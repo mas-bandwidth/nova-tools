@@ -32,6 +32,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -107,17 +108,52 @@ var (
 	runExec                  = startInOwnGroup
 	runNow                   = time.Now
 	runSignals               = notifyTerminating
+	// runGOOS is the platform this verb believes it is on. It is a var for the same reason
+	// internal/sandbox's winDir is a function of the platform rather than of runtime.GOOS:
+	// the windows half of this verb cannot be run on a Mac, and a test that only ever walks
+	// the darwin path calls a windows bug green. The estate has no Windows bench
+	// (2026-09-18), so this seam is the only thing standing between "the windows rules are
+	// written down" and "the windows rules are exercised".
+	runGOOS = runtime.GOOS
 )
 
 // runFlags is the run verb's own argv, parsed by hand like the bare form's.
 type runFlags struct {
 	name, size, container, timeout string
-	reads                          []string
-	argv                           []string
-	useGo                          bool
-	help                           bool
-	sawDashDash                    bool
-	bad                            []sandbox.Refusal
+	// scratch, memory, cpu and place are the windows half's, docs/SPEC-SANDBOX.md W4, W5
+	// and W9. They are PARSED on every platform, because a caller writes one argv for
+	// three platforms and reads one grammar back; what each platform does with them is
+	// validateRun's business.
+	scratch, memory, cpu string
+	place                string
+	reads                []string
+	argv                 []string
+	useGo                bool
+	help                 bool
+	sawDashDash          bool
+	bad                  []sandbox.Refusal
+}
+
+// The two --place values. `job` is W1's Job Object plus scratch and is the default on
+// windows; `wsb` is W8's Windows Sandbox, one instance per machine, for the one-off.
+const (
+	placeJob = "job"
+	placeWSB = "wsb"
+)
+
+// limits is W4's caps in the job's own units, read off the flags after validateRun has
+// already accepted their shapes. A flag that was not given is a zero, and a zero limit is
+// NOT SET: an unset limit is the machine's, and a limit set to "everything" is a number
+// this tool would have had to invent.
+func (f runFlags) limits() winLimits {
+	var l winLimits
+	if f.memory != "" {
+		l.MemoryBytes, _ = parseBytes(f.memory)
+	}
+	if f.cpu != "" {
+		l.CPUPercent, _ = strconv.Atoi(f.cpu)
+	}
+	return l
 }
 
 // runUsage is the verb's own banner. It exists because `nova-sandbox run --help` printed
@@ -147,6 +183,25 @@ usage:
   --read <dir>    readable, recursively, and NOT writable. Repeatable.
   --container <d> the APFS container to make the volume in. Default: the container
                   the boot volume is in.
+
+windows (docs/SPEC-SANDBOX.md, "Windows -- the disposable place", W1..W12):
+  --scratch <d>   REQUIRED on windows, refused elsewhere: an existing absolute path
+                  the per-run directory <scratch>\nova-<n> is made under. There is
+                  no default: not the TEMP variable, not the user profile.
+  --size          REFUSED on windows: NTFS has no per-directory ceiling this tool
+                  can enforce without administrator rights, and a ceiling the tool
+                  only measures is not a ceiling. Use --place wsb, or name a
+                  --scratch on a volume you have already sized.
+  --memory <s>    the Job Object's memory cap, e.g. 4g. Accepted and IGNORED on
+                  darwin and linux, so one caller builds one argv for three
+                  platforms.
+  --cpu <n>       the Job Object's hard CPU cap, 1..100, as a percentage of one
+                  machine's total cycles. Accepted and ignored off windows.
+  --place job|wsb job (the default) is a Job Object plus the scratch. wsb is
+                  Windows Sandbox: full disposability, Pro and Enterprise only, ONE
+                  INSTANCE PER MACHINE -- the review place, never the swarm's -- and
+                  it requires --timeout, because the guest's status comes back
+                  through a file or not at all.
 
 The volume is the run's ONLY writable directory: the working directory is
 <volume>/work, HOME is <volume>/home and TMPDIR is on it too. On exit -- normal,
@@ -192,6 +247,14 @@ func parseRun(args []string) runFlags {
 			f.container = want("--container")
 		case "--timeout":
 			f.timeout = want("--timeout")
+		case "--scratch":
+			f.scratch = want("--scratch")
+		case "--memory":
+			f.memory = want("--memory")
+		case "--cpu":
+			f.cpu = want("--cpu")
+		case "--place":
+			f.place = want("--place")
 		case "--read":
 			if v := want("--read"); v != "" {
 				f.reads = append(f.reads, v)
@@ -348,45 +411,19 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 		fmt.Fprint(stdout, runUsage)
 		return 0
 	}
-	if !okName(f.name) {
-		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_name",
-			Text: "--name wants one short name out of letters, digits, - _ and . : it becomes the volume nova-<n> and the directory under /Volumes"})
-	}
-	if !okSize(f.size) {
-		f.bad = append(f.bad, sandbox.Refusal{Reason: "bad_size",
-			Text: "--size wants the volume's quota, a number with an optional k, m, g or t: --size 8g"})
-	}
-	var deadline time.Duration
-	if f.timeout != "" {
-		d, err := time.ParseDuration(f.timeout)
-		if err != nil || d <= 0 {
-			f.bad = append(f.bad, sandbox.Refusal{Reason: "bad_timeout",
-				Text: "--timeout wants a positive Go duration: --timeout 30m"})
-		} else {
-			deadline = d
-		}
-	}
-	if f.container != "" && !okContainer(f.container) {
-		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_container",
-			Text: "--container wants an APFS container reference: --container disk3"})
-	}
-	if !f.sawDashDash {
-		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
-			Text: "no --; the command comes after it: nova-sandbox run --name j1 --size 8g -- <command> <args...>"})
-	} else if len(f.argv) == 0 {
-		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
-			Text: "nothing after --; the run verb wraps one command"})
-	}
+	goos := runGOOS
+	deadline, bad := validateRun(&f, goos)
+	f.bad = append(f.bad, bad...)
 	if len(f.bad) > 0 {
 		code := refuseAll(stderr, f.bad)
-		fmt.Fprintln(stderr, runRemedy)
+		fmt.Fprintln(stderr, remedyFor(goos))
 		return code
 	}
 	// Rule 1's shape for this verb: a platform whose disposable place is not built REFUSES,
 	// and the refusal says where the disposable place is on that platform instead. A run
 	// that quietly worked in an ordinary directory would leave exactly the debt the verb
 	// abolishes.
-	if line, remedy, refused := noDisposableBody(runtime.GOOS); refused {
+	if line, remedy, refused := noDisposableBody(goos); refused {
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitRefused
@@ -396,10 +433,177 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 	// knows the flag exists.
 	if r := applyGoReads(&f, stderr); r != nil {
 		code := refuseAll(stderr, []sandbox.Refusal{*r})
-		fmt.Fprintln(stderr, runRemedy)
+		fmt.Fprintln(stderr, remedyFor(goos))
 		return code
 	}
+	if goos == "windows" {
+		return runDisposableWindows(f, deadline, stdin, stdout, stderr, env)
+	}
 	return runDisposable(f, deadline, stdin, stdout, stderr, env)
+}
+
+// remedyFor is the one remedy line a refusal carries, and it is the PLATFORM'S. A windows
+// reader handed the darwin argv would type `--size 8g`, which W6 refuses, and would not type
+// the `--scratch` W5 requires: a remedy that names the wrong flags is worse than none,
+// because a reader trusts it.
+func remedyFor(goos string) string {
+	if goos == "windows" {
+		return winRemedy
+	}
+	return runRemedy
+}
+
+// validateRun is every check on the argv that does not touch the machine, WITH THE PLATFORM
+// NAMED. The platform is a parameter and not runtime.GOOS because the windows rules cannot
+// be run on a Mac and the estate has no Windows bench: this is how a darwin `go test` asks
+// what the tool says on windows, the same way internal/sandbox's winpath_test.go does.
+//
+// The contract does not change across the three (docs/SPEC-SANDBOX.md, W-preamble): the same
+// verb, the same receipt, the same exit codes. What differs is here and nowhere else.
+func validateRun(f *runFlags, goos string) (time.Duration, []sandbox.Refusal) {
+	var bad []sandbox.Refusal
+	add := func(reason, text string) { bad = append(bad, sandbox.Refusal{Reason: reason, Text: text}) }
+	win := goos == "windows"
+
+	if !okName(f.name) {
+		add("no_name", "--name wants one short name out of letters, digits, - _ and . : it becomes the volume nova-<n> and the directory under /Volumes")
+	}
+
+	// W6. --size is REFUSED on windows, because NTFS quotas are per user per volume, a
+	// directory quota is FSRM (a server role) and a per-run quota is a VHDX, which needs
+	// administrator rights that rule 2 forbids this tool from requiring. A ceiling the tool
+	// only MEASURES is not a ceiling, and the precedent is rule 7's net_unenforceable: a
+	// promise this tool cannot enforce is a refusal, never a note.
+	switch {
+	case win && f.size != "":
+		add("size_unenforceable", "--size cannot be enforced on windows: NTFS quotas are per user per volume, a directory quota is FSRM (a server role) and a per-run quota is a VHDX that needs administrator rights this tool does not take. Two remedies: run under --place wsb, whose whole disk is discarded, or name a --scratch on a volume you have already sized")
+	case !win && !okSize(f.size):
+		add("bad_size", "--size wants the volume's quota, a number with an optional k, m, g or t: --size 8g")
+	}
+
+	// W5. --scratch is REQUIRED on windows and must be an absolute path: there is no
+	// default, no %TEMP% and no %USERPROFILE%. A disposable place the tool chose the
+	// location of is a place the caller cannot put on the volume they meant.
+	switch {
+	case win && f.scratch == "":
+		add("bad_scratch", "--scratch is required on windows: it is the existing absolute path the per-run directory <scratch>\\nova-<n> is made under, and there is no default -- not %TEMP%, not %USERPROFILE%. Name one: --scratch C:\\nova")
+	case win && !absolutePathFor(goos, f.scratch):
+		add("bad_scratch", "--scratch wants an EXISTING ABSOLUTE path: --scratch C:\\nova. A relative one is resolved against a working directory this verb is about to replace")
+	case !win && f.scratch != "":
+		add("bad_scratch", "--scratch is the windows half's flag: on darwin the disposable place is an APFS volume made by the tool and there is nothing for it to be made under. Drop it, or run this on windows")
+	}
+
+	// W4. --memory and --cpu are the JOB's caps and they are accepted and IGNORED off
+	// windows, the way --name already is, so one caller builds one argv for three
+	// platforms. Their SHAPES are checked everywhere: a typo that is silently ignored on a
+	// Mac and refused on a bench is a bug found on the wrong machine.
+	if f.memory != "" {
+		if n, ok := parseBytes(f.memory); !ok || n <= 0 {
+			add("bad_memory", "--memory wants a positive quantity, a number with an optional k, m, g or t: --memory 4g. It is the Job Object's ProcessMemoryLimit and JobMemoryLimit on windows, and is accepted and ignored elsewhere")
+		}
+	}
+	if f.cpu != "" {
+		n, err := strconv.Atoi(f.cpu)
+		if err != nil || n < 1 || n > 100 {
+			add("bad_cpu", "--cpu wants a whole percentage of one machine's cycles, 1..100: --cpu 50. It is the Job Object's hard CPU rate cap on windows, and is accepted and ignored elsewhere")
+		}
+	}
+
+	// W9. The default on windows is --place job, because Windows Sandbox permits ONE
+	// running instance per machine and a pool of workers each wanting one is a queue of one.
+	if f.place == "" {
+		f.place = placeJob
+	}
+	switch f.place {
+	case placeJob:
+	case placeWSB:
+		if !win {
+			add("no_wsb", "--place wsb is Windows Sandbox and there is none on "+goos+": the disposable place here is the platform's own. Drop --place, or run this on windows")
+		}
+	default:
+		add("bad_place", "--place wants job or wsb: job is a Job Object plus the per-run scratch and is the default, wsb is Windows Sandbox -- full disposability, one instance per machine, the review place and never the swarm's")
+	}
+
+	var deadline time.Duration
+	if f.timeout != "" {
+		d, err := time.ParseDuration(f.timeout)
+		if err != nil || d <= 0 {
+			add("bad_timeout", "--timeout wants a positive Go duration: --timeout 30m")
+		} else {
+			deadline = d
+		}
+	}
+	// W10. --timeout is REQUIRED under wsb. WindowsSandbox.exe returns as soon as the VM is
+	// up and carries no guest status, so the command's exit comes back through a file in the
+	// mapped folder; without a deadline a guest that never writes the file is a wait with no
+	// end, and this verb never waits without one.
+	if win && f.place == placeWSB && deadline == 0 && f.timeout == "" {
+		add("bad_timeout", "--place wsb requires --timeout: WindowsSandbox.exe returns as soon as the VM is up and carries no guest status, so the command's exit comes back through a file in the mapped folder -- and a guest that never writes it is a wait with no end. Name the deadline: --timeout 30m")
+	}
+
+	if f.container != "" {
+		if win {
+			add("no_container", "--container is darwin's APFS container reference; windows makes no volume, so there is no container to name. The place is --scratch")
+		} else if !okContainer(f.container) {
+			add("no_container", "--container wants an APFS container reference: --container disk3")
+		}
+	}
+
+	if !f.sawDashDash {
+		add("no_command", "no --; the command comes after it: "+remedyFor(goos))
+	} else if len(f.argv) == 0 {
+		add("no_command", "nothing after --; the run verb wraps one command")
+	}
+	return deadline, bad
+}
+
+// absolutePathFor is "is this an absolute path on THAT platform", with the platform named.
+// filepath.IsAbs answers for the host, and the host here is a Mac: `C:\nova` is a relative
+// path to it and `/nova` is an absolute one, which is both answers exactly backwards for the
+// argv this verb is judging.
+func absolutePathFor(goos, p string) bool {
+	if p == "" {
+		return false
+	}
+	if goos != "windows" {
+		return strings.HasPrefix(p, "/")
+	}
+	q := strings.ReplaceAll(p, "/", `\`)
+	if strings.HasPrefix(q, `\\`) { // a UNC share is absolute
+		return true
+	}
+	// A drive-qualified path is absolute only WITH the separator: `C:nova` is relative to
+	// the current directory ON drive C, which is a different directory per drive and not a
+	// place this verb can be asked to make anything under.
+	return len(q) >= 3 && q[1] == ':' && q[2] == '\\' &&
+		((q[0] >= 'a' && q[0] <= 'z') || (q[0] >= 'A' && q[0] <= 'Z'))
+}
+
+// parseBytes is --memory's number in bytes. It takes the same shapes okSize takes, because
+// a caller who learned --size 8g should not have to learn a second spelling for --memory.
+func parseBytes(s string) (int64, bool) {
+	if !okSize(s) {
+		return 0, false
+	}
+	body := strings.TrimSuffix(strings.TrimSuffix(s, "b"), "B")
+	mult := int64(1)
+	if n := len(body); n > 0 {
+		switch body[n-1] {
+		case 'k', 'K':
+			mult, body = 1<<10, body[:n-1]
+		case 'm', 'M':
+			mult, body = 1<<20, body[:n-1]
+		case 'g', 'G':
+			mult, body = 1<<30, body[:n-1]
+		case 't', 'T':
+			mult, body = 1<<40, body[:n-1]
+		}
+	}
+	f, err := strconv.ParseFloat(body, 64)
+	if err != nil || f <= 0 {
+		return 0, false
+	}
+	return int64(f * float64(mult)), true
 }
 
 // noDisposableBody is rule 1's shape for this verb, with the platform NAMED so that a
@@ -408,10 +612,12 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 // run that quietly worked in an ordinary directory would leave exactly the cleanup debt
 // the verb abolishes, and would leave it on the platform nobody was watching.
 func noDisposableBody(goos string) (line, remedy string, refused bool) {
-	if goos == "darwin" {
+	// darwin's place is the APFS volume; windows's is W1's Job Object plus the per-run
+	// scratch (runwin.go). Both are built, so neither refuses here.
+	if goos == "darwin" || goos == "windows" {
 		return "", "", false
 	}
-	return fmt.Sprintf("SANDBOX REFUSED reason=no_sandbox: the disposable volume is darwin's, an APFS volume in the boot container made per run and deleted on exit; %s has no body here and this tool does not pretend an ordinary directory is one",
+	return fmt.Sprintf("SANDBOX REFUSED reason=no_sandbox: the disposable place is darwin's APFS volume, made per run in the boot container and deleted on exit, or windows's Job Object plus per-run scratch; %s has no body here and this tool does not pretend an ordinary directory is one",
 			oneline.Field(goos)),
 		"run: nova-sandbox --write <dir> -- <command> <args...>, naming the card's own image root as <dir>: on linux a card is already disposable because it runs INSIDE its image, and the image is the container",
 		true
