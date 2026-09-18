@@ -64,9 +64,9 @@ usage:
   nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
         [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
-  nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
-  nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>]
-  nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
+  nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>] [--bench <name>] [--log <path>]
+  nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>] [--bench <name>] [--log <path>]
+  nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>] [--bench <name>] [--log <path>]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>] [--max-commits <n>]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -858,6 +858,12 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the bus until it is pushed")
+	// The structured sink of SPEC-LOGS.md Part 2: --log names the file Alloy tails; without
+	// it the line goes to stderr, which under systemd is the unit's journal. --bench is the
+	// fleet's name for this machine. The line carries the note's id, lane and recipients --
+	// never its body, subject or path: see events.go.
+	logPath := f.fs.String("log", "", "append one structured JSON event per landed note to this file")
+	bench := f.fs.String("bench", "", "this machine's fleet name, the bench label every structured line carries")
 	dryRun := f.fs.Bool("dry-run", false, "stop after the preflight and the shaping: commit nothing, push nothing, print the note that would be sent")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "remote": remote, "branch": branch}) {
 		return 2
@@ -870,6 +876,16 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
 		return 2
+	}
+	// The sink is opened BEFORE the checkout is touched: a --log nobody can write is a
+	// refusal that costs nothing, and a note that has gone out is not unsent by a logging
+	// failure found afterwards.
+	events, eventsCloser, ok := busEmitter("send", "SEND", *logPath, *bench, stderr)
+	if !ok {
+		return 2
+	}
+	if eventsCloser != nil {
+		defer eventsCloser.Close()
 	}
 	hasDraft := *file != "" || *useStdin
 	hasPrepared := *preparedFile != "" || *usePreparedStdin
@@ -945,11 +961,13 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		if err != nil {
 			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(art.Path), oneline.Err(err))
 			printTranscript(stderr, err)
+			emitNoteRefused(events, art.ID, p.Sender.Lane, "the prepared note did not land")
 			return 1
 		}
 		to, _ := p.Note.Header.Recipients(c)
 		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s wakes=%d\n",
 			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State), len(to))
+		emitNote(events, art.ID, p.Sender.Lane, to, res.Commit, res.Pushed)
 		return 0
 	}
 
@@ -1090,11 +1108,13 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		printTranscript(stderr, err)
+		emitNoteRefused(events, prepared.Note.Header.ID, prepared.Sender.Lane, "the note did not land")
 		return 1
 	}
 	to, _ := prepared.Note.Header.Recipients(t.Config)
 	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d\n",
 		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to))
+	emitNote(events, prepared.Note.Header.ID, prepared.Sender.Lane, to, res.Commit, res.Pushed)
 	return 0
 }
 

@@ -21,6 +21,9 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
+		"main.go|emitNativeCard|nativeUsageFields(res.usage)": "the usage columns of the row this run just wrote to usage.tsv, rendered by nativeUsageFields " +
+			"immediately above: every value in it goes through oneline.Field there, and the names are the literal swarm.TokenColumns. It is a run of " +
+			"`name=value` pairs and is one line by construction; escaping it again would fold the pairs into one token a panel cannot read.",
 		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
@@ -52,6 +55,12 @@ var swarmAudit = audit.Config{
 		"fenceSuffix",
 	},
 	Imports: []string{
+		// internal/log holds the structured JSON line of SPEC-LOGS.md Part 2. It cannot
+		// write past the escape: its one writer is the sink the verb hands it, every
+		// field whose content comes from outside the program goes through oneline and
+		// then Redact inside Line.Write, and the object is rendered by log/slog's own
+		// JSON handler, which escapes a newline as \n rather than ending the line.
+		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by

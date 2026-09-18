@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -81,6 +82,13 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	fs.Var(attempts, "attempt", "a prior attempt as rung:outcome[:reason]; outcome is "+strings.Join(attemptOutcomes(), " | ")+"; repeatable, in order")
 	touches := &stringList{}
 	fs.Var(touches, "touches", "security this unit touches: "+strings.Join(decide.Touches, " | ")+"; repeatable")
+	// THE FLAG IS --event-log AND NOT --log. On this verb --log has meant the ESCALATION
+	// log -- the JSON-lines record `nova-decide log --summary` reads back -- since the
+	// ladder shipped, and it is REQUIRED whenever jev is asked. Taking that name for the
+	// structured stream would repoint a flag the loop already passes. One name per file:
+	// --log is the decision record, --event-log is the SPEC-LOGS.md Part 2 stream.
+	eventLog := fs.String("event-log", "", "append one structured JSON event per decision to this file (SPEC-LOGS.md Part 2)")
+	bench := fs.String("bench", "", "this machine's fleet name, the bench label every structured line carries")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -91,6 +99,25 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	// The structured sink is opened before the provider is called: a decision that cost a
+	// call must not be the thing that discovers the event path was wrong.
+	// THE SINK IS THE FILE OR NOTHING. Round 1 let a verb with no --log write its JSON to
+	// stderr, on the grounds that a unit's stderr is the journal. That is right for a loop
+	// that runs as a unit and wrong for a verb like this one, whose stderr IS a contract:
+	// other programs and this tree's own tests read its refusal lines, and a second line of
+	// JSON beside a one-line refusal breaks them (found by dogfooding, 2026-09-18). The file
+	// Alloy tails is the path (SPEC-LOGS.md Part 6), so a run that names no file writes no
+	// structured line and every existing stdout and stderr contract is untouched.
+	eventsW, eventsCloser, err := novalog.Sink(*eventLog, nil)
+	if err != nil {
+		return refuse(stderr, "ROUTE", "bad-event-log",
+			fmt.Sprintf("--event-log %s cannot be opened for append: %s", oneline.Field(*eventLog), oneline.Err(err)))
+	}
+	if eventsCloser != nil {
+		defer eventsCloser.Close()
+	}
+	events := novalog.NewEmitter(eventsW, "nova-decide", "route", novalog.BenchName(*bench))
 
 	// The floor is refused here, with the one remedy, before anything else
 	// reads it: NaN compares false against every bound, so a bare range check
@@ -155,12 +182,14 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		if persisted != nil {
 			detail += "; and the record could not be written: " + oneline.Err(persisted)
 		}
+		emitRoute(events, novalog.EventRefuse, res, *floor, routeErr)
 		return refuse(stderr, "ROUTE", "no-rung", detail)
 	}
 	if persisted != nil {
 		return refuse(stderr, "ROUTE", "bad-record", oneline.Cap(persisted.Error(), oneline.TailBytes))
 	}
 	fmt.Fprintln(stdout, res.Line())
+	emitRoute(events, EventRoute, res, *floor, nil)
 	switch {
 	case !res.Dispatchable():
 		// The verb ran and said NOT YET. Only exit 0 is permission (SPEC.md),
@@ -171,6 +200,47 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	return 0
+}
+
+// EventRoute is the kind of the line one decision writes: `{source="nova-decide"} | json |
+// event="route"` is every routing decision the fleet made, with the rung it chose, the
+// confidence it chose it with and the floor it was gated on. It is the event the "how often
+// does the floor step us up" question is asked of, and it is the stream half of the
+// escalation log: the log is the RECORD (--log, replayable, summarised by `nova-decide
+// log`), this is the OBSERVATION (--event-log, shipped, queryable beside every other verb).
+const EventRoute = "route"
+
+// emitRoute writes one decision as one structured line. The unit id is an evidence pointer
+// and the kind is one of a fixed set, so nothing here is prose a caller wrote -- the reason
+// sentence the ROUTE line carries is deliberately NOT on it: it is the rules' own English
+// and belongs with the record, not in a label-indexed stream.
+func emitRoute(e *novalog.Emitter, event string, res decide.RouteResult, floor float64, err error) {
+	if e == nil {
+		return
+	}
+	l := e.Line(event)
+	l.Job = oneline.Field(res.Unit)
+	l.Msg = fmt.Sprintf("kind=%s rung=%s confidence=%.2f floor=%.2f source=%s stepped_up=%t escalated=%t wait=%s",
+		oneline.Field(dashOrEmpty(res.Kind)), oneline.Field(dashOrEmpty(res.Rung.Name)),
+		res.Confidence, floor, oneline.Field(dashOrEmpty(res.Source)),
+		res.SteppedUp, res.Escalated, oneline.Field(dashOrEmpty(res.Wait)))
+	if err != nil {
+		l.Level = "ERROR"
+		l.Err = err.Error()
+	} else if res.Confidence < floor {
+		// A decision under its own floor is the one an operator wants to see without a
+		// line filter: the ladder stepped up, and the panel is a label selector.
+		l.Level = "WARN"
+	}
+	e.Send(l)
+}
+
+// dashOrEmpty keeps a `name=value` run readable when a field is absent.
+func dashOrEmpty(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
 }
 
 // persist writes the decision's record: the log row for any decision that got

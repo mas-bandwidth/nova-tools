@@ -224,3 +224,62 @@ five seconds. The slice is done when that number is printed, not when Loki is in
   The hook lives beside the handler, so the refusal is a test of the emitter and not of review.
 - `the-hung-card-query-returns-the-card-s-last-event` — a card that `start`s and never `done`s;
   the Part 3 hung query returns that card's last event and its age.
+
+## Part 6 — which verbs emit, which do not, and the sink that is not wanted (round 2, 2026-09-18)
+
+**The rule, restated, because it is not a choice to make per verb:** a verb that CHANGES STATE
+emits; a verb that only reads does not. A read that emitted would double the fleet's line count
+to say that somebody looked at something.
+
+**What emits today.** The five below join the merge lane (`batch`, `queue`, `react`), the fill
+loop and `nova-work events`:
+
+| tool | verb | kinds beside `start`/`done`/`refuse` | the message's own fields |
+| --- | --- | --- | --- |
+| `nova-pulse` | `harvest` | `harvest-card`, one per RESULT.md disposed | `disposition` (`pr`, `mismatch`, `retry`, `refused`), `card`, `slot`, and `pr` as a FIELD on the line |
+| `nova-pulse` | `hygiene` | `delete` per path removed, `disk-free` per pass | `rule` (the verb that decided it) and `path`; `free_gb`, `cache_gb` |
+| `nova-swarm` | `native` | — (the spine IS the card: one `start`, one `done`) | `model`, `deadline`, `rc`, `wall`, `harness`, and the usage columns `tokens_in`, `tokens_out`, `cache_write`, `cache_read`, `reasoning`, `usd`, each a dash when the provider reported nothing |
+| `nova-bus` | `send`, `reply` | `note`, one per note that landed | `id`, `lane`, `to` (a count), `names` (capped at 8, then `+k`), `commit`, `pushed` |
+| `nova-decide` | `route` | `route`, one per decision | `kind`, `rung`, `confidence`, `floor`, `source`, `stepped_up`, `escalated`, `wait`; below the floor the line is `WARN` |
+
+**What still emits nothing, in the order it is worth doing** (state-changing verbs, from the
+most-run down): `nova-pulse` `cut`, `launch`'s per-card admission, `sweep`, `reap`, `gate`,
+`fleet certify`; `nova-swarm` `batch`, `finalize`, `publish`, `reap`, `triage`; `nova-merge`
+`land`, `rebase`, `sweep`; `nova-cairn append`; `nova-secrets seal`/`place`; `nova-review
+mutate`; `nova-wake serve`. `certify` and `batch --land` are the next two, and the fleet's alert
+rules are already written against their kinds (`certify` `ESCALATE`, `batch-verdict` `FAIL`) so
+that the rule and the emitter meet rather than the rule waiting on a reading of the code.
+
+**The sink is the file, and `--emit-to <redis-stream>` is not wanted.** The path is
+`--log <file>` → Alloy tails it → Loki, and nothing else. A verb that wrote its events straight
+into a Redis stream would be a second shipper of our own making, with a second failure mode
+(the stream is down, so the verb blocks or drops), a second retention policy, a second query
+language beside LogQL, and an ordering that no longer matches the file a person reads over
+`ssh`. The file is the cheapest durable buffer there is: a verb that cannot reach the network
+still writes it, and Alloy ships it when the network comes back. Redis remains the fleet's
+*message* bus — `nova-merge react` reacts to it — and events are not messages: nobody waits on
+one.
+
+**The sink is the file or NOTHING** (a correction to round 1). A verb given no `--log` writes no
+structured line at all. Round 1 fell back to stderr on the grounds that a unit's stderr is the
+journal; that is right for a loop that runs as a systemd unit and wrong for a verb whose stderr
+is a CONTRACT — `nova-pulse hygiene`'s refusals are one line each and this tree's own tests count
+them, and a second line of JSON beside them broke those tests the first time the fallback was
+wired (2026-09-18, found by dogfooding). Alloy tails the file; the file is the path.
+
+**One name per file.** The flag is `--log` wherever the name is free. Two verbs already own
+`--log` for a different file and keep it: `nova-pulse hygiene` (the per-bench ACTION log,
+`~/hygiene.log`) and `nova-decide route` (the escalation log, the RECORD an accounting obligation
+is discharged against). On those two the structured stream is `--event-log`, because silently
+repointing a flag a loop already passes is worse than a second name.
+
+**The bench label.** `--bench <name>` on `nova-swarm`, `nova-bus` and `nova-decide`; `--label
+<name>` on the `nova-pulse` verbs, where `--bench` means the bench being ACTED ON and not the
+machine acting. Both fall back to `$NOVA_BENCH` and then the short hostname.
+
+**What a note event may hold.** The bus's line carries the note's id, its lane and its resolved
+recipients, and never the body, the SUBJECT or the PATH: the subject is one line of somebody's
+private prose and is very often the whole content of the note, and the path carries the slug,
+which is minted from the subject. The human `SEND OK` line still carries both, because it is
+read by the person who just wrote the note; the structured line is read by anybody with a
+dashboard.

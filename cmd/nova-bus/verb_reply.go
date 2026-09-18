@@ -28,6 +28,11 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dryRun := f.fs.Bool("dry-run", false, "shape and report the reply and write nothing")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
+	// The structured sink of SPEC-LOGS.md Part 2, the same two flags send carries. The
+	// line holds the reply's id, its lane and its recipients; the body, the subject and
+	// the path stay out of it (events.go).
+	logPath := f.fs.String("log", "", "append one structured JSON event per landed reply to this file")
+	bench := f.fs.String("bench", "", "this machine's fleet name, the bench label every structured line carries")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "file": file, "remote": remote, "branch": branch}) {
 		return 2
 	}
@@ -47,6 +52,13 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
 		return 2
+	}
+	events, eventsCloser, ok := busEmitter("reply", "REPLY", *logPath, *bench, stderr)
+	if !ok {
+		return 2
+	}
+	if eventsCloser != nil {
+		defer eventsCloser.Close()
 	}
 	raw, err := os.ReadFile(*file)
 	if err != nil {
@@ -118,6 +130,8 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if *dryRun {
 		replyOK(stdout, prepared, "-", false, false, 0)
+		// A dry run wrote no note, so it emits no note event: the stream says what
+		// happened on the bus and never what would have.
 		return 0
 	}
 	if err := prepared.Save(*busDir); err != nil {
@@ -170,9 +184,12 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		printTranscript(stderr, err)
+		emitNoteRefused(events, prepared.Note.Header.ID, me.Lane, "the reply did not land")
 		return 1
 	}
 	replyOK(stdout, prepared, res.Commit, res.Pushed, *advance, res.Attempts)
+	to, _ := prepared.Note.Header.Recipients(c)
+	emitNote(events, prepared.Note.Header.ID, me.Lane, to, res.Commit, res.Pushed)
 	return 0
 }
 

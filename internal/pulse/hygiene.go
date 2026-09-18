@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -65,7 +66,24 @@ type HygieneInput struct {
 	Disk   HygieneDisk
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// Events is the structured sink of SPEC-LOGS.md Part 2 (internal/log). The timer is
+	// named there by name: one start per pass, one event per action -- a delete with the
+	// path and the rule that decided it -- and one done with dur_ms and the free disk the
+	// pass left behind, which is the number the "a bench under 25 GB free" alert reads.
+	// The old ~/hygiene.log line stays exactly as it is; this is beside it, never instead
+	// of it. A nil Events writes nothing.
+	Events *novalog.Emitter
 }
+
+// The nouns of this timer, beside the start/done spine: one delete per path removed with
+// the rule that decided it, and one disk-free per pass, so `{source="nova-pulse",
+// verb="hygiene"} | json | event="delete"` is "what did hygiene delete in the last hour,
+// and why" (SPEC-LOGS.md Part 3) and the free-disk alert is a label selector.
+const (
+	EventHygieneDelete   = "delete"
+	EventHygieneDiskFree = "disk-free"
+)
 
 type hygiene struct {
 	in    HygieneInput
@@ -172,13 +190,30 @@ func (h *hygiene) removeUnder(verb, path string, roots ...string) bool {
 	}
 	if err := safepath.RemoveUnderRoots(path, roots...); err != nil {
 		fmt.Fprintf(h.in.Stderr, "HYGIENE REFUSED: %s (pass a path strictly below one of the two roots)\n", oneline.Err(err))
+		h.in.Events.Announce(novalog.EventRefuse,
+			fmt.Sprintf("hygiene: %s refused for %s", oneline.Field(verb), oneline.Field(path)), 0, err)
 		return false
 	}
 	h.appendLog(verb + " " + path)
+	// One event per action, with the path and the rule that decided it -- the rule IS the
+	// verb here (delete-job, delete-slot, drop-cache, reap), which is the whole answer to
+	// "why was this deleted".
+	l := h.in.Events.Line(EventHygieneDelete)
+	l.Msg = fmt.Sprintf("rule=%s path=%s", oneline.Field(verb), oneline.Field(path))
+	h.in.Events.Send(l)
 	return true
 }
 
 func (h *hygiene) remove(verb, path string) bool { return h.removeUnder(verb, path, h.roots...) }
+
+// clock reads the pass's injected clock, or the real one when the caller injected none.
+// A test pins it, so a duration in a test is the test's number and never the weather's.
+func (h *hygiene) clock() time.Time {
+	if h.in.Now != nil {
+		return h.in.Now().UTC()
+	}
+	return time.Now().UTC()
+}
 
 func (h *hygiene) refuse(msg string) int {
 	fmt.Fprintln(h.in.Stderr, msg)
@@ -291,7 +326,17 @@ func (h *hygiene) logVerb() int {
 // run is the timer's verb: it walks both roots, leaves every live slot alone,
 // reaps the dead, deletes the read jobs, drops the cache when the disk is low,
 // and prints one HYGIENE line (and, unless --dry-run, logs it too).
+// hygieneLowDiskGB is the free-disk floor this timer works to: below it the build cache is
+// dropped, and the disk-free event is a WARN. It is the same number the fleet's free-disk
+// alert is written against (SPEC-LOGS.md Part 4), named once rather than typed twice.
+const hygieneLowDiskGB = 25
+
 func (h *hygiene) run() int {
+	// The elapsed time comes from the pass's own clock, read twice: h.now is one snapshot
+	// taken when the run was built, and a duration measured from a snapshot is always zero.
+	started := h.clock()
+	h.in.Events.Announce(novalog.EventStart,
+		fmt.Sprintf("hygiene: pass over %s", oneline.Field(strings.Join(h.roots, ","))), 0, nil)
 	before := h.disk.Free()
 	slots, reaped, jobs, dropped := 0, 0, 0, 0
 	for _, root := range h.roots {
@@ -334,7 +379,7 @@ func (h *hygiene) run() int {
 	}
 	size := h.disk.SizeGB(h.cache)
 	cache := "kept"
-	if h.disk.FreeGB() < 25 || size > 20 {
+	if h.disk.FreeGB() < hygieneLowDiskGB || size > 20 {
 		if h.removeUnder("drop-cache", h.cache, filepath.Join(h.in.Home, ".cache")) {
 			cache = "dropped"
 		}
@@ -345,6 +390,18 @@ func (h *hygiene) run() int {
 		h.appendLog(line)
 	}
 	fmt.Fprintln(h.in.Stdout, line)
+	// The free disk is its own event and not a number buried in a sentence: the alert
+	// "a bench under 25 GB free" reads free_gb off this line, per bench, once a pass.
+	free := h.in.Events.Line(EventHygieneDiskFree)
+	free.Msg = fmt.Sprintf("free_gb=%d cache_gb=%d cache=%s", h.disk.FreeGB(), size, oneline.Field(cache))
+	if h.disk.FreeGB() < hygieneLowDiskGB {
+		free.Level = "WARN"
+	}
+	h.in.Events.Send(free)
+	h.in.Events.Announce(novalog.EventDone, fmt.Sprintf(
+		"hygiene: slots=%d reaped=%d jobs-deleted=%d slots-deleted=%d cache=%s free_gb=%d",
+		slots, reaped, jobs, dropped, oneline.Field(cache), h.disk.FreeGB()),
+		h.clock().Sub(started), nil)
 	return 0
 }
 

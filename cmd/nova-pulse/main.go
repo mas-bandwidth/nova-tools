@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
@@ -25,7 +26,7 @@ nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | -
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once] [--label <name>] [--log <path>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--label <name>] [--log <path>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -446,6 +447,13 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	floor := f.fs.Float64("floor", 0.9, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
+	// The structured sink of SPEC-LOGS.md Part 2, wired exactly as fill's is: --log names
+	// the file Alloy tails, and without it the lines go to stderr, which under systemd is
+	// the unit's journal and so a source Alloy already reads. --label is the fleet name of
+	// THIS machine (else $NOVA_BENCH, else the short hostname); harvest keeps --bench free
+	// for the bench a fold reads, which is a different question from which bench folded.
+	logPath := f.fs.String("log", "", "")
+	label := f.fs.String("label", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -464,6 +472,24 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	// The sink is opened BEFORE the fold takes a card, so a --log nobody can write is a
+	// refusal before the first push rather than a fold whose lines went nowhere.
+	// THE SINK IS THE FILE OR NOTHING. Round 1 let a verb with no --log write its JSON to
+	// stderr, on the grounds that a unit's stderr is the journal. That is right for a loop
+	// that runs as a unit and wrong for a verb like this one, whose stderr IS a contract:
+	// other programs and this tree's own tests read its refusal lines, and a second line of
+	// JSON beside a one-line refusal breaks them (found by dogfooding, 2026-09-18). The file
+	// Alloy tails is the path (SPEC-LOGS.md Part 6), so a run that names no file writes no
+	// structured line and every existing stdout and stderr contract is untouched.
+	events, closer, err := novalog.Sink(*logPath, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "HARVEST REFUSED: --log %s cannot be opened for append: %s\n",
+			oneline.Field(*logPath), oneline.Err(err))
+		return 2
+	}
+	if closer != nil {
+		defer closer.Close()
+	}
 	in := pulse.HarvestInput{
 		ID:           *id,
 		Root:         *root,
@@ -473,6 +499,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 		Max:          *max,
 		Stdout:       stdout,
 		Stderr:       stderr,
+		Events:       novalog.NewEmitter(events, "nova-pulse", "harvest", novalog.BenchName(*label)),
 	}
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)

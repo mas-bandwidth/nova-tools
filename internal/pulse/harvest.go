@@ -12,8 +12,15 @@ import (
 	"strings"
 	"time"
 
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// EventHarvestCard is the kind of the per-card line the fold writes: one event per RESULT.md
+// disposed, the way SPEC-LOGS.md Part 2 asks the coordinator's loops to emit one event per
+// action and not one per turn. `{source="nova-pulse", verb="harvest"} | json |
+// event="harvest-card"` is exactly "what did the fold do to each card".
+const EventHarvestCard = "harvest-card"
 
 // HarvestInput is everything the harvest verb needs, held apart from command-line parsing
 // so a test can drive it with fake directories and a fake nova-swarm/nova-pulse on PATH.
@@ -36,6 +43,13 @@ type HarvestInput struct {
 	Decide  bool
 	Floor   float64
 	Decider Decider
+
+	// Events is the structured sink of SPEC-LOGS.md Part 2 (internal/log): one start when
+	// the fold takes the pulse, one harvest-card per RESULT.md disposed, and one done
+	// carrying the same counts the HARVEST line prints. It is what answers "no card has
+	// been harvested for two hours while cards are launched" without an ssh. A nil Events
+	// writes nothing, which is how every test that predates it keeps its exact output.
+	Events *novalog.Emitter
 }
 
 func field(s string) string {
@@ -64,11 +78,12 @@ func Harvest(in HarvestInput) int {
 	started := in.Now()
 
 	if strings.TrimSpace(in.ID) == "" {
-		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --id; refusing to guess (supply the pulse id)"))
+		return in.refuse(fmt.Errorf("missing --id; refusing to guess (supply the pulse id)"))
 	}
 	if strings.TrimSpace(in.Root) == "" {
-		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --root; refusing to guess (supply the root directory)"))
+		return in.refuse(fmt.Errorf("missing --root; refusing to guess (supply the root directory)"))
 	}
+	in.Events.Announce(novalog.EventStart, fmt.Sprintf("harvest: pulse %s under %s", oneline.Field(in.ID), oneline.Field(in.Root)), 0, nil)
 
 	// A root `nova-pulse cut` wrote has a cards.tsv and is folded from it. A bare
 	// swarm root a caller handed straight to `nova-swarm batch` has none, and harvest
@@ -82,7 +97,7 @@ func Harvest(in HarvestInput) int {
 			cards = discoverRootCards(in.Root)
 		}
 		if len(cards) == 0 {
-			return refusal(in.Stderr, "HARVEST", err)
+			return in.refuse(err)
 		}
 	}
 
@@ -113,6 +128,7 @@ func Harvest(in HarvestInput) int {
 		case "mismatch":
 			mismatch++
 			writeSeen(in.Root, c, "mismatch")
+			in.card(c, "mismatch", 0, "RESULT line 1 is not the card's contract line")
 		case "abstain":
 			abstain++
 			retried++
@@ -121,10 +137,12 @@ func Harvest(in HarvestInput) int {
 			lines = append(lines, fmt.Sprintf("HARVEST RETRY label=%s card=%s: %s",
 				field(c.Label), field(c.Card), oneline.Escape(refusal)))
 			appendRetry(in.Root, c, refusal)
+			in.card(c, "retry", 0, "abstained; the last refusal was recorded in retry.tsv")
 		case "refused":
 			refused++
 			writeSeen(in.Root, c, "refused")
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
+			in.card(c, "refused", 0, "fix card with no red: line and no test file in its diff")
 		case "done":
 			done++
 			// The typed decision is asked after the job is read and before any push:
@@ -165,6 +183,7 @@ func Harvest(in HarvestInput) int {
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
 				field(repo), pr, field(c.Label), field(branch), classTail))
 			appendNext(in.Root, repo, pr, c.Label)
+			in.card(c, "pr", pr, fmt.Sprintf("pushed to %s and opened on %s", oneline.Field(branch), oneline.Field(repo)))
 		}
 	}
 
@@ -189,6 +208,10 @@ func Harvest(in HarvestInput) int {
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d usd=%s took=%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, usd,
 		in.Now().Sub(started).Round(time.Millisecond))
+	in.Events.Announce(novalog.EventDone, fmt.Sprintf(
+		"harvest: pulse %s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d usd=%s",
+		oneline.Field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, oneline.Field(usd)),
+		in.Now().Sub(started), nil)
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.
@@ -196,6 +219,32 @@ func Harvest(in HarvestInput) int {
 		code = rc
 	}
 	return code
+}
+
+// refuse is the harvest's one refusal door: the REFUSED line on stderr, and the same
+// refusal as one structured event, so a fold that never started is a refuse in the stream
+// and not a silence a query cannot tell from a bench that had nothing to do.
+func (in HarvestInput) refuse(err error) int {
+	in.Events.Announce(novalog.EventRefuse, "harvest: "+oneline.Err(err), 0, err)
+	return refusal(in.Stderr, "HARVEST", err)
+}
+
+// card writes one card's disposition as one harvest-card event. The disposition is the
+// event's own word in the message's `disposition=` field, so one LogQL line filter answers
+// "which cards mismatched today" without a second event kind per outcome. No RESULT body
+// and no refusal prose from a model ever reaches the line: the label, the slot and the
+// disposition are ids, and the sentence is this program's own.
+func (in HarvestInput) card(c CardRow, disposition string, pr int, msg string) {
+	if in.Events == nil {
+		return
+	}
+	l := in.Events.Line(EventHarvestCard)
+	l.Card = oneline.Field(c.Label)
+	l.Slot = oneline.Field(c.Slot)
+	l.PR = pr
+	l.Msg = fmt.Sprintf("disposition=%s card=%s slot=%s: %s",
+		oneline.Field(disposition), oneline.Field(dash(c.Label)), oneline.Field(dash(c.Slot)), msg)
+	in.Events.Send(l)
 }
 
 func bound(w io.Writer, max int) *boundedList {
