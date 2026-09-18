@@ -32,6 +32,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // ErrNoTestsChanged is the refusal for a range that changes no test file: a fix without
@@ -161,7 +163,7 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 	// list` that grows by one per run is the repo's own record going wrong.
 	defer func() {
 		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "remove", "--force", wt)
-		_ = os.RemoveAll(wt)
+		_ = safepath.RemoveUnder(os.TempDir(), wt)
 		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "prune")
 	}()
 	if _, err := gitLine(ctx, repo, "worktree", "add", "--detach", wt, head); err != nil {
