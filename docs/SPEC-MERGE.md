@@ -1467,7 +1467,7 @@ Every script and hand step sketched on the bench becomes an official verb, and t
 
 ```
 nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
-nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
 nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
 ```
 
@@ -1479,7 +1479,7 @@ entries after it still judged), and `SIMULATE POISON #<n> check="<check>" <first
 line>` for the first red one, with `SIMULATE DONE entries=<n> ok=<n> conflicts=<n>
 poison=<#n|none>` and exit 2 when a poison was found, 1 when it could not run at all.
 
-**What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
+**What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). **A record's path is a git path and is built with `path.Join`, never `filepath.Join`**: it is written into the record's own `file` field, it is the pathspec for `git add`, and it is the right-hand side of the confirming `git show <rev>:<path>`, all of which git spells with forward slashes on every platform. Built with the machine's separator it came out `classify\<name>.json` on Windows, the push landed, the confirm asked for a file whose name contains a backslash and `queue classify` exited 1 on windows-latest alone (#1335). `destinationOf` makes the path a git path at the one boundary where a record's `file` reaches git, and `TestRecordPathsAreGitPathsNotMachinePaths` reads this package's source so the class cannot come back on a host where it is invisible. Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
 
 **One queue, one hold file, one order.** The queue is the order `run` walks: `queued` is the ordered pull requests, and `skipped` and `parked` are the sets the sweep must not touch. `add` is still a person's decision and appends; `queue` is the mechanical hand that keeps the order, so no coordinator empties and refills it by hand. A hold is a person's, never the tool's.
 
@@ -1493,7 +1493,7 @@ poison=<#n|none>` and exit 2 when a poison was found, 1 when it could not run at
 
 **The poison detector.** A pull request whose own merge-group run fails twice on one test, in a package that pull request changed, and whose `classify` decision is `own-change`, is poison: the sweep parks it — `skip` plus one issue naming the test, the package, the two run ids and the pull request — and no sweep ever re-enqueues it. A `flaky-under-load` or `environment` decision never parks, and `unskip` clears a park. `QUEUE PARK entry=<pr> test=<name> package=<path> runs=<n> issue=<url|->` is the one line.
 
-**`classify --run <id>`.** `classify` records one typed decision behind the merge group's floor — `flaky-under-load`, `own-change` or `environment` — keyed to the run id and the head sha, written and pushed as a record (rule 22) and folded beside the gates; the newest `at` for a run wins, a second classification is a second file, and the detector reads `own-change` to arm and the other two to disarm. It records a person's class and decides nothing.
+**`queue classify --run <id>`.** It is a subverb of `queue` and not a top-level `classify`, because the top-level one (SPEC-DECIDE.md, "nova-merge classify merge-group failure") ASKS a provider for a decision about a failed merge-group run and records nothing, while this one RECORDS a decision somebody already reached, for the sweep to read: two asks, two verbs, one word each way round. `queue classify` records one typed decision behind the merge group's floor — `flaky-under-load`, `own-change` or `environment` — keyed to the run id and the head sha, written and pushed as a record (rule 22) and folded beside the gates; the newest `at` for a run wins, a second classification is a second file, and the detector reads `own-change` to arm and the other two to disarm. It records a person's class and decides nothing.
 
 **The output, one line per verb.**
 
@@ -1511,7 +1511,7 @@ CLASSIFY FAIL run=<id> file=<path> pushed=false: <reason>; re-run the same verb 
 CLASSIFY REFUSED: <reason>
 ```
 
-**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
+**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `queue classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
 
 ### Red tests
 
@@ -1523,8 +1523,8 @@ A card writes these first, each seen red before it is trusted; the network, the 
 4. A sweep over a fake host of ten open pull requests — green, stale red, current red, dirty, skipped, parked and already queued — counts each bucket and enqueues only the green one.
 5. A sweep with a stale red and a queue of six does not re-enqueue it; the same sweep with a queue of five does; a mutation that drops the bound turns the test red.
 6. The detector with a fake host: one test failed twice in a changed package plus an `own-change` classify parks the pull request (`QUEUE PARK` names test and issue) and a green re-sweep does not enqueue it, while a `flaky-under-load` classify never parks.
-7. `classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
-8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
+7. `queue classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
+8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `queue classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
 9. Two concurrent `hold`/`skip`/`front`/`sweep` writers: every write lands, `queue.json` parses at every read, a killed writer leaves the old queue whole (rule 1), and the sweep window is measured by a fake clock, never the wall clock.
 
 ## Tests this spec demands

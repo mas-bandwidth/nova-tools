@@ -39,7 +39,37 @@ type FakeHost struct {
 	Do func(n int, headOID, baseSHA, mergeSHA string) error
 	// Open is the open pull request list OpenPRs answers: the rebase cutter's whole input.
 	Open []RebasePR
+	// OpenQueue is the open pull requests the queue sweep walks. It is a SECOND list
+	// because the two seams want different rows: the rebase cutter reads the four
+	// fields of a RebasePR, and the sweep reads a whole PR -- its head oid, its
+	// mergeable state and when the host last saw it move. One method cannot answer two
+	// shapes, so QueuePRs answers this one and OpenPRs answers Open.
+	//
+	// Failures, Changed and Issues are the poison detector's data: the tests that
+	// failed, the packages the pull request changed, and the issue a park names.
+	OpenQueue []PR
+	Failures  map[int][]Failure
+	Changed   map[int][]string
+	Issues    map[int]string
 }
+
+// QueuePRs lists the open pull requests this fake reports to the queue sweep. It is the
+// queueHost seam, and it is deliberately not OpenPRs: see OpenQueue.
+func (f *FakeHost) QueuePRs() ([]PR, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return f.OpenQueue, nil
+}
+
+// PoisonFailures is the detector's view of a pull request's own run.
+func (f *FakeHost) PoisonFailures(pr int) []Failure { return f.Failures[pr] }
+
+// ChangedPackages is the packages the pull request changed.
+func (f *FakeHost) ChangedPackages(pr int) []string { return f.Changed[pr] }
+
+// IssueFor is the issue a park names, or "".
+func (f *FakeHost) IssueFor(pr int) string { return f.Issues[pr] }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
@@ -170,4 +200,15 @@ func (f *FakeHost) SetCheckDetails(oid string, details ...CheckDetail) {
 // and a test uses this to prove the wait verb ignores it (nova-tools #1014).
 func (f *FakeHost) SetCheckResult(sha, name, conclusion string) {
 	f.CheckResults = append(f.CheckResults, CheckDetail{Name: name, Conclusion: conclusion, SHA: sha})
+}
+
+// SetCheckRuns sets one commit's checks from details that carry their own sha, so a test
+// can put a green run, a current red and a stale red on the same rollup and see which
+// bucket each lands in.
+func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
+	var c Checks
+	for _, d := range details {
+		c.AddRun(d.Name, d.Conclusion, d.SHA)
+	}
+	f.ChecksBy[oid] = c
 }

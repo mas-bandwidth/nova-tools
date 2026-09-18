@@ -93,6 +93,29 @@ func injectLockClock() {
 // verb waited: the wait is measured in injected time, never in wall time.
 var lockClk *lockClock
 
+// realLockClock puts the merge package's two wait seams back on the MACHINE's clock for
+// the rest of one test, and restores the injected one when that test ends.
+//
+// The injected clock is one instant shared by the whole process and every waiter's poll
+// advances it. That is what a timeout test wants -- a bounded wait runs to its end with
+// no wall time -- but it is wrong for the one test whose writers must really wait on each
+// other: three waiters polling a held lock advance the shared instant by three poll
+// intervals per round, so the whole 120 s bound passes in a few hundred real
+// microseconds and every waiter but the first is refused before the holder has finished
+// its write. On a fast, idle machine the holder wins that race and the test passes; on a
+// loaded one it does not, which is a test that asserts the machine (#1206 was green on CI
+// and red on the Studio the CI runners share).
+//
+// Only a test that does not call t.Parallel may use it: Go resumes the paused parallel
+// tests after the sequential ones have finished, so nothing else is reading the clock
+// while such a test runs.
+func realLockClock(t *testing.T) {
+	t.Helper()
+	merge.Now = time.Now
+	merge.Sleep = time.Sleep
+	t.Cleanup(injectLockClock)
+}
+
 type lab struct {
 	t      *testing.T
 	dir    string

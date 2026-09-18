@@ -63,6 +63,13 @@ usage:
   nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>]
 
+  nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
+  nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+
+queue classify RECORDS a verdict somebody already reached, as one immutable record the
+queue sweep then reads; the top-level classify ASKS for one about a failed merge-group
+run. Two asks, two verbs, one word each way round.
+
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
 batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, merges
@@ -304,6 +311,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdPacket(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
+	case "queue":
+		return cmdQueue(rest, stdout, stderr, deps)
 	case "classify":
 		return cmdClassify(rest, stdout, stderr, deps)
 	case "wait":
