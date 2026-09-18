@@ -1896,6 +1896,32 @@ boot volume to clean. It needs no `sudo`. A delete that fails prints
 `SANDBOX LEAK` with the one `diskutil` command that removes it and exits 3,
 never silently.
 
+**A commit leaves as a bundle, through `--out`.** Everything on the volume is
+deleted, so a card that committed something needs one writable path out.
+`--out <dir>` opens it: after the command exits and before the volume is deleted,
+the named artifacts are copied to `<dir>/<name>/` and one line says what left.
+
+```
+$ nova-sandbox run --name j1 --size 8g --out ./handoff \
+               -- /bin/sh -c 'cd repo && git bundle create ../repo.bundle HEAD && echo DONE > ../RESULT.md'
+SANDBOX STEP name=out state=start
+SANDBOX STEP name=out state=done ms=3
+SANDBOX OUT name=j1 files=2 bytes=21174
+SANDBOX DONE name=j1 exit=0 wall=11.220 freed=1048576
+```
+
+The default set is `RESULT.md`, `usage.tsv` and `repo.bundle`, each taken **if
+present**; `--artifact <relpath>` names another set, repeatable, relative to the
+card's working directory, and an artifact you name and did not write is a
+refusal. Every path is resolved inside the volume — an absolute path, a `..` or
+a symlink is refused — and the whole set is measured before a byte is written
+and refused over `--out-max-bytes` (default `64m`). `git bundle create
+repo.bundle <branch>` as the card's last step is the documented way a commit
+leaves; the other side reads it with `git fetch ./repo.bundle <branch>`. A
+handoff that fails after a command that exited 0 makes the run
+`SANDBOX REFUSED reason=out_failed`, exit 125, because a zero would say the
+artifacts are there.
+
 On linux `run` refuses with one remedy line: a card is already disposable there
 — it runs inside its image — so name the image root as `--write` on the bare
 form instead.

@@ -43,7 +43,7 @@ import (
 )
 
 // runRemedy is the one remedy line every refusal of this verb carries.
-const runRemedy = "run: nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--read <dir>]... -- <command> <args...>"
+const runRemedy = "run: nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--read <dir>]... [--out <dir> [--artifact <relpath>]...] -- <command> <args...>"
 
 // volumePrefix is the one name shape this verb makes and the one it deletes. A volume
 // whose name does not begin with it was not made here and is never touched.
@@ -126,12 +126,18 @@ type runFlags struct {
 	// validateRun's business.
 	scratch, memory, cpu string
 	place                string
-	reads                []string
-	argv                 []string
-	useGo                bool
-	help                 bool
-	sawDashDash          bool
-	bad                  []sandbox.Refusal
+	// out, artifacts and outMax are the handoff (handoff.go): the one writable
+	// path off the volume, taken after the command finishes and before the volume
+	// is deleted. Without them a card's commit dies with the place it was made in.
+	out         string
+	artifacts   []string
+	outMax      string
+	reads       []string
+	argv        []string
+	useGo       bool
+	help        bool
+	sawDashDash bool
+	bad         []sandbox.Refusal
 }
 
 // The two --place values. `job` is W1's Job Object plus scratch and is the default on
@@ -181,6 +187,18 @@ usage:
                   card that builds Go wants this flag, and the alternative is naming
                   both by hand in every argv.
   --read <dir>    readable, recursively, and NOT writable. Repeatable.
+  --out <dir>     the ONE writable path off the volume. After the command exits
+                  and BEFORE the volume is deleted, the named artifacts are
+                  copied to <dir>/<name>/. Without it nothing survives the run,
+                  which is the whole point of the verb and the wrong answer for
+                  a card that made a commit.
+  --artifact <p>  what leaves, relative to the card's working directory.
+                  Repeatable. Default: RESULT.md, usage.tsv and repo.bundle,
+                  each taken IF PRESENT. An artifact you NAME and did not write
+                  is a refusal. A directory is taken whole.
+  --out-max-bytes <n>
+                  the ceiling on the whole set, default 64m. Measured before a
+                  byte is written; over it is a refusal, not a truncation.
   --container <d> the APFS container to make the volume in. Default: the container
                   the boot volume is in.
 
@@ -213,9 +231,15 @@ When a contained command exits non-zero, the tool asks the operating system what
 refused and prints one SANDBOX DENIED line per path, with the flag that would have
 allowed it. docs/SPEC-SANDBOX.md says what that can and cannot see on this macOS.
 
+A COMMIT LEAVES AS A BUNDLE. The volume is deleted, so the card's last step is
+"git bundle create repo.bundle <branch>" in its working directory; the bundle is
+one of the default artifacts, and the other side reads it with
+"git fetch ./repo.bundle <branch>". That is the documented way, and it is why a
+run with no --out loses the work it did.
+
 example:
-  nova-sandbox run --name card1 --size 8g --timeout 30m --go \
-                   -- /bin/sh -c 'cd repo && go build ./...'
+  nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
+                   -- /bin/sh -c 'cd repo && go build ./... && git bundle create ../repo.bundle HEAD'
 `
 
 func parseRun(args []string) runFlags {
@@ -258,6 +282,14 @@ func parseRun(args []string) runFlags {
 		case "--read":
 			if v := want("--read"); v != "" {
 				f.reads = append(f.reads, v)
+			}
+		case "--out":
+			f.out = want("--out")
+		case "--out-max-bytes":
+			f.outMax = want("--out-max-bytes")
+		case "--artifact":
+			if v := want("--artifact"); v != "" {
+				f.artifacts = append(f.artifacts, v)
 			}
 		case "--go":
 			f.useGo = true
@@ -549,6 +581,31 @@ func validateRun(f *runFlags, goos string) (time.Duration, []sandbox.Refusal) {
 		}
 	}
 
+	// The handoff (handoff.go). --out is the ONE writable path off the volume and
+	// everything about it is checked here, before a volume is made: a typo in an
+	// artifact name is worth nothing if it is found after the card has run.
+	if win && f.out != "" {
+		add("no_out", "--out is the darwin handoff: the volume is deleted on exit, so the artifacts are copied off it first. The windows half keeps its per-run scratch under --scratch and there is nothing to copy out of. Drop --out, or run this on darwin")
+	}
+	if f.out == "" {
+		if len(f.artifacts) > 0 {
+			add("no_out", "--artifact names WHAT leaves; name WHERE it goes too: --out <dir>. Without --out nothing survives the run")
+		}
+		if f.outMax != "" {
+			add("no_out", "--out-max-bytes caps the handoff and there is no handoff without --out <dir>")
+		}
+	}
+	for _, a := range f.artifacts {
+		if _, err := cleanArtifactRel(a); err != nil {
+			add("bad_artifact", err.Error())
+		}
+	}
+	if f.outMax != "" {
+		if n, ok := parseBytes(f.outMax); !ok || n <= 0 {
+			add("bad_out_max", "--out-max-bytes wants a positive quantity, a number with an optional k, m, g or t: --out-max-bytes 64m")
+		}
+	}
+
 	if !f.sawDashDash {
 		add("no_command", "no --; the command comes after it: "+remedyFor(goos))
 	} else if len(f.argv) == 0 {
@@ -661,6 +718,22 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 
 	// ONE exit from here. Whatever the run does, the volume goes.
 	code := runInVolume(f, vol, deadline, stdin, stdout, stderr, env)
+	// The handoff is the one thing that happens between the command's exit and
+	// the delete, and it happens on EVERY path through runInVolume -- a failure,
+	// a timeout and a signal included, because a card that was killed at its
+	// deadline has written a RESULT.md saying so and that is exactly the artifact
+	// worth keeping.
+	if f.out != "" {
+		max, _ := parseBytes(f.outMax)
+		code = handoff(stderr, handoffInput{
+			Work:      filepath.Join(vol.Mount, "work"),
+			Out:       f.out,
+			Name:      f.name,
+			Artifacts: f.artifacts,
+			Named:     len(f.artifacts) > 0,
+			MaxBytes:  max,
+		}, code)
+	}
 	return finish(stderr, f.name, vol, code, started)
 }
 
