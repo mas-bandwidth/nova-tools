@@ -157,14 +157,45 @@ func TestBenchProbeNeverReadsAuth(t *testing.T) {
 		t.Fatalf("mode 0644 refuses at exit 1, got %d:\n%s", exit, stdout)
 	}
 	// The fake ssh saw a stat of the auth path and never a read of it.
-	if !strings.Contains(log, "stat -c %a "+f.auth) {
+	if !ranOn(log, "stat", f.auth) {
 		t.Errorf("the probe stats the auth path:\n%s", log)
 	}
 	for _, line := range strings.Split(log, "\n") {
-		if strings.Contains(line, f.auth) && (strings.Contains(line, "cat") || strings.Contains(line, "head") || strings.Contains(line, "cp")) {
+		if readsPath(line, f.auth) {
 			t.Errorf("the probe read the auth file: %s", line)
 		}
 	}
+}
+
+// probeReaders are the commands that would copy a file's CONTENTS out of the
+// bench. `stat` is not one of them: it answers about the file, which is the
+// whole point of the check above.
+var probeReaders = []string{"cat", "head", "cp"}
+
+// readsPath reports whether one line of the fake ssh's recording READ the file
+// at p. The fake records `"$*"` -- the words it was handed, space-joined -- so
+// the question is about the recorded ARGV WORDS and never about the letters in
+// the line.
+func readsPath(line, p string) bool {
+	if !strings.Contains(line, p) {
+		return false
+	}
+	for _, reader := range probeReaders {
+		if strings.Contains(line, reader) {
+			return true
+		}
+	}
+	return false
+}
+
+// ranOn reports whether any line of the recording ran `name` on the file at p.
+func ranOn(log, name, p string) bool {
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, name) && strings.Contains(line, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // cores=- on a bench without taskset probes pin=none and admits; a list on the same
