@@ -117,11 +117,16 @@ func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
 //	                           ("'go' binary is trimmed").
 //	/opt/homebrew/Cellar/sbcl  brew's sbcl, resolved through `sbcl` the same way: the core
 //	                           file lives beside the binary inside the Cellar tree.
-//	/opt/homebrew/opt/openjdk  brew's JDK, and
+//	/opt/homebrew/opt/openjdk  brew's JDK, itself a symlink into the Cellar (on the Air it
+//	                           resolves to /opt/homebrew/Cellar/openjdk/27), and
 //	/Library/Java/JavaVirtualMachines
-//	                           the Temurin/Oracle install location. `java` is a launcher
-//	                           that locates a runtime relative to itself, and without its
-//	                           tree it says "Unable to locate a Java Runtime".
+//	                           the install location the system's own launcher reads, where
+//	                           brew links its JDK. With the tree granted, that JDK RUNS
+//	                           inside the wall -- measured. The `/usr/bin/java` STUB still
+//	                           says "Unable to locate a Java Runtime", because it asks
+//	                           `/usr/libexec/java_home`, which needs a system service the
+//	                           wall denies and not a path anyone can grant; a Java card sets
+//	                           JAVA_HOME, and then the stub works too (measured on the Air).
 //	/usr/local/share/dotnet    the .NET install. `dotnet` resolves its own full path and
 //	                           fails with an EMPTY one ("Failed to resolve full path of the
 //	                           current executable []") when the tree is denied.

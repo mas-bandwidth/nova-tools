@@ -968,9 +968,18 @@ so a `brew upgrade` is not a stale literal here); `/opt/homebrew/opt/openjdk` an
 `/Library/Java/JavaVirtualMachines` for `java`; and `/usr/local/share/dotnet` for `dotnet`.
 Each is skipped when it is not there — a Mac with no .NET is a Mac with no .NET — and each
 reaches the argv RESOLVED THROUGH ITS SYMLINKS, because the grant is checked against the
-resolved target and `/opt/homebrew/opt/openjdk` is itself a link into the Cellar. The grant
-is on the toolchain TREE and never on `/opt/homebrew/bin`, which is a writable directory
-holding a launcher for every formula on the machine.
+resolved target and `/opt/homebrew/opt/openjdk` is itself a link into the Cellar (on the Air
+it resolves to `/opt/homebrew/Cellar/openjdk/27`). The grant is on the toolchain TREE and
+never on `/opt/homebrew/bin`, which is a writable directory holding a launcher for every
+formula on the machine. Measured inside the wall on the Air with the roots granted:
+`go version go1.27.1 darwin/arm64`, `SBCL 2.6.8`, `dotnet` `10.0.401`, the brewed JDK's own
+`java -version` `openjdk version "27"` — and a script planted in `~/go/bin` still
+`Operation not permitted`.
+
+ONE NARROWING, and it is not a missing root: the `/usr/bin/java` STUB still answers `Unable
+to locate a Java Runtime` inside the wall, because it asks `/usr/libexec/java_home`, which
+needs a macOS system service the wall denies rather than a path anyone can grant. The JDK at
+the granted root runs, and the stub works too once a Java card sets `JAVA_HOME`.
 
 The list is written ONCE, in `internal/swarm/toolchain.go`, the kind is part of it, and each
 OS's entries are that OS's provisioning standard read back: `tools/bench-standard.sh` carries

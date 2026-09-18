@@ -2246,7 +2246,14 @@ and `dotnet` says `Failed to resolve full path of the current executable []`
   `java`, and `/usr/local/share/dotnet` for `dotnet`.
 
 Each is skipped when it is not installed, and each reaches the argv resolved
-through its symlinks, because the wall checks the resolved target.
+through its symlinks, because the wall checks the resolved target — on the Air
+`/opt/homebrew/opt/openjdk` resolves to `/opt/homebrew/Cellar/openjdk/27`.
+
+One narrowing, measured: with the JDK tree granted, that JDK runs inside the
+wall, but the `/usr/bin/java` **stub** still says `Unable to locate a Java
+Runtime`, because it asks `/usr/libexec/java_home`, which needs a system service
+the wall denies rather than a path anyone can grant. A Java card sets
+`JAVA_HOME`, and then the stub works too.
 
 No launcher directory is ever a toolchain root. `~/go/bin` is granted under
 NEITHER kind — it is GOPATH/bin, a card that could exec it could run bench-user
