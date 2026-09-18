@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -307,6 +308,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	ok := fs.Bool("ok", false, "the verb did what the run needed")
 	notOK := fs.Bool("not-ok", false, "it did not; file the edge and name it with --issue")
 	issue := fs.Int("issue", 0, "the issue number of the edge filed, when there is one")
+	closes := fs.String("closes", "", "the id of the finding this run answers, as the gate prints it")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{
 		"tool": tool, "verb": verb, "by": by, "notes": notes, "receipts": receipts,
@@ -342,14 +344,24 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 			oneline.Field(*tool), oneline.Field(*verb), oneline.Escape(remedy))
 		return 2
 	}
+	// A --closes that answers a finding nobody can point at is a close nobody can
+	// check. The id is the eight characters the gate prints beside the edge and
+	// the same eight that end the receipt's filename, so it is checked for shape
+	// here and matched against the real findings by the ledger: an id that names
+	// nothing closes nothing, and says so by leaving the edge open.
+	if id := strings.TrimSpace(*closes); id != "" && !dogfood.IsReceiptID(id) {
+		fmt.Fprintf(stderr, "nova-check dogfood record: --closes is a receipt id, the eight hex characters the gate prints as receipt=<id>, got %s\n", oneline.Field(id))
+		return 2
+	}
 	receipt := dogfood.Receipt{
-		Tool:  *tool,
-		Verb:  *verb,
-		By:    *by,
-		At:    time.Now().UTC().Format(time.RFC3339),
-		OK:    *ok,
-		Notes: *notes,
-		Issue: *issue,
+		Tool:   *tool,
+		Verb:   *verb,
+		By:     *by,
+		At:     time.Now().UTC().Format(time.RFC3339),
+		OK:     *ok,
+		Notes:  *notes,
+		Issue:  *issue,
+		Closes: strings.TrimSpace(*closes),
 	}
 	path, err := dogfood.Record(*receipts, receipt)
 	if err != nil {
