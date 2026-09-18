@@ -208,6 +208,15 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 					}
 				}
 			}
+			// A WALL DEATH (issue #918). The harness's own fence stopped the card at a
+			// path outside the job and the run published nothing: the death is `end=wall`,
+			// its reason is the report `WALL task=<id> path=<p>`, and the work ./repo kept
+			// travels with it (`commits=<n> branch=<name>`) so the harvester can push it
+			// instead of the commits being stranded in a job nobody reads.
+			if report, ok := WallDeath(jobDir, in.Task); ok {
+				fmt.Fprintln(in.Stderr, report)
+				return ExitRecord{RC: rc, Signal: signal, End: EndWall, Spent: spent, Observed: observed, Partial: partial, Reason: report}
+			}
 			// AND A PROVIDER'S INPUT LIMIT IS ITS OWN CLASS, named by the process that
 			// watched the harness say it (#103). Two Freddy reads of whole specs died
 			// `rc=1 end=failed` on 2026-09-12 and the dispatcher had only the rc; the

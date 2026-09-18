@@ -70,6 +70,7 @@ type nativeRunResult struct {
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
 	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	wallReport   string  // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -424,6 +425,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if err := swarm.WriteTimeline(filepath.Join(jobDir, swarm.TimelineFileName), rows); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the timeline.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
+	}
+	// A WALL DEATH (issue #918). When the fence stopped the card AND no result was
+	// published, the death is `end=wall` and its report names the rejected path and the
+	// commits ./repo kept, so the harvester can push the work rather than leave it
+	// stranded with the card. A rejection beside a published result is not a death:
+	// WallDeath asks the result first.
+	if report, ok := swarm.WallDeath(jobDir, cfg.label); ok {
+		res.wallReport = report
 	}
 
 	if wall != "" {
