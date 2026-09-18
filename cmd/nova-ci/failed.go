@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -56,8 +57,12 @@ example:
 // cmdFailed parses the flags, asks the forge, and prints the report. newForge is the
 // seam: the tests pass a fake, and nothing in this file reaches a network.
 func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPath string, timeout time.Duration) ci.FailForge) int {
+	// `help` as a bare word is a positional package flag will never see, so it is
+	// answered here. `--help` and `-h` are answered where the parse error is
+	// handled, through internal/cliflags, which is the family's one answer to the
+	// question and what internal/ci's class test insists on.
 	for _, a := range args {
-		if a == "--help" || a == "-h" || a == "help" {
+		if a == "help" {
 			fmt.Fprint(stdout, failedUsage)
 			return 0
 		}
@@ -75,6 +80,12 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 	ghPath := fs.String("gh", "gh", "path to the gh executable")
 	timeout := fs.Duration("timeout", 2*time.Minute, "budget for one gh call")
 	if err := fs.Parse(args); err != nil {
+		// The verb's own page is the answer, not the tool's banner: this block is
+		// what `nova-ci failed --help` is asking for, and the banner only points
+		// at it.
+		if cliflags.Help(stdout, err, failedUsage) {
+			return 0
+		}
 		return refuse(stderr, " failed", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

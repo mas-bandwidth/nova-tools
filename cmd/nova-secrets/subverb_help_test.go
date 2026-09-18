@@ -22,9 +22,12 @@ func TestEverySubVerbAnswersHelp(t *testing.T) {
 	bin := buildNovaSecrets(t)
 	for _, verb := range []string{
 		"exec", "names", "check", "gate", "keygen", "place", "placed", "seal",
+		// A two-word verb: `seat` dispatches, `seat add` parses. Fields splits it
+		// so the binary is handed the two words it expects.
+		"seat add",
 	} {
 		for _, spelling := range []string{"--help", "-h"} {
-			args := []string{verb, spelling}
+			args := append(strings.Fields(verb), spelling)
 			// exec reads its own flags before the `--` that starts the command,
 			// so a help request for it is spelled the way a person would.
 			if verb == "exec" {

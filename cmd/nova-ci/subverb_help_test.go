@@ -15,7 +15,7 @@ import (
 // the family on 2026-09-18; internal/cliflags is the one answer.
 func TestEverySubVerbAnswersHelp(t *testing.T) {
 	for _, verb := range []string{
-		"slowtests",
+		"slowtests", "failed",
 	} {
 		for _, spelling := range []string{"--help", "-h"} {
 			args := append(strings.Fields(verb), spelling)

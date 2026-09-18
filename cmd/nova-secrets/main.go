@@ -392,9 +392,14 @@ func runSeatCLI(args []string) {
 }
 
 func runSeatAddCLI(args []string) {
-	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Print(usage)
-		os.Exit(0)
+	// `help` as a bare word is a positional package flag will never see. `--help`
+	// and `-h` are answered where the parse error is handled, through
+	// internal/cliflags, like every other verb of this binary. Both spellings
+	// answer with the line for THIS verb rather than the whole banner: somebody
+	// who asked about `seat add` did not ask to re-read `seal`.
+	if len(args) > 0 && args[0] == "help" {
+		cliflags.Help(os.Stdout, flag.ErrHelp, cliflags.Usage(usage, "seat add"))
+		return
 	}
 
 	fs := flag.NewFlagSet("seat add", flag.ContinueOnError)
@@ -409,6 +414,9 @@ func runSeatAddCLI(args []string) {
 	sopsFlag := fs.String("sops", "", "sops path")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "seat add")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
