@@ -653,6 +653,8 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+nova-pulse handoff --queue <dir> --to <name> --bus <clone> --roots <dirs> [--as <name>] [--work <dir>] [--max <n>]
+nova-pulse takeover --queue <dir> --as <name> --bus <clone> --roots <dirs> [--max <n>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
@@ -664,7 +666,7 @@ nova-pulse help
 Those lines are the string `nova-pulse help` must print, byte for byte — the parity is a
 demand on `internal/pulse/cli.go`'s `pulseVerbs`, which carries the same claim in a comment,
 and a replay walks it (replay 36). The rules name verbs and flags the shipped block does not
-yet offer — `handoff`, `takeover`, `status`, rule 9's admission gates, `--work`, `--benches`
+yet offer — `status`, rule 9's admission gates, `--work`, `--benches`
 and `--timeout` on every spawning verb — and each of those gaps is named in the open
 questions, not listed here, so a reader who types a line in this block never gets a flag
 error. `--timeout <s>` (default 120) bounds every `gh`, `git`, `nova-bus`, `nova-wake` and
@@ -694,6 +696,12 @@ The `OWNER` lock and the `HANDOFF` record live under `<root>/queue/` as files, b
 tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `from`,
 `width` (the last `PULSE WIDTH` line), `in-flight` (cards by bench), `pending`, `escalations`,
 `benches` and `state`.
+
+The verbs are shipped (#509): `handoff` checks the successor awake by `nova-wake
+awake --bus <clone>` and posts the record with one `nova-bus send`; the loop's state is
+`<queue>/LOOP`, `stopped` by handoff and `running` by takeover; `--work <dir>` moves the
+tree's ownership record beside the queue's, bumping its generation with a fresh token and
+appending the `:handoff` event. Replays 26-31 walk every refusal and every count.
 
 ## Status
 
@@ -1686,10 +1694,11 @@ handoff (rule **The manager tier**).
 5. **What the shipped tool is behind on, named rather than assumed.** This is a draft, and
    `## Tests this spec demands` says so: the replays are demanded of the implementation, not
    read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
-   card's work: `pulseVerbs` lacks `--work` on `pool`, the `handoff`, `takeover` and `status`
-   lines, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
-   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`; and
-   `TestCutModelByKind` pins the routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
+   card's work: `pulseVerbs` lacks `--work` on `pool`, the `status`
+   line, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
+   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`, and writes
+   `cards.tsv` with four fields where rule 7 gives five; and `TestCutModelByKind` pins the
+   routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
    `zero=<n> flat=<n> metered=<n>` on `CUT OK` (rule 7's cost table) and `TestCutModelByKind`
    asserts the table's routes, while `cards.tsv` still carries four fields where rule 7 gives
    five; and rule 9's: `internal/pulse/launch.go` still writes

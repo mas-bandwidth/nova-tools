@@ -29,6 +29,8 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
+nova-pulse handoff  --queue <dir> --to <name> --bus <clone> --roots <dirs> [--as <name>] [--work <dir>] [--max <n>]
+nova-pulse takeover --queue <dir> --as <name> --bus <clone> --roots <dirs> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
@@ -275,6 +277,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdWatch(rest, stdout, stderr, now)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
+	case "handoff":
+		return cmdHandoff(rest, stdout, stderr)
+	case "takeover":
+		return cmdTakeover(rest, stdout, stderr)
 	case "status":
 		return cmdStatus(rest, stdout, stderr, now)
 	case "progress":
