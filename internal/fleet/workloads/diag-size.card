@@ -1,0 +1,25 @@
+roles: runner
+expect: ^DIAG OK
+report: yes
+
+# REPORT ONLY, deliberately: 15.7 GB of runner _diag logs across the fleet on 2026-09-18 had
+# broken nothing, and a check that fails a machine for it is a check people learn to pass
+# over. It is measured, written and printed as a WARN, and it never withholds a certificate.
+set -eu
+TOTAL=0
+DIRS=0
+for d in "$NOVA_HOME"/runner-nova-tools-*/_diag "$NOVA_HOME"/actions-runner-*/_diag; do
+  [ -d "$d" ] || continue
+  DIRS=$((DIRS + 1))
+  mb=$(du -sm "$d" 2>/dev/null | awk '{print $1}')
+  [ -n "$mb" ] && TOTAL=$((TOTAL + mb))
+done
+if [ "$DIRS" = "0" ]; then
+  echo "DIAG OK no _diag directory on this host"
+  exit 0
+fi
+if [ "$TOTAL" -ge 2048 ]; then
+  echo "DIAG OVER $TOTAL MB across $DIRS _diag directories, over the 2048 MB watch line"
+  exit 1
+fi
+echo "DIAG OK $TOTAL MB across $DIRS _diag directories"

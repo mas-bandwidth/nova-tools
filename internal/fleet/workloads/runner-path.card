@@ -1,0 +1,50 @@
+roles: runner
+expect: ^RUNNER PATH OK
+
+# A CI runner reads its PATH from the `.path` file beside it, NOT from any shell, so every
+# fault here is invisible to every other check. On 2026-09-18 space's sixteen .path files
+# carried the bare distro PATH -- no go at all -- so every Go shard scheduled there ran with
+# no toolchain; batman's six led with /usr/local/bin, where go is 1.25.5, shadowing the
+# 1.27.1 later in the same line.
+#
+# And a runner with no unit behind it is a runner that does not come back: space's sixteen
+# listeners were started by hand with nohup and `systemctl --user list-units nova-runner*`
+# returned nothing.
+set -eu
+DIRS=0
+BAD=""
+UNMANAGED=""
+for d in "$NOVA_HOME"/runner-nova-tools-* "$NOVA_HOME"/actions-runner-*; do
+  [ -d "$d" ] || continue
+  DIRS=$((DIRS + 1))
+  p="$d/.path"
+  if [ ! -f "$p" ]; then BAD="$BAD $d:no-.path"; continue; fi
+  g=$(PATH="$(head -n 1 "$p")" command -v go 2>/dev/null || true)
+  if [ -z "$g" ]; then BAD="$BAD $(basename "$d"):no-go"; continue; fi
+  have=$("$g" version 2>&1 | sed -n 's/.*go\([0-9][0-9.]*\).*/\1/p' | head -n 1)
+  want=$(echo "$NOVA_GO" | sed -n 's/go\([0-9][0-9.]*\)/\1/p')
+  lowest=$(printf '%s\n%s\n' "$want" "$have" | sort -V 2>/dev/null | head -n 1)
+  if [ "$lowest" != "$want" ] && [ "$have" != "$want" ]; then
+    BAD="$BAD $(basename "$d"):go$have"
+    continue
+  fi
+  if [ -d "$d/../Library/LaunchAgents" ] || [ -f "$d/svc.sh" ]; then
+    if [ -f "$d/.service" ]; then continue; fi
+    UNMANAGED="$UNMANAGED $(basename "$d")"
+  elif ! systemctl --user is-enabled "nova-runner-$(basename "$d" | sed 's/[^0-9]*//g').service" >/dev/null 2>&1; then
+    UNMANAGED="$UNMANAGED $(basename "$d")"
+  fi
+done
+if [ "$DIRS" = "0" ]; then
+  echo "RUNNER PATH FAIL no runner directory under $NOVA_HOME"
+  exit 1
+fi
+if [ -n "$BAD" ]; then
+  echo "RUNNER PATH FAIL want >= $NOVA_GO, these .path files do not resolve one:$BAD"
+  exit 1
+fi
+if [ -n "$UNMANAGED" ]; then
+  echo "RUNNER PATH FAIL these runners have no unit and will not survive a reboot:$UNMANAGED"
+  exit 1
+fi
+echo "RUNNER PATH OK runners=$DIRS go>=$NOVA_GO all under a unit"
