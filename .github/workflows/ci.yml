@@ -301,7 +301,7 @@ jobs:
             [ -n "${studio_grp[$g]:-}" ] || continue
             packages="${studio_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"macOS\",\"group\":\"macOS\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -878,7 +878,7 @@ jobs:
       matrix:
         entry:
           - {os: linux, arch: x64, group: space}
-          - {os: macos, arch: arm64, group: studio}
+          - {os: macos, arch: arm64, group: studio} # the lisp leg stays on the Studio: the iMacs carry an older SBCL
     name: lisp (${{ matrix.entry.group }})
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
