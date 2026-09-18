@@ -5,9 +5,16 @@
 //
 // Usage: go test -json -count=1 ./... | go run ./tools/testdur
 //
-// Output is one line per slow test, "<pkg> <test> <seconds>", then one line per
-// package, "<pkg> TOTAL <seconds>", both sorted slowest first. Nothing else: the
-// caller pastes it into docs/TEST-DURATIONS.md.
+// Output is the two tables docs/TEST-DURATIONS.md holds for one bench, each
+// under a heading naming the <goos>/<goarch> THIS RUN was measured on, so a
+// recording carries its platform from the moment it is taken and a paste can
+// never land under the wrong bench. Tests over five seconds come first, then
+// the per-package totals, both sorted slowest first.
+//
+// The platform label is not decoration. Since the record grew a section per
+// bench, the budget a package is judged against is its own platform's
+// (tools/testdur's TestFastSuiteUnderOneMinute), and a table filed under the
+// wrong heading is a ceiling applied to the wrong machine.
 package main
 
 import (
@@ -15,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 )
 
@@ -51,14 +59,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "testdur: reading go test -json: %v\n", err)
 		os.Exit(1)
 	}
-	for _, rs := range []([]row){tests, pkgs} {
-		sort.Slice(rs, func(i, j int) bool { return rs[i].seconds > rs[j].seconds })
-		for _, r := range rs {
-			name := r.test
-			if name == "" {
-				name = "TOTAL"
-			}
-			fmt.Printf("%s %s %.1f\n", r.pkg, name, r.seconds)
-		}
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	sort.Slice(tests, func(i, j int) bool { return tests[i].seconds > tests[j].seconds })
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].seconds > pkgs[j].seconds })
+
+	fmt.Printf("TESTS OVER FIVE SECONDS (%s)\n", platform)
+	for _, r := range tests {
+		fmt.Printf("%s %s %.1f\n", r.pkg, r.test, r.seconds)
+	}
+	fmt.Printf("\nTOTALS (%s)\n", platform)
+	for _, r := range pkgs {
+		fmt.Printf("%s TOTAL %.1f\n", r.pkg, r.seconds)
 	}
 }

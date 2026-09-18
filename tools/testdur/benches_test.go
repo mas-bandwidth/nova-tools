@@ -56,18 +56,35 @@ type benchSection struct {
 // nothing is holding.
 func parseRecord(text string) (benches []benchSection, loose []string, err error) {
 	cur := -1
+	// A bench's PACKAGE table is the one directly under its heading. Any
+	// sub-heading ends it, because the tables under a `###` are about something
+	// else and their columns only look alike. #1411's "The five biggest,
+	// against Space" is `| package | darwin/arm64 | linux/amd64 | ratio |`,
+	// whose second cell is a number too -- so without this every row of it was
+	// read as a second, contradictory measurement for the same package on the
+	// same bench, silently.
+	inRows := false
 	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(line, benchHeading) {
 			heading := strings.TrimSpace(strings.TrimPrefix(line, benchHeading))
-			benches = append(benches, benchSection{heading: heading, factor: 1})
-			cur = len(benches) - 1
+			section, herr := parseHeading(heading)
+			if herr != nil {
+				return nil, nil, herr
+			}
+			benches = append(benches, section)
+			cur, inRows = len(benches)-1, true
 			continue
 		}
 		// Another TOP-LEVEL heading closes the bench's section, so a table
-		// written after one cannot be read as that bench's. A `###` inside the
-		// section -- the tests over five seconds -- does not close it.
+		// written after one cannot be read as that bench's at all.
 		if strings.HasPrefix(line, "## ") {
-			cur = -1
+			cur, inRows = -1, false
+			continue
+		}
+		// A sub-heading keeps us inside the bench -- a row here is not loose --
+		// but ends its package table.
+		if strings.HasPrefix(line, "#") {
+			inRows = false
 			continue
 		}
 		// The table rows are `| <package> | <seconds> | <slowest test> |`; the
@@ -87,9 +104,69 @@ func parseRecord(text string) (benches []benchSection, loose []string, err error
 			loose = append(loose, pkg)
 			continue
 		}
+		if !inRows {
+			continue // a row of a labelled sub-table, not a package measurement
+		}
 		benches[cur].rows = append(benches[cur].rows, benchRow{bench: benches[cur].heading, pkg: pkg, secs: secs})
 	}
 	return benches, loose, nil
+}
+
+// factorKey is what a heading writes to state its ceiling relative to the
+// budget bench's sixty seconds.
+const factorKey = "budget-factor:"
+
+// parseHeading reads the three things a `## Bench:` heading states: the
+// `<goos>/<goarch>` it was measured on, whether it is the `[budget]` bench, and
+// its `budget-factor:`.
+//
+// A heading states them among commas and prose -- `the Air, darwin/arm64, 8
+// cores, budget-factor: 2.2` -- because the heading is also the line a PERSON
+// reads. So each is found by its shape and not by its position: the platform is
+// the comma-separated field that looks like `<goos>/<goarch>`, and the factor
+// is the word after `budget-factor:`.
+//
+// An unreadable or non-positive factor is a REFUSAL. A budget that quietly fell
+// back to the wrong number would be invisible, and a silent wrong ceiling is
+// worse than no ceiling: no ceiling at least reads as no ceiling.
+func parseHeading(heading string) (benchSection, error) {
+	section := benchSection{
+		heading: heading,
+		budget:  strings.Contains(heading, budgetMark),
+		factor:  1,
+	}
+	for _, field := range strings.Split(heading, ",") {
+		field = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(field), budgetMark))
+		field = strings.TrimSpace(field)
+		if goosArch(field) {
+			section.platform = field
+		}
+	}
+	if i := strings.Index(heading, factorKey); i >= 0 {
+		rest := strings.TrimSpace(strings.TrimPrefix(heading[i:], factorKey))
+		word := strings.TrimSpace(strings.SplitN(strings.TrimSpace(strings.SplitN(rest, ",", 2)[0]), " ", 2)[0])
+		factor, err := strconv.ParseFloat(word, 64)
+		if err != nil {
+			return benchSection{}, fmt.Errorf("the bench heading %q states a %s %q that is not a number", heading, factorKey, word)
+		}
+		if factor <= 0 {
+			return benchSection{}, fmt.Errorf("the bench heading %q states a %s of %v; a ceiling is a positive multiple of the budget", heading, factorKey, factor)
+		}
+		section.factor = factor
+	}
+	return section, nil
+}
+
+// goosArch reports whether a heading field is a `<goos>/<goarch>` pair: two
+// non-empty halves around exactly one slash, and no space in either. It is a
+// SHAPE and not a list of the platforms we run on today, so a bench on a
+// platform nobody has thought of is still read.
+func goosArch(field string) bool {
+	goos, goarch, ok := strings.Cut(field, "/")
+	if !ok || goos == "" || goarch == "" {
+		return false
+	}
+	return !strings.ContainsAny(goos, " \t") && !strings.ContainsAny(goarch, " \t/")
 }
 
 // readRecord reads the file and parses it.
@@ -110,20 +187,36 @@ func readRecord(t *testing.T) (rows []benchRow, benches []string, loose []string
 	return rows, benches, loose
 }
 
-// budgetFor answers the ceiling a package total is judged against when the suite
-// is running on `platform`, and the bench that ceiling came from.
+// budgetFor answers the ceiling a package total is judged against when the
+// suite is running on `platform`, and the bench that ceiling came from.
 //
-// TODAY IT IGNORES THE PLATFORM. The budget is the `[budget]` bench's sixty
-// seconds wherever the suite runs, which is why a Mac has no ceiling at all --
-// `cmd/nova-wake` at 62.9 s on the Air is over a minute and nothing reads it.
-// platform_budget_test.go is the red that says what this should answer instead.
+// THE PLATFORM'S OWN SECTION FIRST, at `60 s x its factor`. That is what gives
+// a second bench a real ceiling instead of none, while keeping #1411's rule
+// intact: a change is still never answerable for another machine's absolute
+// numbers, only for its own platform's, and the factor is what makes the two
+// comparable.
+//
+// A platform the record does not name falls back to the `[budget]` bench's
+// plain sixty. Falling back to nothing would mean a new platform arrives
+// unbudgeted and silently, which is the state this change exists to end.
 func budgetFor(benches []benchSection, platform string) (float64, benchSection, error) {
+	fallback := benchSection{}
+	found := false
 	for _, b := range benches {
-		if strings.Contains(b.heading, budgetMark) {
-			return budgetSeconds, b, nil
+		if b.platform != "" && b.platform == platform {
+			return budgetSeconds * b.factor, b, nil
+		}
+		if b.budget {
+			if found {
+				return 0, benchSection{}, fmt.Errorf("two benches are marked %s -- %q and %q; the budget is one bench's", budgetMark, fallback.heading, b.heading)
+			}
+			fallback, found = b, true
 		}
 	}
-	return 0, benchSection{}, fmt.Errorf("no `%s … %s` section: the budget has to belong to a named bench", benchHeading, budgetMark)
+	if !found {
+		return 0, benchSection{}, fmt.Errorf("no `%s … %s` section: the budget has to belong to a named bench", benchHeading, budgetMark)
+	}
+	return budgetSeconds * fallback.factor, fallback, nil
 }
 
 // budgetBench is the one bench the budget is enforced against, refusing if the

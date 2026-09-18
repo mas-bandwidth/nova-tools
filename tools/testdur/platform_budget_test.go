@@ -28,6 +28,39 @@ import (
 // the parser does with a heading the file does not happen to carry today is
 // exactly what cannot be proved by reading the file.
 
+// A bench's package table is the one under its own heading. The record carries
+// other tables inside a bench's section whose second column is a number too,
+// and reading those as package measurements is a second, contradictory row for
+// the same package on the same bench -- silently.
+func TestOnlyTheTableUnderTheHeadingIsTheMeasurement(t *testing.T) {
+	const record = `## Bench: the Air, darwin/arm64, 8 cores, budget-factor: 2.2
+
+| package | total seconds | slowest test |
+| --- | --- | --- |
+| cmd/nova-wake | 62.9 | - |
+
+### The five biggest, against Space
+
+| package | darwin/arm64 | linux/amd64 | ratio |
+| --- | --- | --- | --- |
+| cmd/nova-wake | 62.9 | 12.4 | 5.1x |
+| cmd/nova-merge | 51.4 | 16.7 | 3.1x |
+`
+	benches, loose, err := parseRecord(record)
+	if err != nil {
+		t.Fatalf("parseRecord: %v", err)
+	}
+	if len(loose) != 0 {
+		t.Errorf("rows inside a bench's sub-table read as loose: %v", loose)
+	}
+	if len(benches) != 1 {
+		t.Fatalf("parsed %d sections, want 1", len(benches))
+	}
+	if len(benches[0].rows) != 1 || benches[0].rows[0].pkg != "cmd/nova-wake" {
+		t.Errorf("the Air's package rows = %v, want the one row under its heading", benches[0].rows)
+	}
+}
+
 // A record with the two benches the file holds, plus rows chosen so each
 // platform's verdict differs from the other's.
 const twoBenchRecord = `# Test durations
