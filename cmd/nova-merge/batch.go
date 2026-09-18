@@ -70,28 +70,37 @@ var batchGate = []batchStep{
 	{name: "lisp", command: "sh tools/ci/lisp-test.sh", needs: "sbcl", file: "tools/ci/lisp-test.sh"},
 }
 
-// ciTestTimeout is the per-package deadline `go test` is given. It is not this verb's
-// --timeout: --timeout bounds the whole step, and this one bounds each test binary inside
-// it. They are different questions, and CI answers the second one here.
-const ciTestTimeout = "5m"
-
-// ciTestArgs IS THE ONE LIST: the test command .github/workflows/ci.yml runs, mirrored
-// here so that the gate tests the way CI tests.
+// ciTestArgs IS THE ONE LIST: the test command CI runs, mirrored here so that the gate
+// tests the way CI tests.
 //
-// The line it mirrors is the `test` step of the `test` job in .github/workflows/ci.yml:
+// WHERE THAT COMMAND LIVES MOVED IN integration-4. It used to be written out inline in
+// the `test` step of the `test` job in .github/workflows/ci.yml; that step now reads
 //
-//	run: go test -json -count=1 -timeout 5m ${{ matrix.entry.packages }} | tee ...
+//	run: make test PKGS="${{ matrix.entry.packages }}"
+//
+// and the command itself is the Makefile's `test` target, which is
+//
+//	GOFLAGS=-json $(GO) test -count=1 $(PKGS) | tee $RUNNER_TEMP/test.json
+//	$(GO) run ./cmd/nova-ci slowtests --budget "$budget" < $RUNNER_TEMP/test.json
 //
 // and every flag on it is on the gate for a reason:
 //
 //	-json        CI reads that stream with cmd/nova-ci slowtests, so every leg runs its
 //	             tests under -json -- which turns the verbose stream on in every test
 //	             binary and changes what a tool under test sees. integration-4 went green
-//	             on hulk under a plain `go test ./...` and three CI legs then failed.
+//	             on hulk under a plain `go test ./...` and three CI legs then failed. CI
+//	             delivers it as GOFLAGS=-json on the OUTER command; the gate writes it as
+//	             an argv flag, which is the same thing for that command and survives the
+//	             goenv.Clean environment every step runs in -- Clean strips GOFLAGS on
+//	             purpose, so that an INNER go command a test spawns cannot inherit it.
 //	-count=1     no cached result may stand in for a run; a gate reading a cache from
 //	             before the merge is a gate reading the wrong tree.
-//	-timeout 5m  the per-package deadline, so one hung package is a named failure rather
-//	             than the whole step's deadline with nothing to point at.
+//
+// THERE IS NO -timeout HERE ANY MORE. The old inline step carried `-timeout 5m` and the
+// gate carried it too; the Makefile's `test` target does not, so neither does the gate --
+// the per-package deadline is go's own default and this verb's --timeout still bounds the
+// whole step. A gate that kept a 5 m package deadline CI does not set is a gate that can
+// go red on a tree CI passes, which is the divergence this list exists to prevent.
 //
 // ./... stands where CI writes ${{ matrix.entry.packages }}: CI splits the tree across a
 // matrix and the union of those legs is the tree, which one gate run covers in one
@@ -104,10 +113,10 @@ const ciTestTimeout = "5m"
 // (rule 13), so the share is --gomaxprocs, passed by the caller on a bench that is also
 // running CI.
 //
-// TestTheGateTestsTheWayCIDoes reads ci.yml and this list together, so the day either one
-// moves is the day it goes red.
+// TestTheGateTestsTheWayCIDoes reads ci.yml, the Makefile and this list together, so the
+// day any one of them moves is the day it goes red.
 func ciTestArgs() []string {
-	return []string{"go", "test", "-json", "-count=1", "-timeout", ciTestTimeout, "./..."}
+	return []string{"go", "test", "-json", "-count=1", "./..."}
 }
 
 // batchTempVars are the variables a child reads to find its temp directory, and this ONE

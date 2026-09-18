@@ -90,7 +90,9 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 	contains(t, stderr, "BATCH STEP build ")
 	// AND THE TEST STEP RAN THE WAY CI RUNS IT: the failing test is still named on the
 	// FAIL line above, out of a -json stream rather than out of go test's text output.
-	contains(t, stderr, "BATCH STEP test command=\"go test -json -count=1 -timeout 5m ./...\"")
+	// The command is quoted from ciTestArgs rather than spelled again here, so that this
+	// assertion follows CI the day TestTheGateTestsTheWayCIDoes says the command moved.
+	contains(t, stderr, "BATCH STEP test command=\""+strings.Join(ciTestArgs(), " ")+"\"")
 
 	// NOTHING IS PUSHED. The caller pushes the branch and opens the pull request; the
 	// verb has no path to a push at all, and the fixture's update hook recorded none.
@@ -197,38 +199,72 @@ func TestPrivateTempEnvPointsEveryTempVariableAtTheBatchsOwnDirectory(t *testing
 	}
 }
 
-// THE GATE TESTS THE WAY CI TESTS, and this reads both sides so it goes red the day
-// either moves. integration-4 ran green on hulk under a plain `go test ./...` and three
-// CI legs then failed, because CI does not run a plain `go test ./...`: it runs the
-// command in ci.yml's `test` step, and a gate that tests differently from CI is a gate
-// that passes what CI fails.
+// makeRecipe returns the tab-indented recipe lines of one Makefile target, joined by
+// newlines, or "" when the target has none. A target may be written more than once -- the
+// CL test is a `test: PKGS := ...` line and then a `test:` with the recipe -- so every
+// recipe line under any occurrence of the name belongs to it.
+func makeRecipe(makefile, target string) string {
+	var out []string
+	in := false
+	for _, line := range strings.Split(makefile, "\n") {
+		if strings.HasPrefix(line, "\t") {
+			if in {
+				out = append(out, strings.TrimPrefix(line, "\t"))
+			}
+			continue
+		}
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		in = strings.HasPrefix(line, target+":")
+	}
+	return strings.Join(out, "\n")
+}
+
+// THE GATE TESTS THE WAY CI TESTS, and this reads every side so it goes red the day any
+// of them moves. integration-4 ran green on hulk under a plain `go test ./...` and three
+// CI legs then failed, because CI does not run a plain `go test ./...`; a gate that tests
+// differently from CI is a gate that passes what CI fails.
+//
+// integration-4 also moved the command itself: ci.yml's `test` step is now `make test
+// PKGS=...` and the Makefile's `test` target holds the flags. So this reads BOTH -- that
+// ci.yml still delegates to `make test`, and what that target actually runs -- and
+// ciTestArgs must mirror the target.
 func TestTheGateTestsTheWayCIDoes(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	yml, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := ""
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.Contains(line, "go test -json") {
-			step = line
-			break
-		}
+	if !strings.Contains(string(yml), "make test PKGS=") {
+		t.Fatal("ci.yml's test step no longer runs `make test PKGS=...`; the gate mirrors whatever CI runs, so find the command CI runs now and update ciTestArgs in batch.go with it")
 	}
-	if step == "" {
-		t.Fatal("no `go test -json` line in .github/workflows/ci.yml; the gate mirrors that step, so this test is reading the wrong file or the step has been rewritten -- update ciTestArgs in batch.go with whatever CI runs now")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe := makeRecipe(string(raw), "test")
+	if !strings.Contains(recipe, "test") {
+		t.Fatalf("the Makefile's `test` target has no recipe, but ci.yml runs `make test`; update ciTestArgs in batch.go with whatever CI runs now\nrecipe: %q", recipe)
 	}
 	got := strings.Join(ciTestArgs(), " ")
-	for _, flag := range []string{"-json", "-count=1", "-timeout 5m"} {
-		if !strings.Contains(step, flag) {
-			t.Errorf("ci.yml's test step no longer carries %q; whatever it carries now is what ciTestArgs must mirror\nci.yml: %s", flag, strings.TrimSpace(step))
+	// -json travels as GOFLAGS=-json on CI's outer command and as an argv flag on the
+	// gate's, which is the same thing for that command; both spellings contain "-json".
+	for _, flag := range []string{"-json", "-count=1"} {
+		if !strings.Contains(recipe, flag) {
+			t.Errorf("the Makefile's `test` target no longer carries %q; whatever it carries now is what ciTestArgs must mirror\nrecipe: %s", flag, recipe)
 		}
 		if !strings.Contains(got, flag) {
-			t.Errorf("the gate's test command is %q and does not carry %q, which ci.yml's test step does", got, flag)
+			t.Errorf("the gate's test command is %q and does not carry %q, which the Makefile's `test` target does", got, flag)
 		}
 	}
+	// A -timeout the gate sets and CI does not is a gate that can go red on a tree CI
+	// passes, which is the same divergence from the other side.
+	if strings.Contains(got, "-timeout") && !strings.Contains(recipe, "-timeout") {
+		t.Errorf("the gate's test command is %q and sets a per-package -timeout the Makefile's `test` target does not:\n%s", got, recipe)
+	}
 	if !strings.HasPrefix(got, "go test ") || !strings.HasSuffix(got, " ./...") {
-		t.Errorf("the gate's test command is %q; it is `go test <the ci.yml flags> ./...`, the whole merged tree in one run where CI splits it across the matrix", got)
+		t.Errorf("the gate's test command is %q; it is `go test <the Makefile's flags> ./...`, the whole merged tree in one run where CI splits it across the matrix", got)
 	}
 }
 
