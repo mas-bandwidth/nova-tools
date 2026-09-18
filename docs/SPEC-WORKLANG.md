@@ -62,7 +62,10 @@ queue holds; a live card's lane is read from its own card file under the live di
 launcher failed is not live, so its lane is released and the card returns to the ready directory; a
 card without `LANE` is launched as today; a `LANE` no row of the lanes file names is refused with
 `FILL REFUSED card=card-<n>.md lane=<name> remedy="add the lane to <lanes file> or drop the LANE line"`,
-once per card per lanes-file mtime rather than once every tick.
+once per card per lanes-file mtime rather than once every tick. A card's lane is its own:
+`nova-pulse cut --rows` carries it in field 6 of the table and fills the template's `<lane>`
+slot, so one cut fills as many lanes as it has rows. `nova-pulse fill --only <glob>` is the
+whitelist of cards one run may launch, because a ready directory is shared between lines.
 
 **The clip rule.** `:clip :per-node` is the only value that runs today: **after each node's card lands
 the kernel commits and harvests** — the session clips accepted events to the branch and the pool

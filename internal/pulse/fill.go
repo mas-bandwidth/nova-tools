@@ -122,6 +122,7 @@ type FillInput struct {
 	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
 	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
 	Benches  []string      // the benches to fill, in order
+	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
 	Stdout   io.Writer
@@ -229,7 +230,7 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // launched twice; a launcher that fails moves its card back and releases its lane. It
 // returns the FILL line first and then one FILL HELD line per held card.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
-	cards := readyCards(in.Ready)
+	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
 	idx := 0
@@ -451,6 +452,37 @@ func liveLanes(launched string) map[string]string {
 func readyCards(dir string) []string {
 	cards, _ := filepath.Glob(filepath.Join(dir, "card-*.md"))
 	return cards // filepath.Glob returns lexical order
+}
+
+// selectedCards keeps the ready cards this run is allowed to launch. A ready directory is
+// shared: another line's cards sit in it, and a fill with no filter launched them on its own
+// benches (dogfood, 2026-09-18 -- card-9382 and a card on a live merge lane). --only is the
+// whitelist, one or more glob patterns matched against the card's filename, with or without
+// the card- prefix and the .md suffix, so `--only 96*` and `--only card-9601.md` both name
+// the same card. No --only is every card, as before. A card nobody selected is left in
+// ready, untouched and unrefused: it is not this run's to judge.
+func selectedCards(cards, patterns []string) []string {
+	if len(patterns) == 0 {
+		return cards
+	}
+	var out []string
+	for _, card := range cards {
+		base := filepath.Base(card)
+		name := strings.TrimSuffix(base, ".md")
+		bare := strings.TrimPrefix(name, "card-")
+		for _, p := range patterns {
+			if matched(p, base) || matched(p, name) || matched(p, bare) {
+				out = append(out, card)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func matched(pattern, s string) bool {
+	ok, err := filepath.Match(pattern, s)
+	return err == nil && ok
 }
 
 // strayCards lists the .md files in a ready directory that readyCards would step over: a

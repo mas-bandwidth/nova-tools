@@ -582,3 +582,184 @@ func TestShippedValidatedTemplatesCut(t *testing.T) {
 		}
 	}
 }
+
+// The second round of dogfood edges, from the schema loop on hulk (rows 9601-9603).
+
+// TestCutLabelCarriesNoCardPrefix: the queue's card- prefix belongs to the filename. A label
+// spelt card-9601 to make `fill` see it rendered CARD-card-9601 into the RESULT line and rode
+// into a PR title.
+func TestCutLabelCarriesNoCardPrefix(t *testing.T) {
+	specs := fakePATH(t)
+	gitAnswers(t, specs, "")
+	dir := t.TempDir()
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
+	rows := filepath.Join(dir, "rows.tsv")
+	if err := os.WriteFile(rows, []byte("card-9601\tdev\ta.go\tb.md\trowan/issue-1-one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	if code, _, stderr := runValidatedCut(t, "--rows", rows, "--templates", tmpl,
+		"--out", out, "--repo", dir); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "card-9601.md"))
+	if err != nil {
+		t.Fatalf("the card is not card-9601.md: %v (%v)", err, mdFiles(t, out))
+	}
+	first := strings.SplitN(string(raw), "\n", 2)[0]
+	if strings.Contains(first, "card-9601") {
+		t.Fatalf("the RESULT line doubles the prefix: %q", first)
+	}
+	if !strings.Contains(first, "RESULT 9601 ") {
+		t.Fatalf("the RESULT line = %q, want the bare label", first)
+	}
+	table, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(table), "9601\t") {
+		t.Fatalf("cards.tsv = %q, want the bare label", table)
+	}
+}
+
+// TestCutRowsCarryALanePerRow: one --rows cut filled one lane, because the lane lived in the
+// template and no column carried it. Field 6 is the lane and <lane> is its slot.
+func TestCutRowsCarryALanePerRow(t *testing.T) {
+	specs := fakePATH(t)
+	gitAnswers(t, specs, "")
+	dir := t.TempDir()
+	const laneTemplate = `RESULT <label> sha=<sha12>
+LANE: <lane>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q https://example.com/x.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Read <row> and <replay>; write notes.txt.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", laneTemplate)
+	rows := filepath.Join(dir, "rows.tsv")
+	body := "label\tbase\trow\treplay\tbranch\tlane\n" +
+		"9601\tdev\ta.go\tb.md\trowan/issue-1-one\tschema\n" +
+		"9602\tdev\tc.go\td.md\trowan/issue-2-two\tschema-go\n"
+	if err := os.WriteFile(rows, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	code, stdout, stderr := runValidatedCut(t, "--rows", rows, "--templates", tmpl, "--out", out, "--repo", dir)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (the header row cuts nothing); stderr=%q stdout=%q", code, stderr, stdout)
+	}
+	for card, lane := range map[string]string{"card-9601.md": "LANE: schema", "card-9602.md": "LANE: schema-go"} {
+		raw, err := os.ReadFile(filepath.Join(out, card))
+		if err != nil {
+			t.Fatalf("%s: %v (%v)", card, err, mdFiles(t, out))
+		}
+		if !strings.Contains(string(raw), lane+"\n") {
+			t.Errorf("%s does not carry %q: %q", card, lane, raw)
+		}
+	}
+}
+
+// TestCutRowsCarryATemplatePerRow: one rows.tsv shared one template, so N different tasks
+// wanted N cuts and N template directories. Field 7 names the template for that row.
+func TestCutRowsCarryATemplatePerRow(t *testing.T) {
+	specs := fakePATH(t)
+	gitAnswers(t, specs, "")
+	dir := t.TempDir()
+	tdir := filepath.Join(dir, "templates")
+	writeValidatedTemplates(t, tdir, "rows", validatedRowsTemplate)
+	writeValidatedTemplates(t, tdir, "audit", strings.Replace(validatedRowsTemplate,
+		"STEP 2. Read <row> and <replay>; write notes.txt.",
+		"STEP 2. AUDIT <row> against <replay>.", 1))
+	rows := filepath.Join(dir, "rows.tsv")
+	body := "one\tdev\ta.go\tb.md\trowan/issue-1-one\t\t\n" +
+		"two\tdev\tc.go\td.md\trowan/issue-2-two\t\taudit\n"
+	if err := os.WriteFile(rows, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	if code, _, stderr := runValidatedCut(t, "--rows", rows, "--templates", tdir,
+		"--out", out, "--repo", dir); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr)
+	}
+	first, err := os.ReadFile(filepath.Join(out, "card-one.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(filepath.Join(out, "card-two.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(first), "AUDIT") {
+		t.Errorf("the row naming no template did not take the source's own: %q", first)
+	}
+	if !strings.Contains(string(second), "AUDIT") {
+		t.Errorf("the row naming audit was not cut from audit.md: %q", second)
+	}
+
+	// A template a row names and the directory does not hold is one refusal.
+	bad := filepath.Join(dir, "bad.tsv")
+	if err := os.WriteFile(bad, []byte("three\tdev\te.go\tf.md\trowan/issue-3\t\tghost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runValidatedCut(t, "--rows", bad, "--templates", tdir,
+		"--out", filepath.Join(dir, "out2"), "--repo", dir)
+	if code != 2 || !strings.Contains(stderr, "--templates wants ghost.md") {
+		t.Fatalf("a missing per-row template: exit = %d, stderr=%q", code, stderr)
+	}
+}
+
+// TestCutBaseIsAFlag: `dev` was hardcoded, and a repo without a dev branch had to spell the
+// base in every row. --base is the default for every source that names none.
+func TestCutBaseIsAFlag(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: issueJSON(t, "Fix the widget", "the body")}})
+	dir := t.TempDir()
+	log := filepath.Join(dir, "git.log")
+	gitAnswers(t, specs, log)
+	// The shipped issue.md is the one that names <base>, which is the slot under test.
+	tmpl := filepath.Join("testdata", "templates")
+	out := filepath.Join(dir, "out")
+	if code, _, stderr := runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
+		"--templates", tmpl, "--out", out, "--repo", dir, "--base", "main"); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "card-42.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "on main") {
+		t.Fatalf("the card was not cut onto --base: %q", raw)
+	}
+	if strings.Contains(string(raw), "on dev") {
+		t.Fatalf("the card carries the hardcoded dev: %q", raw)
+	}
+}
+
+// TestCutCardsTableGoesWhereItIsNamed: --out is a queue directory in real use, and cards.tsv
+// landed in it as a file nothing in the queue reads.
+func TestCutCardsTableGoesWhereItIsNamed(t *testing.T) {
+	specs := fakePATH(t)
+	gitAnswers(t, specs, "")
+	dir := t.TempDir()
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
+	rows := filepath.Join(dir, "rows.tsv")
+	if err := os.WriteFile(rows, []byte("one\tdev\ta.go\tb.md\trowan/issue-1-one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "ready")
+	table := filepath.Join(dir, "state", "cards.tsv")
+	if err := os.MkdirAll(filepath.Dir(table), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := runValidatedCut(t, "--rows", rows, "--templates", tmpl,
+		"--out", out, "--repo", dir, "--cards", table); code != 0 {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(table); err != nil {
+		t.Fatalf("the table is not where --cards named: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "cards.tsv")); err == nil {
+		t.Fatal("a cards.tsv was still dropped into the queue directory")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -20,7 +21,7 @@ import (
 // namedSlots are the slots a validated template may declare (SPEC-PULSE, "Cut, from a
 // validated template"). cut fills every one it finds from the source it read; a declared
 // slot with no value is CUT REFUSED check=slot.
-var namedSlots = []string{"issue", "title", "body", "branch", "base", "row", "replay"}
+var namedSlots = []string{"issue", "title", "body", "branch", "base", "row", "replay", "lane"}
 
 // CutValidatedInput is everything the validated-template cut needs, held apart from flag
 // parsing so a test can drive it with a fixture gh and a fixture git.
@@ -32,6 +33,8 @@ type CutValidatedInput struct {
 	Templates  string // the directory holding the source's .md template
 	Out        string // the directory the cards go into
 	Repo       string // the clone every git call runs in: `git -C <repo> ...`, never the working directory
+	Base       string // the base branch a source that names none is cut onto; "" is dev
+	Cards      string // where the cards.tsv goes; "" is <out>/cards.tsv, which puts a table in a queue directory
 	Max        int    // cap on the cards cut; 0 lifts it
 	Stdout     io.Writer
 	Stderr     io.Writer
@@ -40,11 +43,12 @@ type CutValidatedInput struct {
 // validatedCard is one card before it is rendered: its label, the branch and base the checks
 // read, the slot values the template fills, and the paths the base check must find.
 type validatedCard struct {
-	label  string
-	branch string
-	base   string
-	slots  map[string]string
-	paths  []string
+	label    string
+	branch   string
+	base     string
+	template string // the template this card is rendered from; "" is the source's own
+	slots    map[string]string
+	paths    []string
 }
 
 // CutValidated cuts cards from one input (an issue, a table of rows, or a PR's head branch)
@@ -57,21 +61,42 @@ func CutValidated(in CutValidatedInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --repo %s is not a directory (name the clone every git call runs in; cut never reads the working directory)\n", oneline.Field(in.Repo))
 		return 2
 	}
-	tmplPath := filepath.Join(in.Templates, in.Source+".md")
-	raw, err := os.ReadFile(tmplPath)
-	if err != nil {
-		fmt.Fprintf(in.Stderr, "CUT REFUSED: --templates wants %s.md: %s\n", oneline.Field(in.Source), oneline.Err(err))
+	if in.Base == "" {
+		in.Base = "dev"
+	}
+	templates := map[string]string{}
+	load := func(name string) (string, bool) {
+		if t, ok := templates[name]; ok {
+			return t, true
+		}
+		raw, err := os.ReadFile(filepath.Join(in.Templates, name+".md"))
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --templates wants %s.md: %s\n", oneline.Field(name), oneline.Err(err))
+			return "", false
+		}
+		templates[name] = string(raw)
+		return templates[name], true
+	}
+	if _, ok := load(in.Source); !ok {
 		return 2
 	}
-	tmpl := string(raw)
 
 	cards, skipped, err := validatedCards(in)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	for i := range cards {
+		cards[i].label = cardLabel(cards[i].label)
+		if cards[i].template == "" {
+			cards[i].template = in.Source
+		}
+		if _, ok := load(cards[i].template); !ok {
+			return 2
+		}
+	}
 
-	if code, done := validateCards(in, cards, tmpl); done {
+	if code, done := validateCards(in, cards, templates); done {
 		return code
 	}
 	if in.Max > 0 && len(cards) > in.Max {
@@ -86,13 +111,13 @@ func CutValidated(in CutValidatedInput) int {
 	var rows []CardRow
 	for _, c := range cards {
 		name := cardFileName(c.label)
-		if err := os.WriteFile(filepath.Join(in.Out, name), []byte(renderValidated(tmpl, c)), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(in.Out, name), []byte(renderValidated(templates[c.template], c)), 0o644); err != nil {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s\n", oneline.Field(name), oneline.Err(err))
 			return 2
 		}
 		rows = append(rows, CardRow{Label: c.label, Slot: SlotDash, Model: "-", Card: filepath.Join(in.Out, name)})
 	}
-	if err := appendCardsTSV(filepath.Join(in.Out, "cards.tsv"), rows); err != nil {
+	if err := appendCardsTSV(cardsTable(in), rows); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
@@ -105,7 +130,7 @@ func CutValidated(in CutValidatedInput) int {
 
 // validateCards is the five checks, in order, before a byte is written. It returns the exit
 // code and whether it stopped.
-func validateCards(in CutValidatedInput, cards []validatedCard, tmpl string) (int, bool) {
+func validateCards(in CutValidatedInput, cards []validatedCard, templates map[string]string) (int, bool) {
 	// (1) the branch is a branch name git would accept, and it does not exist on origin.
 	// --branch-from names its exact head ref, so the check is skipped for it.
 	if in.Source != "branch-from" {
@@ -140,15 +165,18 @@ func validateCards(in CutValidatedInput, cards []validatedCard, tmpl string) (in
 			}
 		}
 	}
-	// (3) STEP 1 parses as one shell line, in-process.
-	if reason, ok := stepOneIsOneShellLine(tmpl); !ok {
-		fmt.Fprintf(in.Stderr, "CUT REFUSED check=step1 (%s)\n", reason)
-		return 2, true
+	// (3) STEP 1 parses as one shell line, in-process, in every template a card names.
+	for _, name := range sortedNames(templates) {
+		if reason, ok := stepOneIsOneShellLine(templates[name]); !ok {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED check=step1 (%s)\n", reason)
+			return 2, true
+		}
 	}
 	// (4) no row is a table separator or a header: the reader in validatedCards skips them,
 	// so this check has already passed by the time the cards are here.
 	// (5) the rendered RESULT line is one line, and every declared slot has a value.
 	for _, c := range cards {
+		tmpl := templates[c.template]
 		if name, missing := missingSlot(tmpl, c.slots); missing {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED check=slot slot=%s (named slot with no value: fill it, or drop it from the template)\n", oneline.Field(name))
 			return 2, true
@@ -166,26 +194,26 @@ func validateCards(in CutValidatedInput, cards []validatedCard, tmpl string) (in
 func validatedCards(in CutValidatedInput) ([]validatedCard, int, error) {
 	switch in.Source {
 	case "issue":
-		c, err := issueCard(in.Issue)
+		c, err := issueCard(in.Issue, in.Base)
 		if err != nil {
 			return nil, 0, err
 		}
 		return []validatedCard{c}, 0, nil
 	case "branch-from":
-		c, err := branchFromCard(in.BranchFrom)
+		c, err := branchFromCard(in.BranchFrom, in.Base)
 		if err != nil {
 			return nil, 0, err
 		}
 		return []validatedCard{c}, 0, nil
 	case "rows":
-		return rowsCards(in.Rows)
+		return rowsCards(in.Rows, in.Base)
 	}
 	return nil, 0, fmt.Errorf("cut reads one of --pool, --issue, --rows or --branch-from, got source %q", in.Source)
 }
 
 // issueCard reads the issue's title and body verbatim through gh and derives the branch from
 // the issue number and the title slug.
-func issueCard(spec string) (validatedCard, error) {
+func issueCard(spec, base string) (validatedCard, error) {
 	repo, number, err := parseRepoRef("--issue", spec)
 	if err != nil {
 		return validatedCard{}, err
@@ -205,19 +233,19 @@ func issueCard(spec string) (validatedCard, error) {
 	return validatedCard{
 		label:  strconv.Itoa(number),
 		branch: branch,
-		base:   "dev",
+		base:   base,
 		slots: map[string]string{
 			"issue":  fmt.Sprintf("%s#%d", repo, number),
 			"title":  v.Title,
 			"body":   v.Body,
 			"branch": branch,
-			"base":   "dev",
+			"base":   base,
 		},
 	}, nil
 }
 
 // branchFromCard reads the PR's exact head ref through gh and carries it as the branch.
-func branchFromCard(spec string) (validatedCard, error) {
+func branchFromCard(spec, base string) (validatedCard, error) {
 	repo, number, err := parseRepoRef("--branch-from", spec)
 	if err != nil {
 		return validatedCard{}, err
@@ -239,11 +267,11 @@ func branchFromCard(spec string) (validatedCard, error) {
 	return validatedCard{
 		label:  slug(v.HeadRefName),
 		branch: v.HeadRefName,
-		base:   "dev",
+		base:   base,
 		slots: map[string]string{
 			"issue":  fmt.Sprintf("%s#%d", repo, number),
 			"branch": v.HeadRefName,
-			"base":   "dev",
+			"base":   base,
 		},
 	}, nil
 }
@@ -251,7 +279,7 @@ func branchFromCard(spec string) (validatedCard, error) {
 // rowsCards reads a tab-separated table, one card per data group: label, base, row, replay,
 // branch. A separator row (|---|) and a header row naming the columns are not cards, and are
 // counted as skipped.
-func rowsCards(path string) ([]validatedCard, int, error) {
+func rowsCards(path, defaultBase string) ([]validatedCard, int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("--rows wants a readable table: %s", oneline.Err(err))
@@ -275,9 +303,10 @@ func rowsCards(path string) ([]validatedCard, int, error) {
 		}
 		base := at(1)
 		if base == "" {
-			base = "dev"
+			base = defaultBase
 		}
 		row, replay, branch := at(2), at(3), at(4)
+		lane, template := strings.TrimSpace(at(5)), strings.TrimSpace(at(6))
 		label := at(0)
 		if label == "" {
 			label = slug(row)
@@ -290,14 +319,16 @@ func rowsCards(path string) ([]validatedCard, int, error) {
 			paths = append(paths, replay)
 		}
 		cards = append(cards, validatedCard{
-			label:  label,
-			branch: branch,
-			base:   base,
+			label:    label,
+			branch:   branch,
+			base:     base,
+			template: template,
 			slots: map[string]string{
 				"row":    row,
 				"replay": replay,
 				"branch": branch,
 				"base":   base,
+				"lane":   lane,
 			},
 			paths: paths,
 		})
@@ -328,7 +359,7 @@ func isHeaderRow(fields []string) bool {
 	}
 	for _, f := range fields {
 		switch strings.ToLower(strings.TrimSpace(f)) {
-		case "label", "base", "row", "replay", "branch", "kind", "template":
+		case "label", "base", "row", "replay", "branch", "lane", "kind", "template":
 		default:
 			return false
 		}
@@ -402,6 +433,7 @@ func substituteSlots(s string, c validatedCard) string {
 		"<base>", c.slots["base"],
 		"<row>", c.slots["row"],
 		"<replay>", c.slots["replay"],
+		"<lane>", c.slots["lane"],
 	).Replace(s)
 }
 
@@ -500,6 +532,37 @@ func cardFileName(label string) string {
 		return label + ".md"
 	}
 	return "card-" + label + ".md"
+}
+
+// cardsTable is where the cards.tsv goes: --cards when it is named, and <out>/cards.tsv
+// otherwise. --out is a queue directory in real use, and a table dropped into it is a file
+// nothing in the queue reads and every glob has to step over (dogfood, 2026-09-18).
+func cardsTable(in CutValidatedInput) string {
+	if strings.TrimSpace(in.Cards) != "" {
+		return in.Cards
+	}
+	return filepath.Join(in.Out, "cards.tsv")
+}
+
+// cardLabel is the label a card carries into its RESULT line and its cards.tsv row. A label
+// already spelt card-9601 is 9601: the queue's filename prefix belongs to the filename, and
+// carrying it in the label too rendered CARD-card-9601 and rode into a PR title.
+func cardLabel(label string) string {
+	if bare := strings.TrimPrefix(label, "card-"); bare != "" && bare != label {
+		return bare
+	}
+	return label
+}
+
+// sortedNames is the template names in a fixed order, so a refusal over several templates
+// is the same refusal every run.
+func sortedNames(templates map[string]string) []string {
+	names := make([]string, 0, len(templates))
+	for name := range templates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // appendCardsTSV adds rows to a cards.tsv rather than replacing it: a second cut into the

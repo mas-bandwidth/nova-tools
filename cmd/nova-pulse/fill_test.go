@@ -258,3 +258,71 @@ func TestFillRefusesWithoutReadyAndLaunched(t *testing.T) {
 		t.Fatalf("refusal does not name --launched: %q", errb.String())
 	}
 }
+
+// TestLaunchDoesNotWaitForTheCardToRun: the launcher runs the card, not just the start of
+// it, and one tick blocked nine minutes launching three cards one after another (dogfood,
+// 2026-09-18). The property, asserted without a clock: a child that fails only after the
+// grace is up is already counted as launched, while the same child with no grace is waited
+// for and its failure is seen.
+func TestLaunchDoesNotWaitForTheCardToRun(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{SleepMS: 1500, Stderr: "late failure", Exit: 7}})
+	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
+	card := filepath.Join(t.TempDir(), "card-001.md")
+
+	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", card); err != nil {
+		t.Fatalf("a launcher still running at the grace answered an error: %v", err)
+	}
+	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", card)
+	if err == nil {
+		t.Fatal("with no grace the launcher is waited for; its failure was not seen")
+	}
+	if !strings.Contains(err.Error(), "late failure") {
+		t.Fatalf("the waited launch did not carry the child's last line: %v", err)
+	}
+}
+
+// TestLaunchStillCatchesAFailureInTheGrace: a launcher that fails, fails at once, and the
+// card's return to --ready depends on that being noticed.
+func TestLaunchStillCatchesAFailureInTheGrace(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stderr: "no such bench", Exit: 7}})
+	l := flashLauncher{bin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), grace: 10 * time.Second}
+	err := l.Launch("bench-a", filepath.Join(t.TempDir(), "card-001.md"))
+	if err == nil {
+		t.Fatal("an exit-7 launcher answered no error")
+	}
+	if !strings.Contains(err.Error(), "no such bench") {
+		t.Fatalf("the error does not carry the launcher's last line: %v", err)
+	}
+}
+
+// TestLaunchPassesTheDeadlineFlag: 2400 was a number hardcoded in the script; it is the
+// caller's now, and it reaches the launcher as the fifth argument.
+func TestLaunchPassesTheDeadlineFlag(t *testing.T) {
+	specs := fakePATH(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "argv.log")
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: log, Default: fakeRule{Exit: 0}})
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeMainFile(t, ready, "card-001.md", "a card\n")
+	var out, errb bytes.Buffer
+	code := run([]string{"fill", "--ready", ready, "--launched", launched,
+		"--bench", "bench-a", "--capacity", "1", "--once", "--deadline", "600",
+		"--launch-grace", "0",
+		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
+	}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("fill --deadline exit = %d; stderr=%q", code, errb.String())
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), " 600") {
+		t.Fatalf("the launcher was not given the deadline: %q", raw)
+	}
+	if strings.Contains(string(raw), " 2400") {
+		t.Fatalf("the launcher was given the hardcoded deadline: %q", raw)
+	}
+}

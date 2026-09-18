@@ -21,10 +21,10 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--capacity <n>] [--launcher <path>] [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -699,6 +699,8 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
 	repo := f.fs.String("repo", "", "")
+	base := f.fs.String("base", "dev", "")
+	cardsTSV := f.fs.String("cards", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	probe := f.fs.Bool("probe", false, "")
 	history := f.fs.String("history", "", "")
@@ -739,17 +741,17 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	case *issue != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
 			Source: "issue", Issue: *issue, Templates: *templates, Out: *out, Repo: *repo,
-			Max: *max, Stdout: stdout, Stderr: stderr,
+			Base: *base, Cards: *cardsTSV, Max: *max, Stdout: stdout, Stderr: stderr,
 		})
 	case *rows != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
 			Source: "rows", Rows: *rows, Templates: *templates, Out: *out, Repo: *repo,
-			Max: *max, Stdout: stdout, Stderr: stderr,
+			Base: *base, Cards: *cardsTSV, Max: *max, Stdout: stdout, Stderr: stderr,
 		})
 	case *branchFrom != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
 			Source: "branch-from", BranchFrom: *branchFrom, Templates: *templates, Out: *out, Repo: *repo,
-			Max: *max, Stdout: stdout, Stderr: stderr,
+			Base: *base, Cards: *cardsTSV, Max: *max, Stdout: stdout, Stderr: stderr,
 		})
 	}
 	return pulse.Cut(pulse.CutInput{

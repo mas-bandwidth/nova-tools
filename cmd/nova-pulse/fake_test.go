@@ -28,6 +28,7 @@ type fakeRule struct {
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
+	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 

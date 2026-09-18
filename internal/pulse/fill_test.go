@@ -465,3 +465,62 @@ func TestLaneTableReadsNames(t *testing.T) {
 		t.Fatalf("lane table = %v, want exactly two lanes", table)
 	}
 }
+
+// TestFillOnlyLaunchesTheCardsItWasGiven: a ready directory is shared with other lines, and
+// a fill with no filter launched their cards on its own benches (dogfood, 2026-09-18).
+// --only is the whitelist; a card nobody selected stays ready, untouched and unrefused.
+func TestFillOnlyLaunchesTheCardsItWasGiven(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-9382.md", "another line's card\n")
+	writeCard(t, ready, "card-9601.md", "mine\n")
+	writeCard(t, ready, "card-9602.md", "mine too\n")
+	l := &laneLauncher{}
+	var out, errb bytes.Buffer
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched,
+		Benches:  []string{"bench-a"},
+		Only:     []string{"card-960*"},
+		Once:     true,
+		Stdout:   &out,
+		Stderr:   &errb,
+		Capacity: laneCap{"bench-a": 10},
+		Launcher: l,
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if len(l.calls) != 2 {
+		t.Fatalf("launcher calls = %d, want 2 (only the selected cards): %q", len(l.calls), l.calls)
+	}
+	for _, call := range l.calls {
+		if strings.Contains(call, "card-9382") {
+			t.Fatalf("another line's card was launched: %q", call)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(ready, "card-9382.md")); err != nil {
+		t.Fatalf("the unselected card did not stay ready: %v", err)
+	}
+	if strings.Contains(errb.String(), "REFUSED") {
+		t.Fatalf("an unselected card was refused rather than left alone: %q", errb.String())
+	}
+}
+
+// TestSelectedCardsMatchesThreeSpellings: a card is named by its filename, by its name
+// without .md, or by its number alone, and a glob stands for any of them.
+func TestSelectedCardsMatchesThreeSpellings(t *testing.T) {
+	cards := []string{"/q/card-9601.md", "/q/card-9602.md", "/q/card-42.md"}
+	for _, c := range []struct {
+		pattern string
+		want    int
+	}{
+		{"card-9601.md", 1}, {"card-9601", 1}, {"9601", 1}, {"960*", 2}, {"card-*", 3}, {"nothing", 0},
+	} {
+		if got := len(selectedCards(cards, []string{c.pattern})); got != c.want {
+			t.Errorf("--only %q selected %d cards, want %d", c.pattern, got, c.want)
+		}
+	}
+	if got := len(selectedCards(cards, nil)); got != 3 {
+		t.Errorf("no --only selected %d cards, want every one", got)
+	}
+}

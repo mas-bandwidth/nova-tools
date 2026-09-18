@@ -53,11 +53,22 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	once := f.fs.Bool("once", false, "")
 	capacity := f.fs.Int("capacity", -1, "")
 	launcher := f.fs.String("launcher", "", "")
+	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
+	grace := f.fs.String("launch-grace", defaultLaunchGrace.String(), "")
 	var benches benchFlag
+	var only benchFlag
 	f.fs.Var(&benches, "bench", "")
+	f.fs.Var(&only, "only", "")
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	wait, err := parseGrace(*grace)
+	if err != nil {
+		f.add(err.Error())
+	}
+	if *deadline <= 0 {
+		f.add(fmt.Sprintf("--deadline is the card's deadline in whole seconds, 1 or more, got %d", *deadline))
 	}
 	f.want(*ready, "ready", "the directory holding the card-<n>.md ready to launch")
 	f.want(*launched, "launched", "the directory the launched cards are moved into")
@@ -81,12 +92,13 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Lanes:    *lanes,
 		Machines: *machines,
 		Benches:  []string(benches),
+		Only:     []string(only),
 		Once:     *once,
 		Stdout:   stdout,
 		Stderr:   stderr,
 		Now:      func() time.Time { return now },
 		Capacity: reader,
-		Launcher: flashLauncher{bin: *launcher},
+		Launcher: flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
 	})
 }
 
@@ -124,23 +136,82 @@ func (c sshCapacity) Capacity(bench string) (int, error) {
 	return n, nil
 }
 
+// defaultCardDeadline is the whole seconds a launched card gets, fill-loop.sh's hardcoded
+// 2400. It is --deadline now: one number in the script was the deadline of every card on
+// every bench, and a card's deadline is the caller's to set.
+const defaultCardDeadline = 2400
+
+// defaultLaunchGrace is how long fill waits on a launcher before it takes the card as
+// launched and moves on. Launching used to be cmd.Run(): one tick launched three cards one
+// after another and blocked for nine minutes, because the launcher runs the card, not just
+// the start of it (dogfood, 2026-09-18). A launcher that fails, fails at once -- a missing
+// binary, a refused ssh, a bad argument -- so the grace catches the failure without waiting
+// for the work.
+const defaultLaunchGrace = 10 * time.Second
+
+// parseGrace reads --launch-grace: a duration, or 0 to wait for the launcher to finish (the
+// old behaviour, which is what a test with an instant launcher wants).
+func parseGrace(s string) (time.Duration, error) {
+	if strings.TrimSpace(s) == "" {
+		return defaultLaunchGrace, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("--launch-grace wants a duration like 10s or 0, got %q", s)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("--launch-grace is 0 or more, got %s", d)
+	}
+	return d, nil
+}
+
 // flashLauncher hands one moved card to flash-native-bench.sh, fill-loop.sh's per-card
 // launcher, or to the program --launcher names.
-type flashLauncher struct{ bin string }
+//
+// It starts the child and waits only the grace: a launcher that is still running when the
+// grace is up has launched the card, and the bench owns it from there. The child is waited
+// on in a goroutine, so it is reaped rather than left a zombie, and it is never killed.
+type flashLauncher struct {
+	bin      string
+	deadline int
+	grace    time.Duration
+}
 
 func (l flashLauncher) Launch(bench, card string) error {
 	bin := l.bin
 	if bin == "" {
 		bin = "flash-native-bench.sh"
 	}
+	deadline := l.deadline
+	if deadline <= 0 {
+		deadline = defaultCardDeadline
+	}
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
-	cmd := exec.Command(bin, bench, "swarm-"+bench, card, label, "2400")
+	cmd := exec.Command(bin, bench, "swarm-"+bench, card, label, strconv.Itoa(deadline))
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = io.Discard, said
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return said.wrap(err)
 	}
-	return nil
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	if l.grace <= 0 {
+		if err := <-done; err != nil {
+			return said.wrap(err)
+		}
+		return nil
+	}
+	timer := time.NewTimer(l.grace)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			return said.wrap(err)
+		}
+		return nil
+	case <-timer.C:
+		return nil
+	}
 }
 
 // tailBytes is how much of a child's stderr is kept: the last words of a failure are the

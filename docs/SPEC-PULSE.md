@@ -1055,7 +1055,7 @@ by hand becomes a flag and the script retires. The verb line, as help will print
 
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
-nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 ```
 
 **Amended 2026-09-18, from a non-author's dogfood run.** Four things the section above
@@ -1069,6 +1069,17 @@ one `nova-pulse fill` globs, and a second cut into the same `--out` appends to `
 rather than overwriting it. One example of each template ships at
 `cmd/nova-pulse/testdata/templates/{issue,rows,branch-from}.md`, and a test cuts a card
 from each.
+
+**Amended again the same day, from the schema dogfood loop (rows 9601-9603).** A label
+never carries the queue's `card-` prefix — it belongs to the filename, and carrying it in
+both rendered `CARD-card-9601` into a RESULT line and from there into a PR title. A
+`--rows` table carries two more columns, `lane` (field 6, filling the `<lane>` slot) and
+`template` (field 7, naming another `<templates>/<name>.md`), so one cut fills as many
+lanes as it has rows and one table cuts N different tasks. `--base <branch>` is the
+default base for a source that names none, because `dev` was hardcoded and a repo without
+a `dev` branch had to spell it in every row. `--cards <file.tsv>` names where the
+`cards.tsv` goes, because `--out` is a queue directory in real use and the table is not a
+card.
 
 **It reads one source and one template, and writes only cards.** `--issue` reads title and
 body verbatim through `gh issue view --json title,body`; `--rows` reads a tab-separated file,

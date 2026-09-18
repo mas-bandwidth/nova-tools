@@ -1107,7 +1107,7 @@ line with the swarm's reason.
 
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
-nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 ```
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
@@ -1148,14 +1148,22 @@ CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 the template is the source's own name: `--issue` wants `<templates>/issue.md`,
 `--rows` wants `rows.md`, `--branch-from` wants `branch-from.md`, and a missing one
 is `CUT REFUSED: --templates wants <source>.md`. A template declares named slots —
-`issue`, `title`, `body`, `branch`, `base`, `row`, `replay` — and the source fills
-every one it declares.
+`issue`, `title`, `body`, `branch`, `base`, `row`, `replay`, `lane` — and the source
+fills every one it declares.
 
 - `--issue <owner>/<repo>#<n>` reads that issue's title and body through `gh`,
   verbatim, and derives the branch `rowan/issue-<n>-<slug of the title>` onto `dev`.
 - `--rows <file.tsv>` is one card per row: `label`, `base`, `row`, `replay`,
-  `branch`, tab separated. An empty `base` is `dev`, an empty `label` is the slug of
-  the row, and a separator or header row is skipped and counted as skipped.
+  `branch`, `lane`, `template`, tab separated. An empty `base` is `--base` (`dev`
+  unless you say otherwise — a repo without a `dev` branch used to spell it in every
+  row), an empty `label` is the slug of the row, and a separator or header row is
+  skipped and counted as skipped. **`lane` is the card's own** — it fills the `<lane>`
+  slot, so one cut fills as many lanes as it has rows rather than putting every card
+  in the one lane the template named. **`template` is the card's own too**: it names
+  another `<templates>/<name>.md`, so one table cuts N different tasks instead of
+  wanting N cuts and N template directories; a row that names none takes the source's
+  own `rows.md`, and a template the directory does not hold is `CUT REFUSED:
+  --templates wants <name>.md`.
 - `--branch-from <owner>/<repo>#<n>` reads that pull request's head ref through `gh`
   and cuts one card on that exact branch onto `dev`.
 
@@ -1168,6 +1176,13 @@ yet:
 ```
 nova-pulse cut --issue mas-bandwidth/nova-tools#42 --templates cmd/nova-pulse/testdata/templates --out ./queue/ready --repo .
 ```
+
+**`--cards <file.tsv>`** names where the `cards.tsv` goes; without it the table lands
+beside the cards, which in real use is a queue directory the table does not belong in.
+
+**A label never carries the `card-` prefix.** It belongs to the filename: a label spelt
+`card-9601` to make `fill` see the card rendered `CARD-card-9601` into the RESULT line
+and rode from there into a PR title, so `cut` strips it and the label is `9601`.
 
 **Every card is written as `card-<label>.md`** — the one filename contract the queue
 directories keep and the one `fill` globs. `cut` wrote `<label>.md` until
@@ -1210,7 +1225,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--capacity <n>] [--launcher <path>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1284,6 +1299,23 @@ FILL REFUSED ready=<dir> file=<name> more=<n> remedy="fill reads card-<n>.md and
 
 One bench takes at most 30 cards in a tick, whatever its capacity says, because the
 rest of the machine is not the fill's to spend.
+
+**`--only <glob>` is the whitelist of cards this run may launch**, repeatable and
+comma-separated, matched against the card's filename with or without the `card-`
+prefix and the `.md` suffix — `--only 96*`, `--only card-9601.md` and `--only 9601`
+all name the same card. A ready directory is shared, and a fill with no filter
+launched another line's cards on its own benches. A card nobody selected is left in
+`--ready`, untouched and unrefused: it is not this run's to judge.
+
+**`--deadline <s>`** is the card's deadline handed to the launcher, 2400 by default —
+it was a number hardcoded in the script. **`--launch-grace <d>`** is how long `fill`
+waits on a launcher before taking the card as launched, `10s` by default and `0` to
+wait for the launcher to finish. Launching used to wait for the whole card: one tick
+launched three cards one after another and blocked for nine minutes. A launcher that
+fails, fails at once — a missing binary, a refused ssh, a bad argument — so the grace
+catches the failure without waiting for the work, and the child is waited on in the
+background rather than left a zombie. What happens to a card after that is the
+bench's, and draining `--launched` when it finishes is `manager`'s.
 
 **`--capacity <n>` and `--launcher <path>` make the tick runnable without a bench.**
 `--capacity` is a fixed capacity for every bench and no `ssh` at all; `--launcher` is
