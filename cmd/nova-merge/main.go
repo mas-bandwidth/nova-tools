@@ -61,7 +61,7 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--on <machine> --local-root <dir> [--machines <file>]] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
   nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--halves <k>] [--max-members <n>] [--json]
   nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
 
@@ -119,6 +119,25 @@ number and not a derived one: the derivation is the darwin shard budget of #1372
 reaching it needs a changed-file read per candidate. --json is the same answer as one
 document for a child to read. It pushes nothing, opens nothing and writes nothing to the
 forge; the two fields it reads from the forge are each candidate's head and base branch.
+
+--on IS THE GATE ON A BENCH, WITH THE FORGE STILL HERE. The gate wants cores and a
+toolchain -- hulk is 64 of them and the fleet's Go and sbcl under ~/sdk -- and the forge
+wants a credential, which a bench does not have and must not: secrets are sealed once in
+the store and never copied between machines. So with --on, the clone, the merges in order,
+build, vet, vet-windows, test and lisp run ON THAT MACHINE over ssh, while every member's
+own ci-ok, --plan, the push, the pull request, the one door, the queue watch and the
+members' closes run HERE. The machine is a name in the registry --machines names (default
+queue/control/machines.tsv), checked BEFORE any ssh for whether it may take work at all --
+a runner host is CI-only -- so a refused machine is never connected to. --root is then a
+path on THAT machine and may be written ~/... , which its own shell answers; --local-root
+is where the batch comes back to on this one and is required with --on. The batch crosses
+back as a git bundle on every green gate:
+
+  BATCH BUNDLE name=<name> head=<sha> bytes=<n> file=<path>
+
+and every line, verdict included, carries on=<machine> -- on=local for a gate this machine
+ran. --on and --plan do not go together: the plan reads diffs and runs no step of the
+suite, so it needs no bench.
 
 --land IS THE SEVEN STEPS AFTER BATCH OK, which Rowan ran by hand eight times on
 2026-09-18. With it the same run goes on to (1) push rowan/<name> -- a plain push when the

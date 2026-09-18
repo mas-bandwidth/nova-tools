@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -415,6 +416,36 @@ func TestBatchOnChecksTheToolchainOnTheMachineThatBuilds(t *testing.T) {
 	absent(t, stderr, "BATCH MERGED")
 	absent(t, stdout, "BATCH OK")
 }
+
+// THE CLASS BEHIND A STALE SUMMARY LINE. `--on`, `--machines` and `--local-root` shipped
+// working and `nova-merge help`'s `batch` line did not name them, so a reader of the help
+// concluded the feature was absent. It is edge 3's fault again -- the help described a
+// `-timeout 5m` the gate had stopped passing -- and the shape is the same: a help that does
+// not match the tool sends a reader looking for the wrong thing.
+//
+// Every flag the verb REGISTERS must be named in the banner, and the flags are read off the
+// source rather than off a list kept here, because a list kept here is the very thing that
+// went stale.
+func TestTheHelpNamesEveryFlagBatchTakes(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("batch.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := batchFlagRe.FindAllStringSubmatch(string(src), -1)
+	if len(flags) < 15 {
+		t.Fatalf("found only %d flag registrations in batch.go; this test was looking in the wrong place and would have passed by checking almost nothing", len(flags))
+	}
+	for _, m := range flags {
+		if !strings.Contains(usage, "--"+m[1]) {
+			t.Errorf("`nova-merge help` never names --%s, which `batch` takes; a summary line that advertises some of a verb's flags reads as the whole of them", m[1])
+		}
+	}
+}
+
+// batchFlagRe matches one flag registration on the verb's own flag set:
+// `f.fs.String("local-root", "", "")`.
+var batchFlagRe = regexp.MustCompile(`f\.fs\.(?:String|Bool|Int|Duration)\("([a-z0-9-]+)"`)
 
 // WHAT COMES BACK IS CHECKED AT THE SEAM. A `cat` over ssh answers with whatever the far
 // side wrote on its stdout -- an empty file, a shell's complaint, half a transfer -- and
