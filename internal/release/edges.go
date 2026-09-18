@@ -224,7 +224,26 @@ type ExecSSH struct{ Path string }
 // is a refusal now rather than a password prompt nobody is at the keyboard for,
 // and a connect timeout so a sleeping bench costs seconds rather than the run.
 func (s ExecSSH) sshArgs(machine string) []string {
-	return []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", machine}
+	return append(append([]string(nil), SSHOptions...), machine)
+}
+
+// SSHOptions are the options EVERY invocation carries, in one slice so a test
+// can read the whole policy rather than three call sites (Johnny, 2026-09-18).
+//
+// BatchMode so a missing key is a refusal now rather than a password prompt
+// nobody is at the keyboard for. ConnectTimeout so a sleeping bench costs
+// seconds rather than the run. And ForwardAgent=no SAID OUT LOUD rather than
+// left to the default or to whatever ~/.ssh/config on the adopting host says:
+// this verb runs on the one host that holds keys to the whole fleet, and
+// forwarding that agent to a bench would put the fleet's trust inside a machine
+// the release is being pushed TO. A default is not a decision; this is.
+//
+// There is no -i here and there never will be: a key named on argv is a key in
+// every `ps` on the box. ssh finds its own identity.
+var SSHOptions = []string{
+	"-o", "BatchMode=yes",
+	"-o", "ConnectTimeout=10",
+	"-o", "ForwardAgent=no",
 }
 
 // Run executes argv on the machine. The arguments are handed to ssh as separate
@@ -242,26 +261,126 @@ func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string
 // the thing this replaces was two ssh invocations joined by a shell pipe, where
 // a failure in the first was invisible to the second.
 func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, error) {
+	// ONLY WHAT THE CHECKSUM FILE NAMES GOES OVER THE WIRE. Sending whatever
+	// happens to be sitting in the directory would mean that anything dropped
+	// there -- a key, a token, an unrelated file -- is copied to every machine
+	// in the fleet by a verb nobody thinks of as a file transfer (Johnny,
+	// 2026-09-18). The shipped set is the verified set and nothing else.
+	arts, err := ReadSums(dir)
+	if err != nil {
+		return "", err
+	}
+	allowed := map[string]bool{SumsFile: true}
+	for _, a := range arts {
+		allowed[a.Name] = true
+	}
 	base := filepath.Base(dir)
 	pr, pw := io.Pipe()
 	go func() {
-		pw.CloseWithError(writeTar(pw, dir, base))
+		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
 	defer pr.Close()
 	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
 
+// Fetch reads a directory FROM the machine into a local one, the mirror of
+// Send: the remote tars to stdout and the stream is unpacked here, in Go, so
+// the entry names are checked by this process rather than trusted to a local
+// tar. It is what makes `--from host:dir` work -- the host that has the ssh
+// trust adopting a release that lives on the host that has the cores.
+func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
+	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stderr := bounded.NewCapture(childCap, cancel)
+	cmd := exec.CommandContext(runCtx, s.Path, args...)
+	cmd.Stderr = stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return string(stderr.Bytes()), err
+	}
+	unpackErr := readTar(stdout, dest)
+	// Drain what is left so the child never blocks on a full pipe, then wait.
+	// A fetch that failed halfway must not read as a success just because this
+	// side stopped listening.
+	_, _ = io.Copy(io.Discard, stdout)
+	waitErr := cmd.Wait()
+	if unpackErr != nil {
+		return string(stderr.Bytes()), unpackErr
+	}
+	return string(stderr.Bytes()), waitErr
+}
+
+// fetchFileCap is the ceiling on one fetched artifact. The largest tool in this
+// repository is a few tens of megabytes; 512 MiB is far above any of them and
+// still a bound, so a machine answering a fetch with something enormous cannot
+// fill this host's disk one file at a time.
+const fetchFileCap = 512 * 1024 * 1024
+
+// readTar unpacks a FLAT directory of regular files into dest, and is
+// deliberately unable to do anything else. A release directory is files and
+// nothing but files, so a name carrying a separator, a `..`, an absolute path,
+// or a type that is not a regular file is REFUSED rather than skipped: an
+// unpacker that quietly ignores what it does not understand is an unpacker
+// whose output nobody can describe, and this one is writing executables.
+func readTar(r io.Reader, dest string) error {
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return err
+	}
+	tr := tar.NewReader(r)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := strings.TrimPrefix(path.Clean(header.Name), "./")
+		if name == "." || name == "" {
+			continue
+		}
+		if header.Typeflag == tar.TypeDir {
+			continue // a flat directory: the root itself needs nothing made
+		}
+		if header.Typeflag != tar.TypeReg {
+			return fmt.Errorf("the fetched release carries %q, which is not a regular file", header.Name)
+		}
+		if name != filepath.Base(name) || strings.ContainsAny(name, `/\`) || name == ".." {
+			return fmt.Errorf("the fetched release carries a path rather than a file name: %q", header.Name)
+		}
+		body, err := io.ReadAll(io.LimitReader(tr, fetchFileCap+1))
+		if err != nil {
+			return err
+		}
+		if int64(len(body)) > fetchFileCap {
+			return fmt.Errorf("%s is larger than the %d byte ceiling for one fetched artifact", header.Name, fetchFileCap)
+		}
+		mode := os.FileMode(header.Mode).Perm()
+		if mode == 0 {
+			mode = 0o755
+		}
+		if err := os.WriteFile(filepath.Join(dest, name), body, mode); err != nil {
+			return err
+		}
+	}
+}
+
 // writeTar streams dir into w under the single top-level name prefix, with modes
-// preserved so that an executable arrives executable.
-func writeTar(w io.Writer, dir, prefix string) error {
+// preserved so that an executable arrives executable. Only names in allowed are
+// sent; see Send for why that set is the checksum file's and not the directory's.
+func writeTar(w io.Writer, dir, prefix string, allowed map[string]bool) error {
 	tw := tar.NewWriter(w)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || !allowed[e.Name()] {
 			continue
 		}
 		info, err := e.Info()
