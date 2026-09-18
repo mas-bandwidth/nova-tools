@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -73,14 +74,17 @@ type PRCheck struct {
 
 // PRView is everything the sweep needs to know about one pull request.
 type PRView struct {
-	Number    int
-	State     string // OPEN, MERGED, CLOSED
-	IsDraft   bool
-	Head      string
-	Labels    []string
-	Title     string
-	Checks    []PRCheck
-	AutoMerge bool // an auto-merge is already enqueued on this PR
+	Number  int
+	State   string // OPEN, MERGED, CLOSED
+	IsDraft bool
+	Head    string
+	Labels  []string
+	Title   string
+	Checks  []PRCheck
+	// AutoMerge says the forge is carrying a STANDING INSTRUCTION to merge this pull
+	// request when its checks go green. It is not an enqueue and it is not ours: the sweep
+	// reads it as a hold, and `nova-merge queue audit` takes it off.
+	AutoMerge bool
 }
 
 // PRSource answers what a pull request looks like right now. The real one runs gh; a test
@@ -162,8 +166,15 @@ func Sweep(in SweepInput) int {
 		case row.Verdict != "APPROVE" || view.IsDraft || heldPR(view):
 			held++
 		case view.AutoMerge:
-			enqueued++ // somebody enqueued it already: mark the row, never enqueue twice
-			marks = append(marks, mark(row, stamp, row.ClosedAt, row.Verdict))
+			// AN AUTO-MERGE IS NOT AN ENQUEUE. This arm used to read it as one -- "somebody
+			// enqueued it already" -- and mark the row; on 2026-09-18 that reading was
+			// exactly backwards. --auto leaves a standing instruction on the forge which
+			// fires later with nobody in the room, and four pull requests reached dev that
+			// way while twenty-seven more sat armed. So the row is HELD and left open: the
+			// instruction comes off with `nova-merge queue audit --repo <owner>/<name>`, and
+			// then this row is swept like any other -- into a batch, which is the one thing
+			// that reaches the queue (Glenn, 2026-09-18).
+			held++
 		default:
 			switch checksVerdict(view.Checks) {
 			case "pending":
@@ -417,9 +428,21 @@ func (g GHSource) View(repo string, pr int) (PRView, error) {
 	return view, nil
 }
 
-// GHEnqueuer is the real Enqueuer: `gh pr merge <n> --auto`, run exactly once per approval.
-// The sweep calls it only when every check is green and none is pending, which is the
-// house rule about auto-merge on this estate.
+// GHEnqueuer is the real Enqueuer, and it is now a THIN ADAPTER ONTO THE ONE DOOR
+// (internal/merge.Enqueuer).
+//
+// It used to run `gh pr merge <n> -R <repo> --auto`, once per approval, on the reasoning
+// that the sweep only reached it when every check was green and none pending. That
+// reasoning was wrong in the one way that matters: --auto enqueues nothing. It leaves a
+// STANDING INSTRUCTION on the forge, which fires later, with nobody in the room, against
+// whatever the head has become. On 2026-09-18 twenty-seven open pull requests were
+// carrying one, and four of them walked into the dev merge queue on their own. Glenn
+// locked it the same day: nothing reaches the dev merge queue but a batch.
+//
+// So this reads the pull request's head and offers it to the one door, which admits a
+// batch's head -- or a head with that head's BATCH OK receipt -- and refuses everything
+// else. A refusal is an error like any other here, and the sweep leaves the row open. There
+// is no path from this type to a merge of any kind.
 type GHEnqueuer struct{ Timeout time.Duration }
 
 func (g GHEnqueuer) Enqueue(repo string, pr int) error {
@@ -429,11 +452,12 @@ func (g GHEnqueuer) Enqueue(repo string, pr int) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", "pr", "merge", strconv.Itoa(pr), "-R", repo, "--auto").CombinedOutput()
+	host := merge.NewGHEnqueue(repo, timeout, nil)
+	ref, sha, err := host.Head(ctx, pr)
 	if err != nil {
-		return fmt.Errorf("gh pr merge %d --auto: %s", pr, oneline.Cap(strings.TrimSpace(string(out)), 120))
+		return fmt.Errorf("read pull request %d's head: %s", pr, oneline.Cap(strings.TrimSpace(err.Error()), 120))
 	}
-	return nil
+	return merge.NewEnqueuer(host).Enqueue(ctx, merge.EnqueuePR{Number: pr, HeadRef: ref, HeadSHA: sha}, false)
 }
 
 // appendRow appends one tab-separated record. It is appendLine's sibling, and the

@@ -688,6 +688,25 @@ $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
 ```
 
+## nova-work
+
+`nova-work` is the work layer's event bridge. Its one shipped verb, `events`, publishes
+the pub/sub messages `nova-merge react` subscribes to (docs/SPEC-JOBS.md, "Events, not
+ticks"). It makes no model call and writes no record: the bus is a signal, git is the
+record. The relay needs a local Redis — `--redis <addr>` — and the gh fallback is off
+unless `--repo` names the repository, so a test drives a miniredis and a fake forge and
+reaches no network.
+
+### First run
+
+```text
+$ nova-work
+nova-work: no verb given; run: nova-work help
+
+$ nova-work events --redis 127.0.0.1:6379 --repo mas-bandwidth/nova-tools --once
+EVENTS OK once=true card-done=0 published=1
+```
+
 ## nova-ci
 
 Fixture: `cmd/nova-ci/testdata/example-events.jsonl`. The verb reads on stdin and
