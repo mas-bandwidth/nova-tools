@@ -197,6 +197,9 @@ type Host interface {
 	// Checks reads a commit's check buckets. The base's evidence is read the same way
 	// an entry's is.
 	Checks(oid string) (Checks, error)
+	// MergeGroupRun reads one merge-group run's event, pull request, failed jobs and
+	// their '--- FAIL' test names, the evidence the classify decision judges.
+	MergeGroupRun(id int) (MergeRun, error)
 	// Ready takes a draft out of draft. It is a mutation, it is logged as one, and it
 	// only ever reaches an entry that is in the lane.
 	Ready(n int) error

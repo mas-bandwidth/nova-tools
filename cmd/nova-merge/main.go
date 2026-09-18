@@ -52,6 +52,7 @@ usage:
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
+  nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
@@ -258,6 +259,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdPacket(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
+	case "classify":
+		return cmdClassify(rest, stdout, stderr, deps)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, deps)
 	case "sweep":
