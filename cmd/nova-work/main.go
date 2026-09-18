@@ -33,10 +33,12 @@ usage:
   nova-work version
   nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
   nova-work ready --node X --graph <file>
+  nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
   nova-work ready --node X is the ready set
+  nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -83,6 +85,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdDependencies(args[1:], stdout, stderr)
 	case "ready":
 		return cmdReady(args[1:], stdout, stderr)
+	case "clip":
+		return cmdClip(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
 }

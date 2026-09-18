@@ -30,6 +30,10 @@ var workAudit = audit.Config{
 		// jobs holds the graph values this binary reads and prints through oneline
 		// fields; it writes nothing and reaches no network.
 		`"github.com/mas-bandwidth/nova-tools/internal/jobs"`,
+		// swarm holds clip: it commits the card's branch, harvests the result and
+		// resets the worktree with git, printing nothing; every path it is handed
+		// comes from a flag and the one CLIP line goes through oneline fields.
+		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

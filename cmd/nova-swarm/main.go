@@ -62,6 +62,7 @@ usage:
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
    nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
+   nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
    nova-swarm slots list --store <dir>
@@ -191,6 +192,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdSlots(rest, stdout, stderr)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
+	case "pull":
+		return cmdPull(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
 	}
