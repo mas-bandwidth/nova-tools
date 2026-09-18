@@ -7320,6 +7320,10 @@ CAPABILITY OK rows=<n> changed=<n> rebuilds=<n> rebuild-unknown=<n> from=<sha12>
    must account for all effective inputs; an unsupported or unrecorded input makes the stamp
    unknown. Paths, the manifest format and its canonical ordering are part of the definition;
    matching shortened display hashes alone never establishes equality.
+   The Go adapter records the selected `-buildvcs` mode (`auto`, `true` or `false`) and whether
+   stamping actually applies. When it applies, the effective VCS metadata is an input, so a
+   docs-only commit can move the stamp. An unresolved `auto` decision makes identity unknown;
+   the adapter cannot silently disable stamping or omit its inputs to obtain equivalence.
    Two complete equal manifests mean `stamp=same rebuild=no`; unequal complete manifests mean
    `stamp=moved rebuild=yes`; either incomplete manifest means `stamp=unknown rebuild=unknown`,
    never no. A docs, test or comment change is not automatically irrelevant: it may affect an
