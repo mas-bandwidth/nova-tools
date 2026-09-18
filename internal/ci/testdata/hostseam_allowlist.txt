@@ -1,0 +1,5 @@
+# The functions TestNoTestReachesAHostThroughAnUnfakedSeam finds and does not
+# require a guard from, one `file:function  # reason` per line. A row with no
+# reason is refused: an exception nobody explained is one nobody can ever
+# delete. The list is checked in both directions -- a listed function that is no
+# longer a seam is a red run -- so it only shrinks.
