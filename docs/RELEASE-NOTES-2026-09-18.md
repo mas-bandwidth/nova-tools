@@ -1,6 +1,6 @@
-# nova-tools, 2026-09-18 — three batches
+# nova-tools, 2026-09-18 — six batches
 
-Three batches instead of twenty pull requests. A batch is a handful of pre-tested
+Six batches instead of thirty-odd pull requests. A batch is a handful of pre-tested
 changes merged onto one tree, built and tested there, and opened as one entry that
 names what is in it; the queue round lands the batch and the members are closed with
 a pointer to it. What made it affordable is in the batches themselves: `nova-merge
@@ -98,16 +98,104 @@ documented.
 - **#1292** — `internal/merge` tests back inside the 60 s package budget, no network
   and no wall-clock waits.
 
+Batch 3 conflicted with `dev` after batch 4 landed and was rebased into the lane chain
+`#1308 → #1315 → #1206`, which **batch 6** carries. Its four members are listed here
+because that is where the work was done; what lands them is #1335.
+
+## Batch 4 — #1332: the goenv class, the ci lane, the reports, release, run, dogfood
+
+Ten members, gated by **`nova-merge batch` on `hulk`** from `dev` at ce609c3d — `BATCH
+OK`, tests run as CI runs them (`-json -count=1 -timeout 5m`). This is the first batch
+whose gate was a verb rather than a person's shell loop, and the first whose gate ran
+CI's own test command: batch 4 had gone green under a plain `go test ./...` and three
+CI legs then failed, which is the whole reason the gate now mirrors the workflow.
+
+- **#1333** — **tools that spawn `go` never inherit `GOFLAGS`**: `goenv.Clean` at 21
+  call sites and a class rule that keeps the 22nd from being written. This was the
+  cause of the batch's own first CI red, fixed as a class and not as an instance.
+- **#1317** — **ci lane 3**: the Windows leg on pull requests, a host-independent
+  Makefile test that needs no `make`, and path-assertion and `GITHUB_OUTPUT` class
+  tests.
+- **#1319** — **the reports lane**: `nova-tokens fold` and `nova-pulse status` retire
+  **six** hand-written scripts. `docs/CLI.md`'s *scripts these verbs retire* table is
+  the record of which.
+- **#1321** — the tokens lane: Emma's token branches stacked, for Emma's review.
+- **#1322** — **`nova-work ask` and `nova-work asks`**: a unit whose owner is a friend
+  is never cut as a card — `ask` renders it as one bus note in the house shape, sends
+  it through `nova-bus`'s own send path, and records the note id back on the unit,
+  which is where `asks` reads it again. Twelve more scripts mapped to verbs.
+- **#1323** — docs for batches 1–3, with Stella's corrections.
+- **#1324** — **`nova-update release`: `cut`, `build`, `install`, `adopt`** — the last
+  mile as four verbs that can each refuse, in place of `fleet-install-tools.sh`'s 30
+  lines of nested `ssh` quoting. At the pit stop of 2026-09-17 four Linux benches ran
+  six-hour-old tools while the coordinator believed they were current, because nothing
+  in that loop could say what it had done.
+- **#1325** — **`nova-sandbox run`**: a disposable APFS volume per card on darwin,
+  quota'd by `--size`, killed and deleted on every exit including `--timeout`. There is
+  no cleanup step, because nothing of the run is left on the boot volume to clean.
+- **#1328** — **`nova-check dogfood ledger`, `record` and `gate`**: a tool is done when
+  somebody who did not write it has run it on real work, and until this nothing tracked
+  the middle of that sentence. The verbs come from `docs/CLI.md`, the runs come from
+  receipts, and the gate is one exit code a release lane can call.
+- **#1329** — `nova-work` tests write into a temp dir, with a class test for relative
+  output paths in tests.
+
+## Batch 5 — #1334: the bus lane
+
+One member, gated the same way from `dev` at 2ebb5389, and one member on purpose: the
+bus lane is three stacked pull requests whose shared fix is one registry, and splitting
+them across batches would have landed half a protocol.
+
+- **#1320** — **bus lane 3**: `#1183` send preflight and reply, `#1293` the
+  version-join Windows lock, `#1299` inbox progress. The class fix is **one protocol
+  registry both sides read**, so `nova-wake` drops progress lines and **progress never
+  enters the protocol stream**, with four rule tests and the spec section. The
+  Windows/wall-clock class went with it: a fast-import fixture, the tool's own `after=`
+  and `polls=` in place of clocks, a registry for the sync-point hook, and eight
+  waits-allowlist rows removed.
+
+## Batch 6 — #1335: the merge lane (open, not landed)
+
+Three members — the lane chain `#1308 → #1315 → #1206`, each rebased onto the last in
+that order. **This batch has not landed**, so none of the verbs below are on `dev`;
+`docs/CLI.md` marks every one of them where it is documented.
+
+- **#1308** — the four members of batch 3, rebased onto the new `dev`:
+  **`nova-merge rebase --once`**, **`nova-merge classify`**, **`nova-work events`** with
+  **`nova-merge react`** as its subscriber, and `internal/merge` back inside the
+  test-time budget.
+- **#1315** — **`nova-merge batch`: the landing gate as a verb.** It clones, merges each
+  head onto the base in order, drops what will not merge and says so, then builds, vets,
+  tests and runs the lisp suite over what is left — and **pushes nothing**, because
+  opening the pull request belongs to whoever knows this is the batch they wanted. Its
+  test step is the command `.github/workflows/ci.yml` runs, read back through the same
+  `-json` decoder `cmd/nova-ci` uses on CI.
+- **#1206** — **`nova-merge queue`**: `hold`, `release`, `skip`, `unskip`, `front`,
+  `sweep`, the poison detector, and `queue classify`, which **records** a verdict
+  somebody already reached as an immutable record the sweep reads — the mirror of the
+  top-level `classify`, which **asks** for one.
+
 ## What a reader should do about it
 
-Nothing, on batches 1 and 2 — they are on `dev`, and `go install ./cmd/...` is the
-whole upgrade. Two things are worth knowing:
+Nothing, on batches 1, 2, 4 and 5 — they are on `dev`, and `go install ./cmd/...` is
+the whole upgrade. Four things are worth knowing:
 
 ```sh
 nova-merge simulate --repo . --base dev
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --once
+nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts
+nova-update release build --version v0.16.0 --out ./dist --source .
 ```
 
 The first is the question to ask before a queue round, not after it. The second
 refuses every card naming a lane until `lanes.tsv` exists, which is the file saying
-it has not been written yet rather than a fill that serializes nothing.
+it has not been written yet rather than a fill that serializes nothing. The third is
+the line that says which verbs nobody but their author has run — expect it to be red,
+because that is the news. The fourth is the release path that replaced the install
+loop; `cut` and `adopt` are the ends of it, and both refuse rather than guess.
+
+**Batches 3 and 6 are the same work**: #1308 is a member of #1335 now, and nothing in
+either is on `dev`. A bench running `dev` has none of `nova-merge rebase`, `react`,
+`batch` or `queue`, and none of `nova-work events` — `docs/CLI.md` marks each of them,
+and marks `nova-sandbox egress` (#1330) and `nova-decide route`, `help` and `log`
+(#1327), which are in no batch yet.

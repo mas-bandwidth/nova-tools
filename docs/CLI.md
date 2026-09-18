@@ -78,11 +78,11 @@ DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z o
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=-
 DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
-DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
+DOGFOOD OK verbs=108 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
-DOGFOOD GATE FAIL verbs=106 findings=105 shown=20 unmatched=0
+DOGFOOD GATE FAIL verbs=108 findings=107 shown=20 unmatched=0
 ```
 
 **Reading it.** `ledger` prints one row per verb, in the list's order, and
@@ -497,6 +497,20 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 ```
 
 **Reading it.** Exactly one line, on stdout for a decision and on stderr for a refusal. Exit 0 when every answer is at or above the floor, 3 when any answer is below it — a suggestion, never an authorization: the caller keeps today's behaviour as the fallback. Exit 2 on refusal (no key, bad questions, provider error): `DECIDE REFUSED reason=<one word> <detail>`.
+
+### tune — the floor a decisions table can carry
+
+```
+nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95] [--label <field, default label>] [--choice <field, default decision>] [--conf <field, default confidence>] [--max-escalation 0.7]
+nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
+```
+
+`tune` reads the decisions log — each row joining the decision, its confidence and
+the outcome label — and says which floor the rows actually support, capping the
+escalation rate at `--max-escalation`. The `--kind` form reads the decisions table
+for one kind and **refuses a floor with no rows behind it**: a floor nobody has
+measured is a number, not a threshold (SPEC-DECIDE rule 8). `--dsn` is a
+`postgres://` URL or a TSV path, default `$NOVA_DSN`.
 
 ### route — the ladder of minds
 
@@ -1015,9 +1029,12 @@ nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>
 nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
 
-**These three land with batch 3 (nova-tools #1308) and are not on `dev` yet.** The
-lines below are read off their source and are what the verbs print; until that batch
-merges, this section describes a binary your bench does not have.
+**These three land with nova-tools #1308, which is now a member of batch 6
+(#1335, `rowan/integration-6`, open), and they are not on `dev` yet.** The lines below
+are read off their source and are what the verbs print; until that batch merges, this
+section describes a binary your bench does not have. `#1308` was batch 3's whole
+content; it conflicted with `dev` after batch 4 and was rebased into the lane chain
+`#1308 → #1315 → #1206` that batch 6 carries.
 
 `rebase --once` is the hand rebase loop's tick as a verb: one pass over the
 repository's open pull requests, and for each one the host calls `DIRTY` whose head
@@ -1146,6 +1163,12 @@ every real invocation answered `QUEUE REFUSED: this host cannot list open pull r
 the file.** The error used to be swallowed, which left the walk order empty — and an
 empty walk order meant "walk everything", so a corrupt file **silently un-skipped every
 skip and every parked poison**.
+
+**`queue classify` and the top-level `classify` are two asks, one word each way
+round.** `queue classify` **records** a verdict somebody already reached, as one
+immutable record the sweep then reads; the top-level `classify` **asks** for one about
+a failed merge-group run, behind the floor. The contract is
+[SPEC-MERGE.md](SPEC-MERGE.md), *The merge queue (#1142)*.
 
 ### batch
 
@@ -1745,7 +1768,8 @@ A prune never runs on a guess.
 ### status
 
 ```
-nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]
 ```
 
 `status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
@@ -1817,6 +1841,31 @@ and failing that the origin of the clone the queue sits in, named on a
 `STATUS NOTE` line. With neither there is nobody to ask and the page says so;
 with a repo that did not answer it says that instead — they are different
 facts, and the page used to print the first for both.
+
+### progress
+
+```
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+```
+
+`progress` answers *how fast, at what cost, how long* from records and never from a
+guess (Glenn, 2026-09-15, #536). It reads every job's `usage.tsv` under `--roots` —
+start, end, rc, usd — for the day, and the queue's rows. No model call, two lines:
+
+```
+PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n> effective_parallelism=<n.n> cards_per_hour=<n>
+ESTIMATE remaining_cards=<n> hours=<n.n> pending=<n> launched=<n> prs=<n> issues=<n> wall_p90_s=<n> parallelism=<n.n> rate=<n.n>/h factor=1.5
+```
+
+**The estimate names its terms.** `remaining_cards` and `hours` are the answer;
+`pending`, `launched`, `prs`, `issues` and the three rates behind them are how it was
+reached, and they reconstruct it exactly: `remaining = pending + launched + prs + 2 x
+issues`, and `hours = remaining x wall_p90_s / parallelism x factor`. An estimate a
+reader cannot check is one nobody acts on, which is why `bin/progress.sh` printed the
+terms from the first day. `effective_parallelism` is busy card-seconds over span
+seconds — what the benches **did**, not what they had: the first measurement,
+2026-09-15, was 3.5 against 64 slots. The contract is
+[SPEC-PULSE.md](SPEC-PULSE.md), *Progress*.
 
 ## nova-review
 
@@ -2216,6 +2265,29 @@ on your machine before use.
 The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md), and `nova-swarm`
 reaches for it per job through `--sandbox`.
 
+The verbs, as `nova-sandbox help` prints them — the bare form takes no verb at all,
+because the whole tool is *one command, contained by the OS*:
+
+```
+nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
+nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen] [-- <command> <args...>]
+nova-sandbox check [--max <n>]
+nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--read <dir>]... [--container <disk>] -- <command> <args...>          (darwin)
+nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+nova-sandbox version
+nova-sandbox help
+```
+
+`check` asks the machine what it can enforce; `policy` prints **exactly what a wrapped
+run would apply** and runs nothing (the command after `--` is optional, because one
+root is computed from the resolved command itself); `probe` proves the wall before the
+first job; `run` is the disposable place below; and `worktree` makes one pull request's
+worktree under `--scratch`, with `--prune` as the other mode — `--pr` and `--prune` are
+two modes and never one call, and `--scratch` wants an existing directory and is not
+created.
+
 Two lists and no defaults. `--read <dir>` is readable and **not** writable, so N
 workers share one copy of an input named once; `--write <dir>` is readable and
 writable and is **required**, because a command with no writable directory is a
@@ -2425,6 +2497,41 @@ on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of th
 allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
 measurement.
 
+### egress — the outbound wall, not on `dev` yet
+
+**These four land with nova-tools #1330 — *the card's outbound wall*, Johnny's design —
+which is open and is in none of batches 4, 5 or 6.** The lines below are read off that
+branch and are what the verbs print; until it merges, this section describes a binary
+your bench does not have.
+
+```
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
+nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop  --run <id>                                  (linux)
+```
+
+The flags above are the card's **read and write** wall; `egress` is its **outbound**
+half — what the card may talk to — and it lives on the **bench** rather than in the
+card, because the worker is the adversary. `plan` resolves the names in the reviewed
+allowlist (`infra/image/egress.txt`) **once**, pins the addresses, and writes an
+nftables ruleset that denies everything the card did not name: TCP 443 to the pinned
+addresses, UDP 53 to `--resolver`, and the metadata address, loopback and the other
+benches denied outright. `apply` hands that ruleset to `nft`, `check` reads one back
+and asserts its invariants, and `drop` takes the run's table away — the table is
+`nova_egress_<run>`, and a table that does not begin with that prefix was not made here
+and is never touched.
+
+Three refusals are the design, not caution. **`--model-host` may only name a host the
+policy file already carries**: the file is the reviewed universe and the flag picks one
+model host out of it, because a flag that could name any host would be the runtime
+override the policy exists to prevent. **A pinned address inside a denied range —
+loopback, link-local, a bench — refuses the whole plan**: that answer came from a
+resolver that is not ours, so a name resolving to `127.0.0.1` is poisoned or a
+rebinding, and the wall fails closed. And **a plan with neither `--uid` nor `--veth`
+refuses**, because every rule is scoped to the card's own traffic; an unscoped default
+deny in the output hook would firewall the bench itself.
+
 ## nova-tokens
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
@@ -2432,6 +2539,38 @@ Token spend, folded from declared sources into **one file per day**, keyed exact
 The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all seven verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
 
 `check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines.
+
+The verbs, as `nova-tokens help` prints them:
+
+```
+nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file> [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>] [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file> [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]... [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
+nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+nova-tokens check   --out <dir> [--max <n>]
+nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
+nova-tokens profiles --swarm-root <dir>
+nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
+nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
+nova-tokens version
+```
+
+**Exit 1 still writes.** A fold with one unreadable source or one unparsed bus line
+writes every day it could compute and exits 1: the exit code is about the **claim** —
+a declared source is a claim that the report covers it — and `written=true` on the
+`TOKENS DAY` line is about the **files**. Exit 2 is could-not-run: a missing flag, a
+bad flag value, a duplicate label, `sqlite3` absent when `--opencode` is given, a
+second fold holding the lock.
+
+A day file's **first line is provenance**, not data — `nova-tokens v1 day=<d> at=<stamp>
+build=<v> turns=<n> sources=<labels>` — and its eleven columns are `date`, `model`,
+`repo`, the five token types, `rough` (how many rough `~` lines fed the row),
+`day_basis` (the zone the day boundary was taken in) and `sources` (the source
+**labels**, so two benches of one harness stay apart). A fold merges into a day file
+**by source**: it recomputes the rows its own declared sources wrote and keeps every
+other row exactly as it is, so a run that declares one source does not erase what the
+others reported.
 
 ### First run
 
