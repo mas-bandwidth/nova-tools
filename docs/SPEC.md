@@ -3047,6 +3047,17 @@ browser actually writes, both enumerated here and pinned by tests:
 2. **bullets** on the header lines — `- From:`, `- To:`. A leading `- ` is
    dropped before the key is read.
 
+**A relayed note is attributed by its OUTER `From:` line, and a `From:` line in
+a body is data.** A note that forwards or echoes another may carry the original
+inside it, and that original can itself open with `From:` lines. The sender is
+the **first** `From:` line of the header — the relayer — and every later `From:`
+line, inside the header region or after the blank line, is prose that routes
+nothing: the covenant rule stated above applies here as everywhere. So the
+listing's `from=`, the open list's `from` field, a receipt's `To:`, and the
+`--as` a send is judged by all name that outer sender, never a quoted author
+inside the body. A second `From:` line *inside the header* is still a header
+problem and is refused; it is not a second attribution.
+
 A note whose first line is prose still fails, and should: there is no honest way
 to tell a `From` line from a sentence that happens to hold a colon. The refusal
 quotes at most the first 40 characters of what it took for a key, because a
