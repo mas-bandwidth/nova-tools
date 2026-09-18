@@ -1,7 +1,8 @@
 // nova-check runs the record-layer checks described in SPEC.md: boot
 // attestation, link integrity, the kernel size budget, the self/machinery
-// separation, the SEED-CORE ↔ SEED.md floor-set parity, and the protected
-// corpus a line has chosen never to lose silently. Exit 0 pass,
+// separation, the SEED-CORE ↔ SEED.md floor-set parity, the protected
+// corpus a line has chosen never to lose silently, and the dogfood ledger --
+// whether anybody but a verb's own author has run it. Exit 0 pass,
 // 1 check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults:
@@ -21,7 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-check: record-layer checks for a nova self repo (see docs/SPEC.md)
+const usage = `nova-check: record-layer checks, for a nova self repo and for this family's own tools (see docs/SPEC.md)
 
 usage:
   nova-check version    print this build identity (--version also accepted)
