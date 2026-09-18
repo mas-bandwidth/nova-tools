@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
 // The landing gate's own tests. They drive cmdBatch through run(), against a REAL git
@@ -51,6 +53,15 @@ func batchRepo(t *testing.T) *lab {
 		l.git(l.work, "push", "-q", "origin", sha+":refs/pull/"+strconv.Itoa(n)+"/head")
 	}
 	l.git(l.work, "checkout", "-q", "main")
+	// EDGE 25: every member's own head is green on ci-ok, which is what the gate now
+	// requires before it merges one. The forge is the FAKE host: no test here opens a
+	// socket, and a test that wants a member that has never been green says so by
+	// changing this one commit's checks.
+	l.heads = map[int]string{1: one, 2: two, 3: three}
+	for n, sha := range l.heads {
+		l.host.PRs[n] = merge.PR{Number: n, HeadOID: sha, Base: "dev"}
+		l.host.SetCheckRuns(sha, merge.CheckDetail{Name: "ci-ok", Conclusion: "success", SHA: sha})
+	}
 	return l
 }
 
@@ -118,7 +129,7 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	clone := filepath.Join(root, "integration-2", "repo")
 	base := l.git(l.work, "rev-parse", "dev")
 	head := l.git(clone, "rev-parse", "refs/heads/rowan/integration-2")
-	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2\n", base, head)
+	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required\n", base, head)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("want the one-line shape\n\t%s\ngot:\n%s", want, stdout)
 	}
@@ -126,8 +137,13 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 		t.Error("the head is the base; #1 was supposed to be merged onto it")
 	}
 	// The lisp leg is SKIPPED OUT LOUD here: this fixture holds no tools/ci/lisp-test.sh.
-	// A gate that quietly ran three steps instead of four is a gate nobody can read.
+	// A gate that quietly ran three steps instead of four is a gate nobody can read --
+	// and EDGE 2 is that the skip is on the VERDICT line too, which the shape above
+	// pins: `skipped=lisp`.
 	contains(t, stderr, "BATCH SKIP lisp ")
+	// EDGE 25: the cross vet ran, so a member that does not compile for windows is
+	// caught here rather than on CI after the batch pull request is open.
+	contains(t, stderr, "BATCH STEP vet-windows ")
 	if got := len(l.pushes()); got != before {
 		t.Errorf("the remote received %d new pushes; the batch pushes nothing", got-before)
 	}

@@ -60,11 +60,11 @@ usage:
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
-  nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>]
+  nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
   nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
 
-  nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
+  nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
   nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
 
@@ -78,15 +78,20 @@ batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, 
 each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
 will not merge and says so, and then builds, vets, tests and runs the lisp suite over
 what is left, one progress line per step on stderr with the elapsed time. Green is
-"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list>" at exit 0, and
-red is the same line as BATCH FAIL naming the step, the failing packages and the failing
-tests at exit 1. Pushing that branch and opening the pull request is the caller's, who is
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list>"
+at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages and
+the failing tests at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
+never claims a suite it only ran part of; --require-lisp turns a skipped lisp step into a
+FAIL for a caller who needs it run, and a program that is not on PATH is also looked for
+under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
+the tree's go.mod BEFORE the first merge, so an old go on PATH is one refusal with the
+remedy rather than a red build step quoting a download notice. Pushing that branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
 it a directory of the batch's own.
 
 THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
-runs -- go test -json -count=1 -timeout 5m -- over the whole merged tree, and its verdict
+runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
 is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
 that goes green here is a batch that ran what CI runs. integration-4 went green under a
 plain "go test ./..." and three CI legs then failed. The one thing not mirrored is CI's
