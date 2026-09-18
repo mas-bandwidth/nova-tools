@@ -413,6 +413,51 @@ func TestBuildRefusesASourceTreeWithNoNovaTools(t *testing.T) {
 // nova-wake.exe and every assertion asking after nova-wake.
 var hostPlatform = runtime.GOOS + "-" + runtime.GOARCH
 
+// assertRunnable is what "this tool was installed and can be run" means, on
+// each of the two kinds of filesystem this suite runs on.
+//
+// THE HOST DECIDES THIS, NOT THE TARGET -- and that is the distinction the
+// sharded Windows leg found. Everything else about a platform in these tests is
+// the TARGET's (a windows release is called nova-bus.exe whoever builds it), but
+// a file's mode is a property of the filesystem the bytes actually landed on. On
+// a windows runner BOTH the windows-amd64 case and the linux-amd64 one report
+// `-rw-rw-rw-`, because NTFS has no execute bit for Go to report: os.Chmod there
+// moves one read-only attribute and nothing else. An assertion on 0o111 is not
+// false on windows, it is meaningless -- it cannot fail for a real defect and it
+// cannot pass for a real guarantee, which is the same trap #1262 fell into.
+//
+// So what is asserted is what the install actually promises and what each
+// filesystem can actually answer: the file is there, under the target's name,
+// it is a regular file, and it carries the artifact's bytes rather than an empty
+// placeholder. On unix the execute bit is asserted on top, because there it is
+// the difference between an installed tool and one nobody can run.
+func assertRunnable(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("%s was not installed: %v", filepath.Base(path), err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("%s is not a regular file: %v", filepath.Base(path), info.Mode())
+	}
+	// The fixture toolchain writes "binary <name> <build args>", so this also
+	// says the bytes are the ARTIFACT's and not a leftover or an empty file --
+	// a check every platform can make, and a stronger one than the mode bit.
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%s cannot be read back: %v", filepath.Base(path), err)
+	}
+	if !strings.HasPrefix(string(body), "binary "+filepath.Base(path)+" ") {
+		t.Fatalf("%s does not hold the built artifact's bytes: %q", filepath.Base(path), body)
+	}
+	if runtime.GOOS == "windows" {
+		return // no execute bit exists here; the checks above are the whole answer
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("%s is not executable: %v", filepath.Base(path), info.Mode())
+	}
+}
+
 func platformOf(t *testing.T, flagValue string) (string, string) {
 	t.Helper()
 	goos, goarch, err := Platform(flagValue)
@@ -527,14 +572,7 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 				t.Fatalf("probed %v, want %v", probed, wantProbed)
 			}
 			for _, tool := range []string{"nova-bus", "nova-swarm"} {
-				file := ToolFile(tool, goos)
-				info, err := os.Stat(filepath.Join(bin, file))
-				if err != nil {
-					t.Fatalf("%s was not installed: %v", file, err)
-				}
-				if info.Mode().Perm()&0o111 == 0 {
-					t.Fatalf("%s is not executable: %v", file, info.Mode())
-				}
+				assertRunnable(t, filepath.Join(bin, ToolFile(tool, goos)))
 			}
 			// Skipped means untouched, not overwritten with the same bytes.
 			body, err := os.ReadFile(filepath.Join(bin, current))
