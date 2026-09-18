@@ -300,7 +300,7 @@ func TestAdoptReadsTheDigestFromTheTagObject(t *testing.T) {
 		answer: map[string]string{"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"},
 	}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--repo", "o/n",
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s, Forge: f})
@@ -323,7 +323,7 @@ func TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree(t *testing.T) {
 	f := &fakeForge{messages: map[string]string{"v0.16.0": Annotation("v0.16.0", "abc123", cut)}}
 	s := &fakeSSH{serves: map[string]string{"hulk": served}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--repo", "o/n",
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s, Forge: f})
@@ -344,7 +344,7 @@ func TestAdoptSaysSoWhenTheTagCarriesNoDigest(t *testing.T) {
 	f := &fakeForge{messages: map[string]string{"v0.16.0": "v0.16.0\n\nCut from abc123.\n"}}
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--repo", "o/n",
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s, Forge: f})
