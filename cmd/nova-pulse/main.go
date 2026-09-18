@@ -42,7 +42,9 @@ nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
-nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
+nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--attempts <file>] [--no-fix] [--max-fix-rounds <n>] [--bus <dir> --as <name> --to <names>] [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
+                         (--fix is ON: a FAIL a standard item repairs is applied and certified again; --no-fix waives it)
+nova-pulse fleet standard --apply --machines <file> --machine <name> [--items <a,b>] [--home <dir>] [--git-name <n>] [--git-email <e>] [--ssh <path>] [--timeout <s>] [--dry-run]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
 nova-pulse hygiene reap <slot> --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>

@@ -138,6 +138,10 @@ type Fixer interface {
 // own send path, with its own locking, index and push -- and never a second copy of it.
 type BusPoster interface {
 	Post(lane, subject, body string) error
+	// Where is the bus this poster sends to, for the line that reports the note. A bare
+	// `escalation=unsent reason=no-bus` on a machine carrying three bus clones tells nobody
+	// which path the tool was looking for.
+	Where() string
 }
 
 // DefaultFixRounds is how many times one machine is repaired and re-certified in one run.

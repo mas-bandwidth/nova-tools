@@ -150,6 +150,7 @@ type Workload struct {
 	Class  string         // the name on every line and every row; the file's name
 	Roles  []string       // the roles this workload applies to, sorted
 	Expect *regexp.Regexp // a pass is this matching the machine's output
+	Warn   *regexp.Regexp // a WARN: a state that is neither the pass nor a fault of the machine
 	Wall   bool           // true runs the body inside nova-sandbox
 	Reads  []string       // the wall's readable roots; `$HOME` is the machine's own
 	Forge  string         // ForgeRunners or ForgeRegistry, or "" for a workload the machine runs
@@ -276,6 +277,16 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 				return Workload{}, fmt.Errorf("%s line %d: expect is not a regexp: %w", source, n+1, err)
 			}
 			w.Expect = re
+		case "warn":
+			// A third answer, for a state that is real, known, and not this machine's fault:
+			// redis answering NOAUTH says the address and the port are RIGHT and the seat's
+			// password has not landed yet. It sat in the FAIL branch, so the card could not
+			// pass its own remedy until somebody else finished a different job.
+			re, err := regexp.Compile("(?m)" + value)
+			if err != nil {
+				return Workload{}, fmt.Errorf("%s line %d: warn is not a regexp: %w", source, n+1, err)
+			}
+			w.Warn = re
 		case "wall":
 			switch value {
 			case "yes", "true":
@@ -309,7 +320,7 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 				return Workload{}, fmt.Errorf("%s line %d: report is yes or no, got %q", source, n+1, value)
 			}
 		default:
-			return Workload{}, fmt.Errorf("%s line %d: unknown key %q (the keys are roles, expect, wall, reads, forge, report)", source, n+1, key)
+			return Workload{}, fmt.Errorf("%s line %d: unknown key %q (the keys are roles, expect, warn, wall, reads, forge, where, report)", source, n+1, key)
 		}
 	}
 	if len(w.Roles) == 0 {
@@ -909,7 +920,9 @@ func runnableItems(items []string) []string {
 // wired says so on a line rather than dropping the escalation quietly.
 func (in CertifyInput) postEscalation(e escalation, build string) {
 	if in.Bus == nil {
-		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent reason=no-bus\n", oneline.Field(e.machine))
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent reason=no-bus remedy=%s\n",
+			oneline.Field(e.machine),
+			oneline.Quote("pass --bus <clone> --as <name> --to <names>; the escalation is on the line above and in the event stream either way"))
 		return
 	}
 	lane := strings.TrimSpace(in.Lane)
@@ -917,12 +930,13 @@ func (in CertifyInput) postEscalation(e escalation, build string) {
 		lane = DefaultLane
 	}
 	if err := in.Bus.Post(lane, e.subject(), e.note(in.Hash, build)); err != nil {
-		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent err=%s\n",
-			oneline.Field(e.machine), oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent bus=%s err=%s\n",
+			oneline.Field(e.machine), oneline.Field(dash(in.Bus.Where())),
+			oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
 		return
 	}
-	fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=sent lane=%s\n",
-		oneline.Field(e.machine), oneline.Field(lane))
+	fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=sent lane=%s bus=%s\n",
+		oneline.Field(e.machine), oneline.Field(lane), oneline.Field(dash(in.Bus.Where())))
 }
 
 // Stale says whether the newest certificate for one machine and class is missing, failed,
@@ -1267,7 +1281,7 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	case ForgeRegistry:
 		return registryTruth(in, reg, m)
 	}
-	script := certifyScript(in, w)
+	script := certifyScript(in, reg, m, w)
 	// The branch comes BEFORE the run, not after it. Written the other way round -- run,
 	// then decide -- the ssh had already happened, which is exactly the fault `where` exists
 	// to prevent, and no test of the embedded set could see it because the only coordinator
@@ -1291,6 +1305,12 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	// person reading the certificate in a month actually needs.
 	if line, ok := matchedLine(w.Expect, out); ok {
 		return VerdictOK, line
+	}
+	// A state the card knows and does not blame the machine for.
+	if w.Warn != nil {
+		if line, ok := matchedLine(w.Warn, out); ok {
+			return VerdictWarn, line
+		}
 	}
 	// Reaching the machine comes before judging it: a machine that printed the marker WAS
 	// reached, whatever else came back.
@@ -1499,7 +1519,7 @@ func runnersOnline(in CertifyInput, m Machine) (string, string) {
 //
 // The job directory is made for the run and taken away after it, on every exit path: Glenn,
 // 2026-09-17, hygiene -- a job lives in working/tmp, is read, and is deleted.
-func certifyScript(in CertifyInput, w Workload) string {
+func certifyScript(in CertifyInput, reg *Registry, m Machine, w Workload) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# nova-certify workload %s\n", w.Class)
 	b.WriteString("set -eu\n")
@@ -1508,6 +1528,13 @@ func certifyScript(in CertifyInput, w Workload) string {
 		bin = "$HOME/.local/bin"
 	}
 	fmt.Fprintf(&b, "NOVA_HOME=\"$HOME\"\nNOVA_GO=%q\nNOVA_BIN=%q\nexport NOVA_GO NOVA_BIN\n", DefaultGo, bin)
+	// THE ADDRESSES COME FROM THE REGISTRY, never from DNS. `services-reach` resolved a name
+	// with `getent`, which does not exist on darwin at all, so the Air was told that `space`
+	// "does not resolve" while it was talking to space over ssh at that moment; and
+	// `loki-ready` probed localhost on a host where Loki binds the tailnet address on
+	// purpose. The registry is the file that already knows where every machine is.
+	fmt.Fprintf(&b, "NOVA_SELF_ADDR=%q\nNOVA_SERVICES_ADDR=%q\nNOVA_SERVICES_HOST=%q\nexport NOVA_SELF_ADDR NOVA_SERVICES_ADDR NOVA_SERVICES_HOST\n",
+		MachineAddress(m), ServicesAddress(reg), ServicesName(reg))
 	if !w.Wall {
 		b.WriteString("export NOVA_HOME\n")
 		b.WriteString(w.Body)
@@ -1534,6 +1561,43 @@ func certifyScript(in CertifyInput, w Workload) string {
 	b.WriteString("; do\n  if [ -e \"$r\" ]; then NOVA_READS=\"$NOVA_READS --read $r\"; fi\ndone\n")
 	b.WriteString("HOME=\"$JOB/home\" nova-sandbox $NOVA_READS --write \"$JOB\" --cwd \"$JOB\" -- /bin/sh \"$JOB/body.sh\"\n")
 	return b.String()
+}
+
+// MachineAddress is where a machine IS, as the registry writes it: the ssh column with any
+// user taken off. It is what a probe should dial, because it is the address the fleet
+// already uses for that machine and the one a person can check by hand.
+func MachineAddress(m Machine) string {
+	target := strings.TrimSpace(m.SSH)
+	if i := strings.LastIndex(target, "@"); i >= 0 {
+		target = target[i+1:]
+	}
+	if target == "" {
+		return m.Name
+	}
+	return target
+}
+
+// ServicesAddress is the address of the machine carrying the services role, and "" when the
+// registry names none -- which is a fact about the registry and is said as one.
+func ServicesAddress(reg *Registry) string {
+	if reg == nil {
+		return ""
+	}
+	for _, m := range reg.WithRole(RoleServices) {
+		return MachineAddress(m)
+	}
+	return ""
+}
+
+// ServicesName is that machine's registry name, for evidence a person can read.
+func ServicesName(reg *Registry) string {
+	if reg == nil {
+		return ""
+	}
+	for _, m := range reg.WithRole(RoleServices) {
+		return m.Name
+	}
+	return ""
 }
 
 // matchedLine is the first line of the output the expect matches, whole.

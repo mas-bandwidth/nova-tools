@@ -276,6 +276,9 @@ type certifyBusPoster struct {
 	Timeout time.Duration
 }
 
+// Where is the clone this poster sends from, so the line that reports the note names it.
+func (b certifyBusPoster) Where() string { return b.Bus }
+
 func (b certifyBusPoster) Post(lane, subject, body string) error {
 	note := bus.Skeleton{From: b.As, To: b.To, Subject: subject}.RenderWith("LANE: " + lane + "\n\n" + body)
 	_, err := friends.BusSender{

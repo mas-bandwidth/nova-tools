@@ -66,6 +66,8 @@ type fakeBus struct {
 
 type busNote struct{ lane, subject, body string }
 
+func (b *fakeBus) Where() string { return "/tmp/fake-bus" }
+
 func (b *fakeBus) Post(lane, subject, body string) error {
 	if b.err != nil {
 		return b.err

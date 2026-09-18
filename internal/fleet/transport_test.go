@@ -579,3 +579,66 @@ func TestTheStandardHashIsTheSameFromTheFileAndFromTheEmbeddedCopy(t *testing.T)
 		t.Errorf("the hash of the file is %s and of the same bytes %s; a certificate written by the loop would expire the fleet", fromFile, fromBytes)
 	}
 }
+
+// TestAProbeDialsTheRegistrysAddressAndNeverDNS: `services-reach` resolved a name with
+// `getent`, which darwin does not have, so the Air was told that `space` does not resolve
+// while it was talking to space over ssh at that same moment; and `loki-ready` probed
+// localhost on the one host where Loki binds the tailnet address on purpose. The registry
+// already knows where every machine is, and the engine hands the addresses down.
+func TestAProbeDialsTheRegistrysAddressAndNeverDNS(t *testing.T) {
+	registry := writeFile(t, "machines.tsv", strings.Join([]string{
+		"space\tnova@100.115.99.19\tlinux/x64\tbench,services\trowan\t16\t-",
+		"air\tair\tdarwin/arm64\tbench\t-\t8\t-",
+	}, "\n")+"\n")
+	remote := &fakeRemote{answers: map[string]remoteAnswer{
+		"air": {out: "nova-merge v0.17.0\nEVERYTHING OK PONG ready online\n"},
+	}}
+	runCertify(t, CertifyInput{
+		Machines: registry, Only: "air", Certs: writeFile(t, "certs.tsv", ""),
+		Remote: remote, Hash: "h", Now: fixedNow,
+	})
+	script := ""
+	for _, s := range remote.scripts() {
+		if scriptKey(s) == "services-reach" {
+			script = s
+		}
+	}
+	if script == "" {
+		t.Fatal("services-reach never ran")
+	}
+	if !strings.Contains(script, `NOVA_SERVICES_ADDR="100.115.99.19"`) {
+		t.Errorf("the script carries no services address from the registry:\n%s", script)
+	}
+	if !strings.Contains(script, `NOVA_SELF_ADDR="air"`) {
+		t.Errorf("the script carries no address for the machine itself:\n%s", script)
+	}
+	if strings.Contains(script, "getent") {
+		t.Errorf("the workload still resolves a name, and darwin has no getent:\n%s", script)
+	}
+}
+
+// TestRedisAnsweringNOAUTHIsAWarnAndNeverAFailure: the address and the port are right --
+// redis ANSWERED -- and the password lands on somebody else's schedule. In the FAIL branch
+// the card could not pass its own remedy, and held every bench uncertified for a thing no
+// bench can do.
+func TestRedisAnsweringNOAUTHIsAWarnAndNeverAFailure(t *testing.T) {
+	answers := benchOK()
+	answers["space|services-reach"] = remoteAnswer{
+		out: "SERVICES AUTH-REQUIRED redis name=space addr=100.115.99.19:6379 answered but wants the password -- NOAUTH Authentication required.\n",
+	}
+	certs := writeFile(t, "certs.tsv", "")
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: &fakeRemote{answers: answers}, Hash: "h", Now: fixedNow,
+	})
+	all := out + errs
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0: a password that has not landed is not a bench failure\n%s", code, all)
+	}
+	if !strings.Contains(all, "CERTIFY space services-reach WARN") {
+		t.Errorf("redis wanting a password was not a WARN:\n%s", all)
+	}
+	if !Certified(mustRead(t, certs), "space", "services-reach", "v0.17.0", "h") {
+		t.Error("a WARN withheld the certificate; a WARN is a pass with a note")
+	}
+}

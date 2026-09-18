@@ -29,6 +29,8 @@ func (f *certifyFakeFixer) Apply(machine string, items []string) ([]string, erro
 // certifyFakeBus keeps the note the verb would have sent.
 type certifyFakeBus struct{ posts []string }
 
+func (b *certifyFakeBus) Where() string { return "/tmp/fake-bus" }
+
 func (b *certifyFakeBus) Post(lane, subject, body string) error {
 	b.posts = append(b.posts, lane+"|"+subject+"|"+body)
 	return nil

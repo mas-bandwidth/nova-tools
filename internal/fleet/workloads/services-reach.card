@@ -1,5 +1,6 @@
 roles: bench
 expect: ^SERVICES OK
+warn: ^SERVICES AUTH-REQUIRED
 
 # A plain ssh from the BENCH, by the NAME the design uses, because that is what failed.
 #
@@ -18,10 +19,15 @@ expect: ^SERVICES OK
 # addresses on the Linux benches, and a LAN address is as good an answer. No tailnet address
 # is required -- the Studio has none (tailscaled is not running there) and is not a bench.
 set -eu
+# THE ADDRESS COMES FROM THE REGISTRY, never from DNS. This resolved the name with the name
+# service, which darwin does not answer the way Linux does, so the Air was told that space
+# could not be resolved while it was talking to space over ssh at that same moment. The
+# registry is the file that already knows where every machine is, and the engine hands it
+# down as NOVA_SERVICES_ADDR.
 HOST="${NOVA_SERVICES_HOST:-space}"
-ADDR=$(getent hosts "$HOST" 2>/dev/null | awk 'NR==1{print $1}' || true)
+ADDR="${NOVA_SERVICES_ADDR:-}"
 if [ -z "$ADDR" ]; then
-  echo "SERVICES FAIL the name '$HOST' does not resolve on this bench (getent hosts '$HOST' is empty; ~/.ssh/config is not name resolution)"
+  echo "SERVICES FAIL the registry names no machine with the services role, so this bench has no services address to try"
   exit 1
 fi
 TRIED="name=$HOST addr=$ADDR"
@@ -35,8 +41,12 @@ case "$PING" in
   *PONG*)
     REDIS="PONG" ;;
   *DENIED*|*"protected mode"*|*NOAUTH*|*WRONGPASS*)
-    echo "SERVICES FAIL redis $TRIED:${NOVA_REDIS_PORT:-6379} denied (protected mode): the address and the name work and the password gate remains; set requirepass and give the bench the key through nova-secrets -- $PING"
-    exit 1 ;;
+    # NOT A FAILURE OF THIS BENCH. The address and the port are RIGHT -- redis answered --
+    # and what is missing is the seat's password, which lands through nova-secrets on
+    # somebody else's schedule. In the FAIL branch this card could not pass its own remedy,
+    # so it held every bench uncertified for a thing no bench can do.
+    echo "SERVICES AUTH-REQUIRED redis $TRIED:${NOVA_REDIS_PORT:-6379} answered but wants the password: set requirepass on the services host and give each bench the key through nova-secrets -- $PING"
+    exit 0 ;;
   *refused*|*"Connection refused"*)
     echo "SERVICES FAIL redis $TRIED:${NOVA_REDIS_PORT:-6379} refused: nothing is listening on that address (check the bind line, not the name) -- $PING"
     exit 1 ;;

@@ -5,13 +5,24 @@ expect: ^LOKI OK
 # healthy on 2026-09-17 because nothing ever asked Loki whether it was ready.
 set -eu
 PORT="${NOVA_LOKI_PORT:-3100}"
+# The registry's address for THIS machine, not localhost: Loki binds the tailnet address by
+# design, so a localhost probe said "could not connect" about a Loki that was serving the
+# whole fleet at the time. localhost remains the fallback for a machine the registry gave no
+# address for.
+ADDR="${NOVA_SELF_ADDR:-localhost}"
 CURL=$(command -v curl 2>/dev/null || true)
 if [ -z "$CURL" ]; then
   echo "LOKI FAIL no curl on the services host"
   exit 1
 fi
-OUT=$("$CURL" -fsS --max-time 10 "http://localhost:$PORT/ready" 2>&1 || true)
+OUT=$("$CURL" -fsS --max-time 10 "http://$ADDR:$PORT/ready" 2>&1 || true)
+if [ "$ADDR" != "localhost" ]; then
+  case "$OUT" in
+    *ready*) ;;
+    *) OUT=$("$CURL" -fsS --max-time 10 "http://localhost:$PORT/ready" 2>&1 || true) ;;
+  esac
+fi
 case "$OUT" in
-  *ready*) echo "LOKI OK localhost:$PORT $OUT" ;;
-  *) echo "LOKI FAIL localhost:$PORT $OUT"; exit 1 ;;
+  *ready*) echo "LOKI OK $ADDR:$PORT $OUT" ;;
+  *) echo "LOKI FAIL $ADDR:$PORT (and localhost:$PORT) $OUT"; exit 1 ;;
 esac
