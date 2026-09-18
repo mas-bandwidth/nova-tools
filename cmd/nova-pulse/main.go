@@ -22,6 +22,7 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -175,6 +176,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdPool(rest, stdout, stderr)
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
+	case "fill":
+		return cmdFill(rest, stdout, stderr, now)
 	case "cut":
 		if hasKindFlag(rest) {
 			return cmdCutKind(rest, stdout, stderr)
