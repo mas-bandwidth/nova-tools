@@ -19,7 +19,9 @@ package fleet
 //     touches no machine and reads one file.
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -299,4 +301,129 @@ func localSpaceAnswers() map[string]remoteAnswer {
 		out[key] = answer
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// what Stella's read of 7e6309e found (bus note stella-b59d59aaef49)
+// ---------------------------------------------------------------------------
+
+// TestACoordinatorWorkloadWithABodyRunsHereAndNeverOpensAnSSH. The forge classes never
+// touched ssh because they never ran a script at all; a CUSTOM workload that says
+// `where: coordinator` and carries a body went straight down the ssh pipe, which is the
+// whole of what `where` was added to prevent. The test uses a real card file, because the
+// embedded set has no such workload and so could not see this.
+func TestACoordinatorWorkloadWithABodyRunsHereAndNeverOpensAnSSH(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "gh-ready.card"), strings.Join([]string{
+		"roles: bench",
+		"expect: ^GH OK",
+		"where: coordinator",
+		"",
+		"gh auth status >/dev/null 2>&1 && echo GH OK",
+	}, "\n")+"\n")
+	loads, err := ReadWorkloads(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssh := &fakeRemote{answers: map[string]remoteAnswer{
+		"space|build": {out: "nova-merge v0.17.0\n"},
+	}}
+	here := &fakeRemote{answers: map[string]remoteAnswer{
+		"space|gh-ready": {out: "GH OK gh version 2.62.0\n"},
+		"|gh-ready":      {out: "GH OK gh version 2.62.0\n"},
+	}}
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: writeFile(t, "certs.tsv", ""),
+		Workloads: loads, Remote: ssh, Local: here, Hash: "h", Now: fixedNow,
+	})
+	all := out + errs
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, all)
+	}
+	for _, script := range ssh.scripts() {
+		if scriptKey(script) == "gh-ready" {
+			t.Errorf("a coordinator workload went down the ssh pipe:\n%s", script)
+		}
+	}
+	if len(here.calls) == 0 {
+		t.Error("the coordinator workload did not run here")
+	}
+	if !strings.Contains(all, "CERTIFY space gh-ready OK") {
+		t.Errorf("the coordinator workload was not certified:\n%s", all)
+	}
+}
+
+// TestAWorkloadThatRunsOutOfTimeIsITSOWNTokenAndNeverAFailure: `exec sleep 5` under a
+// one-millisecond bound was called FAIL -- a verdict about the machine's work, from a run
+// that never let the work finish. A timeout writes no certificate, is never repaired, and is
+// counted apart, exactly like UNREACHABLE.
+func TestAWorkloadThatRunsOutOfTimeIsItsOwnTokenAndNeverAFailure(t *testing.T) {
+	certs := writeFile(t, "certs.tsv", "")
+	fixer := &fakeFixer{changed: map[string][]string{ItemGitIdentity: nil}}
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: &fakeRemote{answers: timesOut(benchOK(), "space", "git-identity")},
+		Hash:   "h", Now: fixedNow, Fix: true, Fixer: fixer, Bus: &fakeBus{}, Lane: "fleet",
+	})
+	all := out + errs
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3 (no answer is not a failure)\n%s", code, all)
+	}
+	if !strings.Contains(all, "CERTIFY space git-identity TIMEOUT reason=") {
+		t.Errorf("a workload that ran out of time was not TIMEOUT:\n%s", all)
+	}
+	if strings.Contains(all, "git-identity FAIL") {
+		t.Errorf("a timeout was written as a verdict about the machine's work:\n%s", all)
+	}
+	if !strings.Contains(all, "timeout=1") {
+		t.Errorf("the closing line does not count the timeout:\n%s", all)
+	}
+	if len(fixer.calls) != 0 {
+		t.Errorf("a timeout was repaired: %v", fixer.calls)
+	}
+	for _, r := range mustRead(t, certs) {
+		if r.Class == "git-identity" {
+			t.Errorf("a timeout wrote a certificate row: %+v", r)
+		}
+	}
+}
+
+// TestOneRunWritesOneRowPerMachineAndClass: the repair round certified a class a second
+// time and APPENDED, so one run left two rows for one (machine, class) -- two records of one
+// pass, and the earlier one a failure that never happened by the time the run ended. The
+// record keeps the run's FINAL verdict, once.
+func TestOneRunWritesOneRowPerMachineAndClass(t *testing.T) {
+	answers := benchOK()
+	failing(answers, "space", "git-identity", "GIT IDENTITY name=- email=-")
+	certs := writeFile(t, "certs.tsv", "")
+	fixer := &fakeFixer{
+		changed: map[string][]string{ItemGitIdentity: nil},
+		after:   func() { answers["space|git-identity"] = benchOK()["space|git-identity"] },
+	}
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: &fakeRemote{answers: answers}, Hash: "h", Now: fixedNow,
+		Fix: true, Fixer: fixer, Bus: &fakeBus{}, Lane: "fleet",
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s%s", code, out, errs)
+	}
+	seen := map[string]int{}
+	for _, r := range mustRead(t, certs) {
+		seen[r.Machine+"|"+r.Class]++
+		if r.Class == "git-identity" && r.Verdict != VerdictOK {
+			t.Errorf("the record holds the verdict before the repair: %+v", r)
+		}
+	}
+	for key, n := range seen {
+		if n != 1 {
+			t.Errorf("one run wrote %d rows for %s; a run records one verdict per class", n, key)
+		}
+	}
+}
+
+// timesOut is one class of one machine that never answers inside the bound.
+func timesOut(answers map[string]remoteAnswer, machine, class string) map[string]remoteAnswer {
+	answers[machine+"|"+class] = remoteAnswer{err: context.DeadlineExceeded}
+	return answers
 }

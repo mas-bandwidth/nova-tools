@@ -88,6 +88,11 @@ const (
 	VerdictFail        = "FAIL"
 	VerdictWarn        = "WARN"
 	VerdictUnreachable = "UNREACHABLE"
+	// TIMEOUT is the second thing that is not a verdict: the work did not FINISH inside the
+	// bound this run gave it. `exec sleep 5` under a one-millisecond --timeout was reported
+	// FAIL, which is a judgement on work nobody let run. Like UNREACHABLE it writes no row,
+	// is never repaired, and is counted apart.
+	VerdictTimeout = "TIMEOUT"
 )
 
 // Where one workload runs. `gh` lives where the coordinator is and not on a bench, so the
@@ -575,7 +580,7 @@ func Certify(in CertifyInput) int {
 		}
 	}
 
-	ok, fail, warn, skipped, fixed, would, unreachable := 0, 0, 0, 0, 0, 0, 0
+	ok, fail, warn, skipped, fixed, would, unreachable, timedOut := 0, 0, 0, 0, 0, 0, 0, 0
 	for _, m := range machines {
 		loads := workloadsFor(in.Workloads, m)
 		if len(loads) == 0 {
@@ -588,9 +593,9 @@ func Certify(in CertifyInput) int {
 			fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s transport=local reason=this-is-the-machine\n",
 				oneline.Field(m.Name))
 		}
-		build, unreached := in.Build, ""
+		build, unreached, firstAnswer := in.Build, "", ""
 		if build == "" && !in.DryRun {
-			build, unreached = machineBuild(in, m)
+			build, unreached, firstAnswer = machineBuild(in, m)
 		}
 		if build == "" {
 			build = "-"
@@ -608,6 +613,7 @@ func Certify(in CertifyInput) int {
 		// each class's FINAL verdict, so a class that failed, was repaired and passed is one
 		// pass -- and a certificate -- rather than a failure the summary can never lose.
 		verdicts, evidence := map[string]string{}, map[string]string{}
+		rows := map[string]Certificate{}
 		for _, w := range loads {
 			// A forge question with no forge wired is SKIPPED, not failed: `release adopt`
 			// certifies over ssh and has no runner list to read, and a FAIL there would
@@ -626,30 +632,32 @@ func Certify(in CertifyInput) int {
 				would++
 				continue
 			}
-			// The machine was not reached at all. Its own classes are UNREACHABLE, with the
-			// reason the first attempt gave, and no second attempt is made; a coordinator
-			// class is still answered, because the forge knows what it knows whether or not
-			// anybody can ssh to the machine.
+			// The machine did not answer the first question at all. Its own classes carry
+			// that same answer -- UNREACHABLE or TIMEOUT -- with the reason the first
+			// attempt gave, and no second attempt is made; a coordinator class is still
+			// answered, because the forge and this machine know what they know whether or
+			// not anybody can ssh to the bench.
 			if unreached != "" && w.Where != WhereCoordinator {
-				verdicts[w.Class], evidence[w.Class] = VerdictUnreachable, unreached
+				verdicts[w.Class], evidence[w.Class] = firstAnswer, unreached
 				fmt.Fprintf(in.Stderr, "CERTIFY %s %s %s reason=%s\n",
-					oneline.Field(m.Name), oneline.Field(w.Class), VerdictUnreachable,
+					oneline.Field(m.Name), oneline.Field(w.Class), firstAnswer,
 					oneline.Quote(oneline.Cap(unreached, EvidenceCap)))
-				in.unreachableEvent(m, w.Class, unreached)
+				in.unansweredEvent(m, w.Class, firstAnswer, unreached)
 				continue
 			}
-			if err := in.certifyOne(reg, m, w, build, verdicts, evidence); err != nil {
-				return certifyRefusal(in.Stderr, err)
-			}
+			in.certifyOne(reg, m, w, build, verdicts, evidence, rows)
 		}
 		// Fix, prove, escalate. Nothing here mutates a machine unless Fix is on, and even
 		// then only through the Fixer seam.
 		before := len(failedClasses(verdicts))
-		esc, err := in.repair(reg, m, build, loads, verdicts, evidence)
+		esc, err := in.repair(reg, m, build, loads, verdicts, evidence, rows)
 		if err != nil {
 			return certifyRefusal(in.Stderr, err)
 		}
 		fixed += before - len(failedClasses(verdicts))
+		if err := in.writeRows(rows); err != nil {
+			return certifyRefusal(in.Stderr, err)
+		}
 		if esc != nil {
 			fmt.Fprintln(in.Stderr, esc.Line())
 			in.escalationEvent(*esc, build)
@@ -663,6 +671,8 @@ func Certify(in CertifyInput) int {
 				warn++
 			case VerdictUnreachable:
 				unreachable++
+			case VerdictTimeout:
+				timedOut++
 			default:
 				fail++
 			}
@@ -683,47 +693,73 @@ func Certify(in CertifyInput) int {
 		// and it is not exit 1: nothing failed, and a caller that treats them alike will act
 		// on a machine it has no evidence about.
 		w, result, code = in.Stderr, VerdictUnreachable, 3
+	case timedOut > 0:
+		w, result, code = in.Stderr, VerdictTimeout, 3
 	}
-	fmt.Fprintf(w, "CERTIFY %s machines=%d ok=%d fail=%d warn=%d skipped=%d unreachable=%d fixed=%d\n",
-		result, len(machines), ok, fail, warn, skipped, unreachable, fixed)
+	fmt.Fprintf(w, "CERTIFY %s machines=%d ok=%d fail=%d warn=%d skipped=%d unreachable=%d timeout=%d fixed=%d\n",
+		result, len(machines), ok, fail, warn, skipped, unreachable, timedOut, fixed)
 	return code
 }
 
 // certifyOne runs ONE workload against ONE machine: the row, the event, the line, and the
 // verdict recorded under its class. It is one function because the repair round runs it a
 // second time, and two spellings of "certify this class" is two records of what happened.
-func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build string, verdicts, evidence map[string]string) error {
+func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build string, verdicts, evidence map[string]string, rows map[string]Certificate) {
 	verdict, said := runWorkload(in, reg, m, w)
-	// A machine nobody reached proved nothing, so nothing is written down about it. This is
-	// the whole correction: the row that said `FAIL ... build=Host\x20key\x20verification`
-	// was a record of this tool's own failure, filed as the bench's.
-	if verdict == VerdictUnreachable {
-		verdicts[w.Class], evidence[w.Class] = verdict, said
+	verdicts[w.Class], evidence[w.Class] = verdict, said
+	// Two things that are not verdicts about the machine, and neither is written down: a
+	// machine nobody reached proved nothing, and work nobody let finish proved nothing. The
+	// row that said `FAIL ... build=Host\x20key\x20verification` was a record of this
+	// tool's own failure filed as the bench's, and a FAIL for `exec sleep` under a
+	// one-millisecond bound is a judgement on work that never ran.
+	if verdict == VerdictUnreachable || verdict == VerdictTimeout {
+		// A row from an earlier attempt in this run would now be a lie by omission: the run
+		// ends knowing less than it did, and the record must say so rather than keep the
+		// older verdict as though it were this run's.
+		delete(rows, w.Class)
 		fmt.Fprintf(in.Stderr, "CERTIFY %s %s %s reason=%s\n",
-			oneline.Field(m.Name), oneline.Field(w.Class), VerdictUnreachable,
+			oneline.Field(m.Name), oneline.Field(w.Class), verdict,
 			oneline.Quote(oneline.Cap(said, EvidenceCap)))
-		in.unreachableEvent(m, w.Class, said)
-		return nil
+		in.unansweredEvent(m, w.Class, verdict, said)
+		return
 	}
-	cert := Certificate{
+	// ONE ROW PER (machine, class) PER RUN. The repair round certifies a class a second
+	// time, and appending both left the record holding two verdicts for one pass -- the
+	// first of them a failure that was no longer true when the run ended. The rows are held
+	// and written once the machine's pass is over, so the record carries the FINAL verdict.
+	rows[w.Class] = Certificate{
 		Machine: m.Name, Build: build, Hash: in.Hash, Class: w.Class,
 		Verdict: verdict, Evidence: said, At: in.Now().UTC(),
 	}
-	if err := AppendCertificate(in.Certs, cert); err != nil {
-		return err
-	}
-	in.event(cert)
-	verdicts[w.Class], evidence[w.Class] = verdict, said
 	line := fmt.Sprintf("CERTIFY %s %s %s evidence=%s",
 		oneline.Field(m.Name), oneline.Field(w.Class), verdict,
 		oneline.Quote(oneline.Cap(said, EvidenceCap)))
 	if verdict == VerdictOK {
 		fmt.Fprintln(in.Stdout, line)
-		return nil
+		return
 	}
 	// A WARN and a FAIL both go to stderr, where a person looking for what to do next looks.
 	// A WARN changes neither the count that gates nor the exit.
 	fmt.Fprintln(in.Stderr, line)
+}
+
+// writeRows puts one machine's pass on the record: one row per class, in class order, each
+// with the verdict the run ENDED on. It is called once per machine rather than once at the
+// end, so a fleet run interrupted halfway keeps what it proved about the machines it
+// finished.
+func (in CertifyInput) writeRows(rows map[string]Certificate) error {
+	classes := make([]string, 0, len(rows))
+	for class := range rows {
+		classes = append(classes, class)
+	}
+	sort.Strings(classes)
+	for _, class := range classes {
+		cert := rows[class]
+		if err := AppendCertificate(in.Certs, cert); err != nil {
+			return err
+		}
+		in.event(cert)
+	}
 	return nil
 }
 
@@ -732,7 +768,7 @@ func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build st
 //
 // It NEVER credits a repair. The classes it re-runs are run by the same workloads through
 // the same wall, and the certificate that comes out is the certificate `fill` reads.
-func (in CertifyInput) repair(reg *Registry, m Machine, build string, loads []Workload, verdicts, evidence map[string]string) (*escalation, error) {
+func (in CertifyInput) repair(reg *Registry, m Machine, build string, loads []Workload, verdicts, evidence map[string]string, rows map[string]Certificate) (*escalation, error) {
 	if in.DryRun || len(failedClasses(verdicts)) == 0 {
 		return nil, nil
 	}
@@ -775,9 +811,7 @@ func (in CertifyInput) repair(reg *Registry, m Machine, build string, loads []Wo
 			if verdicts[w.Class] != VerdictFail || len(ItemsForClass(w.Class)) == 0 {
 				continue
 			}
-			if err := in.certifyOne(reg, m, w, build, verdicts, evidence); err != nil {
-				return nil, err
-			}
+			in.certifyOne(reg, m, w, build, verdicts, evidence, rows)
 		}
 	}
 	failed := failedClasses(verdicts)
@@ -1057,11 +1091,11 @@ func (in CertifyInput) escalationEvent(e escalation, build string) {
 	_ = l.Write(in.Log)
 }
 
-// unreachableEvent is the third thing the stream carries: not a certificate and not an
-// escalation, but this tool saying it could not ask. WARN and not ERROR -- nothing about the
+// unansweredEvent is the third thing the stream carries: not a certificate and not an
+// escalation, but this tool saying it could not ask, or could not wait long enough. WARN and not ERROR -- nothing about the
 // machine is known to be wrong -- and it names the transport so a dashboard can tell a fleet
 // with a broken bench from a coordinator with a broken ssh.
-func (in CertifyInput) unreachableEvent(m Machine, class, reason string) {
+func (in CertifyInput) unansweredEvent(m Machine, class, verdict, reason string) {
 	if in.Log == nil {
 		return
 	}
@@ -1074,7 +1108,7 @@ func (in CertifyInput) unreachableEvent(m Machine, class, reason string) {
 	l.Event = "certify"
 	l.Level = "WARN"
 	l.Bench = m.Name
-	l.Msg = fmt.Sprintf("certify unreachable: %s %s transport=%s reason=%s", m.Name, class, m.SSH, reason)
+	l.Msg = fmt.Sprintf("certify %s: %s %s transport=%s reason=%s", strings.ToLower(verdict), m.Name, class, m.SSH, reason)
 	l.Err = reason
 	_ = l.Write(in.Log)
 }
@@ -1112,12 +1146,15 @@ func workloadsFor(loads []Workload, m Machine) []Workload {
 // found: if this answer is the transport failing, nothing else is asked of that machine, and
 // the reason is carried to every one of its classes. Eleven doomed ssh attempts teach a
 // person nothing the first one did not.
-func machineBuild(in CertifyInput, m Machine) (string, string) {
+func machineBuild(in CertifyInput, m Machine) (build, reason, token string) {
 	out, err := runScript(in, m, "build", BuildScript)
-	if reason, bad := TransportFailure(out, err); bad {
-		return "", reason
+	if errors.Is(err, ErrTimeout) {
+		return "", oneline.Err(err), VerdictTimeout
 	}
-	return BuildVersion(out), ""
+	if said, bad := TransportFailure(out, err); bad {
+		return "", said, VerdictUnreachable
+	}
+	return BuildVersion(out), "", ""
 }
 
 // BuildScript is the one question every certification asks first: what build is installed
@@ -1172,15 +1209,29 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	case ForgeRegistry:
 		return registryTruth(in, reg, m)
 	}
-	out, err := runScript(in, m, w.Class, certifyScript(in, w))
+	script := certifyScript(in, w)
+	// The branch comes BEFORE the run, not after it. Written the other way round -- run,
+	// then decide -- the ssh had already happened, which is exactly the fault `where` exists
+	// to prevent, and no test of the embedded set could see it because the only coordinator
+	// workloads there ask the forge and run no script at all.
+	out, err := "", error(nil)
+	if w.Where == WhereCoordinator {
+		out, err = runHere(in, w.Class, script)
+	} else {
+		out, err = runScript(in, m, w.Class, script)
+	}
 	// The evidence is the WHOLE LINE the expect matched, not the matched text: `^GO OK` is
 	// four characters and `GO OK go version go1.26.5 linux/amd64 ok 0.4s` is the answer a
 	// person reading the certificate in a month actually needs.
 	if line, ok := matchedLine(w.Expect, out); ok {
 		return VerdictOK, line
 	}
-	// Reaching the machine comes before judging it. This order is deliberate: a machine that
-	// printed the marker WAS reached, whatever else came back.
+	// Reaching the machine comes before judging it, and letting the work FINISH comes before
+	// both. The order is deliberate: a machine that printed the marker was reached and did
+	// finish, whatever else came back.
+	if errors.Is(err, ErrTimeout) {
+		return VerdictTimeout, oneline.Err(err)
+	}
 	if reason, bad := TransportFailure(out, err); bad {
 		return VerdictUnreachable, reason
 	}
@@ -1234,11 +1285,37 @@ func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	return VerdictOK, fmt.Sprintf("roles=%s online=%d prefix=%s", m.RoleList(), online, prefix)
 }
 
+// ErrTimeout is the work not finishing inside this run's bound. It is a sentinel because
+// what a Remote returns for a killed child is its own business -- `signal: killed` from
+// exec, a context error from another -- and the DISTINCTION must not depend on the wording.
+var ErrTimeout = errors.New("the work did not finish inside the timeout")
+
 func runScript(in CertifyInput, m Machine, class, script string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
 	defer cancel()
 	remote, _ := in.remoteFor(m)
-	return remote.Run(ctx, m.SSH, script)
+	out, err := remote.Run(ctx, m.SSH, script)
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded) {
+		return out, fmt.Errorf("%w (%s)", ErrTimeout, in.Timeout)
+	}
+	return out, err
+}
+
+// runHere runs a coordinator workload's body ON THE COORDINATOR. `where: coordinator` is not
+// only about the forge: a workload that asks whether `gh` is authenticated, or whether the
+// queue is where it should be, is a question about THIS machine, and the first draft sent
+// its body down the ssh pipe to the bench -- which is the one thing `where` exists to stop.
+func runHere(in CertifyInput, class, script string) (string, error) {
+	if in.Local == nil {
+		return "", fmt.Errorf("no coordinator runner is wired, and a %s workload never opens an ssh; inject a fleet.Remote as Local", WhereCoordinator)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
+	defer cancel()
+	out, err := in.Local.Run(ctx, "", script)
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded) {
+		return out, fmt.Errorf("%w (%s)", ErrTimeout, in.Timeout)
+	}
+	return out, err
 }
 
 // remoteFor is the transport for one machine: the local runner when the machine IS this
@@ -1318,11 +1395,6 @@ func TransportFailure(out string, err error) (string, bool) {
 				return line, true
 			}
 		}
-	}
-	// A timeout is the transport failing too: the machine may be perfectly able to do the
-	// work and simply not have answered inside the bound this run gave it.
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "the machine did not answer inside the timeout", true
 	}
 	return "", false
 }
