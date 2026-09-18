@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,7 +118,7 @@ func HarvestWorking(in HarvestInput) int {
 		if out.line != "" {
 			list.Line(out.line)
 		}
-		markHarvested(j.dir)
+		markHarvestedLocal(j.dir)
 	}
 	list.More()
 
@@ -393,9 +394,10 @@ func cloneDir(jobDir string) string {
 	return jobDir
 }
 
-// markHarvested writes the one empty marker atomically; an existing marker is
-// left untouched.
-func markHarvested(jobDir string) {
+// markHarvestedLocal writes the one empty marker beside a job in THIS filesystem,
+// atomically; an existing marker is left untouched. harvestbench.go has the bench-shell
+// twin that touches the same marker over ssh.
+func markHarvestedLocal(jobDir string) {
 	path := filepath.Join(jobDir, ".harvested")
 	if _, err := os.Stat(path); err == nil {
 		return
@@ -421,7 +423,15 @@ func appendHarvestLog(working, line string) {
 
 // installHarvestTimer gives the harvest a clock the bench owns: the two systemd
 // user units carrying the harvest's own flags, then daemon-reload and enable.
+//
+// SYSTEMD IS LINUX'S, so this refuses anywhere else by name instead of leaving
+// two files nothing will ever read in somebody's home. On windows it was worse
+// than useless: os.UserHomeDir there is %USERPROFILE%, so the units landed in
+// the real profile of whoever ran it.
 func installHarvestTimer(in HarvestInput) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("the harvest timer is systemd's and systemd is linux's; this bench is %s, so run the harvest from its own scheduler", runtime.GOOS)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err

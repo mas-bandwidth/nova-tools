@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -318,6 +319,25 @@ func TestHarvestWorkingTimerInstall(t *testing.T) {
 	arglog := filepath.Join(working, "argv.log")
 	fakeTool(t, specs, "systemctl", fakeSpec{Log: arglog})
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
+
+	// THE TIMER IS SYSTEMD'S AND SYSTEMD IS LINUX'S. Off linux the install
+	// refuses and names the platform; this test used to fake systemctl on PATH
+	// and assert the units everywhere, which passed on darwin by accident and
+	// failed on windows, where os.UserHomeDir is %USERPROFILE% and the units
+	// went to the runner's real profile instead of the HOME set here.
+	if runtime.GOOS != "linux" {
+		_, errs, code := wkRun(t, HarvestInput{Working: working, Root: "x", Base: "0123456789ab", SinceStamp: "2026-09-15T00:00:00Z", Timer: "install", Max: 20})
+		if code == 0 {
+			t.Fatalf("timer install exit = 0 on %s, want a refusal", runtime.GOOS)
+		}
+		if !strings.Contains(errs, "systemd is linux's") || !strings.Contains(errs, runtime.GOOS) {
+			t.Fatalf("the refusal does not say systemd is linux's and name %s: %q", runtime.GOOS, errs)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".config", "systemd", "user")); err == nil {
+			t.Fatalf("a refused install still made a unit directory under %s", home)
+		}
+		return
+	}
 
 	_, _, code := wkRun(t, HarvestInput{Working: working, Root: "x", Base: "0123456789ab", SinceStamp: "2026-09-15T00:00:00Z", Timer: "install", Max: 20})
 	if code != 0 {
