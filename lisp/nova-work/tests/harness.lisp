@@ -123,9 +123,7 @@ that path is left exactly as it was found, and the next candidate is tried. The
 path is pushed onto *OWNED-FIXTURES* only after the mkdir has returned, so a
 directory this run did not create is never recorded and never cleaned up."
   (let ((base (or parent (suite-root))))
-    ;; RED: one shot, no retry. A taken candidate fails EEXIST here.
-    (declare (ignorable attempts))
-    (loop for attempt from 0 below 1
+    (loop for attempt from 0 below attempts
           for path = (concatenate 'string base (%fixture-candidate name attempt))
           do (handler-case
                  (progn
