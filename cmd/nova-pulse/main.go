@@ -20,7 +20,7 @@ import (
 const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
@@ -603,6 +603,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	templates := f.fs.String("templates", "", "")
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
+	validateContract := f.fs.Bool("validate-contract", false, "")
 	max := f.fs.Int("max", bounded.Default, "")
 	probe := f.fs.Bool("probe", false, "")
 	history := f.fs.String("history", "", "")
@@ -621,15 +622,16 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.Cut(pulse.CutInput{
-		Pool:      *pool,
-		Templates: *templates,
-		Out:       *out,
-		Root:      *root,
-		Max:       *max,
-		Probe:     *probe,
-		History:   *history,
-		Budget:    *probeBudget,
-		Stdout:    stdout,
-		Stderr:    stderr,
+		Pool:             *pool,
+		Templates:        *templates,
+		Out:              *out,
+		Root:             *root,
+		Max:              *max,
+		Probe:            *probe,
+		History:          *history,
+		Budget:           *probeBudget,
+		ValidateContract: *validateContract,
+		Stdout:           stdout,
+		Stderr:           stderr,
 	})
 }
