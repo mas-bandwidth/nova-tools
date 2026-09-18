@@ -366,6 +366,21 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		return batchRefused(stderr, err)
 	}
 
+	// EDGE 5: AN EMPTY BATCH IS ANSWERED BEFORE THE SUITE RUNS.
+	//
+	// Every member was dropped, so the head IS the base and the gate is about to spend two
+	// minutes proving that the base is green -- which the base's own CI proved before it
+	// got there. Worse, it printed BATCH OK, and that receipt is the one thing `land`
+	// takes: the caller pushed a branch identical to dev, opened a pull request, waited
+	// for CI, and was refused at the end for the reason this line could have given at the
+	// start. The verdict is FAIL because no batch was built, and it comes out here,
+	// before the first step, with the same fields every other verdict carries.
+	if len(members) == 0 {
+		fmt.Fprintf(stdout, "BATCH FAIL %s step=none packages=none tests=none reason=%q\n",
+			batchLine(in, baseSHA, headSHA, members, dropped, nil), "every member dropped")
+		return 1
+	}
+
 	env := ciTestEnv(tmp, in.gomaxprocs)
 	// EDGE 2: THE SKIPPED STEPS ARE ON THE VERDICT LINE. `BATCH SKIP lisp reason="sbcl is
 	// not on this machine"` went to stderr and `BATCH OK` said nothing about it, so the
@@ -606,7 +621,16 @@ func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start 
 			return nil, nil, batchRefused(stderr, aerr)
 		}
 		dropped = append(dropped, n)
-		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, "the merge conflicts with the members ahead", since(start))
+		// WHAT IT REALLY CONFLICTS WITH (dogfood round 5, edge 5). The reason was always
+		// "the merge conflicts with the members ahead" -- but the first member has no
+		// members ahead of it, so the line named an empty set and sent a reader looking
+		// for a member that was not there. With nothing merged yet the tree IS the base,
+		// and the base is what it conflicts with.
+		reason := "the merge conflicts with the members ahead"
+		if len(members) == 0 {
+			reason = "the merge conflicts with the base"
+		}
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, reason, since(start))
 	}
 	return members, dropped, 0
 }

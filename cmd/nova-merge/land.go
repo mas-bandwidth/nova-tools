@@ -96,6 +96,14 @@ type landRun struct {
 }
 
 func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
+	// THE RULE FIRST, AND THE PART OF IT THE INVOCATION SETTLES BEFORE ANY FORGE READ
+	// (dogfood round 5, edge 3). A receipt that is a BATCH FAIL line, or one whose batch
+	// dropped every member, is refused with the host untouched: the forge cannot change
+	// what the caller typed, and a refusal that costs two round trips is two round trips
+	// spent on an answer that was already in hand.
+	if err := merge.RuleBeforeTheForge(in.pr, in.receipt); err != nil {
+		return landRefused(stderr, oneline.Cap(err.Error(), oneline.TailBytes))
+	}
 	host := deps.NewHost(in.repo, in.timeout)
 	data, err := host.PR(in.pr)
 	if err != nil {
@@ -106,6 +114,15 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 	if strings.EqualFold(strings.TrimSpace(data.Mergeable), "CONFLICTING") {
 		return landRefused(stderr, fmt.Sprintf("pull request %d conflicts with its base; build the batch again on the base as it stands: nova-merge batch --name <name> --pr <list>", in.pr))
+	}
+	// AND THE REST OF THE RULE AS SOON AS THE HEAD IS NAMED, which is the one read it
+	// needs. The rollup below is a second, slower read that answers a different question,
+	// and "this head is not a batch's" never needed to wait for it. The door asks this
+	// same function again on the way through: the rule lives in one place.
+	if err := merge.Admissible(merge.EnqueuePR{
+		Number: in.pr, HeadRef: data.HeadRef, HeadSHA: data.HeadOID, Receipt: in.receipt,
+	}); err != nil {
+		return landRefused(stderr, oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	// THE PULL REQUEST'S OWN CHECKS, read on its head. A batch that went green on a bench
 	// and red on the forge is a batch that does not land -- and a pull request with no
@@ -146,9 +163,13 @@ func landRefused(stderr io.Writer, why string) int {
 }
 
 // landCouldNotRun is exit 2: gh could not be reached, a flag was unusable, a read failed.
-// It is a different exit code from a refusal because a caller retries one and not the other.
+// It is a different exit code from a refusal because a caller retries one and not the
+// other -- and, since dogfood round 5, a DIFFERENT WORD. Both exits printed `LAND
+// REFUSED`, so "this does not enter the queue" and "the forge could not be read" were one
+// line to anything reading the stream, and the exit code was the only thing that told them
+// apart. A reader who has the line has the answer.
 func landCouldNotRun(stderr io.Writer, why string) int {
-	fmt.Fprintf(stderr, "LAND REFUSED: %s\n", oneline.Escape(why))
+	fmt.Fprintf(stderr, "LAND ERROR: %s\n", oneline.Escape(why))
 	return 2
 }
 
