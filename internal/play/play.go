@@ -26,7 +26,7 @@ type Note struct {
 
 // Reply is a response to a Note.
 type Reply struct {
-	ID        string    // sha12 of author+note at creation
+	ID        string // sha12 of author+note at creation
 	Author    string
 	Note      string
 	CreatedAt time.Time

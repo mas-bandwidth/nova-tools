@@ -40,6 +40,11 @@ says ANCHOR STALE instead of silently reassigning notes to the wrong place.
 
 Flags come before positional arguments. Exit codes: 0 success, 1 anchor
 conflict, 2 could not run.
+
+example:
+  nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+  nova-play read --source story.txt
+  nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
 `
 
 func refuse(stderr io.Writer, what string) int {
