@@ -165,7 +165,11 @@ func TestSetCheckRefusalsExitTwo(t *testing.T) {
 		{"no sub-verb", []string{"set"}, "set check --file"},
 		{"unknown sub-verb", []string{"set", "walk"}, "set check --file"},
 		{"no --file", []string{"set", "check"}, "--file is required"},
-		{"a missing file", []string{"set", "check", "--file", filepath.Join(t.TempDir(), "nope.lisp")}, "no such file"},
+		// The refusal names the PATH, not the operating system's wording for what
+		// went wrong with it: Windows says "The system cannot find the file
+		// specified" where Unix says "no such file", and a test that pinned either
+		// spelling would be red on the other platform. The windows leg found this.
+		{"a missing file", []string{"set", "check", "--file", filepath.Join(t.TempDir(), "nope.lisp")}, "nope.lisp"},
 		{"an unexpected argument", []string{"set", "check", "--file", good, "extra"}, "unexpected argument"},
 		{"a plan is not a work set", []string{"set", "check", "--file", write(t, "p.work", `(:plan :version 1)`)}, "not a work set"},
 		{"an empty registry", []string{"set", "check", "--file", good, "--minds", write(t, "empty.json", `{"comment":"no rows"}`)}, "names no minds"},
