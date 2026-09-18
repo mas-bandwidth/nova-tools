@@ -2321,7 +2321,10 @@ paragraphs are the normative text and these ten lines are the index.
     rewrites the day file between the lock and the push is exit 1
     `reason=changed`.
 32. A fixture ledger and a fixture swarm root of cards whose receipts carry
-    `repo` and `rc`: `sum --swarm-root` writes one ledger row per `(model,
+    `repo` and `rc`, and a usage receipt is named from SPEC-WORK's `:attempt`
+    `:usage` pointer by its **`usage:<receipt-id>`** form, `receipt-id` a
+    32-character hexadecimal string and the shape the two specs join on:
+    `sum --swarm-root` writes one ledger row per `(model,
     repo)` pair with `repo` from the receipt, `completed` counting only the
     `rc=0` cards, and `usd_per_task` equal to `usd / completed` to six
     decimals; a pair with `completed=0` writes `usd_per_task=-`, never a

@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -420,6 +421,11 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	}
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = wt
+	// The verdict is a property of the range, never of the environment mutate was
+	// started in. A caller's GOFLAGS=-json -- which is what CI's `make test`
+	// exports -- would make this run answer in JSON, no `--- PASS:` line would
+	// match below, and the unit that stayed green would be counted red.
+	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		var ee *exec.ExitError

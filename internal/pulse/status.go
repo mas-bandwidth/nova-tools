@@ -35,6 +35,7 @@ type StatusInput struct {
 	Queue          string // the queue directory: pending, launched, done, failed and the state files
 	Roots          string // comma-separated bench roots, the benches in scope
 	SlotsStores    string // comma-separated bench slot-lease stores to report utilisation for
+	Batches        string // the directory holding the swarm's batch-*.out outputs; empty claims nothing
 	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
 	Max            int
 	Timeout        time.Duration
@@ -84,6 +85,19 @@ func Status(in StatusInput) int {
 	dayStart, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return refusal(in.Stderr, "STATUS", fmt.Errorf("--day wants YYYY-MM-DD, got %q (say the day the window starts at)", in.Day))
+	}
+	// The swarm's health is read BEFORE anything prints: a --batches that names nothing
+	// readable is a refusal, not a quiet zero folded into a report that already started.
+	var batches batchReading
+	haveBatches := strings.TrimSpace(in.Batches) != ""
+	if haveBatches {
+		var berr error
+		batches, berr = readBatchOutputs(strings.TrimSpace(in.Batches))
+		if berr != nil {
+			return refusal(in.Stderr, "STATUS", fmt.Errorf(
+				"--batches %s cannot be read (%s); it wants the directory holding the swarm's batch-*.out outputs, or leave it out to say nothing about the swarm",
+				oneline.Field(in.Batches), oneline.Err(berr)))
+		}
 	}
 	hourStart := now.Add(-time.Hour)
 
@@ -178,6 +192,23 @@ func Status(in StatusInput) int {
 
 	merged, toolNames := mergedTools(prs, dayStart, now)
 	fmt.Fprintf(out, "STATUS TOOLS merged_since_adoption=%d %s\n", merged, strings.Join(toolNames, ", "))
+
+	// SWARM, FAULT and PIT-STOP: the machinery's own health, and only when --batches said
+	// where to read it. One reason recurring pitStopAt times is the whole point of the
+	// line: stop and fix it, because more cards through a broken machine is the most
+	// expensive thing this fleet does.
+	if haveBatches {
+		fmt.Fprintln(out, batches.swarmLine())
+		faults := bounded.Capped(out, in.Max, "STATUS", "fault", "--max 0 to show every reason")
+		for _, f := range batches.faults {
+			faults.Line(fmt.Sprintf("STATUS FAULT reason=%s count=%d", oneline.Field(f.reason), f.n))
+		}
+		faults.More()
+		if len(batches.faults) > 0 && batches.faults[0].n >= pitStopAt {
+			fmt.Fprintf(out, "STATUS PIT-STOP reason=%s count=%d remedy=fix the machinery before more cards\n",
+				oneline.Field(batches.faults[0].reason), batches.faults[0].n)
+		}
+	}
 
 	starved := false
 	for _, store := range splitList(in.SlotsStores) {

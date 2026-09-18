@@ -44,6 +44,8 @@ usage:
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
   nova-sandbox check [--max <n>]
+  nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--read <dir>]...
+               [--container <disk>] -- <command> <args...>          (darwin)
   nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
   nova-sandbox worktree --repo <dir> --scratch <dir> --prune
   nova-sandbox version
@@ -80,6 +82,22 @@ usage:
                   proves the wall's other checks (issue #881).
   --max <n>       how many lines a listing prints before one MORE line stands for
                   the rest. Default 20, and 0 means all.
+
+run gives one command a DISPOSABLE place to work and then takes it away: on darwin
+an APFS volume of its own in the boot container, quota'd by --size and mounted at
+/Volumes/nova-<n>. That volume is the only --write, the command runs in a process
+group of its own, and on exit -- normal, error, signal or --timeout -- the group is
+killed and the volume is unmounted and DELETED. Nothing of the run survives on the
+boot volume, so there is no cleanup step. A delete that fails prints SANDBOX LEAK
+with the one command that removes it and exits 3.
+
+  --name <n>      run only: the volume is nova-<n>. Letters, digits, - _ and .
+  --size <s>      run only: the volume's quota, e.g. 8g or 64m. REQUIRED: a
+                  disposable place with no ceiling can fill the boot disk.
+  --timeout <d>   run only: a Go duration after which the whole process group is
+                  killed and the volume deleted anyway. Exit 124.
+  --container <d> run only: the APFS container to make the volume in. Default:
+                  the container the boot volume is in.
 
 Every path is yours and none is guessed: a --read, a --write, a --cwd or a --tmp
 that does not exist is a refusal and is NOT created. HOME must resolve inside a
@@ -120,6 +138,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return 0
 	case "check":
 		return checkVerb(stdout)
+	case "run":
+		return runVerb(args[1:], stdin, stdout, stderr, env)
 	case "worktree":
 		return worktreeVerb(args[1:], stdout, stderr, env)
 	case "policy":

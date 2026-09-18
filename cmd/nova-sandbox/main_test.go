@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -575,6 +577,7 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "nova-sandbox")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
 	build.Dir = root
+	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the tool: %v\n%s", err, out)
 	}
@@ -1355,6 +1358,7 @@ func toolBinary(t *testing.T) string {
 	bin := filepath.Join(t.TempDir(), "nova-sandbox")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
 	build.Dir = repoRoot(t)
+	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the tool: %v\n%s", err, out)
 	}
