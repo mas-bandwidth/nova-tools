@@ -78,9 +78,9 @@ func TestReceiptsFormatAndValidation(t *testing.T) {
 
 	t.Run("invalid receipt id is refused", func(t *testing.T) {
 		for _, id := range []string{
-			"abcdef0123456789abcdef01234567",   // 31 characters
+			"abcdef0123456789abcdef01234567",    // 31 characters
 			"abcdef0123456789abcdef0123456789x", // 'x' is not hex
-			"ABCDEF0123456789ABCDEF0123456789", // uppercase is not accepted
+			"ABCDEF0123456789ABCDEF0123456789",  // uppercase is not accepted
 		} {
 			bad := strings.Join([]string{
 				"2026-09-15", "m", "r", id, "n", "implementation", "s",

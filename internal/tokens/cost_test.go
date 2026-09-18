@@ -4,9 +4,9 @@ import "testing"
 
 func TestCostNodeAggregation(t *testing.T) {
 	receipts := []CostReceiptRow{
-		{NodeID: "a", Stage: "builder", PricedTokens: 1000, UnpricedTokens: 200, Usd: 50_000},  // $0.05
-		{NodeID: "a", Stage: "review", PricedTokens: 300, UnpricedTokens: 0, Usd: 15_000},        // $0.015
-		{NodeID: "a", Stage: "repair", PricedTokens: 0, UnpricedTokens: 500, Usd: 0},             // no rate
+		{NodeID: "a", Stage: "builder", PricedTokens: 1000, UnpricedTokens: 200, Usd: 50_000},   // $0.05
+		{NodeID: "a", Stage: "review", PricedTokens: 300, UnpricedTokens: 0, Usd: 15_000},       // $0.015
+		{NodeID: "a", Stage: "repair", PricedTokens: 0, UnpricedTokens: 500, Usd: 0},            // no rate
 		{NodeID: "b", Stage: "builder", PricedTokens: 9999, UnpricedTokens: 9999, Usd: 999_999}, // another node
 	}
 

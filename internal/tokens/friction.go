@@ -19,7 +19,7 @@ import (
 type FrictionEntry struct {
 	ID          string
 	Tokens      int64
-	Rough       bool // the cost was recorded with a `~`, an estimate rather than a count
+	Rough       bool  // the cost was recorded with a `~`, an estimate rather than a count
 	WallSeconds int64 // wall clock in seconds; required to be > 0 when Rough
 	Gap         string
 	Tool        string
