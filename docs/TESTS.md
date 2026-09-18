@@ -373,8 +373,6 @@ A first sitting is three runs: one refusal (three cards into two slots), one who
 
 ### First run
 
-### First run
-
 A first sitting is three runs: one pulse that starts its cards, the check that says they started, and the refusal when every slot in the range is held.
 
 ```
