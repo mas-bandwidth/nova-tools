@@ -46,10 +46,52 @@ func TestMain(m *testing.M) {
 	// The lab fixture newLab copies is built under this directory too, so it is
 	// removed with it.
 	labFixtureRoot = dir
+	// THE LOCK CLOCK IS INJECTED. merge.Lock's bounded wait is a deadline read from a
+	// clock and a sleep between polls, and a test that must exercise a verb's
+	// --timeout would otherwise hold the machine's clock for those seconds -- which is
+	// exactly the wall time the slowtests budget refuses. Every test in this package
+	// drives the same process, so one locked clock stands in for the real one; only
+	// the lock wait reads it.
+	injectLockClock()
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
+
+// lockClock is the injected clock merge.Lock reads: a mutex-guarded instant that Sleep
+// advances, so a wait of seconds runs to its end in a few hundred iterations and no
+// test's elapsed time carries the deadline. It is safe for the package's parallel tests
+// because every advance and read is serialised here.
+type lockClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (c *lockClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *lockClock) Sleep(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+// injectLockClock points the merge package's two wait seams at one fake clock for the
+// whole package run. The instant is the tests' own fixed instant, so nothing in a lock
+// refusal depends on the machine's time either. The clock is kept in lockClk so a
+// timeout test can assert how far the wait advanced without reading the wall clock.
+func injectLockClock() {
+	lockClk = &lockClock{at: time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC)}
+	merge.Now = lockClk.Now
+	merge.Sleep = lockClk.Sleep
+}
+
+// lockClk is the fake clock the lock wait reads, for a test that asserts on how long the
+// verb waited: the wait is measured in injected time, never in wall time.
+var lockClk *lockClock
 
 type lab struct {
 	t      *testing.T
@@ -58,6 +100,9 @@ type lab struct {
 	work   string // a clone the test uses to make commits
 	lane   string
 	host   *merge.FakeHost
+	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
+	// gh of these tests, and it reaches nothing.
+	queue  QueueReader
 	now    time.Time
 	build  string
 	runner merge.Runner
@@ -278,6 +323,12 @@ func (l *lab) deps() Deps {
 			return l.remote
 		},
 		NewHost: func(string, time.Duration) merge.Host { return l.host },
+		NewQueue: func(string, time.Duration) QueueReader {
+			if l.queue != nil {
+				return l.queue
+			}
+			return nil
+		},
 		BuildID: func() string { return l.build },
 	}
 }

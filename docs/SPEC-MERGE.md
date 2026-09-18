@@ -1468,7 +1468,16 @@ Every script and hand step sketched on the bench becomes an official verb, and t
 ```
 nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
 nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
 ```
+
+**`simulate`.** It merges the queue's entries onto `origin/<base>` in order in a scratch
+worktree under the repository's own `.git`, runs every check after each squash-merge, and
+names the first entry that turns the base red: `SIMULATE OK #<n>` for each that passes,
+`SIMULATE CONFLICT #<n> with the entries ahead` for one that conflicts (skipped, and the
+entries after it still judged), and `SIMULATE POISON #<n> check="<check>" <first failing
+line>` for the first red one, with `SIMULATE DONE entries=<n> ok=<n> conflicts=<n>
+poison=<#n|none>` and exit 2 when a poison was found, 1 when it could not run at all.
 
 **What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
 

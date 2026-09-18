@@ -1,8 +1,8 @@
 package main
 
 // The fleet verb and its sub-verbs (SPEC-PULSE ## Fleet, issue #880 items 14, 16 and 17).
-// The work is internal/pulse/fleet.go; ssh comes from --ssh so a test puts a fake on PATH and
-// no test reaches a machine.
+// The work is internal/pulse/fleet.go and internal/pulse/fleetadd.go; ssh comes from --ssh so a
+// test puts a fake on PATH and no test reaches a machine.
 //
 // Issue #880 item 13: the benches live in one tab-separated file kept in git, and
 // `fleet survey` runs tools/bench-standard.sh on every bench over ssh and folds the
@@ -12,6 +12,11 @@ package main
 // The ssh child is `ssh <target> bash -s` with the standard script on its stdin, so a
 // test fakes ssh on PATH and no test reaches the network. The benches run in parallel
 // under --timeout, then print in file order so the one-line-per-bench reading is stable.
+//
+// `fleet add <bench>` admits a bench to the loop only on a fully green fleet-probe record
+// (rule R): it reads the fleet-probe read-back, refuses unless every runner name is green
+// (naming the runner that is not and the run id), and on green writes PULSE_ROOTS and the
+// runner labels. No other verb writes those two.
 
 import (
 	"bytes"
@@ -47,10 +52,12 @@ type fleetSurveyResult struct {
 
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (survey, suspend, wake, reboot, secrets)")
+		return refuse(stderr, " fleet", "a sub-verb is required (add, survey, suspend, wake, reboot, secrets)")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "add":
+		return cmdFleetAdd(rest, stdout, stderr)
 	case "survey":
 		return cmdFleetSurvey(rest, stdout, stderr)
 	case "suspend":
@@ -62,8 +69,36 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	case "secrets":
 		return cmdFleetSecrets(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are add, survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
 	return 2
+}
+
+func cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		refuse(stderr, " fleet add", "a bench label is required; refusing to guess")
+		return 2
+	}
+	bench := args[0]
+	f := newFlags("fleet add")
+	queue := f.fs.String("queue", "", "")
+	roots := f.fs.String("roots", "", "")
+	probe := f.fs.String("probe", "", "")
+	if !f.parse(args[1:], stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory PULSE_ROOTS and the runner labels hang under")
+	f.want(*roots, "roots", "the swarm roots PULSE_ROOTS will hold, comma separated")
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.FleetAdd(pulse.FleetAddInput{
+		Bench:  bench,
+		Queue:  *queue,
+		Roots:  *roots,
+		Probe:  *probe,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
 }
 
 func cmdFleetSuspend(args []string, stdout, stderr io.Writer) int {
