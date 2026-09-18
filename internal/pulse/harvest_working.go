@@ -22,16 +22,16 @@ import (
 // roots harvest already folds. Every path comes from a flag, the disposition is
 // one typed class, and .harvested is the only state.
 
-// harvestClass is the one typed disposition of a job, never inferred from a log
+// jobClass is the one typed disposition of a job, never inferred from a log
 // (rule 4, the typed decision behind the floor of card 8336).
-type harvestClass string
+type jobClass string
 
 const (
-	classFixed        harvestClass = "fixed"
-	classAlreadyFixed harvestClass = "already-fixed"
-	classNoChange     harvestClass = "no-change"
-	classFailed       harvestClass = "failed"
-	classOffBranch    harvestClass = "off-branch"
+	classFixed        jobClass = "fixed"
+	classAlreadyFixed jobClass = "already-fixed"
+	classNoChange     jobClass = "no-change"
+	classFailed       jobClass = "failed"
+	classOffBranch    jobClass = "off-branch"
 )
 
 // classFloor is the confidence a class decision must clear to stand alone; below
@@ -102,7 +102,7 @@ func HarvestWorking(in HarvestInput) int {
 	r.base12 = r.resolveBase(jobs, in.Working)
 
 	list := bounded.Capped(in.Stdout, in.Max, "HARVEST", "job", "--max <n>")
-	counts := map[harvestClass]int{}
+	counts := map[jobClass]int{}
 	pushed, prs := 0, 0
 	for _, j := range jobs {
 		// .harvested is the marker and the only state: a job already carrying it
@@ -135,7 +135,7 @@ func HarvestWorking(in HarvestInput) int {
 	return 0
 }
 
-func total(counts map[harvestClass]int) int {
+func total(counts map[jobClass]int) int {
 	n := 0
 	for _, c := range counts {
 		n += c
@@ -167,13 +167,13 @@ type pullRequest struct {
 }
 
 type workingOutcome struct {
-	class  harvestClass
+	class  jobClass
 	line   string
 	pushed int
 	prs    int
 }
 
-func (out workingOutcome) with(class harvestClass) workingOutcome {
+func (out workingOutcome) with(class jobClass) workingOutcome {
 	out.class = class
 	return out
 }
@@ -272,7 +272,7 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 		oneline.Field(r.base12), took)}
 }
 
-func (r *workingRun) jobLine(j harvestJob, class harvestClass, branch, pr, commit string) string {
+func (r *workingRun) jobLine(j harvestJob, class jobClass, branch, pr, commit string) string {
 	return fmt.Sprintf("HARVEST JOB label=%s class=%s branch=%s pr=%s commit=%s base=%s took=%s",
 		oneline.Field(j.label), class, oneline.Field(branch), oneline.Field(pr),
 		oneline.Field(commit), oneline.Field(r.base12), tookMillis(r.clock, j.dir))
