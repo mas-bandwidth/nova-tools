@@ -626,6 +626,38 @@ func TestFriendSequenceLocalModelCard(t *testing.T) {
 	}
 }
 
+// TestNativeAllowsProviderLoopback: a keyless provider (baseURL, no apiKey) whose baseURL
+// names a loopback host:port is carried into the wall as --net-allow <host:port>, so the
+// harness can reach the local model. The wall's nopromise grant (allow network-outbound
+// (remote ip)) does NOT cover 127.0.0.1, so a local-model card died silently without this
+// named grant (issue #591).
+func TestNativeAllowsProviderLoopback(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	label := "a-label"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root,
+		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the keyless loopback provider runs walled, got exit %d:\n%s", code, errOut.String())
+	}
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
+	if !strings.Contains(argv, "--net-allow 127.0.0.1:11434") {
+		t.Errorf("the wall argv does not carry the loopback allow rule:\n%s", argv)
+	}
+}
+
 // TestNativeRunRefusalsNameTheirReason drives the remaining three refusals -- a model with
 // no provider prefix, an auth file looser than 0600, and a slot outside its root -- so each
 // prints its one REFUSED line.

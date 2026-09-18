@@ -84,6 +84,11 @@ var swarmAudit = audit.Config{
 		// and writes only dataHome/auth.json, which is the child's credential, not this
 		// binary's line.
 		`"context"`, `"crypto/sha256"`, `"encoding/base64"`, `"encoding/hex"`, `"encoding/json"`,
+		// native.go (issue #591) needs net and net/url to read the keyless provider's
+		// loopback host:port out of the carried config; neither writes a stream, so neither
+		// can write past the escape: url.Parse reads the baseURL string and net.SplitHostPort
+		// / net.JoinHostPort / net.ParseIP split, join and classify a host, holding no writer.
+		`"net"`, `"net/url"`,
 		// publish.go (slice 7) needs bytes and it writes to no stream. bytes.Buffer only
 		// holds the trimmed stdout/stderr of the git and gh children it samples, and every
 		// one of those strings is put through oneline.Field or oneline.Err before this
