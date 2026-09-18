@@ -255,7 +255,8 @@ FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
     ...+<n> more lines
 CANCELLED job="<name>" step="<name>" after=<d>
 TIMEOUT job="<name>" pkg=<pkg> running=<TestA,TestB,TestC,+<n>>
-FAILED OK jobs=<n> tests=<n>
+NOLOG job="<name>" reason="<the forge's own words>"
+FAILED OK jobs=<n> tests=<n> [unread=<n>]
 ```
 
 A job name and a step name are QUOTED rather than escaped as fields: `test (3/4
@@ -268,6 +269,15 @@ rest are COUNTED, the same cap-and-count rule `slowtests` uses; the `running=`
 list is capped at three the same way. The closing `FAILED OK` line always
 prints, and its counts are the truth about the run whether or not every line
 printed. `running=none` is said out loud rather than left blank.
+
+**A log the forge will not give is a LINE.** A job whose log cannot be read is
+`NOLOG job="<name>" reason="<the forge's own words>"`, and `unread=<n>` joins the
+closing count; the run is still exit 1, and every other failing job still
+reports. The specimen is a job CANCELLED while its run is still in progress,
+whose log blob the forge answers `404 BlobNotFound` for until the run finishes:
+refusing the whole run over that hides every other job's red, which is the one
+thing this verb exists to surface. It was found by running the verb on its own
+pull request the hour it was written.
 
 **Its exit codes.** 0 when the run said nothing red, 1 when it said something,
 2 on a refusal. `failed` is a READER, so a red run is exit 1 — the caller asked
@@ -322,7 +332,9 @@ fake forge:
 7. Only the jobs that did not succeed are read, `--job` reads exactly one, and a
    `--job` matching none of them refuses with their names rather than reporting
    a green run.
-8. Every refusal above exits 2, writes nothing on stdout and ends at the door,
+8. A job whose log the forge will not hand over is a `NOLOG` line and an
+   `unread=` count, and the run's other failing jobs still report in full.
+9. Every refusal above exits 2, writes nothing on stdout and ends at the door,
    and `failed --help` opens the verb's own door without asking a forge anything.
 
 ## The CI class test against a real network host on the CI path
@@ -646,7 +658,8 @@ cancelled sibling as silence.
 `TestStripLogLineTakesTheWrapperAndNothingElse`,
 `TestARunReadsOnlyTheJobsThatDidNotSucceed`,
 `TestTheJobFilterReadsOnlyThatJobsLog`,
-`TestAJobFilterThatMatchesNothingSaysWhichJobsFailed` and
+`TestAJobFilterThatMatchesNothingSaysWhichJobsFailed`,
+`TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport` and
 `TestTheSelectorReachesTheForgeUntouched` (`internal/ci/failed_test.go`), over
 four real job logs in `internal/ci/testdata/failed/`, with the verb run end to
 end in `cmd/nova-ci/failed_test.go`.
@@ -658,7 +671,8 @@ input wants — `--repo` as `<owner>/<name>`, exactly one of `--run`, `--pr` and
 **Its narrowings.** It reads only the jobs whose conclusion is not `success` or
 `skipped`, and only the two shapes `go test` prints; a failure that is neither a
 `--- FAIL`, a `-json` fail frame nor a timeout panic — a compile error, a
-runner that died — is left to the log, which `--job` then narrows to one. Full
+runner that died — is left to the log, which `--job` then narrows to one. A log
+it cannot read at all is a `NOLOG` line and an `unread=` count, never a refusal. Full
 section: *The failing tests of a run*.
 
 ### `removeall` — no `os.RemoveAll` of a computed path

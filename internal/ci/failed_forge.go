@@ -89,7 +89,13 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 		report.Cancels = append(report.Cancels, CancelledSteps(j)...)
 		log, err := f.JobLog(j.ID)
 		if err != nil {
-			return runID, FailedReport{}, fmt.Errorf("job %d (%s): %w", j.ID, j.Name, err)
+			// One log the forge will not hand over is a LINE, not the end of the
+			// report. The forge answers 404 (BlobNotFound) for a cancelled job's log
+			// while its run is still in progress, and refusing the whole run over
+			// that would hide every other job's red -- which is exactly what this
+			// verb exists to surface. Say which job, and say why.
+			report.Unread = append(report.Unread, Unread{Job: j.Name, Reason: oneline.Err(err)})
+			continue
 		}
 		failures, timeouts := ParseJobLog(j.Name, log)
 		report.Failures = append(report.Failures, failures...)

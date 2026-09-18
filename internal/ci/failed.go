@@ -58,17 +58,29 @@ type Timeout struct {
 	Running []string
 }
 
+// Unread is one job whose log the forge would not hand over, with the reason it gave. It
+// is a LINE, never a refusal that sinks the run: everything the other jobs said is still
+// what the caller asked for. The specimen is a job cancelled while its run is still in
+// progress, whose log blob the forge answers 404 for until the run finishes.
+type Unread struct {
+	Job    string
+	Reason string
+}
+
 // FailedReport is everything one run's failing jobs said.
 type FailedReport struct {
-	Jobs     int // jobs whose log this report read
+	Jobs     int // failing jobs this report looked at, read or not
 	Failures []TestFailure
 	Cancels  []Cancellation
 	Timeouts []Timeout
+	Unread   []Unread
 }
 
-// Empty is true when the run's failing jobs held nothing this tool recognises.
+// Empty is true when the run's failing jobs held nothing this tool recognises. A log it
+// could not read is NOT nothing: it is the one thing a reader must be told about, or they
+// will read a short report as a small failure.
 func (r FailedReport) Empty() bool {
-	return len(r.Failures) == 0 && len(r.Cancels) == 0 && len(r.Timeouts) == 0
+	return len(r.Failures) == 0 && len(r.Cancels) == 0 && len(r.Timeouts) == 0 && len(r.Unread) == 0
 }
 
 // ExitCode is 1 when the run said anything red, 0 when it said nothing. A refusal is the
@@ -80,14 +92,21 @@ func (r FailedReport) ExitCode() int {
 	return 1
 }
 
-// SummaryLine is the closing line: the jobs read and the failing tests found, whether or
-// not every line printed.
+// SummaryLine is the closing line: the failing jobs looked at and the failing tests
+// found, whether or not every line printed. A job whose log could not be read is counted
+// in unread= so the reader knows the report is short for a reason, and the field is
+// omitted when there is nothing to say.
 func (r FailedReport) SummaryLine() string {
-	return fmt.Sprintf("FAILED OK jobs=%d tests=%d", r.Jobs, len(r.Failures))
+	line := fmt.Sprintf("FAILED OK jobs=%d tests=%d", r.Jobs, len(r.Failures))
+	if n := len(r.Unread); n > 0 {
+		line += fmt.Sprintf(" unread=%d", n)
+	}
+	return line
 }
 
-// Lines renders the whole report: one block per failing test, then the cancellations and
-// timeouts, then the summary. maxLines bounds each test's own output; zero or less means
+// Lines renders the whole report: one block per failing test, then the cancellations, the
+// timeouts and the logs it could not read, then the summary. maxLines bounds each test's
+// own output; zero or less means
 // the default rather than unlimited, because an unbounded log is the thing this tool
 // exists to replace.
 //
@@ -124,6 +143,10 @@ func (r FailedReport) Lines(maxLines int) []string {
 	for _, t := range r.Timeouts {
 		out = append(out, fmt.Sprintf("TIMEOUT job=%s pkg=%s running=%s",
 			oneline.Quote(t.Job), oneline.Field(t.Package), runningList(t.Running)))
+	}
+	for _, u := range r.Unread {
+		out = append(out, fmt.Sprintf("NOLOG job=%s reason=%s",
+			oneline.Quote(u.Job), oneline.Quote(oneline.Cap(u.Reason, oneline.TailBytes))))
 	}
 	return append(out, r.SummaryLine())
 }

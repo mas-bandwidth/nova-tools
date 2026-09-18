@@ -409,6 +409,44 @@ func TestAJobFilterThatMatchesNothingSaysWhichJobsFailed(t *testing.T) {
 	}
 }
 
+// (12b) A log the forge will not hand over is a NOLOG line, not the end of the report:
+// every other failing job in the run still reports. This is the real specimen -- the
+// forge answers 404 for a cancelled job's log while its run is still in progress -- and
+// it was found by running this verb on its own pull request.
+func TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport(t *testing.T) {
+	f := runFixtureForge(t)
+	delete(f.logs, 3) // the studio job's log: gone, as a cancelled job's blob is
+	_, report, err := ReadFailedRun(f, RunSelector{Run: 35375346271}, "")
+	if err != nil {
+		t.Fatalf("one unreadable log sank the whole run: %v", err)
+	}
+	if len(report.Unread) != 1 || report.Unread[0].Job != "test (3/4 studio)" {
+		t.Fatalf("unread = %+v, want the one job whose log was gone", report.Unread)
+	}
+	if len(report.Failures) != 5 {
+		t.Errorf("%d failing tests, want the windows job's 5 -- the other jobs still report", len(report.Failures))
+	}
+	if len(report.Timeouts) != 1 {
+		t.Errorf("%d timeouts, want the darwin one", len(report.Timeouts))
+	}
+	if got := report.SummaryLine(); got != "FAILED OK jobs=3 tests=5 unread=1" {
+		t.Errorf("summary = %q, want unread= counted so a short report is not read as a small failure", got)
+	}
+	lines := report.Lines(1)
+	var nolog string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "NOLOG ") {
+			nolog = l
+		}
+	}
+	if !strings.HasPrefix(nolog, `NOLOG job="test (3/4 studio)" reason="`) {
+		t.Errorf("NOLOG line = %q", nolog)
+	}
+	if report.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1: a job whose log is missing is not a green run", report.ExitCode())
+	}
+}
+
 // (13) The selector reaches the forge in the caller's own words, so --pr --merge-group is
 // one question to the forge rather than a branch this tool guessed.
 func TestTheSelectorReachesTheForgeUntouched(t *testing.T) {

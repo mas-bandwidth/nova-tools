@@ -41,7 +41,8 @@ output (a job name is quoted, because it is what you paste back into --job):
       <the test's own message lines, indented as it printed them>
   CANCELLED job="<name>" step="<name>" after=<d>
   TIMEOUT job="<name>" pkg=<pkg> running=<tests, three then a count>
-  FAILED OK jobs=<n> tests=<n>
+  NOLOG job="<name>" reason="<a log the forge would not give; the run still reports>"
+  FAILED OK jobs=<n> tests=<n> [unread=<n>]
 
 exit codes: 0 nothing red in the run, 1 the run said something red,
             2 the invocation could not run (bad flag, no run, gh could not answer).

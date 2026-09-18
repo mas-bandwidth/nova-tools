@@ -188,6 +188,34 @@ func TestFailedRefusals(t *testing.T) {
 	}
 }
 
+// (e2) A log the forge will not give is a NOLOG line and an unread= count, not a refusal:
+// the run's other failing jobs still report. Found by running this verb on its own PR.
+func TestFailedPrintsNologForALogTheForgeWillNotGive(t *testing.T) {
+	forge := &stubForge{
+		jobs: []ci.FailedJob{
+			{ID: 2, Name: "test-windows-pr (0)", Conclusion: "failure"},
+			{ID: 8, Name: "e2e", Conclusion: "cancelled"},
+		},
+		logs: map[int64]string{2: forgeFixture(t, "windows-sandbox.log")},
+	}
+	code, stdout, stderr := runFailed(t, forge, "--repo", "owner/name", "--run", "1", "--max-lines", "1")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, `NOLOG job="e2e" reason="`) {
+		t.Errorf("no NOLOG line for the job whose log was gone:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "FAILED OK jobs=2 tests=5 unread=1") {
+		t.Errorf("the summary does not count the unread log:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "test=TestDenialsInsideTheAllowedSetAreNotReported") {
+		t.Errorf("one missing log sank the other job's report:\n%s", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q; a missing log is a line, not a refusal", stderr)
+	}
+}
+
 // (f) A forge that cannot answer is a refusal in one line, not a stack trace.
 func TestAForgeThatCannotAnswerIsOneLine(t *testing.T) {
 	forge := &stubForge{err: fmt.Errorf("no merge_group run for pull request 1370 of owner/name")}
