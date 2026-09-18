@@ -1,0 +1,95 @@
+# nova-card: the card-runner image.
+#
+# One image, one job: run a card's work — build and test nova-tools Go code,
+# run the Lisp kernel, drive the opencode harness — as a non-root user inside a
+# container, with the workspace bind-mounted at /work.
+#
+# Nothing secret is baked in. No keys, no tokens, no SSH material, no git
+# identity. Credentials reach a run only as environment variables the host
+# passes at `podman run` time, and on the host those come from
+# `nova-secrets exec`, never from a file inside the image.
+#
+# Build (context is the repo root, so the staged harness binary is reachable):
+#   podman build -t nova-card:<sha> -f infra/image/Containerfile .
+#
+# See infra/image/README.md for the staging step and the run contract.
+
+FROM docker.io/library/ubuntu:24.04
+
+# Pinned toolchain versions and their upstream sha256 sums. Both archives are
+# fetched from the vendor over TLS and verified here; a mismatch fails the
+# build. The SBCL sum is the official 2.5.8 x86-64 Linux binary tarball, byte
+# identical to the copy already on the benches.
+ARG GO_VERSION=1.26.5
+ARG GO_SHA256=5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053
+ARG SBCL_VERSION=2.5.8
+ARG SBCL_SHA256=103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
+
+# The card user. Fixed uid/gid so the host can map onto it deterministically
+# (see the run contract in the README).
+ARG CARD_UID=10001
+ARG CARD_GID=10001
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      build-essential \
+ && rm -rf /var/lib/apt/lists/*
+
+# Go, under /usr/local/go.
+RUN curl -fsSL -o /tmp/go.tar.gz \
+      "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+ && printf '%s  /tmp/go.tar.gz\n' "${GO_SHA256}" | sha256sum -c - \
+ && tar -C /usr/local -xzf /tmp/go.tar.gz \
+ && rm -f /tmp/go.tar.gz \
+ && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+ && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
+ && /usr/local/bin/go version
+
+# SBCL, installed under /usr/local by the tarball's own install script.
+RUN curl -fsSL -o /tmp/sbcl.tar.bz2 \
+      "https://downloads.sourceforge.net/project/sbcl/sbcl/${SBCL_VERSION}/sbcl-${SBCL_VERSION}-x86-64-linux-binary.tar.bz2" \
+ && printf '%s  /tmp/sbcl.tar.bz2\n' "${SBCL_SHA256}" | sha256sum -c - \
+ && mkdir -p /tmp/sbcl \
+ && tar -C /tmp/sbcl -xjf /tmp/sbcl.tar.bz2 \
+ && (cd "/tmp/sbcl/sbcl-${SBCL_VERSION}-x86-64-linux" && INSTALL_ROOT=/usr/local sh install.sh) \
+ && rm -rf /tmp/sbcl /tmp/sbcl.tar.bz2 \
+ && SBCL_HOME=/usr/local/lib/sbcl /usr/local/bin/sbcl --version
+
+# The opencode harness binary, copied from the bench. It is staged into the
+# build context first (see README); it is not tracked in git — it is a 176 MB
+# vendor executable, and a source repository ships no built executables.
+COPY --chmod=0755 infra/image/opencode /usr/local/bin/opencode
+
+# /usr/local/bin is on the default login-shell PATH, and the two Go symlinks
+# above live there, so `bash -lc` sees the whole toolchain even though
+# /etc/profile rewrites PATH from scratch. This ENV covers non-login shells.
+ENV PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    SBCL_HOME=/usr/local/lib/sbcl \
+    HOME=/home/card \
+    GOPATH=/home/card/go \
+    GOCACHE=/home/card/.cache/go-build \
+    GOMODCACHE=/home/card/go/pkg/mod \
+    GOTOOLCHAIN=local
+
+# The workspace is always bind-mounted from the host and owned by the host
+# user, so git would otherwise refuse it as "dubious ownership". The container
+# is a single-tenant throwaway holding the one workspace we handed it, so this
+# check buys nothing here and costs every git command.
+RUN git config --system --add safe.directory '*'
+
+RUN groupadd --gid "${CARD_GID}" card \
+ && useradd --uid "${CARD_UID}" --gid "${CARD_GID}" \
+      --home-dir /home/card --create-home --shell /bin/bash card \
+ && mkdir -p /work /home/card/go /home/card/.cache \
+ && chown -R card:card /work /home/card
+
+USER card
+WORKDIR /work
+VOLUME /work
+
+CMD ["bash"]
