@@ -153,19 +153,13 @@ jobs:
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
         # code is not the product here — the output is.
         shell: bash
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "not gofmt-clean:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: make fmt
 
       - name: build
-        run: go build ./...
+        run: make build
 
       - name: vet
-        run: go vet ./...
+        run: make vet
 
   test-packages:
     # The list the CL tier's test shards run on, READ OUT OF THE SOURCE rather
@@ -457,7 +451,7 @@ jobs:
       # packages. The whole-tree `go build ./...` still runs once, in lint.
       - name: vet
         if: matrix.entry.packages != ''
-        run: go vet ${{ matrix.entry.packages }}
+        run: make vet PKGS="${{ matrix.entry.packages }}"
 
       - name: test
         if: matrix.entry.packages != ''
@@ -471,7 +465,14 @@ jobs:
         # and an Intel Mac at load 2; the cards make those packages fast. Until they land the budget is 300 s here so
         # a mechanical red does not hold dev, and every CI-SLOW line is still printed for the coordinator. This covers
         # the Intel Mac benches too (about 3x slower per core than the Studio) that cards 9352 to 9354 make fast.
-        run: go test -json -count=1 -timeout 5m ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
+        # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make cmd/nova-swarm, cmd/nova-pulse and
+        # internal/swarm fast, on the Intel Mac benches (about 3x slower per core than the Studio), where the alert still
+        # prints every CI-SLOW line but the budget is 300 s. Dated exception, 2026-09-18; remove with those cards.
+        # All of it now lives in the Makefile's `test` target: the Makefile is the
+        # one entry for the CL test, and the shard travels in PKGS; the target tees
+        # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
+        # exactly as the inline command here did.
+        run: make test PKGS="${{ matrix.entry.packages }}"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
@@ -521,10 +522,10 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: build
-        run: go build ./...
+        run: make build
 
       - name: vet
-        run: go vet ./...
+        run: make vet
 
       - name: test (shard ${{ matrix.shard }} of 4)
         # Four shards per OS, dealt by package order (stable: go list sorts), so a
@@ -548,8 +549,9 @@ jobs:
           # killing the job silently. The two-minute rule is met by gating the
           # multi-process bus tests behind -short on hosted legs (issue filed); until
           # that lands, a slow package must not panic the leg. It is the ceiling, not
-          # the target.
-          go test -short -count=1 -timeout 12m $pkgs
+          # the target. The Makefile's test-short carries the same 12m ceiling, and
+          # the shard travels in PKGS.
+          make test-short PKGS="$(echo $pkgs)"
 
   plan-merge:
     # How many shard slots this merge group needs, decided before any leg starts.
@@ -727,7 +729,7 @@ jobs:
             tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
             if [ -z "$tests" ]; then
               if [ "$shard" -eq 0 ]; then
-                go test -count=1 -timeout 100s "$pkg"
+                make test-merge PKGS="$pkg"
               fi
               continue
             fi
@@ -743,7 +745,7 @@ jobs:
               echo "shard $shard of $n: no tests from $pkg"
               continue
             fi
-            go test -count=1 -timeout 100s -run "^(${names})$" "$pkg"
+            make test-merge PKGS="$pkg" RUN="^(${names})$"
           done
 
   test-hosted-pr:
@@ -826,7 +828,7 @@ jobs:
 
       - name: test the packages this leg filters
         if: steps.filter.outputs.changed == 'true'
-        run: go test -short -count=1 ${{ matrix.leg.packages }}
+        run: make test-short PKGS="${{ matrix.leg.packages }}"
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
@@ -872,7 +874,7 @@ jobs:
           go version
 
       - name: friend sequences
-        run: go test -count=1 -timeout 1m -run TestFriendSequence ./cmd/...
+        run: make test-e2e
 
   lisp-changes:
     # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
@@ -966,7 +968,7 @@ jobs:
         # quicklisp, no download — and runs every acceptance case; the script
         # exits non-zero on any failure. The 120 s budget is the job's
         # timeout-minutes above.
-        run: ./tools/ci/lisp-test.sh
+        run: make test-lisp
 
   # fleet-probe: prove a bench's runners BEFORE the loop trusts them (Glenn, 2026-09-16:
   # "run some tests to make sure that hulk and vision actually work, before trusting them";
