@@ -445,6 +445,10 @@ passed: `gh` and `ssh` each carry their own credential. The three edges to the w
 outside the process — the forge, ssh, the Go toolchain — are interfaces, so no unit test
 here touches the network or a real machine (Glenn's hard rule, 2026-09-17).
 
+This file holds the four verbs' flags and behaviour. What a release IS — the tag, the
+gates it may not be cut without, the adoption topology, the receipts per machine, the
+undo, and what the number on the front means — is [SPEC-RELEASE.md](SPEC-RELEASE.md).
+
 ## Exit codes and the output grammar
 
 Per SPEC.md: **0** every entry current, an `apply` that left the box on the target, or a

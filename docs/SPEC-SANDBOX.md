@@ -529,7 +529,10 @@ boot container are the ordinary user's to run, measured on the Studio (macOS 26,
 arm64, 2026-09-18): rule 2 holds here as it does everywhere else, and a verb
 that needed root would be a different thing than the one measured.
 
-**Every other platform REFUSES**, with `reason=no_sandbox` and one remedy line
+**Windows has its own place**, and it is the *Windows — the disposable place*
+section below: a Job Object plus a per-run scratch directory, with Windows
+Sandbox as the one-off, the same five steps and the same receipt. **Every other
+platform REFUSES**, with `reason=no_sandbox` and one remedy line
 naming the container path to use instead. On linux a card is already disposable
 — it runs *inside its image*, and the image is the container — so the remedy is
 `nova-sandbox --write <dir> -- <command>` with the card's image root as `<dir>`.
@@ -1230,6 +1233,254 @@ reason.
 **Not chosen, and why:** Windows Sandbox is a VM per run and Pro/Enterprise
 only; a restricted token at low integrity blocks writes but not reads; a job
 object has no filesystem scope; WSL2 Landlock forces WSL on everyone.
+
+Those four are rejected as **the wall** — the thing that scopes what a command
+may read and write. Two of them come back below as **the place**, which is a
+different question, and the section says which is which.
+
+## Windows — the disposable place (draft 2, Johnny's read folded in)
+
+The section above is the Windows **wall**: AppContainer, one run, filesystem
+scope. This section is the Windows **place** — the `run` verb's *create → run →
+always delete* — and it is the Windows half of *"build our own minimal isolation
+and hygiene sandboxes"* (Glenn, 2026-09-18), written before the bench arrives so
+that it is not designed under fire (Johnny, 2026-09-18).
+
+It is a draft, read by the security lane (`johnny-860d359211aa`, 2026-09-18) and
+carrying that read: the three questions draft 1 left open are settled in the
+rules that own them and recorded at the end of the section. Every rule below says
+what it is measured on, and **no rule here is measured on a Windows bench yet**:
+the estate has none. Each carries the one call or file it stands on and the red
+test that must be seen red first; the numbers are `W1`…`W12` so that a rule of
+this section is never confused with a rule of the platform-independent set.
+
+**The contract does not change.** `nova-sandbox run --name <n> …` on Windows is
+the same verb with the same five steps, the same receipt, the same leak line and
+the same exit codes as the darwin section: look, create, run, **kill**, delete;
+`SANDBOX DONE name=<n> exit=<code> wall=<s> freed=<bytes>` on the way out;
+`SANDBOX LEAK …` and exit **3** when the place could not be removed; **124** on
+`--timeout`; **125** for every refusal of the tool's own. A caller writes one
+argv for three platforms and reads one grammar back. What differs is named here
+and nowhere else.
+
+W1. **The place is a Job Object plus a per-run scratch directory, and the two
+    are one unit.** The Job Object is the Windows answer to the darwin section's
+    process group — step 4, the kill — and the scratch directory is the
+    disposable place itself. Neither alone is the verb: a job with no scratch
+    leaves the run's files on the profile, and a scratch with no job leaves a
+    survivor holding a handle to the directory the tool is about to delete.
+    **Red test:** `a-windows-run-creates-both-the-job-and-the-scratch-or-neither`.
+
+W2. **`CreateJobObjectW`, `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and the whole
+    tree dies with the handle.** The limit is set on the job with
+    `SetInformationJobObject(JobObjectExtendedLimitInformation)` **before** any
+    process is in it. Closing the tool's last handle to the job terminates every
+    process still in it — including a grandchild a harness spawned and
+    abandoned — which is the property the darwin section gets from killing a
+    process group. `JOB_OBJECT_LIMIT_BREAKAWAY_OK` and
+    `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK` are **never** set: breakaway is
+    exactly how a tree escapes the kill.
+    **Red tests:** `a-grandchild-dies-with-the-job`;
+    `the-job-never-permits-breakaway`.
+
+W3. **The child is put in the job at creation, not after it.**
+    `InitializeProcThreadAttributeList` +
+    `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_JOB_LIST)` on the same
+    attribute list that already carries `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`
+    (the wall, rule 3 of the section above), then one `CreateProcessW` with
+    `EXTENDED_STARTUPINFO_PRESENT`. `CreateProcess` followed by
+    `AssignProcessToJobObject` leaves a window in which the child is alive and
+    outside the job, and a child that spawns inside that window is a survivor the
+    kill never reaches. The wall and the place are therefore applied by **one**
+    call, and there is no ordering between them to get wrong.
+    **Red test:** `the-child-is-in-the-job-before-its-first-instruction`.
+
+W4. **The caps are the job's, and they are `--memory` and `--cpu`.**
+    `JOBOBJECT_EXTENDED_LIMIT_INFORMATION.ProcessMemoryLimit` and
+    `JobMemoryLimit` carry `--memory`; `JOBOBJECT_CPU_RATE_CONTROL_INFORMATION`
+    with `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE|_HARD_CAP` carries `--cpu` as a
+    percentage of one machine's total cycles. This is the one place in this tool
+    that limits CPU or memory at all, and it is a **deliberate exception** to
+    *What it deliberately does not do* — on darwin and linux a runaway worker is
+    still the deadline's problem, because a process group and a Landlock domain
+    carry no such limit and a promise kept on one platform only is worse than no
+    promise. Both flags are accepted and ignored on `darwin` and `linux`, the way
+    `--name` already is, so one caller builds one argv for three platforms.
+    A `--memory` or `--cpu` that is not a positive quantity is
+    `SANDBOX REFUSED reason=bad_memory` / `reason=bad_cpu` at 125.
+    **Both flags belong to the `run` verb and to nothing else** (Johnny,
+    2026-09-18): the bare exec wrapper does not take them and refuses them as
+    unknown flags, because the wrapper builds a wall and a wall carries no
+    limits, while `run` makes a place and the Job Object is part of the place.
+    **Red tests:** `a-child-over-the-memory-cap-is-killed-by-the-job`;
+    `memory-and-cpu-are-accepted-and-ignored-off-windows`;
+    `the-bare-wrapper-refuses-memory-and-cpu-as-unknown-flags`.
+
+W5. **The scratch is a directory the tool makes under `--scratch`, it is the
+    run's only `--write`, and it is deleted on every path out.** `<scratch>/nova-<n>`,
+    created by the tool, refused if it already exists (`reason=volume_exists`,
+    the same token darwin uses for the same mistake — a run never joins a place
+    it did not make). Inside it, `work` is the working directory, `home` is rule
+    9's `HOME`, and rule 8's temp directory defaults inside it, which puts `TEMP`
+    and `TMP` on the scratch too. The AppContainer SID is granted read+write on
+    it and on nothing else the run created. `--read` passes through unchanged, so
+    a shared toolchain or reference checkout is still read in place and never
+    copied. `--scratch` is **required** on windows and must be an existing
+    absolute path: there is no default, no `%TEMP%`, no `%USERPROFILE%`
+    (`reason=bad_scratch`).
+    **Red test:** `the-windows-scratch-is-the-only-write-and-is-gone-afterwards`.
+
+W6. **`--size` is refused on windows, because Windows has no per-directory disk
+    ceiling this tool can enforce without elevation.** NTFS quotas are per user
+    per volume; a directory quota is FSRM, a server role; a per-run quota is a
+    VHDX, and creating or attaching one needs administrator rights, which rule 2
+    forbids this tool from requiring. So `--size` on windows is
+    `SANDBOX REFUSED reason=size_unenforceable` at **125**, with two remedies on
+    the line: run under `--place wsb` (W8), whose whole disk is discarded, or
+    name a `--scratch` on a volume the caller has already sized. **A ceiling the
+    tool only measures is not a ceiling**, and the precedent is rule 7's
+    `net_unenforceable`: a promise this tool cannot enforce is a refusal, never a
+    note. On darwin `--size` stays required, because there the APFS volume quota
+    is real.
+    **Red test:** `size-on-windows-is-refused-not-approximated`.
+
+W7. **The delete is a tree removal, and it is tried only after the job is
+    closed.** In order: close the job handle (W2 kills the tree), wait for the
+    processes to be reaped, then remove `<scratch>/nova-<n>`. `freed=` is read by
+    walking the tree immediately before the removal — there is no `statfs` for a
+    directory. A removal that fails with `ERROR_SHARING_VIOLATION`,
+    `ERROR_ACCESS_DENIED` or `ERROR_DIR_NOT_EMPTY` is retried for a bounded
+    window, because Defender and the search indexer hold transient handles on
+    files a run has just written, and only then is it a leak:
+
+    ```
+    SANDBOX LEAK name=<n> volume=<path> remedy="rmdir /s /q <path>"
+    ```
+
+    exit **3**, whatever the command's own status was — a caller that read `0`
+    would believe the machine was clean.
+    **Red tests:** `a-held-handle-is-retried-before-it-is-a-leak`;
+    `a-windows-leak-exits-3-and-names-the-one-command-that-removes-it`.
+
+W8. **`--place wsb` is Windows Sandbox, and it is the only full disposability
+    Windows offers.** A `.wsb` file is written per run — `<MappedFolders>` one
+    per `--read` with `<ReadOnly>true</ReadOnly>` and one for the scratch
+    writable, `<Networking>Disable</Networking>` unless the run allows it,
+    `<MemoryInMB>` from `--memory`, and a `<LogonCommand>` that runs the command
+    — and `WindowsSandbox.exe <file>` starts it. The guest's disk is discarded
+    when the window closes, so *nothing of the run survives* is the platform's
+    guarantee rather than a delete this tool must get right. It is Pro and
+    Enterprise only and the optional feature must already be enabled: absent,
+    `SANDBOX REFUSED reason=no_wsb` at 125, naming the edition and the feature.
+    **Red test:** `wsb-refuses-on-an-edition-that-has-no-windows-sandbox`.
+
+W9. **`wsb` is one instance at a time, so it is the review place and never the
+    swarm's.** Windows Sandbox permits a single running instance per machine; a
+    pool of workers each wanting one is a queue of one, which is not a pool.
+    **`--place` therefore defaults to `job` and `wsb` is an explicit opt-in**
+    (Johnny, 2026-09-18): the default is the place every Windows machine can
+    make, and the one-off says so on the command line. `wsb` is for the review of
+    an untrusted branch, the first run of a card image, the dependency nobody has
+    read — never the swarm. A second `--place wsb` on a machine already
+    running one is `SANDBOX REFUSED reason=wsb_busy` at 125, naming the running
+    instance — never a silent wait.
+    **Red test:** `a-second-wsb-run-refuses-rather-than-queues`.
+
+W10. **Under `wsb` the exit status comes back through the scratch, and a `wsb`
+    that cannot report one REFUSES.** `WindowsSandbox.exe` returns as soon as the
+    VM is up and carries no guest status, so the `<LogonCommand>` ends by writing
+    the command's own `%ERRORLEVEL%` to `<scratch>/.nova-sandbox-exit` in the
+    mapped writable folder, and the host waits for that file. Johnny, 2026-09-18:
+    *if `.wsb` cannot write an exit-status file, refuse `--place wsb` — do not
+    fake a card exit as 0 on sandbox close.* So a configuration in which the
+    status file cannot be written — no writable mapped folder, a `<LogonCommand>`
+    the tool could not compose — is `SANDBOX REFUSED reason=wsb_no_status` at
+    **125**, before the VM starts. A run whose file never appears is **124** at
+    `--timeout` with the VM closed, and a `wsb` run with no `--timeout` is
+    refused (`reason=bad_timeout`), because without it a guest that never writes
+    the file is a wait with no end. **A clean close is never reported as 0 on the
+    strength of the close alone**: the exit status of a card is the card's, and a
+    fabricated 0 is the one failure that makes every gate downstream believe a
+    run that did not happen. Under `--place job` the status is
+    `GetExitCodeProcess` and none of this arises.
+    **Red tests:** `wsb-refuses-when-it-cannot-report-an-exit-status`;
+    `a-wsb-run-with-no-status-file-times-out-at-124`;
+    `wsb-refuses-a-run-with-no-timeout`;
+    `a-clean-wsb-close-is-never-reported-as-zero`.
+
+W11. **WSL is never the answer. Not as the wall, not as the place, not as a
+    fallback.** WSL2 brings a second operating system, a second filesystem, a
+    second toolchain and a second set of credentials to every friend on Windows,
+    and containment that only holds inside WSL is not containment on Windows —
+    it is containment somewhere else, on a machine the card was not sent to. A
+    build that reaches for WSL when AppContainer, the Job Object or Windows
+    Sandbox is unavailable must **refuse instead**: `reason=no_sandbox` with the
+    remedy naming the edition or the feature, exactly as every other missing
+    backend does (rule 11: there is no switch that turns the wall off).
+    **Red test:** `no-windows-path-reaches-wsl` — a tripwire on every exec site
+    asserting that no argv this tool composes names `wsl`, `wsl.exe` or a
+    `\\wsl$\` path.
+
+W12. **Identity on Windows is a Job Object and process-image question, never a
+    POSIX one.** Johnny, 2026-09-18. The internal verb's third guard — *the child
+    asks the OS for its parent's executable* — is on windows
+    `QueryFullProcessImageNameW` on a handle opened to the parent pid, compared
+    with this binary's own image path, **plus** `IsProcessInJob` asserting the
+    child is in the job the tool created. There is no `proc_pidpath`, no inode,
+    no device number, and a check written against any of those is a check that
+    compiles and answers nothing. The first two guards — the 16 raw bytes on an
+    inherited pipe, the three constant-time copies — are unchanged; an inherited
+    handle is `bInheritHandles` and the `STARTUPINFOEX` handle list, not fd 3.
+    **Red test:** `the-windows-parent-guard-reads-the-image-and-the-job`.
+
+**Secrets on windows.** Rule 6 is unchanged and one clause of it is sharper: a
+credential reaches a run **only as an environment variable set by `nova-secrets
+exec`**, never as a file inside the scratch. A `0600` on NTFS is not a
+permission — the mode bits Go writes are discarded and the file inherits the
+directory's ACL — so a secret written to a file "with the right mode" inside the
+place is a secret readable by anything with the container SID's grant, which is
+the whole run.
+
+**What cannot be promised on Windows, and is therefore not promised.**
+
+- **There is no execute bit.** The executability pre-flight of the exit-codes
+  section stats the resolved path and refuses `reason=not_executable` when it is
+  absent or a directory; on windows the third clause is the **extension against
+  `PATHEXT`**, not a mode. A file that passes the pre-flight and is not a valid
+  PE image fails at `CreateProcessW` and is **126**, the way it already is.
+- **There is no `128+N`.** Windows has no signals; a process the job terminated
+  reports the status `TerminateProcess` gave it. A caller that reads `>128` as
+  *killed by a signal* is reading a unix convention on a platform that has none,
+  and the receipt line — `SANDBOX DONE … exit=…` — is what says how the run
+  ended.
+- **A running `.exe` cannot be replaced in place.** A rename **over** a running
+  image raises `ERROR_SHARING_VIOLATION`; unix's replace-the-inode trick has no
+  equivalent. So a run must never be the thing that updates the tool running it,
+  and anything that installs binaries on windows renames the live file aside
+  first and then moves the new one in ([SPEC-RELEASE.md](SPEC-RELEASE.md) rule
+  12). Inside this verb the consequence is narrower and already handled: the
+  scratch cannot be removed while an image inside it is running, which is why
+  W7's delete comes after W2's kill.
+- **Case, and the length of a path.** NTFS is case-insensitive by default, so
+  two `--read` paths differing only in case are **one** directory and the
+  refusal for a path in both lists must compare case-insensitively on windows.
+  Paths are long-path-prefixed (`\\?\`) before any grant or removal, because a
+  scratch under a deep profile plus a Go module cache reaches `MAX_PATH` in
+  ordinary use.
+- **The tests that cannot run here say so by name.** A POSIX-only test is skipped
+  with `windowsIsNotABench(t)`, the helper `cmd/nova-swarm` already uses, never
+  by weakening the assertion and never silently. The darwin profile is not
+  widened to make a windows test pass, and no windows gap is closed by skipping
+  the wall.
+
+**Settled by the security lane's read** (`johnny-860d359211aa`, 2026-09-18), each
+folded into the rule above that owns it: **`--place` defaults to `job`** and
+`--place wsb` is the opt-in for the one-off, never the swarm (W8, W9);
+**`--memory` and `--cpu` are flags of the `run` verb only**, not of the bare
+exec wrapper (W4); and **a `.wsb` that cannot report the command's exit status
+refuses**, rather than reporting a clean close as 0 (W10). The parent-guard as
+image path plus `IsProcessInJob`, and WSL as a never, were confirmed rather than
+changed. Nothing in this section is open.
 
 ## The probe
 
