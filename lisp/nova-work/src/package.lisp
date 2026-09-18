@@ -730,6 +730,7 @@
     #:undo-request
     #:undo-plan
     #:record-external-effect
+    #:redo-plan
     #:moved-preconditions
     #:redo-request
     ;; roadmap replays (card 8621)
