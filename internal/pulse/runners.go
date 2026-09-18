@@ -45,8 +45,10 @@ const DefaultRunnerIdle = 5 * time.Minute
 const RunnerBusyFile = "runners.busy.tsv"
 
 // RunnerServicesFile maps a runner name to the service that restarts it:
-// name<TAB>host<TAB>kind<TAB>target, kind being systemd (target is the unit) or svc
-// (target is the runner directory holding svc.sh). A host of "-" is this machine.
+// name<TAB>host<TAB>kind<TAB>target, kind being systemd (target is the unit), svc (target is
+// the runner directory holding svc.sh) or runsh (target is the runner directory holding
+// run.sh, supervised by a loop). A host of "-" is this machine. `nova-pulse fleet add`
+// writes these rows, so a runner it stands up is one the reaper can restart.
 const RunnerServicesFile = "runner-services.tsv"
 
 // Runner is one self-hosted runner as the runners API reports it.
@@ -229,8 +231,8 @@ type ServiceRestarter struct {
 type RunnerService struct {
 	Name   string
 	Host   string // "-" or empty is this machine
-	Kind   string // systemd or svc
-	Target string // the unit, or the runner directory holding svc.sh
+	Kind   string // systemd, svc, or runsh (fleet.go's normalizeServiceKind)
+	Target string // the unit, or the runner directory holding svc.sh and run.sh
 }
 
 func (s ServiceRestarter) Restart(name string) error {
@@ -243,14 +245,12 @@ func (s ServiceRestarter) Restart(name string) error {
 		return fmt.Errorf("runner %s has no row in %s (add name<TAB>host<TAB>kind<TAB>target; refusing to guess a service)",
 			name, filepath.Join(s.Queue, RunnerServicesFile))
 	}
-	var command string
-	switch svc.Kind {
-	case "systemd":
-		command = "systemctl restart " + svc.Target
-	case "svc":
-		command = svc.Target + "/svc.sh stop && " + svc.Target + "/svc.sh start"
-	default:
-		return fmt.Errorf("runner %s has kind %q in %s (the kinds are systemd and svc)", name, svc.Kind, RunnerServicesFile)
+	// The three mechanisms live in fleet.go's restartCommand, which `nova-pulse fleet
+	// restart` also calls: the reaper and the verb restart a runner the same way or they
+	// are two tools, and a runner restarted two ways is a runner nobody understands.
+	command, err := restartCommand(svc)
+	if err != nil {
+		return err
 	}
 	timeout := s.Timeout
 	if timeout <= 0 {

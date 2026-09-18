@@ -36,6 +36,10 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse fleet   add <name> --host <ssh> --runners <n> --queue <dir> [--labels <a,b>] [--go <ver>] [--service-kind <k>] [--dry-run]
+nova-pulse fleet   restart <runner> --queue <dir> [--dry-run]
+nova-pulse fleet   probe <name> --queue <dir> [--repo <o/n>] [--job <cmd>] [--keys <a,b>] [--cap <s>]
+nova-pulse fleet   phantoms --repo <o/n> [--force-cancel] [--scan <n>] [--dry-run]
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -133,6 +137,26 @@ from a file of PR states instead of gh, and enqueues into <queue>/enqueued.tsv.
 
 example:
   nova-pulse sweep --repo mas-bandwidth/nova-tools --queue ./queue
+
+fleet is the machines themselves, the four things a person did to them by hand on
+2026-09-16. add stands a machine up: the Go toolchain where the workflow looks for
+it, the actions-runner tarball once, N runners configured under <name>-nova-i with
+a registration token that travels over stdin and is never logged, N services
+started the way that machine starts things, and the rows in <queue>/fleet.tsv and
+<queue>/runner-services.tsv that make every one of them addressable afterwards.
+restart restarts one runner through its own service -- the systemd unit, the
+runner's svc.sh, or the supervised run.sh loop -- by the same service map the
+reaper's rule E2 drives. probe reports the three facts that decide whether a
+machine can take a card: the toolchain, which key files are present (names only,
+never a byte of a key), and a card-shaped job under the cap a card gets; adopt
+runs it before it switches anything over. phantoms finds the runners the API calls
+busy that no in-progress job names -- on 2026-09-16 ten such runs held eight Studio
+runners for two hours -- and with --force-cancel cancels the runs still holding
+their jobs. One line each, counts not lists.
+
+example:
+  nova-pulse fleet phantoms --repo mas-bandwidth/nova-tools --force-cancel
+  nova-pulse fleet add studio --host studio.local --runners 8 --labels self-hosted,macos --queue ./queue
 
 reap collects what the benches leak: processes under a swarm root older than the
 deadline, slot locks whose pid is dead, launched cards whose job directory is gone
