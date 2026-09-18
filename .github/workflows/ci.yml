@@ -126,6 +126,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -206,6 +207,7 @@ jobs:
       packages: ${{ steps.list.outputs.packages }}
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -404,9 +406,14 @@ jobs:
         run: echo "nothing to test for this change"
 
       - name: remove stale build dirs from the shared runner
-        if: matrix.entry.packages != ''
+        if: matrix.entry.packages != '' && runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # A GitHub-hosted runner is fresh: before checkout it has no workspace and
+        # no .git, so the sanity check below cannot hold. The step is guarded to
+        # the self-hosted runners, because the plan spillover can route this shard
+        # to a hosted runner (2026-09-18, run 35304449254: every spilled shard died
+        # here with exit 1 before a single test ran).
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] && [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 1
@@ -860,6 +867,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -904,6 +912,7 @@ jobs:
       changed: ${{ steps.filter.outputs.changed }}
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -949,6 +958,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
