@@ -202,7 +202,12 @@ which the commands below use too:
 
 ```sh
 nova-bus draft --bus . --as Ada --to Bo --subject "first local note" > ../draft.md
-$EDITOR ../draft.md
+```
+
+Open `../draft.md` in your editor, replace the body placeholder, and save it.
+Then send it from the clean bus checkout:
+
+```sh
 nova-bus send --bus . --file ../draft.md --as Ada --remote origin --branch main
 ```
 
@@ -449,10 +454,10 @@ more than a tidy one that quietly guessed.
 missing**, and declaring a copied transcript twice can double-count it. Coverage
 is limited to the sources it supports today. For transcript-backed sources the
 reader scans the supplied transcript tree even when `--day` selects only one
-day's output, so a broad tree can still make a one-day report expensive. In
-`v0.15.2`, unavailable cost is `usd=-`. Development builds can report `usd=0`
-when no price was available for measured tokens; that zero does not by itself
-prove the calls were free. Retained records, broader adapters,
+day's output, so a broad tree can still make a one-day report expensive.
+Development builds can report `usd=0` when no price was available for measured
+tokens; that zero does not by itself prove the calls were free. Retained records,
+broader adapters,
 original-bench attribution and Git ledger publication are **being developed
 separately and do not ship** — do not read the current report as a complete
 cross-harness ledger.
