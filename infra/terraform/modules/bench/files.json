@@ -1,0 +1,50 @@
+{
+  "hygiene-timer": {
+    "content": "[Unit]\nDescription=nova bench hygiene\n\n[Timer]\nOnCalendar=daily\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n",
+    "path": ".config/systemd/user/nova-hygiene.timer",
+    "sha256": "2f31b7501e172a7a4dc24ee147186ebec45eace77fe05a7e74ffe04bb5e14e0b",
+    "witness": true
+  },
+  "mirror-timer": {
+    "content": "[Unit]\nDescription=nova git mirror fetch\n\n[Timer]\nOnCalendar=*:0/15\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n",
+    "path": ".config/systemd/user/nova-mirror.timer",
+    "sha256": "8fe74c80de2f4e946a10e168386b413c74e1cbfe79005c51c2aa1457865ba749",
+    "witness": true
+  },
+  "runner-1": {
+    "content": "[Unit]\nDescription=nova runner 1\n\n[Service]\nEnvironment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin\nEnvironment=HOME=%h\nKillMode=control-group\nTimeoutStopSec=30s\nExecStart=%h/nova-bench/harness/current/runner.sh 1\nRestart=always\n\n[Install]\nWantedBy=default.target\n",
+    "path": ".config/systemd/user/nova-runner-1.service",
+    "sha256": "96339b943cf18394063a95c867f109afea014c9e4d86a7cd8e91b4de8a16d764",
+    "witness": true
+  },
+  "runner-2": {
+    "content": "[Unit]\nDescription=nova runner 2\n\n[Service]\nEnvironment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin\nEnvironment=HOME=%h\nKillMode=control-group\nTimeoutStopSec=30s\nExecStart=%h/nova-bench/harness/current/runner.sh 2\nRestart=always\n\n[Install]\nWantedBy=default.target\n",
+    "path": ".config/systemd/user/nova-runner-2.service",
+    "sha256": "332aec9707dc8479d3d7c23ebc7d95c3d57376fad77c387dbce7fbf1c4452f49",
+    "witness": true
+  },
+  "runner-3": {
+    "content": "[Unit]\nDescription=nova runner 3\n\n[Service]\nEnvironment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin\nEnvironment=HOME=%h\nKillMode=control-group\nTimeoutStopSec=30s\nExecStart=%h/nova-bench/harness/current/runner.sh 3\nRestart=always\n\n[Install]\nWantedBy=default.target\n",
+    "path": ".config/systemd/user/nova-runner-3.service",
+    "sha256": "4f98e138f931e1c37d97bca35e42b66cb4341e11ced7a88c9a865aa9cae00840",
+    "witness": true
+  },
+  "runner-4": {
+    "content": "[Unit]\nDescription=nova runner 4\n\n[Service]\nEnvironment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin\nEnvironment=HOME=%h\nKillMode=control-group\nTimeoutStopSec=30s\nExecStart=%h/nova-bench/harness/current/runner.sh 4\nRestart=always\n\n[Install]\nWantedBy=default.target\n",
+    "path": ".config/systemd/user/nova-runner-4.service",
+    "sha256": "724a88c1762c9d8944e9750e098cb52713ee0daab99ca8dd55ebb99396ea6b0a",
+    "witness": true
+  },
+  "seat-public-key": {
+    "content": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINovaFleetSeatSpacePublicKeyPlaceholder space@seat\n",
+    "path": ".config/nova-secrets/space.pub",
+    "sha256": "badfd215dfe4c78457fd5c12898e834dc3d17accff1791fd3b5379b5b53fb9dd",
+    "witness": true
+  },
+  "shared-cache": {
+    "content": "nova-bench/shared-cache\n",
+    "path": ".config/nova-fleet/shared-cache",
+    "sha256": "02df9121bf746cf0985ee909b31ace671d620890ecf9ecce0e4eb9844e66fe19",
+    "witness": true
+  }
+}
