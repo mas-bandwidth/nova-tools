@@ -245,3 +245,323 @@ hand-written `:node`s only (no `:derive`, `:fold` or `:facts`), builds the needs
 refuses a cycle or an absent need, and writes one card directory per node with the RESULT line,
 branch rule, green list, budget and affinity. The parser tests and `worklang-ready-excludes-a-node-whose-need-is-open`
 are its red tests; benches pull the cards through the pool they already have.
+
+## Part 4 — Amendment 1 (2026-09-18): resources, writes, identity, tools, owners, no barriers
+
+Three sources, one amendment. **Ideas #783** is Patrick's read of the roadmap against Tandem, his
+graph execution engine: admission takes a *resource vector*, not a slot; one authority per physical
+capacity, with nested grants drawn from the parent's reservation; capacity is retained while an
+outcome is uncertain and released only on confirmed termination; input/output *collections* whose
+members are unknown before execution; a tool-provided *semantic key* for invalidation; *retained*
+initialized workers accounted apart from active ones. **Glenn, 2026-09-18** fixed the lane rule:
+a lane is a resource of capacity 1 over an area of the tree, `queue/control/lanes.tsv` is the map,
+and unrelated lanes scatter/gather. **Stella's lease rule** fixed the uncertain one: a lease's
+expiry is UNKNOWN until termination is proved, so expiry alone may never re-grant capacity.
+
+Part 1 stands unchanged; this part adds keys and states, and removes one thing — the barrier.
+
+### The set this amendment is written against
+
+The real work set is `/Users/glenn/rowan-working/work/pitstop-2026-09-17.lisp`, **79 units**, and it
+is not written in Part 1's `(:plan ...)` form at all. It is written as
+
+```lisp
+(work-set "pitstop-2026-09-17"
+  :title "..." :under (:open-root) :inputs (...) :done-when (:all-children-closed)
+  :units ((unit "verb:hygiene" :needs () :pr 1253 :replaces "bench-hygiene.sh" ...)
+          (unit "verb:fill"    :needs ("verb:capacity") :pr 1248 ...)
+          ...))
+```
+
+Measured over those 79 units, with the reader this amendment lands: 61 carry `:title`, 54 carry
+`:needs`, 28 a `:pr`, 20 a `:lane`, 14 an `:owner`, **1** a `:budget`, **1** an `:affinity`, and
+**0 — not one unit — carries `:acceptance`**. Nothing carries `:writes`, `:resources`, `:tools`,
+`:attempts` or `:state`, because until now there was nothing to carry. Before this amendment
+`ParsePlan` refused the file outright with *"not a plan: the top form must be (:plan ...)"*: the
+coordinator's own work set was data no tool in this repo could open. That is the first thing the
+amendment fixes, and every rule below is written so that file still reads after it.
+
+### The rules
+
+Each rule states the contract, gives the grammar for its key, and names the red test that must be
+seen red first. Tests named `worklang-*` live in `internal/worklang` and are landed with this
+amendment; tests named `jobs-*` are the kernel's side of the same rule — the scheduling semantics —
+and are **not** implemented here: this slice is parse-only.
+
+**A1. The work-set form is a plan.** `(work-set "<id>" ... :units (<unit> ...))` is a plan the
+reader reads, and `(unit "<id>" ...)` is a node of it. `:units` is a list of unit forms; a form
+inside a `:derive` template is not a unit of the set. Every key of this amendment is additive: it is
+admitted on a `:node` and on a `unit` alike, so one grammar serves both forms and a file written
+before the amendment reads unchanged after it.
+
+```lisp
+(work-set "<id>" :title "<text>" :under (:open-root) :units ((unit "<id>" <key> <value> ...) ...))
+```
+
+*Red tests:* `worklang-reads-the-real-work-set`; `worklang-node-accepts-the-amendment-keys`.
+
+**A2. A unit has an identity.** The id is the second element of the form, a non-empty string,
+minted once and never reused, never display text (the title is the display text). A unit with no id,
+an empty id, or an id another unit already carries is refused naming the id and the byte. A renamed
+unit is a **new id** carrying `:was "<old id>"`; the old id is never re-pointed, because attempts,
+receipts and evidence are filed under it.
+
+```lisp
+(unit "verb:fill" :was "verb:fill-loop" ...)
+```
+
+*Red test:* `worklang-unit-id-is-stable-and-required`.
+
+**A3. An attempt is a record, not a counter.** `:attempts` is the list of tries at a unit, in order.
+Each carries `:n`, the `:rung` that ran it (the mind or model class), its `:owner`, `:started`, an
+`:outcome` from the closed set `green | red | refused | abandoned | uncertain`, and — for every
+outcome but `uncertain` — a `:proof` of termination: the exit, the merge, the reaped pid, the
+fencing token. An outcome that claims to have ended without proving it is refused, and the refusal
+names the word the author must write instead: `uncertain`. This is #783's "confirmed termination or
+fencing before reuse" written into the file rather than left to a reaper's judgment.
+
+```lisp
+:attempts ((:n 1 :rung "flash" :owner "swarm:flash" :started "2026-09-18T09:10Z"
+            :outcome :red :proof (:kind :exit :value "1"))
+           (:n 2 :rung "child:opus" :owner "Rowan" :started "2026-09-18T10:40Z"
+            :outcome :uncertain))
+```
+
+*Red test:* `worklang-attempt-without-a-termination-proof-is-uncertain`.
+*Kernel:* `jobs-an-uncertain-attempt-is-never-re-granted-on-expiry`.
+
+**A4. `uncertain` is a state.** `:state` is one of `open | ready | live | blocked | uncertain |
+closed | refused | abandoned`. `uncertain` is its own state and not a spelling of open or failed: it
+is what a unit is when its last attempt cannot prove termination. A unit in it **keeps its
+reservation** — the lane, the vector, the warm state — until termination is proved or a fence is
+written. Stella's rule in one line: an expiry is UNKNOWN until termination, so the clock alone never
+frees capacity.
+
+```lisp
+(unit "verb:fill" :state :uncertain ...)
+```
+
+*Red test:* `worklang-uncertain-is-a-state`.
+*Kernel:* `jobs-uncertain-keeps-its-resources`.
+
+**A5. Admission takes a vector, not a slot.** `:resources` is what the unit actually consumes:
+`:cpu`, `:memory-gb`, `:disk-gb`, `:network`, `:gpu`, any named scarce resource as an integer, and
+`:class` for a named scarce class with its `:n` (the darwin runner, an uplink, a GPU queue). A
+download asks for network and no cpu; a compiler asks for cpu and memory. A slot is the degenerate
+one-dimensional case of this vector and stops being the unit of admission. Every value is an
+integer; an entry that is not a `(:<name> <value>)` list is refused, because an admission request is
+never a bare token.
+
+```lisp
+:resources ((:lane "pulse") (:cpu 2) (:memory-gb 4) (:disk-gb 10)
+            (:network 1) (:gpu 0) (:class "darwin-runner" :n 1))
+```
+
+*Red test:* `worklang-resources-are-a-vector-not-a-slot`.
+*Kernel:* `jobs-a-download-asks-for-network-and-no-cpu`.
+
+**A6. A lane is a resource of capacity 1 over an area of the tree.** One entry of that vector is
+`(:lane "<name>")`, and its capacity is always 1. `queue/control/lanes.tsv` is the map: one row per
+lane, `<name>\t<path prefixes>`, today `merge, swarm, pulse, bus, ci, work, decide, docs, sandbox` —
+adding a lane (a `schema` lane, say) is adding a row, and a `:lane` no row names is refused naming
+the lanes file and the remedy. Within a lane units are serial; across lanes they scatter and gather.
+The plain `:lane "<name>"` key the set already writes means exactly this resource, so the 20 units
+that carry it today need no edit; naming the lane twice and differently is refused, because one unit
+sits in one area of the tree and two capacity-1 reservations is double accounting.
+
+```lisp
+:resources ((:lane "docs"))        ; the same thing as :lane "docs", capacity 1, area docs/
+```
+
+*Red test:* `worklang-lane-is-a-resource-of-capacity-one`.
+*Kernel:* `jobs-one-live-unit-per-lane`; `jobs-unrelated-lanes-scatter`.
+
+**A7. `:writes` is what the unit edits, and it serializes across lanes.** `:writes` is the closed
+list of repo-relative paths a unit writes to. Two units whose `:writes` intersect **serialize even
+when their lanes differ**, because the lane is an area of the tree and two areas can still touch one
+file. A path is relative, never absolute and never escaping its repo; either is refused naming the
+path. The reader holds the set; the scheduler computes the intersection.
+
+```lisp
+:writes ("docs/SPEC-WORKLANG.md" "internal/worklang/")
+```
+
+*Red test:* `worklang-writes-are-paths-under-the-repo`.
+*Kernel:* `jobs-intersecting-writes-serialize-across-lanes`.
+
+**A8. One authority per capacity; a nested grant draws from its parent.** Every shared physical
+capacity has exactly one allocator, and every other scheduler on that machine — a CI runner set, an
+external engine such as Tandem — holds a **delegated sub-budget** from it, never an independent
+count. A child's grant is drawn from its parent's reservation and returned to it; reserving the same
+capacity twice is a refusal, not a wait. Admission of a vector is atomic: all dimensions or none,
+never a partial grant a unit then waits inside.
+
+```lisp
+:resources ((:cpu 4) (:memory-gb 8))
+:under-grant "bench:hulk/alloc-7"      ; this unit's vector is drawn from that reservation
+```
+
+*Kernel red tests:* `jobs-admission-is-atomic-no-partial-grant`; `jobs-a-nested-grant-draws-from-its-parent`;
+`jobs-double-reservation-is-a-refusal-not-a-wait`.
+
+**A9. No global barriers.** A unit goes when **its own** needs are closed and **its own** resources
+are free. There is no phase, no round, no wave, no "everything in this set must finish first". A
+work set's `:done-when` is a report of the set's finish line, never a gate on its members;
+`:needs` is the only ordering, and it is per-unit. The pit-stop set's own shape is the argument:
+54 of 79 units name needs and the rest are independent, so a barrier would idle most of the fleet to
+wait for the slowest member of a group it has nothing to do with.
+
+*Kernel red tests:* `jobs-a-ready-unit-goes-with-no-global-barrier`; `jobs-done-when-is-a-report-not-a-gate`.
+
+**A10. `:tools` names the verbs a unit needs, at a version, with a key.** A unit that calls
+`nova-merge batch` needs `nova-merge` installed at or above a version; a unit built against a tool
+whose behaviour changed must be invalidated even when the version string did not move, so a tool may
+supply a **semantic key** and `:key` pins it. A tool with no `:at` is refused: a tool that pins
+nothing invalidates nothing. Bootstrapping is the same key by another name — an in-repo tool a unit
+builds is a `:needs` on the unit that builds it, plus the `:tools` entry that names the built
+version.
+
+```lisp
+:tools ((:nova-work :at "0.4.0" :key "worklang-reader-2026-09-18") (:go :at "1.26"))
+```
+
+*Red test:* `worklang-tools-name-a-verb-and-a-version`.
+*Kernel:* `jobs-a-tool-key-move-invalidates-the-unit`; `jobs-a-unit-refuses-on-a-tool-below-its-version`.
+
+**A11. Output collections are named before the run, their members after it.** `:collects` names an
+output whose members cannot be listed in advance: the receipts a sweep writes, the shards a test
+run produces, the artifacts a build emits. The collection is named, its directory is named, and its
+members are `:unknown-before-run`; the harvester binds the members to the unit's revision when the
+run ends. A collection with no `:name` or no `:under` is refused.
+
+```lisp
+:collects ((:name "receipts" :under "out/receipts" :members :unknown-before-run))
+```
+
+*Red test:* `worklang-a-collection-names-its-members-after-the-run`.
+*Kernel:* `jobs-a-collection-binds-its-members-at-harvest`.
+
+**A12. Warm state is accounted apart from active state.** `:warm` splits what a unit **retains**
+between runs — a kept worktree, a loaded compiler, an initialized GPU worker, a warm model context —
+from what it is **actively** using while it runs. They are charged separately: warmth that is not
+running must never be counted as running capacity, and capacity that is running must never be freed
+because something is merely warm. `:warm` with only one of the two halves is refused, because the
+split is the whole point of the key.
+
+```lisp
+:warm (:retained ((:worktree "mas-bandwidth/nova-tools") (:image "toolchain@sha")) :active ((:cpu 2)))
+```
+
+*Red test:* `worklang-warm-state-is-retained-apart-from-active`.
+*Kernel:* `jobs-retained-warm-state-is-not-charged-as-active`.
+
+**A13. `:owner` is a mind.** One spelling for every kind of worker: a friend (`"Emma"`, `"Stella"`),
+a child rung (`"child:opus"`, `"child:sol"`), a swarm (`"swarm:flash"`), or `"all"`. `nova-work ask`
+(#1338) reads the work set and answers for the owner it finds; the pull worker reads the same form
+to decide what it may take. One form, two readers, no second registry of names — a new mind is a
+registry row, not a new key. An `:owner` that is not a string is refused.
+
+```lisp
+(unit "pull:worker" :owner "Emma" ...)   (unit "lanes:spec" :owner "child:opus" ...)
+```
+
+*Red test:* `worklang-owner-is-a-mind`.
+*Kernel:* `work-ask-reads-the-same-set-as-the-pull-worker`.
+
+**A14. A unit names its evidence.** `:acceptance` on a unit is the same schema the goal already
+carries: `(:id "a1" :kind :test|:job|:merged|:attested :subject "<thing>" :predicate
+:passes|:succeeds|:merged-at|:attested-by)`. A unit with no acceptance names no finish line, so
+whether it is done is a judgement someone makes rather than evidence a tool reads — which is exactly
+the state of the real set today, where **0 of 79** units carry one. The reader reports the gap per
+unit (`WithoutAcceptance`) in this slice and the kernel refuses a unit without acceptance at load
+once the set has been filled in; a criterion with a kind or predicate outside the two closed sets is
+refused now.
+
+```lisp
+:acceptance ((:id "a1" :kind :test :subject "test:internal/pulse@HEAD" :predicate :passes))
+```
+
+*Red test:* `worklang-acceptance-is-read-and-the-real-set-has-none`.
+*Kernel:* `jobs-a-unit-without-acceptance-is-refused-at-load`.
+
+### Worked example: three real units of the pit-stop set, rewritten
+
+Three units taken verbatim from `pitstop-2026-09-17.lisp`, then rewritten under the amendment.
+Nothing in the "before" is wrong; everything the scheduler needs is simply absent from it.
+
+```lisp
+;; before — as the set stands today
+(unit "verb:hygiene" :needs () :pr 1253 :replaces "bench-hygiene.sh" :findings ("F01" "F02")
+      :budget (:minutes 30 :tokens 120000 :model-floor :sonnet) :affinity (:bench :linux :route "deepseek-flash"))
+(unit "lanes:spec" :needs ("lanes:fill" "spec:worklang-amend") :lane "docs"
+      :title "SPEC-WORKLANG: a lane is a :resource of capacity 1 over an area of the tree")
+(unit "pull:worker" :owner "Emma" :lane "swarm" :needs ("promote:main") :deadline "2026-09-18T18:00Z"
+      :title "benches pull work: nova-swarm pull on leases and heartbeats (SPEC-JOBS s2+s3)")
+```
+
+```lisp
+;; after — the same three units, amended
+(unit "verb:hygiene"
+  :needs () :pr 1253 :replaces "bench-hygiene.sh" :findings ("F01" "F02")
+  :owner "swarm:flash"
+  :resources ((:lane "pulse") (:cpu 2) (:memory-gb 4) (:disk-gb 10))
+  :writes ("cmd/nova-pulse/" "internal/pulse/hygiene.go")
+  :tools ((:nova-pulse :at "0.9.2") (:go :at "1.26"))
+  :collects ((:name "receipts" :under "out/receipts" :members :unknown-before-run))
+  :warm (:retained ((:worktree "mas-bandwidth/nova-tools")) :active ((:cpu 2)))
+  :acceptance ((:id "a1" :kind :test :subject "test:internal/pulse@HEAD" :predicate :passes))
+  :attempts ((:n 1 :rung "flash" :owner "swarm:flash" :started "2026-09-18T09:10Z"
+              :outcome :red :proof (:kind :exit :value "1")))
+  :budget (:minutes 30 :tokens 120000 :model-floor :sonnet)
+  :affinity (:bench :linux :route "deepseek-flash"))
+
+(unit "lanes:spec"
+  :needs ("lanes:fill" "spec:worklang-amend")
+  :owner "child:opus"
+  :resources ((:lane "docs") (:cpu 1))
+  :writes ("docs/SPEC-WORKLANG.md" "docs/SPEC-JOBS.md" "internal/worklang/")
+  :tools ((:nova-work :at "0.4.0" :key "worklang-reader-2026-09-18"))
+  :acceptance ((:id "a1" :kind :test :subject "test:internal/docs@HEAD" :predicate :passes))
+  :title "SPEC-WORKLANG: a lane is a :resource of capacity 1 over an area of the tree")
+
+(unit "pull:worker"
+  :needs ("promote:main") :deadline "2026-09-18T18:00Z"
+  :owner "Emma"
+  :resources ((:lane "swarm") (:cpu 4) (:memory-gb 8) (:class "darwin-runner" :n 0))
+  :writes ("cmd/nova-swarm/" "internal/swarm/pull.go")
+  :tools ((:nova-swarm :at "0.9.2") (:go :at "1.26"))
+  :warm (:retained ((:worktree "mas-bandwidth/nova-tools") (:image "toolchain@sha")) :active ((:cpu 4)))
+  :acceptance ((:id "a1" :kind :test :subject "test:internal/swarm/pull@HEAD" :predicate :passes)
+               (:id "a2" :kind :merged :subject "pr:pull-worker" :predicate :merged-at))
+  :state :uncertain
+  :attempts ((:n 1 :rung "Emma" :owner "Emma" :started "2026-09-18T12:00Z" :outcome :uncertain))
+  :title "benches pull work: nova-swarm pull on leases and heartbeats (SPEC-JOBS s2+s3)")
+```
+
+What the rewrite bought, in the three units alone: `verb:hygiene` and `lanes:spec` no longer contend
+for one opaque slot, because one wants the `pulse` lane with two cores and the other the `docs` lane
+with one; `lanes:spec` and this amendment would serialize on `docs/SPEC-WORKLANG.md` even though
+their lanes differ, by A7; `pull:worker`'s attempt is `uncertain` with no proof, so under A3 and A4
+its four cores and its `swarm` lane stay reserved instead of being re-granted on a clock; each of
+the three now says what evidence closes it, which not one of the 79 did.
+
+### What this slice implements, and what it does not
+
+The reader in `internal/worklang` accepts and shape-checks every key above, reads the `(work-set
+... :units ...)` form, and reports the units that name no acceptance. It schedules nothing: no
+admission, no lane serialization, no writes intersection, no lease, no reaper, no grant. Those are
+the `jobs-*` tests named above, they belong to the kernel, and they are Stella's and Emma's.
+
+**The kernel's first slice has since landed** (`internal/jobs.Admission`, SPEC-JOBS section 9,
+"What the kernel slice implements"): A5's vector, A6's lane of capacity 1, A7's writes
+intersection, A8's atomic and nested grant, and A9's barrier-free pass are green, and
+`nova-work set check --ready` computes the ready set THROUGH admission. A3's lease, A4's
+uncertain reservation, A10's tool key, A11's harvest, A12's warm split and A14's refusal
+at load are still red.
+
+### Rule numbering is pinned
+
+`internal/docs/worklang_amendment_test.go` pins this part: the rules are A1 to A14 in order, each
+one states its rule and names at least one red test, and the grammar block of each new key is
+present. A rule may be added only at the end, and a rule may not be renumbered — the numbers are
+referred to from cards, from `nova-work ask`, and from SPEC-JOBS section 9.

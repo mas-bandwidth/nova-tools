@@ -35,137 +35,6 @@ import (
 // instant. A checker that stopped at the first finding would cost a round trip per
 // defect, so every finding of every rule is collected in one pass and printed.
 
-// Unit is one `(unit "id" ...)` of a work set: the keys this reader knows, the byte
-// it starts at, and the raw text of the keys it validates rather than parses.
-type Unit struct {
-	ID    string
-	Title string
-	Owner string
-	Lane  string
-	// Status is the :status value as written -- "closed", :review -- which is one
-	// of the three ways a unit says it is done.
-	Status string
-	Needs  []string
-	// Branch is the :branch a unit's owner replies on, and Acceptance the :acceptance
-	// that says when it is finished. They are read HERE with every other key because
-	// there is ONE reader of this form: a key only the ask side read was the second
-	// reader of the work set, with its own idea of what a unit is.
-	Branch     string
-	Acceptance []string
-	// Deadline is the :deadline text EXACTLY as written. It is parsed by Check
-	// rather than here, because an unreadable deadline is a finding about one unit
-	// and never a refusal of the whole set.
-	Deadline string
-	// Done is the :done key, read as true when it is written true, t, yes or a
-	// non-empty string that folds to one of those.
-	Done bool
-	// Offset is the unit form's first byte, so a finding can name where it lives.
-	Offset int
-	// Keys is every key the form carried, known or not, in the order written. It is
-	// what lets a later slice read what this one ignores without a second reader.
-	Keys []string
-}
-
-// WorkSet is one work-set form: its id, its title, and its units in written order.
-type WorkSet struct {
-	File  string
-	ID    string
-	Title string
-	Units []Unit
-}
-
-// ParseWorkSet reads one `(work-set ...)` form under the reader's three bounds.
-// Everything it refuses is exit 2 through *Refusal: a file it cannot read, a top
-// form that is not a work set, a `:units` that is not a list. Everything about the
-// CONTENT of a unit is a finding from Check, never a refusal here.
-func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
-	root, err := Read(file, data, limits)
-	if err != nil {
-		return nil, err
-	}
-	if root.Kind != List || len(root.List) == 0 || !isSymbolNamed(root.List[0], "work-set") {
-		return nil, refuse(file, `not a work set: the top form must be (work-set "id" ... :units (...))`)
-	}
-	ws := &WorkSet{File: file}
-	body := root.List[1:]
-	if len(body) > 0 && body[0].Kind == String {
-		ws.ID = body[0].Value
-		body = body[1:]
-	}
-	var units *Form
-	for i := 0; i < len(body); i++ {
-		if body[i].Kind != Keyword {
-			continue
-		}
-		switch body[i].Value {
-		case "units":
-			if i+1 >= len(body) || body[i+1].Kind != List {
-				return nil, refuse(file, ":units must be a list of (unit ...) forms; refusing to guess")
-			}
-			list := body[i+1]
-			units = &list
-		case "title":
-			if i+1 < len(body) {
-				ws.Title = body[i+1].Text()
-			}
-		}
-	}
-	if units == nil {
-		return nil, refuse(file, "the work set carries no :units; refusing to guess which forms are its units")
-	}
-	for _, form := range units.List {
-		ws.Units = append(ws.Units, readUnit(form))
-	}
-	return ws, nil
-}
-
-// readUnit reads one member of `:units`. A member that is not a `(unit "id" ...)`
-// form yields a unit with an empty id at that member's byte, which Check reports as
-// a finding: the member is IN the set and saying nothing about it would hide it.
-func readUnit(form Form) Unit {
-	u := Unit{Offset: form.Offset}
-	if form.Kind != List || len(form.List) == 0 || !isSymbolNamed(form.List[0], "unit") {
-		return u
-	}
-	if len(form.List) > 1 && form.List[1].Kind == String {
-		u.ID = form.List[1].Value
-	}
-	rest := form.List[2:]
-	for i := 0; i < len(rest); i++ {
-		key := rest[i]
-		if key.Kind != Keyword {
-			continue
-		}
-		u.Keys = append(u.Keys, key.Value)
-		if i+1 >= len(rest) {
-			break
-		}
-		val := rest[i+1]
-		i++
-		switch key.Value {
-		case "title":
-			u.Title = val.Text()
-		case "owner":
-			u.Owner = atomText(val)
-		case "lane":
-			u.Lane = atomText(val)
-		case "status":
-			u.Status = atomText(val)
-		case "needs":
-			u.Needs = idList(val)
-		case "branch":
-			u.Branch = atomText(val)
-		case "acceptance":
-			u.Acceptance = textList(val)
-		case "deadline":
-			u.Deadline = val.Text()
-		case "done":
-			u.Done = truthy(val)
-		}
-	}
-	return u
-}
-
 // isSymbolNamed reports whether f is the bare symbol (or keyword) named name. A
 // coordinator writes `work-set` and `unit` bare; the same head spelled `:unit`
 // reads the same, because both are data either way.
@@ -346,7 +215,7 @@ func (w *WorkSet) Check(opts Options) ([]Finding, Counts) {
 		}
 		seen[u.ID] = true
 		order = append(order, u.ID)
-		for _, need := range u.Needs {
+		for _, need := range u.Needs() {
 			if !present[need] {
 				add(Finding{Rule: "NEEDS", Unit: u.ID, Offset: u.Offset,
 					Key: "need", Value: need,
@@ -376,20 +245,20 @@ func (w *WorkSet) Check(opts Options) ([]Finding, Counts) {
 		if u.ID == "" {
 			continue
 		}
-		if opts.Minds != nil && u.Owner != "" && !opts.Minds[strings.ToLower(u.Owner)] {
+		if opts.Minds != nil && u.Owner() != "" && !opts.Minds[strings.ToLower(u.Owner())] {
 			add(Finding{Rule: "OWNER", Unit: u.ID, Offset: u.Offset,
-				Key: "owner", Value: u.Owner,
+				Key: "owner", Value: u.Owner(),
 				Remedy: "no mind of " + opts.MindsFile + " is named that; add the row or fix the spelling"})
 		}
-		if opts.Lanes != nil && u.Lane != "" && !opts.Lanes[u.Lane] {
+		if opts.Lanes != nil && u.Lane() != "" && !opts.Lanes[u.Lane()] {
 			add(Finding{Rule: "LANE", Unit: u.ID, Offset: u.Offset,
-				Key: "lane", Value: u.Lane,
+				Key: "lane", Value: u.Lane(),
 				Remedy: "no lane of " + opts.LanesFile + " is named that; add the lane or drop :lane"})
 		}
-		if u.Deadline != "" {
-			if _, err := ParseStamp(u.Deadline); err != nil {
+		if u.Deadline() != "" {
+			if _, err := ParseStamp(u.Deadline()); err != nil {
 				add(Finding{Rule: "DEADLINE", Unit: u.ID, Offset: u.Offset,
-					Key: "deadline", Value: u.Deadline,
+					Key: "deadline", Value: u.Deadline(),
 					Remedy: "write it as 2026-09-19T12:00:00Z or 2026-09-19T12:00Z"})
 			}
 		}
@@ -398,7 +267,7 @@ func (w *WorkSet) Check(opts Options) ([]Finding, Counts) {
 	counts := Counts{Units: len(w.Units)}
 	done := w.DoneSet(opts.Done)
 	for _, u := range w.Units {
-		if u.Owner != "" {
+		if u.Owner() != "" {
 			counts.Owned++
 		}
 		switch {
@@ -425,7 +294,7 @@ func (w *WorkSet) DoneSet(extra map[string]bool) map[string]bool {
 		if u.ID == "" {
 			continue
 		}
-		if u.Done || doneWords[strings.ToLower(u.Status)] || extra[u.ID] {
+		if u.Done() || doneWords[strings.ToLower(u.Status())] || extra[u.ID] {
 			done[u.ID] = true
 		}
 	}
@@ -439,7 +308,7 @@ func (w *WorkSet) DoneSet(extra map[string]bool) map[string]bool {
 // A need no unit of the set defines counts as unmet: rule 2 has already reported
 // it, and a unit whose need does not exist is never ready.
 func (w *WorkSet) unmet(u Unit, done map[string]bool) string {
-	for _, need := range u.Needs {
+	for _, need := range u.Needs() {
 		if !done[need] {
 			return need
 		}

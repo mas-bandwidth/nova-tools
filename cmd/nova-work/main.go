@@ -192,7 +192,9 @@ flags:
                   per line. Without it no lane is checked.
   --done <ids>    set check: comma-separated unit ids that are done, beside what the
                   file's own :done and :status say.
-  --ready         set check: also print one SET READY line per unit of the ready set.
+  --ready         set check: also print one SET READY line per unit of the ready set,
+                  each carrying its admission verdict (admit=go, or admit=held with the
+                  dimension or path that held it and the unit holding it).
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
