@@ -8,6 +8,7 @@ package pulse
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,7 +162,8 @@ func TestFillRefusesUnknownLane(t *testing.T) {
 	if got := len(readyCards(ready)); got != 1 {
 		t.Fatalf("ready holds %d cards, want 1 (refused card stays)", got)
 	}
-	want := `FILL REFUSED card=1 lane=ghost remedy="add the lane to ` + lanes + ` or drop the LANE line"`
+	want := fmt.Sprintf("FILL REFUSED card=1 lane=ghost remedy=%q",
+		fmt.Sprintf("add the lane to %s or drop the LANE line", lanes))
 	if !strings.Contains(errb.String(), want) {
 		t.Fatalf("stderr = %q, want it to carry %q", errb.String(), want)
 	}
