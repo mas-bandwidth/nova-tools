@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -338,8 +339,17 @@ func ValidClass(v string) bool {
 
 // ClassifyFile is where one classify record lives:
 // classify/<run>-<at>-<rand6>.json
+//
+// path.Join AND NEVER filepath.Join, like ReadFile and GateFile beside it: this is a path
+// INSIDE THE RECORD BRANCH, not a path on this machine. It is written into the record's
+// own `file` field, it is a pathspec for `git add`, and it is the right-hand side of
+// `git show <rev>:<path>` -- and git spells all three with forward slashes on every
+// platform. Built with filepath.Join it came out `classify\<name>.json` on Windows, the
+// push landed, and the confirming fetch then asked git for a file whose name contains a
+// backslash and was told there is none: `queue classify` exited 1 on windows-latest alone
+// (integration-6, #1335). See TestRecordPathsAreGitPathsNotMachinePaths.
 func ClassifyFile(run string, s Submission) string {
-	return filepath.Join(ClassifyDir, safeName(run)+"-"+s.ID()+".json")
+	return path.Join(ClassifyDir, safeName(run)+"-"+s.ID()+".json")
 }
 
 // NewClassRecord builds the one immutable record and its bytes.
