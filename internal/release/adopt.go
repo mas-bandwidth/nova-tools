@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -145,6 +146,47 @@ func RemoteFrom(value string) (host, dir string, remote bool) {
 	return before, after, true
 }
 
+// VersionsUnder lists the releases an artifact root holds for one platform: a
+// directory whose <version>/<goos>-<goarch>/SHA256SUMS exists. A directory that
+// is not a release is not a candidate, so a stray folder never becomes one.
+func VersionsUnder(root, goos, goarch string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var found []string
+	for _, e := range entries {
+		if !e.IsDir() || ValidVersion(e.Name()) != nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(ArtifactDir(root, e.Name(), goos, goarch), SumsFile)); err == nil {
+			found = append(found, e.Name())
+		}
+	}
+	sort.Strings(found)
+	return found
+}
+
+// inferVersion reads the version off the artifact root when there is exactly
+// one. A root usually holds one release, and making somebody retype what the
+// directory already says is making them repeat themselves -- and a mistyped
+// version is how a fleet ends up half adopted. Two releases is the case where a
+// guess would be wrong, so it refuses and NAMES BOTH: the remedy is to pick.
+func inferVersion(root, goos, goarch string, errs io.Writer) (string, error) {
+	found := VersionsUnder(root, goos, goarch)
+	switch len(found) {
+	case 1:
+		progress(errs, "%s holds one release for %s-%s: %s", root, goos, goarch, found[0])
+		return found[0], nil
+	case 0:
+		return "", refuse(fmt.Sprintf("build one first, or pass --version; nothing under %s is a release for %s-%s", root, goos, goarch),
+			"no release to adopt: %s holds none for %s-%s", root, goos, goarch)
+	default:
+		return "", refuse("pass --version to say which",
+			"%s holds %d releases for %s-%s (%s); refusing to guess", root, len(found), goos, goarch, strings.Join(found, ", "))
+	}
+}
+
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	goos, goarch, err := Platform(o.platform)
 	if err != nil {
@@ -158,6 +200,21 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	f.Close()
 	if err != nil {
 		return refusal(errs, "ADOPT", err)
+	}
+	// The version may come from the artifact root. Only a LOCAL --from can be
+	// read this way: a host:dir root lives on another machine, and asking it
+	// what it holds would be one more remote command run before anything has
+	// been verified.
+	if o.version == "" {
+		if _, _, remote := RemoteFrom(o.from); remote {
+			return refusal(errs, "ADOPT", refuse("pass --version; a release on another machine is not scanned from here",
+				"--from names a machine, so the version cannot be read off the directory"))
+		}
+		v, err := inferVersion(o.from, goos, goarch, errs)
+		if err != nil {
+			return refusal(errs, "ADOPT", err)
+		}
+		o.version = v
 	}
 	// EVERY HOST AND PATH IS VALIDATED BEFORE ANY REMOTE COMMAND IS COMPOSED,
 	// not while it is being composed (Johnny, 2026-09-18). The names came from
@@ -255,7 +312,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// once on this host is one refusal; caught on each machine it is four, and
 	// the fleet is left in four different states while somebody reads them.
 	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
-	if err := VerifyArtifacts(local, arts); err != nil {
+	if _, err := VerifyArtifacts(local, arts); err != nil {
 		return refusal(errs, "ADOPT", err)
 	}
 	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote
@@ -278,6 +335,10 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "ADOPT", refuse("build from a checkout that has cmd/nova-update",
 			"this release carries no %s, so no machine could run the install", updateFile))
 	}
+	localSums, err := os.ReadFile(filepath.Join(local, SumsFile))
+	if err != nil {
+		return refusal(errs, "ADOPT", fmt.Errorf("cannot read %s: %w (build the release again)", filepath.Join(local, SumsFile), err))
+	}
 	adopted, refused := 0, 0
 	for _, entry := range machines {
 		machine := entry.Name
@@ -296,15 +357,53 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// purpose. A leading ~ is left alone for the remote shell to expand,
 		// which is how one --bin names three different home directories.
 		remoteDir := path.Join(dest, o.version, goos+"-"+goarch)
-		progress(errs, "sending %s to %s:%s", o.version, machine, remoteDir)
-		if output, err := ssh.Send(ctx, machine, local, path.Dir(remoteDir)); err != nil {
-			refused++
-			fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (check `ssh %s` reaches it and that %s is writable there; adopt runs from the host that has ssh to every machine)\n",
-				field(machine), field(o.version), oneLine(output, err), machine, dest)
+		remoteTool := path.Join(remoteDir, updateFile)
+		// --dry-run ANSWERS FROM THE MACHINES, not from what this host
+		// assumes. It asks each one three things -- can I reach you, is the
+		// destination there, what are you running now -- and streams nothing
+		// and installs nothing. A plan composed without asking is a plan about
+		// a fleet somebody remembers rather than the one that exists.
+		if o.dryRun {
+			installedNow, err := ssh.Run(ctx, machine, []string{path.Join(bin, updateFile), "version"})
+			if err != nil {
+				refused++
+				fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (check `ssh %s` reaches it; nothing was sent)\n",
+					field(machine), field(o.version), oneLine(installedNow, err), machine)
+				continue
+			}
+			destOK := "yes"
+			if _, err := ssh.Run(ctx, machine, []string{"test", "-d", dest}); err != nil {
+				destOK = "no"
+			}
+			action := "install"
+			current := firstToken(installedNow)
+			if hasToken(installedNow, o.version) {
+				action = "skip"
+			}
+			adopted++
+			fmt.Fprintf(out, "RELEASE WOULD ADOPT machine=%s version=%s installed=%s dest=%s action=%s bin=%s\n",
+				field(machine), field(o.version), field(current), field(destOK), field(action), field(bin))
 			continue
 		}
+		// THE MACHINE IS ASKED WHAT IT ALREADY HOLDS before anything is
+		// streamed. A bench that took this release an hour ago does not need
+		// twenty-one binaries pushed to it again, and on a fleet this is most
+		// of the benches most of the time.
+		sent := "yes"
+		if remote, err := ssh.Run(ctx, machine, []string{"cat", path.Join(remoteDir, SumsFile)}); err == nil && sameSums(remote, localSums) {
+			sent = "no"
+			progress(errs, "%s already holds %s; streaming nothing", machine, o.version)
+		} else {
+			progress(errs, "sending %s to %s:%s", o.version, machine, remoteDir)
+			if output, err := ssh.Send(ctx, machine, local, path.Dir(remoteDir)); err != nil {
+				refused++
+				fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (check `ssh %s` reaches it and that %s is writable there; adopt runs from the host that has ssh to every machine)\n",
+					field(machine), field(o.version), oneLine(output, err), machine, dest)
+				continue
+			}
+		}
 		argv := []string{
-			path.Join(remoteDir, updateFile), "release", "install",
+			remoteTool, "release", "install",
 			"--from", dest, "--version", o.version, "--bin", bin,
 			"--platform", goos + "-" + goarch,
 		}
@@ -337,18 +436,47 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if retired == "" {
 			retired = "0"
 		}
-		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s retired=%s bin=%s\n",
-			field(machine), field(o.version), field(m[2]), field(m[3]), field(retired), field(bin))
+		// sent= is the STREAM, skipped= is the TOOLS: a machine can be
+		// sent=no tools=0 skipped=21 (it already had everything) or sent=yes
+		// tools=21 (it had nothing). Two different facts, two fields.
+		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s retired=%s sent=%s bin=%s\n",
+			field(machine), field(o.version), field(m[2]), field(m[3]), field(retired), field(sent), field(bin))
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
 		w, result, code = errs, "FAIL", 1
 	}
-	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s\n",
-		result, len(machines), adopted, refused, field(o.version))
+	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s dry-run=%s\n",
+		result, len(machines), adopted, refused, field(o.version), map[bool]string{true: "yes", false: "no"}[o.dryRun])
 	return code
 }
 
 // errNoReceipt gives oneLine something to fold when the remote's failure is that
 // it said nothing this tool recognises.
 var errNoReceipt = fmt.Errorf("no receipt")
+
+// sameSums compares two checksum files by content, ignoring only the trailing
+// newline a shell redirect may or may not have left. It is a comparison of the
+// WHOLE file rather than of a digest, because both sides are already here.
+func sameSums(remote string, local []byte) bool {
+	return strings.TrimSpace(remote) != "" && strings.TrimSpace(remote) == strings.TrimSpace(string(local))
+}
+
+// firstToken is the version a tool printed, for a probe line: its `version`
+// verb answers `<name> <version> <goos>/<goarch> <go>`, and the probe reports
+// the second token when there is one.
+func firstToken(line string) string {
+	fields := strings.Fields(strings.TrimSpace(firstLineOf(line)))
+	if len(fields) >= 2 {
+		return fields[1]
+	}
+	if len(fields) == 1 {
+		return fields[0]
+	}
+	return ""
+}
+
+func firstLineOf(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}

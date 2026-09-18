@@ -60,19 +60,26 @@ func ReadSums(dir string) ([]Artifact, error) {
 // before its first rename, and `adopt` after fetching a release from another
 // machine -- a truncated fetch caught once on the adopting host is one refusal
 // rather than one per machine.
-func VerifyArtifacts(dir string, arts []Artifact) error {
+// It returns HOW MANY it checked, and `build` prints that number rather than
+// the length of the list it was given. The two are equal when the check ran and
+// there is no way to print the number without running it -- which is the point:
+// `verified=21` computed from a slice length would be a claim about work that
+// may not have happened, and a claim like that is worse than no claim.
+func VerifyArtifacts(dir string, arts []Artifact) (int, error) {
+	checked := 0
 	for _, a := range arts {
 		path := filepath.Join(dir, a.Name)
 		got, err := fileSum(path)
 		if err != nil {
-			return fmt.Errorf("cannot read %s: %w (build the release again)", path, err)
+			return checked, fmt.Errorf("cannot read %s: %w (build the release again)", path, err)
 		}
 		if got != a.Sum {
-			return refuse("build the release again; do not install an artifact whose bytes changed after it was built",
+			return checked, refuse("build the release again; do not install an artifact whose bytes changed after it was built",
 				"%s does not match %s: recorded %s, on disk %s", a.Name, SumsFile, a.Sum, got)
 		}
+		checked++
 	}
-	return nil
+	return checked, nil
 }
 
 // retire removes this release's tools from a SECOND directory that is no longer
@@ -178,7 +185,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	// installs puts good binaries beside a bad one and leaves the box in a
 	// state no version answers for.
 	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
-	if err := VerifyArtifacts(dir, arts); err != nil {
+	if _, err := VerifyArtifacts(dir, arts); err != nil {
 		return refusal(errs, "INSTALL", err)
 	}
 	if err := os.MkdirAll(o.bin, 0o755); err != nil {

@@ -85,12 +85,24 @@ type fakeSSH struct {
 	// serves is the local directory a machine hands back from a Fetch,
 	// standing in for `ssh host tar -cf -`.
 	serves map[string]string
+	// remoteSums is what `cat <dest>/SHA256SUMS` answers on that machine: the
+	// release it is already holding, if any.
+	remoteSums map[string]string
 }
 
 func (s *fakeSSH) Run(_ context.Context, machine string, argv []string) (string, error) {
 	s.runs = append(s.runs, machine+": "+strings.Join(argv, " "))
 	if err := s.refuse[machine]; err != nil {
 		return "", err
+	}
+	// `cat <dir>/SHA256SUMS` is answered from remoteSums, so a test can say
+	// "this machine already holds that release" without a filesystem there.
+	if len(argv) > 0 && argv[0] == "cat" {
+		sums, ok := s.remoteSums[machine]
+		if !ok {
+			return "", fmt.Errorf("cat: %s: No such file or directory", argv[len(argv)-1])
+		}
+		return sums, nil
 	}
 	return s.answer[machine], nil
 }
@@ -134,6 +146,21 @@ func (s *fakeSSH) Fetch(_ context.Context, machine, dir, dest string) (string, e
 		}
 	}
 	return "", nil
+}
+
+// installRun finds the `release install` command a machine was given. adopt
+// also asks each machine what it already holds, so the install is no longer
+// simply the first thing run -- and a test that indexes by position is a test
+// that breaks every time the verb learns to ask one more question.
+func installRun(t *testing.T, s *fakeSSH, machine string) string {
+	t.Helper()
+	for _, run := range s.runs {
+		if strings.HasPrefix(run, machine+": ") && strings.Contains(run, "release install") {
+			return run
+		}
+	}
+	t.Fatalf("%s was never given a release install: %v", machine, s.runs)
+	return ""
 }
 
 func at(t *testing.T) time.Time {
@@ -717,14 +744,14 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 			if !strings.Contains(o.String(), "RELEASE ADOPT OK machines=3 adopted=3 refused=0") {
 				t.Fatalf("no verdict line:\n%s", o.String())
 			}
-			if len(s.sends) != 3 || len(s.runs) != 3 {
-				t.Fatalf("sends=%v runs=%v", s.sends, s.runs)
+			if len(s.sends) != 3 {
+				t.Fatalf("sends=%v", s.sends)
 			}
 			// The release installs ITSELF: the nova-update that runs the
 			// remote install is the one just sent, so a bench with no
 			// nova-tools at all can still adopt. That is the whole of what
 			// fleet-install-tools.sh's nested ssh quoting was doing.
-			run := s.runs[0]
+			run := installRun(t, s, "hulk")
 			for _, part := range []string{
 				"/home/nova/nova-bench/build/v0.16.0/" + goos + "-" + goarch + "/" + ToolFile("nova-update", goos),
 				"release install",
@@ -951,8 +978,8 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 	if len(s.fetches) != 1 || !strings.Contains(s.fetches[0], "hulk: /home/nova/nova-bench/release/v0.16.0/linux-amd64") {
 		t.Fatalf("fetches=%v", s.fetches)
 	}
-	if len(s.sends) != 2 || len(s.runs) != 2 {
-		t.Fatalf("sends=%v runs=%v", s.sends, s.runs)
+	if len(s.sends) != 2 {
+		t.Fatalf("sends=%v", s.sends)
 	}
 	for _, machine := range []string{"vision", "mini"} {
 		if !strings.Contains(o.String(), "RELEASE ADOPTED machine="+machine+" version=v0.16.0") {
@@ -965,8 +992,8 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 	}
 	// A leading ~ survives to the remote shell, which is what lets one --bin
 	// name three different home directories.
-	if !strings.Contains(s.runs[0], "--bin ~/.local/bin") {
-		t.Fatalf("the tilde did not survive: %s", s.runs[0])
+	if run := installRun(t, s, "vision"); !strings.Contains(run, "--bin ~/.local/bin") {
+		t.Fatalf("the tilde did not survive: %s", run)
 	}
 }
 
@@ -1078,14 +1105,15 @@ func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
-	if !strings.Contains(s.runs[0], "--bin ~/.local/bin") || !strings.Contains(s.runs[0], "~/nova-bench/build") {
-		t.Fatalf("hulk did not get the flags' values: %s", s.runs[0])
+	hulk, vision := installRun(t, s, "hulk"), installRun(t, s, "vision")
+	if !strings.Contains(hulk, "--bin ~/.local/bin") || !strings.Contains(hulk, "~/nova-bench/build") {
+		t.Fatalf("hulk did not get the flags' values: %s", hulk)
 	}
-	if !strings.Contains(s.runs[1], "--bin /opt/nova/bin") || !strings.Contains(s.runs[1], "/opt/nova/stage") {
-		t.Fatalf("vision did not get its own columns: %s", s.runs[1])
+	if !strings.Contains(vision, "--bin /opt/nova/bin") || !strings.Contains(vision, "/opt/nova/stage") {
+		t.Fatalf("vision did not get its own columns: %s", vision)
 	}
 	// And the receipt says where the tools actually went on that machine.
-	if !strings.Contains(o.String(), "machine=vision version=v0.16.0 tools=2 skipped=0 retired=0 bin=/opt/nova/bin") {
+	if !strings.Contains(o.String(), "machine=vision version=v0.16.0 tools=2 skipped=0 retired=0 sent=yes bin=/opt/nova/bin") {
 		t.Fatalf("the receipt does not carry that machine's bin:\n%s", o.String())
 	}
 }
@@ -1173,8 +1201,8 @@ func TestAdoptPassesRetireToEachMachineAndCountsIt(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
-	if !strings.Contains(s.runs[0], "--retire ~/go/bin") {
-		t.Fatalf("the remote install was not told to retire: %s", s.runs[0])
+	if run := installRun(t, s, "hulk"); !strings.Contains(run, "--retire ~/go/bin") {
+		t.Fatalf("the remote install was not told to retire: %s", run)
 	}
 	if !strings.Contains(o.String(), "retired=18") {
 		t.Fatalf("the receipt does not carry the retirement:\n%s", o.String())
@@ -1536,13 +1564,270 @@ func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
 		&o, &e, Deps{SSH: s}); code != 0 {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
-	run := s.runs[0]
-	command := strings.TrimPrefix(run, "hulk: ")
+	command := strings.TrimPrefix(installRun(t, s, "hulk"), "hulk: ")
 	first := strings.Fields(command)[0]
 	if first != "~/nova-bench/build/v0.16.0/linux-amd64/nova-update" {
 		t.Fatalf("the remote command does not name the sent binary by path: %q", first)
 	}
 	if !strings.HasPrefix(first, "/") && !strings.HasPrefix(first, "~/") {
 		t.Fatalf("the remote binary would resolve against $PATH: %q", first)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The darwin dogfood's edges (2026-09-18). Everything here was somebody
+// noticing that the verb made them type something it could have known.
+// ---------------------------------------------------------------------------
+
+// A --from root usually holds exactly one release. Making somebody type its
+// version again is making them repeat what the directory already says -- and
+// mistyping it is how a fleet ends up half-adopted.
+func TestAdoptInfersTheVersionWhenThereIsOnlyOne(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--machines", machinesFile(t, "hulk\n"),
+		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if !strings.Contains(o.String(), "version=v0.16.0") {
+		t.Fatalf("the inferred version is not in the receipt:\n%s", o.String())
+	}
+	if !strings.Contains(e.String(), "v0.16.0") {
+		t.Fatalf("the inference was silent; it should say what it chose:\n%s", e.String())
+	}
+}
+
+// Two releases under one root is the case where guessing would be wrong, so it
+// refuses -- and names both, because the remedy is to pick one.
+func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	second := built(t, "v0.17.0", "linux-amd64", "nova-bus", "nova-update")
+	if err := os.Rename(filepath.Join(second, "v0.17.0"), filepath.Join(from, "v0.17.0")); err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSSH{}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--machines", machinesFile(t, "hulk\n"),
+		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 2 {
+		t.Fatalf("it guessed: code=%d out=%s", code, o.String())
+	}
+	for _, v := range []string{"v0.16.0", "v0.17.0", "--version"} {
+		if !strings.Contains(e.String(), v) {
+			t.Fatalf("the refusal does not name %s: %s", v, e.String())
+		}
+	}
+	if len(s.runs)+len(s.sends) != 0 {
+		t.Fatalf("a guess still reached ssh: %v %v", s.runs, s.sends)
+	}
+}
+
+func TestAdoptRefusesAnEmptyArtifactRoot(t *testing.T) {
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--machines", machinesFile(t, "hulk\n"),
+		"--ssh", "/usr/bin/ssh", "--from", t.TempDir(), "--bin", "~/.local/bin", "--dest", "~/build",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: &fakeSSH{}})
+	if code != 2 || !strings.Contains(e.String(), "no release") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+}
+
+// One build, every platform the fleet runs. Four invocations differing only in
+// --platform is four chances for one of them to carry a different --version.
+func TestBuildTakesSeveralPlatformsAtOnce(t *testing.T) {
+	source, out := sourceTree(t), t.TempDir()
+	tc := &fakeToolchain{}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source,
+		"--platform", "linux-amd64,darwin-arm64", "--platform", "windows-amd64"}, &o, &e, Deps{Toolchain: tc})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if len(tc.calls) != 9 { // 3 tools x 3 platforms
+		t.Fatalf("built %d packages, want 9: %v", len(tc.calls), tc.calls)
+	}
+	for _, tcase := range []struct{ platform, tool string }{
+		{"linux-amd64", "nova-bus"},
+		{"darwin-arm64", "nova-bus"},
+		{"windows-amd64", "nova-bus.exe"},
+	} {
+		goos, goarch, err := Platform(tcase.platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		arts, err := ReadSums(ArtifactDir(out, "v0.16.0", goos, goarch))
+		if err != nil {
+			t.Fatalf("%s: %v", tcase.platform, err)
+		}
+		var names []string
+		for _, a := range arts {
+			names = append(names, a.Name)
+		}
+		if !strings.Contains(strings.Join(names, ","), tcase.tool) {
+			t.Fatalf("%s holds %v, want %s", tcase.platform, names, tcase.tool)
+		}
+		if !strings.Contains(o.String(), "platform="+tcase.platform) {
+			t.Fatalf("no receipt for %s:\n%s", tcase.platform, o.String())
+		}
+	}
+}
+
+func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", t.TempDir(),
+		"--source", sourceTree(t), "--platform", "linux-amd64,nonsense"}, &o, &e, Deps{Toolchain: &fakeToolchain{}})
+	if code != 2 || !strings.Contains(e.String(), "nonsense") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+}
+
+// A checksum file nobody has ever checked is a file whose first reader is the
+// person it was supposed to reassure. The build reads its own, in the step that
+// wrote it, and says how many it checked.
+func TestBuildVerifiesTheChecksumsItJustWrote(t *testing.T) {
+	source, out := sourceTree(t), t.TempDir()
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
+		&o, &e, Deps{Toolchain: &fakeToolchain{}})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if !strings.Contains(o.String(), "verified=3") {
+		t.Fatalf("the build does not say what it verified:\n%s", o.String())
+	}
+}
+
+// --dry-run answers "what would happen" with what the MACHINES say, not with
+// what this host assumes: is it reachable, is the destination there, what is
+// installed now. Nothing is streamed and nothing is installed.
+func TestAdoptDryRunProbesEveryMachineAndStreamsNothing(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	s := &fakeSSH{
+		answer: map[string]string{
+			"hulk":   "nova-update v0.15.3 linux/amd64 go1.27.1\n",
+			"vision": "nova-update v0.16.0 linux/amd64 go1.27.1\n",
+		},
+		refuse: map[string]error{"mini": fmt.Errorf("ssh: connect to host mini port 22: Connection refused")},
+	}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\nvision\nmini\n"), "--ssh", "/usr/bin/ssh",
+		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+		"--platform", "linux-amd64", "--dry-run"}, &o, &e, Deps{SSH: s})
+	if code != 1 { // mini could not be reached; that is a finding, not a success
+		t.Fatalf("code=%d out=%s errs=%s", code, o.String(), e.String())
+	}
+	if len(s.sends) != 0 {
+		t.Fatalf("--dry-run streamed a release: %v", s.sends)
+	}
+	// One line per machine, saying what it found and what it would do.
+	if !strings.Contains(o.String(), "RELEASE WOULD ADOPT machine=hulk") || !strings.Contains(o.String(), "installed=v0.15.3") {
+		t.Fatalf("no probe line for hulk:\n%s", o.String())
+	}
+	if !strings.Contains(o.String(), "machine=vision") || !strings.Contains(o.String(), "action=skip") {
+		t.Fatalf("vision is already current and the probe does not say so:\n%s", o.String())
+	}
+	if !strings.Contains(e.String(), "mini") {
+		t.Fatalf("the unreachable machine is not reported:\n%s", e.String())
+	}
+	if !strings.Contains(e.String(), "dry-run=yes") && !strings.Contains(o.String(), "dry-run=yes") {
+		t.Fatalf("the verdict does not say it was a dry run:\n%s\n%s", o.String(), e.String())
+	}
+}
+
+// A machine already holding this release does not need it streamed again. The
+// question is asked of the machine's own checksum file, before anything moves.
+func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
+	goos, goarch := platformOf(t, "linux-amd64")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	localSums, err := os.ReadFile(filepath.Join(ArtifactDir(from, "v0.16.0", goos, goarch), SumsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSSH{
+		// hulk answers the probe with the same checksum file it was sent
+		// last time; vision has never seen this release.
+		remoteSums: map[string]string{"hulk": string(localSums)},
+		answer: map[string]string{
+			"hulk":   "RELEASE INSTALLED version=v0.16.0 tools=0 skipped=2 retired=0\n",
+			"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n",
+		},
+	}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\nvision\n"), "--ssh", "/usr/bin/ssh",
+		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if len(s.sends) != 1 || !strings.HasPrefix(s.sends[0], "vision:") {
+		t.Fatalf("the wrong set was streamed: %v", s.sends)
+	}
+	if !strings.Contains(o.String(), "machine=hulk") || !strings.Contains(o.String(), "sent=no") {
+		t.Fatalf("hulk's receipt does not say the stream was skipped:\n%s", o.String())
+	}
+	if !strings.Contains(o.String(), "machine=vision") || !strings.Contains(o.String(), "sent=yes") {
+		t.Fatalf("vision's receipt does not say it was streamed:\n%s", o.String())
+	}
+	// Both machines still get the install: the bits being there is not the
+	// same fact as the tools being installed from them.
+	if len(s.runs) < 2 {
+		t.Fatalf("a machine was skipped entirely: %v", s.runs)
+	}
+}
+
+// `<tool> <verb> --help` printed `flag: help requested`, which is the flag
+// package's internal sentinel leaking to a person who asked a reasonable
+// question. It prints the verb's own usage, and exits 0 because asking for
+// help is not an error.
+func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
+	for _, verb := range []string{"cut", "build", "install", "adopt"} {
+		for _, flagSpelling := range []string{"--help", "-h"} {
+			t.Run(verb+" "+flagSpelling, func(t *testing.T) {
+				var o, e bytes.Buffer
+				code := Run("nova-update", []string{verb, flagSpelling}, &o, &e, Deps{})
+				if code != 0 {
+					t.Fatalf("code=%d errs=%s", code, e.String())
+				}
+				if strings.Contains(o.String()+e.String(), "help requested") {
+					t.Fatalf("the flag package's sentinel leaked: %s%s", o.String(), e.String())
+				}
+				if !strings.Contains(o.String(), "nova-update release "+verb+" ") {
+					t.Fatalf("%s's usage is not what was printed:\n%s", verb, o.String())
+				}
+				// ONE verb's usage, not all four: the person asked about one.
+				if strings.Count(o.String(), "nova-update release ") != 1 {
+					t.Fatalf("%s --help printed more than its own line:\n%s", verb, o.String())
+				}
+			})
+		}
+	}
+}
+
+// verified=<n> is the number the CHECK returned, not the length of a list, so
+// the number cannot be printed without the check having run.
+func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
+	goos, goarch := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm", "nova-wake")
+	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
+	arts, err := ReadSums(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := VerifyArtifacts(dir, arts)
+	if err != nil || n != 3 {
+		t.Fatalf("checked %d of 3: %v", n, err)
+	}
+	// One bad artifact stops the count where it stopped the check.
+	if err := os.WriteFile(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("changed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := VerifyArtifacts(dir, arts); err == nil || n == 3 {
+		t.Fatalf("a changed artifact was counted as verified: n=%d err=%v", n, err)
 	}
 }

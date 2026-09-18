@@ -381,9 +381,9 @@ nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft -
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
 nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 nova-update help
 ```
 
@@ -438,6 +438,95 @@ Four verbs, and each one can refuse:
   receipt per machine, read from what the remote SAID and not from its exit code, or one
   `RELEASE REFUSED machine=… : <cause> (<remedy>)`, and a final count. Exit 1 if any
   machine refused: the other machines are still reported.
+
+### Where adopt runs, and why it is not the build host
+
+**`adopt` runs FROM the host that has ssh to every machine, and fans out from there.** It
+never needs the machines to reach one another. This is not a preference, it is the shape of
+the fleet: the first dogfood pass (receipt `20260918T144929Z`, rowan-child) ran `adopt` on
+hulk, the build host, and 3 of 3 machines refused — short names did not resolve, and
+Tailscale addresses gave `Permission denied (publickey)`, because **no bench in this fleet
+has ssh trust to any other bench**. Only the Studio does. The fleet was brought current by
+running `release install` on each bench by hand, which is the thing this verb exists to
+stop anybody having to do.
+
+A jump host (`ssh -J`) does not fix it and was not chosen: `-J` forwards the *connection*
+but still authenticates to the target with the **calling** host's key, so fanning out from
+hulk would still need hulk's key on every bench. That is new trust between benches, and the
+trust that would make it unnecessary belongs to the Studio, which is Glenn's. So the verb
+goes to the trust rather than the trust going to the verb, and the only thing that had to
+be added is a way to *read* the release from wherever it was built:
+
+- **`--from <dir>`** is an artifact root on this host, and **`--from <host>:<dir>`** is one
+  on another machine. In the second form the release is fetched ONCE into `--stage <dir>`,
+  verified here, and pushed to every machine from there — so a truncated fetch is one
+  refusal on the adopting host rather than four machines left in four different states. A
+  `host:` prefix is only read as a host when it is a machine name of two characters or
+  more, so a windows path (`C:\releases`) stays a path.
+
+### The machines file
+
+One machine per line: `<name>[TAB<bin>[TAB<dest>]]`. Blank lines and `#` comments are
+skipped, `user@host` is allowed, and every name is checked against the machine-name shape
+before ssh is reached. The optional columns override `--bin` and `--dest` **for that
+machine**, because the fleet has three different home directories and a second run with
+different flags is a second chance to get the version wrong. An override column left empty
+is a refusal, not a fallback: the fallback is exactly what it was overriding.
+
+**`--bin` and `--dest` are paths on each machine.** The remote shell expands a leading `~`,
+which is how one `--bin '~/.local/bin'` names three different home directories at once —
+and the quotes are load-bearing, because an unquoted `~` is expanded by the *local* shell
+into the adopting host's home, a path the machine has probably never heard of.
+
+### Retiring the other directory
+
+`--retire <dir>` removes this release's own tools from a SECOND directory nobody should
+still be running from. The shell script this verb replaces kept `~/go/bin` in step with
+`~/.local/bin`; the verb did not, and after the first real adoption every bench held 18
+stale `~/go/bin/nova-*` from a `go install` months ago — both directories on `PATH`, and
+which one wins a fact about `PATH` order nobody has read.
+
+What it will remove is narrow, and every clause is load-bearing: only a name this run
+installed into `--bin`, only a name beginning `nova-`, only a regular file (a directory or
+a symlink is left for a person), and only through `safepath.RemoveUnder`. `--retire` naming
+`--bin` is refused outright, and so is the release's own artifact tree in either direction
+— those are the two arguments that would delete the release just installed or the
+last-good copy a rollback reads. The receipt carries `retired=<n>`, and `adopt` passes the
+flag to each machine and reports each machine's count.
+
+### What the verbs work out for themselves
+
+The darwin dogfood (2026-09-18) found the places where the verb made somebody type
+something it could have known, or hid what it was about to do:
+
+- **`adopt` infers `--version`** when the `--from` root holds exactly one release for the
+  platform. Retyping what the directory already says is repeating yourself, and a mistyped
+  version is how a fleet ends up half adopted. Two releases is the case where a guess would
+  be wrong, so it refuses and names both. Only a LOCAL `--from` is read this way: scanning
+  a `host:dir` root would be one more remote command run before anything has been verified.
+- **`build --platform` is repeatable and comma-separated.** The fleet is three platforms
+  wide, and four invocations differing only in `--platform` are four chances for one to
+  carry a different `--version` — a release whose linux half and darwin half are not the
+  same release. Every platform is resolved before the first compile, so a typo in the
+  fourth is not found out after three have been built.
+- **`build` verifies the `SHA256SUMS` it just wrote** and reports `verified=<n>`.
+  `release.yml` has done this from the beginning, for the reason it gives in place: a
+  checksum file nobody has ever checked is a file whose first reader is the person it was
+  supposed to reassure.
+- **`adopt --dry-run` asks the machines.** Per machine: can it be reached, is `--dest`
+  there, what is installed now — one `RELEASE WOULD ADOPT machine=… installed=… dest=…
+  action=…` line each, nothing streamed and nothing installed. A plan composed without
+  asking is a plan about a fleet somebody remembers rather than the one that exists.
+- **`adopt` streams only what a machine does not already have.** It reads that machine's
+  own `SHA256SUMS` first; if it matches, nothing is sent. The receipt carries `sent=yes|no`
+  **separately from** `skipped=`, because they are two different facts: `sent=` is the
+  stream, `skipped=` is the tools. A machine can be `sent=no tools=0 skipped=21` — it had
+  everything already — or `sent=yes tools=21`. The install runs either way: the bits being
+  there is not the same fact as the tools being installed from them.
+
+`<verb> --help` prints that verb's usage and exits 0. It used to print `flag: help
+requested`, the flag package's own sentinel, to somebody who had asked a reasonable
+question; `nova-update`'s own verbs did the same and now print their usage too.
 
 ### What adopt will never do
 

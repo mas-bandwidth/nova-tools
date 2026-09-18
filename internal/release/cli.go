@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,9 +17,9 @@ import (
 // default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
 // release cut from a laptop and a release cut from a bench are the same release.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]`
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
 
 // AdoptNote is what a person needs before their first adopt, and every sentence
 // of it is something the first dogfood pass had to find out by failing.
@@ -47,8 +48,37 @@ type Deps struct {
 type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
 	stage, retire, expectSums, sums                                                 string
+	platforms                                                                       platformList
 	dryRun                                                                          bool
 	timeout                                                                         time.Duration
+}
+
+// platformList is a repeatable, comma-separated --platform. The fleet is three
+// platforms wide, and four invocations differing only in --platform are four
+// chances for one of them to carry a different --version -- which is a release
+// whose linux half and darwin half are not the same release.
+type platformList []string
+
+func (p *platformList) String() string { return strings.Join(*p, ",") }
+func (p *platformList) Set(v string) error {
+	for _, one := range strings.Split(v, ",") {
+		if one = strings.TrimSpace(one); one != "" {
+			*p = append(*p, one)
+		}
+	}
+	return nil
+}
+
+// VerbUsage is the one usage line for one release verb, so that `--help` on a
+// verb answers about THAT verb. A person who asked about `adopt` did not ask to
+// re-read `cut`.
+func VerbUsage(verb string) string {
+	for _, line := range strings.Split(Verbs, "\n") {
+		if strings.HasPrefix(line, "nova-update release "+verb+" ") {
+			return line
+		}
+	}
+	return Verbs
 }
 
 func refusal(w io.Writer, token string, err error) int {
@@ -109,7 +139,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	case "build":
 		f.StringVar(&o.out, "out", "", "artifact root")
 		f.StringVar(&o.source, "source", "", "the checkout to build")
-		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
+		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		required = []string{"version", "out", "source"}
 	case "install":
 		f.StringVar(&o.from, "from", "", "artifact root")
@@ -127,10 +157,28 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.expectSums, "expect-sums", "", "sha256 of SHA256SUMS, as the cut recorded it")
 		f.StringVar(&o.retire, "retire", "", "second directory on each machine to clear")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
-		required = []string{"version", "from", "bin", "machines", "ssh", "dest"}
+		f.BoolVar(&o.dryRun, "dry-run", false, "probe every machine and stream nothing")
+		// --version is NOT required: a --from root usually holds exactly one
+		// release, and adopt reads it rather than making somebody retype what
+		// the directory already says. Two releases there is the case where a
+		// guess would be wrong, and it refuses naming both.
+		required = []string{"from", "bin", "machines", "ssh", "dest"}
 	}
 	token := strings.ToUpper(verb)
 	if err := f.Parse(args); err != nil {
+		// `--help` on a verb is a REASONABLE QUESTION, not a parse failure.
+		// The flag package answers it with the sentinel flag.ErrHelp, and
+		// printing that gave a person who asked for help the words `flag: help
+		// requested` -- the package's own internals, leaked (darwin dogfood,
+		// 2026-09-18). It is answered here with that verb's usage, and exit 0,
+		// because asking is not an error.
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(out, VerbUsage(verb))
+			if verb == "adopt" {
+				fmt.Fprintln(out, AdoptNote)
+			}
+			return 0
+		}
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
 	}
 	if len(f.Args()) != 0 {
@@ -150,8 +198,11 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	if o.timeout <= 0 {
 		return refusal(errs, token, fmt.Errorf("invalid bound (use a positive --timeout)"))
 	}
-	if err := ValidVersion(o.version); err != nil {
-		return refusal(errs, token, err)
+	// adopt may infer its version from --from; every other verb must be told.
+	if o.version != "" || verb != "adopt" {
+		if err := ValidVersion(o.version); err != nil {
+			return refusal(errs, token, err)
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
 	defer cancel()
