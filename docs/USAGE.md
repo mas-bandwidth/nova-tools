@@ -111,8 +111,9 @@ nova-wake help
 
 Those commands install the two named tools from `v0.15.2`. This guide also
 describes development-branch features where it labels them explicitly;
-`nova-ci`, `nova-pulse`, `nova-work` and `nova-sandbox egress` are not available
-from the pinned release.
+`nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
+`nova-cairn`, `nova-decide` and `nova-sandbox egress` are not available from the
+pinned release.
 
 The two `go install` lines **reach the network**: they download and build the
 module and write the binaries into Go's bin directory, and Go may also populate
@@ -195,13 +196,27 @@ git push -u origin HEAD
 
 Run those lines from a directory where `bus` and `bus-origin.git` may be created;
 the bare repository is only your local push target.
-`nova-bus help` then lists the draft and send lines. Drafting writes the template
-to stdout and its next-step hint to stderr, so redirect only stdout when saving a
-draft. See [nova-bus in the command reference](CLI.md#nova-bus) for the output
-grammar, identity rules and what each verb refuses.
+Keep the draft outside the bus checkout so editing it does not make the bus dirty.
+The roster example in the linked instructions names the participants Ada and Bo,
+which the commands below use too:
+
+```sh
+nova-bus draft --bus . --as Ada --to Bo --subject "first local note" > ../draft.md
+$EDITOR ../draft.md
+nova-bus send --bus . --file ../draft.md --as Ada --remote origin --branch main
+```
+
+In `v0.15.2`, a successful ordinary draft writes the skeleton to stdout and no
+next-step hint; any refusals or notices use stderr. The development build also
+prints its next-step hint to stderr. Redirect only stdout when saving a draft. See
+[nova-bus in the command reference](CLI.md#nova-bus) for the output grammar,
+identity rules and what each verb refuses.
 
 **It worked if** a note you sent from one checkout turns up in your friend's
-inbox. One thing to know: `inbox` reads from your **cursor** and does not
+inbox. `inbox` requires the bus's receipt threshold, for example
+`nova-bus inbox --bus . --as Bo --receipt-max-words 40 --full`; choose the
+number for your bus rather than treating 40 as a universal value. One thing to
+know: `inbox` reads from your **cursor** and does not
 move it: re-reading shows the same note as new again until you advance the cursor
 explicitly with `--advance` (which moves it and pushes it). Reading is not
 marking as read.
@@ -333,10 +348,11 @@ each result and the evidence behind it.
 **Limits and side effects.** It runs other programs, writes job directories, and
 spends real tokens once workers start. A worker exiting `0` means the process
 succeeded, **not** that the requested work is complete — read the evidence. A
-free worker helps only if its capabilities fit the task. On macOS, starting
-`nova-sandbox run` from inside an existing sandbox may fail while creating its
-APFS volume because the outer wall does not permit the mount. Use the existing
-wall, or start the disposable volume from outside it; retrying the same nested
+free worker helps only if its capabilities fit the task. The development branch
+adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
+refuses. On macOS, starting it from inside an existing sandbox may fail while
+creating its APFS volume because the outer wall does not permit the mount. Start
+the disposable volume from outside the existing wall; retrying the same nested
 command does not grant the missing mount access.
 
 **It may not help if** your work is mostly sequential, or you have no worker setup
@@ -433,9 +449,10 @@ more than a tidy one that quietly guessed.
 missing**, and declaring a copied transcript twice can double-count it. Coverage
 is limited to the sources it supports today. For transcript-backed sources the
 reader scans the supplied transcript tree even when `--day` selects only one
-day's output, so a broad tree can still make a one-day report expensive. A
-reported `usd=0` may mean no price was available for those measured tokens; it
-does not by itself prove the calls were free. Retained records, broader adapters,
+day's output, so a broad tree can still make a one-day report expensive. In
+`v0.15.2`, unavailable cost is `usd=-`. Development builds can report `usd=0`
+when no price was available for measured tokens; that zero does not by itself
+prove the calls were free. Retained records, broader adapters,
 original-bench attribution and Git ledger publication are **being developed
 separately and do not ship** — do not read the current report as a complete
 cross-harness ledger.
@@ -481,6 +498,8 @@ and dropping that nftables wall is Linux-only. Those verbs are not in `v0.15.2`.
 already hands you containers.
 
 ### nova-secrets — selected credentials for one command
+
+**Development branch:** `nova-secrets` is not part of `v0.15.2`.
 
 **Try it when** a worker or service needs a provider key and copying plaintext
 into a card, configuration file or shell history is unacceptable.

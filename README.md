@@ -27,7 +27,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Know who is doing what and what still needs doing.</td><td nowrap><a href="docs/CLI.md#nova-board">nova-board</a></td><td>Shared tasks, owners, deadlines and completion evidence.</td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>AI workers you configure, with time limits and collected results.</td></tr>
 <tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>An ordered merge queue tied to reviewed revisions.</td></tr>
-<tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td>A bounded packet of evidence for the reviewer.</td></tr>
+<tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td><strong>Development branch:</strong> a bounded packet of evidence for the reviewer.</td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>Usage by model and repository, with gaps shown.</td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>Installed tool identities, local or as a prepared bus note.</td></tr>
 <tr><td>Check declared versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>Bounded reads and explicit UNKNOWN results, never automatic installation.</td></tr>
@@ -36,14 +36,14 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Catch broken links and other problems in your records.</td><td nowrap><a href="docs/CLI.md#nova-check">nova-check</a></td><td>Specific findings you can inspect and fix.</td></tr>
 <tr><td>Review how you write about yourself.</td><td nowrap><a href="docs/CLI.md#nova-self-talk">nova-self-talk</a></td><td>Flagged sentence patterns for you to judge.</td></tr>
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
-<tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td>Encrypted storage and selected credentials delivered to a child command.</td></tr>
+<tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td><strong>Development branch:</strong> encrypted storage and selected credentials delivered to a child command.</td></tr>
 <tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td><strong>Development branch:</strong> a work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
-<tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td>Saved drafts and a send gate tied to approval of the exact content.</td></tr>
+<tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td><strong>Development branch:</strong> saved drafts and a send gate tied to approval of the exact content.</td></tr>
 <tr><td>Check task dependencies and a work plan.</td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td><strong>Development branch:</strong> a ready set, bounded plan checks and generated task cards.</td></tr>
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
 <tr><td>Read the useful part of a failed CI run.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci failed</a></td><td><strong>Development branch:</strong> failing tests and their locations instead of a whole job log.</td></tr>
-<tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td>Explicit checkpoints, source pointers and a bounded index.</td></tr>
-<tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td>Typed answers and reported confidence for your workflow to evaluate.</td></tr>
+<tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td><strong>Development branch:</strong> explicit checkpoints, source pointers and a bounded index.</td></tr>
+<tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td><strong>Development branch:</strong> typed answers and reported confidence for your workflow to evaluate.</td></tr>
 </tbody>
 </table>
 
@@ -51,12 +51,13 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Useful workflows
 
-The `nova-pulse`, `nova-work` and `nova-ci` workflows below, and
-`nova-sandbox egress`, are available on the development branch and are not part
-of the pinned `v0.15.2` release shown in the install guide.
+The `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-work`,
+`nova-ci`, `nova-cairn` and `nova-decide` commands below, and `nova-sandbox
+egress`, are available on the development branch and are not part of the pinned
+`v0.15.2` release shown in the install guide.
 
-- Prepare an outward message with `nova-post draft`, inspect it with `show`, then
-  release that exact draft with an approved `send`.
+- On the development branch, prepare an outward message with `nova-post draft`,
+  inspect it with `show`, then release that exact draft with an approved `send`.
 - Fold worker-pool usage into a ledger with `nova-tokens fold-pool`. Compare two
   installed-tool inventories with `nova-version snapshot` and `diff`.
 - Check a `.work` plan with `nova-work plan check`, generate its cards with
