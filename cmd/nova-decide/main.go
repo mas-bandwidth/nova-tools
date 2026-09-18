@@ -102,9 +102,9 @@ opaque ids rather than any mind's name.
                       REQUIRED when jev is asked
   --event-log <path>  append one structured JSON event per decision (kind, rung,
                       confidence, floor) to this file, the one Alloy tails
-                      (SPEC-LOGS.md Part 2). Without it the line goes to stderr,
-                      which under systemd is the unit's journal. It is NOT --log:
-                      --log is the decision RECORD, this is the OBSERVATION
+                      (SPEC-LOGS.md Part 2). Without it no structured line is
+                      written at all. It is NOT --log: --log is the decision
+                      RECORD, this is the OBSERVATION
   --bench <name>      this machine's fleet name, the bench label every structured
                       line carries (else $NOVA_BENCH, else the short hostname)
   --usage <path>      append what a provider call spent to this usage TSV, in

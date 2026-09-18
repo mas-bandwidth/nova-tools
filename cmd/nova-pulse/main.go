@@ -447,9 +447,8 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	floor := f.fs.Float64("floor", 0.9, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
-	// The structured sink of SPEC-LOGS.md Part 2, wired exactly as fill's is: --log names
-	// the file Alloy tails, and without it the lines go to stderr, which under systemd is
-	// the unit's journal and so a source Alloy already reads. --label is the fleet name of
+	// The structured sink of SPEC-LOGS.md Part 2: --log names the file Alloy tails, and a
+	// fold that names none writes no structured line at all. --label is the fleet name of
 	// THIS machine (else $NOVA_BENCH, else the short hostname); harvest keeps --bench free
 	// for the bench a fold reads, which is a different question from which bench folded.
 	logPath := f.fs.String("log", "", "")

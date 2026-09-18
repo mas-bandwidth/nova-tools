@@ -858,10 +858,10 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the bus until it is pushed")
-	// The structured sink of SPEC-LOGS.md Part 2: --log names the file Alloy tails; without
-	// it the line goes to stderr, which under systemd is the unit's journal. --bench is the
-	// fleet's name for this machine. The line carries the note's id, lane and recipients --
-	// never its body, subject or path: see events.go.
+	// The structured sink of SPEC-LOGS.md Part 2: --log names the file Alloy tails, and a
+	// run that names none writes no structured line at all (events.go says why). --bench is
+	// the fleet's name for this machine. The line carries the note's id, lane and
+	// recipients -- never its body, subject or path: see events.go.
 	logPath := f.fs.String("log", "", "append one structured JSON event per landed note to this file")
 	bench := f.fs.String("bench", "", "this machine's fleet name, the bench label every structured line carries")
 	dryRun := f.fs.Bool("dry-run", false, "stop after the preflight and the shaping: commit nothing, push nothing, print the note that would be sent")
