@@ -93,7 +93,9 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 	ref := f.fs.String("ref", "", "")
 	evidence := f.fs.String("evidence", "", "")
 	decideOn := f.fs.Bool("decide", false, "")
-	floor := f.fs.Float64("floor", 0.9, "")
+	dedupe := f.fs.Bool("dedupe", false, "")
+	issues := f.fs.String("issues", "", "")
+	floor := f.fs.Float64("floor", pulse.DefaultDedupeFloor, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 
@@ -103,8 +105,11 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 	f.want(*kind, "case", "one of "+joinKinds())
 	f.want(*queue, "queue", "the queue directory holding RULES.tsv and the undecided evidence")
 	f.want(*out, "out", "the card file this packet is written to")
-	if *decideOn && (*floor < 0 || *floor > 1) {
+	if (*decideOn || *dedupe) && (*floor < 0 || *floor > 1) {
 		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g", *floor))
+	}
+	if *dedupe {
+		f.want(*issues, "issues", "the open issues file, one number<TAB>title per line")
 	}
 	if f.refused(stderr) {
 		return 2
@@ -113,12 +118,12 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 		Case: *kind, Queue: *queue, Out: *out, Ref: *ref, Evidence: *evidence,
 		Stdout: stdout, Stderr: stderr,
 	}
-	if *decideOn {
+	if *decideOn || *dedupe {
 		client, err := decide.New(*baseURL, *keyEnv)
 		if err != nil {
 			return refuse(stderr, " triage", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
-		in.Decide, in.Floor, in.Decider = true, *floor, client
+		in.Decide, in.Dedupe, in.Issues, in.Floor, in.Decider = *decideOn, *dedupe, *issues, *floor, client
 	}
 	return pulse.Triage(in)
 }
