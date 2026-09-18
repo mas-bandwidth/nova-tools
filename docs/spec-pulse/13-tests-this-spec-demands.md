@@ -216,3 +216,10 @@ handoff (rule **The manager tier**).
     not by the clock; and a recovery releases only the take it wrote.
     `TestPausedTakerIsNeverRobbed`, `TestDeadTakerIsClearedByIdentity`,
     `TestRecoveryReleasesOnlyItsOwnTake` (`internal/pulse/queuelock_test.go`).
+58. `racing-recoverers-never-remove-a-live-record`: with one recoverer PAUSED between its
+    claim and its judgement and a second running for real, the second's live record survives;
+    a claimed record whose owner turns out to be alive is put back; a release that meets a
+    record published in its own window removes nothing. No sleeps: the two are sequenced by
+    channels, and the assertion holds under `-race`. `TestRacingRecoverersNeverRemoveALiveRecord`,
+    `TestAClaimedLiveRecordIsPutBack`, `TestReleaseClaimsBeforeItUnlinks`
+    (`internal/pulse/queuelock_test.go`).

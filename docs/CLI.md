@@ -1446,16 +1446,22 @@ orphan, and deleted a live owner's lock. Four rules close that:
    the lock and hard-linked onto the lock name. `link` fails when the name exists, so
    it is the exclusion, and the lock path never exists holding half a record. A
    filesystem that will not hard-link is named and refused rather than worked around.
-2. **Release is identity-checked.** Every record carries a nonce, and a lock is
-   unlinked only when the record on disk is still the one that handle wrote. An owner
-   whose lock was recovered out from under it does not then delete its replacement's.
-3. **Stale recovery is serialized** through `<queue>/.lock.take`, and the holder is
-   read *again* under it, because the one the caller saw may have been replaced in
-   between. The take is a lock too, held to these same rules: it carries its taker's
-   record, and it is cleared only when that taker is **provably gone** — never by
-   age. Age is not death: a recoverer that is merely slow, a stopped process, a
-   paused container, a machine that swapped, was robbed of the take while it was
-   alive and mid-recovery, which put two writers inside the thing the file excludes.
+2. **Nothing is ever removed by path — only by claim.** Reading a record and then
+   unlinking the path is check-then-act, and no number of re-reads closes it: A finds
+   the owner dead, B finds the same, B removes it and publishes its own live record,
+   A resumes and unlinks *B's*. So a remover first `rename`s the record to a name only
+   it knows, `<path>.claim-<nonce>` — exactly one rename can win, every other gets
+   `ENOENT` and backs off having touched nothing — and only then judges the file it is
+   holding, which nobody else can reach, and unlinks it. Release works the same way and
+   unlinks only a record whose nonce is still its own. A record whose owner turns out
+   to be alive is put back with `link`, never `rename`: a writer may legitimately have
+   published into the gap, and a lock protocol may not overwrite a file it did not read.
+3. **Stale recovery is serialized** through `<queue>/.lock.take`. The take is a lock
+   too, held to every rule here: it carries its taker's record, it is claimed before it
+   is judged, and it is cleared only when that taker is **provably gone** — never by
+   age. Age is not death: a recoverer that is merely slow, a stopped process, a paused
+   container, a machine that swapped, was robbed of the take while it was alive and
+   mid-recovery, which put two writers inside the thing the file excludes.
 4. **Reentrancy is by nonce, not by pid.** `loop` runs three verbs that each ask for
    the lock and one process is one writer — but "the holder's pid equals mine" would
    let a recycled pid walk into a lock this process never took. A lock is ours when

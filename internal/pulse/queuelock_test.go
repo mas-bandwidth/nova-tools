@@ -368,3 +368,124 @@ func TestRecoveryReleasesOnlyItsOwnTake(t *testing.T) {
 		t.Fatalf("a recoverer could not release its own take: %v", err)
 	}
 }
+
+// TestRacingRecoverersNeverRemoveALiveRecord is Stella's third read of #1430, walked exactly:
+//
+//	A reads the record and finds its owner dead.
+//	B reads the same record and finds the same.
+//	B removes it and publishes its own, LIVE.
+//	A resumes and unlinks -- B's live record -- and both are inside the recovery.
+//
+// A second read before the unlink does not fix this; it only makes the window smaller. The
+// removal has to be ATOMIC WITH THE VALIDATION, and the atom is `rename`: A claims the record
+// under a name only A knows before judging it, so the file A unlinks is the file A read and
+// B can never have reached it.
+//
+// The pause is a hook between the claim and the judgement -- the exact instant the old code
+// was wrong -- with a second recoverer running for real in another goroutine. No sleeps: the
+// two are sequenced by channels, so the race is deterministic rather than hoped for.
+func TestRacingRecoverersNeverRemoveALiveRecord(t *testing.T) {
+	teachLiveness(t)
+	queue := t.TempDir()
+	path := filepath.Join(queue, QueueLockName)
+	writeHolder(t, queue, deadPID, "loop") // the dead owner D that both recoverers see
+
+	claimed := make(chan struct{})   // A has claimed and is about to judge
+	published := make(chan struct{}) // B has taken the lock in the gap
+	hook := func() {
+		lockClaimHook = nil // once: the second recoverer must not re-enter it
+		close(claimed)
+		<-published
+	}
+	lockClaimHook = hook
+	t.Cleanup(func() { lockClaimHook = nil })
+
+	done := make(chan bool, 1)
+	go func() { done <- clearDeadRecord(path) }() // recoverer A, pausing mid-claim
+
+	<-claimed
+	// B, in the gap, doing exactly what B does: recover the dead record if it is still
+	// there, then take the lock. Against the claim protocol the record is already out of
+	// reach, so B's own recovery finds nothing and B simply publishes; against the old
+	// read-then-remove shape B removes D here and publishes over it -- and A, resuming, had
+	// unlinked THE PATH and taken B's live record with it.
+	_ = clearDeadRecord(path)
+	bNonce, err := publishRecord(path, "fill", time.Now().UTC(), livePID)
+	if err != nil {
+		t.Fatalf("the second writer could not take the freed lock: %v", err)
+	}
+	close(published)
+
+	if !<-done {
+		t.Fatalf("the recoverer did not clear the dead record it was holding")
+	}
+	// THE ASSERTION: B's live record is still there, untouched. The old code unlinked the
+	// PATH and would have deleted it.
+	got := readLockHolder(path)
+	if got.Nonce != bNonce {
+		t.Fatalf("a recoverer removed a live record published in its claim window: %+v (want nonce %s)", got, bNonce)
+	}
+	if got.PID != livePID {
+		t.Fatalf("the live record was replaced: %+v", got)
+	}
+	// And no claim file is left behind.
+	strays, _ := filepath.Glob(filepath.Join(queue, "*.claim-*"))
+	if len(strays) != 0 {
+		t.Fatalf("the recovery left claim files behind: %q", strays)
+	}
+}
+
+// TestAClaimedLiveRecordIsPutBack: a recoverer that claims a record and finds its owner alive
+// after all must put it back where its owner expects it, not keep it and not delete it.
+func TestAClaimedLiveRecordIsPutBack(t *testing.T) {
+	teachLiveness(t)
+	queue := t.TempDir()
+	path := filepath.Join(queue, QueueLockName)
+	// Dead when it is read from outside; alive the moment the claim judges it. That is the
+	// owner that came back between one recoverer's read and its claim.
+	writeHolder(t, queue, deadPID, "loop")
+	lockClaimHook = func() {
+		lockClaimHook = nil
+		lockAlive = func(pid int, _ string) bool { return true }
+	}
+	t.Cleanup(func() { lockClaimHook = nil })
+
+	if clearDeadRecord(path) {
+		t.Fatalf("a recoverer removed a record whose owner was alive when it judged it")
+	}
+	if got := readLockHolder(path); got.PID != deadPID || got.Verb != "loop" {
+		t.Fatalf("the live record was not put back: %+v", got)
+	}
+	strays, _ := filepath.Glob(filepath.Join(queue, "*.claim-*"))
+	if len(strays) != 0 {
+		t.Fatalf("the put-back left claim files behind: %q", strays)
+	}
+}
+
+// TestReleaseClaimsBeforeItUnlinks: Release had the same shape -- read the nonce, then remove
+// the path -- so a record published between the two was deleted by somebody else's release.
+func TestReleaseClaimsBeforeItUnlinks(t *testing.T) {
+	teachLiveness(t)
+	queue := t.TempDir()
+	path := filepath.Join(queue, QueueLockName)
+	lock, err := LockQueue(queue, "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// In the window between the claim and the judgement, somebody else publishes.
+	var theirs string
+	lockClaimHook = func() {
+		lockClaimHook = nil
+		theirs, _ = publishRecord(path, "fill", time.Now().UTC(), livePID)
+	}
+	t.Cleanup(func() { lockClaimHook = nil })
+
+	lock.Release()
+	if got := readLockHolder(path); got.Nonce != theirs {
+		t.Fatalf("a release deleted the record published in its own window: %+v (want %s)", got, theirs)
+	}
+	strays, _ := filepath.Glob(filepath.Join(queue, "*.claim-*"))
+	if len(strays) != 0 {
+		t.Fatalf("the release left claim files behind: %q", strays)
+	}
+}

@@ -218,27 +218,91 @@ func publishRecord(path, verb string, now time.Time, self int) (string, error) {
 	return nonce, nil
 }
 
+// THE CLAIM: THE ONLY WAY A RECORD IS EVER REMOVED.
+//
+// Reading a record and then unlinking the path is check-then-act, and no number of re-reads
+// closes it. Stella's third read of #1430 walked it: A reads the record and finds its owner
+// dead; B reads the same and finds the same; B removes it and publishes its own, LIVE;
+// A resumes and unlinks -- B's live record -- and both are inside the thing the file
+// excludes. The second read A does before unlinking is just a smaller window.
+//
+// So the removal is ATOMIC WITH THE VALIDATION, and the atom is `rename`. A recoverer first
+// renames the record to a name only it knows, <path>.claim-<nonce>. Exactly one rename can
+// succeed; every other recoverer gets ENOENT and backs off, having touched nothing. THEN the
+// winner judges the record it is holding, which nobody else can reach, and unlinks it -- or,
+// if the owner turns out to be alive after all, puts it back.
+//
+// The put-back is `link`, never `rename`: rename would clobber a record somebody published
+// into the gap, and a lock protocol may not overwrite a file it did not read.
+
+// lockClaimHook runs between the claim and the judgement. It is nil in production and is
+// what lets a test PAUSE one recoverer exactly inside the window, with a second one running,
+// and prove the live record survives.
+var lockClaimHook func()
+
+// claimRecord takes a record out of everyone else's reach, atomically, and hands back what
+// it was and where it now is. ok is false when somebody else won the claim, or there was
+// nothing there: either way this caller has touched nothing and must back off.
+func claimRecord(path, nonce string) (claim string, was LockHolder, ok bool) {
+	claim = path + ".claim-" + nonce
+	if err := os.Rename(path, claim); err != nil {
+		return "", LockHolder{}, false
+	}
+	if lockClaimHook != nil {
+		lockClaimHook()
+	}
+	return claim, readLockHolder(claim), true
+}
+
+// unclaim puts a claimed record back where its owner expects it. `link` and not `rename`: a
+// writer may legitimately have published into the gap while the claim was held, and this one
+// has no right to overwrite that. When the gap is taken, the claim is dropped rather than
+// forced -- one of the two owners then finds its record gone, and an identity-checked
+// release means it removes nothing that is not its own.
+func unclaim(claim, path string) {
+	if err := os.Link(claim, path); err != nil {
+		_ = os.Remove(claim)
+		return
+	}
+	_ = os.Remove(claim)
+}
+
 // releaseRecord unlinks a record ONLY when it is still the one this nonce wrote. A cleanup
 // that removes the path whatever is at it is a cleanup that deletes the file of whoever
 // rightfully replaced you -- which is two writers inside the thing the file was excluding.
 func releaseRecord(path, nonce string) {
-	if nonce == "" || readLockHolder(path).Nonce != nonce {
+	if nonce == "" {
 		return
 	}
-	_ = os.Remove(path)
+	claim, was, ok := claimRecord(path, nonce)
+	if !ok {
+		return // already gone, or claimed by a recoverer that will judge it
+	}
+	if was.Nonce == nonce {
+		_ = os.Remove(claim)
+		return
+	}
+	unclaim(claim, path)
 }
 
-// clearDeadRecord removes a lock or a take whose owner is PROVABLY GONE, and only while it
-// is still the same gone owner. It never judges by age: a process is dead when the kernel
-// says so, and the clock says nothing at all about a process that is merely slow.
-func clearDeadRecord(path string, was LockHolder) bool {
-	if lockHolderLive(was) {
+// clearDeadRecord removes a lock or a take whose owner is PROVABLY GONE. It never judges by
+// age: a process is dead when the kernel says so, and the clock says nothing at all about a
+// process that is merely slow. The judgement happens under the claim, so the record it reads
+// and the record it unlinks are the same file and nobody else can reach it in between.
+func clearDeadRecord(path string) bool {
+	nonce, err := lockNonce()
+	if err != nil {
 		return false
 	}
-	if again := readLockHolder(path); again != was {
-		return false // it moved under us; it is not ours to clear
+	claim, was, ok := claimRecord(path, nonce)
+	if !ok {
+		return false
 	}
-	return os.Remove(path) == nil
+	if lockHolderLive(was) {
+		unclaim(claim, path)
+		return false
+	}
+	return os.Remove(claim) == nil
 }
 
 // recoverStale takes a dead holder's lock away, under <queue>/.lock.take so two recoverers
@@ -256,7 +320,7 @@ func recoverStale(path string, now time.Time) error {
 		// been holding: age is not death, and a slow recoverer robbed of its take puts two
 		// writers inside the recovery this file exists to serialize.
 		taker := readLockHolder(take)
-		if !clearDeadRecord(take, taker) {
+		if !clearDeadRecord(take) {
 			return &LockedError{Path: path, Holder: taker,
 				Why: "another writer is recovering a stale lock right now"}
 		}
@@ -276,7 +340,7 @@ func recoverStale(path string, now time.Time) error {
 	if lockHolderLive(holder) {
 		return &LockedError{Path: path, Holder: holder}
 	}
-	if !clearDeadRecord(path, holder) {
+	if !clearDeadRecord(path) {
 		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
 			return nil // already gone: the next turn takes it
 		}

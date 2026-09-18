@@ -50,14 +50,17 @@ depth and headroom, never from slot count alone.
     a file. **`O_EXCL` alone is not enough**: it creates an empty file and the content
     arrives after, and a reader in that window deletes a live owner's lock. The record is
     written to a temp file and HARD-LINKED onto the lock name, so creation and content are
-    one step; release unlinks only a record whose nonce is still the handle's; stale recovery
-    is serialized through `<queue>/.lock.take` and re-reads the holder under it; and
-    reentrancy is by nonce, never by pid, because a recycled pid is not the same process.
-    **The take is a lock too**, held to every one of these rules: a record of its own, and
-    cleared only when its taker is PROVABLY GONE. Age is never evidence — a recoverer that is
-    merely slow, robbed of its take by the clock, puts two writers inside the recovery the
-    take exists to serialize. Replays: `second-writer-refuses-naming-the-holder`,
-    `lock-is-atomic-and-identity-checked`.
+    one step. **Nothing is ever removed by path**: a remover first renames the record to
+    `<path>.claim-<nonce>`, which exactly one rename can win, and only then judges the file it
+    is holding — reading a record and then unlinking the path is check-then-act, and a second
+    read only narrows the window it leaves. Release claims the same way and unlinks only its
+    own nonce; a claimed record whose owner is alive is put back with `link`, never `rename`.
+    Stale recovery is serialized through `<queue>/.lock.take`, and reentrancy is by nonce,
+    never by pid, because a recycled pid is not the same process. **The take is a lock too**,
+    held to every one of these rules, and cleared only when its taker is PROVABLY GONE: age is
+    never evidence. Replays: `second-writer-refuses-naming-the-holder`,
+    `lock-is-atomic-and-identity-checked`, `paused-taker-is-never-robbed`,
+    `racing-recoverers-never-remove-a-live-record`.
 11. **One verb is the loop.** `nova-pulse loop` is one tick of `run`, then `fill`, then
     `manager`, under one lock, then the launch-dead probe, then one `LOOP TICK` line. Every
     placement on either road is held against the same `--machines` registry and `--lanes`
