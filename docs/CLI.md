@@ -2238,7 +2238,7 @@ usage:
                  [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
-  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] (--once | --deadline <duration>)
+  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -2322,6 +2322,15 @@ poll publishes nothing. Without --repo only the stream is bridged.
 --once reads the stream and polls the forge once, then exits. The loop form requires
 --deadline and returns when it is reached.
 
+Every event events publishes is also written as one structured JSON line (SPEC-LOGS.md
+Part 2): the same five labels on every line -- source=nova-work, verb=events, bench, the
+event kind (start, card-done, pr-checks-done, dev-moved, done) and level -- plus the
+fixed fields ts, guid, card, pr, msg, dur_ms and err. The line goes to stderr, which
+under systemd is the unit's journal and so a source Alloy already reads, or to the file
+--log names, which Alloy tails on every bench. A secret value never reaches the line:
+the emitter redacts anything credential-shaped before it leaves the process. The stdout
+EVENTS OK line is unchanged; the JSON line is written beside it, never instead of it.
+
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
                   Required on both graph verbs; there is no default and no discovery.
@@ -2372,6 +2381,11 @@ flags:
   --now <stamp>   ask and asks: the instant deadlines and ages are measured against;
                   the default is this run's clock and an unparsable one is a refusal
                   rather than a silent fall back to it.
+  --bench <name>  events: the fleet name of this machine, the bench label on every
+                  structured line. Without it, $NOVA_BENCH, else the short hostname.
+  --log <path>    events: append the structured JSON lines to this file instead of
+                  stderr. The file is the one Alloy tails; a path that cannot be opened
+                  is refused naming --log, never a silent run with no log.
 
 exit codes: 0 ran and passed; 1 set check read the file whole and found something wrong
 with its content, one SET line per finding; 2 could not run (bad invocation, an
