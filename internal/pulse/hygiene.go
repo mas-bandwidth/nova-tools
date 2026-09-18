@@ -323,14 +323,14 @@ func (h *hygiene) logVerb() int {
 	return 0
 }
 
-// run is the timer's verb: it walks both roots, leaves every live slot alone,
-// reaps the dead, deletes the read jobs, drops the cache when the disk is low,
-// and prints one HYGIENE line (and, unless --dry-run, logs it too).
 // hygieneLowDiskGB is the free-disk floor this timer works to: below it the build cache is
 // dropped, and the disk-free event is a WARN. It is the same number the fleet's free-disk
 // alert is written against (SPEC-LOGS.md Part 4), named once rather than typed twice.
 const hygieneLowDiskGB = 25
 
+// run is the timer's verb: it walks both roots, leaves every live slot alone,
+// reaps the dead, deletes the read jobs, drops the cache when the disk is low,
+// and prints one HYGIENE line (and, unless --dry-run, logs it too).
 func (h *hygiene) run() int {
 	// The elapsed time comes from the pass's own clock, read twice: h.now is one snapshot
 	// taken when the run was built, and a duration measured from a snapshot is always zero.
