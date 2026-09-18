@@ -20,6 +20,7 @@ func TestEverySubVerbAnswersHelp(t *testing.T) {
 		"clip",
 		"plan check",
 		"plan expand",
+		"set check",
 		"ask",
 		"asks",
 		"query",

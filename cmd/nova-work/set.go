@@ -39,6 +39,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -67,6 +68,9 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "set check")) {
+			return 0
+		}
 		return refuse(stderr, " set check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
