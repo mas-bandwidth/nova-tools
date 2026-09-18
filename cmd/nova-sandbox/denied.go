@@ -35,14 +35,32 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
+
+// EVERY PATH IN THIS FILE IS A POSIX PATH, and that is a contract rather than an accident.
+// These lines come out of macOS's unified log, so their separator is `/` whatever machine
+// reads them — and this file is compiled on all three platforms, so the suite reads the
+// same fixture on windows, where `path/filepath` means `\`.
+//
+// Measured on the windows CI leg (run 35367602664, job test-windows-pr):
+// `filepath.Dir("/Users/me/notes/out.txt")` answered `\Users\me\notes` and the remedy line
+// printed `--write \\Users\\me\\notes`; and `sandbox.Inside`, which joins with
+// `os.PathSeparator`, called a denial at `/Volumes/nova-j1/work/inside.txt` OUTSIDE the
+// write set `/Volumes/nova-j1` — so a run was told to go and fix a path it had already
+// named. Both are `path` now, and the containment test is this file's own rather than
+// `sandbox.Inside`: that function is about the paths of the machine it runs on, and these
+// are not those.
+//
+// denialStat is the one question here that IS about the local machine — whether a denied
+// path is a directory — and it is a seam so the tests answer it the same way everywhere.
+// Without it they were asserting that the machine reading them has an `/opt`.
+var denialStat = os.Stat
 
 // maxDenied is how many SANDBOX DENIED lines a run prints before one line stands for the
 // rest — rule 16's shape for a list. A command that died on its first syscall can trip
@@ -141,7 +159,7 @@ func outsideTheWall(denied []deniedPath, allowed []string) []deniedPath {
 	for _, d := range denied {
 		inside := false
 		for _, dir := range allowed {
-			if sandbox.Inside(d.Path, dir) {
+			if insidePosix(d.Path, dir) {
 				inside = true
 				break
 			}
@@ -187,16 +205,28 @@ func printDenied(stderr io.Writer, denied []deniedPath, max int) {
 	}
 }
 
+// insidePosix is Inside for the slash paths of a seatbelt log: the same path, or a path
+// under it, with `/` as the separator on every platform. It is a prefix test and nothing
+// more — there is no disk here to resolve a symlink against, because the denial was
+// recorded on a machine this reader may not be.
+func insidePosix(p, dir string) bool {
+	p, dir = path.Clean(p), path.Clean(dir)
+	if p == dir {
+		return true
+	}
+	return strings.HasPrefix(p, strings.TrimSuffix(dir, "/")+"/")
+}
+
 // remedyDir is the directory a flag would name for this path: the path when it is a
 // directory, its parent when it is a file, and its parent when it is neither — a path that
 // was denied may not exist, and the parent is the flag a caller can actually pass.
-func remedyDir(path string) string {
-	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
-		return path
+func remedyDir(p string) string {
+	if fi, err := denialStat(p); err == nil && fi.IsDir() {
+		return p
 	}
-	dir := filepath.Dir(path)
+	dir := path.Dir(p)
 	if dir == "" || dir == "." {
-		return path
+		return p
 	}
 	return dir
 }

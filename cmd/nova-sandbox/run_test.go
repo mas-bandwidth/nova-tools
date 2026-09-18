@@ -505,6 +505,9 @@ func TestGoRefusesWhenThereIsNoGoToAsk(t *testing.T) {
 // The whole point of the line: a command that failed is told what the wall refused.
 func TestAFailedRunIsToldWhatTheWallDenied(t *testing.T) {
 	b := newRunBench(t, 2)
+	// /opt is a directory of the machine the DENIAL came from, not of the machine reading
+	// this test: the windows leg has none and the remedy came out as `--read \` there.
+	posixDirs(t, "/opt")
 	oldDenials := runDenials
 	t.Cleanup(func() { runDenials = oldDenials })
 	runDenials = func(int, int) []deniedPath {

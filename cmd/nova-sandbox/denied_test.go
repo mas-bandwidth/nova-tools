@@ -2,9 +2,36 @@ package main
 
 import (
 	"bytes"
+	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
+
+// posixDirs makes the local stat answer the same question on every platform. These are
+// macOS's own log paths, and whether `/opt` is a directory is not a fact about the machine
+// running the test — without this, the suite was asserting that the READER has an /opt,
+// which is true on the Studio and false on the windows runner (run 35367602664).
+func posixDirs(t *testing.T, dirs ...string) {
+	t.Helper()
+	old := denialStat
+	t.Cleanup(func() { denialStat = old })
+	set := map[string]bool{}
+	for _, d := range dirs {
+		set[d] = true
+	}
+	denialStat = func(p string) (fs.FileInfo, error) {
+		if set[p] {
+			return fakeDirInfo{}, nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+// fakeDirInfo is a directory, and remedyDir asks it exactly one question.
+type fakeDirInfo struct{ fs.FileInfo }
+
+func (fakeDirInfo) IsDir() bool { return true }
 
 // The seatbelt violation lines this parser reads are the OS's own, copied from
 // `log show --predicate 'subsystem == "com.apple.sandbox.reporting"'` on the Studio
@@ -80,6 +107,7 @@ func TestDenialsInsideTheAllowedSetAreNotReported(t *testing.T) {
 
 // The line is the contract, and the remedy on it is a line to RUN, not a thing to work out.
 func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
+	posixDirs(t, "/opt")
 	var errb bytes.Buffer
 	printDenied(&errb, []deniedPath{
 		{Path: "/opt", Op: "read", PID: 10},
@@ -92,6 +120,26 @@ func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
 	// A FILE's remedy names the directory to pass, because --read takes a directory.
 	if !strings.Contains(out, `SANDBOX DENIED path=/Users/me/notes/out.txt op=write remedy="--write /Users/me/notes"`) {
 		t.Errorf("the denied line for a file does not name its directory as the remedy:\n%s", out)
+	}
+}
+
+// Every path this file handles is a POSIX path, because every one of them came out of
+// macOS's log — and this file is compiled and run on windows too, where `path/filepath`
+// means `\`. Both halves are asserted here directly, with no fixture and no machine: the
+// windows leg went red on exactly these two (run 35367602664).
+func TestTheDenialReaderUsesPosixPathsOnEveryPlatform(t *testing.T) {
+	posixDirs(t) // nothing is a directory: every answer below is path arithmetic
+	if got := remedyDir("/Users/me/notes/out.txt"); got != "/Users/me/notes" {
+		t.Errorf("remedyDir gave %q; a seatbelt log path is separated by / on every platform, so this is `path` and never `path/filepath`", got)
+	}
+	if !insidePosix("/Volumes/nova-j1/work/inside.txt", "/Volumes/nova-j1") {
+		t.Error("a path under the write set was called outside it; the containment test joins with / and not with os.PathSeparator")
+	}
+	if insidePosix("/Volumes/nova-j1x/work", "/Volumes/nova-j1") {
+		t.Error("a sibling whose name merely starts the same was called inside the write set")
+	}
+	if !insidePosix("/Volumes/nova-j1", "/Volumes/nova-j1/") {
+		t.Error("a directory is inside itself however it is spelled")
 	}
 }
 
