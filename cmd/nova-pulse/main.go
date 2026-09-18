@@ -711,7 +711,7 @@ func cmdCapacity(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	allowed := pulse.Capacity(c, l, fg, mg)
+	allowed := pulse.AllowedCards(c, l, fg, mg)
 	fmt.Fprintf(stdout, "CAPACITY bench=%s cores=%d load=%d free=%dG memfree=%dG allowed=%d\n",
 		oneline.Field(*bench), c, l, fg, mg, allowed)
 	return 0

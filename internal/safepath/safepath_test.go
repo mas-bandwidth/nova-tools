@@ -84,7 +84,6 @@ func TestRemoveUnderRefusesOutsideTheRoots(t *testing.T) {
 	if err := RemoveUnder(root, victim); err == nil {
 		t.Fatalf("RemoveUnder(%q, %q) = nil, want a refusal", root, victim)
 	}
-	}
 	if !exists(victim) {
 		t.Fatalf("RemoveUnder removed %s, a path outside the root", victim)
 	}
@@ -101,7 +100,6 @@ func TestRemoveUnderRefusesDotDot(t *testing.T) {
 	}
 	if err := RemoveUnder(root, escape); err == nil {
 		t.Fatalf("RemoveUnder(%q, %q) = nil, want a refusal for \"..\"", root, escape)
-	}
 	}
 	if !exists(target) {
 		t.Fatalf("RemoveUnder removed %s through a \"..\" element", target)
@@ -122,7 +120,6 @@ func TestRemoveUnderRefusesSymlinkPath(t *testing.T) {
 	}
 	if err := RemoveUnder(root, link); err == nil {
 		t.Fatalf("RemoveUnder(%q, %q) = nil, want a refusal for a symlink", root, link)
-	}
 	}
 	if !exists(filepath.Join(outside, "keep")) {
 		t.Fatalf("RemoveUnder followed the symlink and removed its target")

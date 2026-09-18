@@ -8,11 +8,11 @@ package pulse
 // by free memory. It makes no model call and reads nothing itself: the caller supplies the
 // four numbers read from nproc, /proc/loadavg, df and /proc/meminfo.
 
-// Capacity returns the allowed cards for one bench from its cores, one-minute load, free
+// AllowedCards returns the allowed cards for one bench from its cores, one-minute load, free
 // disk in whole GB and free memory in whole GB. a1 keeps cap()'s integer arithmetic
 // (cores*3/2 and cores/8 truncate), so one fleet's number matches the shell it replaces;
 // the result floors at 0, never negative.
-func Capacity(cores, load1, freeGB, memFreeGB int) int {
+func AllowedCards(cores, load1, freeGB, memFreeGB int) int {
 	a1 := cores*3/2 - load1 - cores/8
 	a2 := (freeGB - 25) / 2
 	a3 := memFreeGB / 2
