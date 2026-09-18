@@ -62,27 +62,49 @@ func prefixes(t *testing.T, ss ...string) []netip.Prefix {
 	return out
 }
 
-// goodInput is one plan's worth of input: the four reviewed names, a model host that is one
-// of them, a resolver on the bench's own network and one other bench denied.
+// testModelHost is the model host these tests plan for. It is a reserved name, like every
+// other host named in this file: the four names a card really reaches live in
+// infra/image/egress.txt, which is data the tests READ, and a test fixture never spells a
+// host this suite could be pointed at.
+const testModelHost = "model.example.test"
+
+// testAddrs are documentation addresses (TEST-NET-3 and 2001:db8::/32), for the same
+// reason: a pinned address in a fixture is an address, not a destination.
+const (
+	testGitHubV4  = "198.51.100.10"
+	testAPIV4     = "198.51.100.11"
+	testAPIV6     = "2001:db8::11"
+	testObjectsV4 = "198.51.100.12"
+	testModelV4   = "198.51.100.13"
+)
+
+// goodInput is one plan's worth of input: the three base names the CODE fixes plus one
+// model host, a resolver on the bench's own network and one other bench denied. The base
+// names come from EgressBaseNames rather than from three literals here, so this fixture
+// cannot drift from the constant it is meant to exercise.
 func goodInput(t *testing.T) EgressInput {
 	t.Helper()
 	res := &fakeResolver{table: map[string][]netip.Addr{
-		"github.com":                    addrs(t, "140.82.121.4"),
-		"api.github.com":                addrs(t, "140.82.121.6", "2606:50c0:8000::153"),
-		"objects.githubusercontent.com": addrs(t, "185.199.108.133"),
-		"api.deepseek.com":              addrs(t, "104.18.26.90"),
-		"example.com":                   addrs(t, "93.184.216.34"),
+		EgressBaseNames[0]: addrs(t, testGitHubV4),
+		EgressBaseNames[1]: addrs(t, testAPIV4, testAPIV6),
+		EgressBaseNames[2]: addrs(t, testObjectsV4),
+		testModelHost:      addrs(t, testModelV4),
 	}}
 	return EgressInput{
 		Run:        "j1",
 		PolicyPath: "infra/image/egress.txt",
-		Names:      []string{"github.com", "api.github.com", "objects.githubusercontent.com", "api.deepseek.com"},
-		ModelHost:  "api.deepseek.com",
+		Names:      append(append([]string{}, EgressBaseNames...), testModelHost),
+		ModelHost:  testModelHost,
 		Resolver:   netip.MustParseAddr("10.9.0.53"),
 		BenchCIDRs: prefixes(t, "10.1.0.0/24"),
 		UID:        "10001",
 		Lookup:     res,
 	}
+}
+
+// allowedNames is the allow set a good plan carries: the base names, then the model host.
+func allowedNames() string {
+	return strings.Join(append(append([]string{}, EgressBaseNames...), testModelHost), ",")
 }
 
 func mustBuild(t *testing.T, in EgressInput) EgressPlan {
@@ -95,11 +117,11 @@ func mustBuild(t *testing.T, in EgressInput) EgressPlan {
 }
 
 func TestParseEgressPolicyTakesNamesAndComments(t *testing.T) {
-	names, bad := ParseEgressPolicy([]byte("# the header\n\ngithub.com\n  api.github.com  # the api\n\n# a comment\napi.deepseek.com\n"))
+	names, bad := ParseEgressPolicy([]byte("# the header\n\none.example.test\n  two.example.test  # the api\n\n# a comment\nmodel.example.test\n"))
 	if len(bad) > 0 {
 		t.Fatalf("a well-formed policy was refused: %v", bad)
 	}
-	want := "github.com|api.github.com|api.deepseek.com"
+	want := "one.example.test|two.example.test|model.example.test"
 	if got := strings.Join(names, "|"); got != want {
 		t.Errorf("the policy's names are %q, want %q (order is the file's)", got, want)
 	}
@@ -107,17 +129,14 @@ func TestParseEgressPolicyTakesNamesAndComments(t *testing.T) {
 
 func TestParseEgressPolicyRefusesWhatIsNotAHostname(t *testing.T) {
 	for _, line := range []string{
-		// A URL is not a hostname. It is written in two pieces because internal/ci's
-		// network guard reads a whole `https://host` literal in a test as a real host
-		// this suite might talk to, and this one is a string the parser must REFUSE.
-		"https://" + "github.com",
-		"github.com:443",                 // a port is not the file's business
-		"140.82.121.4",                   // an address pins nothing and is reviewed nowhere
-		"git hub.com",                    // two tokens on one line
-		"-github.com",                    // a label may not begin with a hyphen
-		"github..com",                    // an empty label
-		"*.github.com",                   // no wildcards: the wall is per name
-		strings.Repeat("a", 64) + ".com", // a label over 63 bytes
+		"https://example.com",             // a URL is not a hostname
+		"example.com:443",                 // a port is not the file's business
+		"198.51.100.10",                   // an address pins nothing and is reviewed nowhere
+		"one two.example.test",            // two tokens on one line
+		"-example.test",                   // a label may not begin with a hyphen
+		"one..example.test",               // an empty label
+		"*.example.test",                  // no wildcards: the wall is per name
+		strings.Repeat("a", 64) + ".test", // a label over 63 bytes
 	} {
 		if _, bad := ParseEgressPolicy([]byte(line + "\n")); len(bad) == 0 {
 			t.Errorf("ParseEgressPolicy accepted %q; the file is the reviewed contract and only a hostname belongs in it", line)
@@ -131,9 +150,9 @@ func TestParseEgressPolicyRefusesAnEmptyFile(t *testing.T) {
 	}
 }
 
-// The shipped file is the contract, so the tests read IT rather than a fixture: the three
-// GitHub names Johnny's page fixes have to be in it, and so does the model host the image's
-// run contract names.
+// The shipped file is the contract, so this reads IT: the three names Johnny's page fixes
+// have to be in it, and so has at least one model host for a run to name. The names
+// themselves are data in that file and are not spelled again here.
 func TestTheShippedPolicyCarriesTheReviewedNames(t *testing.T) {
 	names, bad := ParseEgressPolicy(readShippedPolicy(t))
 	if len(bad) > 0 {
@@ -143,10 +162,19 @@ func TestTheShippedPolicyCarriesTheReviewedNames(t *testing.T) {
 	for _, n := range names {
 		have[n] = true
 	}
-	for _, want := range append(append([]string{}, EgressBaseNames...), "api.deepseek.com") {
+	for _, want := range EgressBaseNames {
 		if !have[want] {
 			t.Errorf("infra/image/egress.txt does not carry %q; the card cannot reach a name that is not in the reviewed file", want)
 		}
+	}
+	models := 0
+	for _, n := range names {
+		if !isBaseName(n) {
+			models++
+		}
+	}
+	if models == 0 {
+		t.Error("infra/image/egress.txt carries no model host; --model-host may only name a host already in the file, so no run could reach a model at all")
 	}
 }
 
@@ -154,14 +182,14 @@ func TestBuildEgressPinsEveryAllowedNameOnceAndAsksNothingElse(t *testing.T) {
 	in := goodInput(t)
 	p := mustBuild(t, in)
 	res := in.Lookup.(*fakeResolver)
-	if got, want := strings.Join(res.asked, ","), "github.com,api.github.com,objects.githubusercontent.com,api.deepseek.com"; got != want {
+	if got, want := strings.Join(res.asked, ","), allowedNames(); got != want {
 		t.Errorf("the plan resolved %q, want %q: every allowed name is asked exactly once at plan time and pinned", got, want)
 	}
-	if got, want := strings.Join(p.Names, ","), "github.com,api.github.com,objects.githubusercontent.com,api.deepseek.com"; got != want {
+	if got, want := strings.Join(p.Names, ","), allowedNames(); got != want {
 		t.Errorf("the plan allows %q, want %q", got, want)
 	}
-	if n := len(p.Addrs["api.github.com"]); n != 2 {
-		t.Errorf("api.github.com pinned %d addresses, want 2: every address the name resolves to is pinned, or the run fails on the one that was left out", n)
+	if n := len(p.Addrs[EgressBaseNames[1]]); n != 2 {
+		t.Errorf("%s pinned %d addresses, want 2: every address the name resolves to is pinned, or the run fails on the one that was left out", EgressBaseNames[1], n)
 	}
 }
 
@@ -170,7 +198,7 @@ func TestBuildEgressPinsEveryAllowedNameOnceAndAsksNothingElse(t *testing.T) {
 // flag that could name any host would be exactly the widening the page refuses.
 func TestBuildEgressRefusesAModelHostThatIsNotInThePolicy(t *testing.T) {
 	in := goodInput(t)
-	in.ModelHost = "api.example-model.com"
+	in.ModelHost = "other-model.example.test"
 	_, bad := BuildEgress(in)
 	if !hasReason(bad, "bad_model_host") {
 		t.Fatalf("a --model-host outside the policy file was accepted: %v", bad)
@@ -180,28 +208,29 @@ func TestBuildEgressRefusesAModelHostThatIsNotInThePolicy(t *testing.T) {
 // A second model host in the file is not a second model host in the run.
 func TestBuildEgressAllowsExactlyOneModelHost(t *testing.T) {
 	in := goodInput(t)
-	in.Names = append(in.Names, "api.anthropic.com")
-	in.Lookup.(*fakeResolver).table["api.anthropic.com"] = addrs(t, "160.79.104.10")
+	const second, secondAddr = "second-model.example.test", "198.51.100.77"
+	in.Names = append(in.Names, second)
+	in.Lookup.(*fakeResolver).table[second] = addrs(t, secondAddr)
 	p := mustBuild(t, in)
 	for _, n := range p.Names {
-		if n == "api.anthropic.com" {
-			t.Fatalf("the plan allows a second model host %q; a run allows the three GitHub names and the ONE host named by --model-host", n)
+		if n == second {
+			t.Fatalf("the plan allows a second model host %q; a run allows the three base names and the ONE host named by --model-host", n)
 		}
 	}
-	if !strings.Contains(p.Text, "api.deepseek.com") {
+	if !strings.Contains(p.Text, testModelHost) {
 		t.Error("the plan does not name the model host it was given")
 	}
-	if strings.Contains(p.Text, "160.79.104.10") {
+	if strings.Contains(p.Text, secondAddr) {
 		t.Error("the plan pinned an address of a name it does not allow")
 	}
 }
 
 func TestBuildEgressRefusesAPolicyMissingABaseName(t *testing.T) {
 	in := goodInput(t)
-	in.Names = []string{"api.github.com", "api.deepseek.com"}
+	in.Names = []string{EgressBaseNames[1], testModelHost}
 	_, bad := BuildEgress(in)
 	if !hasReason(bad, "bad_policy") {
-		t.Fatalf("a policy without github.com was accepted: %v; the three GitHub names are the card contract's and a plan that quietly left one out would fail inside the run instead", bad)
+		t.Fatalf("a policy missing %s was accepted: %v; the three base names are the card contract's and a plan that quietly left one out would fail inside the run instead", EgressBaseNames[0], bad)
 	}
 }
 
@@ -210,7 +239,7 @@ func TestBuildEgressRefusesAPolicyMissingABaseName(t *testing.T) {
 func TestBuildEgressRefusesAPinnedAddressInsideADeniedRange(t *testing.T) {
 	for _, bad := range []string{"127.0.0.1", "169.254.169.254", "::1", "10.1.0.7"} {
 		in := goodInput(t)
-		in.Lookup.(*fakeResolver).table["api.github.com"] = addrs(t, bad)
+		in.Lookup.(*fakeResolver).table[EgressBaseNames[1]] = addrs(t, bad)
 		_, refusals := BuildEgress(in)
 		if !hasReason(refusals, "bad_address") {
 			t.Errorf("a name resolved to %s and the plan was built anyway: %v; a pinned address inside a denied range is a poisoned answer and the plan fails closed", bad, refusals)
@@ -269,8 +298,8 @@ func TestRenderedPlanHasTheShapeThePageAsksFor(t *testing.T) {
 		"meta skuid 10001 ip6 daddr ::1/128 drop",
 		"meta skuid 10001 ip daddr 10.1.0.0/24 drop",
 		"meta skuid 10001 ip daddr 10.9.0.53 udp dport 53 accept",
-		"meta skuid 10001 ip daddr 140.82.121.4 tcp dport 443 accept",
-		"meta skuid 10001 ip6 daddr 2606:50c0:8000::153 tcp dport 443 accept",
+		"meta skuid 10001 ip daddr 198.51.100.10 tcp dport 443 accept",
+		"meta skuid 10001 ip6 daddr 2001:db8::11 tcp dport 443 accept",
 	} {
 		if !strings.Contains(p.Text, want) {
 			t.Errorf("the rendered plan has no line %q:\n%s", want, p.Text)
@@ -361,11 +390,11 @@ func TestCheckEgressPlanGoesRedOnEachLostInvariant(t *testing.T) {
 		name, from, to, reason string
 	}{
 		{"the default deny is gone", "\tmeta skuid 10001 drop\n", "", "no_default_deny"},
-		{"an allow to the whole internet", "meta skuid 10001 ip daddr 140.82.121.4 tcp dport 443 accept", "meta skuid 10001 ip daddr 0.0.0.0/0 tcp dport 443 accept", "allow_any"},
+		{"an allow to the whole internet", "meta skuid 10001 ip daddr 198.51.100.10 tcp dport 443 accept", "meta skuid 10001 ip daddr 0.0.0.0/0 tcp dport 443 accept", "allow_any"},
 		{"an allow on a port that is neither 443 nor 53", "tcp dport 443 accept", "tcp dport 22 accept", "allow_port"},
 		{"the metadata address is no longer denied", "meta skuid 10001 ip daddr 169.254.169.254/32 drop\n", "", "no_metadata_deny"},
-		{"a rule that is not scoped to the card", "meta skuid 10001 ip daddr 140.82.121.4 tcp dport 443 accept", "ip daddr 140.82.121.4 tcp dport 443 accept", "unscoped_rule"},
-		{"an allow with no port at all", "meta skuid 10001 ip daddr 140.82.121.4 tcp dport 443 accept", "meta skuid 10001 ip daddr 140.82.121.4 accept", "allow_port"},
+		{"a rule that is not scoped to the card", "meta skuid 10001 ip daddr 198.51.100.10 tcp dport 443 accept", "ip daddr 198.51.100.10 tcp dport 443 accept", "unscoped_rule"},
+		{"an allow with no port at all", "meta skuid 10001 ip daddr 198.51.100.10 tcp dport 443 accept", "meta skuid 10001 ip daddr 198.51.100.10 accept", "allow_port"},
 		{"the chain's base policy is not accept", "policy accept;", "policy drop;", "bad_chain"},
 		{"a line the grammar does not have", "meta skuid 10001 drop\n", "meta skuid 10001 drop\n\t\tcounter name whatever\n", "bad_rule"},
 	}

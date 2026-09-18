@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
 // The egress verbs, with the three things they reach the machine through REPLACED: the
@@ -50,6 +52,41 @@ func (f fakeLookup) LookupHost(name string) ([]netip.Addr, error) {
 	return got, nil
 }
 
+// The addresses these tests pin are documentation addresses (TEST-NET-3 and
+// 2001:db8::/32), and the model host comes out of the shipped allowlist rather than out of a
+// literal here: a fixture never spells a host this suite could be pointed at, and the four
+// names a card really reaches live in infra/image/egress.txt, which is data.
+const (
+	testModelAddr = "198.51.100.13"
+	testBaseAddr  = "198.51.100.10"
+	testBaseAddr6 = "2001:db8::11"
+)
+
+// shippedModelHost is the one model host of these runs, read from the file in git. A test
+// that named it in a literal would be a second copy of the allowlist.
+func shippedModelHost(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "infra", "image", "egress.txt"))
+	if err != nil {
+		t.Fatalf("infra/image/egress.txt is the allowlist and it has to be readable: %s", err)
+	}
+	names, bad := sandbox.ParseEgressPolicy(raw)
+	if len(bad) > 0 {
+		t.Fatalf("infra/image/egress.txt does not parse: %v", bad)
+	}
+	base := map[string]bool{}
+	for _, n := range sandbox.EgressBaseNames {
+		base[n] = true
+	}
+	for _, n := range names {
+		if !base[n] {
+			return n
+		}
+	}
+	t.Fatal("infra/image/egress.txt carries no model host, so no run can name one")
+	return ""
+}
+
 // egressBench puts the three seams in place for one test and puts the production bodies
 // back afterwards, so a test that forgets cannot leave the next one talking to the machine.
 func egressBench(t *testing.T, goos string, priv *fakePriv) {
@@ -57,23 +94,23 @@ func egressBench(t *testing.T, goos string, priv *fakePriv) {
 	oldPriv, oldGOOS, oldLookup := egressPriv, egressGOOS, egressLookup
 	t.Cleanup(func() { egressPriv, egressGOOS, egressLookup = oldPriv, oldGOOS, oldLookup })
 	egressPriv, egressGOOS = priv, goos
-	egressLookup = func(netip.Addr) sandboxResolver {
-		return fakeLookup{table: map[string][]netip.Addr{
-			"github.com":                    {netip.MustParseAddr("140.82.121.4")},
-			"api.github.com":                {netip.MustParseAddr("140.82.121.6"), netip.MustParseAddr("2606:50c0:8000::153")},
-			"objects.githubusercontent.com": {netip.MustParseAddr("185.199.108.133")},
-			"api.deepseek.com":              {netip.MustParseAddr("104.18.26.90")},
-		}}
+	table := map[string][]netip.Addr{
+		sandbox.EgressBaseNames[0]: {netip.MustParseAddr(testBaseAddr)},
+		sandbox.EgressBaseNames[1]: {netip.MustParseAddr("198.51.100.11"), netip.MustParseAddr(testBaseAddr6)},
+		sandbox.EgressBaseNames[2]: {netip.MustParseAddr("198.51.100.12")},
+		shippedModelHost(t):        {netip.MustParseAddr(testModelAddr)},
 	}
+	egressLookup = func(netip.Addr) sandboxResolver { return fakeLookup{table: table} }
 }
 
 // planArgs is one good plan invocation against the SHIPPED policy file, which is the
 // contract: a test that built its own allowlist would pass on the day the two disagreed.
-func planArgs(out string, extra ...string) []string {
+func planArgs(t *testing.T, out string, extra ...string) []string {
+	t.Helper()
 	return append([]string{"egress", "plan",
 		"--run", "j1",
 		"--policy", filepath.Join("..", "..", "infra", "image", "egress.txt"),
-		"--model-host", "api.deepseek.com",
+		"--model-host", shippedModelHost(t),
 		"--resolver", "10.9.0.53",
 		"--bench-cidr", "10.1.0.0/24",
 		"--uid", "10001",
@@ -84,11 +121,12 @@ func TestEgressPlanWritesARulesetAndPrintsItsReceipt(t *testing.T) {
 	egressBench(t, "linux", &fakePriv{})
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(out)...)
+	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
 	if code != 0 {
 		t.Fatalf("a good plan exited %d: %s", code, errOut)
 	}
-	if !strings.Contains(errOut, "EGRESS PLAN run=j1 allow=") || !strings.Contains(errOut, "names=github.com,api.github.com,objects.githubusercontent.com,api.deepseek.com") {
+	wantNames := "names=" + strings.Join(append(append([]string{}, sandbox.EgressBaseNames...), shippedModelHost(t)), ",")
+	if !strings.Contains(errOut, "EGRESS PLAN run=j1 allow=") || !strings.Contains(errOut, wantNames) {
 		t.Errorf("the plan's receipt is not the line the spec publishes: %q", errOut)
 	}
 	raw, err := os.ReadFile(out)
@@ -101,7 +139,7 @@ func TestEgressPlanWritesARulesetAndPrintsItsReceipt(t *testing.T) {
 		"meta skuid 10001 ip daddr 169.254.169.254/32 drop",
 		"meta skuid 10001 ip daddr 10.1.0.0/24 drop",
 		"meta skuid 10001 ip daddr 10.9.0.53 udp dport 53 accept",
-		"meta skuid 10001 ip daddr 104.18.26.90 tcp dport 443 accept",
+		"meta skuid 10001 ip daddr " + testModelAddr + " tcp dport 443 accept",
 		"meta skuid 10001 drop",
 	} {
 		if !strings.Contains(text, want) {
@@ -123,12 +161,12 @@ func TestEgressPlanRefusesTheInputsThatWouldWidenTheWall(t *testing.T) {
 		name, reason string
 		args         []string
 	}{
-		{"a model host outside the file", "bad_model_host", replaceFlag(planArgs(out), "--model-host", "api.example-model.com")},
-		{"a resolver inside a denied range", "bad_resolver", replaceFlag(planArgs(out), "--resolver", "127.0.0.53")},
-		{"a bench cidr that is not one", "bad_cidr", replaceFlag(planArgs(out), "--bench-cidr", "10.1.0.0")},
-		{"a run id that is not a table name", "no_name", replaceFlag(planArgs(out), "--run", "j 1")},
-		{"a policy file that is not there", "bad_policy", replaceFlag(planArgs(out), "--policy", filepath.Join(j.write, "nope.txt"))},
-		{"a flag of another verb", "no_command", append(planArgs(out), "--net-deny")},
+		{"a model host outside the file", "bad_model_host", replaceFlag(planArgs(t, out), "--model-host", "other-model.example.test")},
+		{"a resolver inside a denied range", "bad_resolver", replaceFlag(planArgs(t, out), "--resolver", "127.0.0.53")},
+		{"a bench cidr that is not one", "bad_cidr", replaceFlag(planArgs(t, out), "--bench-cidr", "10.1.0.0")},
+		{"a run id that is not a table name", "no_name", replaceFlag(planArgs(t, out), "--run", "j 1")},
+		{"a policy file that is not there", "bad_policy", replaceFlag(planArgs(t, out), "--policy", filepath.Join(j.write, "nope.txt"))},
+		{"a flag of another verb", "no_command", append(planArgs(t, out), "--net-deny")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -153,7 +191,7 @@ func TestEgressPlanRefusesTheInputsThatWouldWidenTheWall(t *testing.T) {
 func TestEgressPlanNeedsASelector(t *testing.T) {
 	egressBench(t, "linux", &fakePriv{})
 	j := newJob(t)
-	args := planArgs(filepath.Join(j.write, "plan.nft"))
+	args := planArgs(t, filepath.Join(j.write, "plan.nft"))
 	args = replaceFlag(args, "--uid", "")
 	code, _, errOut := j.tool(t, j.env(), args...)
 	if code != 2 || !strings.Contains(errOut, "reason=no_selector") {
@@ -166,7 +204,7 @@ func TestEgressApplyHandsTheAuditedPlanToNft(t *testing.T) {
 	egressBench(t, "linux", priv)
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	if code, _, errOut := j.tool(t, j.env(), planArgs(out)...); code != 0 {
+	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
 	}
 	code, _, errOut := j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j1")
@@ -186,7 +224,7 @@ func TestEgressApplyRefusesAPlanItCannotAudit(t *testing.T) {
 	egressBench(t, "linux", priv)
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	if code, _, errOut := j.tool(t, j.env(), planArgs(out)...); code != 0 {
+	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
 	}
 	raw, err := os.ReadFile(out)
@@ -219,7 +257,7 @@ func TestEgressApplyRefusesAPlanFromAnotherRun(t *testing.T) {
 	egressBench(t, "linux", priv)
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	if code, _, errOut := j.tool(t, j.env(), planArgs(out)...); code != 0 {
+	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
 	}
 	code, _, errOut := j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j2")
@@ -236,7 +274,7 @@ func TestEgressRefusesWhenNftIsNotOnTheBench(t *testing.T) {
 	egressBench(t, "linux", priv)
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	if code, _, errOut := j.tool(t, j.env(), planArgs(out)...); code != 0 {
+	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
 	}
 	code, _, errOut := j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j1")
@@ -312,7 +350,7 @@ func TestEgressPlanAndCheckRunOffLinux(t *testing.T) {
 	egressBench(t, "darwin", &fakePriv{})
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	if code, _, errOut := j.tool(t, j.env(), planArgs(out)...); code != 0 {
+	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("plan on darwin exited %d: %s", code, errOut)
 	}
 	if code, _, errOut := j.tool(t, j.env(), "egress", "check", "--plan", out); code != 0 {
@@ -324,14 +362,14 @@ func TestEgressCheckGoesRedOnABrokenPlan(t *testing.T) {
 	egressBench(t, "linux", &fakePriv{})
 	j := newJob(t)
 	out := filepath.Join(j.write, "plan.nft")
-	if code, _, errOut := j.tool(t, j.env(), planArgs(out)...); code != 0 {
+	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
 	}
 	raw, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	broken := strings.Replace(string(raw), "ip daddr 104.18.26.90 tcp dport 443 accept", "ip daddr 0.0.0.0/0 tcp dport 443 accept", 1)
+	broken := strings.Replace(string(raw), "ip daddr "+testModelAddr+" tcp dport 443 accept", "ip daddr 0.0.0.0/0 tcp dport 443 accept", 1)
 	if err := os.WriteFile(out, []byte(broken), 0o600); err != nil {
 		t.Fatal(err)
 	}
