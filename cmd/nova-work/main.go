@@ -119,7 +119,6 @@ example:
   nova-work dependencies --graph ./deps.json --node a --needs b
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
-  nova-work push --redis 127.0.0.1:6379 --card ./card.md
 `
 
 // refuse is what an unusable invocation or an unreadable plan costs: one line naming
