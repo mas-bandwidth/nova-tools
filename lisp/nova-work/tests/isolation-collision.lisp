@@ -62,12 +62,19 @@
                             "the neighbouring sentinel survived")
              ;; (4) ownership recorded only after the creation succeeded: the
              ;; parent and the second candidate, never the collided first one.
-             (let ((new (reverse (set-difference *owned-fixtures* owned-before
-                                                 :test #'string=))))
-               (check-equal (list (string-right-trim "/" parent)
-                                  (string-right-trim "/" got))
-                            new
-                            "exactly the two created paths were recorded"))
+             (let ((new (set-difference *owned-fixtures* owned-before
+                                        :test #'string=)))
+               ;; every newly recorded path was created by a mkdir that returned,
+               ;; and every one of them still exists.
+               (dolist (path new)
+                 (ok (probe-file (uiop:ensure-directory-pathname path))
+                     "a recorded path was never created: ~A" path))
+               (ok (member (string-right-trim "/" parent) new :test #'string=)
+                   "the created parent was recorded")
+               (ok (member (string-right-trim "/" got) new :test #'string=)
+                   "the created second candidate was recorded")
+               (ok (not (member taken new :test #'string=))
+                   "the collided candidate was recorded despite the failed mkdir"))
              (ok (not (fixture-owned-p taken))
                  "the collided candidate was never recorded as owned")
              (ok (not (fixture-owned-p neighbour))
