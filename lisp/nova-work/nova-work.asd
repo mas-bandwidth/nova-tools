@@ -41,7 +41,8 @@
                (:file "src/roadmap")
                (:file "src/savepoint")
                (:file "src/new-verbs")
-               (:file "src/decide")))
+               (:file "src/decide")
+               (:file "src/replays-verdict-state")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -70,4 +71,5 @@
                (:file "tests/replays-8661")
                (:file "tests/replays-8663")
                 (:file "tests/replays-8664")
-                (:file "tests/decide")))
+                (:file "tests/decide")
+                (:file "tests/replays-8682")))
