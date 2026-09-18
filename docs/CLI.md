@@ -1591,6 +1591,24 @@ example:
   nova-work dependencies --graph ./deps.json --node a --needs b
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
+
+nova-work is also the durable card-result record: Redis carries the result, Postgres keeps it.
+
+usage:
+  nova-work record  --postgres <dsn> --redis <addr> [--once] [--deadline 1h] [--migrate]
+  nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed] [--max 20]
+
+verbs:
+  record  consume cards:done and write one row per result into card_results, idempotent on
+          the stream id; --migrate applies the schema and exits; --once reads one pass
+  results one line per recorded result, newest first
+  help
+  version
+
+example:
+  nova-work record --migrate --postgres postgres://space/nova
+  nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+  nova-work results --postgres postgres://space/nova --bench space --failed --max 5
 ```
 
 The session verbs `session start`, `session status` and `session stop` speak the socket protocol; `SESSION OK` is one shape printed by all three alike. A missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. The graph and plan verbs read the JSON dependency graph and the bounded `.work` plan as data: `plan check` and `plan expand` require a plan path and default to 65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`, `--max-nodes`); unknown kinds, absent dependencies and dependency cycles refuse. `plan expand` writes card directories for explicit `:node` entries and does not launch them; existing cards are left unchanged when expanding again. `dependencies --graph <file>` reads the graph and `--node <id> --needs <id,id>` writes dependency edges; `ready` prints whether each requested node's dependencies are terminal and accepted without acquiring a lease or reserving a slot. `nova-work help` also describes `clip`, which commits and harvests a worker's result before resetting its worktree; use that mutating workflow only with the intended worktree, branch, base and harvest destination.

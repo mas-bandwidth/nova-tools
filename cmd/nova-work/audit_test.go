@@ -41,6 +41,20 @@ var workAudit = audit.Config{
 		// request line, and writes nothing to stdout or stderr, so every byte a caller
 		// reads is still printed by an escaped site in this package.
 		`"github.com/mas-bandwidth/nova-tools/internal/workclient"`,
+		// record holds the durable card-result values and the store and consumer the
+		// record verbs drive. It writes only through the store; every row it formats
+		// goes out through record.FormatRow, which renders each field through
+		// oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
+		// bounded is the capped line writer `results` prints through; every line it
+		// takes is already a record.FormatRow, and it escapes the remedy it writes.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		// context carries cancellation into the Redis consumer; it writes nothing.
+		`"context"`,
+		// time is the clock behind the deps seam and the durations --deadline and
+		// --since parse; the two durations a refusal names are rendered through
+		// oneline.Escape before they reach a line.
+		`"time"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
