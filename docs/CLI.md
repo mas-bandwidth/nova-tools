@@ -2255,6 +2255,22 @@ per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` ask
 it holds and installs nothing.
 
 ```sh
+nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64
+```
+
+A **windows** bench is a target like any other. The build names every artifact for it — a
+`windows-amd64` release is a directory of `.exe` files and a `SHA256SUMS` that lists them — and the
+adopt sends and runs `nova-update.exe` there. `--bin`, `--dest`, `--retire` and the `--machines`
+columns take the drive-absolute form as well (`C:\Users\nova\.local\bin`, which is what
+[BENCH-WINDOWS.md](BENCH-WINDOWS.md) puts in that bench's runner `.path`); every backslash is folded
+to a forward slash before a command is composed, because the far side's ssh shell is Git Bash and a
+backslash there is an escape. The drive form is refused for a non-windows target, and a drive-relative
+(`C:Users\nova`) or UNC (`\\server\share`) path is refused everywhere. A cross-built windows artifact
+cannot be run by the host that built it, so the build claims nothing about having done so; see
+[SPEC-RELEASE.md](SPEC-RELEASE.md) §11.
+
+```sh
 nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/nova-release' --reason "shipped a key"
 ```
 
