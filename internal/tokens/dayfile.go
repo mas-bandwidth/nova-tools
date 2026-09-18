@@ -11,7 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// The day file: one file per day, eleven columns, every one written on every row.
+// The day file: one file per day, twelve columns, every one written on every row.
 //
 // It is WRITTEN WHOLE every time and never appended to, never edited in place: the write
 // goes to one fixed temp name in the same directory and lands by one atomic rename. Whole
@@ -31,8 +31,20 @@ const TempSuffix = ".tsv.tmp"
 // FileSuffix is a day file's extension.
 const FileSuffix = ".tsv"
 
-// Columns are the eleven, in order, and the file's second line is exactly these.
-var Columns = []string{"date", "model", "repo", "input", "output", "cache_write", "cache_read", "reasoning", "rough", "day_basis", "sources"}
+// Columns are the twelve, in order, and the file's second line is exactly these.
+//
+// `units` is the TWELFTH and is APPENDED: the eleven before it mean exactly what they
+// meant, and a file written before this column existed is read at its own width with
+// every row's unit `-`. A fold writes twelve from now on -- the table is fixed, so every
+// row writes every field -- and the day after a fold the file is twelve wide.
+var Columns = []string{"date", "model", "repo", "input", "output", "cache_write", "cache_read", "reasoning", "rough", "day_basis", "sources", "units"}
+
+// ColumnsV1 is the eleven-column header of every day file written before the units column.
+// The reader takes either width; nothing else in this tool does.
+var ColumnsV1 = Columns[:len(Columns)-1]
+
+// HeaderLineV1 is that file's second line.
+var HeaderLineV1 = strings.Join(ColumnsV1, "\t")
 
 // HeaderLine is the second line of every day file.
 var HeaderLine = strings.Join(Columns, "\t")
@@ -40,10 +52,14 @@ var HeaderLine = strings.Join(Columns, "\t")
 // DayRow is one written row.
 type DayRow struct {
 	Date, Model, Repo string
-	Counts            Counts
-	Rough             int
-	Basis             string
-	Sources           []string
+	// Unit is the work-set unit this row's spend is attributed to, or `-`. It is the
+	// `units` column: a fold run without --units writes `-` on every row, which is the
+	// file this tool wrote before the column existed with one more cell on it.
+	Unit    string
+	Counts  Counts
+	Rough   int
+	Basis   string
+	Sources []string
 }
 
 // DayFile is a whole day file, parsed or about to be written.
@@ -87,10 +103,20 @@ func (d *DayFile) Render() string {
 			cells = append(cells, r.Counts.Cell(t))
 		}
 		cells = append(cells, strconv.Itoa(r.Rough), oneline.Field(r.Basis),
-			oneline.Field(strings.Join(r.Sources, ",")))
+			oneline.Field(strings.Join(r.Sources, ",")), oneline.Field(orDashStr(r.Unit)))
 		rows = append(rows, strings.Join(cells, "\t"))
 	}
 	return strings.Join(rows, "\n") + "\n"
+}
+
+// orDashStr is the dash an absent value is written as, so no cell is ever empty. It is
+// here rather than at the caller because the file's rule is the file's: every column is
+// written on every row, and an absent one is `-`.
+func orDashStr(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return Dash
+	}
+	return s
 }
 
 // Save writes the file whole: the bytes to the fixed temp name in the same directory,
@@ -312,8 +338,15 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 	if d.Day != name {
 		f = append(f, Finding{Line: 1, Reason: "the version line says day=" + d.Day + " and the file is named " + name})
 	}
-	if len(lines) < 2 || lines[1] != HeaderLine {
-		f = append(f, Finding{Line: 2, Reason: "the second line is not the eleven column names: " + HeaderLine})
+	// EITHER WIDTH. A file whose header is the eleven names was written before the units
+	// column and is read with every row's unit `-`; a file whose header is the twelve is
+	// read as it is written. Anything else is the refusal it always was, and it names the
+	// header a fold writes today.
+	width := len(Columns)
+	if len(lines) >= 2 && lines[1] == HeaderLineV1 {
+		width = len(ColumnsV1)
+	} else if len(lines) < 2 || lines[1] != HeaderLine {
+		f = append(f, Finding{Line: 2, Reason: "the second line is neither the twelve column names nor the eleven a file written before the units column carries: " + HeaderLine})
 		return d, f
 	}
 	var last string
@@ -322,15 +355,23 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		n := i + 1
 		line := lines[i]
 		if line == "" {
-			f = append(f, Finding{Line: n, Reason: "a blank line; every row has eleven columns"})
+			f = append(f, Finding{Line: n, Reason: fmt.Sprintf("a blank line; every row has %d columns", width)})
 			continue
 		}
 		cells := strings.Split(line, "\t")
-		if len(cells) != len(Columns) {
-			f = append(f, Finding{Line: n, Reason: fmt.Sprintf("%d columns, want %d (%s)", len(cells), len(Columns), HeaderLine)})
+		if len(cells) != width {
+			f = append(f, Finding{Line: n, Reason: fmt.Sprintf("%d columns, want %d (%s)", len(cells), width, strings.Join(Columns[:width], "\t"))})
 			continue
 		}
-		row := DayRow{Date: cells[0], Model: cells[1], Repo: cells[2]}
+		row := DayRow{Date: cells[0], Model: cells[1], Repo: cells[2], Unit: Dash}
+		unitEmpty := false
+		if width == len(Columns) {
+			row.Unit = cells[11]
+			if row.Unit == "" {
+				unitEmpty = true
+				row.Unit = Dash
+			}
+		}
 		bad := false
 		for t := Type(0); t < NTypes; t++ {
 			cell := cells[3+int(t)]
@@ -364,17 +405,21 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 			f = append(f, Finding{Line: n, Reason: "the sources cell is empty; every number is traceable to the flags of the run that wrote it"})
 			bad = true
 		}
+		if unitEmpty {
+			f = append(f, Finding{Line: n, Reason: "the units cell is empty; a row attributed to no unit is `-`, never empty"})
+			bad = true
+		}
 		row.Sources = strings.Split(cells[10], ",")
 		if row.Date != name {
 			f = append(f, Finding{Line: n, Reason: "the date column is " + row.Date + " and the file is named " + name})
 			bad = true
 		}
-		key := row.Model + "\t" + row.Repo
+		key := row.Model + "\t" + row.Repo + "\t" + row.Unit
 		if seen[key] {
-			f = append(f, Finding{Line: n, Reason: "a second row for (" + row.Model + ", " + row.Repo + "); rows are unique by (model, repo)"})
+			f = append(f, Finding{Line: n, Reason: "a second row for (" + row.Model + ", " + row.Repo + ", " + row.Unit + "); rows are unique by (model, repo, unit)"})
 			bad = true
 		} else if last != "" && key < last {
-			f = append(f, Finding{Line: n, Reason: "out of order; rows are sorted by (model, repo)"})
+			f = append(f, Finding{Line: n, Reason: "out of order; rows are sorted by (model, repo, unit)"})
 			bad = true
 		}
 		seen[key] = true
