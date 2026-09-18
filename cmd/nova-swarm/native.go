@@ -53,6 +53,11 @@ type nativeRunConfig struct {
 	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
 	// argv has to be assertable without the machine's real toolchain under it.
 	benchHome string
+	// benchOS is the operating system whose toolchain list the wall is built from -- this
+	// bench's own, because the wall contains a card on THIS machine. Empty is the ordinary
+	// case and means runtime.GOOS; a test names one, so the linux list is assertable from a
+	// Mac and the darwin list from a linux runner.
+	benchOS string
 	// WORKER (issue #881): the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
@@ -679,7 +684,14 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
 	// so the cache under that flag would put every dependency's own files one exec away from
 	// running inside the wall (Johnny's security read of #1364).
-	for _, root := range swarm.ToolchainRoots(benchHome(cfg)) {
+	//
+	// AND THE LIST IS PER GOOS, because a Mac bench's toolchains are INSTALLED rather than
+	// unpacked into a home and each one resolves its runtime from the directory of the
+	// launcher that ran it -- `/opt/homebrew/bin/go` is a symlink into the Cellar, and
+	// without the Cellar tree the wall left the M2 Air `go: cannot find GOROOT directory:
+	// 'go' binary is trimmed`, `java: Unable to locate a Java Runtime` and `dotnet: Failed to
+	// resolve full path of the current executable []` (measured 2026-09-18).
+	for _, root := range swarm.ToolchainRoots(benchOS(cfg), benchHome(cfg)) {
 		flag := "--read-noexec"
 		if root.Exec {
 			flag = "--read"
@@ -707,6 +719,16 @@ func benchHome(cfg nativeRunConfig) string {
 		return ""
 	}
 	return home
+}
+
+// benchOS is the operating system whose toolchain list the roots come from: the one a caller
+// named, and otherwise this process's own. The list is per GOOS because a linux bench's
+// toolchain is unpacked under HOME and a Mac bench's is installed on the machine.
+func benchOS(cfg nativeRunConfig) string {
+	if cfg.benchOS != "" {
+		return cfg.benchOS
+	}
+	return swarm.ThisOS()
 }
 
 // nativeChildEnv is the child's whole environment, built rather than inherited: a short

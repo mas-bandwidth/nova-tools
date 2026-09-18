@@ -63,7 +63,7 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 	// The toolchain roots the sandbox wall grants a card, taken from the ONE list rather
 	// than spelled again here (internal/swarm/toolchain.go): the standard checks a bench
 	// has them, because a bench missing one is a bench whose Go cards die inside the wall.
-	for _, name := range swarm.ToolchainRootNames() {
+	for _, name := range swarm.ToolchainRootNames("linux") {
 		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +186,7 @@ func TestBenchStandardDriftNamesSandboxNetwork(t *testing.T) {
 func TestBenchStandardDriftNamesAMissingToolchainRoot(t *testing.T) {
 	want := "v9.9.9-bench-test"
 	goVer := "go1.26.5"
-	for _, name := range swarm.ToolchainRootNames() {
+	for _, name := range swarm.ToolchainRootNames("linux") {
 		t.Run(name, func(t *testing.T) {
 			home, bin := benchStandardHome(t, want, goVer)
 			missing := filepath.Join(home, filepath.FromSlash(name))
