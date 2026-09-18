@@ -524,7 +524,12 @@ type OpenEntry struct {
 	// as RFC 3339 in UTC (or "" when it has none), and Subject is its subject. All four are
 	// for the listing and nothing computes from them but the switch-day line, which reads
 	// Date. They are "" on an unreadable entry, which has no header to read them from.
-	From    string
+	From string
+	// Host is the machine the note was posted from, "" when it carried no Host line --
+	// which is most notes, and every note written before that line existed. It is a
+	// snapshot like the four above it, and nothing computes from it: the listing prints
+	// `host=<name>` beside `from=` when there is one and prints nothing when there is not.
+	Host    string
 	Addr    string
 	Date    string
 	Subject string
@@ -556,12 +561,30 @@ const OpenHeader = "OPEN v2"
 
 // openFields is how many tab-separated fields an open entry has:
 //
-//	<id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->
+//	<id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->  <host|->
 //
 // Tabs and one-line escaping, the same as INDEX and for the same reason: a subject holding
 // a tab or a newline cannot make one record look like two. An absent value is "-" and never
 // empty, so no line ends in an invisible tab.
-const openFields = 8
+//
+// HOST IS THE NINTH AND IS APPENDED, not inserted. The reader takes EITHER width, and the
+// writer writes the ninth field ONLY when the entry has a host -- so a bus whose notes
+// carry no Host line has an OPEN file this change does not touch by one byte, and needs no
+// migration at all.
+//
+// The file still says `OPEN v2`, because the alternative -- a v3 header -- would make every
+// reader on every bench read once with `--full --advance` to be shown a field almost no
+// note carries. Appending keeps the rule this repo already has for a table that grows:
+// newer reads older, older refuses by name. A binary from before this line, reading a lane
+// where somebody has since posted with --host, says "an open entry is 8 tab-separated
+// fields ... got 9", which names the file, the line and the count; the remedy is the newer
+// binary, and the note itself is never in doubt, because the bus is the notes and this file
+// is only a cache of how they list.
+const openFields = 9
+
+// openFieldsV2 is the eight-field row every OPEN on disk has today. A row of this width
+// reads with Host "", which is what those notes have.
+const openFieldsV2 = 8
 
 // openHeardToken is what the heard flag looks like when it is set. A word rather than a 1,
 // because the file is read by people as often as by this tool.
@@ -622,8 +645,8 @@ func ReadOpen(root, lane string) ([]OpenEntry, error) {
 	var out []OpenEntry
 	for _, r := range rows[1:] {
 		fields := strings.Split(r.text, "\t")
-		if len(fields) != openFields {
-			return nil, fmt.Errorf("%s: line %d: an open entry is %d tab-separated fields (id, kind, heard, from, addr, date, path, subject), got %d", OpenPath(lane), r.line, openFields, len(fields))
+		if len(fields) != openFields && len(fields) != openFieldsV2 {
+			return nil, fmt.Errorf("%s: line %d: an open entry is %d tab-separated fields (id, kind, heard, from, addr, date, path, subject, host), or %d without the host, got %d", OpenPath(lane), r.line, openFields, openFieldsV2, len(fields))
 		}
 		e := OpenEntry{
 			ID:      undash(fields[0]),
@@ -634,6 +657,9 @@ func ReadOpen(root, lane string) ([]OpenEntry, error) {
 			Date:    undash(fields[5]),
 			Path:    undash(fields[6]),
 			Subject: undash(fields[7]),
+		}
+		if len(fields) == openFields {
+			e.Host = undash(fields[8])
 		}
 		if e.Path == "" {
 			return nil, fmt.Errorf("%s: line %d: an open entry names no path", OpenPath(lane), r.line)
@@ -655,12 +681,16 @@ func ReadOpen(root, lane string) ([]OpenEntry, error) {
 }
 
 // OpenLine renders one open entry.
+//
+// An entry with no host renders the EIGHT fields it always rendered, byte for byte: a bus
+// whose notes carry no Host line has an OPEN file this change does not touch, and the ninth
+// field appears on the day a note carries a host and on no day before it.
 func OpenLine(e OpenEntry) string {
 	heard := "-"
 	if e.Heard {
 		heard = openHeardToken
 	}
-	return strings.Join([]string{
+	fields := []string{
 		oneline.Escape(orDash(e.ID)),
 		oneline.Escape(orDash(string(e.Kind))),
 		heard,
@@ -669,7 +699,11 @@ func OpenLine(e OpenEntry) string {
 		oneline.Escape(orDash(e.Date)),
 		oneline.Escape(orDash(e.Path)),
 		oneline.Escape(orDash(e.Subject)),
-	}, "\t")
+	}
+	if e.Host != "" {
+		fields = append(fields, oneline.Escape(e.Host))
+	}
+	return strings.Join(fields, "\t")
 }
 
 // WriteOpen replaces a lane's OPEN list, in the order given. Callers keep the survivors in

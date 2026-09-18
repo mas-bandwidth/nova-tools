@@ -117,10 +117,12 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 		t.Fatalf("the open list does not begin with its version header: %q", raw)
 	}
 	// A legacy note's id is "-", a path holding a space rides in its own tab-separated
-	// field, and every line is the same eight fields.
+	// field, and every line here is the same EIGHT fields: none of these notes carries a
+	// Host line, so none of them writes the ninth. That is the compatibility claim in one
+	// assertion -- a bus without hosts has the OPEN file it has always had.
 	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n")[1:] {
-		if n := strings.Count(line, "\t"); n != openFields-1 {
-			t.Fatalf("the line holds %d tabs, want %d: %q", n, openFields-1, line)
+		if n := strings.Count(line, "\t"); n != openFieldsV2-1 {
+			t.Fatalf("the line holds %d tabs, want %d: %q", n, openFieldsV2-1, line)
 		}
 	}
 	if !strings.Contains(raw, "-\tnote\t-\tBo\tcc\t-\tfrom-bo/a legacy note.md\t") {

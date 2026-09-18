@@ -708,7 +708,7 @@ func TestLaneStateFilesAreNotStrays(t *testing.T) {
 	writeFile(t, checkout, "from-ada/OPEN", bus.OpenHeader+"\nno-path-here\n")
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN").
-		mustContain(t, "stderr", "an open entry is 8 tab-separated fields")
+		mustContain(t, "stderr", "an open entry is 9 tab-separated fields")
 }
 
 // A LANE'S README IS NOT A NOTE, and this is the finding a review named. It ends in

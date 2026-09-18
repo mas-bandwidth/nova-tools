@@ -89,6 +89,10 @@ const (
 // that lands on the bus are the same shape.
 type Skeleton struct {
 	From string
+	// Host is the machine posting, written under From when there is one and not written at
+	// all when there is not. See Header.Host: it is optional, and a skeleton without one is
+	// the skeleton this tool has always written.
+	Host string
 	// To and Cc are the caller's OWN lines, resolved against the roster and then written
 	// as they were written. A group is a name on this bus and stays the group's name, and
 	// an instance qualifier stays on the name it qualifies: the header's rule everywhere
@@ -112,6 +116,9 @@ func (s Skeleton) Render() string { return s.RenderWith(PlaceholderBody + "\n") 
 func (s Skeleton) RenderWith(body string) string {
 	var b strings.Builder
 	b.WriteString(KeyFrom + ": " + s.From + "\n")
+	if strings.TrimSpace(s.Host) != "" {
+		b.WriteString(KeyHost + ": " + s.Host + "\n")
+	}
 	b.WriteString(KeyTo + ": " + s.To + "\n")
 	if strings.TrimSpace(s.Cc) != "" {
 		b.WriteString(KeyCc + ": " + s.Cc + "\n")
