@@ -972,20 +972,37 @@ depth and headroom, never from slot count alone.
 8. **The coordinator is a friend.** Every broadcast includes it; adoption is a mechanical step
    with a receipt; `status` names it on its own `ADOPTION` line (replay 34).
 9. **Parallelism and time remaining are printed, never guessed** — `progress`, above.
-10. **One writer per queue.** `<queue>/.lock` is taken with `O_EXCL` by every verb that
-    writes the queue — `run`, `fill`, `manager` and `loop` — and carries the holder's pid, the
-    kernel's start stamp for that pid, the verb and when it started. A second writer refuses
-    at exit 2 and NAMES the holder; a lock whose holder is not running is taken over once,
-    with no wait, because a `SIGKILL`ed loop would otherwise stop the bench until somebody
-    noticed a file. One PROCESS is one writer, so `loop`'s own three verbs are not three.
+10. **One writer per queue.** `<queue>/.lock` is taken by every verb that writes the queue —
+    `run`, `fill`, `manager` and `loop` — and carries the holder's pid, the kernel's start
+    stamp for that pid, a nonce, the verb and when it started. A second writer refuses at
+    exit 2 and NAMES the holder; a lock whose holder is not running is taken over once, with
+    no wait, because a `SIGKILL`ed loop would otherwise stop the bench until somebody noticed
+    a file. **`O_EXCL` alone is not enough**: it creates an empty file and the content
+    arrives after, and a reader in that window deletes a live owner's lock. The record is
+    written to a temp file and HARD-LINKED onto the lock name, so creation and content are
+    one step; release unlinks only a record whose nonce is still the handle's; stale recovery
+    is serialized through `<queue>/.lock.take` and re-reads the holder under it; and
+    reentrancy is by nonce, never by pid, because a recycled pid is not the same process.
     Replay: `second-writer-refuses-naming-the-holder`.
 11. **One verb is the loop.** `nova-pulse loop` is one tick of `run`, then `fill`, then
     `manager`, under one lock, then the launch-dead probe, then one `LOOP TICK` line. Every
     placement on either road is held against the same `--machines` registry and `--lanes`
     table, so a card refused on one road is refused on the other. A launched card whose job
     directory never appeared inside the launch grace is given back to `pending` with its
-    marker, which releases its lane. Replays: `loop-tick-is-run-fill-manager-in-order`,
-    `launch-dead-releases-the-lane`.
+    marker, which releases its lane. **Every table is read before the first tick** — a path
+    that is merely non-empty is not a registry — and **a step that failed is not a quiet
+    day**: its exit code is counted under `failed=`, a failed run tick stops the fill, the
+    manager and the probe, and the loop's own exit is non-zero. Replays:
+    `loop-tick-is-run-fill-manager-in-order`, `launch-dead-releases-the-lane`,
+    `loop-stops-dependent-steps-and-exits-non-zero`.
+12. **A read-only mode is whole or it is refused.** `fill --dry-run` and `manager --dry-run`
+    change nothing and say so; the run tick's six seams have no read-only mode, so
+    `loop --dry-run` is REFUSED rather than half-kept (nova-tools #1441). A dry run that
+    still harvests, merges, reaps, cuts and launches is worse than no flag: it is a flag a
+    person points at a live queue BECAUSE they were promised nothing would move. The proof is
+    a byte-for-byte snapshot of the whole queue, before and after, through the real command
+    line — never a library call with the step under test stubbed out.
+    Replay: `dry-run-touches-nothing-through-the-cli`.
 
 The exit of a pit stop is a trust batch: the fix cards of the stop rerun as one batch and every
 one scores `done` with its red line quoted, before the queue widens again
@@ -1639,6 +1656,25 @@ handoff (rule **The manager tier**).
     marker removed, so its lane is free; a card whose job directory is there, and one still
     inside its grace, are untouched. `TestLoopLaunchDeadRequeuesAndReleasesTheLane`
     (`internal/pulse/loop_test.go`).
+54. `loop-stops-dependent-steps-and-exits-non-zero`: a tick whose run step exits non-zero runs
+    neither fill, manager nor the launch-dead probe, counts `failed=1` on its line, names the
+    skip in `pulse.log`, and the loop exits non-zero; a failed fill is counted and the manager
+    still runs. `TestLoopStopsDependentStepsAndExitsNonZero`,
+    `TestLoopCountsAFailedFillAndStillRunsTheManager` (`internal/pulse/loop_test.go`).
+55. `dry-run-touches-nothing-through-the-cli`: `fill --dry-run` and `manager --dry-run`, run
+    through the real command line against an isolated queue, leave every file in it
+    byte-for-byte identical and never reach the launcher; `loop --dry-run` is refused, exit 2,
+    naming the two verbs that do have a read-only mode; and the same snapshot helper DOES
+    catch the same fill without the flag, so the guarantee is not vacuous.
+    `TestFillDryRunTouchesNothingThroughTheCLI`,
+    `TestManagerDryRunTouchesNothingThroughTheCLI`, `TestLoopRefusesDryRunThroughTheCLI`,
+    `TestTheSnapshotCatchesARealRun` (`cmd/nova-pulse/dryrun_test.go`).
+56. `lock-is-atomic-and-identity-checked`: an empty lock file is never handed out half-written,
+    an old owner's release never deletes its replacement's lock, two writers never recover one
+    stale lock at once, and a lock is never entered on a pid match alone.
+    `TestPausedPublisherIsNeverRobbed`, `TestOldOwnerReleaseDoesNotDeleteItsReplacement`,
+    `TestCompetingTakeoverIsSerialized`, `TestReentrancyIsByNonceNotByPid`
+    (`internal/pulse/queuelock_test.go`).
 51. `status-contraction-window-and-threshold-stay-visible` (#177: *avoid reacting to one
     arbitrary sampling instant; configurable windows and thresholds must stay visible*): every
     `CONTRACTION` line names the sustained window and the threshold that produced its verdict

@@ -71,6 +71,13 @@ func cmdLoop(args []string, stdout, stderr io.Writer) int {
 	if *capacity < -1 {
 		f.add(fmt.Sprintf("--capacity is 0 or more, got %d; leave it out to read each bench's capacity over ssh", *capacity))
 	}
+	// --dry-run is REFUSED rather than half-kept: the run step's seams have no read-only
+	// mode, so a dry run would still harvest, merge, reap, cut and launch. The flag exists so
+	// the refusal can name the two verbs that do have one -- a flag that is simply absent
+	// sends a person looking for a spelling (Stella's cold read of #1430, defect 1).
+	if *dryRun {
+		f.add("--dry-run is not honoured by the run step and is refused rather than half-kept: its seams (gate, harvest, sweep, reap, refill, launch) have no read-only mode, so the tick would still harvest, merge, reap, cut and launch. Use `nova-pulse fill --dry-run` and `nova-pulse manager --dry-run`, which change nothing, or run the loop for real (nova-tools #1441)")
+	}
 	if f.refused(stderr) {
 		return 2
 	}

@@ -192,3 +192,22 @@ handoff (rule **The manager tier**).
     marker removed, so its lane is free; a card whose job directory is there, and one still
     inside its grace, are untouched. `TestLoopLaunchDeadRequeuesAndReleasesTheLane`
     (`internal/pulse/loop_test.go`).
+54. `loop-stops-dependent-steps-and-exits-non-zero`: a tick whose run step exits non-zero runs
+    neither fill, manager nor the launch-dead probe, counts `failed=1` on its line, names the
+    skip in `pulse.log`, and the loop exits non-zero; a failed fill is counted and the manager
+    still runs. `TestLoopStopsDependentStepsAndExitsNonZero`,
+    `TestLoopCountsAFailedFillAndStillRunsTheManager` (`internal/pulse/loop_test.go`).
+55. `dry-run-touches-nothing-through-the-cli`: `fill --dry-run` and `manager --dry-run`, run
+    through the real command line against an isolated queue, leave every file in it
+    byte-for-byte identical and never reach the launcher; `loop --dry-run` is refused, exit 2,
+    naming the two verbs that do have a read-only mode; and the same snapshot helper DOES
+    catch the same fill without the flag, so the guarantee is not vacuous.
+    `TestFillDryRunTouchesNothingThroughTheCLI`,
+    `TestManagerDryRunTouchesNothingThroughTheCLI`, `TestLoopRefusesDryRunThroughTheCLI`,
+    `TestTheSnapshotCatchesARealRun` (`cmd/nova-pulse/dryrun_test.go`).
+56. `lock-is-atomic-and-identity-checked`: an empty lock file is never handed out half-written,
+    an old owner's release never deletes its replacement's lock, two writers never recover one
+    stale lock at once, and a lock is never entered on a pid match alone.
+    `TestPausedPublisherIsNeverRobbed`, `TestOldOwnerReleaseDoesNotDeleteItsReplacement`,
+    `TestCompetingTakeoverIsSerialized`, `TestReentrancyIsByNonceNotByPid`
+    (`internal/pulse/queuelock_test.go`).

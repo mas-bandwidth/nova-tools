@@ -1365,7 +1365,7 @@ the marker to release the lane and to know whose job it is looking at.
 
 ```
 nova-pulse loop --queue <dir> --machines <file> --lanes <file> --roots <dirs> [--repo <o/n>] [--branch <b>] [--policy <file>] [--bus <clone>] [--as <name>]
-                [--once | --deadline <d>] [--interval <d>] [--launch-grace <d>] [--bench <name>]... [--capacity <n>] [--launcher <path>] [--ssh <path>] [--gh-config <dir>] [--dry-run]
+                [--once | --deadline <d>] [--interval <d>] [--launch-grace <d>] [--bench <name>]... [--capacity <n>] [--launcher <path>] [--ssh <path>] [--gh-config <dir>]
 ```
 
 `loop` is `bin/pulse-loop.sh` as one verb. The script's body was three verbs — `run`
@@ -1381,14 +1381,40 @@ right queue, with the right identity, and nothing made them agree. One tick is:
 6. **one line.**
 
 ```
-LOOP TICK n=<i> ran=<n> filled=<n> harvested=<n> held=<n> refused=<n> dead=<n>
+LOOP TICK n=<i> ran=<n> filled=<n> harvested=<n> held=<n> refused=<n> dead=<n> failed=<n>
 ```
 
 `ran=` is what the run tick placed, `filled=` what the fill tick placed, `held=` the
-cards a lane or a gate held, `refused=` the cards and benches a table refused, and
-`dead=` the launches the probe gave back. Each of the three keeps its own line and
-those lines go to `<queue>/pulse.log`, where the hand loop wrote them and where a
-person already looks; the console keeps this one.
+cards a lane or a gate held, `refused=` the cards and benches a table refused,
+`dead=` the launches the probe gave back, and `failed=` the steps that exited
+non-zero. Each of the three keeps its own line and those lines go to
+`<queue>/pulse.log`, where the hand loop wrote them and where a person already
+looks; the console keeps this one.
+
+**Every table is read before the first tick.** `--machines` must parse as a
+registry, `--lanes` must exist and name at least one lane, every `--roots` entry
+must be a directory, and `--policy` must parse. A path that is merely non-empty is
+not a registry: a typo used to become a tick that placed nothing and said so only in
+the log, and an unreadable lanes file became "no lane by that name" and refused
+every card in the queue one at a time. A refusal here costs nobody a card; the same
+refusal found on tick 40 has already run 39 ticks against a table nobody could read.
+
+**A step that failed is not a quiet day.** The loop honours each step's exit code:
+the failure is counted under `failed=`, named in `pulse.log` (`LOOP STEP <verb>
+exited <n>`), and **the loop's own exit is 1**. A failed *run* step stops the fill,
+the manager and the probe — the run tick is the gate, so nothing may place a card
+behind a gate, harvest, reap and refill that did not happen — and `pulse.log` says
+which steps were skipped and why. A failed *fill* does not stop the manager: a bench
+nobody can reach is no reason to stop merging what already came home.
+
+**`--dry-run` is refused, on purpose.** `fill` and `manager` have a real read-only
+mode; the run tick's six seams — gate, harvest, sweep, reap, refill, launch — have
+none, and `RunInput` has no field to carry one. A loop that took the flag and then
+ran them would still harvest, merge into the lane, reap, cut cards and launch, on a
+queue somebody pointed it at *because they were promised nothing would move*. So the
+flag exists only to refuse, exit 2, naming the two verbs that do change nothing
+(nova-tools #1441) — a flag that is simply absent sends a person looking for a
+spelling.
 
 **Every placement is held against the same tables.** `--machines` and `--lanes` are
 required and never guessed. `fill --machines` refused a CI runner host by name while
@@ -1409,9 +1435,29 @@ A lock whose holder is gone is not a lock: it is taken over, once, with no wait 
 `SIGKILL`ed loop would otherwise stop the bench until somebody noticed a file. Both
 halves must hold for a lock to stand, the pid running AND the process wearing that
 number being the one that wrote the file, because a pid is a small number the
-operating system hands out again. `loop` runs three verbs that each ask for the lock;
-one process is one writer, so the inner asks are handed a handle that releases
-nothing.
+operating system hands out again.
+
+**The protocol, and why it is not just `O_EXCL`.** `O_EXCL` creates an *empty* file
+and the content arrives after it, so there is a window in which the lock exists and
+says nothing — and a second writer that read it there saw no pid, called it an
+orphan, and deleted a live owner's lock. Four rules close that:
+
+1. **Creation and content are one step.** The record is written to a temp file beside
+   the lock and hard-linked onto the lock name. `link` fails when the name exists, so
+   it is the exclusion, and the lock path never exists holding half a record. A
+   filesystem that will not hard-link is named and refused rather than worked around.
+2. **Release is identity-checked.** Every record carries a nonce, and a lock is
+   unlinked only when the record on disk is still the one that handle wrote. An owner
+   whose lock was recovered out from under it does not then delete its replacement's.
+3. **Stale recovery is serialized** through a second `O_EXCL` file,
+   `<queue>/.lock.take`, and the holder is read *again* under it, because the one the
+   caller saw may have been replaced in between. A `.lock.take` whose own holder died
+   is cleared once, after a minute.
+4. **Reentrancy is by nonce, not by pid.** `loop` runs three verbs that each ask for
+   the lock and one process is one writer — but "the holder's pid equals mine" would
+   let a recycled pid walk into a lock this process never took. A lock is ours when
+   its nonce is one this process is holding; the inner asks are handed a handle that
+   releases nothing.
 
 **The launch-dead probe** is the script's `launch_check`. A card under `--launched`
 whose marker is older than `--launch-grace` (90 s by default) and whose job directory
