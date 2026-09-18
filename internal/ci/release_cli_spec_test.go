@@ -47,10 +47,35 @@ func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 	}
 	// The flags a person cannot get through a release without, named where
 	// they will meet them.
-	for _, want := range []string{"--security-read", "--paths-from", "--local-diff", "--expect-sums-from", "--platform"} {
+	for _, want := range []string{"--security-read", "--paths-from", "--local-diff", "--expect-sums-from", "--platform", "--receipts", "--no-dogfood-gate"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("docs/CLI.md does not name %s", want)
 		}
+	}
+}
+
+// LESSON 12. The definition of done is a gate in front of the tag, and the
+// gate's whole worth is that somebody meeting its refusal can find out what it
+// is. A refusal a person cannot look up is a refusal they route around.
+func TestTheDogfoodGateIsInTheReleaseSpec(t *testing.T) {
+	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
+	for _, want := range []string{
+		"## 12. ",
+		"RELEASE CUT REFUSED reason=dogfood-gate",
+		"RELEASE BUILD REFUSED",
+		"--no-dogfood-gate",
+		"--receipts",
+		release.DogfoodWaiverPrefix,
+		"dogfood-gate=skipped",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("docs/SPEC-RELEASE.md does not carry %q", want)
+		}
+	}
+	// And the remedy the refusal hands somebody is the remedy the spec
+	// prints, composed from the one string rather than retyped beside it.
+	if !strings.Contains(spec, release.DogfoodRemedy) {
+		t.Errorf("docs/SPEC-RELEASE.md does not carry the remedy %q", release.DogfoodRemedy)
 	}
 }
 
