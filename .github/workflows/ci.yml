@@ -427,7 +427,12 @@ jobs:
 
       - name: test
         if: matrix.entry.packages != ''
-        run: go test -count=1 ${{ matrix.entry.packages }}
+        # The default bash flags on a `run:` step are `-eo pipefail`, so a
+        # failing `go test` already stops the step at the pipe, before
+        # slowtests runs; the budget check only ever sees a green stream. The
+        # raw `-json` is teed so a slow package's finding is read once, by
+        # cmd/nova-ci, and the same bytes are on disk if a reader wants them.
+        run: go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 60 < "$RUNNER_TEMP/test.json"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
