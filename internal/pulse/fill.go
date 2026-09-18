@@ -70,6 +70,14 @@ type Capacity interface {
 	Capacity(bench string) (int, error)
 }
 
+// BuildReader answers what build is installed on a machine. It is half of what makes a
+// certificate current -- `nova-update release adopt` changes it, and a certificate written
+// before an adopt must not survive it -- so the fill READS it rather than assuming, once per
+// machine per tick. The real one is one ssh; tests inject a table.
+type BuildReader interface {
+	Build(machine string) (string, error)
+}
+
 // refuseNonBenches holds every named bench against the registry BEFORE the first tick, so
 // a fill naming a runner host launches nothing at all rather than launching what it can and
 // refusing the rest. Every refused name gets its own line: a person who typed two wrong
@@ -132,6 +140,16 @@ type FillInput struct {
 	Sleep    func(time.Duration)
 	Launcher CardLauncher
 	Capacity Capacity
+	// CERTIFICATION. Certs names the certificates file `nova-pulse fleet certify` writes,
+	// Hash is the standard hash the fleet is held to now, and Build reads what each machine
+	// is running. With all three, a card whose workload class has no current certificate on
+	// the bench it was dealt is REFUSED and stays ready. Without them the gate is off, which
+	// is the documented narrowing for a loop that has not adopted certification yet -- and
+	// exactly the state hulk was in when its first Go card of 2026-09-18 died inside the
+	// wall on a toolchain the wall could not read.
+	Certs string
+	Hash  string
+	Build BuildReader
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -234,6 +252,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
+	gate := newCertifyGate(in)
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
@@ -278,6 +297,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 						oneline.Field(filepath.Base(card)), oneline.Field(lane), oneline.Field(holder)))
 					continue
 				}
+			}
+			// A card goes to a machine that has PROVED it can do that kind of work, or it
+			// does not go. The card stays READY, so the remedy is run and the same card is
+			// dealt again rather than lost.
+			if !gate.allows(in.Stderr, bench, card) {
+				continue
 			}
 			base := filepath.Base(card)
 			moved := filepath.Join(in.Launched, base)
@@ -392,6 +417,122 @@ func lanesStamp(path string) int64 {
 		return 0
 	}
 	return info.ModTime().Unix()
+}
+
+// certifyGate is the fill's half of Glenn's certification directive of 2026-09-18: a card
+// may not be launched onto a machine that has not proved it can do that kind of work.
+//
+// It is built once per tick and answers per card. The machine's build is read at most once
+// per tick per machine, and the certificates file at most once per tick, because the gate
+// must cost one ssh and one read whatever the queue's depth is.
+type certifyGate struct {
+	certs  []fleet.Certificate
+	hash   string
+	build  BuildReader
+	on     bool
+	err    error
+	builds map[string]string
+	said   map[string]bool
+}
+
+func newCertifyGate(in FillInput) *certifyGate {
+	g := &certifyGate{
+		hash: in.Hash, build: in.Build,
+		builds: map[string]string{}, said: map[string]bool{},
+	}
+	if strings.TrimSpace(in.Certs) == "" || in.Build == nil || strings.TrimSpace(in.Hash) == "" {
+		return g
+	}
+	g.on = true
+	g.certs, g.err = fleet.ReadCertificates(in.Certs)
+	return g
+}
+
+// allows answers whether this card may be launched on this machine, and prints the refusal
+// once per machine and class -- a queue of forty Go cards against an uncertified bench is
+// one line, not forty.
+func (g *certifyGate) allows(stderr io.Writer, machine, card string) bool {
+	if !g.on {
+		return true
+	}
+	class := cardWorkload(card)
+	if g.certified(machine, class) {
+		return true
+	}
+	key := machine + "\x00" + class
+	if !g.said[key] {
+		g.said[key] = true
+		fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=uncertified workload=%s remedy=%s\n",
+			oneline.Field(machine), oneline.Field(class),
+			oneline.Quote("nova-pulse fleet certify --machine "+machine))
+	}
+	return false
+}
+
+func (g *certifyGate) certified(machine, class string) bool {
+	if g.err != nil {
+		return false
+	}
+	build, read := g.builds[machine]
+	if !read {
+		b, err := g.build.Build(machine)
+		if err != nil {
+			b = ""
+		}
+		g.builds[machine] = b
+		build = b
+	}
+	if build == "" {
+		return false
+	}
+	return fleet.Certified(g.certs, machine, class, build, g.hash)
+}
+
+// cardWorkload is the workload class a card's work belongs to. The card may say so itself
+// with `workload: <class>`; otherwise it is decided by the language the card names, and a
+// card that names no language at all is Go, which is what all but a handful of them are.
+func cardWorkload(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return DefaultWorkload
+	}
+	lang := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(t, "workload:"); ok {
+			if class := strings.TrimSpace(v); class != "" {
+				return class
+			}
+		}
+		if lang != "" {
+			continue
+		}
+		for _, key := range []string{"LANG:", "LEG:"} {
+			if v, ok := strings.CutPrefix(t, key); ok {
+				lang = strings.ToLower(strings.TrimSpace(v))
+			}
+		}
+	}
+	if class, ok := workloadByLanguage[lang]; ok {
+		return class
+	}
+	return DefaultWorkload
+}
+
+// DefaultWorkload is the class a card with no `workload:` and no language line belongs to.
+const DefaultWorkload = "go-test"
+
+// workloadByLanguage maps a card's LANG or LEG line to the workload class that certifies a
+// bench for it. A language with no entry falls back to DefaultWorkload rather than to no
+// gate at all: an unknown language on an uncertified bench is still an uncertified bench.
+var workloadByLanguage = map[string]string{
+	"go":     "go-test",
+	"golang": "go-test",
+	"c":      "c-build",
+	"cpp":    "cpp-build",
+	"c++":    "cpp-build",
+	"lisp":   "sbcl",
+	"sbcl":   "sbcl",
 }
 
 // cardLane reads a card's `LANE: <name>` line, or "" when it names none. Only the exact

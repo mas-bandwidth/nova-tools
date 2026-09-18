@@ -1,0 +1,35 @@
+roles: bench
+expect: ^C OK
+wall: yes
+reads: /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+
+# A bench compiles and RUNS what it compiled, inside the wall. A compiler that is present
+# and a compiler that can link are two different machines.
+set -eu
+CC=""
+for candidate in cc gcc clang; do
+  found=$(command -v "$candidate" 2>/dev/null || true)
+  if [ -n "$found" ]; then CC="$found"; break; fi
+done
+if [ -z "$CC" ]; then
+  echo "C FAIL no C compiler is reachable inside the wall"
+  exit 1
+fi
+cat > probe.c <<'NOVA_C_SRC'
+#include <stdio.h>
+
+int main(void) {
+    printf("42\n");
+    return 0;
+}
+NOVA_C_SRC
+if ! "$CC" -O2 -o probe probe.c > build.out 2>&1; then
+  echo "C FAIL $CC could not build"
+  head -n 3 build.out
+  exit 1
+fi
+if [ "$(./probe)" != "42" ]; then
+  echo "C FAIL the built program did not run"
+  exit 1
+fi
+echo "C OK $("$CC" --version 2>&1 | head -n 1)"

@@ -1,0 +1,17 @@
+roles: services
+expect: ^LOKI OK
+
+# Local, over ssh: the services host answers for itself. A fleet nobody could see looked
+# healthy on 2026-09-17 because nothing ever asked Loki whether it was ready.
+set -eu
+PORT="${NOVA_LOKI_PORT:-3100}"
+CURL=$(command -v curl 2>/dev/null || true)
+if [ -z "$CURL" ]; then
+  echo "LOKI FAIL no curl on the services host"
+  exit 1
+fi
+OUT=$("$CURL" -fsS --max-time 10 "http://localhost:$PORT/ready" 2>&1 || true)
+case "$OUT" in
+  *ready*) echo "LOKI OK localhost:$PORT $OUT" ;;
+  *) echo "LOKI FAIL localhost:$PORT $OUT"; exit 1 ;;
+esac
