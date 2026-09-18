@@ -131,6 +131,14 @@ func LoadWorker(path string) (Worker, []error) {
 	}
 
 	var problems []error
+	// SECRET IMPLIES ENV_VAR (issue #881): a description that names `secret` but no
+	// `env_var` loads with env_var defaulting to the secret NAME -- the key is delivered
+	// by `nova-secrets exec` under that NAME, and the harness config carries the
+	// variable's NAME, so the NAME is the same string in both fields. An explicit
+	// `env_var` beside `secret` is kept as typed.
+	if w.Secret != "" && w.EnvVar == "" {
+		w.EnvVar = w.Secret
+	}
 	want := func(value, field, wants string) {
 		if strings.TrimSpace(value) == "" {
 			problems = append(problems, fmt.Errorf("%s: %s is required; it wants %s", path, field, wants))
