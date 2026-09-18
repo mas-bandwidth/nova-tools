@@ -231,6 +231,35 @@ BEFORE it exits, and the exit code stays the refusal's own. The hurt: a provider
 tokens were spent, the rung it picked had nothing above it to step up to, and the verb exited 2
 before either file was written, so the call left no trace anywhere.
 
+**An answer is checked against the question that asked it.** A typed decision is typed at BOTH
+ends. A choice answer must name one of the options its own question offered: an answer the criteria
+never held, an answer naming NOTHING AT ALL, an answer of the wrong type, and an answer to a
+question nobody asked are PROVIDER ERRORS, refused at exit 2 in a line naming the answer and the
+offered set — never decisions with a confidence on them, and the floor never sees one. The hurt:
+`deepseek-flash` came back to a question offering `continue|ask-all-friends|ask-glenn` and printed
+`HELP help=deepseek-flash conf=0.94 below=-` at exit 0, and `{"type":"choice","confidence":0.99}` —
+an answer naming nothing — printed an empty value ABOVE the floor at exit 0. A decision that was
+never made cannot be authorized by the number attached to it.
+
+**The step-up signal names the rung above it, and can take it.** Exit 3 said only which question
+fell below the floor, and stopped there: the reader was left to work out where the work goes next
+from a ladder they cannot see, and nothing turned the signal into the step. So every route line
+carries `next=<rung>` — the rung ABOVE the one answered, from the same registry, and a dash where
+the answer is at or above the floor, where the work is waiting, where the answer is a designation,
+or where there is nothing above. `--step-up` takes the step: below the floor it re-asks the SAME
+question with that rung EXCLUDED from the criteria, up to `--max-steps` (default 3). Every step is
+a decision in its own right — asked, answered, paid for — so each writes its own log row and its
+own usage row, carrying its own reason, and the final line says how many it took in `steps=<n>`.
+Nothing steps past an answer the floor accepts, past a wait (which is not permission to move at
+all), past a designation (security is a KIND and not a height), or past a rung with nothing above
+it. A step-up that never gets above the floor is still exit 3: a suggestion, never an
+authorization.
+
+**A sub-verb refuses an unknown flag by name.** `nova-decide help` with no arguments is the door
+the onboarding standard names and prints the banner at exit 0; `nova-decide help` with a flag it
+does not hold, or one given no value, is `REFUSED reason=bad-flags` at exit 2 naming the flag. A
+flag silently swallowed is a caller who thinks they asked something and did not.
+
 The second decision, `help`, answers continue | ask-all-friends | ask-glenn over hours on the same
 problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
 recurring, whether landing moved, and stated uncertainty. Ask-glenn only ever follows
@@ -246,6 +275,11 @@ synthetic private markers, checked over the state AND the questions),
 `the-provider-usage-is-kept-including-a-failed-call`, `usage-presence-is-per-counter`,
 `an-unreported-counter-is-a-dash-and-a-reported-zero-is-a-zero` and
 `a-routing-refusal-still-persists-the-call` and `a-jev-call-with-no-accounting-is-refused-before-it-is-made`,
+`a-choice-answer-outside-the-criteria-is-a-provider-error`,
+`an-empty-choice-above-the-floor-is-a-provider-error`,
+`the-line-names-the-next-rung-below-the-floor`,
+`step-up-re-asks-with-the-below-floor-rung-excluded`,
+`every-step-is-a-logged-decision` and `a-sub-verb-refuses-an-unknown-flag-by-name`,
 all against a fake decider, with no network and no key on disk.
 
 ### manager abstain / needs_human

@@ -510,6 +510,9 @@ nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lan
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                   [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
                   [--fresh-take] [--deadline 45m] [--no-jev]
+nova-decide route ... [--step-up] [--max-steps 3]
+                  (below the floor, re-ask with that rung excluded from the criteria;
+                   every step is a logged decision, and --max-steps caps how many)
 ```
 
 Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, and how it is `ask`ed) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
@@ -541,19 +544,33 @@ Presence is tracked **per counter**: a 200 with a valid answer and no `usage` ob
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
 $ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
-ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
+ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- next=- steps=1 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
 ```
 
 ```
 $ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
-ROUTE unit=t-1 rung=opus confidence=1.00 floor=0.90 wait=awaiting_termination reason="the attempt on opus timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=child
+ROUTE unit=t-1 rung=opus confidence=1.00 floor=0.90 wait=awaiting_termination next=- steps=1 reason="the attempt on opus timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=child
 exit=1
 ```
 
-**Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the typed `wait` (`-` or `awaiting_termination`), the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 the answer may be acted on, **1 the verb ran and said NOT YET** (a wait: the rung named owns the work and an attempt on it is not known dead), 3 below the floor (the line already carries the rung it stepped up to), 2 on refusal. Only exit 0 is permission to dispatch.
+**The step-up signal names the rung above it, and can take it.** Exit 3 used to say only *which question* fell below the floor, which left the reader to work out where the work goes next from a ladder they cannot see. Every line now carries `next=<rung>` — the rung **above** the one answered, from the same registry — and `-` where the answer is at or above the floor, where the work is waiting, or where there is nothing above. `--step-up` turns the signal into the step: below the floor it re-asks the **same question** with that rung excluded from the criteria, up to `--max-steps` (default 3). Every step is a decision in its own right — asked, answered, paid for — so each one is a row in `--log` and `--usage`, carrying its own reason, and the final line says how many it took in `steps=<n>`. `--max-steps` without `--step-up`, and a `--max-steps` below 1, are refusals naming the flag. A step-up that never gets above the floor is still exit 3: a suggestion, never an authorization.
+
+```
+$ nova-decide route --unit-id thin --kind new-verb --no-jev ; echo "exit=$?"
+ROUTE unit=thin rung=emma confidence=0.60 floor=0.90 wait=- next=astra steps=1 reason="kind new-verb starts at rung opus/sol; below the floor on opus, so the answer steps UP a rung to emma, never down" ask=bus
+exit=3
+
+$ nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl ; echo "exit=$?"
+ROUTE unit=thin rung=astra confidence=0.60 floor=0.90 wait=- next=all-friends steps=3 reason="step 3: 2 rungs answered below the floor and emma, freddy excluded from the criteria; kind new-verb starts at rung opus/sol; below the floor on opus, so the answer steps UP a rung to astra, never down" ask=bus
+exit=3
+```
+
+**An answer is checked against the question that asked it.** A choice answer must name one of the options the question offered: an answer the criteria never held (`deepseek-flash` to a question offering `continue|ask-all-friends|ask-glenn`), an answer naming **nothing at all** (`{"type":"choice","confidence":0.99}`), and an answer of the wrong type are all **provider errors** at exit 2, naming the answer and the offered set — not decisions with a confidence on them. A decision that was never made cannot be authorized by the number attached to it, and the floor never sees one.
+
+**Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the typed `wait` (`-` or `awaiting_termination`), the `next` rung, the step count, the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 the answer may be acted on, **1 the verb ran and said NOT YET** (a wait: the rung named owns the work and an attempt on it is not known dead), 3 below the floor (the line already carries the rung it stepped up to and the one above that), 2 on refusal. Only exit 0 is permission to dispatch.
 
 ### help — continue, ask all friends, ask Glenn
 
@@ -569,6 +586,14 @@ The second decision, over what a line can count about itself: hours on the same 
 ```
 $ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
 HELP answer=ask-all-friends reason="3.0 h on the same problem; the friends have not been asked, and Glenn is only asked after they are"
+```
+
+**A sub-verb refuses an unknown flag by name.** `nova-decide help` with no arguments is the door the onboarding standard names and prints the banner at exit 0; `nova-decide help` with a flag it does not hold — or one given no value — is `HELP REFUSED reason=bad-flags` at exit 2, naming the flag. A flag that is silently swallowed is a caller who thinks they asked something and did not.
+
+```
+$ nova-decide help --state ; echo "exit=$?"
+HELP REFUSED reason=bad-flags flag needs an argument: -state
+exit=2
 ```
 
 ### log — the escalation log

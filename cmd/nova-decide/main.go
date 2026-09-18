@@ -43,6 +43,9 @@ usage:
                     [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                     [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
                     [--fresh-take] [--deadline 45m] [--no-jev]
+  nova-decide route ... [--step-up] [--max-steps 3]
+                    (below the floor, re-ask the same question with that rung
+                     excluded; every step is a logged decision)
 
   nova-decide help --state <json file|inline json>
   nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
@@ -106,6 +109,12 @@ opaque ids rather than any mind's name.
                       is asked: a call nobody can account for is refused before
                       it is made, never made and then forgotten
   --floor <f>         confidence floor; below it the answer steps UP (default 0.9)
+  --step-up           below the floor, re-ask the SAME question with that rung
+                      excluded from the criteria. Every step is a decision of
+                      its own: one log row and one usage row each, and the final
+                      line carries steps=<n>
+  --max-steps <n>     how many decisions --step-up makes before it stops
+                      (default 3); it wants --step-up beside it
   --no-jev            answer by the rules alone: no key, no network, deterministic
   --kind <kind>       rebase | stack | fixture-retarget | fleet-chore |
                       fix-with-red-test | new-verb | spec | design | guard |
@@ -132,6 +141,7 @@ example:
   nova-decide tune --decisions ./decisions.jsonl
   nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
   nova-decide route --unit ./unit.json --usage ./usage.tsv --log ./decide.jsonl
+  nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
   nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
   nova-decide log --log ./decide.jsonl --summary
 `
