@@ -218,6 +218,14 @@
 (deftest "session-server-daemon-and-session-start" "docs/SPEC-WORK.md:268-310,2256-2267"
     "expected=launcher-returns-session-ok-while-daemon-stays-up;status-served-over-the-local-socket;foreground-is-the-process;stop-shuts-the-listener"
   (let* ((base (short-socket-base (format nil "nwd-~D" (random 1000000))))
+         (tmp (namestring (uiop:temporary-directory)))
+         (name (format nil "nw-daemon-~D" (random 1000000)))
+         ;; A Unix-domain socket path lives in a fixed-size sun_path (108
+         ;; bytes); a temporary directory past that falls back to a relative
+         ;; name under this directory, which stays short enough to bind.
+         (base (if (< (length tmp) 80)
+                   (concatenate 'string tmp name)
+                   name))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w"))
          (fdir (concatenate 'string base "/f"))
