@@ -40,6 +40,7 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
@@ -138,7 +139,14 @@ func refuse(stderr io.Writer, where, what string) int {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+	args := os.Args[1:]
+	// Before a launch verb starts a card, refuse a nova-swarm whose PATH copy is not the
+	// built one (doctor.go). The check is at the process boundary because it reads the real
+	// PATH and the real home; the dispatcher below is what the tests drive with fakes.
+	if code, stop := preflightDoctor(args, os.Stderr); stop {
+		os.Exit(code)
+	}
+	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
@@ -152,6 +160,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return 0
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
+	case "doctor":
+		return cmdDoctor(rest, stdout, stderr)
 	case "add":
 		return cmdAdd(rest, stdin, stdout, stderr, now)
 	case "batch":
