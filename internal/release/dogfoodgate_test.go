@@ -9,6 +9,7 @@ package release
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,14 +40,24 @@ type receipt struct {
 	Issue int    `json:"issue,omitempty"`
 }
 
+// writeReceipts appends receipts as files, newest-sorting last. The NAME
+// carries no timestamp: `dogfood.Record` slugs the colons out of an RFC3339 `at`
+// before it names a file, and a test that spelled the name itself put them back
+// -- on windows a `:` is not a filename character at all, and every one of these
+// tests failed there and nowhere else (test-windows-pr, #1423). The ledger reads
+// the `at` INSIDE the record, so the file may be called anything that sorts.
 func writeReceipts(t *testing.T, dir string, rs ...receipt) string {
 	t.Helper()
+	existing, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i, r := range rs {
 		raw, err := json.Marshal(r)
 		if err != nil {
 			t.Fatal(err)
 		}
-		name := filepath.Join(dir, r.At+"-"+r.Tool+"-"+r.Verb+"-"+string(rune('a'+i))+".json")
+		name := filepath.Join(dir, fmt.Sprintf("%03d-%s-%s.json", len(existing)+i, r.Tool, r.Verb))
 		if err := os.WriteFile(name, append(raw, '\n'), 0o644); err != nil {
 			t.Fatal(err)
 		}
