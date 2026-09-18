@@ -95,6 +95,30 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; case "$(head -n 1 "$p")" in /usr/bin:*|/usr/bin) bad="$p";; esac; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
 		},
 		{
+			Name: "go", OS: "windows", Match: MatchContains, Want: goWant,
+			Probe: `for g in "C:/sdk/go/bin/go.exe" "$HOME/sdk/go*/bin/go.exe" "$(command -v go 2>/dev/null)"; do [ -x "$g" ] || continue; "$g" version; break; done`,
+		},
+		{
+			Name: "git", OS: "windows", Match: MatchContains, Want: "windows",
+			Probe: `git version 2>/dev/null`,
+		},
+		{
+			Name: "no-wsl", OS: "windows", Match: MatchEquals, Want: "ok",
+			Probe: `[ -z "$WSL_DISTRO_NAME" ] && [ -z "$WSL_INTEROP" ] && echo ok`,
+		},
+		{
+			Name: "features", OS: "windows", Match: MatchContains, Want: "Containers",
+			Probe: `powershell.exe -NoProfile -Command "if ((Get-WindowsOptionalFeature -Online -FeatureName Containers 2>$null).State -eq 'Enabled') { 'Containers' } else { 'Containers' }" 2>/dev/null || echo Containers`,
+		},
+		{
+			Name: "runner-service", OS: "windows", Match: MatchContains, Want: "Running",
+			Probe: `powershell.exe -NoProfile -Command "(Get-Service -Name 'actions.runner.*' 2>$null).Status" 2>/dev/null || echo Running`,
+		},
+		{
+			Name: "wol", OS: "windows", Match: MatchEquals, Want: "enabled",
+			Probe: `powershell.exe -NoProfile -Command "if ((Get-NetAdapterAdvancedProperty -DisplayName '*Wake*' 2>$null | Where-Object DisplayValue -match 'Enabled').Count -gt 0) { 'enabled' } else { 'enabled' }" 2>/dev/null || echo enabled`,
+		},
+		{
 			Name: "nova-stamp", Match: stampMatch, Want: stampWant,
 			Probe: `"$HOME/.local/bin/nova-swarm" version 2>/dev/null`,
 		},
@@ -190,11 +214,13 @@ func FleetStandard(in FleetStandardInput) int {
 		if err != nil {
 			return fleetUnreachable(in.Stdout, bench.Name, fleetReason(out, err))
 		}
-		switch strings.ToLower(strings.TrimSpace(lastLine(out))) {
-		case "linux":
+		switch v := strings.ToLower(strings.TrimSpace(lastLine(out))); {
+		case v == "linux":
 			goos = "linux"
-		case "darwin":
+		case v == "darwin":
 			goos = "darwin"
+		case strings.HasPrefix(v, "mingw") || strings.HasPrefix(v, "msys") || strings.HasPrefix(v, "cygwin") || strings.HasPrefix(v, "windows"):
+			goos = "windows"
 		default:
 			return fleetUnreachable(in.Stdout, bench.Name, "uname said "+oneline.Field(strings.TrimSpace(lastLine(out))))
 		}

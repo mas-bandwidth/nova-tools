@@ -147,8 +147,9 @@ func fleetVerbsBenches(t *testing.T, home string) string {
 func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 	linux := FleetStandardChecks("linux", "go1.26.5", "abc123", 25)
 	darwin := FleetStandardChecks("darwin", "go1.26.5", "abc123", 25)
-	if len(linux) == 0 || len(darwin) == 0 {
-		t.Fatalf("check lists are empty: linux=%d darwin=%d", len(linux), len(darwin))
+	windows := FleetStandardChecks("windows", "go1.26.5", "abc123", 25)
+	if len(linux) == 0 || len(darwin) == 0 || len(windows) == 0 {
+		t.Fatalf("check lists are empty: linux=%d darwin=%d windows=%d", len(linux), len(darwin), len(windows))
 	}
 	names := func(list []StandardCheck) map[string]bool {
 		m := map[string]bool{}
@@ -157,10 +158,15 @@ func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 		}
 		return m
 	}
-	ln, dn := names(linux), names(darwin)
+	ln, dn, wn := names(linux), names(darwin), names(windows)
 	for _, want := range []string{"go", "sbcl", "nova-stamp", "seat", "disk-free"} {
 		if !ln[want] || !dn[want] {
 			t.Errorf("check %q must be in both lists (linux=%v darwin=%v)", want, ln[want], dn[want])
+		}
+	}
+	for _, want := range []string{"go", "nova-stamp", "seat", "disk-free"} {
+		if !wn[want] {
+			t.Errorf("check %q must be in windows list", want)
 		}
 	}
 	if !ln["safe-rm"] {
@@ -170,8 +176,16 @@ func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 		if !dn[want] {
 			t.Errorf("the Mac bench standard checks %q; the list is %v", want, dn)
 		}
-		if ln[want] {
-			t.Errorf("%q is a Mac bench check and must not be in the Linux list", want)
+		if ln[want] || wn[want] {
+			t.Errorf("%q is a Mac bench check and must not be in linux or windows lists", want)
+		}
+	}
+	for _, want := range []string{"git", "no-wsl", "features", "runner-service", "wol"} {
+		if !wn[want] {
+			t.Errorf("check %q must be in windows list; list is %v", want, wn)
+		}
+		if ln[want] || dn[want] {
+			t.Errorf("%q is a Windows check and must not be in linux or darwin lists", want)
 		}
 	}
 }
