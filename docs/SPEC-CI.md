@@ -875,6 +875,36 @@ per-binary and live in each command's own `firstrun_test.go`, where the example
 lines are EXECUTED, the refusal sentences asserted and the transcript compared
 against real output.
 
+### `benchname` — a bench name is resolved through the machines registry
+
+**The rule.** Glenn's lock of 2026-09-18: runner hosts are CI-only — no card,
+probe or load on a machine that serves the merge group's shards. A function in
+`internal/pulse` or `cmd/nova-pulse` that takes a `bench string` must resolve it
+through `internal/fleet`'s registry (`RequireBench`, `Lookup`, or the two pulse
+wrappers `fleetOneBench` and `refuseNonBenches`) before the name reaches a
+machine, or be named in the allowlist with its reason.
+**The hurt.** The lock was broken by a SHAPE, not a mistake: a bench name was a
+bare string, so `--bench batman` was a hostname to ssh to and nothing in the
+tools knew batman is six CI runners and not a card bench (2026-09-18: a
+reproduction loaded onto batman put the darwin shards under, ledger item 13).
+**The test.** `TestEveryBenchNameIsResolvedThroughTheRegistry` and
+`TestTheBenchNameHeuristicReadsWhatItClaims`
+(`internal/ci/benchname_class_test.go`); the second holds the heuristic itself
+to hand-written sources so the first cannot pass by reading nothing.
+**Its allowlist.** `internal/ci/testdata/benchname_allowlist.txt`, one
+`<path>:<func>` per line with its reason, checked in BOTH directions — a listed
+function that has left or now resolves its name is a red run — so the list only
+shrinks. Today: `reissue` (formats card text, touches no machine), the two raw
+seams `sshCapacity.Capacity` and `flashLauncher.Launch` (wrapped by
+`pulse.Fill`), and the Mac power verbs, which exist FOR the runner hosts.
+**Its remedy line.** `<path>:<func> takes a bench name and does not resolve it
+through the machines registry; call fleet.RequireBench (or fleetOneBench /
+refuseNonBenches) first, or add it to internal/ci/testdata/benchname_allowlist.txt
+with the reason`.
+**Its narrowings.** Only the two packages where a bench name reaches a machine
+are read; a bench name that arrives as a different type, or through a package
+outside them, is the compiler's rule, not this one.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
