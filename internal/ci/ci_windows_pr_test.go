@@ -90,6 +90,15 @@ const windowsSizesPath = "testdata/ci/package-sizes-windows.tsv"
 // budget below is 60.
 const windowsPRShards = 4.0
 
+// windowsLargestInvocation is the longest single `go test` this repository has
+// been measured at on windows-latest: cmd/nova-bus's shard 3 of 6, run FULL in
+// the merge group of run 35354900090, at 149.9 s. It is not the largest package
+// (that whole is 300.1 s) and not its mean share (50.0 s) — it is what one
+// invocation actually took, because tests are dealt by NAME and one shard drew
+// three times the mean. The per-package ceiling is checked against twice this,
+// since the next uneven draw is the one that finds a thinner ceiling.
+const windowsLargestInvocation = 149.9
+
 // windowsShardBudget is the seconds of Windows work a shard should carry, and it
 // is the number ci.yml's shard plan compares each measurement against: at or
 // over it a package's tests are dealt across the three slots, under it the
@@ -233,6 +242,12 @@ func TestWindowsPRShardPlanIsDerivedFromMeasurements(t *testing.T) {
 	if d.Seconds() < 2*largestShare {
 		t.Errorf("WINDOWS_TIMEOUT = %s, under twice the largest per-invocation share the plan can hand one `go test` (%.1fs of %.1fs, from %s); the dealing is by test name and comes out as uneven as 40.7/46.5/98.7, so a ceiling without that room is the 100 s mistake again", d, largestShare, largest, windowsSizesPath)
 	}
+	// And the same check against what has actually been OBSERVED in one
+	// invocation, which is the stricter of the two: the shares above are means,
+	// and a mean is not what a runner kills.
+	if d.Seconds() < 2*windowsLargestInvocation {
+		t.Errorf("WINDOWS_TIMEOUT = %s, under twice the largest single `go test` ever measured on Windows here (%.1fs); that invocation passed under 180 s with 20%% to spare, which is not room, it is luck", d, windowsLargestInvocation)
+	}
 	if !strings.Contains(readFile(t, filepath.Join(root, "Makefile")), "#1332") {
 		t.Error("the Makefile does not say where WINDOWS_TIMEOUT's number comes from; a ceiling is a claim about the machine and belongs in the repository with its measurement")
 	}
@@ -280,8 +295,9 @@ func TestMergeGateWindowsLegDealsFromTheWindowsTable(t *testing.T) {
 	// And the Makefile end of that handshake: a target that prints the number,
 	// and a merge target that reads MERGE_TIMEOUT rather than a literal.
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
-	if got := strings.Join(mk.recipeFor("windows-timeout"), "\n"); !strings.Contains(got, "echo 180s") {
-		t.Errorf("`make windows-timeout` does not print the Windows ceiling, it runs %q; the workflow reads the number from here", got)
+	want := "echo " + strings.TrimSpace(mk.vars["WINDOWS_TIMEOUT"])
+	if got := strings.Join(mk.recipeFor("windows-timeout"), "\n"); !strings.Contains(got, want) {
+		t.Errorf("`make windows-timeout` runs %q, not %q; the workflow reads the Windows ceiling from this target, so it must print WINDOWS_TIMEOUT itself and not a number that can drift from it", got, want)
 	}
 	if got := strings.Join(mk.recipeFor("test-merge"), "\n"); !strings.Contains(got, "-timeout 100s") {
 		t.Errorf("make test-merge does not carry the 100 s linux and darwin ceiling: %q", got)

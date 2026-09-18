@@ -29,7 +29,19 @@ CL_PKGS := ./cmd/... ./internal/...
 # on 2026-09-18 too, when that leg's shard 0 of 3 for cmd/nova-bus was killed at
 # 100 s running the package FULL: the same ceiling, the same cause, one tier
 # later.
-WINDOWS_TIMEOUT ?= 180s
+#
+# THREE HUNDRED since run 35354900090, and 180 was not wrong so much as thin.
+# That run's merge legs proved it works — cmd/nova-bus's shard 3 of 6 ran
+# 149.9 s in ONE `go test` and passed, where the old 100 s would have killed it
+# a second time — and in doing so showed how little room was left: 149.9 s under
+# a 180 s ceiling is 20%. The mean share of that package is 50 s (300.1 s dealt
+# six ways); the shard that got three times the mean is not an outlier but the
+# ordinary result of dealing by test NAME instead of by time. 300 s is twice the
+# largest single invocation ever measured here, and also the whole of the largest
+# package, so no honest invocation can exceed it. Both job caps (ten minutes on
+# the PR leg, twelve on the merge windows leg) still fire above it, so a real
+# hang is still named by Go rather than by the runner.
+WINDOWS_TIMEOUT ?= 300s
 
 # MERGE_TIMEOUT is the per-package ceiling on the merge group's legs. 100 s is
 # the linux and darwin number and is what those legs have always used; the

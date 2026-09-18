@@ -622,6 +622,9 @@ jobs:
         leg:
           - name: linux
             runner: ubuntu-latest
+            # FIVE, the allowance the budget test records: measured 41 to 94 s
+            # in run 35354900090, so the cap is a hang detector with room.
+            timeout: 5
           - name: darwin
             # A label array, carried as a JSON string: a runs-on expression must
             # resolve to a single string, so the job parses this one with fromJSON.
@@ -630,8 +633,23 @@ jobs:
             # which, and one machine as the only darwin runner made it the clock of the
             # whole merge queue.
             labels: '["self-hosted","macOS"]'
+            # FIVE as well: 38 to 256 s in run 35354900090, the slowest leg
+            # inside 4:16 on a Studio also carrying the self-hosted matrix.
+            timeout: 5
           - name: windows
             runner: windows-latest
+            # TWELVE, and it is the same lesson as the PR leg's ten, one tier
+            # later. In run 35354900090 five windows legs finished in 3:47 to
+            # 4:53 and the sixth was CANCELLED by the five-minute cap at 5:12 —
+            # mid `go test -list` of its ninth of twenty-three packages, with
+            # fifteen to go, so unlike the PR shards this one was genuinely not
+            # done. Its remaining work costs about another 95 s (45 s of tests
+            # at this shard's share plus ~50 s of listing), which puts the true
+            # whole near 6:47. Twelve minutes is about 1.8x that: a hang
+            # detector, not a budget. The cost of getting this wrong is not one
+            # red leg — a cancelled shard drops the whole group and restarts
+            # every PR behind it, which is why the number has room.
+            timeout: 12
         # Only the slots plan-merge says this group needs (1, 3 or 6).
         shard: ${{ fromJSON(needs.plan-merge.outputs.shards) }}
     # A runs-on expression must resolve to one value, so the darwin leg's label
@@ -639,18 +657,27 @@ jobs:
     # carry their runner image as a plain string and are quoted as a JSON string
     # in the same expression. Same steps, timeout and package selection below.
     runs-on: ${{ fromJSON(matrix.leg.labels || format('"{0}"', matrix.leg.runner)) }}
-    # FIVE: the one allowed exception to the two-minute law. Every other job on
-    # the CL path stays at TWO, but this gate is not a small check — it runs the
-    # FULL hosted suite (no -short) of the packages a group changes, on three
-    # platforms, sharded by size. Under load (the Studio running sixteen
-    # self-hosted legs plus three friends, windows-latest cold) its darwin shards
-    # were cancelled at 2:44 and its windows shards at 2:40 on 2026-09-17, and a
-    # cancelled shard drops the whole group and restarts every group behind it,
-    # so the two-minute cap on this one job was the throughput limit of the whole
-    # fleet. Scoping to the group's changed packages plus the shard-by-size
-    # matrix was already in place; five minutes is the allowance the budget test
-    # (internal/ci) records, and the comment there carries the reason.
-    timeout-minutes: 5
+    # THE EXCEPTION to the two-minute law — the one allowed exception, and since
+    # 2026-09-18 one exception with two numbers. Every other job on the CL path stays at
+    # TWO, but this gate is not a small check — it runs the FULL hosted suite (no
+    # -short) of the packages a group changes, on three platforms, sharded by
+    # size. Under load (the Studio running sixteen self-hosted legs plus three
+    # friends, windows-latest cold) its darwin shards were cancelled at 2:44 and
+    # its windows shards at 2:40 on 2026-09-17, and a cancelled shard drops the
+    # whole group and restarts every group behind it, so the two-minute cap on
+    # this one job was the throughput limit of the whole fleet. Five minutes was
+    # the allowance that fixed it.
+    #
+    # PER LEG now, because the three platforms are three different measurements
+    # and one number for all of them censored the slowest. In run 35354900090 the
+    # linux legs ran 41-94 s and the darwin legs 38-256 s, both comfortably
+    # inside five — while five of six windows legs took 3:47 to 4:53 and the
+    # sixth was cancelled at 5:12 with fifteen of its twenty-three packages still
+    # to run. linux and darwin keep the recorded five; windows carries twelve,
+    # for the reason written beside it in the matrix above. internal/ci's budget
+    # test reads both numbers out of the matrix and records why each is what it
+    # is.
+    timeout-minutes: ${{ matrix.leg.timeout }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -704,7 +731,13 @@ jobs:
           # guards, so a cmd/nova-swarm edit (PR #1073) selected no shard to run
           # it. Always append it, so the leg is never green by doing nothing and
           # never blind to the workflow's own law.
-          pkgs="$pkgs ./internal/ci"
+          # Appended ONCE: when the diff already selected internal/ci, a bare
+          # append ran it twice in every shard of every leg (run 35354900090,
+          # ten runs of it across the windows legs alone).
+          case " $pkgs " in
+            *" ./internal/ci "*|*"/internal/ci "*) ;;
+            *) pkgs="$pkgs ./internal/ci" ;;
+          esac
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
