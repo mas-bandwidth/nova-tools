@@ -26,8 +26,9 @@ const DefaultPullFloor = 0.9
 // pullDecisionBudget is the 400 ms the section allows the one typed decision.
 const pullDecisionBudget = 400 * time.Millisecond
 
-// PullInput is everything nova-swarm pull needs.
-type PullInput struct {
+// PullLanesInput is everything nova-swarm pull-lanes needs. The name avoids the
+// dev-landed Pull type in warm.go, which is the affinity pull of section 4.
+type PullLanesInput struct {
 	Queue  string
 	Score  lanes.Scorer
 	Floor  float64
@@ -35,9 +36,9 @@ type PullInput struct {
 	Stderr io.Writer
 }
 
-// Pull drains the lanes in order and prints one line. Every path comes from a
-// flag; a queue that cannot be read is a refusal with one remedy line.
-func Pull(in PullInput) int {
+// PullLanes drains the lanes in order and prints one line. Every path comes from
+// a flag; a queue that cannot be read is a refusal with one remedy line.
+func PullLanes(in PullLanesInput) int {
 	entries, err := lanes.Drain(context.Background(), in.Queue, in.Score, in.Floor)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "PULL REFUSED: %s; pass --queue a readable directory holding %s/%s/{red,green,small,next}\n",

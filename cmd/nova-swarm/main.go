@@ -74,7 +74,7 @@ usage:
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
    nova-swarm slots list --store <dir>
    nova-swarm worker    check <description.json> [--env] [--max <n>]
-   nova-swarm pull      --queue <dir> [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
+   nova-swarm pull-lanes --queue <dir> [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
    nova-swarm pull     --stream <kind> --bench <name> (--redis <addr> | --dir <dir>) [--lane <lane>] [--wait <duration>]
 
 PULL TAKES ONE CARD BY RENAME. nova-swarm pull lists a bench's queue/ directory
@@ -136,7 +136,7 @@ is invocation-scoped, so a later recovery run needs the flag again.
 stop stops new admissions and drains workers already running; it does not kill or
 cancel them, including a retry that already started.
 
-pull drains queue/lanes/{red,green,small,next}/ in that order: red (fixes to a
+pull-lanes drains queue/lanes/{red,green,small,next}/ in that order: red (fixes to a
 red bench or a red PR), then green (small, already-approved PRs), then small
 (the shortest step budget), then next. Ordering inside a lane is source order; a
 tie the rule cannot break is asked of Jev as one typed decision in 400 ms behind
@@ -225,10 +225,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdReap(rest, stdout, stderr, now)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
-	case "pull":
-		return cmdPull(rest, stdout, stderr)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
+	case "pull-lanes":
+		return cmdPullLanes(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
 	case "pull":
@@ -973,12 +973,13 @@ func forWord(sc swarm.Sidecar, now time.Time) string {
 	return now.Sub(started).Round(time.Second).String()
 }
 
-// cmdPull drains the priority lanes of a queue in the order docs/SPEC-JOBS.md
+// cmdPullLanes drains the priority lanes of a queue in the order docs/SPEC-JOBS.md
 // section 5 names: red, then green, then small, then next. --decide asks one
 // typed decision behind --floor for an ordering the rule cannot break; a refusal
-// keeps source order.
-func cmdPull(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("pull")
+// keeps source order. The verb is pull-lanes because dev already owns pull for
+// the affinity pull of section 4 (cmd/nova-swarm/pull.go).
+func cmdPullLanes(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("pull-lanes")
 	queue := f.fs.String("queue", "", "")
 	decideFlag := f.fs.Bool("decide", false, "")
 	floor := f.fs.Float64("floor", swarm.DefaultPullFloor, "")
@@ -998,12 +999,12 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 	if *decideFlag {
 		client, err := decide.New(*baseURL, *keyEnv)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-swarm pull: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "nova-swarm pull-lanes: %s\n", oneline.Err(err))
 			return 2
 		}
 		score = pullScorer(client)
 	}
-	return swarm.Pull(swarm.PullInput{Queue: *queue, Score: score, Floor: *floor, Stdout: stdout, Stderr: stderr})
+	return swarm.PullLanes(swarm.PullLanesInput{Queue: *queue, Score: score, Floor: *floor, Stdout: stdout, Stderr: stderr})
 }
 
 // pullScorer is the one typed decision: a choice among the tied cards, under the
