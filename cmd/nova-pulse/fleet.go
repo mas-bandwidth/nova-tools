@@ -19,7 +19,6 @@ package main
 // runner labels. No other verb writes those two.
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -49,6 +48,38 @@ type fleetSurveyResult struct {
 	lines  []string
 	status int
 }
+
+// fleetSurveyRunner is the survey's one remote step: run the standard script on one bench
+// and return its combined output. The real one is `ssh <target> bash -s`, bounded by the
+// context. A test wires in a Go fake that answers from a table, so no unit test starts a
+// program or waits on the host's scheduler.
+type fleetSurveyRunner interface {
+	Run(ctx context.Context, target, script string) (string, error)
+}
+
+// fleetSSHRunner is the real runner: `ssh <target> bash -s` with the script on stdin.
+type fleetSSHRunner struct {
+	Program string
+}
+
+func (r fleetSSHRunner) Run(ctx context.Context, target, script string) (string, error) {
+	program := r.Program
+	if program == "" {
+		program = "ssh"
+	}
+	cmd := exec.CommandContext(ctx, program, target, "bash -s")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// The hooks a test replaces. Nothing here is a global side effect: a test wires its fake
+// in and restores it. fleetNow is the survey's clock, so a test can assert the deadline
+// each bench is given without waiting for one.
+var (
+	fleetNewSurveyRunner = func(program string) fleetSurveyRunner { return fleetSSHRunner{Program: program} }
+	fleetNow             = func() time.Time { return time.Now() }
+)
 
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -272,13 +303,14 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 	}
 
 	bound := time.Duration(*timeout) * time.Second
+	runner := fleetNewSurveyRunner(*ssh)
 	results := make([]fleetSurveyResult, len(list))
 	var wg sync.WaitGroup
 	for i, bench := range list {
 		wg.Add(1)
 		go func(i int, bench fleetBench) {
 			defer wg.Done()
-			results[i] = surveyOneBench(*ssh, script, bench, bound)
+			results[i] = surveyOneBench(runner, script, bench, bound)
 		}(i, bench)
 	}
 	wg.Wait()
@@ -308,14 +340,11 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 // surveyOneBench runs the standard on one bench over ssh and folds the script's DRIFT
 // lines and its last line into FLEET lines. An ssh failure that is not a drift script's
 // own exit 1 is an unreachable bench.
-func surveyOneBench(ssh, script string, bench fleetBench, timeout time.Duration) fleetSurveyResult {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func surveyOneBench(runner fleetSurveyRunner, script string, bench fleetBench, timeout time.Duration) fleetSurveyResult {
+	ctx, cancel := context.WithDeadline(context.Background(), fleetNow().Add(timeout))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, ssh, bench.Target, "bash -s")
-	cmd.Stdin = bytes.NewReader([]byte(script))
-	out, err := cmd.CombinedOutput()
+	text, err := runner.Run(ctx, bench.Target, script)
 
-	text := string(out)
 	drifting := isDriftOutput(text)
 	answered := strings.Contains(text, "STANDARD OK")
 	if !drifting && !answered {
