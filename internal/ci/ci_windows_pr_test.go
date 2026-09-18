@@ -41,8 +41,8 @@ func TestPullRequestsGetAWindowsLeg(t *testing.T) {
 	// The matrix is the shard list and NOTHING else. Every slot is billed
 	// Windows minutes, so a second dimension — an OS, a Go version — is a
 	// multiplication of the bill and is refused here rather than reviewed later.
-	if !strings.Contains(job, "shard: [0, 1, 2]") {
-		t.Error("test-windows-pr does not deal its work over the three shards `shard: [0, 1, 2]`; #1332 measured four packages at or over the 100 s per-package ceiling under -short, which is thirteen minutes of work under a six-minute cap when one job carries it")
+	if !strings.Contains(job, "shard: [0, 1, 2, 3]") {
+		t.Error("test-windows-pr does not deal its work over the four shards `shard: [0, 1, 2, 3]`; the largest measured package, cmd/nova-merge at 203.9 s of -short Windows time, is 68 s a shard over three slots and 51 s over four, and 60 s is the budget")
 	}
 	if strings.Contains(job, "os:") || strings.Contains(job, "go-version: [") {
 		t.Error("test-windows-pr's matrix has a second dimension; the shard list is the whole matrix, because every extra slot is billed Windows minutes")
@@ -83,6 +83,12 @@ func TestPullRequestsGetAWindowsLeg(t *testing.T) {
 // testdata/ci/package-sizes.tsv records the idle-Linux size; the two are
 // different measurements and neither predicts the other.
 const windowsSizesPath = "testdata/ci/package-sizes-windows.tsv"
+
+// windowsPRShards is the number of slots test-windows-pr deals its work over,
+// and it is arithmetic: the largest measured package, cmd/nova-merge at 203.9 s
+// of -short Windows time, is 68 s a shard over three and 51 s over four, and the
+// budget below is 60.
+const windowsPRShards = 4.0
 
 // windowsShardBudget is the seconds of Windows work a shard should carry, and it
 // is the number ci.yml's shard plan compares each measurement against: at or
@@ -187,14 +193,34 @@ func TestWindowsPRShardPlanIsDerivedFromMeasurements(t *testing.T) {
 			continue
 		}
 		if !v.censored && v.secs < windowsShardBudget {
-			t.Errorf("%s says %s is %.1fs, under the %.0fs shard budget, so the plan would run it whole; #1332 measured it at or over 100 s on windows-latest under -short", windowsSizesPath, pkg, v.secs, windowsShardBudget)
+			t.Errorf("%s says %s is %.1fs, under the %.0fs shard budget, so the plan would run it whole; run 35352593117 measured it over the budget on windows-latest under -short. If a real re-measurement put it under, take it off windowsForcingPackages in the same edit", windowsSizesPath, pkg, v.secs, windowsShardBudget)
 		}
 	}
 
-	// The per-package ceiling lives in the Makefile, where `make test-pr` and
-	// the windows merge leg both read it, and must be above every size this tree
-	// has been SEEN to have on Windows — the censored rows included, since their
-	// true size is at least what was recorded.
+	// The per-package ceiling lives in the Makefile, where `make test-pr` and the
+	// windows merge leg both read it. It bounds ONE `go test` invocation, which
+	// is one shard's share of a dealt package or the whole of a package that
+	// runs in one slot — not the whole of a dealt package, which no single
+	// invocation ever runs.
+	//
+	// The margin is not decoration. Tests are dealt by NAME INDEX, not by time,
+	// so the shares come out uneven: run 35352593117 dealt cmd/nova-bus as
+	// 40.7 + 46.5 + 98.7, a worst shard 1.6x the mean. Twice the largest share
+	// is the room that unevenness needs, and a ceiling under it would be the
+	// 100 s mistake again.
+	largestShare := 0.0
+	for _, v := range short {
+		if !v.measured {
+			continue
+		}
+		share := v.secs
+		if v.censored || share >= windowsShardBudget {
+			share = v.secs / windowsPRShards
+		}
+		if share > largestShare {
+			largestShare = share
+		}
+	}
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 	raw, ok := mk.vars["WINDOWS_TIMEOUT"]
 	if !ok {
@@ -204,8 +230,8 @@ func TestWindowsPRShardPlanIsDerivedFromMeasurements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WINDOWS_TIMEOUT = %q is not a Go duration: %v", raw, err)
 	}
-	if d.Seconds() <= largest {
-		t.Errorf("WINDOWS_TIMEOUT = %s, at or under the largest measured Windows size (%.1fs in %s); a ceiling a package sits on is the hang, not the detector — that is what #1332 found at 100 s", d, largest, windowsSizesPath)
+	if d.Seconds() < 2*largestShare {
+		t.Errorf("WINDOWS_TIMEOUT = %s, under twice the largest per-invocation share the plan can hand one `go test` (%.1fs of %.1fs, from %s); the dealing is by test name and comes out as uneven as 40.7/46.5/98.7, so a ceiling without that room is the 100 s mistake again", d, largestShare, largest, windowsSizesPath)
 	}
 	if !strings.Contains(readFile(t, filepath.Join(root, "Makefile")), "#1332") {
 		t.Error("the Makefile does not say where WINDOWS_TIMEOUT's number comes from; a ceiling is a claim about the machine and belongs in the repository with its measurement")
@@ -265,12 +291,18 @@ func TestMergeGateWindowsLegDealsFromTheWindowsTable(t *testing.T) {
 	}
 }
 
-// windowsForcingPackages are the four git-fixture packages whose Windows sizes
-// forced both the PR leg's sharding (#1332, -short, all four on the 100 s
-// ceiling) and the merge leg's move off the Linux table (integration-4, full,
-// one third of cmd/nova-bus over 100 s). Naming them here means a table that
-// quietly loses one is a red run.
-var windowsForcingPackages = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-review", "cmd/nova-wake"}
+// windowsForcingPackages are the packages whose MEASURED -short Windows size is
+// over the shard budget, so the plan must deal them across every slot. Naming
+// them here means a table that quietly loses one is a red run.
+//
+// cmd/nova-review used to be on this list and is not any more, and that is the
+// point of measuring rather than censoring: its row read 100.1+ because the leg
+// killed it at a 100 s ceiling, and the real number is 38.6 s. It runs whole in
+// one slot now. cmd/nova-merge went the other way — 100.0+ turned out to be
+// 203.9 s — and internal/bus, never measured at all, turned out to be 63.3 s and
+// joined the list. A censored row is not a conservative estimate; it is no
+// estimate.
+var windowsForcingPackages = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-wake", "internal/bus"}
 
 // modulePath is this module, the prefix both size tables are keyed by.
 const modulePath = "github.com/mas-bandwidth/nova-tools/"

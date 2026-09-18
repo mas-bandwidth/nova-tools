@@ -12,21 +12,44 @@
 # A "-" is NOT MEASURED. A trailing "+" is CENSORED — the run hit its timeout, so
 # the true size is AT LEAST that number and unknown above it. Both plans treat
 # either one as "deal this package across every slot the group opened", because
-# an unknown size must never be guessed downward. Guessing it downward is exactly
-# what cost integration-4's merge group.
+# an unknown size must never be guessed downward.
+#
+# EVERY -short ROW IS NOW A REAL NUMBER, and that matters more than it sounds.
+# The first version of this table had four censored rows at the 100 s ceiling and
+# nothing else; every other package was unmeasured, so the plan dealt each of
+# them across all three shards, paying a `go test -list` compile per package per
+# shard for packages that turned out to take a tenth of a second. Run 35352593117
+# replaced the guesses with measurements — and two of the four censored rows came
+# back far smaller than their censoring suggested (cmd/nova-review 100.1+ is
+# really 38.6 s, and it now runs whole in one slot) while two came back far
+# larger (cmd/nova-merge 203.9 s, cmd/nova-bus 185.9 s). A censored row is not a
+# conservative estimate; it is no estimate at all.
 #
 # THE LINUX TABLE CANNOT PREDICT THIS ONE, which is why this file exists instead
 # of a multiplier over package-sizes.tsv. cmd/nova-bus is 10.0 s on an idle-ish
-# hulk and at least 100 s here; cmd/nova-swarm is 51.0 s there and 37.0 s here.
-# The difference is processes: the git-fixture packages spawn one per case and
+# hulk and 185.9 s here; cmd/nova-swarm is 51.0 s there and 18.4 s here. The
+# difference is processes: the git-fixture packages spawn one per case and
 # Windows pays the most per process, while nova-swarm's heavy cases skip under
 # -short. The merge group deals its WINDOWS shards from this file; its linux and
 # darwin legs keep reading package-sizes.tsv, which is their measurement.
 #
+# A NOTE ON HOW THE -short COLUMN WAS READ. Run 35352593117 dealt each of these
+# packages across three shards, so the number here is the SUM of the three `ok`
+# times for that package — the whole package's work, which is what the shard plan
+# divides. A package that ran whole in one slot contributes that one number.
+# The dealing is by test-name index, not by time, so the shares are uneven:
+# cmd/nova-bus came back 40.7 + 46.5 + 98.7, a worst shard 1.6x the mean. The
+# plan's budget and the leg's timeout both carry room for that.
+#
 # Measurements:
-#   short: PR #1332 (integration-4), 2026-09-18, windows-latest,
-#          `go test -short -count=1 -timeout 100s` — four packages sat ON the
-#          100 s ceiling, hence the "+".
+#   short: run 35352593117 (PR #1332, integration-4), 2026-09-18, windows-latest,
+#          `go test -short -count=1 -timeout 180s`, whole tree (a go.mod change),
+#          three shards. The run was CANCELLED by the job's six-minute cap — but
+#          every shard had finished its last package two to four seconds before
+#          the kill (ok internal/bus at 13:56:36.1, 13:56:34.6, 13:56:35.3
+#          against kills at 13:56:38-40), so the per-package times below are
+#          complete and the only thing lost was the cleanup. That near miss is
+#          the measurement the new cap is set from.
 #   full:  the same PR's merge group, 2026-09-18. The windows leg's shard 0 of 3
 #          for cmd/nova-bus was killed at the 100 s ceiling with
 #          TestALanesReadmeIsNotANote, TestLaneStateFilesAreNotStrays and
@@ -34,11 +57,32 @@
 #          package exceeded 100 s, so the whole is far above it; 100.0+ is what
 #          was actually observed and the "+" carries the rest.
 #
+# Four packages measured by that run are NOT in this tree — internal/dogfood,
+# internal/friends, internal/goenv and internal/release arrived on the branch
+# the run was testing. Their rows are left out rather than carried: this table
+# is checked against the tree (internal/ci), so a row for a package that is not
+# here is a row nobody can correct. They come back with the packages.
+#
 # import path	short	full
-github.com/mas-bandwidth/nova-tools/cmd/nova-bus	100.1+	100.0+
-github.com/mas-bandwidth/nova-tools/cmd/nova-merge	100.0+	-
-github.com/mas-bandwidth/nova-tools/cmd/nova-review	100.1+	-
-github.com/mas-bandwidth/nova-tools/cmd/nova-wake	100.1+	-
-github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	37.0	-
-github.com/mas-bandwidth/nova-tools/internal/ci	26.0	-
-github.com/mas-bandwidth/nova-tools/cmd/nova-board	19.0	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-merge	203.9	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-bus	185.9	100.0+
+github.com/mas-bandwidth/nova-tools/cmd/nova-wake	79.6	-
+github.com/mas-bandwidth/nova-tools/internal/bus	63.3	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-review	38.6	-
+github.com/mas-bandwidth/nova-tools/internal/update	30.6	-
+github.com/mas-bandwidth/nova-tools/internal/swarm	23.1	-
+github.com/mas-bandwidth/nova-tools/internal/pulse	21.0	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	18.4	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-board	11.7	-
+github.com/mas-bandwidth/nova-tools/internal/review	9.0	-
+github.com/mas-bandwidth/nova-tools/internal/ci	8.9	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-tokens	4.1	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	4.1	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-check	3.8	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-secrets	2.1	-
+github.com/mas-bandwidth/nova-tools/internal/tokens	0.7	-
+github.com/mas-bandwidth/nova-tools/internal/check	0.6	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-update	0.3	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-sandbox	0.3	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-work	0.2	-
+github.com/mas-bandwidth/nova-tools/cmd/nova-version	0.2	-

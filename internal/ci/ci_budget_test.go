@@ -350,16 +350,28 @@ var clTierCeilings = map[string]int{
 	"test-hosted-pr": 6,
 
 	// The Windows leg a pull request gets for the packages it changes, and since
-	// 2026-09-18 the ONLY Windows leg a PR runs. Same number as test-hosted-pr
-	// and the same reason: a hosted runner starts cold before it compiles
-	// anything, and a two-minute cap killed a windows leg by the clock rather
-	// than by any finding. Six minutes is a hang detector here because the work
-	// inside it is bounded by the shard plan — three shards dealt from the
-	// measured sizes in testdata/ci/package-sizes-windows.tsv, with the
-	// Makefile's WINDOWS_TIMEOUT (180 s) as the per-package ceiling — and not by
-	// hope. The leg that was retired had the same six minutes and no shard plan,
-	// which is exactly the difference. (2026-09-18)
-	"test-windows-pr": 6,
+	// 2026-09-18 the ONLY Windows leg a PR runs. TEN, and it is a hang detector
+	// rather than a budget — the third and last number on this leg to be set by
+	// a measurement instead of by a convention.
+	//
+	// Six minutes sat ON the measurement. In run 35352593117 all three shards
+	// FINISHED their last package — ok internal/bus at 13:56:36.1, 13:56:34.6
+	// and 13:56:35.3 — and were killed two to four seconds later, in the
+	// post-checkout cleanup. The work was done; the cap reported a red about the
+	// clock. That is the same mistake the 100 s per-package ceiling made one
+	// tier down, at the job level: a limit that close to the thing it measures
+	// censors it.
+	//
+	// The measured whole is 6:00 a shard (13:50:36 to 13:56:36) for the whole
+	// tree over three shards, with twenty unmeasured packages needlessly dealt
+	// across all of them. The leg now runs four shards with every package
+	// measured, which is about 4:03 of the same work: 178 s of tests, ~40 s of
+	// compiles and listing, 25 s of setup. Ten minutes is 1.7x the largest whole
+	// ever observed and about 2.5x the expected one. What keeps the leg fast is
+	// the shard plan and the measurements in
+	// testdata/ci/package-sizes-windows.tsv, not this ceiling; this ceiling only
+	// stops a wedged process burning a runner. (2026-09-18)
+	"test-windows-pr": 10,
 
 	// The sharded test matrix, and the one number the move to self-hosted
 	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
