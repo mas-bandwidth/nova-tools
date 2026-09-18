@@ -1,4 +1,6 @@
-// Package check implements the six record-layer checks behind nova-check.
+// Package check implements six of the seven record-layer checks behind
+// nova-check; the seventh, dogfood, is internal/dogfood, because its records
+// are receipts about the family's tools rather than about one self repo.
 // Each function returns (result, failures, error): failures mean the check
 // ran and said NO (exit 1 at the CLI); a non-nil error means the check could
 // not run at all (exit 2). See SPEC.md for what each check asserts and,

@@ -32,6 +32,9 @@ nova-check nocode --dir <dir>                      # no code, executables, scrip
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
+nova-check dogfood ledger --cli <docs/CLI.md> --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
+nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt: I ran this verb, on real work, and here is how it went
+nova-check dogfood gate --cli <docs/CLI.md> --receipts <dir> [--require-all]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 ```
 
 ### First run
@@ -54,6 +57,56 @@ KERNEL OK bytes=771 budget=4000
 **What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`), never the whole banner.
 
 **`corpus` is the odd one out.** Every other check finds something present: a broken link names its target. A sentence that has been dropped names nothing, and a rewrite, a move or a restore can drop something that was given to you once, with nothing going red, because the record and the evidence about the record are the same files. So `corpus` reads a ledger you wrote in advance, the statements you intend never to lose without deciding to and where each lives, and asserts they are still there. Changing them is allowed; changing them silently is not, because the repair for a real change is to move the ledger row in the same commit.
+
+### The dogfood ledger
+
+*Draft, for Stella, who owns the docs.*
+
+A tool is not finished until it is tested, dogfooded by a non-author on real
+work with the edges filed, the feedback applied, documented and released
+(Glenn, 2026-09-18). Nothing tracked the middle of that sentence, so the claim
+was whatever the last person to speak said it was. `dogfood` makes it a record:
+the verbs come from this file, the runs come from receipts, and the gate is one
+exit code a release lane can call.
+
+```
+$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+    --notes "ran it over my own self repo before the merge; found nothing" \
+    --receipts ./dogfood-receipts
+DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
+
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=-
+DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
+DOGFOOD OK verbs=71 dogfooded=1 by-nonauthor=1 open-edges=0
+
+$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
+DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
+DOGFOOD GATE FAIL verbs=71 findings=70 shown=20
+```
+
+**Reading it.** `ledger` prints one row per verb this file declares, in this
+file's order, and never elides one: a ledger that capped its rows would hide
+exactly the verbs nobody has run. The summary is the bounded read —
+`dogfooded=` counts verbs with any receipt, `by-nonauthor=` counts the ones a
+non-author ran and said ok, `open-edges=` counts receipts that said NO and that
+no later run has cleared. `gate` is the same read with an exit code: 1 on an
+open edge always, and with `--require-all` on every verb no non-author has
+passed. A receipt the tool cannot parse is exit 1 and a named `DOGFOOD FAIL`
+line, never a quietly shorter ledger.
+
+**Who counts as the author.** `--authors <file>` maps `<tool> <verb> = <who
+wrote it>`, one per line, and is exact. `--repo <dir>` is the second-best
+source: for each verb it asks git for the first commit that introduced the
+verb's word under `cmd/<tool>` and takes that commit's author. A verb neither
+places has no author, so every receipt for it counts — the gate can be wrong by
+asking for one more pass, never by passing a verb nobody ran. An author
+dogfooding their own verb is recorded and does not count.
+
+**The receipts are files.** One JSON line each — `tool`, `verb`, `by`, `at`,
+`ok`, `notes`, `issue` — one file per receipt, written to a temporary name and
+renamed, so two benches recording at once never interleave. Keep the directory
+in a repository: it is the record, and it should outlive the bench.
 
 ## nova-self-talk
 
