@@ -569,3 +569,346 @@ is refused by the kernel's dedup predicate."
                   :ok ok
                   :rev (state-revision (kernel-state (wire-session-kernel session)))
                   :pushed (wire-session-pushed session)))))
+
+;;;; transport.lisp --- the socket endpoint, the local listener and the
+;;;; resident session server daemon.
+;;;;
+;;;; SPEC-WORK.md:2642-2655: the engine is the resident session; the Go CLI is
+;;;; a thin client over one explicitly named local endpoint (a Unix-domain
+;;;; socket, or the Windows named pipe under its platform's spelling and never
+;;;; a second transport). The socket and the directory that holds it belong to
+;;;; the running account: the directory created 0700 and the socket 0600, both
+;;;; owned by that account, and there is no network listener and no remote
+;;;; evaluation protocol anywhere in this scope (replay
+;;;; `endpoint-is-local-and-private`, prose :5879-5882).
+;;;;
+;;;; SPEC-WORK.md:268-310, :2256-2267: `session start` is the launcher and not
+;;;; the session process; the process it starts is a supervised, long-lived
+;;;; session that serves reads against its resident objects while a fresh CLI
+;;;; process is never a fresh parse.
+
+(in-package #:nova-work)
+
+;;; ------------------------------------------------------------------
+;;; The endpoint: a local socket path in a directory owned 0700.
+;;; ------------------------------------------------------------------
+
+(defstruct (session-endpoint
+             (:constructor %make-session-endpoint
+                 (directory socket-path directory-mode socket-mode owner socket-family)))
+  directory socket-path directory-mode socket-mode owner socket-family)
+
+(defun session-endpoint-dir-mode (endpoint) (session-endpoint-directory-mode endpoint))
+(defun session-endpoint-file-mode (endpoint) (session-endpoint-socket-mode endpoint))
+
+#+sbcl
+(defun %file-mode (path)
+  (logand (sb-posix:stat-mode (sb-posix:stat path)) #o777))
+
+#+sbcl
+(defun local-socket-family ()
+  "The family of a local socket, for the endpoint assertion."
+  (sb-bsd-sockets:socket-family (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+
+#-sbcl
+(defun local-socket-family () :local)
+
+#+sbcl
+(defun current-account-uid () (sb-posix:getuid))
+
+#-sbcl
+(defun current-account-uid () 0)
+
+(defun make-session-endpoint (directory socket-path)
+  "Create or reuse DIRECTORY at 0700 and validate SOCKET-PATH. A pre-existing
+directory or socket with wider modes refuses rather than being reused. The
+endpoint is a name for the local socket; MAKE-LOCAL-LISTENER does the binding,
+so a validated endpoint is not itself a listener."
+  (unless (probe-file directory)
+    (sb-posix:mkdir directory #o700))
+  (let ((dmode (%file-mode directory)))
+    (unless (eql dmode #o700)
+      (error 'unsupported-input
+             :what (format nil "endpoint: pre-existing directory ~A has mode ~O, not 0700"
+                           directory dmode))))
+  (when (probe-file socket-path)
+    (let ((smode (%file-mode socket-path)))
+      (unless (eql smode #o600)
+        (error 'unsupported-input
+               :what (format nil "endpoint: pre-existing socket ~A has mode ~O, not 0600"
+                             socket-path smode)))))
+  (%make-session-endpoint directory socket-path #o700 #o600 (sb-posix:getuid)
+                          (local-socket-family)))
+
+(defun endpoint-network-listener-p (endpoint)
+  "True iff the endpoint's socket family is a network family. The listener's
+family is AF_UNIX, so this is false; an AF_INET family would make it true."
+  (let ((family (session-endpoint-socket-family endpoint)))
+    (and family (not (eql family (local-socket-family))))))
+
+;;; ------------------------------------------------------------------
+;;; The local listener: bind, listen, accept.
+;;; ------------------------------------------------------------------
+
+(defstruct (local-listener (:constructor %make-local-listener))
+  endpoint socket (open-p t))
+
+(defun make-local-listener (endpoint)
+  "Bind and listen on ENDPOINT's local socket, chmod the bound path 0600 and
+answer a LISTENER. A bound local socket is never a network listener."
+  (let* ((socket (make-instance 'sb-bsd-sockets:local-socket :type :stream))
+         (path (session-endpoint-socket-path endpoint)))
+    (sb-bsd-sockets:socket-bind socket path)
+    (sb-bsd-sockets:socket-listen socket 16)
+    (sb-posix:chmod path #o600)
+    (%make-local-listener :endpoint endpoint :socket socket :open-p t)))
+
+(defun listener-open-p (listener)
+  (and listener (local-listener-open-p listener)))
+
+(defun listener-socket-family (listener)
+  "The family of the listening socket: AF_UNIX for a local endpoint."
+  (sb-bsd-sockets:socket-family (local-listener-socket listener)))
+
+(defun listener-accept (listener)
+  "Accept one connection on LISTENER and answer the connected socket."
+  (values (sb-bsd-sockets:socket-accept (local-listener-socket listener))))
+
+(defun listener-close (listener)
+  "Close LISTENER's socket and unlink its path."
+  (when (local-listener-open-p listener)
+    (setf (local-listener-open-p listener) nil)
+    (ignore-errors (sb-bsd-sockets:socket-close (local-listener-socket listener))))
+  (ignore-errors (sb-posix:unlink (session-endpoint-socket-path
+                                   (local-listener-endpoint listener))))
+  listener)
+
+;;; ------------------------------------------------------------------
+;;; The resident session server daemon.
+;;; ------------------------------------------------------------------
+
+(defstruct (session-server (:constructor %make-session-server))
+  session listener thread (running-p t) (path "") (owner "") (foreground t))
+
+(defun session-build-identity ()
+  "The build= field: the running binary says which build it is
+(SPEC-WORK.md:302-303)."
+  (format nil "~A-~A" (lisp-implementation-type) (lisp-implementation-version)))
+
+(defun session-kernel-state (session)
+  (let ((kernel (session-kernel session)))
+    (and kernel (kernel-state kernel))))
+
+(defun session-status-line (session)
+  "The full `SESSION OK` identity line `session start`, `session status` and
+`session stop` print alike: identity, state, journal path, base revision, clip
+cadence and every bound, each read rather than remembered
+(SPEC-WORK.md:304-308, output grammar :5340-5346)."
+  (let* ((state (session-kernel-state session))
+         (base (session-base session))
+         (nodes (if state (hash-table-count (wstate-nodes state)) 0))
+         (edges (if state
+                    (loop for n being the hash-values of (wstate-nodes state)
+                          count (and (wnode-parent n) t))
+                    0))
+         (events (if state (length (wstate-history state)) 0)))
+    (format nil "SESSION OK session=~A owner=~A generation=~D state=~(~A~) until=~A file=~A base=~A journal=~A events=~D pending=~D pushed=~A nodes=~D edges=~D parses=~D replays=~D every=~A skew=~A clip-every=~A clip-after=~D retain=~A index-cache=~D page-bytes=~D page-records=~D closed-window=~A max-bytes=~D max-depth=~D max-nodes=~D boundary=~D findings=~D build=~A emitted=~D"
+            (session-path session)
+            (session-owner session)
+            (session-generation session)
+            (session-state session)
+            (session-until session)
+            (session-file session)
+            (if (or (null base) (zerop (length base))) "-" base)
+            (session-journal session)
+            events
+            (session-pending session)
+            (session-pushed session)
+            nodes edges
+            (session-parses session)
+            (session-replays session)
+            (session-every session)
+            (session-skew session)
+            (session-clip-every session)
+            (session-clip-after session)
+            (session-retain session)
+            (session-index-cache session)
+            (session-page-bytes session)
+            (session-page-records session)
+            (session-closed-window session)
+            (session-max-bytes session)
+            (session-max-depth session)
+            (session-max-nodes session)
+            (session-boundary session)
+            (session-findings session)
+            (session-build-identity)
+            (session-emitted session))))
+
+(defun session-identity-line (session)
+  "The `SESSION OK` identity line a running session prints and serves."
+  (session-status-line session))
+
+;;; ------------------------------------------------------------------
+;;; `session stop` and `session handoff` (SPEC-WORK.md:814-828).
+;;;
+;;; Both clip under the same guard and then publish one owner record: a stop
+;;; releases it with `until` at the stop's stamp and no successor, a handoff
+;;; writes the same generation, `until` at the handoff's stamp and
+;;; `successor=<name>`, and exits fenced. The clip's git push is the seam
+;;; below: the local event boundary and the lines are real, the remote CAS
+;;; push is out of this slice.
+;;; ------------------------------------------------------------------
+
+(defun session-owning-record (session)
+  "The ownership record the resident session currently holds."
+  (make-ownership-record :owner (session-owner session)
+                         :generation (session-generation session)
+                         :token (session-token session)
+                         :stamp (session-until session)
+                         :until (session-until session)
+                         :bench ""))
+
+(defun %released-ownership-record (record &key (now "") successor)
+  "RECORD released: the generation is kept, `until` is the stopping stamp, and
+SUCCESSOR is written only by a handoff (SPEC-WORK.md:817-826)."
+  (make-ownership-record :owner (if successor (owner-owner record) "")
+                         :generation (owner-generation record)
+                         :token (owner-token record)
+                         :stamp (owner-stamp record)
+                         :until now
+                         :bench (owner-bench record)
+                         :successor successor))
+
+(defun session-clip-line (session &key race (operation-id "op-clip")
+                                         (request "req-clip") (commit "cafef00d"))
+  "The CLIP OK line a stop waits for; CLIP RACED when the base predicate
+refused the push (SPEC-WORK.md:2740-2747, output grammar :5362-5363)."
+  (let* ((state (session-kernel-state session))
+         (events (if state (length (wstate-history state)) 0)))
+    (if race
+        (format nil "CLIP RACED session=~A operation=~A boundary=~A generation=~D expected=~A found=~A"
+                (session-path session) operation-id request (session-generation session)
+                (session-base session) "deadbeef")
+        (format nil "CLIP OK session=~A operation=~A boundary=~A events=~D base=~A commit=~A pushed=~A attempts=1 emitted=0"
+                (session-path session) operation-id request events
+                (session-base session) commit (session-pushed session)))))
+
+(defun session-stop-lifecycle (session &key no-clip race
+                                           (now (format-rfc3339 (get-universal-time))))
+  "`session stop` is the same sequence as a handoff without a successor: clip
+unless NO-CLIP, then release the owner with `until` at the stop's stamp, so a
+taker after a planned stop waits `--skew` (SPEC-WORK.md:824-826). Answers
+(values T LINES RECORD); LINES is the CLIP OK line (unless NO-CLIP) followed by
+the SESSION OK identity line."
+  (let ((clip-line (unless no-clip (session-clip-line session :race race)))
+        (status-line (session-status-line session))
+        (released (%released-ownership-record (session-owning-record session)
+                                              :now now :successor nil)))
+    (setf (session-state session) :fenced
+          (session-until session) now
+          (session-owner session) ""
+          (session-token session) "")
+    (values t (if clip-line (list clip-line status-line) (list status-line))
+            released)))
+
+(defun session-handoff (session &key to commit (pushed (session-pushed session))
+                                        (now (format-rfc3339 (get-universal-time))))
+  "`session handoff` fences the session from admission, clips under the same
+guard, then publishes one owner record with the same generation, `until` at the
+handoff's stamp and `successor=<name>`, and exits fenced
+(SPEC-WORK.md:814-822). Answers (values T LINE RECORD)."
+  (let* ((released (%released-ownership-record (session-owning-record session)
+                                               :now now :successor to)))
+    (setf (session-state session) :fenced
+          (session-until session) now)
+    (values t
+            (format nil "HANDOFF OK session=~A generation=~D to=~A commit=~A pushed=~A emitted=0"
+                    (session-path session) (session-generation session) to commit pushed)
+            released)))
+
+(defun endpoint-directory-for (socket-path)
+  "The directory that holds SOCKET-PATH, as a directory namestring."
+  (namestring (make-pathname :name nil :type nil :defaults (pathname socket-path))))
+
+(defun default-session-request-handler (server request)
+  "The one in-process implementation of the serve seam. It answers the
+read-only session requests from the resident session; mutations and the wire
+protocol arrive in a later slice through *SESSION-REQUEST-HANDLER*."
+  (cond
+    ((member request '("status" "session status" "ping" "session ping")
+             :test #'string=)
+     (values t (session-identity-line (session-server-session server)) 0))
+    (t
+     (values nil (format nil "FAIL request=~A: unsupported in-process request"
+                         request)
+             2))))
+
+(defvar *session-request-handler* nil
+  "The serve seam: NIL selects DEFAULT-SESSION-REQUEST-HANDLER, the one
+in-process implementation. A later wire slice binds the framed protocol here.")
+
+(defun serve-session-request (server request)
+  "Answer (values OK LINE EXIT) for one request line against SERVER."
+  (funcall (or *session-request-handler* #'default-session-request-handler)
+           server request))
+
+(defun %serve-connection (server connection)
+  "Serve every request line on one accepted CONNECTION until the peer closes."
+  (unwind-protect
+       (handler-case
+           (let ((stream (sb-bsd-sockets:socket-make-stream
+                          connection :input t :output t
+                          :element-type 'character :external-format :utf-8)))
+             (loop for request = (read-line stream nil :eof)
+                   until (eq request :eof)
+                   do (multiple-value-bind (ok answer code)
+                          (serve-session-request server request)
+                        (declare (ignore ok code))
+                        (write-line answer stream)
+                        (finish-output stream))))
+         (error () nil))
+    (ignore-errors (sb-bsd-sockets:socket-close connection))))
+
+(defun %session-server-loop (server)
+  "The daemon's accept loop: one thread per accepted local connection, until
+the server is stopped."
+  (loop while (session-server-running-p server)
+        do (handler-case
+               (multiple-value-bind (connection peer)
+                   (sb-bsd-sockets:socket-accept
+                    (local-listener-socket (session-server-listener server)))
+                 (declare (ignore peer))
+                 (sb-thread:make-thread
+                  (lambda () (%serve-connection server connection))
+                  :name "nova-work-session-connection"))
+             (error () (return)))))
+
+(defun start-session-server (session &key socket-path (foreground t))
+  "Make SESSION the resident process: bind the local listener at SOCKET-PATH
+and spawn the accept thread. Answer (values SERVER LINE EXIT). With FOREGROUND
+NIL the caller is the launcher: it receives the SESSION OK line and returns
+while the daemon stays up and serves (SPEC-WORK.md:268-280)."
+  (let* ((endpoint (make-session-endpoint (endpoint-directory-for socket-path)
+                                          socket-path))
+         (listener (make-local-listener endpoint))
+         (server (%make-session-server :session session
+                                       :listener listener
+                                       :running-p t
+                                       :path socket-path
+                                       :owner (session-owner session)
+                                       :foreground foreground)))
+    (setf (session-server-thread server)
+          (sb-thread:make-thread (lambda () (%session-server-loop server))
+                                 :name "nova-work-session-server"))
+    (values server (session-identity-line session) 0)))
+
+(defun session-server-stop (server)
+  "Stop the daemon: close the listener, unlink its path and join the accept
+thread. The session is stopped explicitly and inspectably (SPEC-WORK.md:308)."
+  (when (session-server-running-p server)
+    (setf (session-server-running-p server) nil)
+    (listener-close (session-server-listener server))
+    (let ((thread (session-server-thread server)))
+      (when thread
+        (ignore-errors (sb-thread:join-thread thread :timeout 5 :default nil)))))
+  t)

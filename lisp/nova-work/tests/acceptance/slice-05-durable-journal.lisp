@@ -155,16 +155,38 @@
 ;;; in this file or in the slice file named beside it.
 ;;; ------------------------------------------------------------------
 
+(defun short-socket-base (prefix)
+  "Create and answer a directory short enough to hold an AF_UNIX socket path.
+The kernel bounds a Unix-domain socket path (108 bytes on Linux), which a long
+TMPDIR can exceed, so try short roots first and create the first that works."
+  (flet ((try-root (root)
+           (when root
+             (let* ((trimmed (string-right-trim "/" (namestring (pathname root))))
+                    (base (concatenate 'string trimmed "/" prefix)))
+               (when (< (+ (length base) 4) 108)
+                 (when (or (probe-file base)
+                           (ignore-errors (sb-posix:mkdir base #o700) t))
+                   base))))))
+    (or (some #'try-root
+              (list "/dev/shm"
+                    (format nil "/run/user/~D" (sb-posix:getuid))
+                    "/var/tmp"
+                    (uiop:getenv "TMPDIR")
+                    ;; the parent of TMPDIR is still short when TMPDIR itself
+                    ;; is not (the sandbox's sits under the job's working dir).
+                    (uiop:pathname-parent-directory-pathname
+                     (uiop:temporary-directory))))
+        (concatenate 'string
+                     (string-right-trim "/" (namestring (uiop:temporary-directory)))
+                     "/" prefix))))
+
 ;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2646-2653 / table :5727
 (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727"
     "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
   ;; the session's directory created 0700 and its socket 0600, both owned
   ;; by the running account; a pre-existing directory or socket with wider
   ;; modes refused rather than reused; no listener on any network address.
-  (let* ((tmp (namestring (uiop:temporary-directory)))
-         (base (if (< (length tmp) 80)
-                   (concatenate 'string tmp (format nil "n~D" (random 99999)))
-                   (format nil "n~D" (random 99999))))
+  (let* ((base (short-socket-base (format nil "nw-~D" (random 1000000))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w")))
     (unwind-protect
@@ -179,6 +201,39 @@
              (check-equal (local-socket-family) (session-endpoint-socket-family ep)
                           "the socket is a local (AF_UNIX) socket")
              (ok (not (endpoint-network-listener-p ep)) "no network listener"))
+           ;; The local listener really binds, listens and accepts one local
+           ;; connection; the bound socket and its directory keep their modes.
+           (let* ((ld (concatenate 'string base "/l"))
+                  (ls (concatenate 'string ld "/w"))
+                  (lep (make-session-endpoint ld ls))
+                  (listener (make-local-listener lep)))
+             (unwind-protect
+                  (progn
+                    (ok (listener-open-p listener) "the local listener is open")
+                    (check-equal (local-socket-family) (listener-socket-family listener)
+                                 "the listening socket is AF_UNIX, never a network family")
+                    (check-equal #o600 (logand (sb-posix:stat-mode (sb-posix:stat ls)) #o777)
+                                 "the bound socket path is 0600")
+                    (check-equal #o700 (logand (sb-posix:stat-mode (sb-posix:stat ld)) #o777)
+                                 "the directory stays 0700")
+                    (let ((client (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+                      (unwind-protect
+                           (progn
+                             (sb-bsd-sockets:socket-connect client ls)
+                             (let ((accepted (listener-accept listener)))
+                               (ok accepted "the listener accepts the local connection")
+                               (ignore-errors (sb-bsd-sockets:socket-close accepted))))
+                        (ignore-errors (sb-bsd-sockets:socket-close client)))))
+               (listener-close listener))
+             (ignore-errors (sb-posix:unlink ls))
+             (ignore-errors (sb-posix:rmdir ld)))
+           ;; A network family is a different family, which is what "no network
+           ;; listener" means rather than a flag the endpoint asserts about itself.
+           (ok (not (eql (local-socket-family)
+                         (sb-bsd-sockets:socket-family
+                          (make-instance 'sb-bsd-sockets:inet-socket
+                                         :type :stream :protocol :tcp))))
+               "AF_UNIX and AF_INET are different families")
            ;; A pre-existing directory with wider modes refuses rather than reuses.
            (let ((wide (concatenate 'string base "/w")))
              (sb-posix:mkdir wide #o755)
