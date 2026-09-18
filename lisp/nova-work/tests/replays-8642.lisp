@@ -175,28 +175,131 @@
 ;;; batches-and-pipelines                       SPEC-WORK.md:6240
 ;;; ------------------------------------------------------------------
 
-(deftest "batches-and-pipelines" "docs/SPEC-WORK.md:6240"
-    "expected=atomic=all-or-none,prefix=exact,unattempted=marked"
-  (let ((entries '((:id "e1" :payload 1)
-                   (:id "e2" :payload 2)
-                   (:id "e3" :payload 3))))
-    (flet ((reject-middle (entry) (not (equal (getf entry :id) "e2"))))
-      ;; Atomic: all-or-none. One bad entry publishes nothing.
-      (multiple-value-bind (acc outcome)
-          (apply-atomic-batch '() entries #'reject-middle)
-        (check-equal :refused outcome "an atomic batch with a bad entry published")
-        (check-equal '() acc "an atomic batch applied a partial prefix"))
-      ;; An all-valid atomic batch applies everything, in order.
-      (multiple-value-bind (acc outcome)
-          (apply-atomic-batch '() entries (lambda (e) (declare (ignore e)) t))
-        (check-equal :applied outcome "an all-valid atomic batch refused")
-        (check-equal '("e1" "e2" "e3") acc "the atomic batch did not apply in order"))
-      ;; Independent: exact accepted prefix applied, remainder not attempted.
-      (multiple-value-bind (acc accepted not-attempted)
-          (apply-independent-batch '() entries #'reject-middle)
-        (check-equal '("e1") acc "the independent batch did not stop at the refusal")
-        (check-equal '("e1") accepted "the accepted prefix was not exact")
-        (check-equal '("e3") not-attempted "the remainder was not marked not-attempted")))))
+(deftest "batches-and-pipelines" "docs/SPEC-WORK.md:2762-2814"
+    "expected=read-bundle=one-revision-and-watermark,expired-page-refused,atomic=all-or-none-with-entry-id,long-op-refused-in-atomic,prefix=exact,unattempted=marked,continuation=explicit,long-op-returns-operation-id"
+  ;; B2 -- a read bundle is one revision and one lease-time watermark. Every
+  ;; ask is answered from the captured revision, never the work set, and a
+  ;; later page keeps that snapshot identity or refuses `page expired`.
+  (let* ((kernel (fresh))
+         (bundle (make-read-bundle kernel :watermark 300)))
+    (check-equal '(:open 5 :closed 0) (read-bundle-ask bundle :size)
+                 "the read bundle answers the ask it names from one revision")
+    (check-equal 300 (read-bundle-ask bundle :watermark)
+                 "the bundle carries one lease-time watermark")
+    (multiple-value-bind (fields line) (read-bundle-page bundle 0)
+      (ok fields "a page inside the snapshot answers")
+      (ok (search (format nil "rev=~D" (read-bundle-revision bundle)) line)
+          "the page names its snapshot revision: ~A" line))
+    ;; A mutation after the capture does not move the bundle's revision, so a
+    ;; later page still reads the captured one.
+    (multiple-value-bind (okp line) (submit kernel (close-request :request "bundle-m-1"))
+      (declare (ignore line))
+      (ok okp "the mutation after the capture is accepted"))
+    (check-equal '(:open 5 :closed 0) (read-bundle-ask bundle :size)
+                 "the bundle still reads its captured revision")
+    ;; Asked below the bundle's own revision the snapshot has expired.
+    (multiple-value-bind (fields line)
+        (read-bundle-page bundle (1+ (read-bundle-revision bundle)))
+      (ok (null fields) "an expired page answers no fields")
+      (ok (search "page expired" line) "the refusal names the expiry: ~A" line)))
+
+  ;; B4 -- an atomic mutation batch is one envelope, all or none. Every entry
+  ;; is validated against the expected revision before anything is published;
+  ;; one bad entry writes nothing and is named by its own entry id.
+  (let* ((kernel (fresh))
+         (good-1 (edit-request "acme/work/f1/t1" :request "atom-1" :title (list :set "t1")))
+         (good-2 (edit-request "acme/work/f1/t2" :request "atom-2" :title (list :set "t2")))
+         (bad (list :verb :state-to-done :node "acme/work/nope" :by "rowan"
+                    :reason "x" :evidence '("ev-1") :request "atom-bad"
+                    :stamp "2026-09-14T12:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+         (entries (list (list :id "a-1" :request good-1)
+                        (list :id "a-2" :request bad)
+                        (list :id "a-3" :request good-2))))
+    (multiple-value-bind (okp failing applied rev) (atomic-batch-run kernel entries)
+      (ok (null okp) "an atomic batch with one bad entry is refused whole")
+      (check-string= "a-2" failing "the failing entry is named")
+      (check-equal 0 applied "an atomic batch applied a partial prefix")
+      (check-equal 0 (length (state-history (kernel-state kernel)))
+                   "a refused atomic batch wrote an event")
+      (check-equal 0 rev "a refused atomic batch moved the revision"))
+    ;; An all-valid atomic batch applies every entry.
+    (let ((entries (list (list :id "b-1" :request good-1)
+                         (list :id "b-2" :request good-2))))
+      (multiple-value-bind (okp failing applied rev) (atomic-batch-run kernel entries)
+        (ok okp "an all-valid atomic batch refused")
+        (ok (null failing) "with no failing entry")
+        (check-equal 2 applied "the atomic batch did not apply every entry")
+        (check-equal 2 (length (state-history (kernel-state kernel)))
+                     "the atomic batch did not write both events")
+        (check-equal 2 rev "the revision did not move for both entries")))
+    ;; An entry that would accept a long operation is refused by its own entry
+    ;; id before anything is staged: no external I/O inside an atomic batch.
+    (let ((entries (list (list :id "c-1" :request good-1)
+                         (list :id "c-2" :op :capture
+                               :request (edit-request "acme/work/f1/t2"
+                                                      :request "atom-cap")))))
+      (multiple-value-bind (okp failing applied rev) (atomic-batch-run kernel entries)
+        (ok (null okp) "a long-operation entry did not refuse the atomic batch")
+        (check-string= "c-2" failing "the long-operation entry is not refused by its own id")
+        (check-equal 0 applied "a long-operation entry staged something")
+        (check-equal 2 rev "a long-operation entry moved the revision"))))
+
+  ;; B3 -- an independent batch is ordered entries with outcomes of their own.
+  ;; The default stops at the first refusal and marks every remaining entry
+  ;; `not attempted`; a continuation is an explicit flag, never the default.
+  (let* ((good-1 (close-request :request "ind-1"))
+         (bad (list :verb :state-to-done :node "acme/work/nope" :by "rowan"
+                    :reason "x" :evidence '("ev-1") :request "ind-bad"
+                    :stamp "2026-09-14T12:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+         (good-3 (reopen-request :request "ind-3"))
+         (entries (list (list :id "i-1" :request good-1)
+                        (list :id "i-2" :request bad)
+                        (list :id "i-3" :request good-3))))
+    (let ((kernel (fresh)))
+      (multiple-value-bind (results applied refused not-attempted)
+          (independent-batch-run kernel entries)
+        (check-equal '(:applied :refused :not-attempted)
+                     (mapcar (lambda (r) (getf r :state)) results)
+                     "the default did not stop at the first refusal")
+        (check-equal 1 applied "the exact accepted prefix was not applied")
+        (check-equal 1 refused "the refusal is not counted")
+        (check-equal 1 not-attempted "the remainder is not marked not-attempted")
+        (check-equal 1 (length (state-history (kernel-state kernel)))
+                     "an entry after the refusal was applied")
+        (check-string= "i-2" (getf (second results) :id)
+                       "the refusal does not carry its entry id")))
+    ;; An explicit continuation attempts past the refusal and replays nothing.
+    (let ((kernel (fresh)))
+      (multiple-value-bind (results applied refused not-attempted)
+          (independent-batch-run kernel entries :continue t)
+        (check-equal '(:applied :refused :applied)
+                     (mapcar (lambda (r) (getf r :state)) results)
+                     "the explicit continuation did not attempt past the refusal")
+        (check-equal 2 applied "the entries after the refusal did not apply")
+        (check-equal 1 refused "the refusal is not still counted")
+        (check-equal 0 not-attempted "the continuation left an entry unattempted")
+        (check-equal 2 (length (state-history (kernel-state kernel)))
+                     "the accepted prefix was replayed as new work")))
+    ;; An entry that accepts a long operation returns an operation id, which a
+    ;; later entry may not read as a completed result.
+    (multiple-value-bind (results applied refused not-attempted)
+        (independent-batch-run
+         (fresh)
+         (list (list :id "l-1" :op :capture
+                     :request (list :request "cap-1" :by "rowan"
+                                    :stamp "2026-09-14T12:00:00Z"))
+               (list :id "l-2" :request (close-request :request "cap-2"))))
+      (declare (ignore refused not-attempted))
+      (check-equal 2 applied "the long-operation entry was not accepted")
+      (let ((long (first results)))
+        (check-equal :operation (getf long :state)
+                     "the long-operation entry did not answer with an operation")
+        (ok (getf long :operation-id)
+            "the operation id was not returned")
+        (ok (null (getf long :result))
+            "a later entry read the operation as a completed result")))))
 
 ;;; ------------------------------------------------------------------
 ;;; cache-aware-context-choice                   SPEC-WORK.md:4854

@@ -645,6 +645,17 @@
    #:wire-frame-response
    #:independent-batch-results
    #:atomic-batch-validate
+   ;; the read bundle and the two batch modes over the kernel
+   ;; (SPEC-WORK.md:2762-2814, src/transport.lisp).
+   #:make-read-bundle
+   #:read-bundle-p
+   #:read-bundle-revision
+   #:read-bundle-watermark
+   #:read-bundle-ask
+   #:read-bundle-page
+   #:*long-operation-verbs*
+   #:independent-batch-run
+   #:atomic-batch-run
    #:make-wire-session
    #:wire-session-p
    #:wire-session-kernel
