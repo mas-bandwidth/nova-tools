@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,9 @@ type batchStep struct {
 	needs   string
 	file    string
 	stream  bool
+	// env is what this step adds to the environment every step runs in, last value
+	// wins. It is how the windows leg is spelled without a second runner.
+	env []string
 }
 
 // batchGate is the suite, in order. A step whose program or file is missing is SKIPPED
@@ -66,9 +70,48 @@ type batchStep struct {
 var batchGate = []batchStep{
 	{name: "build", command: "go build ./...", needs: "go"},
 	{name: "vet", command: "go vet ./...", needs: "go"},
+	// EDGE 25, batch 7: THE GATE RUNS ON ONE OPERATING SYSTEM AND CI RUNS ON THREE.
+	// Three members went green under the gate on linux and red on CI's windows legs --
+	// cmd/nova-sandbox's path fixtures and internal/dogfood's exec-bit discovery -- and
+	// the batch pull request went red after the gate had said OK. A cross vet is cheap,
+	// needs no second machine, and catches the whole BUILD-level half of that class: a
+	// file that does not compile for windows, a syscall that is not there, a constant
+	// that is unix-only. It does not catch a windows-only TEST failure, which is what
+	// the forge's own windows leg is for; the gate says what it checked and no more.
+	{name: crossVetStep, command: "go vet ./...", needs: "go", env: []string{"GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}},
 	{name: "test", command: strings.Join(ciTestArgs(), " "), needs: "go", stream: true},
 	{name: "lisp", command: "sh tools/ci/lisp-test.sh", needs: "sbcl", file: "tools/ci/lisp-test.sh"},
 }
+
+// crossVetStep is the cross vet's name, and it is a constant because it is THE ONE STEP A
+// UNIT TEST MUST NOT RUN.
+//
+// Its cost is not its own compile: `GOOS=windows go vet ./...` has to build the WINDOWS
+// STANDARD LIBRARY into the build cache before it can type-check anything, which is ~5 s
+// on an idle 64-core bench with a cold cache and far more on a shared darwin runner --
+// eight of them run on one of those machines. Paid inside `go test`, that is wall clock
+// taken from the package's own -timeout, and the package's serial tests are what the
+// parallel ones are waiting behind: on 2026-09-18 it turned the merge group's
+// `test-hosted-merge (darwin, 1)` leg into `panic: test timed out after 1m40s` with ten
+// parallel tests reported at 14 s each -- not one of them slow, all of them starved,
+// every one blocked in Cmd.Wait on a git child that could not get the machine.
+//
+// So the step is in the product's gate, where it is paid once per bench and cached, and
+// the tests run Deps.BatchGate instead, which is this list without it.
+// TestTheGateCrossVetsForWindows pins the step in the real list, and pins that the tests'
+// list differs from it by this one name and no other.
+const crossVetStep = "vet-windows"
+
+// sdkDir is where this fleet's hand-installed toolchains live, under the home directory:
+// `sdk/go1.26.5/bin/go`, `sdk/sbcl-2.5.8-x86-64-linux/bin/sbcl`. A bench that HAS the
+// program and has not put it on PATH is a bench with the program, and a gate that says
+// "sbcl is not on this machine" about a machine holding sbcl is a gate that skipped a
+// step it could have run (edge 2).
+//
+// Rule 13's line is that every path this tool WRITES comes from a flag a person gave it.
+// This is a path it LOOKS IN, it is one directory, and it is written here rather than
+// guessed from anything the shell happened to carry.
+const sdkDir = "sdk"
 
 // ciTestArgs IS THE ONE LIST: the test command CI runs, mirrored here so that the gate
 // tests the way CI tests.
@@ -160,6 +203,22 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	reference := f.fs.String("reference", "", "")
 	timeoutRaw := f.fs.String("timeout", batchTimeout, "")
 	gomaxprocs := f.fs.Int("gomaxprocs", 0, "")
+	// --require-checks is ON, and --no-require-checks turns it off out loud (edge 25).
+	// A member whose own head has never gone green is a member the gate is being asked
+	// to judge for the first time IN COMBINATION, which is the one thing a batch cannot
+	// do: it would report the batch red for a fault that is one member's alone.
+	noRequireChecks := f.fs.Bool("no-require-checks", false, "")
+	// --receipt-file carries the BATCH OK lines of batches ALREADY BUILT, so a member that
+	// is itself a gated tree is admitted on the gate's own evidence rather than on a
+	// `ci-ok` the forge has not finished running. It is the same receipt `nova-merge land`
+	// reads and the same parser (internal/merge.ParseBatchReceipt): one receipt, one
+	// meaning, wherever it is presented.
+	receiptFile := f.fs.String("receipt-file", "", "")
+	// --require-lisp is for the caller who needs the lisp suite RUN. Without it a bench
+	// with no sbcl skips that step and says so on the verdict line (edge 2); with it, a
+	// bench with no sbcl is a bench that cannot judge this batch, and the gate says FAIL
+	// rather than a green nobody may trust.
+	requireLisp := f.fs.Bool("require-lisp", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -200,28 +259,39 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 	return runBatch(batchRun{
-		name:       *name,
-		base:       *base,
-		root:       *root,
-		repo:       *repo,
-		reference:  *reference,
-		prs:        prs,
-		timeout:    timeout,
-		gomaxprocs: *gomaxprocs,
+		steps:        deps.BatchGate,
+		name:         *name,
+		base:         *base,
+		root:         *root,
+		repo:         *repo,
+		reference:    *reference,
+		prs:          prs,
+		timeout:      timeout,
+		gomaxprocs:   *gomaxprocs,
+		requireLisp:  *requireLisp,
+		requireCheck: !*noRequireChecks,
+		receiptFile:  strings.TrimSpace(*receiptFile),
 	}, stdout, stderr, deps)
 }
 
 // batchRun is one batch's whole invocation, checked, so the run below reads as the steps
 // it performs rather than as a second pass over the flags.
 type batchRun struct {
-	name       string
-	base       string
-	root       string
-	repo       string
-	reference  string
-	prs        []int
-	timeout    time.Duration
-	gomaxprocs int
+	// steps is the suite this run performs. Nil is batchGate, which is what every
+	// invocation of the binary uses; a caller injects a shorter one only through
+	// Deps.BatchGate, and only the tests do.
+	steps        []batchStep
+	name         string
+	base         string
+	root         string
+	repo         string
+	reference    string
+	prs          []int
+	timeout      time.Duration
+	gomaxprocs   int
+	requireLisp  bool
+	requireCheck bool
+	receiptFile  string
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -272,26 +342,66 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	fmt.Fprintf(stderr, "BATCH START name=%s base=%s prs=%d t=%.1fs\n",
 		oneline.Field(in.name), oneline.Field(baseSHA), len(in.prs), since(start))
 
-	members, dropped, code := mergeMembers(g, in, stderr, start)
+	// EDGE 1: THE TOOLCHAIN IS CHECKED BEFORE THE FIRST MERGE, NOT DISCOVERED IN A STEP.
+	// With go1.22 on PATH and a go.mod asking for 1.26 the whole gate ran, the build step
+	// went red, and the failure a caller read was `step=build reason="go: downloading
+	// go1.26 (linux/amd64)"` -- a NOTICE, not an error, naming no remedy, after minutes
+	// of merging. The requirement is a fact of the tree, so this is the earliest point it
+	// can be known at all: the base is checked out and nothing has been merged yet.
+	if code := checkToolchain(clone, stderr); code != 0 {
+		return code
+	}
+
+	prs, prechecked, code := admissible(in, stdout, stderr, deps, start)
 	if code != 0 {
 		return code
 	}
+	members, dropped, code := mergeMembers(g, in, prs, stderr, start)
+	if code != 0 {
+		return code
+	}
+	dropped = append(prechecked, dropped...)
 	headSHA, err := g.Out("rev-parse", "HEAD")
 	if err != nil {
 		return batchRefused(stderr, err)
 	}
-	line := fmt.Sprintf("name=%s base=%s head=%s members=%s dropped=%s",
-		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
-		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)))
 
 	env := ciTestEnv(tmp, in.gomaxprocs)
-	for _, step := range batchGate {
-		if why := stepUnavailable(step, clone); why != "" {
-			fmt.Fprintf(stderr, "BATCH SKIP %s reason=%q t=%.1fs\n", oneline.Field(step.name), why, since(start))
+	// EDGE 2: THE SKIPPED STEPS ARE ON THE VERDICT LINE. `BATCH SKIP lisp reason="sbcl is
+	// not on this machine"` went to stderr and `BATCH OK` said nothing about it, so the
+	// one line a caller parses claimed a green gate over a suite that ran three of its
+	// four steps. Every skip is named on the verdict line, green or red, and
+	// --require-lisp turns the skip into a failure for a caller who needs that step run.
+	var skipped []string
+	type ready struct {
+		step batchStep
+		bin  string
+	}
+	var plan []ready
+	gate := in.steps
+	if gate == nil {
+		gate = batchGate
+	}
+	for _, step := range gate {
+		why, bin := stepUnavailable(step, clone)
+		if why == "" {
+			plan = append(plan, ready{step: step, bin: bin})
 			continue
 		}
+		if step.name == "lisp" && in.requireLisp {
+			fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=none tests=none reason=%q\n",
+				batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name)),
+				oneline.Field(step.name), oneline.Cap(why+"; --require-lisp asked for this step to be RUN, not skipped", oneline.TailBytes))
+			return 1
+		}
+		skipped = append(skipped, step.name)
+		fmt.Fprintf(stderr, "BATCH SKIP %s reason=%q t=%.1fs\n", oneline.Field(step.name), why, since(start))
+	}
+	line := batchLine(in, baseSHA, headSHA, members, dropped, skipped)
+	for _, r := range plan {
+		step := r.step
 		fmt.Fprintf(stderr, "BATCH STEP %s command=%q t=%.1fs\n", oneline.Field(step.name), step.command, since(start))
-		out, err := runCheck(clone, step.command, in.timeout, env)
+		out, err := runCheck(clone, step.command, in.timeout, append(withBin(env, r.bin), step.env...))
 		if err == nil {
 			continue
 		}
@@ -305,12 +415,173 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	return 0
 }
 
+// batchLine is the fields every verdict line carries, green or red.
+func batchLine(in batchRun, baseSHA, headSHA string, members, dropped []int, skipped []string) string {
+	return fmt.Sprintf("name=%s base=%s head=%s members=%s dropped=%s skipped=%s checks=%s",
+		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
+		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)),
+		oneline.Field(numberOrNone(skipped)), oneline.Field(checksWord(in)))
+}
+
+// checksWord is what the verdict line says about edge 25's admission: `required` when
+// every member's own head had to be green before it was merged, `waived` when the caller
+// passed --no-require-checks and took that on themselves.
+func checksWord(in batchRun) string {
+	if in.requireCheck {
+		return "required"
+	}
+	return "waived"
+}
+
+// batchRequiredCheck is the check a member's own head must have gone green on before the
+// gate will merge it. It is CI's one rollup job, the same name the merge condition reads.
+const batchRequiredCheck = "ci-ok"
+
+// admissible is edge 25's gate in front of the gate: every member whose OWN head has no
+// green ci-ok is dropped BEFORE the merge, by name and with the state it was in.
+//
+// The reason is the batch 7 morning: three members were green under this gate on linux
+// and red on CI's windows legs, and the batch pull request went red after the gate had
+// said OK. A member that has not been green on its own is a member nobody has judged on
+// every platform yet, and putting it in a batch asks this gate a question it cannot
+// answer -- it would report the WHOLE batch red for one member's own fault.
+//
+// The forge is reached through the one host seam the rest of this binary uses, so the
+// tests drive merge.FakeHost and no test here opens a socket.
+func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
+	if !in.requireCheck {
+		fmt.Fprintf(stderr, "BATCH NOTE checks=waived reason=%q t=%.1fs\n",
+			"--no-require-checks was given: a member is merged whatever its own head last did, and a red batch may be one member's own fault",
+			since(start))
+		return in.prs, nil, 0
+	}
+	receipts, err := batchReceipts(in.receiptFile)
+	if err != nil {
+		return nil, nil, batchRefused(stderr, err)
+	}
+	host := deps.NewHost(in.repo, in.timeout)
+	for _, n := range in.prs {
+		pr, err := host.PR(n)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d could not be read, and --require-checks is on, so this gate cannot tell whether its head has been green on its own: %w; pass --no-require-checks to merge it anyway and own that", n, err))
+		}
+		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO ci-ok. A batch's own branch --
+		// rowan/integration-*, the shape this verb builds and nothing else does -- and a
+		// head named by a BATCH OK receipt the caller presented are both evidence the
+		// gate produced; requiring the forge's rollup on top of them would refuse a batch
+		// pull request whose CI is still running, which is every batch pull request in
+		// the minutes after it is opened. It is the same receipt `nova-merge land` takes
+		// and the same parser reads it (#1347).
+		if merge.IsBatchBranch(pr.HeadRef) {
+			keep = append(keep, n)
+			fmt.Fprintf(stderr, "BATCH NOTE #%d checks=batch-branch reason=%q t=%.1fs\n", n,
+				"its head branch is a batch's own, which is the gate's own evidence", since(start))
+			continue
+		}
+		if receipts[strings.ToLower(strings.TrimSpace(pr.HeadOID))] {
+			keep = append(keep, n)
+			fmt.Fprintf(stderr, "BATCH NOTE #%d checks=receipt reason=%q t=%.1fs\n", n,
+				"a BATCH OK receipt names this very head", since(start))
+			continue
+		}
+		checks, err := host.Checks(pr.HeadOID)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d's checks could not be read, and --require-checks is on: %w; pass --no-require-checks to merge it anyway and own that", n, err))
+		}
+		state := checkState(checks.ForSHA(pr.HeadOID), batchRequiredCheck)
+		if state == "green" {
+			keep = append(keep, n)
+			continue
+		}
+		dropped = append(dropped, n)
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n,
+			fmt.Sprintf("head %s has no green %s (state=%s)", oneline.Field(pr.HeadOID), batchRequiredCheck, oneline.Field(state)), since(start))
+	}
+	return keep, dropped, 0
+}
+
+// batchReceipts reads --receipt-file: every BATCH OK line in it, keyed by the head it
+// names. A file with no readable receipt at all is a refusal rather than an empty set --
+// a caller who presented evidence and had it silently ignored would read a `ci-ok`
+// refusal and have no idea why.
+func batchReceipts(path string) (map[string]bool, error) {
+	if path == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--receipt-file could not be read: %w", err)
+	}
+	heads := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rec, err := merge.ParseBatchReceipt(strings.TrimSpace(line))
+		if err != nil {
+			continue
+		}
+		heads[strings.ToLower(rec.Head)] = true
+	}
+	if len(heads) == 0 {
+		return nil, fmt.Errorf("--receipt-file %s holds no BATCH OK line naming a head; a receipt is the landing gate's own green line", path)
+	}
+	return heads, nil
+}
+
+// checkState is what the named check last did on this commit: green, failure, pending,
+// or none when the head carries no such check at all. NONE IS NOT GREEN -- a head whose
+// workflows were never queued has no evidence, which is the whole point of the read.
+func checkState(c merge.Checks, name string) string {
+	state := "none"
+	for _, d := range c.Details {
+		if d.Name != name {
+			continue
+		}
+		switch merge.Bucket(d.Conclusion) {
+		case "green":
+			return "green"
+		case "red":
+			state = "failure"
+		default:
+			if state != "failure" {
+				state = "pending"
+			}
+		}
+	}
+	return state
+}
+
+// withBin puts one directory in front of the step's PATH, for a program this gate found
+// under ~/sdk rather than on PATH. The step's own command and anything IT runs -- the
+// lisp step is a shell script that calls sbcl by name -- then find it.
+func withBin(env []string, bin string) []string {
+	// ALWAYS A COPY: the caller holds one env for the whole suite and every step appends
+	// its own to what this returns, so handing back the caller's own slice would let one
+	// step's append write into the next step's environment.
+	if bin == "" {
+		return append([]string(nil), env...)
+	}
+	out := make([]string, 0, len(env)+1)
+	path := bin
+	for _, kv := range env {
+		name, value, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(name, "PATH") {
+			if value != "" {
+				path = bin + string(os.PathListSeparator) + value
+			}
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "PATH="+path)
+}
+
 // mergeMembers merges every pull request head onto the branch IN THE ORDER GIVEN, which
 // is the order they will land. A head that will not merge is dropped and said out loud,
 // and the members after it are still judged -- on the tree without it, which is the tree
 // that would land.
-func mergeMembers(g *merge.Git, in batchRun, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
-	for _, n := range in.prs {
+func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
+	for _, n := range prs {
 		if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
 		}
@@ -340,6 +611,70 @@ func mergeMembers(g *merge.Git, in batchRun, stderr io.Writer, start time.Time) 
 	return members, dropped, 0
 }
 
+// goDirective matches the `go <version>` line of a go.mod.
+var goDirective = regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+
+// goVersionLine matches the version `go version` prints: `go version go1.26.5 linux/amd64`.
+var goVersionLine = regexp.MustCompile(`go([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+
+// checkToolchain refuses, with the remedy, a bench whose `go` is older than the tree's
+// go.mod asks for -- before any step runs and before a minute of merging is spent.
+//
+// It does NOT let the go command solve this by downloading a toolchain: a gate is a
+// verdict about a tree on THIS machine with THIS toolchain, and a step that silently
+// fetched another one is a gate whose answer nobody can reproduce. A tree with no go.mod,
+// no `go` directive, or a `go` this tool could not run at all is left alone: this check
+// refuses what it KNOWS is wrong and never guesses.
+func checkToolchain(clone string, stderr io.Writer) int {
+	raw, err := os.ReadFile(filepath.Join(clone, "go.mod"))
+	if err != nil {
+		return 0
+	}
+	m := goDirective.FindStringSubmatch(string(raw))
+	if m == nil {
+		return 0
+	}
+	want := m[1]
+	cmd := exec.Command("go", "version")
+	// goenv.Clean like every other go command this binary runs: a caller's GOFLAGS can
+	// change what an inner go command prints, and this reads what it printed.
+	cmd.Env = goenv.Clean(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	v := goVersionLine.FindStringSubmatch(string(out))
+	if v == nil {
+		return 0
+	}
+	have := v[1]
+	if !olderThan(have, want) {
+		return 0
+	}
+	return batchRefused(stderr, fmt.Errorf(
+		"this machine's go is go%s and %s asks for go%s; put a go%s or newer on PATH -- on this fleet that is ~/sdk/go%s*/bin -- and run this again. The gate does not download a toolchain: a verdict a bench reached with a compiler it fetched mid-run is a verdict nobody can reproduce",
+		have, filepath.Join(clone, "go.mod"), want, want, want))
+}
+
+// olderThan compares two dotted go versions numerically, so go1.9 is older than go1.22
+// (which a string compare calls newer) and go1.22 is older than go1.26.5.
+func olderThan(have, want string) bool {
+	hs, ws := strings.Split(have, "."), strings.Split(want, ".")
+	for i := 0; i < len(hs) || i < len(ws); i++ {
+		h, w := 0, 0
+		if i < len(hs) {
+			h, _ = strconv.Atoi(hs[i])
+		}
+		if i < len(ws) {
+			w, _ = strconv.Atoi(ws[i])
+		}
+		if h != w {
+			return h < w
+		}
+	}
+	return false
+}
+
 // batchRefused is what a tool error costs: ONE line on stderr and exit 2, which is this
 // tool's "could not run". A red batch is exit 1 and a green one is 0, and a clone that
 // could not be made is neither -- it is nothing anybody may read as a verdict.
@@ -348,19 +683,57 @@ func batchRefused(stderr io.Writer, err error) int {
 	return 2
 }
 
-// stepUnavailable is why a step cannot run here, or the empty string when it can.
-func stepUnavailable(step batchStep, clone string) string {
+// stepUnavailable is why a step cannot run here, or the empty string when it can. The
+// second answer is the directory the program was found in when it was found OFF PATH, so
+// the caller can put that directory in front of the step's own PATH.
+func stepUnavailable(step batchStep, clone string) (why, binDir string) {
 	if step.file != "" {
 		if _, err := os.Stat(filepath.Join(clone, filepath.FromSlash(step.file))); err != nil {
-			return "this checkout holds no " + step.file
+			return "this checkout holds no " + step.file, ""
 		}
 	}
 	if step.needs != "" {
-		if _, err := exec.LookPath(step.needs); err != nil {
-			return step.needs + " is not on this machine"
+		if _, err := exec.LookPath(step.needs); err == nil {
+			return "", ""
+		}
+		if dir := lookInSDK(step.needs); dir != "" {
+			return "", dir
+		}
+		return step.needs + " is not on this machine and is not under " + filepath.Join("~", sdkDir), ""
+	}
+	return "", ""
+}
+
+// lookInSDK is the one place off PATH this gate looks: `~/sdk/<anything>/bin/<program>`.
+// It answers the directory, so the step's environment gets it in front of PATH and the
+// SCRIPT the step runs finds the program too -- `sh tools/ci/lisp-test.sh` calls sbcl by
+// name, so an absolute path handed only to the shell would not have reached it.
+//
+// The newest match wins by name, which is how these directories sort: sbcl-2.5.8 after
+// sbcl-2.4.0. A directory that holds no such program is skipped rather than guessed at.
+func lookInSDK(program string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	entries, err := os.ReadDir(filepath.Join(home, sdkDir))
+	if err != nil {
+		return ""
+	}
+	found := ""
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		bin := filepath.Join(home, sdkDir, e.Name(), "bin")
+		for _, name := range []string{program, program + ".exe"} {
+			if info, err := os.Stat(filepath.Join(bin, name)); err == nil && !info.IsDir() {
+				found = bin
+				break
+			}
 		}
 	}
-	return ""
+	return found
 }
 
 // parsePRList reads the pull request numbers, separated by commas or spaces, in the
@@ -417,7 +790,31 @@ func stepFailure(step batchStep, out string, err error) (pkgs, tests []string, r
 		}
 	}
 	pkgs, tests = failuresIn(out)
-	return pkgs, tests, firstLine(out, err)
+	return pkgs, tests, firstLine(dropGoNotices(out), err)
+}
+
+// goNotice matches the lines the go command writes about ITSELF rather than about the
+// tree: `go: downloading go1.26 (linux/amd64)`, `go: downloading golang.org/x/...`.
+var goNotice = regexp.MustCompile(`^go: (downloading|finding|extracting|upgraded|added|toolchain)\b`)
+
+// dropGoNotices takes those lines off the front of a step's output, so the one line the
+// verdict quotes is THE ERROR and not the progress note in front of it.
+//
+// EDGE 1: a build that failed because the toolchain was too old reported
+// `reason="go: downloading go1.26 (linux/amd64)"`. That line is not a failure, it names
+// nothing to fix, and it was chosen for the verdict only because firstLine takes the
+// first line that says anything. A notice is not the news.
+func dropGoNotices(out string) string {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if s := strings.TrimSpace(line); s == "" || goNotice.MatchString(s) {
+			continue
+		}
+		return strings.Join(lines[i:], "\n")
+	}
+	// Everything was a notice: hand back what there was rather than nothing, so a reader
+	// sees what the step said instead of an empty reason.
+	return out
 }
 
 // testFailures reads a `go test -json` stream for the packages and tests that failed,

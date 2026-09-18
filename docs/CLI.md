@@ -1011,26 +1011,44 @@ REBASE NOTE PR #<n> card=<name> is cut and marked and was not launched: <reason>
 ```
 
 `react` is the lane's subscriber, and it holds no timer of its own: it blocks on the
-pub/sub channels until a message lands or `--deadline` is reached — 60 seconds by
-default — and acts once per message. A `pr-checks-done` that succeeded enqueues the
-pull request unless the skip set or a live hold key stops it; a `dev-moved` asks for
-a rebase unit for every pull request the move made `DIRTY`; a `card-done` does
-nothing, because the recorder and the harvester read the stream themselves. `--lane`
-is optional and is how the reactor learns the repository and base the `dev-moved` arm
-needs; without it only the enqueue arm runs.
+pub/sub channels until a message lands or `--deadline` is reached, and acts once per
+message. A `pr-checks-done` that succeeded **enqueues the pull request into
+`<lane>/queue.json`** — the one queue this tree has, the one `nova-merge queue` writes
+and `nova-merge run` walks — unless that queue's skip set or `<lane>/hold` stops it; a
+`dev-moved` asks for a rebase unit for every pull request the move made `DIRTY`; a
+`card-done` does nothing, because the recorder and the harvester read the stream
+themselves.
+
+**`--lane` is required, and it is the queue.** It used to be optional, and without it
+the reactor enqueued into a redis set called `merge:queue` that nothing in this tree
+ever read: `REACT enqueue pr=<n>`, exit 0, and nothing reachable afterwards. There is
+**one hold and one skip set**, the lane's; the redis `enqueue:hold` and `enqueue:skip`
+are gone, because two mechanisms wearing the same words are one mechanism nobody can
+reason about — a held lane with the pull request skipped still printed `REACT enqueue`.
+
+**`--once` or `--deadline <seconds>` is required.** The loop form with neither ran a
+60-second loop and exited 0 although the help said one was required; it is now refused
+by name, like `nova-work events`. `--once` with no `--deadline` waits 60 seconds for
+its one message.
 
 ```
 REACT enqueue pr=<n> head=<sha>
-REACT skip pr=<n> head=<sha> reason=skip-set
-REACT hold pr=<n> head=<sha> reason=hold-key
+REACT skip pr=<n> head=<sha> reason=queue-skip
+REACT hold pr=<n> head=<sha> reason=<the hold's own reason>
 REACT rebase-wanted pr=<n> head=<sha> base=<sha>
-REACT OK once=true
-REACT OK once=false deadline=<n>s
+REACT DROP channel=<name> reason=<why the payload could not be read>
+REACT OK once=true dropped=<n>
+REACT OK once=false deadline=<n>s dropped=<n>
 ```
 
 **Returning at the deadline is the design and not a failure**, so a window in which
 nothing was published is still `REACT OK`, exit 0; `REACT FAIL` on stderr, exit 1, is
-the reactor that could not read its channels.
+the reactor that could not read its channels. **One malformed payload is one message
+dropped**, said on a `REACT DROP` line and counted in `dropped=<n>` on the closing
+line — it used to kill the whole reactor at exit 1, although an unknown channel was
+already ignored. go-redis's own connection-pool chatter is silenced before the first
+dial, so a bus this verb cannot reach is one `REACT FAIL` line and not five `redis:
+… pool.go` lines in front of it.
 
 `classify` asks one typed decision about **one failed merge-group run**: was the
 failure flaky under the queue's load, the environment, or the pull request's own
@@ -1050,6 +1068,111 @@ are the decide route's, as everywhere else; a run the host cannot read, a route 
 will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
 exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
 risk; never a merge*.
+
+### queue
+
+```
+nova-merge queue --lane <dir> (status | hold "<reason>" --who <name> | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration>) [--timeout <seconds>] [--max <n>]
+nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--head <sha>] [--pr <n>|--branch <name>] [--test <name>] [--note <text>] [--who <name>]
+```
+
+`queue` is the mechanical hand that keeps the lane's order. One queue
+(`<lane>/queue.json`: `queued`, `skipped`, `parked`), one hold (`<lane>/hold`), one
+order — the order `run` walks. Every write is a read-modify-write under the lane's own
+lock through a fixed temp name.
+
+**`status`** reads the two files and nothing else — no forge, no clone, no lock — so it
+runs on a bench with no `gh` and no token:
+
+```
+QUEUE ENTRY pos=<n> entry=<pr> state=queued
+QUEUE ENTRY pos=- entry=<pr> state=skipped|parked
+QUEUE STATUS lane=<dir> queued=<n> skipped=<n> parked=<n> hold=<reason|-> by=<who|->
+```
+
+Before it existed there was no way to see the queue at all: a lane standing still under
+a hold read exactly like a lane with nothing to do, and a skipped pull request read
+exactly like one nobody had queued.
+
+**`hold "<reason>" --who <name>`** writes the reason into `<lane>/hold`. **`--who` is
+required**: it was undocumented and optional, and a hold written without it said
+`by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release. This
+tool reads no environment variable, so `$USER` is the caller's to pass. While a hold
+stands, the sweep refuses, `front` and every enqueue refuse, **`run` refuses** —
+`RUN REFUSED: a hold is standing (<reason>) by <who>` at exit 2, read at the top of
+every pass so a hold written during a `--loop` stops the next one — and `react` prints
+`REACT hold` instead of enqueueing. **`release`** removes the file and prints how long
+it stood.
+
+**`skip`/`unskip`/`front`** are **local**: they reorder numbers in a file and reach no
+forge. `front` used to read the pull request and its checks from the host first, which
+made the one local verb of the family need a network, a `gh` and a token, over a
+judgement `run` makes again on every pass anyway; the one thing it still checks is that
+the entry is in this lane.
+
+**`sweep --window <duration>`** walks the open pull requests the host reports inside the
+session window and enqueues each that is green, not skipped, not parked, not dirty and
+not already queued. It **runs against a real repository now**: `QueuePRs`,
+`PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so
+every real invocation answered `QUEUE REFUSED: this host cannot list open pull requests
+… no host, no sweep` — the verb passed its tests and had never once run.
+
+**A `queue.json` that does not parse is `QUEUE REFUSED` / `RUN REFUSED` at exit 2 naming
+the file.** The error used to be swallowed, which left the walk order empty — and an
+empty walk order meant "walk everything", so a corrupt file **silently un-skipped every
+skip and every parked poison**.
+
+### batch
+
+```
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+```
+
+`batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
+`--root`, merges each `--pr` head onto `--base` in the order given on a branch
+`rowan/<name>`, drops a head that will not merge and says so, then runs the suite —
+`build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
+
+```
+BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
+BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<the first line that is not a notice>"
+BATCH DROP #<n> reason="the merge conflicts with the members ahead"
+BATCH DROP #<n> reason="head <sha> has no green ci-ok (state=<pending|failure|none>)"
+BATCH SKIP <step> reason="<why it could not run>"
+BATCH STEP <step> command="<what it runs>"
+BATCH NOTE checks=waived reason="<what the caller took on>"
+BATCH NOTE #<n> checks=<batch-branch|receipt> reason="<the gate's own evidence for this member>"
+BATCH REFUSED: <reason>
+```
+
+`skipped=<list>` **names every step that did not run**, so a green line never claims a
+suite it only ran part of: `BATCH SKIP lisp` went to stderr and `BATCH OK` said nothing
+about it. **`--require-lisp`** turns a skipped lisp step into `BATCH FAIL` for a caller
+who needs it run. A program that is not on `PATH` is also looked for under
+`~/sdk/<toolchain>/bin` — this fleet's toolchains live there — before its step is
+skipped.
+
+**The toolchain is checked against the tree's `go.mod` before the first merge.** With
+`go1.22` on `PATH` and a `go.mod` asking for 1.26 the whole gate ran and the failure
+surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a progress
+notice naming nothing to fix. It is now one `BATCH REFUSED` with the remedy, and a
+`go: downloading …` line is never what a `reason=` quotes.
+
+**`checks=required` is the default (edge 25).** A member whose own head has no green
+`ci-ok` is **dropped before the merge**, by name and with the state it was in. The gate
+runs on one operating system and CI runs on three: three members went green under the
+gate on linux and red on CI's windows legs, and the batch pull request went red after
+the gate had said OK. A member that has not been green on its own is a member nobody
+has judged on every platform, and putting it in a batch asks this gate a question it
+cannot answer. A member whose head is **a batch's own branch** (`rowan/integration-*`) or is named by a
+`BATCH OK` line in **`--receipt-file`** is admitted on the gate's own evidence instead of
+the forge's rollup — that is the same receipt `nova-merge land` takes, read by the same
+parser — so a batch pull request whose own CI is still running is never refused as a
+member of the next one. `--no-require-checks` waives the whole check and says so on
+`BATCH NOTE` and on the verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
+build-level half of the same class on the bench, in seconds, with no second machine; it
+does not catch a windows-only **test** failure, which is what the forge's own windows
+leg is for.
 
 ## nova-pulse
 

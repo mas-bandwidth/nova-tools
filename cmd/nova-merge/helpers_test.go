@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
@@ -135,6 +138,9 @@ type lab struct {
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
+	// heads is the batch fixture's pull request heads by number, so a batch test can
+	// say what the FORGE thinks of one member's own head (edge 25).
+	heads map[int]string
 }
 
 func newLab(t *testing.T) *lab {
@@ -359,7 +365,40 @@ func (l *lab) deps() Deps {
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
 		Launcher:      l.launcher,
 		BuildID:       func() string { return l.build },
+		// react's two edges. Dial is the caller's own address -- every react test
+		// hands it a miniredis of its own -- and the forge is the fake.
+		BatchGate: labBatchGate(),
+		Dial:      func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(string, string, time.Duration) ci.Forge {
+			return &reactFakeForge{}
+		},
 	}
+}
+
+// labBatchGate is the landing gate's suite AS THE TESTS RUN IT: batchGate with the cross
+// vet taken out, and nothing else taken out.
+//
+// The gate a friend runs is batchGate, and these tests run the rest of it for real -- the
+// build, the vet, CI's own `go test -json` command and the lisp suite. The one step that
+// cannot be paid here is `vet-windows`, because `GOOS=windows go vet ./...` must build the
+// WINDOWS STANDARD LIBRARY into the cache first: seconds on an idle 64-core bench and far
+// more on a darwin runner sharing its machine with seven others. Paid inside `go test`, it
+// comes out of this package's own -timeout, and the package's serial tests are what its
+// parallel tests wait behind -- which is exactly how the merge group's darwin leg reached
+// `panic: test timed out after 1m40s` with ten parallel tests starved at 14 s each on
+// 2026-09-18.
+//
+// TestTheGateCrossVetsForWindows pins the step in the real list and pins that this list
+// differs from it by that one name and no other, so the exemption cannot quietly grow.
+func labBatchGate() []batchStep {
+	out := make([]batchStep, 0, len(batchGate))
+	for _, step := range batchGate {
+		if step.name == crossVetStep {
+			continue
+		}
+		out = append(out, step)
+	}
+	return out
 }
 
 // run drives the binary's own run() with the test's deps, which is what a stranger's
