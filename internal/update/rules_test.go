@@ -393,15 +393,18 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 }
 
-// #592: the snapshot verb is callable and produces report's manifest, yet help
-// never prints it. Its whole usage line belongs beside report so a reader
-// discovers the manifest-writing verb, distinguishable from report's unrelated
-// --snapshot <path> option by the verb spelling and its --bin/--out flags.
+// #592: the snapshot verb is callable, yet help never printed it. Its whole
+// usage line belongs beside report so a reader discovers the inventory verb,
+// distinguishable from report's unrelated --snapshot <path> option by the verb
+// spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	var printed bytes.Buffer
 	help("nova-version", &printed)
-	if !strings.Contains(printed.String(), "nova-version snapshot --file <manifest") {
+	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
 		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
+	}
+	if !strings.Contains(printed.String(), "nova-version diff --from <a.tsv> --to <b.tsv>") {
+		t.Fatalf("nova-version help omits the diff verb:\n%s", printed.String())
 	}
 }
 
@@ -549,4 +552,26 @@ func valuesOf(m map[string]string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// `nova-update check --help` answered `flag: help requested` -- the flag
+// package's own sentinel, shown to somebody who asked for help (darwin dogfood,
+// 2026-09-18). Asking is not an error: the usage is printed and the exit is 0.
+func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
+	for _, verb := range []string{"check", "apply", "report"} {
+		for _, spelling := range []string{"--help", "-h"} {
+			var out, errs bytes.Buffer
+			code := Main("nova-update", []string{verb, spelling}, "test", &out, &errs)
+			if code != 0 {
+				t.Errorf("%s %s: code=%d errs=%s", verb, spelling, code, errs.String())
+				continue
+			}
+			if strings.Contains(out.String()+errs.String(), "help requested") {
+				t.Errorf("%s %s leaked the flag sentinel: %s%s", verb, spelling, out.String(), errs.String())
+			}
+			if !strings.Contains(out.String(), "nova-update "+verb+" ") {
+				t.Errorf("%s %s did not print the usage:\n%s", verb, spelling, out.String())
+			}
+		}
+	}
 }

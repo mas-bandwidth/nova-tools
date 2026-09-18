@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,21 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
+
+// TestMain keeps this package's tests off the network. packet --pr reads a PR's
+// title and body through the real gh CLI (viewPRIntent); on a bench where gh is
+// installed that call reaches github.com and hangs until packet's context
+// deadline, which is how five packet --pr tests summed to a 131s CI-SLOW against
+// a 60s budget while passing in under five seconds on a machine without gh. The
+// tests drive packet's logic against local bare repositories standing in for
+// GitHub, so the fake answers as a machine with no gh: getAuthorIntent falls
+// back to the head commit, which is already local.
+func TestMain(m *testing.M) {
+	viewPRIntent = func(context.Context, int, string) (string, string, bool) {
+		return "", "", false
+	}
+	os.Exit(m.Run())
+}
 
 func packetLab(t *testing.T) (lane, head string) {
 	t.Helper()
@@ -947,7 +963,10 @@ func TestPacketFetchesBaseFromGitHubNotLaneRemote(t *testing.T) {
 func TestLaneRefusalNamesRemedy(t *testing.T) {
 	plain := t.TempDir()
 	var out, errb bytes.Buffer
-	if code := run([]string{"packet", "--lane", plain, "--branch", "feature", "--who", "emma", "--out", "p.md"}, &out, &errb); code != 2 {
+	// --out is named inside the temp dir even though this run refuses before it
+	// writes: the class rule reads the call, not the exit code, and a refusal that
+	// stops writing today is one flag away from not refusing tomorrow.
+	if code := run([]string{"packet", "--lane", plain, "--branch", "feature", "--who", "emma", "--out", filepath.Join(plain, "p.md")}, &out, &errb); code != 2 {
 		t.Fatalf("plain checkout code=%d, want 2", code)
 	}
 	want := "a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>"

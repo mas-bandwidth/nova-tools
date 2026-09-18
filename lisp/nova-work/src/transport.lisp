@@ -375,6 +375,8 @@ or (:absent) for a JSON null and (:missing) when the key is not there."
                (#\" (write-string "\\\"" out))
                (#\\ (write-string "\\\\" out))
                (#\Newline (write-string "\\n" out))
+               (#\Return (write-string "\\r" out))
+               (#\Tab (write-string "\\t" out))
                (t (write-char ch out))))
     (write-char #\" out)))
 
@@ -586,6 +588,23 @@ is refused by the kernel's dedup predicate."
 ;;;; the session process; the process it starts is a supervised, long-lived
 ;;;; session that serves reads against its resident objects while a fresh CLI
 ;;;; process is never a fresh parse.
+;;;; transport.lisp --- the request bundle: the bus between two owners.
+;;;;
+;;;; SPEC-WORK.md:423-440 and :2210-2240: a fenced session's accepted events
+;;;; since its base are written as a request bundle -- each request with its
+;;;; request id, its required `--expect` (the one clipped revision) and its
+;;;; payload -- which the owning coordinator applies with `session replay
+;;;; --from`, one request at a time, validated fresh against the live O.
+;;;;
+;;;; The offline form `session export --journal` reads the journal alone, under
+;;;; the caller's bounds and the journal's own lock: each request's required
+;;;; `--expect` and the bundle's `base=` come from the journal's newest clip
+;;;; boundary record, it starts no session, takes no ownership, reads no
+;;;; repository and validates nothing -- a bundle is requests, and `session
+;;;; replay` is where they are validated (SPEC-WORK.md:430-440). A journal
+;;;; whose lock is held is refused `journal held`.
+;;;;
+;;;; This is the one bus: no second transport is invented (SPEC-WORK.md:2240).
 
 (in-package #:nova-work)
 
@@ -826,6 +845,28 @@ handoff's stamp and `successor=<name>`, and exits fenced
                     (session-path session) (session-generation session) to commit pushed)
             released)))
 
+(defun session-identity-line (session)
+  "The `SESSION OK` identity line a running session prints and serves: identity,
+bounds and clip cadence are explicit and read, never remembered
+(SPEC-WORK.md:304-308)."
+  (let ((base (session-base session)))
+    (format nil "SESSION OK owner=~A generation=~D token=~A state=~(~A~) until=~A base=~A every=~A skew=~A max-bytes=~D max-depth=~D max-nodes=~D index-cache=~D page-bytes=~D page-records=~D closed-window=~A"
+            (session-owner session)
+            (session-generation session)
+            (session-token session)
+            (session-state session)
+            (session-until session)
+            (if (or (null base) (zerop (length base))) "nil" base)
+            (session-every session)
+            (session-skew session)
+            (session-max-bytes session)
+            (session-max-depth session)
+            (session-max-nodes session)
+            (session-index-cache session)
+            (session-page-bytes session)
+            (session-page-records session)
+            (session-closed-window session))))
+
 (defun endpoint-directory-for (socket-path)
   "The directory that holds SOCKET-PATH, as a directory namestring."
   (namestring (make-pathname :name nil :type nil :defaults (pathname socket-path))))
@@ -912,3 +953,553 @@ thread. The session is stopped explicitly and inspectably (SPEC-WORK.md:308)."
       (when thread
         (ignore-errors (sb-thread:join-thread thread :timeout 5 :default nil)))))
   t)
+;;;; transport.lisp --- the read bundle, the independent batch and the atomic
+;;;; mutation batch (docs/SPEC-WORK.md:2762-2814, the B2/B3/B4/B5 paragraphs).
+;;;;
+;;;; The three batch modes ride the accepted mutation envelope and the framed
+;;;; protocol the wire codec of src/operations.lisp already defines. Here they
+;;;; are made real over the kernel: the read bundle captures one revision and
+;;;; one lease-time watermark and answers the asks it names from that snapshot;
+;;;; an independent batch enters each entry through the kernel's one writer and
+;;;; stops at the first refusal by default; an atomic batch validates every
+;;;; entry against the expected revision before one of them is published.
+;;;;
+;;;; The one thing the slice-1 kernel cannot do is commit several entries as a
+;;;; single journal envelope; the atomic batch therefore validates the whole
+;;;; batch on a private reconstruction and only then applies the entries through
+;;;; the one writer. That is noted in RESULT.md.
+
+(in-package #:nova-work)
+
+;;; ------------------------------------------------------------------
+;;; B2 -- a read bundle is one revision and one watermark.
+;;; ------------------------------------------------------------------
+
+(defstruct (read-bundle (:conc-name read-bundle-)
+                        (:constructor %make-read-bundle))
+  "A captured revision and its lease-time watermark. Every ask is evaluated
+against REVISION, so a mutation after the capture cannot move what the bundle
+answers; the work set is never read."
+  revision watermark state)
+
+(defun make-read-bundle (kernel &key (watermark 0))
+  "Capture the kernel's current revision and the lease-time watermark in force
+when the bundle was opened. One bundle is one snapshot identity."
+  (%make-read-bundle :revision (state-revision (kernel-state kernel))
+                     :watermark watermark
+                     :state (kernel-state kernel)))
+
+(defun read-bundle-ask (bundle ask)
+  "Evaluate one bounded ask against the bundle's captured revision and answer
+the fields and aggregates the ask names. `:size` reads the |O| and |C| counters
+the bundle's own revision maintains; `:watermark` reads the lease-time
+watermark. The work set (W) is never read."
+  (ecase ask
+    (:size (list :open (state-open-count (read-bundle-state bundle))
+                 :closed (state-closed-count (read-bundle-state bundle))))
+    (:watermark (read-bundle-watermark bundle))))
+
+(defun read-bundle-page (bundle floor &key (ask :size))
+  "A later page keeps the bundle's snapshot identity; asked at or above FLOOR
+the snapshot has expired and the page refuses `page expired`, the cursor rule of
+Retention rather than a second one. Answers (values FIELDS LINE)."
+  (if (< (read-bundle-revision bundle) floor)
+      (values nil (format nil "BUNDLE FAIL page expired rev=~D floor=~D"
+                          (read-bundle-revision bundle) floor))
+      (values (read-bundle-ask bundle ask)
+              (format nil "BUNDLE OK rev=~D watermark=~D"
+                      (read-bundle-revision bundle)
+                      (read-bundle-watermark bundle)))))
+
+;;; ------------------------------------------------------------------
+;;; B3/B4 -- the two batch modes over the kernel.
+;;; ------------------------------------------------------------------
+
+(defparameter *long-operation-verbs* '(:capture :import :export :clip)
+  "The verbs whose acceptance returns a durable operation id. An atomic
+mutation batch runs no external I/O inside it, so an entry naming one of these
+is refused by its own entry id before anything is staged (SPEC-WORK.md:2791-2797).")
+
+(defun independent-batch-run (kernel entries &key continue (batch "batch-1"))
+  "An independent batch is ordered entries with outcomes of their own. Submit
+each entry through the kernel's one writer, in order; other requests may
+interleave because the writer is shared. The default is to stop at the first
+refusal and mark every remaining entry `:not-attempted`; a continuation past a
+refusal is the explicit CONTINUE flag and never the default. The mode promises
+no rollback and no single shared revision. An entry that accepts a long
+operation answers with an operation id and no completed result, so a later entry
+cannot read it as one. Answers (values RESULTS APPLIED REFUSED NOT-ATTEMPTED
+REGISTRY), each result an (id request state rev/line) plist."
+  (declare (ignore batch))
+  (let ((results '()) (applied 0) (refused 0) (not-attempted 0)
+        (stopped nil) (registry nil))
+    (dolist (entry entries)
+      (let ((id (getf entry :id))
+            (request (getf entry :request)))
+        (cond
+          ((and stopped (not continue))
+           (incf not-attempted)
+           (push (list :id id :request request :state :not-attempted) results))
+          ((getf entry :op)
+           ;; A long operation: acceptance is durable and answers an operation
+           ;; id at once; it is never a completed result.
+           (unless registry (setf registry (make-operation-registry)))
+           (let ((opid (operation-accept registry
+                                         :id (format nil "op-~A" id)
+                                         :kind (getf entry :op)
+                                         :request request
+                                         :author (getf request :by)
+                                         :stamp (getf request :stamp))))
+             (incf applied)
+             (push (list :id id :request request :state :operation
+                         :operation-id opid :result nil)
+                   results)))
+          (t
+           (multiple-value-bind (okp line code envelope)
+               (submit kernel request)
+             (declare (ignore code envelope))
+             (if okp
+                 (progn
+                   (incf applied)
+                   (push (list :id id :request request :state :applied
+                               :rev (state-revision (kernel-state kernel))
+                               :line line)
+                         results))
+                 (progn
+                   (incf refused)
+                   (setf stopped t)
+                   (push (list :id id :request request :state :refused
+                               :line line)
+                         results))))))))
+    (values (nreverse results) applied refused not-attempted registry)))
+
+(defun atomic-batch-run (kernel entries &key expect)
+  "An atomic mutation batch is one envelope, all or none. Every entry is
+validated against EXPECT (defaulting to the kernel's current revision) before
+anything is published. An entry that would accept a long operation is refused
+by its own entry id before anything is staged; any entry the verb grammar
+refuses fails the whole batch and nothing is written. Only once every entry has
+validated is each applied through the kernel's one writer. Answers (values OK-P
+FAILING-ID APPLIED REV); FAILING-ID is the entry id to name, or :expect when the
+batch was taken at a stale revision."
+  (let ((rev (state-revision (kernel-state kernel))))
+    (let ((long (find-if (lambda (e) (member (getf e :op) *long-operation-verbs*))
+                         entries)))
+      (when long
+        (return-from atomic-batch-run (values nil (getf long :id) 0 rev))))
+    (when (and expect (not (equal expect rev)))
+      (return-from atomic-batch-run (values nil :expect 0 rev)))
+    ;; Validate the batch whole on a private reconstruction of the state; a
+    ;; single refusal publishes nothing and names its entry id.
+    (let* ((state (kernel-state kernel))
+           (clone (make-kernel
+                   :state (reconstruct-state
+                           (canonical-string (state-canonical-form state))))))
+      (dolist (entry entries)
+        (multiple-value-bind (okp line code) (submit clone (getf entry :request))
+          (declare (ignore line code))
+          (unless okp
+            (return-from atomic-batch-run (values nil (getf entry :id) 0 rev))))))
+    ;; Every entry validated; publish them through the one writer.
+    (dolist (entry entries)
+      (submit kernel (getf entry :request)))
+    (values t nil (length entries) (state-revision (kernel-state kernel)))))
+
+;;; ------------------------------------------------------------------
+;;; The request bundle: the bus between two owners.
+;;;
+;;; SPEC-WORK.md:423-440 and :2210-2251: a fenced session's accepted events
+;;; since its base are written as a request bundle -- each request with its
+;;; request id, its required `--expect` (the one clipped revision) and its
+;;; payload -- which the owning coordinator applies with `session replay
+;;; --from`, one request at a time, validated fresh against the live O. It is
+;;; the one bus: no second transport is invented (SPEC-WORK.md:2240).
+;;; ------------------------------------------------------------------
+
+(defstruct (request-bundle
+             (:constructor %make-request-bundle (base clipped-revision requests)))
+  (base "-" :type string)
+  (clipped-revision 0 :type integer)
+  (requests '() :type list))
+
+(defun make-request-bundle (&key (base "-") (clipped-revision 0) (requests '()))
+  "One request bundle: the boundary commit sha, the single clipped revision
+every request expects, and the ordered requests."
+  (%make-request-bundle base clipped-revision requests))
+
+(defun request-bundle-form (bundle)
+  "The canonical order of a bundle: base=, the one clipped revision and the
+ordered requests, each with its request id, its required --expect and its
+payload (SPEC-WORK.md:2256-2262, :423-425)."
+  (list :request-bundle
+        :base (request-bundle-base bundle)
+        :clipped-revision (request-bundle-clipped-revision bundle)
+        :requests (request-bundle-requests bundle)))
+
+(defun request-bundle-string (bundle)
+  "The canonical bytes a bundle is written and read as."
+  (canonical-string (request-bundle-form bundle)))
+
+(defun read-request-bundle (text)
+  "Read one restricted s-expression request bundle. The bundle is
+`(:request-bundle :base <sha> :clipped-revision <n> :requests (<request> ...))`
+where each request is a plist carrying `:request` and the verb's own fields. A
+malformed or absent boundary refuses rather than being guessed."
+  (let ((form (read-restricted text)))
+    (unless (and (consp form) (eq (first form) :request-bundle))
+      (error 'unsupported-input :what "not a request bundle"))
+    (let ((base (getf (rest form) :base))
+          (clipped (getf (rest form) :clipped-revision +absent+))
+          (requests (getf (rest form) :requests +absent+)))
+      (unless (and (stringp base) (plusp (length base)))
+        (error 'unsupported-input :what "request bundle needs a :base sha"))
+      (unless (and (integerp clipped) (not (minusp clipped)))
+        (error 'unsupported-input
+               :what "request bundle needs a nonnegative :clipped-revision"))
+      (unless (listp requests)
+        (error 'unsupported-input :what "request bundle needs a :requests list"))
+      (dolist (request requests)
+        (unless (and (consp request) (keywordp (first request)))
+          (error 'unsupported-input :what "a bundle request is not a plist"))
+        (unless (getf request :request)
+          (error 'unsupported-input :what "a bundle request carries no :request id")))
+      (make-request-bundle :base base :clipped-revision clipped :requests requests))))
+
+;;; ------------------------------------------------------------------
+;;; `session export`: read the accepted journal, write the bundle.
+;;; ------------------------------------------------------------------
+
+(defun journal-accepted-records (journal)
+  "Every accepted record of JOURNAL in acceptance order, from its first record
+forward: (:request id :rev n :events (...)). Reads no repository and validates
+nothing; a bundle is requests."
+  (let ((path (journal-path journal))
+        (records '())
+        (seq 0))
+    (with-open-file (in path :direction :input
+                             :element-type 'character :external-format :utf-8)
+      (read-header in path (journal-initial-state-hash journal))
+      (loop
+        (let ((frame (read-record-frame in path (1+ seq))))
+          (unless frame (return))
+          (incf seq)
+          (let ((record (getf (rest frame) :record)))
+            (push (list :request (getf record :request)
+                        :rev (getf record :rev)
+                        :events (getf record :events))
+                  records)))))
+    (nreverse records)))
+
+(defun export-request-bundle (journal &key into (clipped-revision nil) (base nil))
+  "`session export --journal`: write JOURNAL's accepted events as a request
+bundle -- each request with its request id, its required --expect and its
+payload. Every request carries the one CLIPPED-REVISION as `--expect`, and BASE
+is the journal's newest clip boundary commit sha; both are supplied by the
+caller because a bundle is a file and the boundary record is what carries them
+(SPEC-WORK.md:430-440). Starts no session, takes no ownership, reads no
+repository and validates nothing. Answers the canonical bundle string; when
+INTO names a path it is written there byte-identically."
+  (let* ((records (journal-accepted-records journal))
+         (clipped (or clipped-revision
+                      (if records (getf (first records) :rev) 0)))
+         (requests (mapcar (lambda (record)
+                             (list :request (getf record :request)
+                                   :expect clipped
+                                   :payload (getf record :events)))
+                           records))
+         (bundle (make-request-bundle :base (or base "-")
+                                      :clipped-revision clipped
+                                      :requests requests))
+         (text (request-bundle-string bundle)))
+    (when into
+      (with-open-file (out into :direction :output :if-exists :supersede
+                                :if-does-not-exist :create
+                                :element-type 'character :external-format :utf-8)
+        (write-string text out)
+        (write-char #\Newline out)
+        (finish-output out)))
+    text))
+
+;;; ------------------------------------------------------------------
+;;; `session replay --from`: the bundle intake.
+;;;
+;;; The verb-level replay applies each request through the session's single
+;;; writer (SUBMIT), so the journal's dedup predicate answers a retry with its
+;;; recorded disposition and the coordinator's `--as` is recorded in
+;;; `:generation-owner` while the event's `:by` stays the bundle's author.
+;;; The lower REPLAY-REQUEST-BUNDLE is the same intake against a bare kernel,
+;;; used where there is no resident session (SPEC-WORK.md:423-427, :2214-2238).
+;;; ------------------------------------------------------------------
+
+(defun %bundle-request (request coordinator &key now)
+  "The kernel request a bundle entry becomes. `--expect` is the replay's own
+precondition and is not a kernel field, so it is removed; the replayer replaces
+`:generation-owner`; the bundle's `:by` is left alone."
+  (let ((req (copy-list request)))
+    (remf req :expect)
+    (setf (getf req :generation-owner) coordinator)
+    (let ((stamp (getf req :stamp)))
+      (cond
+        (stamp (unless (getf req :clock) (setf (getf req :clock) :given)))
+        (now (setf (getf req :stamp) now (getf req :clock) :given))
+        (t (setf (getf req :stamp) "1970-01-01T00:00:00Z"
+                 (getf req :clock) :tool))))
+    req))
+
+(defun %bundle-apply (session request coordinator &key now)
+  "Apply one bundle request through the session's single writer and answer a
+verdict line for it."
+  (multiple-value-bind (okp line code)
+      (wire-session-mutate session (%bundle-request request coordinator :now now))
+    (if okp
+        (values t (format nil "REPLAY OK request=~A node=~A"
+                          (getf request :request) (getf request :node))
+                0)
+        (values nil (format nil "REPLAY FAIL request=~A node=~A: ~A"
+                            (getf request :request) (getf request :node)
+                            (or (and (stringp line) line)
+                                (format nil "exit ~A" code)))
+                1))))
+
+(defun %replay-verdict (session request coordinator baseline &key now)
+  "Answer (values OK-P LINE EXIT) for one bundle request. A recorded id is
+answered by the journal's dedup predicate; a fresh request whose node has
+accepted an event of its own after the revision `--expect` names is refused
+`stale`; otherwise it is applied."
+  (let* ((kernel (wire-session-kernel session))
+         (node (getf request :node))
+         (rid (getf request :request))
+         (expect (getf request :expect)))
+    (multiple-value-bind (found recorded-digest recorded-line)
+        (journal-lookup (kernel-journal kernel) rid)
+      (declare (ignore recorded-digest recorded-line))
+      (cond
+        ((eq found :unavailable)
+         (values nil (format nil "REPLAY FAIL request=~A node=~A: dedup unavailable" rid node) 1))
+        (found
+         ;; The id and body are already recorded: the kernel's dedup predicate
+         ;; returns the recorded disposition and applies no second event.
+         (%bundle-apply session request coordinator :now now))
+        ((null expect)
+         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect is required on a bundle request"
+                             rid node)
+                 1))
+        ((not (and (integerp expect) (not (minusp expect))))
+         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect must be a nonnegative revision"
+                             rid node)
+                 1))
+        ((let ((latest (gethash node baseline)))
+           (and latest (> latest expect)))
+         (values nil (format nil "REPLAY FAIL request=~A node=~A expect=~D current=~D: stale"
+                             rid node expect (gethash node baseline))
+                 1))
+        (t
+         (%bundle-apply session request coordinator :now now))))))
+
+(defun session-replay (session bundle &key as max now)
+  "Apply BUNDLE one request at a time through the session's kernel, bounded by
+MAX (NIL or 0 means every request; a negative bound refuses). `--as` names the
+coordinator applying the bundle and is recorded in `:generation-owner`, while
+the event's `:by` stays the request's own author. Answer (values OK-P LINES
+EXIT): one verdict line per request, exit 0 only when every one applied."
+  (unless (and (stringp as) (plusp (length as)))
+    (error 'unsupported-input :what "session replay needs --as <name>"))
+  (when (and max (minusp max))
+    (error 'unsupported-input :what "session replay: a negative --max is refused"))
+  (let* ((kernel (wire-session-kernel session))
+         (baseline (make-hash-table :test #'equal))
+         (requests (request-bundle-requests bundle))
+         (selected (if (or (null max) (zerop max))
+                       requests
+                       (subseq requests 0 (min max (length requests)))))
+         (lines '())
+         (exit 0))
+    ;; The per-node accepted-revision baseline is read once, before the replay,
+    ;; so a bundle's own earlier requests never stale its later ones.
+    (dolist (record (state-history (kernel-state kernel)))
+      (dolist (form (getf record :events))
+        (let ((node (getf form :node))
+              (rev (getf form :rev)))
+          (when (and (stringp node) (integerp rev)
+                     (or (null (gethash node baseline))
+                         (> rev (gethash node baseline))))
+            (setf (gethash node baseline) rev)))))
+    (dolist (request selected)
+      (multiple-value-bind (okp line code)
+          (%replay-verdict session request as baseline :now now)
+        (declare (ignore okp))
+        (push line lines)
+        (when (plusp code) (setf exit 1))))
+    (values (zerop exit) (nreverse lines) exit)))
+
+(defun replay-request-bundle (text target-kernel)
+  "`session replay --from` against a bare TARGET-KERNEL: apply the bundle
+TEXT's requests one at a time, validating each fresh. The bundle is one ordered
+sequence from one session and every request carries the same clipped revision,
+so the check is against the revision the target started at -- a target that
+moved independently refuses the request `stale` and applies nothing. Answers
+(values LINES APPLIED)."
+  (let* ((bundle (read-request-bundle text))
+         (clipped (request-bundle-clipped-revision bundle))
+         (requests (request-bundle-requests bundle))
+         (start (state-revision (kernel-state target-kernel)))
+         (lines '())
+         (applied 0))
+    (dolist (request requests)
+      (let ((rid (getf request :request))
+            (expect (getf request :expect)))
+        ;; The replay path's expectation is the clipped revision, required;
+        ;; checked against the revision the target started at, never the
+        ;; revision this bundle's own earlier requests moved (SPEC-WORK.md:2214-
+        ;; 2238). A value that is not the current value of its kind is stale.
+        (if (/= (or expect clipped) start)
+            (push (format nil "REPLAY FAIL request=~A expect=~D current=~D: stale"
+                          rid (or expect clipped) start)
+                  lines)
+            (let* ((events (mapcar (lambda (e)
+                                     (record-form->event
+                                      e :session-written-p
+                                      (member (getf e :kind) '(:settle :revive))))
+                                   (getf request :payload)))
+                   (last-event (car (last events)))
+                   (envelope (list :request rid
+                                   :digest (payload-digest events)
+                                   :events events)))
+              (setf (kernel-state target-kernel)
+                    (apply-envelope (kernel-state target-kernel) envelope))
+              (setf (kernel-next-rev target-kernel) (1+ (work-event-rev last-event)))
+              (incf applied)
+              (push (format nil "REPLAY OK request=~A rev=~D events=~D"
+                            rid (state-revision (kernel-state target-kernel))
+                            (length events))
+                    lines)))))
+    (values (nreverse lines) applied)))
+
+;;;; ------------------------------------------------------------------
+;;;; The framed wire handshake: `hello` protocol-version negotiation.
+;;;;
+;;;; The engine and its client (SPEC-WORK.md:2642-2708). The client's first
+;;;; frame is {"op": "hello", "protocol": ["1"], "client": "<build identity>"}
+;;;; and the session answers with the one version it will speak or refuses,
+;;;; naming what it supports, and closes; an unsupported version fails clearly
+;;;; and never degrades into a guess (SPEC-WORK.md:2682-2685). The initial
+;;;; `hello` is the sole ordinary exchange without a request id and finishes
+;;;; before pipelining begins (SPEC-WORK.md:2705-2708; replay
+;;;; `protocol-version-negotiated-or-refused`).
+;;;; ------------------------------------------------------------------
+
+(defun wire-unframe (frame)
+  "Answer (values TEXT COMPLETE-P) for one length-prefixed message. TEXT is the
+whole declared payload when COMPLETE-P is true; an unfinished frame answers
+(values NIL NIL) rather than dispatching a truncated object."
+  (if (< (length frame) 4)
+      (values nil nil)
+      (let ((length (wire-frame-length frame)))
+        (if (< (length frame) (+ 4 length))
+            (values nil nil)
+            (values (sb-ext:octets-to-string frame :start 4 :end (+ 4 length)
+                                             :external-format :utf-8)
+                    t)))))
+
+;;; ------------------------------------------------------------------
+;;; The JSON spellings of the two hello answers.
+;;; ------------------------------------------------------------------
+
+(defun wire-json-string-array (strings)
+  "STRINGS as one JSON array of string literals."
+  (format nil "[~{~A~^, ~}]" (mapcar #'wire-json-string strings)))
+
+(defun protocol-build-identity ()
+  "The `session` of the hello answer: the running build says which build it is
+(SPEC-WORK.md:302-303)."
+  (format nil "~A-~A" (lisp-implementation-type) (lisp-implementation-version)))
+
+(defun protocol-hello-ok-text (version)
+  "The one version the session will speak, as the `hello-ok` JSON object."
+  (format nil "{\"op\": \"hello-ok\", \"protocol\": ~A, \"session\": ~A}"
+          (wire-json-string version)
+          (wire-json-string (protocol-build-identity))))
+
+(defun protocol-hello-refused-text (supported reason)
+  "A refusal as the `hello-refused` JSON object, naming every version the
+session supports and why the offer was refused."
+  (format nil "{\"op\": \"hello-refused\", \"supported\": ~A, \"reason\": ~A}"
+          (wire-json-string-array supported)
+          (wire-json-string reason)))
+
+;;; ------------------------------------------------------------------
+;;; The hello exchange (SPEC-WORK.md:2682-2685).
+;;; ------------------------------------------------------------------
+
+(defun protocol-version-list (object key)
+  "The version list KEY of a decoded hello object, as strings. The wire codec
+answers a quoted decimal version as an integer, so both spellings are accepted
+and normalized to the string the protocol carries."
+  (let ((field (wire-field object key)))
+    (cond
+      ((absentp field)
+       (error 'unsupported-input
+              :what (format nil "hello frame carries no ~A list" key)))
+      ((and (listp field)
+            (every (lambda (v) (or (stringp v) (integerp v))) field))
+       (mapcar (lambda (v) (if (stringp v) v (princ-to-string v))) field))
+      (t
+       (error 'unsupported-input
+              :what (format nil "hello frame's ~A must be an array of version strings"
+                            key))))))
+
+(defun protocol-hello-versions (object)
+  "The offered versions of a decoded hello object, as strings."
+  (protocol-version-list object "protocol"))
+
+(defun %protocol-refusal-frame (session reason)
+  "Close SESSION and frame the refusal that names its supported versions."
+  (setf (protocol-session-closed-p session) t)
+  (wire-frame (protocol-hello-refused-text (protocol-session-supported session)
+                                           reason)))
+
+(defun %protocol-hello-body (session text)
+  "Decode one hello payload and answer (values RESPONSE-OCTETS VERSION REFUSAL).
+The frame must carry op=hello and an array of version strings. VERSION is the
+one version the session will speak; REFUSAL is the reason it would not."
+  (let ((object (wire-object-decode text)))
+    (if (equal (wire-field object "op") "hello")
+        (multiple-value-bind (version refusal)
+            (protocol-hello session (protocol-hello-versions object))
+          (declare (ignore refusal))
+          (if version
+              (values (wire-frame (protocol-hello-ok-text version)) version nil)
+              (values (%protocol-refusal-frame session "unsupported protocol version")
+                      nil "unsupported protocol version")))
+        (values (%protocol-refusal-frame session "hello frame must carry op=hello")
+                nil "hello frame must carry op=hello"))))
+
+(defun protocol-hello-frame (session frame)
+  "One `hello` exchange over FRAME, one 4-byte-length-prefixed UTF-8 JSON object
+(SPEC-WORK.md:2662-2685). Answer (values RESPONSE-OCTETS VERSION REFUSAL).
+VERSION is the one version the session will speak. On an unsupported version,
+an oversized or malformed frame, REFUSAL is the reason, RESPONSE-OCTETS is the
+framed refusal naming the supported list, and the connection is closed."
+  (cond
+    ((protocol-session-closed-p session)
+     (values (%protocol-refusal-frame session "connection closed")
+             nil "connection closed"))
+    ((< (length frame) 4)
+     (values (%protocol-refusal-frame session "incomplete frame")
+             nil "incomplete frame"))
+    ((> (wire-frame-length frame) (protocol-session-max-frame-bytes session))
+     (values (%protocol-refusal-frame session "frame exceeds max-frame-bytes")
+             nil "frame exceeds max-frame-bytes"))
+    ((< (length frame) (+ 4 (wire-frame-length frame)))
+     (values (%protocol-refusal-frame session "incomplete frame")
+             nil "incomplete frame"))
+    (t
+     (handler-case
+         (%protocol-hello-body
+          session
+          (sb-ext:octets-to-string frame :start 4
+                                   :end (+ 4 (wire-frame-length frame))
+                                   :external-format :utf-8))
+       (error ()
+         (values (%protocol-refusal-frame session "malformed hello frame")
+                 nil "malformed hello frame"))))))

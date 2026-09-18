@@ -66,6 +66,11 @@ var messageBusAudit = audit.Config{
 			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
 			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
 			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
+		"main.go|printSendDraft|note": "the shaped note itself, printed to stdout VERBATIM because it is the thing `send --dry-run` " +
+			"frames and a caller pipes to a file: escaping it would fold the very bytes the verb promises to carry. Every value in it " +
+			"has been checked before this line runs -- the header is the same Render the commit writes, from a note that passed the " +
+			"send preflight -- and the count on the SEND DRAFT line above is what frames it. TestSendDryRunPrintsTheShapedNoteAndWritesNothing " +
+			"is the behavioural test for this site.",
 		"main.go|cmdPrepare|artifactJSON": "the prepared artifact itself, printed to stdout VERBATIM because it is a machine-readable JSON " +
 			"object and not an event line: a self-contained artifact that a caller saves, and an escape would fold it or escape its quotes. " +
 			"Every value in it has been checked before this line runs. TestPrepareDecidingTests is the behavioural test for this site.",
@@ -107,6 +112,12 @@ var messageBusAudit = audit.Config{
 		// pointer a test installs and waitLoop invokes, holds no writer, and reaches no
 		// stream -- the hook prints nothing, it only closes a channel.
 		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"sync/atomic"`, `"time"`,
+		// sync is walkProgress's: a Mutex and a WaitGroup make the since-walk's
+		// once-a-second ticker and its closing line write one stderr line each rather
+		// than interleave mid-line. It holds no writer of its own and reaches no stream;
+		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
+		// duration is rendered through oneline.Field like every other line here.
+		`"sync"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at

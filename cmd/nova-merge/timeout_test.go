@@ -18,7 +18,9 @@ func TestTheStateLockWaitsTheVerbsOwnTimeout(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow: waits out a real lock --timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+	// NOT parallel: the injected clock is process-wide, and this is the one test that
+	// asserts how far the wait advanced, so it runs where no other test's wait can move
+	// the clock under it.
 	l := newLab(t)
 	l.init("main")
 	release, err := merge.Lock(filepath.Join(l.lane, merge.StateLock), time.Second)
@@ -26,16 +28,18 @@ func TestTheStateLockWaitsTheVerbsOwnTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	start := time.Now()
+	before := lockClk.Now()
 	exit, stdout, stderr := l.run("add", "--lane", l.lane, "--pr", "951", "--timeout", "1")
-	waited := time.Since(start)
+	waited := lockClk.Now().Sub(before)
 	if exit != 2 {
 		t.Fatalf("a verb that cannot take the lock exits 2: got %d\n%s\n%s", exit, stdout, stderr)
 	}
 	contains(t, stderr, "pid=")
-	// One second, not ten. The slack is generous; the constant is not within it.
-	if waited > 5*time.Second { // wall-ok: the bound is the assertion -- it distinguishes the verb's own 1s timeout from the 10s package constant, and any generous bound would be blind to the regression; short-skipped, self-hosted legs only
-		t.Errorf("--timeout 1 waited %s for the state lock; the wait is the verb's own --timeout and not a package constant", waited.Round(time.Millisecond))
+	// One second of INJECTED time, not the ten-second package constant. The wait is read
+	// off the fake clock the lock was given, so the assertion never depends on how long
+	// the machine took -- only on the deadline the verb chose.
+	if waited < time.Second || waited >= merge.LockWait { // wall-ok: waited is read off the injected lock clock, not the wall clock; the short bound is the verb's own --timeout beside the package constant
+		t.Errorf("--timeout 1 waited %s of injected time for the state lock; the wait is the verb's own --timeout and not the %s package constant", waited, merge.LockWait)
 	}
 }
 

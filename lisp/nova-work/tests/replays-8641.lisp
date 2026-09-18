@@ -100,6 +100,44 @@
           "savepoint list shows the shared revision beside it")
       (ok (search "unshared" listed) "savepoint list shows the unshared work")
       (ok (search "failed-backups=1" listed) "savepoint list shows the failed backups"))
+    ;; `savepoint compare --savepoint <path> --against <session|snapshot>` puts
+    ;; the local and the against revisions side by side, names the work unshared
+    ;; each way and the shared checkpoint separately, and never reports the
+    ;; savepoint as that shared backup.
+    (let* ((records (list (list :seq 1 :revision 700 :events '(1))
+                          (list :seq 2 :revision 812 :events '(2))
+                          (list :seq 3 :revision 820 :events '(3))))
+           (cmp (savepoint-compare sp
+                                   :against (list :kind :session
+                                                  :revision 820
+                                                  :checkpoint 750
+                                                  :records records))))
+      (check-equal "sp-1" (getf cmp :savepoint) "compare names the savepoint")
+      (check-equal 812 (getf cmp :local-revision) "compare shows the local revision")
+      (check-equal 820 (getf cmp :against-revision)
+                   "compare shows the against revision beside it")
+      (check-equal 750 (getf cmp :shared-checkpoint)
+                   "compare shows the shared checkpoint separately")
+      (check-equal '(812) (getf cmp :unshared)
+                   "the work above the checkpoint and at or below the savepoint is unshared")
+      (check-equal '(820) (getf cmp :missing)
+                   "the work the against holds beyond the savepoint is named missing")
+      (check-equal nil (getf cmp :shared) "a savepoint is not a shared backup")
+      (ok (search "rev=812" (getf cmp :line)) "the compare line names the local revision")
+      (ok (search "checkpoint=750" (getf cmp :line))
+          "the compare line names the shared checkpoint separately"))
+    ;; a local-only copy states the exposure; an independent verified copy
+    ;; removes it.
+    (let ((cmp (savepoint-compare sp :against (list :kind :snapshot
+                                                    :revision 812
+                                                    :checkpoint 750))))
+      (check-equal t (getf cmp :local-only) "a local-only copy states the exposure"))
+    (let ((cmp (savepoint-compare sp :against (list :kind :snapshot
+                                                    :revision 812
+                                                    :checkpoint 750)
+                                       :independent-copy "bench-b")))
+      (check-equal nil (getf cmp :local-only)
+                   "an independent verified copy removes the exposure"))
     ;; a savepoint is never printed where a checkpoint was asked for.
     (handler-case
         (progn (checkpoint-line sp)

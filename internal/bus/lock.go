@@ -41,6 +41,95 @@ const LockName = "nova-bus.lock"
 // ErrLockHeld indicates that the requested lock could not be acquired within the wait duration.
 var ErrLockHeld = errors.New("lock held")
 
+// staleLockRemovalWindow bounds how long a sentinel removal is retried when the
+// platform reports a transient collision. On Windows a file that was just
+// closed can sit in a delete-pending or sharing-violating state for a moment,
+// so a single os.Remove is not enough to prove the lock was released.
+const staleLockRemovalWindow = 250 * time.Millisecond
+
+// maxStaleRecoveries bounds how many dead-holder sentinels one acquisition will
+// clear, so a delete-and-recreate cannot turn the wait loop into a spin.
+const maxStaleRecoveries = 3
+
+// sentinelPath is the sibling file whose existence means a sentinel lock is
+// held. It is beside the lock file the caller opened so that the lock stays in
+// the git directory and dies with it.
+func sentinelPath(name string) string {
+	return filepath.Clean(name) + ".held"
+}
+
+// removeLockFile removes a lock artifact, retrying over a short bounded window
+// while the platform calls the failure a transient lock collision. A missing
+// file is success: the lock is already gone.
+func removeLockFile(path string) error {
+	deadline := time.Now().Add(staleLockRemovalWindow)
+	for {
+		err := os.Remove(path)
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if !platformTransientLockCollision(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(lockPoll)
+	}
+}
+
+// clearStaleSentinel reports whether it removed the sentinel beside lockPath
+// because the holder the lock file names is no longer alive.
+//
+// On the sentinel platforms (Windows and the generic exclusive-create build) a
+// killed process cannot have its lock dropped by the kernel, so the sentinel
+// outlives it and the next run would otherwise wait out its whole budget for a
+// process that will never release anything. The pid stamped into the lock file
+// is the only thing that distinguishes a dead holder's lock from a live one, so
+// it is read and checked rather than inferred from the file's existence.
+//
+// On unix the kernel drops an flock when its holder dies, so there is normally
+// no sentinel to clear; if one is left in the repository by a Windows run, this
+// clears it the same way rather than refusing over a file nothing owns.
+func clearStaleSentinel(lockPath string) bool {
+	sentinel := sentinelPath(lockPath)
+	if _, err := os.Stat(sentinel); err != nil {
+		return false
+	}
+	holder := ReadLockHolder(lockPath)
+	pid, err := strconv.Atoi(holder)
+	if err != nil || pid <= 0 {
+		// No pid to judge: an older or unwritten record. Never clear a lock
+		// whose holder cannot be shown to be gone.
+		return false
+	}
+	if processAlive(pid) {
+		return false
+	}
+	// Confirm the holder is still the same dead one before removing, so a live
+	// acquirer that has created the sentinel but not yet stamped its pid cannot
+	// have its lock cleared out from under it.
+	if again := ReadLockHolder(lockPath); again != holder {
+		return false
+	}
+	if err := removeLockFile(sentinel); err != nil {
+		return false
+	}
+	return true
+}
+
+// lockClock is the lock's view of time: the deadline it reads and the poll it waits
+// between attempts. It is a seam so a test drives the whole bounded wait with no wall
+// time -- the fake's Sleep advances Now, so a 500ms budget is over in a few instant
+// polls. Production passes realLockClock; a nil clock takes it too.
+type lockClock interface {
+	Now() time.Time
+	Sleep(time.Duration)
+}
+
+// realLockClock is the production clock: the machine's.
+type realLockClock struct{}
+
+func (realLockClock) Now() time.Time        { return time.Now() }
+func (realLockClock) Sleep(d time.Duration) { time.Sleep(d) }
+
 // LockFile takes an exclusive advisory lock on path, waiting up to wait for it, and returns the
 // release function. The release is safe to call more than once.
 //
@@ -53,16 +142,20 @@ var ErrLockHeld = errors.New("lock held")
 // If wait > 0, LockFile polls every 25ms until the deadline.
 // If the lock cannot be acquired within wait, it returns an error wrapping ErrLockHeld.
 func LockFile(path string, wait time.Duration) (func(), error) {
-	return lockFile(path, wait, tryLockFile)
+	return lockFile(path, wait, tryLockFile, nil)
 }
 
-func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error)) (func(), error) {
+func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error), clk lockClock) (func(), error) {
+	if clk == nil {
+		clk = realLockClock{}
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
-	deadline := time.Now().Add(wait)
+	deadline := clk.Now().Add(wait)
 	var lastErr error
+	recoveries := 0
 	for {
 		ok, retryable, lockErr := try(f)
 		if lockErr != nil {
@@ -86,7 +179,15 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 				f.Close()
 			}, nil
 		}
-		if wait == 0 || !time.Now().Before(deadline) {
+		if clearStaleSentinel(path) && recoveries < maxStaleRecoveries {
+			// The sentinel is a dead run's lock, not a live one: its holder is
+			// gone, so waiting out the budget would be waiting for a process
+			// that can never release anything. Try again at once. The cap keeps
+			// a pathological delete-and-recreate from spinning this loop.
+			recoveries++
+			continue
+		}
+		if wait == 0 || !clk.Now().Before(deadline) {
 			f.Close()
 			if lastErr != nil {
 				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lastErr)
@@ -94,7 +195,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 			holder := ReadLockHolder(path)
 			return nil, fmt.Errorf("the lock at %s is held by process %s; waited %s: %w", path, holder, wait, ErrLockHeld)
 		}
-		time.Sleep(jitter(lockPoll))
+		clk.Sleep(jitter(lockPoll))
 	}
 }
 
@@ -148,12 +249,18 @@ func ReadLockHolder(path string) string {
 // verbs that reach one are the full reads, which write nothing, and refusing them for the
 // want of a `.git` would be refusing a bus for a reason that is not about the bus.
 func LockCheckout(busDir string, wait time.Duration) (func(), error) {
+	return lockCheckoutAt(busDir, wait, nil)
+}
+
+// lockCheckoutAt is LockCheckout with the clock injected, so a test can drive the wait
+// for a held lock to its end without spending the machine's time doing it.
+func lockCheckoutAt(busDir string, wait time.Duration, clk lockClock) (func(), error) {
 	gd, err := GitDir(busDir)
 	if err != nil {
 		return func() {}, nil
 	}
 	path := filepath.Join(gd, LockName)
-	release, err := LockFile(path, wait)
+	release, err := lockFile(path, wait, tryLockFile, clk)
 	if err != nil {
 		if errors.Is(err, ErrLockHeld) {
 			return nil, fmt.Errorf("another nova-bus is already running on this checkout and still holds %s; this run waited %s for it and will not work beside it, because two runs on one checkout write one OPEN list and one index -- run this again when that one has finished", path, wait)

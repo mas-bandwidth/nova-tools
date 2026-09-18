@@ -191,6 +191,54 @@ the shared checkpoint."
               (getf a :stage)))))
 
 ;;; ------------------------------------------------------------------
+;;; compare (docs/SPEC-WORK.md:2276, :6399-6406)
+;;; ------------------------------------------------------------------
+
+(defun savepoint-compare (savepoint &key against independent-copy)
+  "Compare a local savepoint against a session or snapshot (docs/SPEC-WORK.md:
+2276, :6399-6406). AGAINST carries the target's :revision, the newest shared
+:checkpoint it knows and the accepted :records it holds. The comparison puts
+the local and the against revisions side by side, names the work unshared above
+the shared checkpoint and the work the against holds beyond the savepoint, keeps
+the shared checkpoint a different field from the local savepoint, and states the
+exposure when no independent verified copy exists."
+  (let* ((local (savepoint-local-revision savepoint))
+         (against-rev (getf against :revision))
+         (checkpoint (getf against :checkpoint))
+         (records (getf against :records))
+         (revisions (mapcar (lambda (r) (getf r :revision)) records))
+         (unshared (sort (remove-if-not
+                          (lambda (r) (and (numberp r)
+                                           (> r (or checkpoint 0))
+                                           (<= r local)))
+                          revisions)
+                         #'<))
+         (missing (sort (remove-if-not
+                         (lambda (r) (and (numberp r)
+                                          (> r local)
+                                          (<= r (or against-rev local))))
+                         revisions)
+                        #'<))
+         (local-only (null independent-copy)))
+    (list :savepoint (savepoint-id savepoint)
+          :manifest (savepoint-manifest-sha savepoint)
+          :age (savepoint-age savepoint)
+          :local-revision local
+          :against-revision against-rev
+          :against-kind (getf against :kind)
+          :shared-checkpoint checkpoint
+          :unshared unshared
+          :missing missing
+          :shared nil
+          :local-only local-only
+          :independent-copy independent-copy
+          :line (format nil "SAVEPOINT OK id=~A rev=~D checkpoint=~A against=~A unshared=~D missing=~D~A"
+                        (savepoint-id savepoint) local
+                        (or checkpoint "-") (or against-rev "-")
+                        (length unshared) (length missing)
+                        (if local-only " local-only=true" "")))))
+
+;;; ------------------------------------------------------------------
 ;;; verify (docs/SPEC-WORK.md:2274, :6399-6401, :6446-6459)
 ;;; ------------------------------------------------------------------
 

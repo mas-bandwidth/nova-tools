@@ -291,10 +291,14 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
 		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
-	case "version":
+	case "version", "--version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
-		// asking (lesson 142).
+		// asking (lesson 142). The two spellings are one verb (SPEC-VERSION
+		// rule 8); a second argument is a refusal.
+		if len(args) != 1 {
+			return refuse(stderr, "", "version takes no arguments")
+		}
 		fmt.Fprintf(stdout, "nova-wake %s %s/%s %s\n", oneline.Field(Version()),
 			oneline.Field(runtime.GOOS), oneline.Field(runtime.GOARCH), oneline.Field(runtime.Version()))
 		return 0
@@ -431,10 +435,35 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 }
 
 // isGitRepo reports whether dir is a git working tree, the one thing that makes
-// a directory a bus rather than a directory.
+// a directory a bus rather than a directory. The repository must be dir's OWN:
+// `git -C dir rev-parse` ascends to a parent repository, so a plain directory
+// under some other checkout would pass a discovery-only test.
+//
+// THE DIRECTORY ITSELF MUST BE THE WORK TREE ROOT, not merely live under some
+// unrelated repository. `git -C dir rev-parse --git-dir` walks UP to the nearest
+// ancestor with a .git, so a plain directory inside any checkout answered yes: on
+// a machine whose temp directory lives under a repo, `awake --bus <empty dir>`
+// treated the empty directory as a bus. A bus is its own repository.
 func isGitRepo(dir string) bool {
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "--git-dir")
-	return cmd.Run() == nil
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return false
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return false
+	}
+	top := strings.TrimSpace(string(out))
+	if resolved, err := filepath.EvalSymlinks(top); err == nil {
+		top = resolved
+	}
+	return top == abs
 }
 
 // laneNames is every from-<name>/ directory in the bus clone, sorted by name.

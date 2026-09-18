@@ -129,6 +129,16 @@ cat: /Users/me/.config/anthropic/env: Operation not permitted
 
 The last run is the whole tool in three lines: the job's own write landed, and the same command could not read the key that was in neither list. Its exit status is the wrapped command's, which is 1 here because `cat` failed.
 
+### The disposable volume, and the one test that touches a disk
+
+`nova-sandbox run` makes an APFS volume per run and deletes it on every path out (SPEC-SANDBOX, "The run verb"). Its logic is unit-tested against a fake `diskutil`, so an ordinary `go test ./cmd/nova-sandbox/` creates no volumes. The one real end-to-end test is behind the `novadisk` build tag, because eight CI runners share the Mac this repository is built on and a suite that made and destroyed volumes on every run would be a hazard rather than a test. Run it by hand on a Mac when the disposable-volume body changes — it needs no `sudo`:
+
+    go test -tags novadisk -run TestARealRunLeavesNothingBehind ./cmd/nova-sandbox/
+
+`nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
+
+Measured on the Studio, macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
+
 ## nova-secrets
 
 Fixture: a throwaway secrets store git working copy and age private key, as in [SPEC-SECRETS.md](SPEC-SECRETS.md).
@@ -365,6 +375,30 @@ $ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
 DECIDE gate=go conf=0.94 floor=0.90 below=-
 ```
 
+### The ladder of minds
+
+`route`, `help` and `log` need no key and no network with `--no-jev`: the rules
+alone answer, the same way every time. These lines were produced by running the
+binary built on this branch.
+
+```
+$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+
+$ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
+ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.90 wait=- reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
+
+$ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.90 wait=awaiting_termination reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
+
+$ nova-decide help --hours 6 --asked-all-friends
+HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
+
+$ nova-decide log --log ./decide.jsonl --summary
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
+LOG OK rows=1 kinds=1 escalations=0
+```
+
 ## nova-pulse
 
 Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
@@ -504,7 +538,7 @@ TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shr
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 
 $ nova-tokens check --out ./out
-CHECK OK at=2026-09-11T23:55:02Z build=devel files=1 rows=3 first=2026-09-11 last=2026-09-11 missing=0 stray=0
+CHECK OK at=2026-09-11T23:55:02Z build=devel files=1 rows=3 first=2026-09-11 last=2026-09-11 missing=0 stray=0 gap=0 notes=0
 
 $ nova-tokens sum --out ./out --month 2026-09
 SUM MONTH month=2026-09 at=2026-09-11T23:55:02Z build=devel days=1 first=2026-09-11 last=2026-09-11 missing=0 rows=3 turns=3
@@ -590,6 +624,16 @@ endpoints — an `httptest` server per channel, a fake mailer, an injected clock
 environment `nova-secrets exec` delivers, is never printed, and is never
 measured.
 
+The outward gate of [docs/SPEC-OUTBOUND.md](SPEC-OUTBOUND.md). Slice 1 carries
+only the in-process `fake` channel: every line below is local, and no socket, no
+credential and no provider is touched. `draft` writes the payload under
+`./drafts`; `show` prints the exact payload bytes to stdout and its OK line to
+stderr; `send` releases only on a bus receipt from Glenn that names the hash and
+is under 24 hours old, and a second send of a sent hash prints the recorded
+result. The refresh stamps come from the injected clock in tests; a real run
+reads the wall clock and there is no `--now` flag, because a caller who can name
+the time can forge freshness.
+
 ### First run
 
 ```text
@@ -615,6 +659,19 @@ POST SHOW OK hash=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327a
 
 $ nova-post send --draft 8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
 POST REFUSED reason=no-approval no receipt glenn-0123456789ab in ./bus; have Glenn send `APPROVE nova-post sha256=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4` and pass its id
+
+$ nova-post draft --channel fake --target friends --file body.md --drafts ./drafts --allowlist ./allowlist
+POST DRAFT OK hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf channel=fake target=friends bytes=38 drafts=./drafts
+
+$ nova-post show --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --drafts ./drafts
+A first post for the friends channel.
+POST SHOW OK hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf channel=fake bytes=38 drafts=./drafts
+
+$ nova-post send --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --approval rec-1 --drafts ./drafts --bus ./bus --allowlist ./allowlist
+POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf approval=rec-1 bytes=38
+
+$ nova-post send --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --approval rec-1 --drafts ./drafts --bus ./bus --allowlist ./allowlist
+POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf approval=rec-1 bytes=38
 ```
 
 ## nova-work
@@ -622,6 +679,11 @@ POST REFUSED reason=no-approval no receipt glenn-0123456789ab in ./bus; have Gle
 No fixture: the graph file is created by the run itself under `--graph`, and every
 line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
 network. A `:deps` cycle is refused at exit 2 before anything is written.
+
+The bounded reader for a `.work` plan. No fixture and no network: the plan is a
+file the run writes, and every line below is read from local bytes alone.
+`cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
+it, so the `./work.work` below is a fresh file per run.
 
 ### First run
 
@@ -638,8 +700,37 @@ READY node=a ready=false blocker=b state=open resolver="nova-merge queue"
 $ nova-work ready --node b --graph ./deps.json
 READY node=b ready=true
 
+$ nova-work plan check --file ./work.work
+PLAN OK file=./work.work bytes=47 version=1 nodes=1 edges=0
+```
+
+The two verbs read one plan and one graph as data; a `:deps` cycle is refused at
+exit 2 before anything is written.
+
+### Refusals
+
+```text
 $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
+```
+
+## nova-work
+
+`nova-work` is the work layer's event bridge. Its one shipped verb, `events`, publishes
+the pub/sub messages `nova-merge react` subscribes to (docs/SPEC-JOBS.md, "Events, not
+ticks"). It makes no model call and writes no record: the bus is a signal, git is the
+record. The relay needs a local Redis — `--redis <addr>` — and the gh fallback is off
+unless `--repo` names the repository, so a test drives a miniredis and a fake forge and
+reaches no network.
+
+### First run
+
+```text
+$ nova-work
+nova-work: no verb given; run: nova-work help
+
+$ nova-work events --redis 127.0.0.1:6379 --repo mas-bandwidth/nova-tools --once
+EVENTS OK once=true card-done=0 published=1
 ```
 
 ## nova-ci

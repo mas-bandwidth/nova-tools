@@ -62,8 +62,15 @@ type Worker struct {
 	// assistant turns and max_cache_read caps the observed cache_read, and run
 	// stops the card at either with end=budget and a PROMPT-DEFECT line. Zero
 	// is unset; negative is refused at load.
-	MaxTurns     int `json:"max_turns,omitempty"`
-	MaxCacheRead int `json:"max_cache_read,omitempty"`
+	//
+	// CLASS (worker check): `class` is the one word public or paid, an OPTIONAL
+	// field a description may carry and the launcher never requires. `nova-swarm
+	// worker check` validates it when it is present; no other verb reads it, so a
+	// description without it is exactly the description this tool ran before it
+	// existed. The two budgets above are the same fields worker check validates.
+	Class        string `json:"class,omitempty"`
+	MaxTurns     int    `json:"max_turns,omitempty"`
+	MaxCacheRead int    `json:"max_cache_read,omitempty"`
 
 	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
 	// job that dies because the request did not fit is its own failure class, and the only
@@ -82,6 +89,12 @@ type Worker struct {
 	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is
 	// a real run that failed and is never retried.
 	LaunchGrace string `json:"launch_grace,omitempty"`
+
+	// KEEP DATA (issue #1048): a worker description that sets keep_data=true asks `run` not
+	// to reap the finished slots' data/ and tmp/ at task end. It is a person's debugging
+	// switch: the default is false, and the shared per-bench caches under <root>/cache are
+	// never touched either way.
+	KeepData bool `json:"keep_data,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -109,7 +122,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -131,6 +144,14 @@ func LoadWorker(path string) (Worker, []error) {
 	}
 
 	var problems []error
+	// SECRET IMPLIES ENV_VAR (issue #881): a description that names `secret` but no
+	// `env_var` loads with env_var defaulting to the secret NAME -- the key is delivered
+	// by `nova-secrets exec` under that NAME, and the harness config carries the
+	// variable's NAME, so the NAME is the same string in both fields. An explicit
+	// `env_var` beside `secret` is kept as typed.
+	if w.Secret != "" && w.EnvVar == "" {
+		w.EnvVar = w.Secret
+	}
 	want := func(value, field, wants string) {
 		if strings.TrimSpace(value) == "" {
 			problems = append(problems, fmt.Errorf("%s: %s is required; it wants %s", path, field, wants))

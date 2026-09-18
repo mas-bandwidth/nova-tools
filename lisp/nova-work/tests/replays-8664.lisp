@@ -181,4 +181,63 @@ sequence driven is a random sequence of legal verbs."
       (check-equal '("x") (holder-open-ids shared "alice")
                    "a shared item lists once under its holder")
       (check-equal '() (index-mismatches shared)
-                   "shared references never double-count"))))
+                   "shared references never double-count")
+      ;; The same agreement over the real kernel: the write-maintained |O|,
+      ;; |C|, the two separate counters, every container's own subtree count
+      ;; and the holder (friend) index equal a full independent reconstruction
+      ;; after every legal verb, and the required constant-time read visits no
+      ;; node (SPEC-WORK.md:5538-5545,6363).
+      (let* ((seed '((:id "r" :type :work-set :parent nil :state :unknown)
+                     (:id "r/f" :type :feature :parent "r" :state :unknown)
+                     (:id "r/f/one" :type :task :parent "r/f" :state :doing
+                      :links ("https://x/1"))
+                     (:id "r/f/two" :type :task :parent "r/f" :state :review)
+                     (:id "r/g" :type :feature :parent "r" :state :unknown)
+                     (:id "r/g/three" :type :task :parent "r/g" :state :doing
+                      :links ("https://x/2" "https://x/3"))))
+             (k (make-kernel :state (make-seed-state seed)))
+             (leaves '("r/f/one" "r/f/two" "r/g/three"))
+             (holders '("alice" "bob"))
+             (rseed 20260917))
+        (check-equal '() (state-index-mismatches (kernel-state k))
+                     "the real seeded counters and indexes agree with reconstruction")
+        (dotimes (i 60)
+          (setf rseed (%replay-lcg rseed))
+          (let ((id (nth (mod rseed 3) leaves))
+                (holder (nth (mod (floor rseed 4) 2) holders))
+                (request (format nil "ic-~D" i)))
+            (case (mod (floor rseed 8) 4)
+              (0 (submit k (close-request :node id :request request)))
+              (1 (submit k (reopen-request :node id :request request)))
+              (2 (ignore-errors (take-lease k id holder)))
+              (t (ignore-errors (release-lease k id holder)))))
+          (check-equal '() (state-index-mismatches (kernel-state k))
+                       (format nil "real step ~D keeps counters and indexes equal" i)))
+        ;; The required constant-time read visits no node, parses nothing and
+        ;; replays nothing.
+        (with-instrumentation
+          (multiple-value-bind (open unit scope line) (ask-size k)
+            (declare (ignore open unit scope))
+            (ok (plusp (length line)) "the real size ask printed nothing"))
+          (check-equal 0 *visits* "the real size ask visited a node")
+          (check-equal 0 *parses* "the real size ask parsed")
+          (check-equal 0 *replays* "the real size ask replayed"))
+        ;; A close moves |O| and |C| together by one, so the two branches keep
+        ;; summing to the same total, and a reconstruction agrees throughout.
+        (let* ((zs '((:id "z" :type :task :parent nil :state :doing
+                          :links ("https://x/9"))))
+               (zk (make-kernel :state (make-seed-state zs))))
+          (check-equal '() (state-index-mismatches (kernel-state zk))
+                       "the fresh real counters agree with reconstruction")
+          (ok (submit zk (close-request :node "z" :request "ic-final"))
+              "the final real close refused")
+          (check-equal 0 (state-open-count (kernel-state zk))
+                       "the final real close did not lower |O| to zero")
+          (check-equal 1 (state-closed-count (kernel-state zk))
+                       "the final real close did not raise |C| to one")
+          (check-equal (+ (state-open-count (kernel-state zk))
+                          (state-closed-count (kernel-state zk)))
+                       (length zs)
+                       "the two real branches do not sum to the node count")
+          (check-equal '() (state-index-mismatches (kernel-state zk))
+                       "the real counters disagree with reconstruction after the close"))))))

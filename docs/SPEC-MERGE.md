@@ -1467,10 +1467,25 @@ Every script and hand step sketched on the bench becomes an official verb, and t
 
 ```
 nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
-nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
 ```
 
-**What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
+**`simulate`.** It merges the queue's entries onto `origin/<base>` in order in a scratch
+worktree under the repository's own `.git`, runs every check after each squash-merge, and
+names the first entry that turns the base red: `SIMULATE OK #<n>` for each that passes,
+`SIMULATE CONFLICT #<n> with the entries ahead` for one that conflicts (skipped, and the
+entries after it still judged), and `SIMULATE POISON #<n> check="<check>" <first failing
+line>` for the first red one, with `SIMULATE DONE entries=<n> ok=<n> conflicts=<n>
+poison=<#n|none>` and exit 2 when a poison was found **or the invocation named something
+the verb cannot use** — a `--repo` that is not a repository, an `--entries` file that
+cannot be read or holds a line that is not a pull request number, a `--base` or a
+`pull/<n>/head` the origin does not have — 1 when the invocation was good and it could not
+run at all. The scratch worktree is removed whole on the way out, the directory **and**
+git's own entry for it under `.git/worktrees/`, and a removal that could not happen is one
+`SIMULATE NOTE` rather than a silence.
+
+**What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). **A record's path is a git path and is built with `path.Join`, never `filepath.Join`**: it is written into the record's own `file` field, it is the pathspec for `git add`, and it is the right-hand side of the confirming `git show <rev>:<path>`, all of which git spells with forward slashes on every platform. Built with the machine's separator it came out `classify\<name>.json` on Windows, the push landed, the confirm asked for a file whose name contains a backslash and `queue classify` exited 1 on windows-latest alone (#1335). `destinationOf` makes the path a git path at the one boundary where a record's `file` reaches git, and `TestRecordPathsAreGitPathsNotMachinePaths` reads this package's source so the class cannot come back on a host where it is invisible. Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
 
 **One queue, one hold file, one order.** The queue is the order `run` walks: `queued` is the ordered pull requests, and `skipped` and `parked` are the sets the sweep must not touch. `add` is still a person's decision and appends; `queue` is the mechanical hand that keeps the order, so no coordinator empties and refills it by hand. A hold is a person's, never the tool's.
 
@@ -1484,7 +1499,7 @@ nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-chang
 
 **The poison detector.** A pull request whose own merge-group run fails twice on one test, in a package that pull request changed, and whose `classify` decision is `own-change`, is poison: the sweep parks it — `skip` plus one issue naming the test, the package, the two run ids and the pull request — and no sweep ever re-enqueues it. A `flaky-under-load` or `environment` decision never parks, and `unskip` clears a park. `QUEUE PARK entry=<pr> test=<name> package=<path> runs=<n> issue=<url|->` is the one line.
 
-**`classify --run <id>`.** `classify` records one typed decision behind the merge group's floor — `flaky-under-load`, `own-change` or `environment` — keyed to the run id and the head sha, written and pushed as a record (rule 22) and folded beside the gates; the newest `at` for a run wins, a second classification is a second file, and the detector reads `own-change` to arm and the other two to disarm. It records a person's class and decides nothing.
+**`queue classify --run <id>`.** It is a subverb of `queue` and not a top-level `classify`, because the top-level one (SPEC-DECIDE.md, "nova-merge classify merge-group failure") ASKS a provider for a decision about a failed merge-group run and records nothing, while this one RECORDS a decision somebody already reached, for the sweep to read: two asks, two verbs, one word each way round. `queue classify` records one typed decision behind the merge group's floor — `flaky-under-load`, `own-change` or `environment` — keyed to the run id and the head sha, written and pushed as a record (rule 22) and folded beside the gates; the newest `at` for a run wins, a second classification is a second file, and the detector reads `own-change` to arm and the other two to disarm. It records a person's class and decides nothing.
 
 **The output, one line per verb.**
 
@@ -1502,7 +1517,7 @@ CLASSIFY FAIL run=<id> file=<path> pushed=false: <reason>; re-run the same verb 
 CLASSIFY REFUSED: <reason>
 ```
 
-**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
+**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `queue classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
 
 ### Red tests
 
@@ -1514,9 +1529,32 @@ A card writes these first, each seen red before it is trusted; the network, the 
 4. A sweep over a fake host of ten open pull requests — green, stale red, current red, dirty, skipped, parked and already queued — counts each bucket and enqueues only the green one.
 5. A sweep with a stale red and a queue of six does not re-enqueue it; the same sweep with a queue of five does; a mutation that drops the bound turns the test red.
 6. The detector with a fake host: one test failed twice in a changed package plus an `own-change` classify parks the pull request (`QUEUE PARK` names test and issue) and a green re-sweep does not enqueue it, while a `flaky-under-load` classify never parks.
-7. `classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
-8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
+7. `queue classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
+8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `queue classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
 9. Two concurrent `hold`/`skip`/`front`/`sweep` writers: every write lands, `queue.json` parses at every read, a killed writer leaves the old queue whole (rule 1), and the sweep window is measured by a fake clock, never the wall clock.
+
+## One entry to the merge queue (2026-09-18)
+
+**The mistake it removes, in one sentence.** It removes the morning four pull requests landed on `dev` that nobody enqueued: each carried GitHub's auto-merge, switched on hours earlier by a `gh pr merge` call made while the pull request was still red, and the forge queued them itself when their last check went green — twenty-seven more were armed and waiting when the sweep found them.
+
+**The rule (Glenn, 2026-09-18).** *Nothing reaches the dev merge queue but a batch.* The batch verb is the only enqueuer; swarms produce branches, never queue entries.
+
+**One function.** `internal/merge.Enqueuer.Enqueue(ctx, pr, jump)` is the ONE function in the tools that admits anything to a merge queue. It speaks the `enqueuePullRequest` GraphQL mutation — at the front of the queue when `jump` — and it is never `gh pr merge` in any spelling, because `--auto` does not enqueue at all: it leaves a standing instruction the forge executes later, with no caller in the room. It refuses, BEFORE reaching the forge, anything whose head branch is not `rowan/integration-*` unless the caller presents that head's own `BATCH OK` receipt: the line `nova-merge batch` prints after it builds, vets, tests and runs the lisp suite over the merged tree. A receipt naming another sha is refused, and so is one whose `members=none` — that batch dropped everything and lands the base.
+
+**One caller.**
+
+```
+nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
+```
+
+`land` reads the pull request back from the forge and enqueues it at the front after three refusals: not open, its own checks not green, or a head that is not a batch's. The two green-nesses are different questions and both are asked — the gate's green is a bench's, CI's green is the forge's on the commit the queue will take, and integration-4 went green on hulk and red on three CI legs. `--receipt-file` takes the LAST line of a file, so a caller may hand it the gate's whole output. A refusal is exit 1 (the verb ran and said NO); a read that failed is exit 2.
+
+`queue audit` is the other half: it lists every open pull request carrying an auto-merge and takes it off — the hand sweep that removed 27 that morning, as a verb, with every entry named and one line of counts. `--dry-run` lists and writes nothing. It is not a lane verb and names its repository outright.
+
+**Every other site moved onto it or went.** `nova-merge sweep`'s host now offers a green pull request to the one door instead of enqueueing it, and prints `refused=<n>` for the ones the door would not take; `nova-pulse sweep`'s `GHEnqueuer` — the site that ran `gh pr merge --auto` — is now a thin adapter that reads the head and offers it to the door; `.github/scripts/revert-on-red.sh` opens its revert pull request and LEAVES IT OPEN with a notice, enabling no auto-merge. `internal/ci`'s `merge:queue` set is this session's own green list and reaches no forge.
+
+**The class rule.** `TestNoGhPrMergeSpellingInTheToolsGo` and `TestNoGhPrMergeSpellingUnderDotGithub` (internal/ci) refuse a `pr merge` argument list or an `--auto` flag in every non-test Go file under `cmd/` and `internal/` and in every file under `.github/`. The exceptions are a shrink-only list in `internal/ci/testdata/prmerge_allowlist.txt`, checked in both directions: the guard that names `--auto` in order to refuse it, the audit's `--disable-auto` (the one spelling that unmerges), and the secrets store's own squash merge in a repository that has no merge queue.
 
 ## Tests this spec demands
 

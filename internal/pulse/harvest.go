@@ -27,6 +27,15 @@ type HarvestInput struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	Now          func() time.Time
+
+	// Decide turns on the harvest's one typed decision per finished job: before
+	// any push each done card's RESULT.md is classified behind Floor as fixed,
+	// already-fixed, no-change, failed or off-branch. Decider is the typed
+	// decision seam (the shipped *decide.Client; a test's fake). A nil Decider
+	// leaves the harvest exactly as it was.
+	Decide  bool
+	Floor   float64
+	Decider Decider
 }
 
 func field(s string) string {
@@ -118,6 +127,29 @@ func Harvest(in HarvestInput) int {
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
 		case "done":
 			done++
+			// The typed decision is asked after the job is read and before any push:
+			// fixed and failed push as today, no-change and already-fixed push nothing
+			// and are marked harvested, off-branch pushes nothing and prints the remedy,
+			// and anything below the floor leaves today's path exactly as it was.
+			classTail := ""
+			if in.Decide {
+				class := in.decideClass(jobDir, branch, resultLines)
+				classTail = " " + classFields(class, in.Floor)
+				switch class.kind {
+				case "no-change", "already-fixed":
+					writeSeen(in.Root, c, "done")
+					line := fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail)
+					if class.kind == "already-fixed" {
+						line += " test=" + field(class.test)
+					}
+					lines = append(lines, line)
+					continue
+				case "off-branch":
+					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s remedy=%s",
+						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
+					continue
+				}
+			}
 			url := pushURL(repo)
 			if err := push(in, jobDir, url, branch); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
@@ -130,8 +162,8 @@ func Harvest(in HarvestInput) int {
 				continue
 			}
 			prs++
-			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s",
-				field(repo), pr, field(c.Label), field(branch)))
+			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
+				field(repo), pr, field(c.Label), field(branch), classTail))
 			appendNext(in.Root, repo, pr, c.Label)
 		}
 	}

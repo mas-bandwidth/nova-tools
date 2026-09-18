@@ -1,0 +1,39 @@
+package fixture
+
+// The fixed shape: the same inner `go test`, with the child's environment
+// built by goenv.Clean so the caller's GOFLAGS cannot reshape the output the
+// parser reads. A tool that needs a variable of its own appends it after
+// Clean, where the last value wins.
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+)
+
+func runUnits(ctx context.Context, wt string, names []string) map[string]bool {
+	failed := map[string]bool{}
+	args := []string{"test", "-count=1", "-v", "-run", "^(" + strings.Join(names, "|") + ")$", "./pkg/"}
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = wt
+	cmd.Env = goenv.Clean(os.Environ())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return failed
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--- FAIL: ") {
+			failed[line] = true
+		}
+	}
+	return failed
+}
+
+func buildTool(dir, out string) error {
+	cmd := exec.Command("go", "build", "-o", out, dir)
+	cmd.Env = append(goenv.Clean(os.Environ()), "CGO_ENABLED=0")
+	return cmd.Run()
+}

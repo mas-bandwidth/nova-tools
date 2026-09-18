@@ -58,18 +58,44 @@
          (old (make-journal-segment :path "journal.1" :header '(:segment 1)
                                     :records (list rec1 rec2)))
          (chain (make-journal-chain :id "journal-abc" :segments (list old)))
-         (rotated (rotate-journal chain))
+         (cut1 (list :sequence 1 :sha256 (journal-record-hash rec1)))
+         ;; the clip rotates after a savepoint whose cut is record 1: the cut and
+         ;; the dispositions it needs must stay reachable without scanning the
+         ;; old segment.
+         (rotated (rotate-journal chain :retained-cuts (list cut1)
+                                        :retained-dispositions '("r1")))
          (new (car (last (journal-chain-segments rotated))))
-         (boundary (getf (journal-segment-header new) :copied-boundary)))
+         (header (journal-segment-header new))
+         (boundary (getf header :copied-boundary)))
     ;; the new segment's header names the same journal id.
-    (check-equal "journal-abc" (getf (journal-segment-header new) :journal-id)
+    (check-equal "journal-abc" (getf header :journal-id)
                  "the new segment header names the same journal id")
     ;; the copied boundary record carries its sequence and hash.
     (check-equal 2 (getf boundary :seq) "the boundary record keeps its sequence")
     (check-string= (journal-record-hash rec2) (getf boundary :sha256)
                    "the boundary record keeps its hash")
-    (check-string= "journal.1" (getf (journal-segment-header new) :copied-from)
+    (check-string= "journal.1" (getf header :copied-from)
                    "the boundary names the segment it was copied from")
+    ;; the savepoint's cut and every disposition it needs are handed forward as
+    ;; a bounded locator, never a scan of the old segment.
+    (check-equal (list cut1) (getf header :retained-cuts)
+                 "the retained cut is handed forward with its sequence and hash")
+    (check-equal '("r1") (getf header :retained-dispositions)
+                 "the retained dispositions are handed forward")
+    (check-equal nil (savepoint-cut-reachable-p chain 1)
+                 "before rotation the cut is not reachable from the newest segment")
+    (check-equal t (savepoint-cut-reachable-p rotated 1)
+                 "after rotation the savepoint cut is reachable from the header alone")
+    (check-equal t (savepoint-cut-reachable-p rotated 2)
+                 "the copied boundary record is reachable too")
+    ;; a rotation that would lose a retained cut refuses and publishes nothing.
+    (handler-case
+        (progn (rotate-journal chain :retained-cuts
+                              (list (list :sequence 1 :sha256 "not-the-hash")))
+               (fail "a rotation losing a retained cut published a replacement"))
+      (unsupported-input (c)
+        (ok (search "lose retained cut" (format nil "~A" c))
+            "the lost cut is named: ~A" c)))
     ;; the chain continues past the copied boundary.
     (let* ((rotated2 (journal-append-record rotated (make-journal-record :events '("e3"))))
            (new2 (car (last (journal-chain-segments rotated2)))))
@@ -77,13 +103,15 @@
                    "the chain continues past the boundary")
       (check-equal 2 (journal-record-seq (first (journal-segment-records new2)))
                    "the copied boundary record is the first record of the new segment"))
-    ;; the savepoint cut is reachable from the new segment's boundary record alone.
-    (check-equal t (savepoint-cut-reachable-p rotated 2)
-                 "the savepoint cut is reachable from the boundary record")
-    ;; export --journal writes the same bundle from either file.
+    ;; export --journal writes the same bundle from either file, and an unknown
+    ;; file refuses rather than being guessed.
     (check-string= (export-journal-bundle rotated :from "journal.1")
-                   (export-journal-bundle rotated :from "journal.2")
-                   "the same bundle is written from either file")))
+                   (export-journal-bundle rotated :from (journal-segment-path new))
+                   "the same bundle is written from either file")
+    (handler-case
+        (progn (export-journal-bundle rotated :from "journal.9")
+               (fail "an unknown file wrote a bundle"))
+      (unsupported-input () t))))
 
 ;;; ------------------------------------------------------------------
 ;;; rule-2-unavailable-is-not-green          SPEC-WORK.md:5024/5633

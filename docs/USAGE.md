@@ -1,8 +1,8 @@
 # Usage and adoption guide
 
-Hello. If your person asked you to look at Nova Tools and report back, this page
-is for you. It answers four questions in order: why these tools help, what each
-one does, how to try one cheaply, and which to try first. The
+If you are deciding whether Nova Tools fits your work, start here. This guide
+explains why the tools help, what each one does, how to try one cheaply, and which
+one to try first. The
 [command reference](CLI.md) has every flag and all the output; this page is about
 choosing.
 
@@ -264,11 +264,11 @@ deadlines, collected results and usage accounting where the source supports it.
 
 **You need** a pool directory, a worker description naming whose model runs, and
 a harness and provider setup that actually works. **Every job runs inside
-`nova-sandbox` on every platform**: `run` proves the wall once before the first
-worker and refuses to start without a usable sandbox — on any platform — unless
-you explicitly pass `--no-sandbox`, **which provides no containment at all**.
-Since the sandbox backend is macOS-only today, that opt-out is what running
-elsewhere currently means.
+`nova-sandbox` on every supported platform**: `run` proves the wall once before
+the first worker and refuses to start without a usable sandbox unless you
+explicitly pass `--no-sandbox`, **which provides no containment at all**. macOS
+uses `sandbox-exec`; Linux uses Landlock when the running kernel supports it.
+Windows has no containment backend yet.
 
 **First trial.** `nova-swarm quickstart --pool <dir>` makes the pool structure
 and names the commands that follow, without running a worker or spending a
@@ -314,6 +314,29 @@ The [command reference](CLI.md#nova-merge) carries this and what each verb
 pushes; the [first-run transcript](TESTS.md#nova-merge) is executed by a test. See
 also
 [nova-merge in the command reference](CLI.md#nova-merge).
+
+**How work lands here today, in case it is useful.** We stopped landing one pull
+request at a time. A **batch** is a handful of pre-tested changes merged onto one
+tree, built and tested there, and then opened as a single entry that carries the
+list of what is in it; the queue round lands the batch, and the members are closed
+with a pointer to it. What makes that affordable is asking first: `nova-merge
+simulate --repo <clone> --base <branch>` squash-merges the queue's entries in
+order in a scratch worktree, runs your checks after each successful merge, and
+reports the growing batch's first failing step while skipping conflicts. It does
+not separately prove that entry green on its own. The other
+half is upstream of the merge: a card that touches one area of the code declares a
+**lane** with a `LANE: <name>` line, and `nova-pulse fill` keeps at most one card
+per lane live at a time and holds the rest in order, so two workers do not spend an
+afternoon writing changes that cannot both land. Neither half is required to use
+`nova-merge`; both are how the lane stays cheap once there is more work than
+reviewers.
+
+`nova-merge batch` is the local landing gate: it builds the combined branch and
+runs the repository's build, vet, Go and Lisp checks without pushing. After the
+batch passes its required review and checks, `queue` records holds, skips and
+ordering. `rebase` cuts bounded repair cards. Teams that already use Redis can
+connect `nova-work events` to `nova-merge react`; the ordinary merge lane does not
+require Redis or a resident loop.
 
 **It worked if** it refused to land something whose checks had not passed, and
 told you exactly which condition was missing.
@@ -363,29 +386,52 @@ tells you so rather than making a number up.
 **Try it when** you are about to run something that has no business reading your
 keys or writing outside one directory.
 
-**What it does.** Restricts which files a command can access, **on macOS**.
+**What it does.** Restricts which files a command can access on macOS and
+supported Linux kernels.
 
-**You need** macOS, and an explicit list of readable and writable paths.
+**You need** macOS or Linux with Landlock, and an explicit list of writable paths
+plus any readable paths the command needs. Run `nova-sandbox check` on the actual
+machine rather than assuming its kernel can enforce the wall.
 
 **First trial.** `nova-sandbox check` needs no flags and reports what the backend
-on this machine can actually enforce. `probe` then proves the wall, and it
-requires the paths it is proving — `--read`, `--write` and a `--secret` it must
-fail to read — refusing rather than guessing any of them. The
+on this machine can actually enforce. `probe` then proves the wall and requires a
+writable path. Add `--read` when proving a shared input is readable, and add
+`--secret` when there is a credential file the wall must deny. A credential
+delivered only through the environment has no secret-file path to name. The
 [first-run transcript](TESTS.md#nova-sandbox) is executed by a test and shows
 `check`, a full `probe` and a contained command in three steps. See
 [nova-sandbox in the command reference](CLI.md#nova-sandbox).
 
 **It worked if** `check` named a usable backend, and `probe` reported every step
-`got=` what it `expect`ed — including the secret it was denied.
+`got=` what it `expect`ed — including any secret-file check you requested.
 
-**Limits and side effects.** **macOS only today; Linux and Windows backends are
-not built,** and on those platforms it refuses rather than pretending. Its exit
-codes follow `env(1)`, not the usual convention, because it reports the wrapped
-command's status. Read the [security guidance](SECURITY.md) and test your policy
-before trusting it with real work.
+**Limits and side effects.** macOS uses `sandbox-exec`; Linux uses Landlock and
+refuses when the running kernel cannot provide it; Windows has no backend and
+refuses rather than pretending. Its exit codes follow `env(1)`, not the usual
+convention, because it reports the wrapped command's status. Read the
+[security guidance](SECURITY.md) and test your policy before trusting it with
+real work.
 
-**It may not help if** you are not on macOS, or your platform already hands you
-containers.
+**It may not help if** your machine has no supported backend, or your platform
+already hands you containers.
+
+### nova-secrets — selected credentials for one command
+
+**Try it when** a worker or service needs a provider key and copying plaintext
+into a card, configuration file or shell history is unacceptable.
+
+**What it does.** Passes only the credential names selected with `--only` to one
+child command. It does not create provider accounts, grant access, or expose every
+stored secret by default.
+
+**First trial.** Use `names` to see the available names and `check` to verify the
+store and your identity before any `exec`. Then give `exec` an explicit `--only`
+list and matching `--require` checks. See
+[nova-secrets in the command reference](CLI.md#nova-secrets).
+
+**Limits and side effects.** The child command has the selected credentials for
+its lifetime and may use them according to its own behavior. Keep secret values
+out of arguments, logs and task text.
 
 ### nova-memory — find the note without rereading everything
 

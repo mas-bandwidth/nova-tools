@@ -15,8 +15,8 @@ window reads one line per cycle.
 - `nova-pulse pool` enumerates bounded open work from declared sources into `pool.tsv`.
 - `nova-pulse cut` writes one card per candidate from a typed template, in the practice-17
   shape ([WORKER-CARDS.md](WORKER-CARDS.md) 17), and a `cards.tsv` with the model by kind.
-- `nova-pulse launch` allocates free slots, admits the cards as one batch with a `--then`
-  that names `harvest`, and queues what did not fit.
+- `nova-pulse launch` allocates free slots, admits the cards as one batch, and queues what did
+  not fit.
 - `nova-pulse harvest` pushes and opens a PR for every card whose `RESULT.md` line 1 is its
   contract line, sends every abstain to `retry.tsv` with the harness's last refusal line,
   cuts a read card per PR, and pulses again — queue first.
@@ -31,7 +31,7 @@ more. Merges are not this tool's: `nova-merge` and a person hold the gates
 ## The loop, in words
 
 ```
-pool ──► cut ──► launch ══(nova-swarm batch, --then harvest)══► harvest ──► pool ──► …
+pool ──► cut ──► launch ══(nova-swarm batch: pool admission)══► harvest ──► pool ──► …
  │                 │                                              │
  │  candidates     │  every free slot is filled with admitted work;│  done: push, PR, read card
  │  from sources   │  the rest wait in queue.tsv, never dropped    │  abstain: retry.tsv, no push
@@ -165,6 +165,24 @@ The loop ends only when the pool and the queue are both empty, and then it says 
      ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
      relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
+10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
+    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s
+    --files <n> --tokens <n>` per model route present, so at most two admissions, both under
+    one pulse id recorded in `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on
+    `--files` and `--tokens` is that route's card count and summed token bound taken from its
+    `cards.tsv` columns, so the admission is bounded exactly as the cards say. Where
+    `cards.tsv` carries no budget column, the budgets come from the configuration --
+    `[launch] files` (default 40) and `[launch] tokens` (default the explicit word
+    `unmetered`, which is what a native runner with no live token accounting has always
+    meant). Neither is ever omitted: `nova-swarm batch` requires both and refuses to guess,
+    so a launch that names none is refused before a card starts (issue #869). This is the
+    pool/tasks admission mode: it enqueues work and returns, it does not wait and it holds no
+    follow-on. `--then` is the gather mode's flag (`batch --cards --runner`), so `launch`
+    never passes it; `launch`'s whole-seconds `--deadline` is spelled as the duration `<s>s`
+    the swarm's `Sidecar.Deadline` parser requires, because a bare `120` parses as no deadline
+    and silently falls back to the worker default (issue #534). A `BATCH REFUSED` line from
+    the swarm is relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
+11. **`harvest` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
     its own two lines — line 1 the contract, line 2 the verdict — and by the `BRANCH` line.
     It never asks `nova-merge` whether the PR can merge, never reads a hosted check, never
     waits for a read. A chain that waits on mergeability waits on a person, and the pulse
@@ -285,6 +303,28 @@ is a tab-separated file, one bench per line: `name`, `ssh target`, `home`,
 `mac` (the wake address; `-` when the bench never sleeps). A missing
 `--benches` is `refusing to guess`, exit 2.
 
+**The machines registry.** `--machines <file>` is the second file, and it says
+what each machine IS: `name`, `ssh`, `os/arch`, `roles`, `seat`, `cores`,
+`notes`, tab separated, where `roles` is a set from `{bench, runner,
+coordination, services}`. THE LOCK (Glenn, 2026-09-18): **runner hosts are
+CI-only** — no card, no probe and no load may be placed on a machine that
+serves the merge group's shards. Every verb that puts work on a machine
+resolves its `--bench` through the registry and refuses a machine whose roles
+lack `bench`, by name and before any ssh:
+
+```
+FILL REFUSED bench=batman reason=runner-host remedy="..."
+```
+
+The reason is one of `runner-host`, `coordination-host`, `services-host`,
+`not-a-bench`, `unknown-machine`. `nova-pulse fill`, the path a CARD takes,
+**requires** `--machines`: without it the verb cannot tell a bench from a CI
+runner host, and that is the one thing it may not guess. The fleet admin verbs
+take it optionally and keep their older guard without it. A machine that is
+both `runner` and `bench` must carry a dated exception in its notes,
+`allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
+worker runs cards in containers. `nova-pulse fleet registry` lists the file.
+
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
 0/2/3 (0 ok, 2 drift-or-refused, 3 unreachable), takes ssh from `--ssh` so
@@ -393,6 +433,124 @@ seat the key names. It never prints a value. The benches run in parallel under
 or found no seat, and 3 when any bench was unreachable. ssh comes from `--ssh` (default
 `ssh`), so a test fakes it and no test reaches a machine.
 
+### The four bench scripts, retired
+
+`fleet standard`, `fleet mirror`, `fleet join` and `fleet sleep` are the last
+four hand-run bench scripts as verbs (#1142, "everything sketched becomes a
+tool"). Each keeps the fleet rule: one bench per `--bench`, every path from a
+flag with no default, ssh from `--ssh`, `studio` and an unknown name refused by
+name before any ssh, exit 0/2/3, and one remedy line per refusal.
+
+`nova-pulse fleet standard --benches <file> --bench <name> [--want <stamp>]
+[--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>]
+[--timeout <s>] [--max <n>]` holds one bench against the provisioning standard.
+It prints one `STANDARD <bench> <check> OK got=<v>` or
+`STANDARD <bench> <check> DRIFT want=<match>:<want> got=<v>` line per check and
+then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
+`FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
+operating system, so the standard is read rather than traced through a shell
+script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+`sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
+opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
+the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
+the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
+`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+first — with the stamp, seat and space checks shared. `--os` names the list;
+left out, the bench is asked with `uname -s`. The remote side prints
+`CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This
+retires `bench-standard.sh`, which refused to run anywhere but ON a Linux bench
+and could say nothing at all about a Mac one.
+
+`nova-pulse fleet mirror --benches <file> --bench <name> --repo <url>
+--path <remote path> [--ssh <path>] [--timeout <s>]` creates the bare mirror a
+card clones from (`git clone --reference`) or fetches the one already there, and
+prints `FLEET <bench> MIRROR <path> created|refreshed head=<sha> size=<n>K`. It
+deletes nothing. `--repo` must be an https remote and `--path` an absolute clean
+path, both free of shell metacharacters, or the verb refuses before any ssh:
+both are pasted into a remote command line. This retires `bench-mirror.sh`,
+whose mirror root and repository list were hard-coded.
+
+`nova-pulse fleet join --benches <file> --bench <name> --tailscale <path>
+--authkey-env <NAME> [--ssh <path>] [--timeout <s>]` joins one bench to the
+tailnet and prints `FLEET <bench> JOINED ip=<addr>`. The auth key is never a
+flag value: it reaches the process ONLY through the environment variable
+`--authkey-env` names, which `nova-secrets exec` fills for the length of the
+call, and it reaches the bench on the remote shell's stdin, piped into
+`tailscale up --auth-key=file:/dev/stdin --hostname=<bench>`, so it is in no
+argv on either machine, and anything the bench says back is scrubbed of it
+before a line is printed. An empty variable, a `--tailscale` that is not
+absolute, and a bench the file does not carry are refusals before any ssh. This
+retires `ts-join-one.sh`.
+
+`nova-pulse fleet sleep --benches <file> --bench <name> [--ssh <path>]
+[--if-idle] [--force] [--timeout <s>] [--max <n>]` puts ONE bench to sleep. It
+is `fleet suspend` over one name, not a second implementation: one place decides
+busy, so a lease or a job directory with a live pid under either swarm root, or
+a `Runner.Worker`, is `FLEET <bench> BUSY <what>` and is never suspended. It
+retires the Linux half of `fleet-sleep.sh` (the Mac half — `pmset` idle sleep —
+is `nova-pulse sleep`, under "Mac bench power"): that script asked GitHub whether
+the bench's RUNNERS were busy and knew nothing about the cards in flight on it,
+so a bench working through nova-swarm looked idle and slept under its own work.
+
+Red tests, one per verb: `fleet-standard-lists-the-checks` (the two lists as
+data, and what both benches must carry in both); `fleet-standard-names-the-check-that-drifted`;
+`fleet-mirror-creates-then-refreshes` (clone once, fetch after);
+`fleet-join-keeps-the-auth-key-out-of-every-argv` (the key is on the remote
+stdin and in no argv log, on neither stream); `fleet-sleep-refuses-a-bench-with-a-live-job`
+(and the idle one is suspended through systemctl). Every one of them drives a
+fake ssh on the test's own PATH that runs the remote script through `bash -s`
+with fake sudo, git, tailscale and systemctl beside it, so no test reaches a
+machine or opens a socket.
+
+## Mac bench power
+
+The Mac benches (batman, superman) draw 100 W each and the fleet runs on solar, so an idle
+Mac sleeps and is woken on demand (Glenn 2026-09-17). `nova-pulse wake` and
+`nova-pulse sleep` are the Go verbs that replace `scripts/coordination/fleet-wake.sh` and
+`fleet-sleep.sh` (#1142); the shell's case table, its python heredoc over `ssh` and its
+swallowed errors are not carried over. Both take the benches as a repeatable
+`--bench <name>` or as bare arguments.
+
+The verb lines, as `nova-pulse help` carries them:
+
+```
+nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
+```
+
+`--registry` is one `name,mac,lan-bench` per line, blank lines and `#` comments skipped.
+The file is validated whole before any ssh: a row with the wrong field count, an empty or
+non-alias name, a mac that does not parse as six bytes, an empty `lan-bench`, or a duplicate
+name refuses the verb, and an unknown `--bench` refuses the whole invocation rather than
+waking the ones it knows.
+
+To wake a bench the magic packet is built in Go -- six `0xFF` bytes then the six-byte mac
+sixteen times -- and sent three times from the named `lan-bench` to the all-ones UDP
+broadcast on port 9. Then ssh is polled for up to ninety seconds; a user-activity assertion
+(`sudo -n pmset -a sleep 0; /usr/bin/caffeinate -u -t 5`) turns the dark wake a magic packet
+gives (ssh answers, runners stay offline) into a full one; and the bench is awake only when
+the runners whose names start with the bench show `online` in GitHub inside `--timeout`. The
+line is `WAKE <bench> up after <s>s runners=<n>` or
+`WAKE FAIL <bench> <stage> <reason>`, the stage one of `registry`, `packet`, `ssh`,
+`assert`, `runners`; a bench a test already sees online prints `up after 0s`.
+
+`sleep` refuses while any runner of the bench is busy (`SLEEP REFUSED <bench> busy=<n>`;
+`busy=unknown` when GitHub cannot be read, refusing rather than guessing), and otherwise
+sets idle sleep with `sudo -n pmset -a sleep <m> displaysleep 1 womp 1`, printing
+`SLEEP <bench> idle=<m>`. A failure to reach the bench is `SLEEP FAIL <bench> <reason>`.
+
+Red tests, one per behaviour: `power-wake-registry-refused-before-ssh` and
+`power-wake-unknown-bench-refused-before-ssh` (no runner call before validation);
+`power-wake-sends-packet-asserts-and-waits` (the packet goes from the `lan-bench` first,
+then ssh, then the assertion, then the runner wait); `power-wake-fails-with-the-stage-that-did`
+(no ssh inside ninety seconds is `WAKE FAIL ... ssh`); `power-wake-fails-when-no-runner-comes-online`;
+`sleep-refuses-a-busy-bench` (a busy runner is never told to sleep);
+`sleep-sets-idle-sleep`; the `power-registry-*` shape cases; and
+`power-runner-timeout-kills-the-group` (a cancelled ssh child takes its whole process group
+with it). Every remote step goes through one runner interface (`ssh <target> bash -s`, the
+script on stdin) and the GitHub runner list is a second interface, so every test drives
+fakes and no test opens a socket or reaches a machine.
+
 ## Fleet hygiene
 
 `nova-pulse fleet hygiene --install` starts mechanical clean-as-we-work on the bench it runs
@@ -471,18 +629,35 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 11. `hygiene-refuses-studio`: any hygiene act with `studio` in `--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fake ssh log is empty.
 12. `hygiene-status-without-benches-refuses`: `--status` with no `--benches` is `refusing to guess`, exit 2, and no bench is contacted.
 
+`fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
+2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
+record — the `fleet-probe` job in `ci.yml` (#872), dispatched with
+`bench=<label> slots=<n>`, one job per runner slot, read back by `runner_name` —
+and refuses the bench unless every runner name on the record is green: the line
+is `FLEET REFUSED bench=<name> runner=<first-not-green> run=<id>:
+the fleet-probe is not all green (green=<n> of <n>)`, exit 2, and a record with
+no jobs is refused the same way because a probe that ran nothing is not a probe.
+A green record prints `FLEET ADD bench=<name> run=<id> runners=<n>` and writes
+two values that no other verb and no hand writes: `<queue>/PULSE_ROOTS`, the
+roots the loop holds, and `<queue>/runner-labels.tsv`, one admitted runner per
+line. The red test is `fleet-add-refuses-a-bench-with-a-failed-probe-job`: a
+fixture record with one failed job and one green job is refused with the failed
+runner name and the run id on the line.
+
 ## The verbs
 
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse handoff --queue <dir> --to <name> --bus <clone> --roots <dirs> [--as <name>] [--work <dir>] [--max <n>]
 nova-pulse takeover --queue <dir> --as <name> --bus <clone> --roots <dirs> [--max <n>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -564,7 +739,25 @@ STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
 STATUS SLOTS bench=<name> capacity=<n> reserve=<n> held=<n> free=<n> owners=<owner:held/share,...>
 STATUS STARVED bench=<name> free=<n> pending=<n>
+STATUS SWARM first_attempt=<x.xx|-> done=<n> abstain=<n> batches=<n> hedge=<none|opus-on-critical-path|->
+STATUS FAULT reason=<token> count=<n>
+STATUS PIT-STOP reason=<token> count=<n> remedy=fix the machinery before more cards
 ```
+
+**The swarm's own health is a flag, never a guess** (`--batches <dir>`, `bin/status.sh`'s
+last two lines). With `--batches` status folds the newest 60 `batch-*.out` outputs in that
+directory, by modification time with the name as the tie-break: `done=` and `abstain=` summed
+over their `BATCH` lines give `first_attempt`, and every `<label> slot=<n>: ABSTAIN
+reason=<token>` line is counted by reason. `hedge` is `opus-on-critical-path` below 0.90 —
+the coordinator's model stays on the critical path until the rate holds above it for a day
+(Glenn, 2026-09-15) — and `none` at or above it. One `STATUS FAULT` line per reason prints
+loudest first, capped by `--max`, and a reason recurring five times or more in the window is
+`STATUS PIT-STOP`: when one small fault recurs, fixing it beats continuing (Glenn,
+2026-09-16), because more cards through a broken machine is the most expensive thing the
+fleet does. Without `--batches` none of the three lines print — the verb claims nothing about
+a swarm it was not shown — and a `--batches` that cannot be read is refused with one remedy
+line rather than folded as a swarm with no faults. The `BATCH` line's own
+`uniform-abstain=<reason>` field is a label and is never counted.
 
 **Utilisation is per bench, every slot working all the time** (Glenn). With
 `--slots-store <dir>[,<dir>]` status reads each bench slot-lease store
@@ -627,6 +820,91 @@ opened over closed. When a stream's ratio has been above 1 for every tick in two
 prints `STATUS EXPANDING stream=<name> hours=<n>` and exits 2 — the alarm is a state the
 coordinator must act on, like `PULSE UNDER-WIDTH`.
 
+### The fleet page
+
+`nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>]
+[--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
+[--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]` is the fleet page as a verb
+(`bin/status-page.sh`). It reads every bench in `--benches` over `ssh <target> bash -s`, in
+parallel and bounded by `--timeout`, counting live cards from running card processes — a
+process whose command line names a job directory, or whose cwd is under the slot, the
+authoritative shape `bench-hygiene.sh`'s `live_slot` uses — and never from log age, which
+called a silently dead card alive and a long card dead. It writes the page to `--html`,
+appends one seven-column row to `metrics.tsv` beside it — `<RFC3339> live queue merged
+opened launched free-disk-per-bench` — ships both where `--publish` says, and prints one
+line:
+
+```
+STATUS HTML wrote=<path> live=<n> queue=<n> down=<n> merged=<n|-> published=<host:dir|->
+```
+
+**A count nobody took is a dash, never a zero.** This is the page's one rule and it has
+been learned twice. A bench that does not answer is `DOWN (no answer over ssh)`, its disk is
+a dash in the metrics row, it adds nothing to `live`, and it is counted in `down=`: a row of
+zeros reads as a bench with nothing to do, which is how a fleet nobody could see looked
+healthy on 2026-09-17. An answer that cannot be parsed is no answer and says DOWN too. With
+no `<queue>/REPO` there is nobody to ask the forge, so `merged`, `opened` and the merge
+queue read as a dash on the page, in the series and on the STATUS HTML line, and the chart
+plots a gap rather than a flat line at zero — a flat line is a claim.
+
+The rule was learned a third time by probing the real fleet: a `--benches` home that is not
+a directory on the bench — a typo, a user renamed, a machine reinstalled — let `df` answer
+nothing, and every row read `0 GB free, allowed 0` from benches that had answered perfectly.
+So the home is checked first, before any of the work it would make pointless, and the row
+says DOWN **with its reason** rather than a number. The reasons are prose and render as
+prose: a run verdict of `completed cancelled` printed once as `completed\x20cancelled`,
+because two words had gone through the one-token escaper.
+
+**The rows, all of them.** The page a fleet reads is the whole page or it is not adopted:
+an adoption attempt on 2026-09-17 matched four bench rows byte for byte and was still
+correctly refused over twelve gaps.
+
+- the branch tip and its CI run (`--branch`, `dev` by default) — a red tip is the one fact
+  that makes every other number beside the point;
+- the merge queue by state: running, waiting, unmergeable, from the forge's `mergeQueue`;
+- pending and ready cards, what the fill loop launched and what capacity refused;
+- hygiene actions in the last hour, summed over the benches from each `~/hygiene.log`,
+  counted in the SAME round trip as the liveness numbers — a second ssh per bench per
+  minute for one integer is the dumb waste the fleet audits for;
+- one row per bench, and one for `--self`: the host running the verb is a bench too, with
+  its own columns (CI runners, cores, load, free disk, orphans). The Studio drowned at load
+  147 on 2026-09-17 while the page showed four Linux benches idling;
+- the loops on the `--self` host, counted by the pattern the CALLER names. No loop name is
+  baked into this tool: a verb carrying `harvest-loop.sh` in its source would freeze the
+  scripts it exists to retire, and `--loop` without `--self` is refused because there is no
+  host to count them on;
+- the `metrics.tsv` time series it writes beside itself.
+
+**`--limit` is not optional on a gh list.** gh's own default is thirty, so a fleet that
+merges more than that reads as a fleet that merged thirty, every tick, for the rest of the
+day. The page said 30 where the script said 273. Every list call here asks for 500.
+
+**The day starts at 02:00Z** (`--day-start`), because `INSTALL-fleet.md`'s `rate_counter`
+resets there and the script counted from there; before the boundary the window is still
+yesterday's. A malformed boundary is refused rather than silently reset, and the page names
+the boundary it counted from.
+
+**`--publish <host:dir>`** ships `index.html` and `metrics.tsv` through the same ssh door
+the benches are read through, as one child writing both files. A failed publish is loud and
+exits 3: a page that quietly stopped shipping goes stale while everybody keeps reading it.
+The local page is written first, so a publish that fails never costs the file.
+
+**`--gh-config <dir>`** is `GH_CONFIG_DIR` for the gh children, and it overrides rather than
+invents: without it the caller's own environment goes through untouched. gh answers as
+whoever that directory says, so a page run from a service manager with a bare environment
+must be given it.
+
+**The verb is bounded and it is fast.** `--timeout` takes a whole number of seconds or a
+duration (`90s`, `2m`), because the verb's own progress line prints a duration and a flag
+that will not accept what the tool prints is a trap. The `/proc` walk happens once, before
+the slot loop, and is capped: reading every pid's cwd once per slot is forty slots times a
+few thousand processes, which is why a live bench read DOWN at `--timeout 10` and the page
+took 24.6 s against the script's 13.8. This path fetches pull requests only — the page
+shows no issue count, and the issue round trip was half its gh time.
+
+**Counts only ever reach the page**: no card id, branch name or label, because it is served
+to whoever can reach the host.
+
 ## Progress
 
 `nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]` answers "how fast, at what cost,
@@ -636,8 +914,14 @@ two lines:
 
 ```
 PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n.n> effective_parallelism=<n.n> cards_per_hour=<n.n>
-ESTIMATE remaining_cards=<n> hours=<n.n>
+ESTIMATE remaining_cards=<n> hours=<n.n> pending=<n> launched=<n> prs=<n> issues=<n> wall_p90_s=<n> parallelism=<n.n> rate=<n.n>/h factor=1.5
 ```
+
+**The estimate names its terms.** `remaining_cards` and `hours` are the answer; `pending`,
+`launched`, `prs`, `issues` and the three rates behind them are how it was reached, and they
+reconstruct it exactly: `remaining = pending + launched + prs + 2 x issues` and `hours =
+remaining x wall_p90_s / parallelism x factor`. An estimate a reader cannot check is one
+nobody acts on, which is why `bin/progress.sh` printed the terms from the first day.
 
 `effective_parallelism` is busy card-seconds over span seconds — what the benches did, not
 what they had. `remaining_cards` is pending + launched + open PRs needing a read + 2 x open
@@ -904,9 +1188,9 @@ clone and copy pay about 44 s and the model loop pays the tail — the same leve
   person rewrites it, and the rewritten card is a new candidate.
 - **No model call, no summary, no judgement.** It never reads a report body, never opens a
   transcript, never scores a finding. The swarm's packet is the whole read.
-- **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
-  the alarm is `width`, run by nova-wake or a person. The one clock is the manager tier's
-  cycle (#587), and its tick is **Rate and convergence** rule 1.
+- **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `harvest` and
+  the manager tier's tick; the alarm is `width`, run by nova-wake or a person. The one clock
+  is the manager tier's cycle (#587), and its tick is **Rate and convergence** rule 1.
 
 ## The manager tier
 
@@ -1168,6 +1452,12 @@ handoff (rule **The manager tier**).
      `--cards` TSV holding exactly the admitted cards in order, `--deadline`, a `--runner`,
      `--root`, and a `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH
      REFUSED` fixture reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
+12. `launch-every-card-through-batch`: two model routes present run exactly two `nova-swarm
+    batch` invocations and zero `nova-swarm add`, each with `--label pulse-<id>`, a `--files`
+    equal to that route's card count, a `--tokens` equal to the sum of that route's `tokens`
+    column in `cards.tsv`, a duration-form `--deadline <s>s`, and no `--then` (the gather
+    mode's flag, which this admission does not carry); a `BATCH REFUSED` fixture
+    reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
 13. `harvest-pushes-only-on-line1-match`: three done cards — line 1 equal, line 1 differing
     by one byte, line 1 equal with `BRANCH main` — push exactly one, by `git push <https>
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
@@ -1397,6 +1687,10 @@ handoff (rule **The manager tier**).
    --root <root>"` to `nova-swarm batch`'s card form, which runs it when every card is done
    and never earlier (rule 10); the pool form's `--then` (card 269) is no longer on launch's
    path. Nothing else in this draft depends on it.
+4. **What batches the chain.** `nova-swarm batch`'s pool/tasks admission mode enqueues work
+   and returns; `--then` belongs to its `--cards --runner` gather mode only. Default: `launch`
+   admits and prints its line, and `harvest` is run by the manager tier's tick (or a person),
+   never chained from the admission batch itself.
 5. **What the shipped tool is behind on, named rather than assumed.** This is a draft, and
    `## Tests this spec demands` says so: the replays are demanded of the implementation, not
    read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
@@ -1454,6 +1748,7 @@ by `lisp/nova-work/tests/acceptance.lisp` (WORKER-CARDS.md practice 26).
 - [CI wall](spec-pulse/15-ci-wall.md)
 - [Layout](spec-pulse/16-layout.md)
 - [The beat](spec-pulse/17-the-beat.md)
+- [The learned admission checklist](spec-pulse/18-learned-admission-checklist.md)
 
 ## The beat
 
@@ -1470,6 +1765,68 @@ lines=<n>`, where `<n>` is the cairn's line count, and then the line a fresh win
 from: `RESTART: exit this window; the next window boots from <cairn>`. Replays:
 `beat-appends-the-queue-section`, `beat-appends-a-second-section`,
 `beat-without-git-still-says-ok`.
+
+## The learned admission checklist
+
+Ikrima's synthesis for Glenn, "Let tomorrow's questions shape today's memory" (2026-09-16),
+reviewed by Rowan. The organizing question: what may Rowan forget while still able to learn,
+decide and act correctly tomorrow? The answer from today's record is the **abstain reason** —
+the recurring failure class the machinery actually produced. The checklist below is cut from
+that history, not from imagination, and every rule names the hurt that made it and the red
+test that holds it. `nova-pulse cut --probe` runs it against each new card before launch.
+
+1. **The checklist is cut from the abstain history, never invented.** The 2026-09-15 baseline
+   over 60 batches: first-attempt 0.58, and the classes that recur are `no-result` (26),
+   `wall refusal`, `idle kill`, `admission` and `line1-mismatch`. **Hurt:** a rule written
+   after each fault did not transfer to the next unfamiliar card, so the same class abstained
+   again; a checklist with no history behind it is a new opinion, not memory. **Red test:**
+   `probe-reads-the-abstain-history` — a check whose class is absent from the history is
+   skipped, and the same check refuses the card when the class is present.
+
+2. **`cut --probe` runs the checklist against each new card before launch.** **Hurt:** the
+   classes were discovered only after a card was cut, launched and abstained, at the price of
+   the whole run; the probe pays a read instead. **Red test:** `probe-refuses-before-launch` —
+   a card carrying a known class is refused with no card written and exit 1.
+
+3. **The five checks, each named for the class it was learned from:** paths outside the job;
+   quoted forbidden words; a missing red-test step; the budget against the card's size; the
+   result location. **Hurt:** `admission` and `wall refusal` came from cards that left their
+   job, `line1-mismatch` from a card with no red-test step, `idle kill` from a card over its
+   file budget, `no-result` from a card that never named where `RESULT.md` goes. **Red test:**
+   `probe-names-the-five-checks` — each class names its one check.
+
+4. **A probe refusal names the known class and its remedy.** **Hurt:** an abstain reason that
+   arrived without its class was triaged as new and cost a fresh rule; the probe says
+   `class=` so the per-class count stays comparable to the history. **Red test:**
+   `probe-refusal-names-the-class`.
+
+5. **Measure repeated abstains of a known class on unfamiliar cards (retained transfer).**
+   The measure is abstains per class per day, and total cost with reads and probes included;
+   the adoption round and Glenn's judgment stay the external standard. **Hurt:** counting only
+   total abstains hid that the classes had moved to new cards. **Red test:**
+   `probe-counts-by-class-per-day`.
+
+6. **A compression is legal only if the next decision survives it.** Apply it to the manager's
+   `SHIFT END` and `HANDOFF` record: a successor must be able to make the same next decision
+   from the record alone. **Hurt:** a handoff that carried what the shift produced, not what
+   the successor needs, sent a fresh window to a different first move. **Red test:**
+   `handoff-record-supports-next-decision`.
+
+7. **A cairn compaction carries what the next decision needs, not what the last produced.**
+   **Hurt:** a session summary that preserved the last turns lost the one fact the next window
+   acted on. **Red test:** `cairn-preserves-next-decision`.
+
+8. **A read RESULT states its scope: `not checked: <list>`.** **Hurt** (his PR 300 point): a
+   "review passed" line lost the kind and scope of the evidence it stood on, so a reader took
+   a pass over one axis for a pass over all — "review passed" is not a verdict. The template
+   change lands in `nova-pulse cut` and in SPEC-REVIEW. **Red test:**
+   `read-result-states-not-checked`.
+
+9. **The objective is future capability per unit of total cost, verification included.** The
+   ledger adds the read and probe cost to each card's row, so the probe is never free by
+   construction and a cheaper route that cannot hold the card is named. **Hurt:** a route
+   chosen on card price alone bought abstains that cost more than the card. **Red test:**
+   `ledger-counts-read-and-probe`.
 
 ## Watch
 

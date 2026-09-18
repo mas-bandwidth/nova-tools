@@ -3,6 +3,7 @@ package bus
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -521,6 +522,39 @@ func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
 	}
 }
 
+// testWaitBound is how long an event poll waits for an observable before it reports rather
+// than waits forever. It is read from NOVA_TEST_WAIT (default 30s), the allowed shape the
+// waits class test names: every use returns the MOMENT the observable appears, so a slower
+// runner pays only when the event never comes.
+func testWaitBound() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+// helperStdin keeps a helper process parked until its parent kills it, with no timer in the
+// helper: the parent holds the write end of a pipe open for the life of the test, and the
+// helper blocks in blockUntilKilled on the read end. When the parent SIGKILLs the helper the
+// pipe closes with it; when the test ends, cleanup closes the write end.
+func helperStdin(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close(); _ = r.Close() })
+	cmd.Stdin = r
+}
+
+// blockUntilKilled is the helper's half of helperStdin: a read that returns only on EOF,
+// which never arrives before the parent kills the process.
+func blockUntilKilled() {
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
 func TestSendPreparedProcessDeathHelper(t *testing.T) {
 	if os.Getenv("GO_WANT_PREPARED_DEATH_HELPER") != "1" {
 		return
@@ -598,8 +632,8 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 		os.Exit(5)
 	}
 
-	// Block indefinitely until killed by parent via SIGKILL
-	time.Sleep(10 * time.Minute)
+	// Block until killed by parent via SIGKILL, with no timer.
+	blockUntilKilled()
 }
 
 func TestPreparedIndexStagedPartialHelper(t *testing.T) {
@@ -648,7 +682,7 @@ func TestPreparedIndexStagedPartialHelper(t *testing.T) {
 	if err := os.WriteFile(barrierFile, []byte("ready\n"), 0644); err != nil {
 		os.Exit(5)
 	}
-	time.Sleep(10 * time.Minute)
+	blockUntilKilled()
 }
 
 func TestSendPreparedRecoveryHelper(t *testing.T) {
@@ -702,13 +736,15 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 				"PREPARED_HELPER_MODE="+mode,
 				"PREPARED_HELPER_ART="+artFile,
 			)
+			helperStdin(t, cmd)
 
 			if err := cmd.Start(); err != nil {
 				t.Fatalf("failed to start helper process: %v", err)
 			}
 
-			// Wait for observable barrier
-			deadline := time.Now().Add(5 * time.Second)
+			// Wait for the observable barrier, up to a generous bound the environment
+			// can move.
+			deadline := time.Now().Add(testWaitBound())
 			for {
 				if _, err := os.Stat(barrierFile); err == nil {
 					break
@@ -818,10 +854,11 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 		"PREPARED_HELPER_BARRIER="+barrierFile,
 		"PREPARED_HELPER_ART="+artFile,
 	)
+	helperStdin(t, cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start helper process: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testWaitBound())
 	for {
 		if _, err := os.Stat(barrierFile); err == nil {
 			break

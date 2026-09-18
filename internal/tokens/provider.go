@@ -257,8 +257,9 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 
 // xaiJSONColumns maps the grok usage JSON's camelCase turn fields to the five token types
 // the xAI parser already reports from the CSV shape. totalTokens is a derived sum, and
-// modelCalls/costUsdTicks/turnCount are not token spend, so none of them is a column: an
-// unknown field is ignored rather than admitted as a seventh type.
+// modelCalls/turnCount are not token spend, so neither is a column: an unknown field is
+// ignored rather than admitted as a seventh type. costUsdTicks is not token spend either
+// -- it is the turn's COST, and it folds into the message's Usd below, never into a type.
 var xaiJSONColumns = map[string]Type{
 	"inputTokens":         Input,
 	"outputTokens":        Output,
@@ -325,6 +326,16 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 			}
 			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
 				m.Counts.Set(t, n)
+			}
+		}
+		// The turn's cost is its costUsdTicks: an integer count of micro-dollar
+		// ticks, the unit the fold's usd= holds (rule 20: the cost is "from the
+		// usage `usd` column or a cost tick the source reported"). A lexeme that
+		// is not a non-negative integer is an absence rather than a guess, and
+		// usd= is 0 where no source reported one.
+		if v, ok := turn["costUsdTicks"].(json.Number); ok {
+			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil && n >= 0 {
+				m.Usd = n
 			}
 		}
 		s.Stream = append(s.Stream, m)

@@ -218,6 +218,14 @@
 (deftest "session-server-daemon-and-session-start" "docs/SPEC-WORK.md:268-310,2256-2267"
     "expected=launcher-returns-session-ok-while-daemon-stays-up;status-served-over-the-local-socket;foreground-is-the-process;stop-shuts-the-listener"
   (let* ((base (short-socket-base (format nil "nwd-~D" (random 1000000))))
+         (tmp (namestring (uiop:temporary-directory)))
+         (name (format nil "nw-daemon-~D" (random 1000000)))
+         ;; A Unix-domain socket path lives in a fixed-size sun_path (108
+         ;; bytes); a temporary directory past that falls back to a relative
+         ;; name under this directory, which stays short enough to bind.
+         (base (if (< (length tmp) 80)
+                   (concatenate 'string tmp name)
+                   name))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w"))
          (fdir (concatenate 'string base "/f"))
@@ -342,3 +350,98 @@
         (ok (search "SESSION OK" (first lines)) "the no-clip stop still reports")
         (check-string= "2026-09-14T12:06:00Z" (owner-until record)
                        "a no-clip stop still releases the owner")))))
+
+;;; ------------------------------------------------------------------
+;;; `session export`: the request bundle, the bus between two owners
+;;; (SPEC-WORK.md:423-440, :2210-2240).
+;;; ------------------------------------------------------------------
+
+(deftest "session-export-writes-the-request-bundle" "docs/SPEC-WORK.md:423-440"
+    "expected=every-request-id-and-expect-and-payload;base=from-the-boundary;bundle-replays-whole;stale-refused-whole;byte-identical"
+  ;; A fenced session's accepted events since its base are written as a request
+  ;; bundle -- each request with its request id, its required --expect (the one
+  ;; clipped revision) and its payload -- with no repository read. The bundle
+  ;; replays whole into the next owner; a bundle whose clipped revision is not
+  ;; the target's is refused stale and applies nothing.
+  (let* ((path (test-journal-path "export-bundle"))
+         (seed '((:id "b1" :type :task :parent nil :state :todo)
+                 (:id "b2" :type :task :parent nil :state :todo)))
+         (j (open-file-journal path :initial-state-hash (root-digest (make-seed-state seed))))
+         (k (make-kernel :state (make-seed-state seed) :journal j)))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (ok1 line1 code1)
+               (submit k (list :verb :state-to-doing :node "b1" :by "rowan"
+                               :reason "start" :evidence '("ev-1") :request "req-a"
+                               :stamp "2026-09-14T12:00:00Z" :clock :tool
+                               :generation-owner "gen-4"))
+             (ok ok1 "the first mutation is accepted: ~A" line1)
+             (check-equal 0 code1 "exit 0"))
+           (multiple-value-bind (ok2 line2 code2)
+               (submit k (list :verb :state-to-doing :node "b2" :by "rowan"
+                               :reason "start" :evidence '("ev-1") :request "req-b"
+                               :stamp "2026-09-14T12:01:00Z" :clock :tool
+                               :generation-owner "gen-4"))
+             (ok ok2 "the second mutation is accepted: ~A" line2)
+             (check-equal 0 code2 "exit 0"))
+           ;; `session export --journal`: no repository, no validation -- the
+           ;; journal alone writes every request's --expect and base=.
+           (let* ((text (export-request-bundle j :clipped-revision 0 :base "boundary-sha"))
+                  (plist (rest (read-restricted text)))
+                  (requests (getf plist :requests)))
+             (check-string= "boundary-sha" (getf plist :base)
+                            "base= is the boundary record's commit sha")
+             (check-equal 0 (getf plist :clipped-revision)
+                          "the bundle names its one clipped revision")
+             (check-equal 2 (length requests) "every accepted request is in the bundle")
+             (check-equal '("req-a" "req-b")
+                          (mapcar (lambda (r) (getf r :request)) requests)
+                          "the bundle is ordered by acceptance")
+             (check-equal '(0 0) (mapcar (lambda (r) (getf r :expect)) requests)
+                          "every request carries the clipped revision as --expect")
+             (check-equal 1 (length (getf (first requests) :payload))
+                          "each request carries its payload events")
+             ;; The bundle is byte-identical however it is written.
+             (let ((one (test-journal-path "export-bundle-1"))
+                   (two (test-journal-path "export-bundle-2")))
+               (unwind-protect
+                    (progn
+                      (export-request-bundle j :into one :clipped-revision 0
+                                               :base "boundary-sha")
+                      (export-request-bundle j :into two :clipped-revision 0
+                                               :base "boundary-sha")
+                      (check-string= (uiop:read-file-string one)
+                                     (uiop:read-file-string two)
+                                     "the same bundle is written twice")
+                      (check-string= text
+                                     (string-trim '(#\Newline #\Space)
+                                                  (uiop:read-file-string one))
+                                     "the file carries the canonical bundle"))
+                 (ignore-errors (delete-file one))
+                 (ignore-errors (delete-file two))))
+             ;; It replays whole into a fresh engine at the clipped revision.
+             (let ((fresh (make-kernel :state (make-seed-state seed))))
+               (multiple-value-bind (lines applied) (replay-request-bundle text fresh)
+                 (check-equal 2 applied "every request in the bundle is applied")
+                 (check-equal 2 (length lines) "each request reports its own verdict")
+                 (ok (every (lambda (l) (search "REPLAY OK" l)) lines)
+                     "each line is its own verdict: ~S" lines)
+                 (check-equal :doing (node-state (kernel-state fresh) "b1")
+                              "b1 replayed")
+                 (check-equal :doing (node-state (kernel-state fresh) "b2")
+                              "b2 replayed")
+                 (check-equal 2 (state-revision (kernel-state fresh))
+                              "the replay moved the revision")))
+             ;; A bundle at another clipped revision is refused whole.
+             (let* ((stale (export-request-bundle j :clipped-revision 7
+                                                    :base "boundary-sha"))
+                    (fresh (make-kernel :state (make-seed-state seed))))
+               (multiple-value-bind (lines applied) (replay-request-bundle stale fresh)
+                 (check-equal 0 applied "a stale bundle applies nothing")
+                 (ok (every (lambda (l) (search "stale" l)) lines)
+                     "each stale request is refused by name: ~S" lines)
+                 (check-equal 0 (state-revision (kernel-state fresh))
+                              "the stale replay writes nothing")))))
+      (close-file-journal j)
+      (ignore-errors (delete-file path))
+      (ignore-errors (delete-file (concatenate 'string path ".lock"))))))

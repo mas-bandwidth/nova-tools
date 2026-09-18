@@ -3,11 +3,15 @@ package pulse
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // fakeSwarm puts a fake nova-swarm on PATH that records each invocation's argv, one line
@@ -326,5 +330,77 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	}
 	if !strings.Contains(string(pulses), "pulse-"+id+"\t4") {
 		t.Fatalf("pulses/%s.tsv does not name the batch: %q", id, pulses)
+	}
+}
+
+// realSwarm builds the nova-swarm binary from this revision and returns a directory
+// holding a shim named nova-swarm that records each invocation's argv before exec'ing
+// the real thing, and a runner shim that writes each card's RESULT.md. The bundled
+// example's fake exits 0 for any argv, so only the real binary can say whether the
+// wired launch's argv is one the swarm accepts.
+func realSwarm(t *testing.T) (binDir, argvLog string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the argv-recording shim is a shell script; the real binary is exercised on unix legs")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "nova-swarm.real")
+	build := exec.Command("go", "build", "-o", real, "../../cmd/nova-swarm")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the real nova-swarm: %v\n%s", err, out)
+	}
+	argvLog = filepath.Join(dir, "argv.log")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + argvLog + "\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "nova-swarm"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The card form starts one runner process per card. The runner writes the card's
+	// own line 1 as its RESULT.md so the real binary's gather scores the card done,
+	// and drops a marker the test can see.
+	runner := "#!/bin/sh\nhead -1 \"$4\" > \"$NOVA_SWARM_JOB/RESULT.md\"\ntouch \"$5/card-ran\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "nova-native-runner.sh"), []byte(runner), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, argvLog
+}
+
+// launch-composes-with-real-swarm (issue #534): the launched argv ran the pool/tasks
+// admission mode the swarm does not accept with the deadline form that mode requires.
+// The bundled example's fake exits 0 for any argv, so only the real binary catches the
+// mismatch. The card form carries whole seconds of deadline and the gather mode's
+// --then. The mutation that matters: the interface the release actually ships.
+func TestLaunchComposesWithRealSwarm(t *testing.T) {
+	root := t.TempDir()
+	binDir, argvLog := realSwarm(t)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cards, _ := writeCards(t, root, 1)
+
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 2, Deadline: "120",
+		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
+	}
+	if !strings.Contains(out, "PULSE OK") {
+		t.Fatalf("no PULSE OK: %q", out)
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(raw))
+	if !strings.Contains(line, "--cards ") {
+		t.Errorf("the real swarm was not handed the card form: %s", line)
+	}
+	if !strings.Contains(line, "--then nova-pulse harvest --id ") {
+		t.Errorf("the card form does not carry the gather mode's --then: %s", line)
+	}
+	if !strings.Contains(line, "--deadline 120") {
+		t.Errorf("the deadline is not the whole seconds the card form requires: %s", line)
+	}
+	if _, err := os.Stat(filepath.Join(root, "card-ran")); err != nil {
+		t.Fatalf("the real swarm never ran the card's runner: %v", err)
 	}
 }

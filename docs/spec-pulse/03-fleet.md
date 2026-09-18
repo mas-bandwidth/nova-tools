@@ -26,3 +26,72 @@ builds `nova-sandbox` from the checkout and runs the network fetch inside it,
 failing unless the fetch answers 200, so a bench enters the loop only after the
 SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
 one passed while every sandboxed card died.
+
+### The four bench scripts, retired
+
+`fleet standard`, `fleet mirror`, `fleet join` and `fleet sleep` are the last
+four hand-run bench scripts as verbs (#1142, "everything sketched becomes a
+tool"). Each keeps the fleet rule: one bench per `--bench`, every path from a
+flag with no default, ssh from `--ssh`, `studio` and an unknown name refused by
+name before any ssh, exit 0/2/3, and one remedy line per refusal.
+
+`nova-pulse fleet standard --benches <file> --bench <name> [--want <stamp>]
+[--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>]
+[--timeout <s>] [--max <n>]` holds one bench against the provisioning standard.
+It prints one `STANDARD <bench> <check> OK got=<v>` or
+`STANDARD <bench> <check> DRIFT want=<match>:<want> got=<v>` line per check and
+then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
+`FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
+operating system, so the standard is read rather than traced through a shell
+script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+`sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
+opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
+the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
+the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
+`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+first — with the stamp, seat and space checks shared. `--os` names the list;
+left out, the bench is asked with `uname -s`. The remote side prints
+`CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This
+retires `bench-standard.sh`, which refused to run anywhere but ON a Linux bench
+and could say nothing at all about a Mac one.
+
+`nova-pulse fleet mirror --benches <file> --bench <name> --repo <url>
+--path <remote path> [--ssh <path>] [--timeout <s>]` creates the bare mirror a
+card clones from (`git clone --reference`) or fetches the one already there, and
+prints `FLEET <bench> MIRROR <path> created|refreshed head=<sha> size=<n>K`. It
+deletes nothing. `--repo` must be an https remote and `--path` an absolute clean
+path, both free of shell metacharacters, or the verb refuses before any ssh:
+both are pasted into a remote command line. This retires `bench-mirror.sh`,
+whose mirror root and repository list were hard-coded.
+
+`nova-pulse fleet join --benches <file> --bench <name> --tailscale <path>
+--authkey-env <NAME> [--ssh <path>] [--timeout <s>]` joins one bench to the
+tailnet and prints `FLEET <bench> JOINED ip=<addr>`. The auth key is never a
+flag value: it reaches the process ONLY through the environment variable
+`--authkey-env` names, which `nova-secrets exec` fills for the length of the
+call, and it reaches the bench on the remote shell's stdin, piped into
+`tailscale up --auth-key=file:/dev/stdin --hostname=<bench>`, so it is in no
+argv on either machine, and anything the bench says back is scrubbed of it
+before a line is printed. An empty variable, a `--tailscale` that is not
+absolute, and a bench the file does not carry are refusals before any ssh. This
+retires `ts-join-one.sh`.
+
+`nova-pulse fleet sleep --benches <file> --bench <name> [--ssh <path>]
+[--if-idle] [--force] [--timeout <s>] [--max <n>]` puts ONE bench to sleep. It
+is `fleet suspend` over one name, not a second implementation: one place decides
+busy, so a lease or a job directory with a live pid under either swarm root, or
+a `Runner.Worker`, is `FLEET <bench> BUSY <what>` and is never suspended. It
+retires the Linux half of `fleet-sleep.sh` (the Mac half — `pmset` idle sleep —
+is `nova-pulse sleep`, under "Mac bench power"): that script asked GitHub whether
+the bench's RUNNERS were busy and knew nothing about the cards in flight on it,
+so a bench working through nova-swarm looked idle and slept under its own work.
+
+Red tests, one per verb: `fleet-standard-lists-the-checks` (the two lists as
+data, and what both benches must carry in both); `fleet-standard-names-the-check-that-drifted`;
+`fleet-mirror-creates-then-refreshes` (clone once, fetch after);
+`fleet-join-keeps-the-auth-key-out-of-every-argv` (the key is on the remote
+stdin and in no argv log, on neither stream); `fleet-sleep-refuses-a-bench-with-a-live-job`
+(and the idle one is suspended through systemctl). Every one of them drives a
+fake ssh on the test's own PATH that runs the remote script through `bash -s`
+with fake sudo, git, tailscale and systemctl beside it, so no test reaches a
+machine or opens a socket.

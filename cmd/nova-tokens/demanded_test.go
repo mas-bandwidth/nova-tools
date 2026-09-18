@@ -961,12 +961,41 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 
 	r := invoke(t, "check", "--out", out, "--max", "0")
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "CHECK MISSING date=2026-09-09")
 	wantContains(t, r.stderr, "2026-09-11.tsv")
 	wantContains(t, r.stderr, "2026-09-12.tsv")
 	line := lineWith(r.stderr, "CHECK FAIL files=")
 	wantContains(t, line, "bad=10")
-	wantContains(t, line, "missing=1")
+	// The gap at 09-09 is COUNTED by default and named only when something says there
+	// was spend on it. Nobody folded that day, and the day file nobody wrote is not
+	// evidence that anybody worked.
+	wantContains(t, line, "gap=1")
+	wantContains(t, line, "missing=0")
+	wantNotContains(t, r.stderr, "CHECK MISSING date=2026-09-09")
+
+	strict := invoke(t, "check", "--out", out, "--max", "0", "--strict")
+	wantExit(t, strict, 1)
+	wantContains(t, strict.stderr, "CHECK MISSING date=2026-09-09")
+	wantContains(t, lineWith(strict.stderr, "CHECK FAIL files="), "missing=1")
+
+	// A --no-spend list is the other door, and it is the one a person keeps: the days it
+	// does not name are the days nobody folded.
+	blank := write(t, filepath.Join(dir, "no-spend-blank.txt"), "# nothing declared\n")
+	listed := invoke(t, "check", "--out", out, "--max", "0", "--no-spend", blank)
+	wantExit(t, listed, 1)
+	wantContains(t, listed.stderr, "CHECK MISSING date=2026-09-09")
+	named := write(t, filepath.Join(dir, "no-spend.txt"), "# the day nobody worked\n2026-09-09\tnobody was at the bench\n")
+	accounted := invoke(t, "check", "--out", out, "--max", "0", "--no-spend", named)
+	wantExit(t, accounted, 1) // the ten bad files are still findings
+	wantContains(t, lineWith(accounted.stderr, "CHECK FAIL files="), "missing=0")
+	wantNotContains(t, accounted.stderr, "CHECK MISSING")
+
+	// Two answers to one question is a refusal, not a silent precedence.
+	both := invoke(t, "check", "--out", out, "--strict", "--no-spend", named)
+	wantExit(t, both, 2)
+	wantContains(t, both.stderr, "CHECK REFUSED")
+	// And a --no-spend line that is not a day is named by its line number.
+	badList := write(t, filepath.Join(dir, "no-spend-bad.txt"), "2026-09-09\nyesterday\n")
+	wantExit(t, invoke(t, "check", "--out", out, "--no-spend", badList), 2)
 
 	// A clean set, with dashes and a zone, is CHECK OK.
 	clean := mkdir(t, filepath.Join(dir, "clean"))

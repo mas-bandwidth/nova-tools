@@ -66,6 +66,18 @@
                   (check-equal 2 (+ (state-open-count (kernel-state k2))
                                     (state-closed-count (kernel-state k2)))
                                "the recovered branches do not sum to the two ids")
+                  ;; The counters and indexes the replay rebuilt are read, not
+                  ;; walked: the first read after recovery visits no node and
+                  ;; agrees with a full independent reconstruction
+                  ;; (SPEC-WORK.md:5685-5688).
+                  (with-instrumentation
+                    (state-open-count (kernel-state k2))
+                    (state-closed-count (kernel-state k2))
+                    (check-equal 0 *visits* "the first read after recovery visited a node")
+                    (check-equal 0 *parses* "the first read after recovery parsed")
+                    (check-equal 0 *replays* "the first read after recovery replayed"))
+                  (check-equal '() (state-index-mismatches (kernel-state k2))
+                               "the recovered counters and indexes disagree with reconstruction")
                   ;; The same replay builds the index overlay: each settle appears
                   ;; exactly once, in one bounded pass, and never per query.
                   (let ((ov (replay-overlay (list (list :kind :settle :node "a" :rev 1)
@@ -76,7 +88,32 @@
                                  (mapcar (lambda (e) (getf e :node)) (ov-entries ov))
                                  "the overlay did not cover the settles in order")
                     (ok (<= (ov-pages ov) 64) "the overlay exceeded the index cache")))
-              (close-file-journal j2))))
+              (close-file-journal j2)))
+          ;; The same run with a :revive after the settle recovers the item in
+          ;; O and keeps its record in C (SPEC-WORK.md:5686-5688).
+          (let* ((rpath (test-journal-path "index-replay-revive"))
+                 (rj (open-file-journal rpath :initial-state-hash init-digest)))
+            (unwind-protect
+                (progn
+                  (let ((rk (make-kernel :state (make-seed-state seed) :journal rj)))
+                    (ok (submit rk (close-request :node "a" :request "irp-r1"))
+                        "revive leg: settle a")
+                    (ok (submit rk (reopen-request :node "a" :request "irp-r2"))
+                        "revive leg: revive a"))
+                  (close-file-journal rj)
+                  (let* ((rj2 (open-file-journal rpath :initial-state-hash init-digest))
+                         (rk2 (make-kernel :state (make-seed-state seed) :journal rj2)))
+                    (unwind-protect
+                        (progn
+                          (replay-journal rj2 rk2)
+                          (check-equal :o (node-branch (kernel-state rk2) "a")
+                                       "the replayed revive did not return a to O")
+                          (ok (plusp (length (state-closed-rows (kernel-state rk2))))
+                              "the settle's record was not retained in C")
+                          (check-equal '() (state-index-mismatches (kernel-state rk2))
+                                       "the replayed revive left the indexes disagreeing"))
+                      (close-file-journal rj2))))
+              (ignore-errors (delete-file rpath)))))
       (ignore-errors (delete-file path)))))
 
 ;;; ------------------------------------------------------------------

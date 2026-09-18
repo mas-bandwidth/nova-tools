@@ -266,6 +266,18 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		return fmt.Sprintf("RUN PROVIDER id=%s slot=%d after=%s attempts=%d dest=failed provider=%s requeued=%t: %s",
 			oneline.Field(sc.ID), r.slot, after, sc.Requeued+1, oneline.Field(dashOr(providerRef)), requeued,
 			oneline.Escape(oneline.Cap(HarnessTail(r.jobDir), oneline.TailBytes))), EndProvider, dest
+	case end == EndWall:
+		// THE WALL LINE IS THE REPORT (issue #918): `WALL task=<id> path=<p>` and the
+		// commits it kept. The supervisor wrote it onto the evidence; a recovered job
+		// whose supervisor died is rebuilt here from the same classifier.
+		report := rec.Reason
+		if strings.TrimSpace(report) == "" {
+			report, _ = WallDeath(r.jobDir, sc.ID)
+		}
+		if strings.TrimSpace(report) == "" {
+			report = "WALL task=" + oneline.Field(sc.ID) + " path=" + Dash
+		}
+		return report, EndWall, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
@@ -362,7 +374,7 @@ func survivorsSeen(aliveBefore, survivedTheReap bool) int {
 func destinationFor(end, class string, rc int) string {
 	switch {
 	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed,
-		end == EndInputLimit, end == EndProvider:
+		end == EndInputLimit, end == EndProvider, end == EndWall:
 		return Failed
 	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
 		return Failed

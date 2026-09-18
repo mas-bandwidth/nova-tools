@@ -231,7 +231,9 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	write(t, filepath.Join(out, "2026-11-30.tsv"),
 		"nova-tokens v1 day=2026-11-30 at=2026-09-11T23:55:02Z build=b turns=1 sources=x\n"+hdr+
 			"2026-11-30\ta\tschema\t1\t2\t3\t4\t5\t0\tutc\tx\n")
-	r := invoke(t, "check", "--out", out)
+	// --strict is the reading that names every calendar gap and every non-day entry, and
+	// it is the one this measurement is about: the longest listing check can print.
+	r := invoke(t, "check", "--out", out, "--strict")
 	wantExit(t, r, 1)
 	all := r.stdout + r.stderr
 	more, byToken := countKinds(all)

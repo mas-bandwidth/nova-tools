@@ -16,7 +16,19 @@ lisp="$root/lisp/nova-work"
 
 [ -d "$lisp" ] || { echo "lisp-test.sh: lisp/nova-work not found in the checkout" >&2; exit 1; }
 
-exec sbcl --non-interactive \
+# Each run gets its own short TMPDIR. The suite keys its journals, exports and
+# socket bases off the ambient TMPDIR and clears stale directories first, so two
+# runs on one host (concurrent merge groups, 2026-09-18) wrecked each other's
+# state: "held by another process", "destination exists", MKDIR ENOENT. Short,
+# because an AF_UNIX path is bounded and the suite only uses TMPDIR directly
+# when it is under 80 bytes. Removed on exit, whatever the verdict.
+TMPDIR="${LISP_TEST_TMPROOT:-/tmp}/nw-$$"
+mkdir -p "$TMPDIR" || { echo "lisp-test.sh: cannot create $TMPDIR" >&2; exit 1; }
+export TMPDIR
+trap 'rm -rf "$TMPDIR"' EXIT
+echo "lisp-test.sh: TMPDIR=$TMPDIR" >&2
+
+sbcl --non-interactive \
   --eval "(require :asdf)" \
   --eval "(push #p\"${lisp}/\" asdf:*central-registry*)" \
   --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work/tests))" \

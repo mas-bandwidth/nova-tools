@@ -1,0 +1,7 @@
+package fixture
+
+import "testing"
+
+func TestFixtureRealURL(t *testing.T) {
+	_ = "https://api.acme.com/v1/status"
+}

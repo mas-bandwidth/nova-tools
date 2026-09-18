@@ -24,6 +24,7 @@ const usage = `nova-ci: the checks this repository's CI runs on its own test out
 
 usage:
   nova-ci help        print this banner and the verbs below
+  nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
   nova-ci slowtests --budget <seconds>
                       read newline-delimited ` + "`go test -json`" + ` TestEvents on stdin and
                       print one CI-SLOW line per package whose total elapsed
@@ -35,6 +36,7 @@ exit codes: 0 inside budget, 2 a package is over budget or the invocation
 
 example:
   nova-ci help
+  nova-ci version
   nova-ci slowtests --budget 60
 `
 
@@ -55,6 +57,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return refuse(stderr, "", "no verb given; slowtests is the verb this tool exists for")
 	}
 	switch args[0] {
+	case "version", "--version":
+		return cmdVersion(args[1:], stdout, stderr)
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "help", "-h", "--help":
