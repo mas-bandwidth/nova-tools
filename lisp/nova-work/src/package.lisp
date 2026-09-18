@@ -409,6 +409,13 @@
    #:observation-attempt
    #:observation-outcome
    #:observation-usage
+   #:observation-evidence-quality
+   #:observation-negative-lookup-p
+   #:observation-identity-bound-p
+   #:observation-launch-rejects-p
+   #:observation-queue-miss-p
+   #:stop-evidence-p
+   #:not-started-qualifies-p
    #:synthesised-usage
    #:reconcile-observations
    #:release-permitted-p
@@ -1396,6 +1403,10 @@
     #:retained-disposition-record-hash
     #:retained-disposition-reply
     #:retained-disposition-boundary
+    #:make-receipt-ledger
+    #:receipt-ledger-record
+    #:receipt-ledger-lookup
+    #:receipt-ledger-retains-p
     #:make-coverage
     #:coverage-verified-p
     #:retire-reply

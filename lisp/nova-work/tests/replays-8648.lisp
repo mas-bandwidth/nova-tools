@@ -101,7 +101,31 @@
     (check-equal 420 (retained-disposition-sequence disposition)
                  "the accepted record's sequence is retained")
     (check-equal "clip-390" (retained-disposition-boundary disposition)
-                 "the boundary record is retained")))
+                 "the boundary record is retained")
+    ;; a dedup root that is reachable but is not the bytes the boundary record
+    ;; names does not retire the reply: the gap prints instead.
+    (let ((wrong-root (make-coverage :snapshot-reachable t :retained-events-reachable t
+                                     :dedup-root-reachable t :push-ok t
+                                     :boundary-root-digest "sha256:bbb"
+                                     :observed-root-digest "sha256:zzz")))
+      (multiple-value-bind (verdict line gaps) (retire-reply disposition wrong-root)
+        (check-equal :retained verdict "a root that is not the boundary's retires nothing")
+        (check-string= (retained-disposition-reply disposition) line
+                       "the original OK still answers for a mismatched root")
+        (ok (member "recovery-gap kind=coverage-unverified" gaps :test #'string=)
+            "a mismatched root prints the coverage gap by its kind: ~S" gaps)))
+    ;; the ledger keeps the disposition; retirement never deletes the reply.
+    (let* ((ledger (receipt-ledger-record (make-receipt-ledger) "req-1" disposition))
+           (kept (receipt-ledger-lookup ledger "req-1")))
+      (ok (receipt-ledger-retains-p ledger "req-1")
+          "the ledger retains the accepted request's disposition")
+      (check-equal "sha256:aaa" (retained-disposition-payload-digest kept)
+                   "the ledger copy keeps the payload digest")
+      (check-equal 420 (retained-disposition-sequence kept)
+                   "the ledger copy keeps the accepted sequence")
+      (check-string= (retained-disposition-reply disposition)
+                     (retained-disposition-reply kept)
+                     "the ledger copy keeps the original reply byte for byte"))))
 
 ;;; ------------------------------------------------------------------
 ;;; restore-is-isolated-and-dispatches-nothing  SPEC-WORK.md:6285-6290,5790-5793

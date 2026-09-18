@@ -35,6 +35,7 @@
                (:file "src/operations")
                (:file "src/transport")
                (:file "src/scheduler")
+               (:file "src/receipts")
                (:file "src/assignment")
                (:file "src/control")
                (:file "src/roadmap")

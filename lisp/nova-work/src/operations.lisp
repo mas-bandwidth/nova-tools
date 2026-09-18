@@ -1613,3 +1613,126 @@ handed to OUT or ERR by their second token, and count the bytes printed. Answer
       (finish-output err)
       (incf (cli-client-emitted client) emitted)
       (values exit emitted stdout stderr))))
+;;; Reconciliation over observation manifests (SPEC-WORK.md:3994-4013)
+;;; ------------------------------------------------------------------
+;;;
+;;; `execution reconcile --from <manifest-id>` admits records binding control,
+;;; offer and attempt identity, node generation, source identity, observed
+;;; handle, observation time and an outcome in running, paused, stopped,
+;;; completed, not-started, unsupported, unknown, with result and usage
+;;; references where present. The reconcile keeps contradictions unresolved,
+;;; refuses silence, an expired lease and an elapsed estimate as stop evidence,
+;;; qualifies `not-started` only under a durable launch rejection, leaves
+;;; capacity for an unknown execution advertised nowhere free, and permits
+;;; capacity reconciliation only through the holder's own release.
+
+(defun make-observation (&key attempt outcome usage source control offer generation
+                              handle observed-at result
+                              negative-lookup-p identity-bound-p
+                              (evidence-quality :observed)
+                              launch-rejects-p queue-miss-p)
+  "One manifest record. Missing usage stays unknown; the evidence quality is
+the record's provenance and defaults to an observed report."
+  (list :attempt attempt :outcome outcome :usage usage :source source
+        :control control :offer offer :generation generation :handle handle
+        :observed-at observed-at :result result
+        :negative-lookup-p negative-lookup-p :identity-bound-p identity-bound-p
+        :evidence-quality evidence-quality
+        :launch-rejects-p launch-rejects-p :queue-miss-p queue-miss-p))
+
+(defun observation-attempt (o) (getf o :attempt))
+(defun observation-outcome (o) (getf o :outcome))
+(defun observation-usage (o) (getf o :usage))
+
+(defun observation-evidence-quality (o)
+  (let ((quality (getf o :evidence-quality)))
+    (if quality quality :observed)))
+
+(defun observation-negative-lookup-p (o) (getf o :negative-lookup-p))
+(defun observation-identity-bound-p (o) (getf o :identity-bound-p))
+(defun observation-launch-rejects-p (o) (getf o :launch-rejects-p))
+(defun observation-queue-miss-p (o) (getf o :queue-miss-p))
+
+(defun non-stop-evidence-quality-p (quality)
+  "Silence, an expired lease and an elapsed estimate are not stop evidence."
+  (member quality '(:silence :expired-lease :elapsed-estimate)))
+
+(defun stop-evidence-p (o)
+  "Only an observed stop is stop evidence. A negative process lookup counts
+only for its bound execution identity (SPEC-WORK.md:3996-3999)."
+  (and (eq (observation-outcome o) :stopped)
+       (not (non-stop-evidence-quality-p (observation-evidence-quality o)))
+       (or (not (observation-negative-lookup-p o))
+           (observation-identity-bound-p o))))
+
+(defun not-started-qualifies-p (o)
+  "`not-started` qualifies only when the launch authority durably rejects that
+exact assignment identity from future launch; a queue miss is not it
+(SPEC-WORK.md:4000-4002)."
+  (and (eq (observation-outcome o) :not-started)
+       (observation-launch-rejects-p o)
+       (not (observation-queue-miss-p o))))
+
+(defun synthesised-usage (o)
+  "Missing usage stays unknown and a stop report never synthesises zero cost
+(SPEC-WORK.md:3999)."
+  (let ((usage (observation-usage o)))
+    (if usage usage :absent)))
+
+(defun observation-conflicting-p (a b)
+  "Two observations conflict when one attempt is reported under two outcomes."
+  (and (equal (observation-attempt a) (observation-attempt b))
+       (not (equal (observation-outcome a) (observation-outcome b)))))
+
+(defun contradictory-attempts (observations)
+  "The attempt identities one manifest reports under two different outcomes,
+in first-seen order."
+  (let ((out '()))
+    (dolist (o observations)
+      (let ((attempt (observation-attempt o)))
+        (when (and (not (member attempt out :test #'equal))
+                   (some (lambda (other) (observation-conflicting-p o other))
+                         observations))
+          (push attempt out))))
+    (nreverse out)))
+
+(defun uncertain-execution-outcome-p (outcome)
+  "An outcome that settles nothing keeps its execution uncertain."
+  (member outcome '(:running :paused :unknown :unsupported)))
+
+(defun reconcile-observations (observations &key leases)
+  "The reconcile the paragraph at SPEC-WORK.md:3994-4013 promises. Every record
+is retained; contradictions are preserved unresolved, never last-write-wins;
+only a qualifying `not-started` releases its unlaunched reservation; capacity
+held for an unknown execution is never advertised free; W stays the live leases
+and ACTIVE keeps the uncertain executions W no longer names."
+  (let* ((unresolved (contradictory-attempts observations))
+         (not-started (loop for o in observations
+                            when (not-started-qualifies-p o)
+                              collect (observation-attempt o)))
+         (capacity (loop for o in observations
+                         when (and (not-started-qualifies-p o)
+                                   (not (member (observation-attempt o) unresolved
+                                                :test #'equal)))
+                           collect (observation-attempt o)))
+         (uncertain (loop for o in observations
+                          when (uncertain-execution-outcome-p (observation-outcome o))
+                            collect (observation-attempt o))))
+    (list :status (if unresolved :unresolved :resolved)
+          :retained observations
+          :unresolved unresolved
+          :stop-evidence (loop for o in observations
+                               when (stop-evidence-p o)
+                                 collect (observation-attempt o))
+          :not-started not-started
+          :capacity-released capacity
+          :uncertain (remove-duplicates uncertain :test #'equal)
+          :w (remove-if-not (lambda (lease) (getf lease :live)) leases)
+          :active (remove-if-not (lambda (lease) (not (getf lease :live))) leases))))
+
+(defun release-permitted-p (actor holder &key confirmed-exit-p)
+  "Confirmed termination permits capacity reconciliation but bypasses no
+holder-only release: the coordinator never signs for a holder
+(SPEC-WORK.md:4003)."
+  (declare (ignore confirmed-exit-p))
+  (equal actor holder))

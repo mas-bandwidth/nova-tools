@@ -470,45 +470,6 @@ its generation, identity, capacity and the other holds (SPEC-WORK.md:3970)."
       acceptance))
 
 ;;; ------------------------------------------------------------------
-;;; Reconciliation keeps contradiction (SPEC-WORK.md:3991-4009)
-;;; ------------------------------------------------------------------
-
-(defun make-observation (&key attempt outcome usage source)
-  (list :attempt attempt :outcome outcome :usage usage :source source))
-
-(defun observation-attempt (o) (getf o :attempt))
-(defun observation-outcome (o) (getf o :outcome))
-(defun observation-usage (o) (getf o :usage))
-
-(defun synthesised-usage (o)
-  "Missing usage stays unknown and a stop report never synthesises zero cost
-(SPEC-WORK.md:3999)."
-  (let ((usage (observation-usage o)))
-    (if usage usage :absent)))
-
-(defun observation-conflicting-p (a b)
-  "Two observations conflict when one attempt is reported under two outcomes."
-  (and (equal (observation-attempt a) (observation-attempt b))
-       (not (equal (observation-outcome a) (observation-outcome b)))))
-
-(defun reconcile-observations (observations)
-  "Contradictory observations are preserved unresolved, never last-write-wins
-(SPEC-WORK.md:3998)."
-  (let ((contradiction
-          (loop for tail on observations
-                thereis (loop for other in (rest tail)
-                              thereis (observation-conflicting-p (first tail) other)))))
-    (list :status (if contradiction :unresolved :resolved)
-          :retained observations)))
-
-(defun release-permitted-p (actor holder &key confirmed-exit-p)
-  "Confirmed termination permits capacity reconciliation but bypasses no
-holder-only release: the coordinator never signs for a holder
-(SPEC-WORK.md:4003)."
-  (declare (ignore confirmed-exit-p))
-  (equal actor holder))
-
-;;; ------------------------------------------------------------------
 ;;; Resume is two different acts under one verb (SPEC-WORK.md:4011)
 ;;; ------------------------------------------------------------------
 
@@ -1283,46 +1244,6 @@ policy; the historic tick and the closed node are left as they are."
   (make-repair-work :id (or id (format nil "~A-repair" (verification-summary-node summary)))
                     :node (verification-summary-node summary)
                     :state :todo))
-
-;;; ------------------------------------------------------------------
-;;; A reply retires only under verified coverage
-;;; (SPEC-WORK.md:6020-6024,6316-6325)
-;;; ------------------------------------------------------------------
-
-(defstruct (retained-disposition
-             (:constructor make-retained-disposition
-                 (&key request payload-digest sequence record-hash reply boundary)))
-  "A request's identity, its accepted record's sequence and hash and the
-original reply, kept in the image even when its events lie before the cut."
-  request payload-digest sequence record-hash reply boundary)
-
-(defstruct (coverage
-             (:constructor make-coverage
-                 (&key snapshot-reachable retained-events-reachable
-                       dedup-root-reachable push-ok)))
-  "The three reachabilities a boundary record names, plus the push that a
-locally existing commit is not proof of."
-  snapshot-reachable retained-events-reachable dedup-root-reachable push-ok)
-
-(defun coverage-verified-p (coverage)
-  "A disposition is retired only once the committed snapshot, its retained
-events and the dedup root are verified reachable and the push succeeded."
-  (and (coverage-snapshot-reachable coverage)
-       (coverage-retained-events-reachable coverage)
-       (coverage-dedup-root-reachable coverage)
-       (coverage-push-ok coverage)))
-
-(defun retire-reply (disposition coverage)
-  "Retire a retained disposition to the dedup index's `already applied` only
-under verified coverage. Otherwise the original OK still answers from the
-retained disposition, and an unreadable dedup root prints the coverage gap. A
-reply is never deleted, invented or reconstructed from current state."
-  (if (coverage-verified-p coverage)
-      (values :already-applied "already applied" nil)
-      (values :retained
-              (retained-disposition-reply disposition)
-              (unless (coverage-dedup-root-reachable coverage)
-                (list "recovery-gap kind=coverage-unverified")))))
 
 ;;; ------------------------------------------------------------------
 ;;; A restore is isolated and dispatches nothing
