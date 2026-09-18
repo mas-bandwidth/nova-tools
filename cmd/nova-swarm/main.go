@@ -579,6 +579,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// ONE loud workaround, which a person types and no environment variable can produce.
 	sandboxPath := f.fs.String("sandbox", "", "")
 	noSandbox := f.fs.Bool("no-sandbox", false, "")
+	// THE BENCH SLOT STORE (issue #917). When named, the route's in-flight count includes
+	// the live leases of this store whose label carries the route, so a cap holds across
+	// the roots of a bench and not only inside one pool.
+	slotsStore := f.fs.String("slots-store", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -688,6 +692,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
+		SlotsStore: *slotsStore,
 	})
 }
 

@@ -24,13 +24,17 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // step is one thing the fake runner does. Everything is optional but Op; Path and Body are
@@ -53,11 +57,21 @@ type spec struct {
 // the whole process tree's CPU time, and a burner that is not in the tree proves nothing.
 const spinArg = "--spin-ms"
 
+// SUPERVISE IS THE OTHER MODE THAT IS NOT A CARD. `run` spawns this binary as
+// `<exe> supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file>
+// (--sandbox <path>|--no-sandbox)`, exactly as it spawns the real nova-swarm. A test that
+// drives `run`'s dispatch/cap path therefore hands it this same fixture under a
+// `runnerDoing` name, and the `supervise` step below writes the launch identity and the
+// completion evidence the dispatcher reads. It never starts a harness: the tests that drive
+// `run` need a job that lives and ends, not a worker that does anything.
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == spinArg {
 		ms, _ := strconv.Atoi(os.Args[2])
 		burn(time.Duration(ms) * time.Millisecond)
 		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "supervise" {
+		os.Exit(superviseMain(os.Args[2:]))
 	}
 	if len(os.Args) != 6 {
 		fmt.Fprintf(os.Stderr, "fakerunner: want 5 arguments (label slot model card root), got %d\n", len(os.Args)-1)
@@ -69,8 +83,30 @@ func main() {
 	os.Exit(r.run(load()))
 }
 
+// superviseMain parses the argv `run` hands a supervisor. The flags the real supervisor
+// declares but this fixture does not act on are still accepted, so the argv parses whole.
+func superviseMain(args []string) int {
+	fs := flag.NewFlagSet("supervise", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	pool := fs.String("pool", "", "")
+	task := fs.String("task", "", "")
+	slot := fs.Int("slot", 0, "")
+	nonce := fs.String("nonce", "", "")
+	fs.String("worker", "", "")
+	fs.String("sandbox", "", "")
+	fs.Bool("no-sandbox", false, "")
+	fs.String("usage-interval", "", "")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "fakerunner: supervise arguments: %v\n", err)
+		return 2
+	}
+	r := &runner{label: *task, slot: strconv.Itoa(*slot), pool: *pool, nonce: *nonce}
+	return r.run(load())
+}
+
 type runner struct {
 	label, slot, model, card, root string
+	pool, nonce                    string
 	job                            string
 	line1, line2                   string
 }
@@ -161,6 +197,11 @@ func (r *runner) run(s spec) int {
 			sleep(st.Ms)
 		case "spin":
 			r.spin(st.N, st.Ms)
+		case "supervise":
+			// The one step that acts as `nova-swarm supervise`: identify the launch, hold
+			// the lane for Ms (so a capped dispatcher has a job to count), then write the
+			// completion evidence and fall through to exit 0.
+			must(r.supervise(st.Ms))
 		case "exit":
 			return st.N
 		default:
@@ -169,6 +210,46 @@ func (r *runner) run(s spec) int {
 		}
 	}
 	return 0
+}
+
+// supervise identifies the launch the way the real supervisor's step 3 does -- a
+// compare-and-swap against the reservation and its nonce, with the hash of a fresh
+// attestation secret in the slot file -- holds the lane for ms, then writes exit.json with
+// the secret itself. It adds no PidRecord, data home or harness: a job that only has to
+// live and end needs none of them.
+func (r *runner) supervise(ms int) error {
+	pool, err := swarm.OpenPool(r.pool)
+	if err != nil {
+		return err
+	}
+	slot, err := strconv.Atoi(r.slot)
+	if err != nil {
+		return err
+	}
+	sf, err := pool.ReadSlot(slot)
+	if err != nil {
+		return err
+	}
+	secret, err := swarm.NewExitAttest()
+	if err != nil {
+		return err
+	}
+	self := os.Getpid()
+	if err := pool.Identify(slot, r.nonce, swarm.SlotFile{
+		State:      swarm.SlotLaunched,
+		Pid:        self,
+		Pgid:       self,
+		PidStarted: swarm.StartStamp(self),
+		LaunchedAt: swarm.Stamp(time.Now().UTC()),
+		ExitAttest: swarm.ExitAttestHash(secret),
+	}); err != nil {
+		return err
+	}
+	sleep(ms)
+	return swarm.WriteJSON(swarm.ExitPath(sf.JobDir), swarm.ExitRecord{
+		RC: 0, End: swarm.EndDone, Nonce: r.nonce, Attest: secret,
+		Ended: swarm.Stamp(time.Now().UTC()),
+	})
 }
 
 // spin starts a CPU burner as a grandchild of the card, waits Ms, then kills it. burnMs is

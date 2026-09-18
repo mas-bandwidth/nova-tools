@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -47,6 +48,11 @@ type RunInput struct {
 	// once per job. The two are exclusive and the verb refuses both at once.
 	Sandbox   string
 	NoSandbox bool
+	// SLOTS-STORE is a bench slot-lease store (docs/SPEC-SWARM.md, "Bench slot leases").
+	// When it is named, this route's in-flight count includes every live lease whose label
+	// carries the route, so a cap holds across the roots of a bench and not only inside one
+	// pool (issue #917).
+	SlotsStore string
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -79,6 +85,8 @@ type running struct {
 	deadline   time.Duration
 	adopted    bool
 	notes      int
+	// route is the lane this job occupies for the in-flight cap.
+	route string
 }
 
 // Run is the dispatcher. It returns the exit code.
@@ -137,7 +145,7 @@ func Run(in RunInput) int {
 			sc, _ := p.ReadSidecar(Running, d.File.Job)
 			started := parseStamp(d.File.LaunchedAt, now())
 			r := &running{sc: sc, slot: n, nonce: d.File.Nonce, exitAttest: d.File.ExitAttest, jobDir: d.File.JobDir, started: started,
-				deadline: taskDeadline(sc, in.Worker), adopted: true}
+				deadline: taskDeadline(sc, in.Worker), adopted: true, route: in.Worker.RouteName()}
 			watching[n] = r
 			fmt.Fprintf(out, "RUN ADOPT id=%s slot=%d pid=%d started=%s remaining=%s\n",
 				oneline.Field(d.File.Job), n, d.File.Pid, oneline.Field(d.File.LaunchedAt),
@@ -166,7 +174,7 @@ func Run(in RunInput) int {
 			// `reaped` and no second attempt (read 4, F1). The reap is counted here, once,
 			// exactly as `finish` counts it, and BEFORE the files move -- the new task's
 			// text is the old task's text, read from where the old task still is.
-			if end == EndKilled {
+			if end == EndKilled || end == EndStall {
 				sc.Reaped++
 			}
 			// RULE 11 IS ABOUT THE JOB, NOT ABOUT WHICH DISPATCHER WAS ALIVE TO SEE IT
@@ -204,7 +212,7 @@ func Run(in RunInput) int {
 			dest := destinationFor(end, fin.Class, rec.RC)
 			_ = p.WriteSidecar(Running, sc)
 			requeued := false
-			if end == EndKilled && !in.NoAutoRetry {
+			if (end == EndKilled || end == EndStall) && !in.NoAutoRetry {
 				requeued = in.requeue(sc, now())
 			}
 			_ = p.Claim(sc.ID, Running, dest)
@@ -304,7 +312,7 @@ func Run(in RunInput) int {
 					sc, _ := p.ReadSidecar(Running, sf.Job)
 					started := parseStamp(sf.LaunchedAt, now())
 					watching[n] = &running{sc: sc, slot: n, nonce: sf.Nonce, exitAttest: sf.ExitAttest, jobDir: sf.JobDir, started: started,
-						deadline: taskDeadline(sc, in.Worker), adopted: true}
+						deadline: taskDeadline(sc, in.Worker), adopted: true, route: in.Worker.RouteName()}
 					fmt.Fprintf(out, "RUN ADOPT id=%s slot=%d pid=%d started=%s remaining=%s\n",
 						oneline.Field(sf.Job), n, sf.Pid, oneline.Field(sf.LaunchedAt), trimDuration(taskDeadline(sc, in.Worker)-now().Sub(started)))
 					continue
@@ -336,10 +344,19 @@ func Run(in RunInput) int {
 
 	deadline := now().Add(time.Duration(in.Hours * float64(time.Hour)))
 	tasks := bounded.Capped(out, in.Max, "RUN", "task", "nova-swarm status --pool "+p.Dir+" --max 0")
+	lastInflight := -1
 
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
 		for !haltAdmissions && !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
+			// THE IN-FLIGHT CAP (issue #917). A route over its ceiling starts nothing,
+			// however many slots this dispatcher has free: the tasks wait in pending/, and
+			// a lane freed by a finished or stalled job admits the next one on the poll
+			// below. The count is recomputed here, never cached, because a lease can expire
+			// or a watcher can end between two admissions.
+			if in.routeAtCap(watching, now()) {
+				break
+			}
 			slot, ok := freeSlot(p, in.Workers, quarantined, retired, watching)
 			if !ok {
 				break
@@ -373,6 +390,14 @@ func Run(in RunInput) int {
 				launchFailed++
 				haltAdmissions = true
 				tasks.Line(line)
+			}
+		}
+		// STATUS ROUTE, printed when the count changes: the one observable that says the
+		// cap is what holds a waiting task, and where that task goes when a lane frees.
+		if in.Worker.MaxInflight > 0 {
+			if n := in.routeInflight(watching, now()); n != lastInflight {
+				fmt.Fprintln(out, in.statusRouteLine(watching, now()))
+				lastInflight = n
 			}
 		}
 		if len(watching) == 0 {
@@ -515,6 +540,59 @@ func unionOf(a, b map[int]bool) map[int]bool {
 	return out
 }
 
+// routeInflight is the live task count for the worker's route: every job this dispatcher is
+// watching on that lane, plus -- when a bench slot store is named -- every unexpired lease
+// in it whose label carries the route. A live lease is one still inside its until= or whose
+// pid is alive (a lease past until= with a live pid is DRIFT and stays held), which is the
+// same liveness the bench's own taker uses.
+func (in RunInput) routeInflight(watching map[int]*running, now time.Time) int {
+	route := in.Worker.RouteName()
+	n := 0
+	for _, r := range watching {
+		if r.route == route {
+			n++
+		}
+	}
+	if in.SlotsStore == "" {
+		return n
+	}
+	leases, err := ListSlotLeases(in.SlotsStore, now)
+	if err != nil {
+		return n
+	}
+	for _, l := range leases {
+		if !l.Until.After(now) && !Alive(l.Pid, "") {
+			continue
+		}
+		if labelCarriesRoute(l.Label, route) {
+			n++
+		}
+	}
+	return n
+}
+
+// labelCarriesRoute says whether a bench lease's label names this route. A label is free
+// text a person typed -- often `<route> <card>` -- so the route is a substring of it.
+func labelCarriesRoute(label, route string) bool {
+	return route != "" && strings.Contains(label, route)
+}
+
+// statusRouteLine is the one STATUS line the run prints about its route, and it is printed
+// when the count changes so a reader sees the cap hold and then release (issue #917).
+func (in RunInput) statusRouteLine(watching map[int]*running, now time.Time) string {
+	return fmt.Sprintf("STATUS ROUTE %s inflight=%d cap=%d",
+		oneline.Field(in.Worker.RouteName()), in.routeInflight(watching, now), in.Worker.MaxInflight)
+}
+
+// routeAtCap says whether the worker's route has reached its in-flight ceiling and no
+// further task may be launched on it. A cap of zero is no ceiling.
+func (in RunInput) routeAtCap(watching map[int]*running, now time.Time) bool {
+	if in.Worker.MaxInflight <= 0 {
+		return false
+	}
+	return in.routeInflight(watching, now) >= in.Worker.MaxInflight
+}
+
 // launch is rule 18's transaction, from this side: reserve, spawn, wait for the identity,
 // and kill what did not identify itself.
 func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired map[int]bool) (*running, string, int) {
@@ -641,7 +719,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		CheckKillPoint("after-identify")
 		CheckKillPoint("after-handshake")
 		CheckKillPoint("after-release")
-		r := &running{sc: sc, slot: slot, nonce: nonce, exitAttest: sf.ExitAttest, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
+		r := &running{sc: sc, slot: slot, nonce: nonce, exitAttest: sf.ExitAttest, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker), route: in.Worker.RouteName()}
 		return r, fmt.Sprintf("RUN START id=%s slot=%d pid=%d pgid=%d started=%s deadline=%s tokens=%s job=%s",
 			oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),
 			trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), launchStarted

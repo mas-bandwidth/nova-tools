@@ -172,7 +172,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// file in failed/ still said `reaped=1`, so the fact a person reads tomorrow was one
 	// less than the fact the run said out loud. The reap is counted HERE, once, and the
 	// line and the file read the same number.
-	if end == EndKilled {
+	if end == EndKilled || end == EndStall {
 		sc.Reaped++
 	}
 	sc.Violation = violationWord(end, survivors)
@@ -186,6 +186,11 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	requeued := false
 	switch {
 	case end == EndKilled && !in.NoAutoRetry:
+		requeued = in.requeue(sc, now)
+	case end == EndStall && !in.NoAutoRetry:
+		// A STALLED TASK IS RE-QUEUED ONCE (issue #917), through rule 7's own path: the new
+		// attempt goes to pending/ and the dispatcher's route cap decides when a lane is
+		// free, so it is never launched in the instant the stalled one vacated its slot.
 		requeued = in.requeue(sc, now)
 	case end == EndProvider && !in.NoAutoRetry && sc.Requeued < MaxProviderAttempts-1:
 		// A LAUNCH THAT DIED FAST ON A PROVIDER 5XX IS RETRIED, NOT FILED (issue #900):
@@ -251,6 +256,13 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s survived=%t requeued=%t reaped=%d",
 			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget,
 			survivors > 0, requeued, sc.Reaped), EndKilled, dest
+	case end == EndStall:
+		// A STALLED TASK: the supervisor's own STALL line carries the silence and the last
+		// words; this RUN line is the dispatcher's record of where it landed and whether
+		// rule 7's one retry was queued (issue #917).
+		return fmt.Sprintf("RUN STALL id=%s slot=%d after=%s findings=%d requeued=%t reaped=%d last=%s",
+			oneline.Field(sc.ID), r.slot, after, findings, requeued, sc.Reaped,
+			oneline.Escape(oneline.Cap(LastLogLine(r.jobDir, 120), 120))), EndStall, dest
 	case end == EndInputLimit:
 		// THE CLASS, THE SIZE AND THE PROVIDER'S OWN SENTENCE, so that triage can say "the
 		// task was too big for the model" without opening a log (#103). `input=` is the
@@ -320,7 +332,7 @@ func rateLimitedOutcome(inLog bool, end string, rc int) bool {
 // not the other is how a job's findings go missing.
 func reapEnd(end string) bool {
 	switch end {
-	case EndKilled, EndBudget, EndUnverifiable:
+	case EndKilled, EndBudget, EndUnverifiable, EndStall:
 		return true
 	}
 	return false
@@ -374,7 +386,7 @@ func survivorsSeen(aliveBefore, survivedTheReap bool) int {
 func destinationFor(end, class string, rc int) string {
 	switch {
 	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed,
-		end == EndInputLimit, end == EndProvider, end == EndWall:
+		end == EndInputLimit, end == EndProvider, end == EndWall, end == EndStall:
 		return Failed
 	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
 		return Failed
