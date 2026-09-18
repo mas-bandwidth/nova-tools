@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -485,9 +487,26 @@ func TestCheckAndVersion(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && !strings.Contains(out, "backend=none") {
 		t.Fatalf("check named a backend on %s, where this build has none: %q", runtime.GOOS, out)
 	}
+	// `version` is SPEC.md's Conventions line -- the four tokens every binary in the
+	// set prints -- and then this tool's two named extras. It used to be a shape of
+	// its own, `SANDBOX VERSION tool=... version=...`, which no reader of a version
+	// line could take apart (#1297): the facts survive, the second shape does not.
 	code, out, _ = j.tool(t, j.env(), "version")
-	if code != 0 || !strings.Contains(out, "tool=nova-sandbox") {
+	if code != 0 {
 		t.Fatalf("version exit %d: %q", code, out)
+	}
+	f, ok := buildinfo.Parse(out)
+	if !ok {
+		t.Fatalf("version printed a line internal/buildinfo.Parse refuses: %q", out)
+	}
+	if f.Tool != "nova-sandbox" || f.Version == "" {
+		t.Fatalf("version does not name this tool and its build in fields one and two: %q", out)
+	}
+	if b, have := f.Extra("backend"); !have || b != sandbox.Backend {
+		t.Fatalf("version does not carry backend=%s: %q", sandbox.Backend, out)
+	}
+	if p, have := f.Extra("platform"); !have || p != runtime.GOOS {
+		t.Fatalf("version does not carry platform=%s: %q", runtime.GOOS, out)
 	}
 }
 

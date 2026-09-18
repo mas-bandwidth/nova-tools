@@ -239,11 +239,12 @@ seconds or more; the CI budget test refuses any `_test.go` line carrying such
 a literal under ten seconds, except a fake documented with
 `// wall-ok: <reason>`.
 
-**Every binary says which build it is.** `<tool> version` (and `--version`)
-prints ONE line, four tokens, exit 0, on stdout:
+**Every binary says which build it is, in ONE shape.** `<tool> version` (and
+`--version`) prints ONE line, exit 0, on stdout: four mandatory tokens, and then
+any number of `key=value` extras.
 
 ```
-<tool> <build identity> <goos>/<goarch> <go version>
+<tool> <build identity> <goos>/<goarch> <go version> [key=value ...]
 ```
 
 The identity in field two is the release's `-ldflags "-X main.version=<tag>"`
@@ -251,16 +252,27 @@ stamp when there is one, the module version the toolchain recorded when there
 is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
 stamp, and the word `devel` for a build with none of those. **It is never a
 dotted number this repo made up**: a version string nobody can trace invites
-the comparison it cannot support. Eleven binaries share the resolution order in
-`internal/buildinfo`. `nova-wake` and `nova-sandbox` retain their existing
-resolvers: their VCS fallback reports the revision alone, without the
-revision time or dirty marker. Release-stamped and installed-module versions
-retain the same identity across all thirteen; the release assertion handles
-the sandbox output separately. `nova-merge` adds a fifth field,
-`build=<12 hex>`, the sha256 of its own file on disk, which is a different fact and its own section's;
-`nova-sandbox` answers with its `SANDBOX VERSION` line, which carries the
-backend and the platform a sandbox is judged by. The verb takes no flags and
-no arguments — a second output shape is a second thing to agree about — and
+the comparison it cannot support. Every binary under `cmd/` takes its resolution
+order, its line and its extras from `internal/buildinfo`, and `buildinfo.Parse`
+is the ONE reader of that line: writer and reader are one pair, so a tool that
+adds a fact cannot break a consumer that never heard of it.
+
+**An extra is a named fact, never a loose token.** `nova-merge` says
+`build=<12 hex>`, the sha256 of its own file on disk, which rule 16 of its lane
+needs; `nova-sandbox` says `backend=<name> platform=<os>`, the two facts a
+sandbox is judged by. A reader takes the identity from field two and asks for an
+extra BY NAME, so a tool that adds a second extra cannot move the first, and a
+reader that has heard of neither still reads the four tokens. **A second line
+shape is what this paragraph forbids**: a hand-rolled fifth token and a
+`SANDBOX VERSION …` line of its own made `nova-version snapshot --bin
+~/.local/bin` refuse an entire install, exit 2 (#1297, 2026-09-18) — because each
+reader had been written against the tokens it happened to know, and the same
+week `nova-version report` called every one of our own tools UNKNOWN for asking
+them a question they do not answer (#1264, SPEC-UPDATE.md rule 4b). `internal/ci`'s
+`TestEveryToolPrintsTheOneVersionLine` runs every built `cmd/nova-*` through the
+real reader, walking `cmd/` rather than holding a list, so a binary added
+tomorrow is held to the grammar on the day it appears. The verb takes no flags
+and no arguments — a second output shape is a second thing to agree about — and
 refuses at exit 2 with one line when it is given any.
 
 **A line is bounded as well as single.** `internal/oneline`'s `Escape` and

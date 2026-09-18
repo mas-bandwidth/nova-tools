@@ -1694,6 +1694,10 @@ Run this from the nova-tools checkout. The executable transcript is in [TESTS.md
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Use your own explicit six-column manifest for your
 bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+A `tool` row whose `installed` column is just the executable is asked `version`,
+then `--version`, then bare, all inside one `--timeout` — so our own tools, which
+answer a bare invocation with a usage refusal, are read rather than reported
+UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
@@ -1722,6 +1726,10 @@ Run this from the nova-tools checkout. The executable transcript is in [TESTS.md
 The report reads only installed identities. UNKNOWN means a partial inventory; it
 never means zero or current. Use your own explicit six-column manifest for your
 bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+A `tool` row whose `installed` column is just the executable is asked `version`,
+then `--version`, then bare, all inside one `--timeout` — so our own tools, which
+answer a bare invocation with a usage refusal, are read rather than reported
+UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
@@ -1745,10 +1753,14 @@ This four-column inventory is **not** the six-column manifest accepted by
 `report --file`; `snapshot` has no `--owner` flag. The report's `--snapshot` option
 below is a separate delivery-recovery file.
 
-At main revision `d576bf6bbabb`, snapshot's four-token version parser rejects
-`nova-merge`'s longer version line. [Issue #1297](https://github.com/mas-bandwidth/nova-tools/issues/1297)
-tracks that incompatibility. A refusal is not a complete inventory; keep the
-original evidence rather than rewriting a version line to make it pass.
+Snapshot reads the version line with `internal/buildinfo`, the package that
+writes it, so a tool's named `key=value` extras — `nova-merge`'s `build=<12 hex>`,
+`nova-sandbox`'s `backend=` and `platform=` — are metadata and never a refusal.
+At main revision `d576bf6bbabb` its parser wanted exactly four tokens and one
+`nova-merge` in the directory refused the whole inventory
+([#1297](https://github.com/mas-bandwidth/nova-tools/issues/1297)); a binary that
+prints no version line at all is still a refusal naming that tool, because a
+refusal is not a complete inventory and evidence is kept rather than rewritten.
 For recovery across process death, name `--snapshot`; retries retain the prepared
 note. Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
