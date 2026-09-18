@@ -3247,3 +3247,38 @@ stamp, so a local job never runs beside a benchmark; the separate
 | ideas #275 | refutation rate as a health metric | already, rule 8: `accurate`/`wrong` per batch is that rate; a falling `wrong` share is the reader's to notice |
 | ideas #273 | cleanup arriving before its notification | already, rule 18: `exit.json` before the slot is freed, and the nonce ties the evidence to its launch |
 | ideas #357 | reason about a report, never execute | already, the data paragraph at the top |
+
+## Efficiency: lessons absorbed 2026-09-12 *(Glenn; Stella's measurements)*
+
+Measured 2026-09-12 on the live pool and the worker homes. Correctness is the
+rest of this spec; this section records what `nova-swarm` costs the coordinator
+and the bench, and the rules that bound that cost. Three operations are the
+widest, and each has one rule.
+
+| the operation, measured | the measurement | the rule that bounds it |
+|---|---|---|
+| **REPEATS: one full clone of the repository per job** | 21 clones, 307 MB and 36 s of wall clock for one object graph; 1,128,320 cache-read tokens over 13 tool calls, 86,794 cache-read tokens per tool call, with the clone and the `gh pr checkout` two of them — about 174K per job and 3.6M across the 21 | the reference clone |
+| **COORDINATOR READ: `triage` is the widest listing of the seven** | `status` 22 lines/3,174 B; `cost --max 0` 22/3,698 B; `triage` 45 lines/15,490 B with 20 of 47 at the default; `triage --all --max 0` 71/24,810 B — the counts on `TRIAGE OK` are 27 B of it | counts first, findings capped |
+| **WAITS ON: a deadline, a sampler, and a person** | a job's own clock is `--deadline` (40m in `deepseek.json`); the usage budget is read by the sampler at `--usage-interval` (default 5 s); a verdict waits on a person | one owner per wait, one line back |
+
+1. **The reference clone.** A job's clone is its own (rule 7) and is taken with
+   `git clone --reference-if-able <the shared on-disk checkout> --dissociate`,
+   so the object graph is shared with a checkout already on the bench and the
+   job directory holds only its own objects; `--dissociate` keeps the job's
+   clone independent of a reference it does not own. The task template names
+   the reference checkout and the clone, so every job clones the same way and
+   the network is touched once per object graph, never once per job.
+   (`bin/child-clone.sh:111` already knows the shape.)
+2. **Counts first; a finding's prose is the second read.** The narrow return of
+   `triage` is the counts: `TRIAGE BATCH` and `TRIAGE OK` are the lines a
+   coordinator reads, and a `TRIAGE FINDING` line carries the finding's own
+   prose, bounded by `--max` and capped by `internal/oneline`, with `TRIAGE
+   MORE kind=finding shown=<n> total=<t> at=<path>` naming the page that holds
+   the rest. `status` and `cost` stay one line per task, and `triage` is never
+   wider than the question it answers: 20 finding bodies to learn counts that
+   cost 27 B is the cost this rule removes.
+3. **One owner per wait, and one line back.** A job's own clock is the deadline
+   held by the machinery; the usage budget is read by the sampler at
+   `--usage-interval` and never by a second poll; and a verdict waits on a
+   person, never on a scan. No wait loop scans for its own name (the races
+   below) and no listing polls a person on the coordinator's behalf.
