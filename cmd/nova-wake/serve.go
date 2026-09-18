@@ -576,6 +576,14 @@ func (s *server) spawn(ctx context.Context, ids []string) int {
 		}
 	}
 	fields := strings.Fields(s.onNote)
+	// serve refuses an empty --on-note at parse time, so this is the same rule
+	// read a second time where the indexing happens: a server built inside the
+	// package, or a later flag path that forgets the parse-time check, would
+	// otherwise index an empty slice and panic where nothing is watching -- the
+	// class Emma's #1390 named.
+	if len(fields) == 0 {
+		return refused(s.stderr, "on-note: --on-note carries no command, so there is nothing to start")
+	}
 	cmd := exec.CommandContext(ctx, fields[0], append(append([]string{}, fields[1:]...), ids...)...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.Stdin = nil

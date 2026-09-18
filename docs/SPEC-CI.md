@@ -703,6 +703,51 @@ passed in as an argument reads as computed (refused, and the remedy is the
 safepath route anyway). `os.Remove`, `RemoveAll` behind an interface, and a shell
 `rm` in a script are other rules' business.
 
+### `fieldsindex` — no unchecked index into a split result
+
+**The rule.** An index or slice expression on the result of `strings.Fields`,
+`strings.Split` or `bytes.Fields` must be preceded by a `len(x)` comparison in
+the same function. The length of that slice is decided by the DATA, not by the
+code: a line with fewer separators than the code expects yields a shorter slice,
+and the next subscript panics.
+**The hurt.** Emma's `#1390`: a commit-only cursor line split into two fields and
+the walker reached `fields[2:]`. The instance was one missing `len(fields) < 3`
+refusal; the class is every other place a splitter's answer is trusted to be as
+long as the code assumed. A panic is the worst shape for this — it takes the
+whole verb down, in a loop nobody is watching, on the one input nobody had.
+**The test.** `TestNoUncheckedFieldsIndex`
+(`internal/ci/fieldsindex_class_test.go`), with the rule proved over source in
+`internal/ci/fieldsindex_rule_test.go`:
+`TestFieldsIndexRefusesThePreFixCursor` (the shape of `#1390`),
+`TestFieldsIndexAcceptsTheFixedCursor`,
+`TestFieldsIndexAcceptsTheShapesThatCannotBeShort`,
+`TestFieldsIndexRefusesTheShapesThatCanBeShort` (the narrowings are narrow),
+`TestFieldsIndexKeyIsFileAndFunction` and
+`TestFieldsIndexAllowlistIsShrinkOnly`.
+**Its allowlist.** `internal/ci/testdata/fieldsindex_allowlist.txt`, one
+`file:function # reason` per row — empty today, because the one offender the rule
+found on its first run was fixed rather than listed (`cmd/nova-wake/serve.go`,
+`server.spawn`, which indexed `strings.Fields(s.onNote)` with no length check of
+its own); shrink-only in both directions, and every row must carry a reason.
+**Its remedy lines.** `<index|slice> expression on <x>, the result of <splitter>,
+with no len(<x>) comparison in <func>; add the length check and a refusal line,
+or an allowlist row in testdata/fieldsindex_allowlist.txt with the reason`; for a
+stale row, `delete the stale row (the list only shrinks)`.
+**Its narrowings.** The unnarrowed rule named 26 sites in 15 functions on its
+first run and 25 of them could not be short, so four shapes are read as measured:
+`len(x)` in the header of a `for` (the reverse walk `for i := len(x) - 1; i >= 0;
+i--`), `len(x)` inside the subscript itself (`x[len(x)-1]`), `switch len(x)`,
+and `range x`. A fifth is in range by construction: `strings.Split` with a
+non-empty **string literal** separator always returns at least one element, so
+`x[0]` and `x[1:]` on it are not read — a computed separator, which may be empty,
+gets no such pass, and neither does `strings.Fields`, which returns nothing for a
+blank string. The rule asks only that the length was LOOKED at in the same
+function: deciding which branch a comparison guards needs the control-flow graph,
+and a function that measures the slice and still indexes it wrongly is a
+different mistake from one that never measured it at all. A split result passed
+to another function, stored in a struct field, or indexed through a second
+variable is not followed. Non-test `.go` files under `cmd/` and `internal/` only.
+
 ### `pathassert` — no test compares a path against a slash literal
 
 **The rule.** A test that compares a path against a string literal containing `/`
