@@ -24,7 +24,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
+nova-pulse fill    --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -38,6 +38,12 @@ nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evide
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
+nova-pulse hygiene reap <slot> --home <dir>
+nova-pulse hygiene delete-job <slot> <job> --home <dir>
+nova-pulse hygiene delete-slot <slot> --home <dir>
+nova-pulse hygiene drop-cache --home <dir>
+nova-pulse hygiene log [n] --home <dir>
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -144,6 +150,19 @@ deadline, slot locks whose pid is dead, launched cards whose job directory is go
 example:
   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
 
+hygiene is the bench's clean-as-we-work pass, the Go half of bin/bench-hygiene.sh:
+run reaps dead slots, deletes read jobs and drops the build cache when the disk is
+low, and prints one HYGIENE line; reap <slot>, delete-job <slot> <job>,
+delete-slot <slot>, drop-cache and log [n] are the six verbs it is made of. Every
+path hangs under --home and every deletion goes through internal/safepath: a slot
+name is [A-Za-z0-9._-]+, the path is the join of a literal root and that name,
+resolved and checked to sit strictly below its root, and a target that is not —
+outside the roots, holding "..", or a symlink escape — is refused, exit 2, one
+line. Each deletion is one <utc> <verb> <path> line in <home>/hygiene.log.
+
+example:
+  nova-pulse hygiene run --home "$HOME"
+
 fleet survey runs tools/bench-standard.sh on every bench named in --benches
 (name, ssh target and home per tab-separated line) over the ssh command
 "ssh <target> bash -s", in parallel under --timeout, and prints one line per
@@ -222,6 +241,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSweep(rest, stdout, stderr)
 	case "reap":
 		return cmdReap(rest, stdout, stderr)
+	case "hygiene":
+		return cmdHygiene(rest, stdout, stderr, now)
 	case "fleet":
 		return cmdFleet(rest, stdout, stderr)
 	case "wake":

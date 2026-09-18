@@ -2,7 +2,9 @@ package main
 
 // The fill verb: fill-loop.sh's tick body, once per tick, for every bench. It reads the
 // bench's capacity over ssh, pops that many ready cards, moves them to launched and hands
-// each to flash-native-bench.sh. One FILL line per tick.
+// each to flash-native-bench.sh. A card's `LANE: <name>` line serializes its area: at most
+// one live card per lane, the rest held in order, named by --lanes (default
+// queue/control/lanes.tsv). One FILL line per tick.
 
 import (
 	"bytes"
@@ -38,6 +40,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("fill")
 	ready := f.fs.String("ready", "", "")
 	launched := f.fs.String("launched", "", "")
+	lanes := f.fs.String("lanes", "queue/control/lanes.tsv", "")
 	once := f.fs.Bool("once", false, "")
 	var benches benchFlag
 	f.fs.Var(&benches, "bench", "")
@@ -56,6 +59,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return pulse.Fill(pulse.FillInput{
 		Ready:    *ready,
 		Launched: *launched,
+		Lanes:    *lanes,
 		Benches:  []string(benches),
 		Once:     *once,
 		Stdout:   stdout,
