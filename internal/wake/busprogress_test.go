@@ -27,7 +27,7 @@ func TestProgressIsNeverRelayedAsABusLine(t *testing.T) {
 	b := &Bus{}
 	res := b.Classify(strings.Join([]string{
 		"INBOX WALK commits=1/1 notes=0 elapsed=3ms",
-		`INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`,
+		`INBOX WALK bounded commits=500 cursor=0edc81b7 behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`,
 		"INBOX NOTE id=stella-aaaaaaaaaaaa from=Stella addr=to at=2026-09-18T11:00:00Z path=from-stella/a.md: the first note",
 		"INBOX OPEN carrying=1 heard=0 large=false remedy=-",
 		"INBOX REFUSED: the bus is not a git checkout",

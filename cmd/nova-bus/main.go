@@ -361,6 +361,11 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 		fmt.Fprintf(stderr, "nova-bus %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
 		return false
 	}
+	// The file defaults come in HERE, between the line and the required check, so that a
+	// flag the bus supplies satisfies "required" exactly as one the caller typed does.
+	if !f.applyDefaults(stderr) {
+		return false
+	}
 	for name, value := range required {
 		if strings.TrimSpace(*value) == "" {
 			fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
@@ -420,14 +425,19 @@ func (f *flags) set(name string) bool {
 }
 
 // receiptMaxWords resolves the one count a body is a receipt under. The flag wins; when it
-// is absent, a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults is read, then the
+// is absent, a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults has already been
+// folded into the flag by applyDefaults, and what is left here is the
 // NOVA_BUS_RECEIPT_MAX_WORDS environment variable. It refuses only when none of the three
 // yields a positive number, and the refusal names the two default sources as the remedy.
+//
+// THE FILE USED TO BE READ HERE, by a reader that knew this one key's name. That is why
+// `max-commits` had no file default and a habitually-stale reader had to remember it on
+// every call: the file was not a defaults file, it was this flag with a file behind it.
+// applyDefaults is the general form, and this function kept only the half that is
+// genuinely its own -- an environment variable no other flag has.
 func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, stderr io.Writer) (int, bool) {
 	if !flagWasSet {
-		if v, ok := receiptMaxWordsFromDefaults(busDir); ok {
-			flagValue = v
-		} else if v, ok := receiptMaxWordsFromEnv(); ok {
+		if v, ok := receiptMaxWordsFromEnv(); ok {
 			flagValue = v
 		}
 	}
@@ -438,33 +448,86 @@ func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, s
 	return flagValue, true
 }
 
-// receiptMaxWordsFromDefaults reads the `receipt-max-words=<n>` line out of
-// <bus>/.nova-bus/defaults, the file default source. The file is key=value lines; only this
-// one key matters. A missing file, a missing key, or an unusable value is "absent".
-func receiptMaxWordsFromDefaults(busDir string) (int, bool) {
+// defaultsPath is the one place this tool spells the defaults file, for the reader and for
+// every refusal that has to name it.
+func defaultsPath(busDir string) string {
+	return filepath.Join(busDir, ".nova-bus", "defaults")
+}
+
+// applyDefaults folds <bus>/.nova-bus/defaults into this verb's flag set: every flag the
+// caller did not give on the line, and the bus has an answer for, is set from the file
+// before anything is validated. THE FLAG WINS -- a key is skipped the moment the caller
+// named it -- so the file is a default and never an override.
+//
+// It is GENERAL on purpose. The file was born holding one key, `receipt-max-words`, read
+// by a function that knew that key's name; so when `--max-commits` turned out to need a
+// per-bus default too -- a reader five thousand commits behind gets `INBOX WALK bounded`
+// and no notes until they remember the flag -- there was nowhere to put it. A defaults
+// file that can only hold the keys somebody special-cased is not a defaults file. Any flag
+// of the verb may sit in it, under its own name and its own parser, which is also what
+// makes the refusals below possible: the FLAG says whether a value is usable, so a new
+// flag needs no new validation here.
+//
+// TWO REFUSALS AND ONE PASS-OVER, and the difference matters:
+//
+//   - a line that is not `<flag>=<value>` is refused. A defaults file is read on every
+//     run; a line in it that says nothing is a mistake somebody should be shown once,
+//     not carried silently for months.
+//   - a value the flag will not take is refused. A default nobody can use would otherwise
+//     leave the run reading the bus with a number its owner did not choose.
+//   - a key that names no flag OF THIS VERB is passed over. ONE file serves every verb on
+//     the bus, so `inbox`'s keys sit beside `send`'s and `wait`'s, and neither verb may
+//     refuse the others' defaults.
+//
+// `bus` itself is passed over for the obvious reason: the file lives inside the bus, so a
+// run has to know the bus to have read it.
+func (f *flags) applyDefaults(stderr io.Writer) bool {
+	busFlag := f.fs.Lookup("bus")
+	if busFlag == nil {
+		return true
+	}
+	busDir := strings.TrimSpace(busFlag.Value.String())
 	if busDir == "" {
-		return 0, false
+		return true
 	}
-	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
+	raw, err := os.ReadFile(defaultsPath(busDir))
 	if err != nil {
-		return 0, false
+		// A bus with no defaults file is the ordinary case and not a failure: every
+		// flag then comes from the line, as it always did.
+		return true
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	given := map[string]bool{}
+	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	for i, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		key, val, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "receipt-max-words" {
+		if !ok {
+			fmt.Fprintf(stderr, "nova-bus %s: %s line %d: %s is not `<flag>=<value>`\n",
+				oneline.Field(f.verb), oneline.Field(defaultsPath(busDir)), i+1, oneline.Field(oneline.Cap(line, 80)))
+			return false
+		}
+		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
+		target := f.fs.Lookup(key)
+		if key == "bus" || given[key] || target == nil {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(val))
-		if err != nil || n < 1 {
-			return 0, false
+		if err := f.fs.Set(key, val); err != nil {
+			// THE FLAG'S OWN USAGE GOES ON THE LINE. `flag` answers a bad int with
+			// "parse error", which tells the reader that something is wrong and
+			// nothing about what the flag wants; the usage string is already written,
+			// one lookup away, and is the difference between a refusal somebody can
+			// act on and one they have to go and read the source for.
+			fmt.Fprintf(stderr, "nova-bus %s: %s line %d: --%s cannot take %s: %s; --%s is %s\n",
+				oneline.Field(f.verb), oneline.Field(defaultsPath(busDir)), i+1, oneline.Field(key),
+				oneline.Field(oneline.Cap(val, 80)), oneline.Escape(oneline.Cap(err.Error(), 80)),
+				oneline.Field(key), oneline.Escape(oneline.Cap(target.Usage, oneline.TailBytes)))
+			return false
 		}
-		return n, true
 	}
-	return 0, false
+	return true
 }
 
 // receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
@@ -1707,7 +1770,17 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 1, r
 			}
 			if over {
-				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
+				// THE LINE SAYS WHAT HAPPENED AND NOT ONLY THAT SOMETHING DID. What this
+				// printed first was `INBOX WALK bounded commits=500` and nothing else,
+				// and a reader who did not already know their cursor was thousands of
+				// commits back could not tell that line from a quiet bus: no notes, no
+				// reason, no number. So it carries whose cursor stopped it, that the
+				// cursor is behind by MORE than the bound (how much more is deliberately
+				// not known -- see CommitsSinceBounded, which is the whole point of the
+				// bound), that nothing was read, and the way out. All on the one line,
+				// because a remedy on a second line is a remedy somebody's grep drops.
+				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d cursor=%s behind=more-than-%d notes=0 %s\n",
+					limit, oneline.Field(cursor.Commit), limit, boundedWalkRemedy)
 				return 0, r
 			}
 			var walk *walkProgress

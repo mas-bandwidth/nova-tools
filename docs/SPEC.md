@@ -2723,7 +2723,7 @@ INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
 INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
-INBOX WALK bounded commits=<n> remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
+INBOX WALK bounded commits=<n> cursor=<sha> behind=more-than-<n> notes=0 remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
 WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->[ until=<instant|-> idle-exit=<n>]   (the pair only with --until or --idle-exit)
 WAIT NOTE <why this wait is not waiting>
 WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
@@ -3525,6 +3525,26 @@ in both directions — which is why `Kind:` exists, costs one line, and wins.
 When the flag is absent, the threshold is read from a `receipt-max-words=<n>`
 line in `<bus>/.nova-bus/defaults`, then from `NOVA_BUS_RECEIPT_MAX_WORDS`, and
 the run refuses only when neither supplies one.
+
+**`<bus>/.nova-bus/defaults` holds ANY flag's default, not one key.** It is
+`<flag>=<value>` lines, one per line, `#` comments and blank lines ignored, and
+**the flag on the command line always wins**. The file was born holding
+`receipt-max-words` alone, read by a reader that knew that one key's name; so
+when `--max-commits` turned out to need a per-bus default too — a reader
+habitually thousands of commits behind gets `INBOX WALK bounded` and no notes
+until they remember the flag — there was nowhere to put it, which is what a
+defaults file that can only hold the keys somebody special-cased is worth. Any
+flag of the verb may sit in it under its own name, parsed by that flag's own
+parser. A line that is **not** `<flag>=<value>` is refused at exit 2 naming the
+file and the line, and so is a value the flag will not take — that refusal
+carries the flag's own usage, because `flag` answers a bad number with "parse
+error" and that tells a reader nothing about what the flag wants. A defaults
+file is read on every run, so a line in it that says nothing is a mistake shown
+once rather than carried for months, and a default nobody can use would
+otherwise leave the run reading the bus with a number its owner did not choose.
+A key that names no flag **of this verb** is passed over, because ONE file serves
+every verb on the bus and `inbox`'s keys sit beside `send`'s. `bus` itself is
+passed over: a run has to know the bus to have read the file.
 
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare
