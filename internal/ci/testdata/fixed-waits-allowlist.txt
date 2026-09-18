@@ -18,7 +18,6 @@ cmd/nova-bus/wait_test.go:369 elapsed 2026-09-17 a wall-clock measurement the te
 cmd/nova-bus/wait_test.go:416 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 cmd/nova-bus/wait_test.go:458 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-bus/wait_test.go:545 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-cmd/nova-merge/timeout_test.go:37 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-swarm/native_test.go:147 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/native_test.go:210 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/native_test.go:219 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
