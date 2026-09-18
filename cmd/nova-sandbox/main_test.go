@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -863,6 +865,302 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// It stays out of the banner: a verb a caller must not run is not offered to one.
 	if strings.Contains(usage, probeStepVerbName) {
 		t.Fatal("probe-step is in the usage banner")
+	}
+}
+
+// The parent half of the guard is an IDENTITY test, and this is that half on its own, with
+// no process in it: every case below is a file on disk and an answer that cannot move.
+//
+// It exists because the half used to be a comparison between two path STRINGS, and a string
+// is the wrong question twice over. It is too weak — a name says nothing about which FILE
+// wears it — and it is too brittle: the two paths reach the guard from different syscalls
+// that spell the same file differently (os.Executable() hands back the path as it was
+// passed to exec, the kernel's per-pid path is the resolved one; measured on darwin,
+// /tmp/x against /private/tmp/x), so the old form leaned on filepath.EvalSymlinks and
+// SWALLOWED its error. EvalSymlinks Lstats every component of the path; one component it
+// cannot read — a directory being removed, a call interrupted on a loaded machine, a step
+// the wall denies — and the comparison silently fell back to comparing spellings. A guard
+// whose answer depends on whether a directory walk finished is a guard that answers
+// differently under load, which is the shape of the defect this replaces. device+inode is
+// one stat each, it is what "the same binary" means, and it does not move.
+func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
+	}
+	dir := t.TempDir()
+	elsewhere := t.TempDir()
+	tool := filepath.Join(dir, "tool")
+	if err := os.WriteFile(tool, []byte("not really a tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A COPY: the same bytes, a different file. This is the foreign parent, and it is the
+	// case that must be false under every load and from every direction.
+	copied := filepath.Join(dir, "tool-copy")
+	if err := os.WriteFile(copied, body, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A SYMLINK and a HARD LINK are the same file under another name, and a hard link is the
+	// honest answer: there is no sense in which it is a different image.
+	symlinked := filepath.Join(dir, "tool-symlink")
+	if err := os.Symlink(tool, symlinked); err != nil {
+		t.Fatal(err)
+	}
+	hardLinked := filepath.Join(dir, "tool-hardlink")
+	if err := os.Link(tool, hardLinked); err != nil {
+		t.Fatal(err)
+	}
+	// The same file reached through a DIFFERENT SPELLING of its directory: this is the case
+	// the string comparison got wrong whenever the symlink walk could not finish, and the
+	// one that made the legitimate probe's own child refusable.
+	alias := filepath.Join(elsewhere, "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such-tool")
+
+	for _, c := range []struct {
+		name, self, parent string
+		want               bool
+	}{
+		{"the same path", tool, tool, true},
+		{"a symlink to it", tool, symlinked, true},
+		{"a hard link to it", tool, hardLinked, true},
+		{"the same file spelled through another directory name", tool, filepath.Join(alias, "tool"), true},
+		{"a byte-for-byte copy", tool, copied, false},
+		{"a copy in the other direction", copied, tool, false},
+		{"a parent that is not there", tool, missing, false},
+		{"a self that is not there", missing, tool, false},
+		{"neither is there", missing, missing, false},
+	} {
+		if got := sameImage(c.self, c.parent); got != c.want {
+			t.Errorf("%s: sameImage(%q, %q) = %v, want %v", c.name, c.self, c.parent, got, c.want)
+		}
+	}
+}
+
+// fakeParent is a parent identity the test can MOVE between the guard's reads. It answers
+// every os.Getppid() and every image read from a script and counts both, so that a guard
+// which stopped asking after the first answer fails here rather than passing.
+type fakeParent struct {
+	pids   []int
+	images []string
+	errs   []error
+	// before[i] runs just before image read i answers, which is how a test changes the
+	// world inside the window the guard is being asked about.
+	before   []func()
+	pidCalls int
+	imgCalls int
+}
+
+func (f *fakeParent) getppid() int {
+	i := f.pidCalls
+	f.pidCalls++
+	if i >= len(f.pids) {
+		return f.pids[len(f.pids)-1]
+	}
+	return f.pids[i]
+}
+
+func (f *fakeParent) imageOf(int) (string, error) {
+	i := f.imgCalls
+	f.imgCalls++
+	if i < len(f.before) && f.before[i] != nil {
+		f.before[i]()
+	}
+	if i < len(f.errs) && f.errs[i] != nil {
+		return "", f.errs[i]
+	}
+	if i >= len(f.images) {
+		return f.images[len(f.images)-1], nil
+	}
+	return f.images[i], nil
+}
+
+// The ordering of the parent half, with the syscalls taken out of it: the pid, the image,
+// the pid AGAIN and the image AGAIN, and a refusal if anything moved between any two.
+//
+// The second image read is the one a pid cannot speak for: exec(2) replaces a process's
+// image IN PLACE and leaves its pid untouched, so a parent that is this binary when the
+// guard first looks can exec something else and still be the same number when the guard
+// looks again. A pid that did not move proves nothing about the image that ran.
+//
+// Nothing here touches a clock, a core or the network: the world changes only where a case
+// says it changes, and the call counts make the ORDER itself the assertion — a guard that
+// made up its mind after the first answer reads the image once and fails here.
+func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
+	}
+	dir := t.TempDir()
+	// image is the file the parent runs; self is a SECOND NAME for that same file, so a case
+	// can replace what lives at `image` without touching what `self` names. That is what makes
+	// "the second read is a fresh stat" an assertion rather than a hope.
+	image := filepath.Join(dir, "image")
+	if err := os.WriteFile(image, []byte("the tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	self := filepath.Join(dir, "self")
+	if err := os.Link(image, self); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, []byte("the tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such-image")
+	failed := errors.New("proc_pidpath(7): no such process")
+	// replaceImage is an exec in place with no exec in it: the same path, a different file.
+	replaceImage := func() {
+		if err := os.Remove(image); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(image, []byte("something else\n"), 0o700); err != nil {
+			t.Error(err)
+		}
+	}
+
+	for _, c := range []struct {
+		name               string
+		parent             fakeParent
+		want               string
+		wantPids, wantImgs int
+	}{
+		{
+			name:   "nothing moved",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, image}},
+			want:   "", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the parent is a copy from the first look",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{other}},
+			want:   "the parent process is not this binary", wantPids: 1, wantImgs: 1,
+		},
+		{
+			name:   "the pid moved between the two looks",
+			parent: fakeParent{pids: []int{7, 9}, images: []string{image, image}},
+			want:   "the parent process changed while the guard was reading it", wantPids: 2, wantImgs: 1,
+		},
+		{
+			// The pid never moves. Only the image does, which is what exec in place looks
+			// like from here, and what the pid re-read on its own could not see.
+			name:   "the same pid exec'd a different path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, other}},
+			want:   "the parent process changed the image it is running while the guard was reading it", wantPids: 2, wantImgs: 2,
+		},
+		{
+			// The same pid AND the same path, with a different file underneath it: the second
+			// read has to be a fresh stat or this case passes.
+			name:   "the same pid exec'd a different file at the same path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, image}, before: []func(){nil, replaceImage}},
+			want:   "the parent process changed the image it is running while the guard was reading it", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the first look cannot name the parent",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image}, errs: []error{failed}},
+			want:   "the parent process cannot be named", wantPids: 1, wantImgs: 1,
+		},
+		{
+			// The parent went away between the looks. A guard that had already made up its
+			// mind would never ask, so this case is the second read's own witness.
+			name:   "the second look cannot name the parent",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image}, errs: []error{nil, failed}},
+			want:   "the parent process cannot be named", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the second look is not an absolute path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, "image"}},
+			want:   "the parent process is not named by an absolute path", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the parent is a path that is not there",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{missing}},
+			want:   "the parent process is not this binary", wantPids: 1, wantImgs: 1,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// Each case gets the file back as it was, because one of them replaces it.
+			if err := os.Remove(image); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.Link(self, image); err != nil {
+				t.Fatal(err)
+			}
+			p := c.parent
+			if got := parentIsThisImage(self, p.getppid, p.imageOf); got != c.want {
+				t.Errorf("parentIsThisImage = %q, want %q", got, c.want)
+			}
+			if p.pidCalls != c.wantPids {
+				t.Errorf("the guard read the pid %d times, want %d", p.pidCalls, c.wantPids)
+			}
+			if p.imgCalls != c.wantImgs {
+				t.Errorf("the guard read the parent's image %d times, want %d", p.imgCalls, c.wantImgs)
+			}
+		})
+	}
+}
+
+// The same refusal as TestProbeStepIsTheInternalVerb's last case, made many times at once
+// while every core is busy: a guard that fails OPEN under load is a security defect and not
+// a flake, so the load belongs in the suite rather than in a note about how to reproduce it.
+//
+// There is no sleep, no deadline and no clock anywhere in it. The pool burns for exactly as
+// long as the children take — it is stopped by this test's cleanup, which testing runs after
+// the parallel subtests below have all finished — so the test costs a fraction of a second
+// on a fast machine and the same work on a slow one, and it asserts the same thing on both.
+func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: exec.Cmd.ExtraFiles is unsupported there, so no probe child can be given fd 3 at all")
+	}
+	j := newJob(t)
+	// ONE copy, exec'd many times: a fresh copy per child would race its own write against
+	// its own exec, and this test is about the guard rather than about ETXTBSY.
+	copied := copyOfThisBinary(t)
+	raw := []byte("0123456789abcdef")
+	nonce := hex.EncodeToString(raw)
+	env := probeNonceVar + "=" + nonce
+
+	stop := make(chan struct{})
+	var burning sync.WaitGroup
+	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+		burning.Add(1)
+		go func() {
+			defer burning.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
+		}()
+	}
+	t.Cleanup(func() {
+		close(stop)
+		burning.Wait()
+	})
+
+	for i := 0; i < 8; i++ {
+		t.Run("child-"+strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			// Each child gets its own file OUTSIDE any wall, so an acceptance is not just a
+			// wrong exit code: it is a truncated file, and the file says so.
+			target := filepath.Join(j.write, "under-load-"+strconv.Itoa(i))
+			if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, errOut := probeChild(t, copied, raw, env, nonce, "write_outside", target)
+			if code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+				t.Fatalf("a copied parent was accepted under load: exit %d, stderr %q", code, errOut)
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+				t.Fatalf("a step refused under load still touched the file: %q, %v", string(got), err)
+			}
+		})
 	}
 }
 
