@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE FAKE RUNNER IS AN EXECUTABLE, NOT A SHELL SCRIPT (windows leg, 2026-09-15).
@@ -65,6 +67,7 @@ func builtFakeRunner(t *testing.T) string {
 		}
 		cmd := exec.Command("go", "build", "-o", bin, "./internal/swarm/testdata/fakerunner")
 		cmd.Dir = root
+		cmd.Env = goenv.Clean(os.Environ())
 		if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 			fakeRunnerErr = &buildError{out: string(out), err: cmdErr}
 			return
