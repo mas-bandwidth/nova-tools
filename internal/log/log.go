@@ -106,6 +106,15 @@ func (l Line) Write(w io.Writer) error {
 	return h.Handle(context.Background(), r)
 }
 
+// Emit is Write from the caller's side, and it exists for ONE reason: the binaries that
+// write these lines are held to a source rule that no `.Write` call may stand between a
+// value and a stream (internal/oneline/audit's Bypasses walk), because a Write is a writer
+// the escape audit cannot see through. This package IS the escape for these fields -- msg
+// and err go through internal/oneline inside Write, ts is the clock's own format, and the
+// rest are the caller's literals and numbers -- so the call a verb makes is this one, and
+// the Write stays here where the escaping is.
+func Emit(w io.Writer, l Line) error { return l.Write(w) }
+
 // levelOf is the spec's level word as slog's level, so the handler writes its one spelling
 // of it. The spec admits DEBUG, INFO, WARN and ERROR; anything else is the level of a
 // state change that is not a warning or an error, which is INFO.

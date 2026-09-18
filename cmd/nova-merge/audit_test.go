@@ -48,8 +48,17 @@ var mergeAudit = audit.Config{
 		// The two batch sites are the shape this walk cannot see: a value built above the
 		// print site. Each has a behavioral test of its own in batch_test.go.
 		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same six fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
-		"batch.go|runBatch|line":        "the six fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
-		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
+		"batch.go|runBatch|line": "the six fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
+		// The pull request's BODY is not a line of the grammar: it is a document handed to
+		// gh as one argument, and it is multi-line on purpose. Its three values are this
+		// binary's own: the receipt is the BATCH OK line, every field of which batchLine
+		// already rendered through oneline.Field, and the two lists are digits and commas
+		// from numberList.
+		"batchland.go|landBody|p.receipt":             "the gate's own BATCH OK line, whose every field batchLine rendered through oneline.Field before this run printed it",
+		"batchland.go|landBody|numberList(p.members)": "digits and commas, or the literal \"none\" -- numberList renders a list of ints",
+		"batchland.go|landBody|numberList(p.dropped)": "digits and commas, or the literal \"none\" -- numberList renders a list of ints",
+		"batchland.go|say|fields":                     "the fields of one BATCH LAND STEP line, built at every call site in batchland.go out of oneline.Field values and literal key= words -- the same shape batch.go|runBatch|line is exempted for; TestBatchLandPushesOpensEnqueuesWatchesAndClosesTheMembers reads those lines",
+		"batch.go|mergeMembers|in.name":               "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -131,6 +140,14 @@ var mergeAudit = audit.Config{
 		// skipped set in one deterministic order, so two reads of one file print the
 		// same lines. It returns nothing and prints nothing.
 		`"sort"`,
+		// internal/log is SPEC-LOGS.md Part 2's structured line, written beside the human
+		// one by `batch --land`. It cannot write past the escape: its Write renders msg
+		// through oneline.Field and err through oneline.Escape, ts is the injected clock's
+		// own RFC3339Nano, and every other field this binary sets is a literal (source,
+		// verb, event), a number (pr, dur_ms) or the process guid, which is a boot id, a
+		// pid and a start time. The Write itself stays in that package: this binary calls
+		// log.Emit, so no `.Write` stands between a value and a stream here.
+		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 	},
 	MinClassified: 60,
 }

@@ -1,0 +1,20 @@
+# THE FLAKE LIST, AND IT ONLY EVER SHRINKS.
+#
+# A test on this list fails on a tree that is green. `nova-merge batch --land --flakes
+# tools/ci/flakes.txt` may rerun a red ci-ok ONCE when EVERY failing test is named here, and
+# never twice: a test that fails twice is a red tree, whatever this file says about it.
+#
+# Every entry is one line:
+#
+#	<package> <Test> <why it is on the list>
+#
+# and the reason is required, because an entry with no reason is a test nobody can ever take
+# off the list -- nobody is left who knows what it was waiting for.
+#
+# THE FILE SHRINKS AND DOES NOT GROW. Adding a line is a decision for a person (it says the
+# suite is allowed to lie once), and internal/ci's TestTheFlakeListOnlyShrinks goes red on a
+# file longer than the two entries the fleet had on 2026-09-18. The way to take a line off is
+# to FIX the test and delete it.
+
+cmd/nova-pulse TestPowerRunnerTimeoutKillsProcessGroup the kill races the child's own exit on a loaded bench, so the process group is sometimes already gone when the test looks for it
+internal/review TestMutateRemovesItsWorktreeOnBothPaths the worktree removal races a filesystem that has not finished with the directory, which the darwin runners see and linux does not

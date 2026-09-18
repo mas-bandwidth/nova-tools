@@ -51,6 +51,38 @@ type FakeHost struct {
 	Failures  map[int][]Failure
 	Changed   map[int][]string
 	Issues    map[int]string
+
+	// THE LANDING SIDE. These are the LandForge seam's answers and its record of what was
+	// asked of it, so one fake models the whole of `batch --land`: the batch's own pull
+	// request, the runs over its head and over its merge group, the queue entry, the
+	// reruns, and the members it closed.
+	//
+	// LandPRs is keyed by HEAD BRANCH, because that is the question the verb asks -- "is
+	// there already a pull request from this batch's branch" -- and NextPR is the number
+	// the fake gives the next one it opens.
+	LandPRs map[string]LandPR
+	NextPR  int
+	// HeadRuns is the run over a commit, by sha; QueueRuns is the merge-group run, by
+	// pull request number. OnHeadRun and OnQueueState script a forge that ANSWERS
+	// DIFFERENTLY PER POLL, which is what a rerun that goes green and a queue entry that
+	// disappears both look like from here; each receives the 1-based call count.
+	HeadRuns     map[string]LandRun
+	QueueRuns    map[int]LandRun
+	QueueStates  map[int]string
+	OnHeadRun    func(sha string, call int) (LandRun, bool)
+	OnQueueState func(pr, call int) (string, bool)
+	HeadRunCalls int
+	QueueCalls   int
+	// Opened, Updated, Reruns and Closed are what the verb DID: one entry per call, in
+	// order, so a test says "opened once, reran once, closed both members" rather than
+	// inspecting state that several calls could have reached.
+	Opened  []string
+	Updated []string
+	Reruns  []int64
+	Closed  []string
+	// LandErr, when set, is what every LandForge method answers. It is separate from Err
+	// so a test can break the landing seam without breaking the lane's reads.
+	LandErr error
 }
 
 // QueuePRs lists the open pull requests this fake reports to the queue sweep. It is the
@@ -73,7 +105,101 @@ func (f *FakeHost) IssueFor(pr int) string { return f.Issues[pr] }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
-	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}}
+	return &FakeHost{
+		PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{},
+		MergeGroupRuns: map[int64]MergeRun{},
+		LandPRs:        map[string]LandPR{}, HeadRuns: map[string]LandRun{},
+		QueueRuns: map[int]LandRun{}, QueueStates: map[int]string{},
+		NextPR: 9000,
+	}
+}
+
+// The LandForge seam, faked. Every method here reaches nothing: no network, no subprocess,
+// no environment. What it answers is what a test set, and what it records is what the verb
+// asked for.
+
+func (f *FakeHost) PRForHead(head string) (LandPR, bool, error) {
+	if f.LandErr != nil {
+		return LandPR{}, false, f.LandErr
+	}
+	pr, ok := f.LandPRs[head]
+	return pr, ok, nil
+}
+
+func (f *FakeHost) OpenPR(head, base, title, body string) (LandPR, error) {
+	if f.LandErr != nil {
+		return LandPR{}, f.LandErr
+	}
+	f.NextPR++
+	pr := LandPR{Number: f.NextPR, HeadRef: head, URL: fmt.Sprintf("https://forge.invalid/pull/%d", f.NextPR)}
+	f.LandPRs[head] = pr
+	f.Opened = append(f.Opened, fmt.Sprintf("pr=%d head=%s base=%s title=%s body=%s", pr.Number, head, base, title, body))
+	return pr, nil
+}
+
+func (f *FakeHost) UpdatePR(n int, body string) error {
+	if f.LandErr != nil {
+		return f.LandErr
+	}
+	f.Updated = append(f.Updated, fmt.Sprintf("pr=%d body=%s", n, body))
+	return nil
+}
+
+func (f *FakeHost) HeadRun(sha string) (LandRun, error) {
+	if f.LandErr != nil {
+		return LandRun{}, f.LandErr
+	}
+	f.HeadRunCalls++
+	if f.OnHeadRun != nil {
+		if run, ok := f.OnHeadRun(sha, f.HeadRunCalls); ok {
+			return run, nil
+		}
+	}
+	run, ok := f.HeadRuns[sha]
+	if !ok {
+		return LandRun{}, fmt.Errorf("this fake forge has no run over %s", sha)
+	}
+	return run, nil
+}
+
+func (f *FakeHost) QueueRun(pr int, base string) (LandRun, error) {
+	if f.LandErr != nil {
+		return LandRun{}, f.LandErr
+	}
+	run, ok := f.QueueRuns[pr]
+	if !ok {
+		return LandRun{}, fmt.Errorf("this fake forge has no merge-group run for #%d on %s", pr, base)
+	}
+	return run, nil
+}
+
+func (f *FakeHost) RerunFailed(id int64) error {
+	if f.LandErr != nil {
+		return f.LandErr
+	}
+	f.Reruns = append(f.Reruns, id)
+	return nil
+}
+
+func (f *FakeHost) QueueState(pr int) (string, error) {
+	if f.LandErr != nil {
+		return "", f.LandErr
+	}
+	f.QueueCalls++
+	if f.OnQueueState != nil {
+		if state, ok := f.OnQueueState(pr, f.QueueCalls); ok {
+			return state, nil
+		}
+	}
+	return f.QueueStates[pr], nil
+}
+
+func (f *FakeHost) CloseMember(pr int, comment string) error {
+	if f.LandErr != nil {
+		return f.LandErr
+	}
+	f.Closed = append(f.Closed, fmt.Sprintf("pr=%d comment=%s", pr, comment))
+	return nil
 }
 
 func (f *FakeHost) PR(n int) (PR, error) {
