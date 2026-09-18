@@ -151,6 +151,16 @@ func TestPlanCheckRefusals(t *testing.T) {
 			want: ":kind",
 		},
 		{
+			name: "absent need",
+			body: "(:plan :version 1 (:node :id \"a\" :kind go-fix :needs (\"b\")))\n",
+			want: ":needs",
+		},
+		{
+			name: "needs cycle",
+			body: "(:plan :version 1 (:node :id \"a\" :kind go-fix :needs (\"b\")) (:node :id \"b\" :kind go-fix :needs (\"a\")))\n",
+			want: "rule 3",
+		},
+		{
 			name: "max-bytes",
 			body: "(:plan :version 1 (:node :id \"n1\" :kind docs))\n",
 			args: []string{"--max-bytes", "8"},

@@ -6,8 +6,10 @@
 // The bounded reader: `plan check` reads one plan under --max-bytes, --max-depth and
 // --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses
 // any input past a bound whole rather than truncated, and refuses an unknown `:kind` by
-// field name. A well-formed plan prints one line; a refusal is exit 2 with one remedy
-// line.
+// field name. It then closes the plan's needs/blocks graph at load: `:needs` is the
+// reference edge and `:blocks` its inverse, an absent need is refused naming the field
+// and the id, and a `:needs` cycle is refused by validator rule 3 before publication. A
+// well-formed plan prints one line; a refusal is exit 2 with one remedy line.
 //
 // The job graph: typed needs and blocks edges, refused acyclic at seed by validator rule
 // 3, and the mechanical ready set launch reads. A node is ready only when every need is
@@ -49,7 +51,7 @@ verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
   nova-work ready --node X is the ready set
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
-  nova-work plan check     reads a .work plan as data, never as a program
+  nova-work plan check     reads a .work plan as data and closes its needs/blocks graph
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -57,7 +59,10 @@ publication, so the ready set is finite and the graph can never deadlock.
 
 A plan is read as data, never as a program: a ` + "`#.`" + ` dispatch macro anywhere in code
 position is refused at exit 2 naming its byte offset, string and comment text is opaque,
-and an unknown :kind is refused naming the field.
+and an unknown :kind is refused naming the field. :needs is the reference edge and
+:blocks its inverse, so the kernel derives whichever a node did not give; an absent
+need is refused naming the field and the id, and a :needs cycle is refused by validator
+rule 3, both at load before the graph is published.
 
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
@@ -289,7 +294,13 @@ func cmdPlan(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " plan check", oneline.Err(err))
 	}
-	fmt.Fprintf(stdout, "PLAN OK file=%s bytes=%d version=%d nodes=%d\n",
-		oneline.Field(*file), len(data), plan.Version, len(plan.Nodes))
+	// Closing the graph at load refuses an absent need and a :needs cycle before
+	// anything is published: a plan whose graph cannot be built is not a plan.
+	graph, err := plan.Graph()
+	if err != nil {
+		return refuse(stderr, " plan check", oneline.Err(err))
+	}
+	fmt.Fprintf(stdout, "PLAN OK file=%s bytes=%d version=%d nodes=%d edges=%d\n",
+		oneline.Field(*file), len(data), plan.Version, len(plan.Nodes), graph.Edges())
 	return 0
 }

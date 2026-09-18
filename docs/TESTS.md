@@ -667,7 +667,7 @@ $ nova-work ready --node b --graph ./deps.json
 READY node=b ready=true
 
 $ nova-work plan check --file ./work.work
-PLAN OK file=./work.work bytes=47 version=1 nodes=1
+PLAN OK file=./work.work bytes=47 version=1 nodes=1 edges=0
 ```
 
 The two verbs read one plan and one graph as data; a `:deps` cycle is refused at
