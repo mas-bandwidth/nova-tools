@@ -96,28 +96,22 @@ func (r WaitsResult) ExitCode() int {
 // and cmd/.
 var checkWaitsDirs = []string{"internal", "cmd"}
 
-// CheckWaits reads every _test.go under root/internal and root/cmd and returns
-// the fixed waits, the allowlist entries honored, and any allowlist entry that
-// names no offender. The tree comes from the caller, never from a walk of the
-// repository; testdata directories are skipped so the fixtures are never read
-// as offenders.
-func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
-	var res WaitsResult
-	entries, err := readWaitAllowlist(allowlistPath)
-	if err != nil {
-		return res, err
-	}
-	matched := make([]bool, len(entries))
-
+// walkCITestFiles reads every _test.go under root/internal and root/cmd -- the
+// two trees checkWaitsDirs names -- and calls fn with the repo-relative slash
+// path and the file's bytes. testdata, .git and vendor are skipped so the
+// fixtures the checkers are tested with are never read as offenders. A tree
+// that is not there is not an error: a checkout without cmd/ is still checked
+// for the part it has.
+func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkWaitsDirs {
 		base := filepath.Join(root, dir)
 		if _, statErr := os.Stat(base); statErr != nil {
 			if os.IsNotExist(statErr) {
 				continue
 			}
-			return res, statErr
+			return statErr
 		}
-		err = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -139,18 +133,38 @@ func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
 			if relErr != nil {
 				return relErr
 			}
-			rel = filepath.ToSlash(rel)
-			res.Tests++
-			findings, ok := scanWaitFile(rel, raw)
-			if !ok {
-				return nil
-			}
-			res.Findings = append(res.Findings, findings...)
-			return nil
+			return fn(filepath.ToSlash(rel), raw)
 		})
 		if err != nil {
-			return res, err
+			return err
 		}
+	}
+	return nil
+}
+
+// CheckWaits reads every _test.go under root/internal and root/cmd and returns
+// the fixed waits, the allowlist entries honored, and any allowlist entry that
+// names no offender. The tree comes from the caller, never from a walk of the
+// repository; testdata directories are skipped so the fixtures are never read
+// as offenders.
+func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
+	var res WaitsResult
+	entries, err := readWaitAllowlist(allowlistPath)
+	if err != nil {
+		return res, err
+	}
+	matched := make([]bool, len(entries))
+
+	err = walkCITestFiles(root, func(rel string, raw []byte) error {
+		res.Tests++
+		findings, ok := scanWaitFile(rel, raw)
+		if ok {
+			res.Findings = append(res.Findings, findings...)
+		}
+		return nil
+	})
+	if err != nil {
+		return res, err
 	}
 
 	var remaining []WaitFinding

@@ -1,0 +1,9 @@
+package fixture
+
+import "testing"
+
+func TestFixtureAllowedHostPort(t *testing.T) {
+	_ = "127.0.0.1:0"
+	_ = "localhost:8080"
+	_ = "example.test:443"
+}
