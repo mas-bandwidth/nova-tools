@@ -100,6 +100,16 @@ var swarmAudit = audit.Config{
 		// executable.go asks of PATHEXT, made a parameter so linux can hold the windows
 		// answer to its contract.
 		`"runtime"`,
+		// sync (pull.go) holds a WaitGroup and the lease-heartbeat goroutine's
+		// channel select. It owns no writer and writes no stream; the renewal it
+		// runs goes through the redisq Client and prints nothing.
+		`"sync"`,
+		// redisq (pull.go) is the one interface every Redis call goes through:
+		// XREADGROUP, XAUTOCLAIM, SET/XACK and the lease's compare-and-release.
+		// It opens no stream of its own and returns Entries, which this package
+		// renders through oneline.Field or oneline.Err before printing. A refused
+		// dial reaches stderr as an oneline.Err line.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
 		// regexp (lint.go) compiles the patterns the card lint matches a card's text
 		// against; a *regexp.Regexp holds no writer and writes no stream. Every line it
 		// selects leaves this package through oneline.Escape(oneline.Cap(...)) on the
