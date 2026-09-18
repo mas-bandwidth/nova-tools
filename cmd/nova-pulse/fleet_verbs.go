@@ -17,11 +17,24 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
+
+// splitItems reads `--items a,b,c` as the list it looks like. An empty list is every item
+// the machine has a remedy for, which is what `--apply` alone means.
+func splitItems(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet standard")
@@ -35,8 +48,48 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 	minFree := f.fs.Int("min-free", 25, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", 0, "")
+	// --apply is the other half of the standard: the checks, as REMEDIES. It is the one
+	// mutating fleet verb, so it names its machine through the machines REGISTRY -- the file
+	// that decides where cards go -- and never through the benches file, it never takes
+	// --all, and every change it makes is one line.
+	apply := f.fs.Bool("apply", false, "")
+	machine := f.fs.String("machine", "", "")
+	items := f.fs.String("items", "", "")
+	home := f.fs.String("home", "", "")
+	gitName := f.fs.String("git-name", "", "")
+	gitEmail := f.fs.String("git-email", "", "")
+	dryRun := f.fs.Bool("dry-run", false, "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *apply {
+		f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes")
+		f.want(*machine, "machine", "the one machine to repair; --apply CHANGES a machine, so it is never the whole fleet")
+		if strings.TrimSpace(*bench) != "" || strings.TrimSpace(*benches) != "" {
+			f.add("--apply names its machine with --machine against --machines; --bench and --benches belong to the reading half of this verb")
+		}
+		if *timeout < 1 {
+			f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
+		}
+		if f.refused(stderr) {
+			return 2
+		}
+		return pulse.FleetStandardApply(pulse.ApplyInput{
+			Machines: *machines, Name: *machine, Items: splitItems(*items), SSH: *ssh,
+			Home: *home, GitName: *gitName, GitEmail: *gitEmail, DryRun: *dryRun,
+			Timeout: time.Duration(*timeout) * time.Second,
+			Stdout:  stdout, Stderr: stderr,
+		}).Code
+	}
+	for _, only := range []struct{ name, value string }{
+		{"items", *items}, {"home", *home}, {"git-name", *gitName}, {"git-email", *gitEmail},
+	} {
+		if strings.TrimSpace(only.value) != "" {
+			f.add(fmt.Sprintf("--%s belongs to --apply; without --apply this verb only reads", only.name))
+		}
+	}
+	if *dryRun {
+		f.add("--dry-run belongs to --apply; without --apply this verb only reads, and there is nothing to withhold")
 	}
 	f.want(*benches, "benches", "the fleet file: name, ssh target, home, mac one per line")
 	f.want(*bench, "bench", "the one bench to hold against the standard")

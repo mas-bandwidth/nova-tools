@@ -19,9 +19,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/friends"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
@@ -31,6 +34,8 @@ import (
 var (
 	fleetNewCertifyRemote = func(program string) fleet.Remote { return fleetSSHRunner{Program: program} }
 	fleetNewCertifyForge  = func(timeout time.Duration) fleet.Forge { return ghRunnerList{Timeout: timeout} }
+	fleetNewCertifyFixer  = func(f certifyFixer) fleet.Fixer { return f }
+	fleetNewCertifyBus    = func(b certifyBusPoster) fleet.BusPoster { return b }
 )
 
 // ghRunnerList is the production forge: the reaper's own runner read, narrowed to the one
@@ -67,6 +72,23 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	status := f.fs.Bool("status", false, "")
 	logPath := f.fs.String("log", "", "")
 	dryRun := f.fs.Bool("dry-run", false, "")
+	// The repair round. It is ON by default, because the whole point of mechanizing
+	// certification is that the fleet does not wait for a person to type the same four
+	// repairs on four machines again; `--no-fix` waives it out loud.
+	fix := f.fs.Bool("fix", true, "")
+	noFix := f.fs.Bool("no-fix", false, "")
+	maxFixRounds := f.fs.Int("max-fix-rounds", fleet.DefaultFixRounds, "")
+	gitName := f.fs.String("git-name", "", "")
+	gitEmail := f.fs.String("git-email", "", "")
+	// Where an escalation goes. With no --bus the escalation is still a line and still an
+	// event; the note is what needs a bus, and a run without one says so rather than
+	// dropping it.
+	busDir := f.fs.String("bus", "", "")
+	busAs := f.fs.String("as", "", "")
+	busTo := f.fs.String("to", "", "")
+	busRemote := f.fs.String("bus-remote", "origin", "")
+	busBranch := f.fs.String("bus-branch", "main", "")
+	lane := f.fs.String("lane", fleet.DefaultLane, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -90,6 +112,15 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	}
 	if *status && (*machine != "" || *all || *ifStale) {
 		f.add("--status reads the record and reaches no machine; pass it alone")
+	}
+	if *maxFixRounds < 0 {
+		f.add(fmt.Sprintf("--max-fix-rounds is 0 or more, got %d; 0 is the same waiver as --no-fix", *maxFixRounds))
+	}
+	if strings.TrimSpace(*busDir) != "" && strings.TrimSpace(*busAs) == "" {
+		f.add("--bus without --as; a note needs a sender, and the bus refuses one with no lane of its own")
+	}
+	if strings.TrimSpace(*busDir) != "" && strings.TrimSpace(*busTo) == "" {
+		f.add("--bus without --to; an escalation nobody is addressed by is an escalation nobody reads")
 	}
 	if f.refused(stderr) {
 		return 2
@@ -132,14 +163,76 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		events = f
 	}
 
+	// The repair is on unless it was waived, and it is wired even when it is off: a run that
+	// turns the fix on must never fall back to a guessed path for the apply.
+	wantFix := *fix && !*noFix
+	fixer := fleetNewCertifyFixer(certifyFixer{
+		Machines: *machines, SSH: *ssh, GitName: *gitName, GitEmail: *gitEmail,
+		Timeout: bound, Stdout: stdout, Stderr: stderr,
+	})
+	var poster fleet.BusPoster
+	if strings.TrimSpace(*busDir) != "" {
+		poster = fleetNewCertifyBus(certifyBusPoster{
+			Bus: *busDir, As: *busAs, To: *busTo, Remote: *busRemote, Branch: *busBranch, Timeout: bound,
+		})
+	}
+
 	return fleet.Certify(fleet.CertifyInput{
 		Machines: *machines, Only: *machine, All: *all, Workloads: loads,
 		Certs: *certs, Hash: hash, Build: *build, Bin: *bin, Repo: *repo,
 		Timeout: bound, DryRun: *dryRun, IfStale: *ifStale, MaxAge: age, Log: events,
+		Fix: wantFix, MaxFixRounds: *maxFixRounds, Fixer: fixer, Bus: poster, Lane: *lane,
 		Remote: fleetNewCertifyRemote(*ssh), Forge: fleetNewCertifyForge(bound),
 		Now:    func() time.Time { return fleetNow().UTC() },
 		Stdout: stdout, Stderr: stderr,
 	})
+}
+
+// certifyFixer is the apply seam in production: `fleet standard --apply` for one machine,
+// run in-process rather than as a subprocess, so there is ONE apply and not a second copy of
+// it behind a certify. Its STANDARD APPLY lines go to the same streams as the CERTIFY lines,
+// because what a repair changed on a machine belongs in the same transcript as the failure
+// that asked for it.
+type certifyFixer struct {
+	Machines string
+	SSH      string
+	GitName  string
+	GitEmail string
+	Timeout  time.Duration
+	Stdout   io.Writer
+	Stderr   io.Writer
+}
+
+func (f certifyFixer) Apply(machine string, items []string) ([]string, error) {
+	out := pulse.FleetStandardApply(pulse.ApplyInput{
+		Machines: f.Machines, Name: machine, Items: items, SSH: f.SSH,
+		GitName: f.GitName, GitEmail: f.GitEmail, Timeout: f.Timeout,
+		Stdout: f.Stdout, Stderr: f.Stderr,
+	})
+	if out.Code != 0 {
+		return out.Changed(), fmt.Errorf("the apply on %s exited %d; the STANDARD APPLY lines above name the item", machine, out.Code)
+	}
+	return out.Changed(), nil
+}
+
+// certifyBusPoster is the escalation's note in production: ONE `nova-bus send`, through the
+// bus's own send path -- its locking, its index, its push -- and never a second shape of
+// note on one bus. The lane is the first line of the body, the way a card names its lane.
+type certifyBusPoster struct {
+	Bus     string
+	As      string
+	To      string
+	Remote  string
+	Branch  string
+	Timeout time.Duration
+}
+
+func (b certifyBusPoster) Post(lane, subject, body string) error {
+	note := bus.Skeleton{From: b.As, To: b.To, Subject: subject}.RenderWith("LANE: " + lane + "\n\n" + body)
+	_, err := friends.BusSender{
+		Bin: "nova-bus", Bus: b.Bus, As: b.As, Remote: b.Remote, Branch: b.Branch, Timeout: b.Timeout,
+	}.Send(note)
+	return err
 }
 
 // certifyWorkloads takes the override directory when one is named and the embedded standard
