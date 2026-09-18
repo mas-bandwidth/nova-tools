@@ -77,4 +77,5 @@
                 (:file "tests/replays-8664")
                 (:file "tests/decide")
                 (:file "tests/replays-8682")
-                (:file "tests/replays-notes")))
+                (:file "tests/replays-notes")
+                (:file "tests/isolation-collision")))
