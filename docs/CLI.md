@@ -1559,6 +1559,35 @@ What a first run gets wrong, and what each one wants:
 `nova-sandbox policy` prints what would be generated without running anything,
 which is the fastest way to see the wall a set of flags actually makes.
 
+### A disposable place, on darwin
+
+The flags above give a command a **wall** around a directory you own and keep.
+`nova-sandbox run` gives it a **place** instead, and then takes the place away:
+
+```
+$ nova-sandbox run --name j1 --size 8g --timeout 30m \
+               --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
+SANDBOX STEP name=create state=start
+SANDBOX STEP name=create state=done ms=2395
+SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Volumes/nova-j1/work ...
+SANDBOX STEP name=delete state=start
+SANDBOX STEP name=delete state=done ms=1426
+SANDBOX DONE name=j1 exit=0 wall=9.500 freed=32768
+```
+
+An APFS volume of its own in the boot container, quota'd by `--size`, is the
+command's only writable directory — `TMPDIR`, `HOME` and the working directory
+are all on it — and on exit, whether that exit is clean, an error, a signal or
+`--timeout`, the whole process group is killed and the volume is unmounted and
+deleted. **There is no cleanup step**, because nothing of the run is left on the
+boot volume to clean. It needs no `sudo`. A delete that fails prints
+`SANDBOX LEAK` with the one `diskutil` command that removes it and exits 3,
+never silently.
+
+Every other platform refuses `run` with one remedy line: on linux a card is
+already disposable — it runs inside its image — so name the image root as
+`--write` on the bare form instead.
+
 ## nova-tokens
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
