@@ -14,9 +14,13 @@ import (
 func TestAnIdleSlotAsksOnAnEventNotAPoll(t *testing.T) {
 	var reads, asks int32
 	event := make(chan struct{})
+	// asked is closed inside Ask, so the test observes the block itself rather than
+	// polling a clock for it: no fixed sleep and no short deadline decides this test.
+	asked := make(chan struct{})
 	pending := func() int { atomic.AddInt32(&reads, 1); return 0 }
 	ask := func() bool {
 		atomic.AddInt32(&asks, 1)
+		close(asked)
 		<-event
 		return true
 	}
@@ -25,10 +29,11 @@ func TestAnIdleSlotAsksOnAnEventNotAPoll(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- slot.Wait() }()
 
-	// Wait until the slot has asked once; it is now blocked on the event.
-	deadline := time.Now().Add(2 * time.Second)
-	for atomic.LoadInt32(&asks) == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	// The slot has read its empty queue once and is now blocked on the event.
+	select {
+	case <-asked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the idle slot never asked; it never reached its event seam")
 	}
 	if got := atomic.LoadInt32(&asks); got != 1 {
 		t.Fatalf("idle slot asked %d times, want exactly 1", got)
@@ -36,7 +41,6 @@ func TestAnIdleSlotAsksOnAnEventNotAPoll(t *testing.T) {
 
 	// While blocked on the event the slot must read its queue exactly once -- the read
 	// that found it empty -- and never again. More reads is a poll.
-	time.Sleep(100 * time.Millisecond)
 	if got := atomic.LoadInt32(&reads); got != 1 {
 		t.Fatalf("idle slot read its empty queue %d times while blocked, want 1: it is polling", got)
 	}
