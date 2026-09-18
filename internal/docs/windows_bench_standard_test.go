@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// bench_standard_windows_test.go holds docs/BENCH-STANDARD-WINDOWS.md against the
+// windows_bench_standard_test.go holds docs/BENCH-STANDARD-WINDOWS.md against the
 // two facts in it that rot on their own, and against the README that points at it.
 //
 // The page is a provisioning standard for a machine nobody has yet: every word of
@@ -21,6 +21,14 @@ import (
 // summary missing one is a bench provisioned without it.
 //
 // It reads both sides as text and runs nothing.
+//
+// THE NAME IS LOAD-BEARING. This file was `bench_standard_windows_test.go` first,
+// and it compiled, and it was green, and it ran NOWHERE: Go strips `_test` and
+// reads the remaining `_windows` suffix as an implicit GOOS constraint, so the
+// whole file was excluded on every machine in the fleet. `go test ./internal/docs/`
+// said `ok` because the nine other tests in the package passed. A test about
+// Windows must therefore not be NAMED for Windows at its end -- the word goes at
+// the front.
 
 const (
 	winStandardPath = "../../docs/BENCH-STANDARD-WINDOWS.md"
