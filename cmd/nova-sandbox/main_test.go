@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -938,6 +939,168 @@ func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
 		if got := sameImage(c.self, c.parent); got != c.want {
 			t.Errorf("%s: sameImage(%q, %q) = %v, want %v", c.name, c.self, c.parent, got, c.want)
 		}
+	}
+}
+
+// fakeParent is a parent identity the test can MOVE between the guard's reads. It answers
+// every os.Getppid() and every image read from a script and counts both, so that a guard
+// which stopped asking after the first answer fails here rather than passing.
+type fakeParent struct {
+	pids   []int
+	images []string
+	errs   []error
+	// before[i] runs just before image read i answers, which is how a test changes the
+	// world inside the window the guard is being asked about.
+	before   []func()
+	pidCalls int
+	imgCalls int
+}
+
+func (f *fakeParent) getppid() int {
+	i := f.pidCalls
+	f.pidCalls++
+	if i >= len(f.pids) {
+		return f.pids[len(f.pids)-1]
+	}
+	return f.pids[i]
+}
+
+func (f *fakeParent) imageOf(int) (string, error) {
+	i := f.imgCalls
+	f.imgCalls++
+	if i < len(f.before) && f.before[i] != nil {
+		f.before[i]()
+	}
+	if i < len(f.errs) && f.errs[i] != nil {
+		return "", f.errs[i]
+	}
+	if i >= len(f.images) {
+		return f.images[len(f.images)-1], nil
+	}
+	return f.images[i], nil
+}
+
+// The ordering of the parent half, with the syscalls taken out of it: the pid, the image,
+// the pid AGAIN and the image AGAIN, and a refusal if anything moved between any two.
+//
+// The second image read is the one a pid cannot speak for: exec(2) replaces a process's
+// image IN PLACE and leaves its pid untouched, so a parent that is this binary when the
+// guard first looks can exec something else and still be the same number when the guard
+// looks again. A pid that did not move proves nothing about the image that ran.
+//
+// Nothing here touches a clock, a core or the network: the world changes only where a case
+// says it changes, and the call counts make the ORDER itself the assertion — a guard that
+// made up its mind after the first answer reads the image once and fails here.
+func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
+	}
+	dir := t.TempDir()
+	// image is the file the parent runs; self is a SECOND NAME for that same file, so a case
+	// can replace what lives at `image` without touching what `self` names. That is what makes
+	// "the second read is a fresh stat" an assertion rather than a hope.
+	image := filepath.Join(dir, "image")
+	if err := os.WriteFile(image, []byte("the tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	self := filepath.Join(dir, "self")
+	if err := os.Link(image, self); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, []byte("the tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such-image")
+	failed := errors.New("proc_pidpath(7): no such process")
+	// replaceImage is an exec in place with no exec in it: the same path, a different file.
+	replaceImage := func() {
+		if err := os.Remove(image); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(image, []byte("something else\n"), 0o700); err != nil {
+			t.Error(err)
+		}
+	}
+
+	for _, c := range []struct {
+		name               string
+		parent             fakeParent
+		want               string
+		wantPids, wantImgs int
+	}{
+		{
+			name:   "nothing moved",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, image}},
+			want:   "", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the parent is a copy from the first look",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{other}},
+			want:   "the parent process is not this binary", wantPids: 1, wantImgs: 1,
+		},
+		{
+			name:   "the pid moved between the two looks",
+			parent: fakeParent{pids: []int{7, 9}, images: []string{image, image}},
+			want:   "the parent process changed while the guard was reading it", wantPids: 2, wantImgs: 1,
+		},
+		{
+			// The pid never moves. Only the image does, which is what exec in place looks
+			// like from here, and what the pid re-read on its own could not see.
+			name:   "the same pid exec'd a different path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, other}},
+			want:   "the parent process changed the image it is running while the guard was reading it", wantPids: 2, wantImgs: 2,
+		},
+		{
+			// The same pid AND the same path, with a different file underneath it: the second
+			// read has to be a fresh stat or this case passes.
+			name:   "the same pid exec'd a different file at the same path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, image}, before: []func(){nil, replaceImage}},
+			want:   "the parent process changed the image it is running while the guard was reading it", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the first look cannot name the parent",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image}, errs: []error{failed}},
+			want:   "the parent process cannot be named", wantPids: 1, wantImgs: 1,
+		},
+		{
+			// The parent went away between the looks. A guard that had already made up its
+			// mind would never ask, so this case is the second read's own witness.
+			name:   "the second look cannot name the parent",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image}, errs: []error{nil, failed}},
+			want:   "the parent process cannot be named", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the second look is not an absolute path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, "image"}},
+			want:   "the parent process is not named by an absolute path", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the parent is a path that is not there",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{missing}},
+			want:   "the parent process is not this binary", wantPids: 1, wantImgs: 1,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// Each case gets the file back as it was, because one of them replaces it.
+			if err := os.Remove(image); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.Link(self, image); err != nil {
+				t.Fatal(err)
+			}
+			p := c.parent
+			if got := parentIsThisImage(self, p.getppid, p.imageOf); got != c.want {
+				t.Errorf("parentIsThisImage = %q, want %q", got, c.want)
+			}
+			if p.pidCalls != c.wantPids {
+				t.Errorf("the guard read the pid %d times, want %d", p.pidCalls, c.wantPids)
+			}
+			if p.imgCalls != c.wantImgs {
+				t.Errorf("the guard read the parent's image %d times, want %d", p.imgCalls, c.wantImgs)
+			}
+		})
 	}
 }
 

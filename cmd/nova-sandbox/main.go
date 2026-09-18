@@ -648,26 +648,62 @@ func notTheProbesChild(nonce string, env []string) string {
 	if err != nil {
 		return "this process cannot name its own path"
 	}
-	// The pid is read BEFORE the parent's executable and read again AFTER it, and the guard
-	// refuses if it moved. os.Getppid() and the per-pid path read are two syscalls, and
-	// between them the parent can exit: this process is then reparented, the old number is
-	// free, and on a busy machine it is handed out again within the same second. Asking a
-	// STALE number is asking about whatever process now wears it.
-	ppid := os.Getppid()
-	parent, err := parentExecutable(ppid)
+	// An absolute path is what these syscalls promise; anything else is an answer this guard
+	// has no way to check, and an unchecked answer is a pass.
+	if !filepath.IsAbs(self) {
+		return "this process is not named by an absolute path"
+	}
+	return parentIsThisImage(self, os.Getppid, parentExecutable)
+}
+
+// parentIsThisImage is the parent half's ORDERING, lifted away from the two syscalls that
+// answer it so that the ordering itself can be tested rather than only described. It reads
+// the pid, the image, the pid again and THE IMAGE AGAIN, and it refuses if anything moved
+// between any two of those reads.
+//
+// Both re-reads are there because a pid and an image can each change under the other.
+//
+//   - The pid can go: os.Getppid() and the per-pid path read are two syscalls, and between
+//     them the parent can exit. This process is reparented, the old number is free, and on
+//     a busy machine it is handed out again within the same second — so asking a STALE
+//     number is asking about whatever process now wears it.
+//   - The IMAGE can go while the pid stays. exec(2) replaces a process's image IN PLACE and
+//     leaves its pid alone (Johnny's read on #1310): a parent that is this binary when the
+//     first read happens can exec something else and still be the same pid at the second
+//     read, so a pid that did not move proves nothing about the image that ran. The image
+//     is therefore read again, and the second read is a fresh stat: it catches both an exec
+//     of a different path and a different file put at the SAME path.
+//
+// The window cannot be closed to zero from inside the child — there is no call that hands a
+// process an atomic "my parent, now" — so what this does is make every read that the guard
+// rests on a read that was still true at the end of it, and refuse otherwise. Refusing is
+// the whole point: the probe's real parent does not exec anything, so the honest cost of
+// the re-reads is nil and the dishonest one is a refusal.
+func parentIsThisImage(self string, getppid func() int, imageOf func(pid int) (string, error)) string {
+	before := getppid()
+	first, err := imageOf(before)
 	if err != nil {
 		return "the parent process cannot be named"
 	}
-	// An absolute path is what both of these syscalls promise; anything else is an answer
-	// this guard has no way to check, and an unchecked answer is a pass.
-	if !filepath.IsAbs(self) || !filepath.IsAbs(parent) {
+	if !filepath.IsAbs(first) {
 		return "the parent process is not named by an absolute path"
 	}
-	if !sameImage(self, parent) {
+	if !sameImage(self, first) {
 		return "the parent process is not this binary"
 	}
-	if os.Getppid() != ppid {
+	after := getppid()
+	if after != before {
 		return "the parent process changed while the guard was reading it"
+	}
+	second, err := imageOf(after)
+	if err != nil {
+		return "the parent process cannot be named"
+	}
+	if !filepath.IsAbs(second) {
+		return "the parent process is not named by an absolute path"
+	}
+	if !sameImage(self, second) || !sameImage(first, second) {
+		return "the parent process changed the image it is running while the guard was reading it"
 	}
 	return ""
 }
