@@ -43,6 +43,8 @@ var mergeAudit = audit.Config{
 		"verbs.go|cmdAdd|yn":                                            "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
 		"pass.go|discoverDefault|verb":                                  "the verb's own name, the literals \"RUN\" and \"STATUS\" at its three call sites in pass.go",
+		"classify.go|classifyPacketEntry|line":                          "the decision renderer decide.Line has already rendered every name and value through oneline.Field; escaping it again would turn its \\x3d escapes into literal backslashes",
+		"classify.go|classifyPacketEntry|mergePacketEvidence(e)":        "pr#<n> is digits, and branch#<name> renders the name through oneline.Field inside mergePacketEvidence",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -75,6 +77,14 @@ var mergeAudit = audit.Config{
 		// escape.
 		// safepath removes the scratch worktree this verb computed; it holds no writer.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// context carries no writer: it is the deadline the typed-decision call runs under
+		// (context.Background here, and decide.Client applies its own 10 s timeout), and it
+		// prints nothing.
+		`"context"`,
+		// internal/decide is the typed-decision route: it builds one JSON request and
+		// parses the answers, and it never prints. Its one line is rendered back here
+		// through oneline/decide.Line, whose every field is escaped.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 	},
 	MinClassified: 60,
 }

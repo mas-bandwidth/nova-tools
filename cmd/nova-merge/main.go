@@ -49,7 +49,7 @@ usage:
   nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
   nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
   nova-merge dry-run    --lane <dir> [--max <n>]
-  nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
+  nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>] [--decide [--floor <0-1>] [--card <file>] [--key-env <var>] [--base-url <url>]]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]

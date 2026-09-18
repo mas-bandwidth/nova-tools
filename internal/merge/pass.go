@@ -52,6 +52,11 @@ type Pass struct {
 	// every base below main right after a merge. A pending base WAITS -- nothing merges
 	// onto it -- and RUN NOTE names the gate run that proves it.
 	basePending bool
+
+	// PacketAnnotate, when set by `packet --decide`, returns one advisory classification
+	// line for a handed-over entry, or "" for none. It only labels the packet: the merge
+	// gate, the queue order and every action stay exactly as they were (rule 7).
+	PacketAnnotate func(e *Entry, c Classification, holds int) string
 }
 
 // Result is what a pass did, for the exit code and the last line.
