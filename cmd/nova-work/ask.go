@@ -47,8 +47,9 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	fs.Usage = func() {}
 	owner := fs.String("owner", "", "the friend this unit belongs to (required)")
 	unit := fs.String("unit", "", "the unit's id in --units (required)")
-	units := fs.String("units", "", "the work set holding the unit, as JSON (required)")
-	deadline := fs.String("deadline", "", "when the answer is owed, RFC3339 (required)")
+	units := fs.String("units", "", "the work set holding the unit, JSON or SPEC-WORKLANG (required)")
+	record := fs.String("record", "", "a JSON file to record the ask in; a SPEC-WORKLANG work set is never written back")
+	deadline := fs.String("deadline", "", "when the answer is owed, RFC3339; the unit's own :deadline when absent")
 	busDir := fs.String("bus", "", "the bus checkout the note is sent on (required)")
 	as := fs.String("as", "", "which participant you send as (required)")
 	kind := fs.String("kind", "work", "what the ask is: work or read")
@@ -69,7 +70,7 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	}
 	for _, need := range []struct{ name, value string }{
 		{"owner", *owner}, {"unit", *unit}, {"units", *units},
-		{"deadline", *deadline}, {"bus", *busDir}, {"as", *as},
+		{"bus", *busDir}, {"as", *as},
 	} {
 		if strings.TrimSpace(need.value) == "" {
 			return refuse(stderr, " ask", "--"+need.name+" is required; refusing to guess")
@@ -82,12 +83,12 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	if !ok {
 		return refuse(stderr, " ask", fmt.Sprintf("--now %q is not an RFC3339 instant", *now))
 	}
-	due, err := time.Parse(time.RFC3339, *deadline)
-	if err != nil {
-		return refuse(stderr, " ask", fmt.Sprintf("--deadline %q is not an RFC3339 instant", *deadline))
-	}
-	if !due.After(at) {
-		return refuse(stderr, " ask", fmt.Sprintf("--deadline %q is not after %s; an ask that is late before it is sent is not an ask", *deadline, oneline.Field(at.UTC().Format(time.RFC3339))))
+	var err2 error
+	var due time.Time
+	if strings.TrimSpace(*deadline) != "" {
+		if due, err2 = friends.ParseStamp(*deadline); err2 != nil {
+			return refuse(stderr, " ask", fmt.Sprintf("--deadline %q is not an instant", *deadline))
+		}
 	}
 
 	ws, err := friends.Load(*units, *maxBytes)
@@ -98,15 +99,33 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	if err != nil {
 		return refuse(stderr, " ask", oneline.Err(err))
 	}
+	// The unit's OWN :deadline stands when the command line names none. That is not a
+	// default: it is the deadline a coordinator already wrote down in the work set, and
+	// a unit with neither is still refused rather than given one.
+	if due.IsZero() {
+		due = u.Deadline.Time
+	}
+	if due.IsZero() {
+		return refuse(stderr, " ask", fmt.Sprintf("neither --deadline nor unit %q carries a deadline; refusing to guess one", *unit))
+	}
+	if !due.After(at) {
+		return refuse(stderr, " ask", fmt.Sprintf("the deadline %s is not after %s; an ask that is late before it is sent is not an ask",
+			oneline.Field(due.UTC().Format(time.RFC3339)), oneline.Field(at.UTC().Format(time.RFC3339))))
+	}
 	reply := *replyBranch
 	if reply == "" {
 		reply = u.Branch
 	}
-	note, err := friends.Render(friends.AskSpec{
+	note, notices, err := friends.Render(friends.AskSpec{
 		From: *as, Owner: *owner, Cc: *cc, Kind: *kind, Branch: reply, Unit: *u, Deadline: due,
 	})
 	if err != nil {
 		return refuse(stderr, " ask", oneline.Err(err))
+	}
+	// What this run did that a reader of the note could not otherwise check, one line
+	// each, before anything is sent -- nova-bus's own SEND NOTE discipline.
+	for _, notice := range notices {
+		fmt.Fprintf(stderr, "ASK NOTE %s\n", oneline.Escape(notice))
 	}
 	if sender == nil {
 		sender = friends.BusSender{
@@ -126,19 +145,47 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	}
 	// Recorded only now. An ask written down for a note that never landed is a
 	// coordinator waiting on a deadline its owner was never given.
-	a := friends.Ask{ID: id, Owner: *owner, Kind: *kind, Unit: *unit, Sent: at.UTC(), Deadline: due.UTC(), Branch: reply, By: *as, Bus: *busDir}
-	if err := ws.Record(*unit, a); err != nil {
-		fmt.Fprintf(stderr, "ASK FAIL id=%s unit=%s: %s\n", oneline.Field(id), oneline.Field(*unit), oneline.Err(err))
-		return 1
+	a := friends.Ask{ID: id, Owner: *owner, Kind: *kind, Unit: *unit, Lane: u.Lane,
+		Sent: at.UTC(), Deadline: due.UTC(), Branch: reply, By: *as, Bus: *busDir}
+	// WHERE THE RECORD GOES. A JSON work set is this package's own file and the ask is
+	// written back onto its unit. A SPEC-WORKLANG work set is a PERSON'S document --
+	// comments, order, keys no reader here knows -- and is never rewritten: the ask goes
+	// to --record when one is named, and otherwise the bus note is the record, which
+	// `asks --bus --as` reads back.
+	into, ws2 := *units, ws
+	if ws.Lisp {
+		into = *record
+		ws2 = &friends.WorkSet{Units: []friends.Unit{{ID: *unit, Title: u.Title, Owner: u.Owner, Lane: u.Lane}}}
+		if into != "" {
+			if have, err := friends.Load(into, *maxBytes); err == nil {
+				if _, err := have.Unit(*unit); err == nil {
+					ws2 = have
+				} else {
+					have.Units = append(have.Units, ws2.Units[0])
+					ws2 = have
+				}
+			}
+		}
 	}
-	if err := friends.Save(*units, ws); err != nil {
-		fmt.Fprintf(stderr, "ASK FAIL id=%s units=%s: the note landed and could NOT be recorded: %s\n",
-			oneline.Field(id), oneline.Field(*units), oneline.Err(err))
-		return 1
+	switch {
+	case into == "":
+		fmt.Fprintf(stderr, "ASK NOTE %s\n", oneline.Escape(
+			"the work set is SPEC-WORKLANG and is never written back; the bus note is the record, read it with: nova-work asks --bus <dir> --as "+*as))
+	default:
+		if err := ws2.Record(*unit, a); err != nil {
+			fmt.Fprintf(stderr, "ASK FAIL id=%s unit=%s: %s\n", oneline.Field(id), oneline.Field(*unit), oneline.Err(err))
+			return 1
+		}
+		if err := friends.Save(into, ws2); err != nil {
+			fmt.Fprintf(stderr, "ASK FAIL id=%s units=%s: the note landed and could NOT be recorded: %s\n",
+				oneline.Field(id), oneline.Field(into), oneline.Err(err))
+			return 1
+		}
 	}
-	fmt.Fprintf(stdout, "ASK OK id=%s owner=%s unit=%s kind=%s deadline=%s branch=%s units=%s\n",
+	fmt.Fprintf(stdout, "ASK OK id=%s owner=%s unit=%s kind=%s lane=%s deadline=%s branch=%s record=%s\n",
 		oneline.Field(id), oneline.Field(*owner), oneline.Field(*unit), oneline.Field(*kind),
-		oneline.Field(due.UTC().Format(time.RFC3339)), oneline.Field(reply), oneline.Field(*units))
+		oneline.Field(dash(u.Lane)), oneline.Field(due.UTC().Format(time.RFC3339)),
+		oneline.Field(dash(reply)), oneline.Field(dash(into)))
 	return 0
 }
 
@@ -147,10 +194,10 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("asks", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	units := fs.String("units", "", "the work set holding the recorded asks (required)")
+	units := fs.String("units", "", "a work set whose units record asks; either form")
 	owner := fs.String("owner", "", "show only the asks of this friend")
-	as := fs.String("as", "", "show only the asks sent by this name")
-	busDir := fs.String("bus", "", "show only the asks sent on this bus")
+	as := fs.String("as", "", "the name you read the bus as; with --bus, whose asks these are")
+	busDir := fs.String("bus", "", "a bus checkout to read the sent notes from, the source of truth for what went out")
 	max := fs.Int("max", askMaxRows, "rows before one MORE line; 0 is every row")
 	maxBytes := fs.Int64("max-bytes", friends.DefaultMaxBytes, "the work set's byte ceiling")
 	now := fs.String("now", "", "the instant ages and deadlines are measured against, RFC3339; default this run's clock")
@@ -160,8 +207,14 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 	if fs.NArg() > 0 {
 		return refuse(stderr, " asks", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
-	if strings.TrimSpace(*units) == "" {
-		return refuse(stderr, " asks", "--units is required; refusing to guess")
+	// TWO SOURCES, either or both. --units is what this tool recorded; --bus is what the
+	// bus itself holds, which is what actually went out. A run with neither has nothing
+	// to read and is refused naming both rather than printing an empty count.
+	if strings.TrimSpace(*units) == "" && strings.TrimSpace(*busDir) == "" {
+		return refuse(stderr, " asks", "name a source: --units <file> (what was recorded), --bus <dir> --as <name> (what the bus holds), or both; refusing to guess")
+	}
+	if strings.TrimSpace(*busDir) != "" && strings.TrimSpace(*as) == "" {
+		return refuse(stderr, " asks", "--bus needs --as: there is no flag that reads the bus as somebody else")
 	}
 	if *max < 0 {
 		return refuse(stderr, " asks", fmt.Sprintf("--max %d is not a count", *max))
@@ -170,21 +223,41 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return refuse(stderr, " asks", fmt.Sprintf("--now %q is not an RFC3339 instant", *now))
 	}
-	ws, err := friends.Load(*units, *maxBytes)
-	if err != nil {
-		return refuse(stderr, " asks", oneline.Err(err))
+	var rows []friends.Row
+	if strings.TrimSpace(*units) != "" {
+		ws, err := friends.Load(*units, *maxBytes)
+		if err != nil {
+			return refuse(stderr, " asks", oneline.Err(err))
+		}
+		rows = ws.Open(at)
+	}
+	if strings.TrimSpace(*busDir) != "" {
+		onBus, err := friends.OnBus(*busDir, *as, *owner, at, *max)
+		if err != nil {
+			return refuse(stderr, " asks", oneline.Err(err))
+		}
+		// The bus wins a tie: an ask recorded in a work set AND found on the bus is one
+		// ask, and the note is the thing that went out.
+		seen := map[string]bool{}
+		for _, r := range onBus {
+			seen[r.ID] = true
+		}
+		kept := onBus
+		for _, r := range rows {
+			if !seen[r.ID] {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+		friends.SortOldestFirst(rows)
 	}
 
-	rows := ws.Open(at)
 	shown, open, overdue := 0, 0, 0
 	for _, r := range rows {
 		if *owner != "" && r.Owner != *owner {
 			continue
 		}
 		if *as != "" && r.By != *as {
-			continue
-		}
-		if *busDir != "" && r.Bus != *busDir {
 			continue
 		}
 		state := "open"
@@ -195,9 +268,10 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 			open++
 		}
 		if *max == 0 || shown < *max {
-			fmt.Fprintf(stdout, "ASK id=%s owner=%s unit=%s kind=%s age=%s deadline=%s state=%s\n",
-				oneline.Field(r.ID), oneline.Field(r.Owner), oneline.Field(r.Unit), oneline.Field(r.Kind),
-				oneline.Field(askAge(r.Age)), oneline.Field(askStamp(r.Deadline)), oneline.Field(state))
+			fmt.Fprintf(stdout, "ASK id=%s owner=%s unit=%s kind=%s lane=%s age=%s deadline=%s state=%s src=%s\n",
+				oneline.Field(r.ID), oneline.Field(r.Owner), oneline.Field(dash(r.Unit)), oneline.Field(r.Kind),
+				oneline.Field(dash(r.Lane)), oneline.Field(askAge(r.Age)), oneline.Field(askStamp(r.Deadline)),
+				oneline.Field(state), oneline.Field(dash(r.Source)))
 		}
 		shown++
 	}
@@ -252,4 +326,13 @@ func askStamp(t time.Time) string {
 		return "-"
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// dash is a field a person reads: an empty value is a dash, never an empty token that
+// makes a one-line row ambiguous about which field is missing.
+func dash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
 }

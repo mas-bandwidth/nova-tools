@@ -1850,10 +1850,11 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
-  nova-work ask  --owner <friend> --unit <id> --units <file.json> --deadline <RFC3339> --bus <dir> --as <name>
-                 [--kind work|read] [--cc <names>] [--reply-branch <name>] [--remote <name>] [--branch <name>]
+  nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
+                 [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
+                 [--reply-branch <name>] [--remote <name>] [--branch <name>]
                  [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
-  nova-work asks --units <file.json> [--owner <friend>] [--as <name>] [--bus <dir>] [--max <n>] [--max-bytes <n>] [--now <stamp>]
+  nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-bytes <n>] [--now <stamp>]
   nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] (--once | --deadline <duration>)
 
 wire:
@@ -1879,11 +1880,23 @@ verbs:
 
 THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
 asks. A unit whose owner is a friend is therefore never cut as a card: ask renders it as
-ONE note in the house shape -- To, Subject, the title, the needs, the acceptance, the
-deadline and the branch to reply on -- sends it through nova-bus's OWN send path, and
-records the bus's note id back on the unit, which is where asks reads it again. An ask
-that could not be sent records nothing, and an ask with no acceptance or no deadline is
-refused before it goes out rather than after.
+ONE note in the house shape -- To, Cc, Subject, the unit, its lane, its needs, its
+acceptance, the deadline and the branch to reply on -- and sends it through nova-bus's
+OWN send path. An ask that could not be sent records nothing.
+
+--units reads EITHER form, read from the file's first byte rather than its name: the
+JSON shape this tool writes, or the SPEC-WORKLANG work set a coordinator writes by hand,
+through the same bounded reader plan check uses. A JSON work set has the ask written
+back onto its unit. A SPEC-WORKLANG one is a person's document and is NEVER written back:
+the ask goes to --record when one is named, and otherwise the note on the bus is the
+record -- which is what asks --bus --as reads. The bus is the source of truth for what
+went out, and where a row appears in both, the bus's wins.
+
+A unit with no :acceptance is asked, not refused: not one unit of the real work set
+carries one, so the title stands as the acceptance, the note says "Acceptance: as titled"
+and one ASK NOTE line on stderr says the unit carried none. A deadline is still never
+guessed: --deadline, or the unit's own :deadline, and a unit with neither is refused.
+The sender is on the Cc line of every ask it sends, because a broadcast includes self.
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -1924,18 +1937,26 @@ flags:
                   refused at its opening byte.
   --max-nodes <n> plan check: the atom ceiling (default 4096). A plan past it is refused
                   at the atom's byte.
-  --units <file>  ask and asks: the work set, as JSON:
-                  {"units":[{"id":"u1","title":"...","owner":"Emma","needs":[...],
-                  "acceptance":[...],"branch":"..."}]}. Required on both; there is no
-                  default and no discovery. ask writes the ask back into this file.
+  --units <file>  ask and asks: the work set, in either form and read as data. JSON:
+                  {"units":[{"id":"u1","title":"...","owner":"Emma","lane":"work",
+                  "needs":[...],"acceptance":[...],"deadline":"...","branch":"..."}]}.
+                  SPEC-WORKLANG: (work-set "id" ... :units ((unit "id" :owner "Stella"
+                  :lane "work" :needs (...) :deadline "2026-09-18T18:00Z" :title "..."))).
+                  Required on ask; there is no default and no discovery.
+  --record <file> ask: where the ask is recorded when --units is SPEC-WORKLANG, which is
+                  never rewritten. Without it the bus note is the only record, and one
+                  ASK NOTE line says so.
   --owner <name>  ask: the friend the unit belongs to, spelled the way the bus's roster
                   spells it. asks: show only that friend's asks.
-  --deadline <t>  ask: when the answer is owed, RFC3339. Required and never defaulted; a
-                  deadline that is not after --now is refused before anything is sent.
-  --bus <dir>     ask: the bus checkout the note is sent on. asks: a filter, not a read.
-  --now <stamp>   ask and asks: the instant deadlines and ages are measured against,
-                  RFC3339; the default is this run's clock and an unparsable one is a
-                  refusal rather than a silent fall back to it.
+  --deadline <t>  ask: when the answer is owed, as 2026-09-18T18:00:00Z or the shorter
+                  2026-09-18T18:00Z a person writes. The unit's own :deadline stands when
+                  this is absent; a unit with neither is refused, and a deadline that is
+                  not after --now is refused before anything is sent.
+  --bus <dir>     ask: the bus checkout the note is sent on. asks: the bus to READ the
+                  sent notes from, which needs --as and is the source of truth.
+  --now <stamp>   ask and asks: the instant deadlines and ages are measured against;
+                  the default is this run's clock and an unparsable one is a refusal
+                  rather than a silent fall back to it.
 
 exit codes: 0 ran and passed; 2 could not run (bad invocation, an unreadable graph or
 plan, a :deps cycle, an unknown node, a refusal).

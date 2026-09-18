@@ -270,3 +270,106 @@ func TestAskHasNoDefaultDeadline(t *testing.T) {
 	}
 	_ = time.Now
 }
+
+// ---------------------------------------------------------------- the dogfood edges
+
+func TestAskReadsTheLispWorkSetAndRecordsNowhereWithoutARecordFile(t *testing.T) {
+	f := &fakeSender{id: "rowan-93d3cbffc3d0"}
+	code, stdout, stderr := runAsk(t, f,
+		"--owner", "Stella", "--unit", "pull:queue",
+		"--units", "../../internal/friends/testdata/work-set.lisp",
+		"--bus", "/bus", "--as", "Rowan", "--now", "2026-09-18T12:00:00Z")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	// edge 3: the unit's OWN :deadline stands in for --deadline
+	if !strings.Contains(stdout, "deadline=2026-09-18T18:00:00Z") {
+		t.Errorf("the unit's own deadline must be used when --deadline is absent: %q", stdout)
+	}
+	if !strings.Contains(stdout, "lane=work") {
+		t.Errorf("the ASK OK line must carry the lane: %q", stdout)
+	}
+	// edge 2: a note, not a refusal, when the unit carries no :acceptance
+	if !strings.Contains(stderr, "acceptance") {
+		t.Errorf("one note must say the unit carries no acceptance: %q", stderr)
+	}
+	if !strings.Contains(f.notes[0], "Acceptance: as titled") {
+		t.Errorf("the note:\n%s", f.notes[0])
+	}
+	// a Lisp work set is not rewritten: the bus note is the record
+	if !strings.Contains(stderr, "the bus note is the record") {
+		t.Errorf("ask must say where the record went: %q", stderr)
+	}
+}
+
+func TestAskRecordsALispWorkSetsAskIntoTheRecordFile(t *testing.T) {
+	rec := filepath.Join(t.TempDir(), "asks.json")
+	f := &fakeSender{id: "rowan-93d3cbffc3d0"}
+	code, _, stderr := runAsk(t, f,
+		"--owner", "Stella", "--unit", "pull:queue",
+		"--units", "../../internal/friends/testdata/work-set.lisp", "--record", rec,
+		"--bus", "/bus", "--as", "Rowan", "--now", "2026-09-18T12:00:00Z")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	raw, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "rowan-93d3cbffc3d0") || !strings.Contains(string(raw), `"lane": "work"`) {
+		t.Fatalf("the record file does not carry the ask and its lane:\n%s", raw)
+	}
+}
+
+func TestAskStillRefusesWhenNeitherTheFlagNorTheUnitHasADeadline(t *testing.T) {
+	f := &fakeSender{id: "x"}
+	code, _, stderr := runAsk(t, f,
+		"--owner", "Emma", "--unit", "verb:hygiene",
+		"--units", "../../internal/friends/testdata/work-set.lisp",
+		"--bus", "/bus", "--as", "Rowan", "--now", "2026-09-18T12:00:00Z")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "deadline") {
+		t.Errorf("the refusal must name the deadline: %q", stderr)
+	}
+	if len(f.notes) != 0 {
+		t.Error("nothing may be sent without a deadline")
+	}
+}
+
+func TestAsksReadsTheBusWhenGivenOne(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := cmdAsks([]string{"--bus", "../../internal/friends/testdata/bus", "--as", "Ada",
+		"--owner", "Bo", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "id=ada-bbbbbbbbbbbb") || !strings.Contains(out, "id=ada-aaaaaaaaaaaa") {
+		t.Fatalf("the bus's own asks are missing:\n%s", out)
+	}
+	if strings.Contains(out, "id=ada-cccccccccccc") {
+		t.Fatalf("an answered ask is not open:\n%s", out)
+	}
+	if !strings.Contains(out, "ASKS n=2 open=1 overdue=1") {
+		t.Fatalf("the count line is wrong:\n%s", out)
+	}
+	if !strings.Contains(out, "src=bus") {
+		t.Fatalf("a row must say where it was read: %s", out)
+	}
+}
+
+func TestAsksTakesEitherSourceAndRefusesNeither(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cmdAsks([]string{"--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("neither --units nor --bus must be exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "units") || !strings.Contains(stderr.String(), "bus") {
+		t.Fatalf("the refusal must name both sources: %q", stderr.String())
+	}
+	stderr.Reset()
+	if code := cmdAsks([]string{"--bus", "../../internal/friends/testdata/bus", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("--bus without --as must be exit 2, got %d", code)
+	}
+}
