@@ -15,6 +15,7 @@ package pulse
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,12 @@ import (
 // so a test can hold the read against the way the API is actually paged.
 func fakeGHRunnerList(t *testing.T, body string) string {
 	t.Helper()
+	// The shim is a /bin/sh script, so this is a unix test. It SKIPS rather than falling
+	// through to whatever `gh` the machine has: a unit test never touches the network, and a
+	// windows shard that cannot run the shim would otherwise have asked the real forge.
+	if runtime.GOOS == "windows" {
+		t.Skip("the gh shim is a shell script; the forge read is held on unix")
+	}
 	dir := t.TempDir()
 	log := filepath.Join(dir, "gh.log")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncat <<'NOVA_GH_BODY'\n" + body + "\nNOVA_GH_BODY\n"
