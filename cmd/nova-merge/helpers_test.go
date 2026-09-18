@@ -132,9 +132,12 @@ type lab struct {
 	// launcher is the fake the rebase verb's cards are handed to, so a test proves the
 	// launch without a bench.
 	launcher *fakeLauncher
-	now      time.Time
-	build    string
-	runner   merge.Runner
+	// enqueue is the one door's forge edge, so a `batch --land` test can say the batch
+	// reached the merge queue and reached it at the front.
+	enqueue *fakeLandEnqueue
+	now     time.Time
+	build   string
+	runner  merge.Runner
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
@@ -156,6 +159,7 @@ func newLab(t *testing.T) *lab {
 		lane:     filepath.Join(dir, "lane"),
 		host:     merge.NewFakeHost(),
 		launcher: &fakeLauncher{},
+		enqueue:  &fakeLandEnqueue{},
 		now:      time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
 		build:    "aaaaaaaaaaaa",
 	}
@@ -355,7 +359,12 @@ func (l *lab) deps() Deps {
 			}
 			return l.remote
 		},
-		NewHost: func(string, time.Duration) merge.Host { return l.host },
+		NewHost:      func(string, time.Duration) merge.Host { return l.host },
+		NewLandForge: func(string, time.Duration) merge.LandForge { return l.host },
+		// The one door's edge. It is the fake `land`'s own tests drive, so a batch that
+		// lands in this package reaches the queue through exactly the function the tool
+		// reaches it through and records what it was asked for.
+		NewEnqueueHost: func(string, time.Duration) merge.EnqueueHost { return l.enqueue },
 		NewQueue: func(string, time.Duration) QueueReader {
 			if l.queue != nil {
 				return l.queue

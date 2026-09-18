@@ -61,7 +61,7 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
   nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
@@ -96,6 +96,27 @@ branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
 it a directory of the batch's own.
+
+--land IS THE SEVEN STEPS AFTER BATCH OK, which Rowan ran by hand eight times on
+2026-09-18. With it the same run goes on to (1) push rowan/<name> -- a plain push when the
+forge has no such branch, the compare-and-swap of rule 21 when it has it at a head this run
+read, so a branch somebody else moved is a refusal and not an overwrite -- (2) open the
+pull request onto --base with the BATCH OK line and the members and drops as its body, or
+update the one that is open, (3) wait for that pull request's own ci-ok on --interval,
+(4) on a red one, read the failing test names off the run and, when EVERY one of them is on
+the --flakes list, rerun the failed jobs ONCE -- "BATCH LAND rerun=flake tests=<list>" --
+and otherwise stop at "BATCH LAND FAIL step=pr-ci job=<name> tests=<list>" with the failing
+lines under it, (5) enqueue at the front through land, the one door, (6) watch the queue
+until the merge commit is on the base -- "BATCH LAND OK name=<n> dev=<sha> members=<list>"
+-- or until the entry is dequeued, where a merge group whose darwin shards were CANCELLED
+is re-enqueued once and any other dequeue is a FAIL with the lines, and (7) close every
+member with a comment pointing at the batch that carried it. Every step writes one stderr
+line with its elapsed time and one structured log event (verb=batch-land).
+
+--flakes is a SHRINK-ONLY list of "<package> <Test> <why it is on the list>" lines; this
+repository ships tools/ci/flakes.txt with the two the fleet had on 2026-09-18. A rerun buys
+one round and no more, because a test that fails twice is a red tree. Adding a line to that
+file is a decision for a person, and the way to take one off is to fix the test.
 
 THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
 runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
@@ -240,6 +261,12 @@ type Deps struct {
 	// NewAuditHost is `queue audit`'s edge: the open pull requests carrying an auto-merge,
 	// and the one call that takes it off.
 	NewAuditHost func(repo string, timeout time.Duration) merge.AuditHost
+	// NewLandForge is `batch --land`'s edge: the batch's own pull request, the runs behind
+	// a red check, the reruns, the merge-queue entry and the members it closes. It holds no
+	// enqueue and no merge primitive of any kind -- admission to a merge queue is
+	// NewEnqueueHost and Enqueuer.Enqueue, and a seam that cannot enqueue cannot be talked
+	// into enqueueing.
+	NewLandForge func(repo string, timeout time.Duration) merge.LandForge
 	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
 	// field so the tests hand it a fake queue and reach no network.
 	NewQueue func(repo string, timeout time.Duration) QueueReader
@@ -273,6 +300,9 @@ func production() Deps {
 		},
 		NewAuditHost: func(repo string, timeout time.Duration) merge.AuditHost {
 			return merge.NewGHEnqueue(repo, timeout, nil)
+		},
+		NewLandForge: func(repo string, timeout time.Duration) merge.LandForge {
+			return merge.NewGH(repo, timeout, nil)
 		},
 		NewQueue: func(repo string, timeout time.Duration) QueueReader {
 			return newGHQueue(repo, timeout, nil)

@@ -200,6 +200,18 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// bench with no sbcl is a bench that cannot judge this batch, and the gate says FAIL
 	// rather than a green nobody may trust.
 	requireLisp := f.fs.Bool("require-lisp", false, "")
+	// --land IS THE PROCEDURE THAT FOLLOWED BATCH OK EIGHT TIMES ON 2026-09-18, and it is
+	// opt-in: the default gate still pushes nothing and opens nothing, because the step
+	// that needs a person is knowing this is the batch you wanted. With it, the same run
+	// goes on to push the branch, open the pull request, wait for its ci-ok, enqueue
+	// through the one door, watch the queue and close the members.
+	land := f.fs.Bool("land", false, "")
+	// --flakes is the shrink-only list of tests that fail on a green tree, each with the
+	// reason it is on the list. It buys a red ci-ok ONE rerun, and only when every failing
+	// test is on it (see internal/merge.Flakes).
+	flakesFile := f.fs.String("flakes", "", "")
+	maxRounds := f.fs.Int("max-rounds", batchLandRounds, "")
+	intervalRaw := f.fs.String("interval", batchLandInterval, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -236,6 +248,24 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *gomaxprocs < 0 {
 		f.problem(fmt.Sprintf("--gomaxprocs is the share of the machine this batch takes, the way CI divides its cores by the runners on it; 0 is all of them, and a negative one is a typo, got %d", *gomaxprocs))
 	}
+	interval, ierr := time.ParseDuration(*intervalRaw)
+	if ierr != nil || interval <= 0 {
+		f.problem(fmt.Sprintf("--interval is how long --land waits between polls of the forge, as a duration like 30s, got %q", *intervalRaw))
+	}
+	// A landing that may rerun for ever is a landing that lands a red tree eventually.
+	if *maxRounds < 1 || *maxRounds > 3 {
+		f.problem(fmt.Sprintf("--max-rounds is how many times --land may wait for ci-ok: 1 is no rerun at all, 2 is the first run and one rerun of a known flake, and more than 3 is a verb that keeps rolling the dice until the tree looks green, got %d", *maxRounds))
+	}
+	flakes, ferr := readFlakes(*flakesFile)
+	if ferr != nil {
+		f.problem(oneline.Escape(ferr.Error()))
+	}
+	// A flake list is only ever read by --land, and a caller who passed one to a gate that
+	// will not land is a caller whose rerun is not going to happen: say so rather than
+	// accept a flag that does nothing.
+	if !*land && strings.TrimSpace(*flakesFile) != "" {
+		f.problem("--flakes is the list --land reruns a known flake from; without --land nothing here reaches the forge, so the list would be read and never used")
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -251,6 +281,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		requireLisp:  *requireLisp,
 		requireCheck: !*noRequireChecks,
 		receiptFile:  strings.TrimSpace(*receiptFile),
+		land:         *land,
+		flakes:       flakes,
+		interval:     interval,
+		rounds:       *maxRounds,
 	}, stdout, stderr, deps)
 }
 
@@ -268,6 +302,11 @@ type batchRun struct {
 	requireLisp  bool
 	requireCheck bool
 	receiptFile  string
+	// The landing half (--land), which does nothing at all unless land is true.
+	land     bool
+	flakes   merge.Flakes
+	interval time.Duration
+	rounds   int
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -384,7 +423,25 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
-	return 0
+	if !in.land {
+		return 0
+	}
+	// THE GATE IS GREEN AND THE RECEIPT IS PRINTED. Everything after this point touches the
+	// forge, and it is the same run rather than a second verb precisely so that the receipt
+	// handed to the one door is the line above, over the tree in this clone, and not a line
+	// somebody retyped.
+	return runBatchLand(landPhase{
+		in:       in,
+		receipt:  "BATCH OK " + line,
+		branch:   branch,
+		headSHA:  headSHA,
+		clone:    clone,
+		members:  members,
+		dropped:  dropped,
+		flakes:   in.flakes,
+		interval: in.interval,
+		rounds:   in.rounds,
+	}, stdout, stderr, deps, start)
 }
 
 // batchLine is the fields every verdict line carries, green or red.
