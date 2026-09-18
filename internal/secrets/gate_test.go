@@ -81,12 +81,12 @@ func TestGateApprovesAGoodSeatPR(t *testing.T) {
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 		"rowan.yaml": gateSealedFile(),
 	})
-	line, code := RunGate(dir, base, head)
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
 	if code != 0 {
 		t.Fatalf("RunGate = (%q, %d), want APPROVE at exit 0", line, code)
 	}
-	if line != "GATE APPROVE files=2" {
-		t.Fatalf("RunGate line = %q, want %q", line, "GATE APPROVE files=2")
+	if line != "GATE APPROVE files=2 machines=-" {
+		t.Fatalf("RunGate line = %q, want %q", line, "GATE APPROVE files=2 machines=-")
 	}
 }
 
@@ -97,7 +97,7 @@ func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey, gateThirdKey),
 		"rowan.yaml": gateSealedFile(),
 	})
-	line, code := RunGate(dir, base, head)
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
 	if code != 2 {
 		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
 	}
@@ -113,7 +113,7 @@ func TestGateRefusesAPlaintextValue(t *testing.T) {
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 		"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-live-notencrypted\n",
 	})
-	line, code := RunGate(dir, base, head)
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
 	if code != 2 {
 		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
 	}
@@ -130,7 +130,7 @@ func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
 		"rowan.yaml": gateSealedFile(),
 		"notes.txt":  "a change outside the gate\n",
 	})
-	line, code := RunGate(dir, base, head)
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
 	if code != 2 {
 		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
 	}

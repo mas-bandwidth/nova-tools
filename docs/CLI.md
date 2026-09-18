@@ -2657,6 +2657,26 @@ Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
 contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 
+### Gate a seat pull request
+
+```sh
+nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" \
+  --machines ./queue/control/machines.tsv
+```
+
+The store's own review, as a verb: run it in CI on every pull request against the
+secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
+`GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
+`GATE REFUSE rule=<n> file=<f>: <why>` line at exit 2.
+
+`--machines` is the fleet's machines registry, and its `seat` column is what
+vouches for a recipient key the diff introduces: a new key is permitted only for
+a seat some machine in the registry carries, so adding a seat needs no human
+approval and still cannot grant a key to a machine the fleet does not have. A row
+whose seat reads `-` vouches for nothing. Leave `--machines` off and that rule
+does not run — the approval line then says `machines=-`, so an APPROVE is never
+mistaken for the fleet having vouched.
+
 ### Seal a replacement value
 
 ```sh
