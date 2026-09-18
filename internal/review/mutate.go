@@ -54,6 +54,14 @@ type MutateOptions struct {
 	Repo string
 	Base string
 	Head string
+	// TempRoot is the directory the throwaway worktree is made in, and the root its
+	// removal is bounded by. Empty means os.TempDir(), which is what every caller in
+	// production wants. A test names its own t.TempDir() instead, so that "nothing was
+	// left behind" is a statement about a directory only that test writes: the shared
+	// temp directory is shared with every other job on the same self-hosted runner, and
+	// a sibling's `nova-review-mutate-*` appearing between a snapshot and its check made
+	// the assertion red four times (#1341 twice, #1345, #1360).
+	TempRoot string
 }
 
 // GreenTest is a test that stayed green with the change reverted: the one thing that
@@ -155,16 +163,20 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 		return &MutateResult{Head: head}, ErrNoChangeToRevert
 	}
 
-	wt, err := os.MkdirTemp("", "nova-review-mutate-")
+	tempRoot := opts.TempRoot
+	if tempRoot == "" {
+		tempRoot = os.TempDir()
+	}
+	wt, err := os.MkdirTemp(tempRoot, "nova-review-mutate-")
 	if err != nil {
-		return nil, fmt.Errorf("could not make the worktree directory: %v", err)
+		return nil, fmt.Errorf("could not make the worktree directory under %s: %v", tempRoot, err)
 	}
 	// One removal, on every path out of this function: a worktree left behind is a
 	// checkout of somebody's head sitting in the temp directory, and a `git worktree
 	// list` that grows by one per run is the repo's own record going wrong.
 	defer func() {
 		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "remove", "--force", wt)
-		_ = safepath.RemoveUnder(os.TempDir(), wt)
+		_ = safepath.RemoveUnder(tempRoot, wt)
 		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "prune")
 	}()
 	if _, err := gitLine(ctx, repo, "worktree", "add", "--detach", wt, head); err != nil {

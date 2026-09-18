@@ -577,6 +577,40 @@ telling the safe chdir from the unsafe one means knowing where it went. Only
 output flags are read; an input flag may name a `testdata` fixture relatively,
 which is correct.
 
+### `sharedtemp` — a directory a test LISTS is its own, never `os.TempDir()`
+
+**The rule.** No `_test.go` under `cmd/` or `internal/` lists a directory built
+from `os.TempDir()` — no `filepath.Glob`, `os.ReadDir` or `ioutil.ReadDir` over
+an expression naming it, directly or through a local assigned from it. It is the
+read side of `testoutpath`: that one holds the paths a tool WRITES inside
+`t.TempDir()`, this one holds the directories a test READS.
+**The hurt.** `internal/review.TestMutateRemovesItsWorktreeOnBothPaths` proved
+that `review.Mutate` removes its throwaway worktree by globbing
+`os.TempDir()/nova-review-mutate-*` before the run and again after it, refusing
+any entry that was not in the snapshot. On a laptop that is exact; on a
+self-hosted Studio runner `os.TempDir()` is shared with every other job on the
+box, and a sibling shard starting its own mutate between the two listings put a
+directory in the glob this test never made. It went red in `#1341` twice, in
+`#1345` and in `#1360` in the night of 2026-09-18 — four reds, no defect.
+**The test.** `TestNoTestGlobsTheSharedTempDir`
+(`internal/ci/sharedtemp_class_test.go`), with
+`TestSharedTempReadScannerReadsTheFixtures` over the before/after fixtures in
+`internal/ci/testdata/sharedtemp/`.
+**Its allowlist.** `internal/ci/testdata/sharedtemp_allowlist.txt`, one
+`file:function` per row with its reason — EMPTY, which is the point: the one
+offender the rule found when it landed was fixed rather than listed; shrink-only
+in both directions.
+**Its remedy line.** `give the tool a temp root option defaulting to
+os.TempDir(), pass t.TempDir() from the test, and read THAT directory: the
+assertion stays "nothing left behind", over a directory only this test writes`.
+**Its narrowings.** Two, named out loud. The taint is per FUNCTION and per LOCAL:
+a variable assigned `os.TempDir()` anywhere in the same body taints every listing
+of it, but a package-level variable, a struct field or a value handed in by a
+caller is invisible — following those means becoming a type checker, and the
+shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
+`os.Open` and `os.RemoveAll` over one named path in the shared directory are
+questions about that path, which no sibling job can answer wrongly.
+
 ### `busprogress` — progress never enters a protocol stream
 
 **The rule.** Glenn's rule has two halves: a program that takes over 0.1 s says
