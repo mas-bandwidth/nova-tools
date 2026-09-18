@@ -1641,6 +1641,25 @@ Every other platform refuses `run` with one remedy line: on linux a card is
 already disposable — it runs inside its image — so name the image root as
 `--write` on the bare form instead.
 
+**A card that builds Go wants `--go`**, which adds the toolchain's own two roots
+to the read set — `GOROOT` and `GOMODCACHE`, as `go env` reports them — so that
+neither has to be named by hand in every argv. `nova-sandbox run --help` prints
+the verb's own usage.
+
+**When a contained command exits non-zero**, the tool asks the operating system
+what it refused and prints one line per path, with the flag that would have
+allowed it:
+
+```
+SANDBOX DENIED path=/opt op=read remedy="--read /opt"
+```
+
+macOS 26 does not report a `sandbox-exec -p` profile's violations to the unified
+log at all (measured; `(with report)` and `(trace ...)` are both unavailable), so
+on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of the
+allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
+measurement.
+
 ## nova-tokens
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).

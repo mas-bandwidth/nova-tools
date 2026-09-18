@@ -401,7 +401,7 @@ nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox check   [--max <n>]
-nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
 nova-sandbox version
 nova-sandbox help
 ```
@@ -462,7 +462,8 @@ nova-sandbox").
 ## The run verb — a disposable place, on darwin
 
 ```
-nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox run --help
 ```
 
 Glenn, 2026-09-18: *"build our own minimal isolation and hygiene sandboxes on
@@ -544,6 +545,71 @@ real end-to-end test creates a real 64m volume, runs a command that writes a
 file and sleeps, and asserts the volume is gone from `/Volumes` and from
 `diskutil apfs list` afterwards; it is behind the `novadisk` build tag, because
 eight CI runners share the Mac this repository is built on.
+
+### `--go`, and every card that builds Go
+
+```
+nova-sandbox run --name card1 --size 8g --go -- /bin/sh -c 'cd repo && go build ./...'
+```
+
+`--go` adds the Go toolchain's own two roots to the read set, as `go env` reports
+them: **`GOROOT`** and **`GOMODCACHE`**. Neither is a path the caller typed and
+neither is guessed — both are asked of the toolchain that is actually on the
+`PATH`, with `internal/goenv`'s cleaned environment, because a `GOFLAGS` inherited
+from a Makefile can reshape a `go` command's output under the reader's feet. A
+path `go env` names that is **not there** — an empty module cache on a machine
+that has never downloaded a module — is skipped with a note, not refused: rule 5's
+refusal-for-absence is about the paths the *caller* named.
+
+Without it, a card names both by hand in every argv, which is a step that will be
+forgotten. `--read $(go env GOROOT)` remains the manual equivalent.
+
+### `SANDBOX DENIED` — the wall says what it refused
+
+When a contained command exits **non-zero**, the tool asks the operating system
+what it refused during the run and prints one line per path:
+
+```
+SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
+```
+
+The remedy names a **directory**, because that is what the flags take: the path
+itself when it is one, its parent when it is a file. Denials on paths **inside**
+the allowed set are dropped — those are some other operation on a path the caller
+already named, and a remedy naming a flag already in the argv sends a reader to
+fix what is not broken. The list is capped at ten with one line standing for the
+rest, and only `file-read*` and `file-write*` operations are reported: a
+`mach-lookup` denial is real and no `--read` answers it. A run that exits **0**
+asks nothing at all — the query costs a process, and a clean run has no question.
+
+**What this can and cannot see, measured on the Studio (macOS 26, arm64,
+2026-09-18).** macOS *does* report seatbelt violations to the unified log, under
+subsystem `com.apple.sandbox.reporting`, category `violation`, and the parser
+reads that exact shape. It does **not** report them for a profile applied with
+`sandbox-exec -p`: a denial produced by this tool is absent from `log show` at
+every level, `--info` and `--debug` included, while other processes' violations
+sit in the same window. The two ways to ask for them do not exist here either —
+`(deny default (with report))` is refused by the compiler ("report modifier does
+not apply to deny action") and `(trace "<file>")` aborts `sandbox-exec` with
+SIGABRT, exit 134. So on this macOS these lines are usually silent, and a
+`SANDBOX NOTE` naming the size of the allowed set is printed instead. The reader
+is built and kept because it costs one bounded query on a run that already
+failed, it is right wherever the OS does report, and the alternative is a tool
+with no way at all to say what it denied.
+
+The query is bounded at **two seconds** and its absence is silence, never an
+error: measured, a `log show` for a three-second window took over ten seconds and
+found nothing, and a card whose test suite fails would have paid that on every
+run.
+
+### `run --help`
+
+`nova-sandbox run --help`, `-h` or `help` prints the verb's own usage on stdout
+and exits **0**. It printed four refusals and exit 125 before (2026-09-18,
+measured by a non-author dogfooding the verb): one for the missing `--name`, one
+for the missing `--size`, one for `--help` not being a flag of the verb, one for
+the missing `--`. ONBOARDING.md point 2 puts the banner behind `help` rather than
+in front of every mistake — and asking how to use a verb is not a mistake.
 
 ## The worktree verb
 
@@ -695,7 +761,8 @@ which is the thing asked for and goes to stdout.
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed>: <text>
-SANDBOX STEP name=<container|look|create|delete> state=<start|done> [ms=<n>]
+SANDBOX STEP name=<container|look|create|delete|denials> state=<start|done> [ms=<n>]
+SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
 SANDBOX DONE name=<n> exit=<code> wall=<s> freed=<bytes>
 SANDBOX LEAK name=<n> volume=<disk> remedy="diskutil apfs deleteVolume <disk>"
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
@@ -734,7 +801,13 @@ wall, on any platform.
 tool is not implying one. There is no `net=unenforced`; a denial that cannot be
 enforced is a refusal, not a word in a line.
 
-`SANDBOX STEP`, `SANDBOX DONE` and `SANDBOX LEAK` are the `run` verb's alone.
+`SANDBOX STEP`, `SANDBOX DONE`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run`
+verb's alone. `SANDBOX DENIED` is the one line this tool prints about a failure
+the command suffered INSIDE the wall, and it is an exception to the sentence
+above with a reason: on the `run` verb the tool is still there when the command
+dies, because it owns the disposable volume and has to delete it. It is not a
+`NOTE`, it names a path and an operation and a flag, and it is printed only on a
+non-zero exit.
 A `STEP` line is printed **before** the step it names and again when it is done,
 for every step that takes longer than about a tenth of a second — making and
 deleting an APFS volume each take seconds, and a caller staring at a silent
@@ -902,11 +975,29 @@ read:
   `Not a directory`, while the relative forms and `git status` succeed — a wall
   that passes a shallow test and kills the first second of a real job. The
   generator emits one literal per proper ancestor of every `--read`, `--write`,
-  `--cwd` and `--tmp` path (`/` excluded, it is granted above).
-  `file-read-metadata` is `stat(2)` only: **listing** an ancestor stays denied,
-  and so does writing anywhere outside the write set. The rule in one sentence:
-  a generator grants **metadata on ancestors, never data** — `lstat`/`stat`/
-  `access` resolve, and no read of an ancestor's contents is ever allowed.
+  `--cwd`, `--tmp` path **and every OPTIONAL ROOT** (`/` excluded, it is granted
+  above). `file-read-metadata` is `stat(2)` only: **listing** an ancestor stays
+  denied, and so does writing anywhere outside the write set. The rule in one
+  sentence: a generator grants **metadata on ancestors, never data** —
+  `lstat`/`stat`/`access` resolve, and no read of an ancestor's contents is ever
+  allowed.
+
+  **The optional roots were missing from that set, and it cost a toolchain.**
+  Measured 2026-09-18, dogfooding `nova-sandbox run` on a real card step: a
+  `go build` inside the wall died with Go's own sentence and nothing else — `go:
+  cannot find GOROOT directory: 'go' binary is trimmed and GOROOT is not set`.
+  The profile granted `(allow file-read* (subpath "/opt/homebrew"))`, so every
+  *file* of the toolchain was readable; what was not readable was **`/opt`**.
+  Homebrew builds `go` with `-trimpath`, so it finds `GOROOT` by resolving its own
+  executable, `/opt/homebrew/bin/go` is a symlink into `../Cellar/...`, resolving
+  it `lstat`s every leading component, and the `lstat` of `/opt` was denied. **A
+  wall that grants a directory and denies the path TO it has granted nothing that
+  a symlink must be followed to reach.** The card worked around it with `--read
+  /opt/homebrew/Cellar/go/1.27.1`, which looks like a read grant and is really an
+  ancestor grant — naming *any* path under `/opt` is what put `/opt` in the
+  literals. That is a workaround every caller would have to carry, for a root the
+  *tool* added and the caller never named, so it belongs in the generator. The
+  grant stays `file-read-metadata`: `/opt` becomes traversable, never readable.
 
 **`profiles/darwin-check.sh`** is how that file is known to be right. It fills
 the template for a scratch write set beside itself (bash, `set -euo pipefail`,

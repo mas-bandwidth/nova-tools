@@ -8,12 +8,11 @@ package main
 import (
 	"io"
 	"runtime"
-	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
-func startInOwnGroup(*sandbox.Policy, []string, io.Reader, io.Writer, io.Writer) (<-chan int, func(syscall.Signal), error) {
-	return nil, nil, sandbox.Refusal{Reason: "no_sandbox",
+func startInOwnGroup(*sandbox.Policy, []string, io.Reader, io.Writer, io.Writer) (startedRun, error) {
+	return startedRun{}, sandbox.Refusal{Reason: "no_sandbox",
 		Text: "the disposable volume and its process group are darwin's; " + runtime.GOOS + " has no body for the run verb"}
 }
