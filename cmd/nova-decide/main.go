@@ -35,7 +35,8 @@ usage:
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
 
-  nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+  nova-decide route --unit <json file|inline json> --usage <path> --log <path|postgres>
+                    [--dsn-env NOVA_DECIDE_LOG_DSN]
                     [--registry <path>] [--floor 0.9] [--base-url <url>]
                     [--key-env JEV_API_KEY]
                     (--usage and --log are REQUIRED whenever jev is asked)
@@ -52,7 +53,9 @@ usage:
                    [--self-inflicted n] [--class-recurring] [--landing-moved]
                    [--uncertainty 0..1] [--asked-all-friends]
 
-  nova-decide log --log <path> --summary [--registry <path>]
+  nova-decide log --log <path|postgres> --summary [--dsn-env <NAME>] [--registry <path>]
+  nova-decide log migrate [--dsn-env <NAME>]
+                    (install decide_log beside the card results; idempotent)
 
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
@@ -101,8 +104,16 @@ opaque ids rather than any mind's name.
   --registry <path>   the registry of minds (name, lineage, height, kinds it is
                       designated for, owned lanes, availability, ask); the
                       embedded ladder when absent
-  --log <path>        append this decision to the escalation log (JSON lines);
-                      REQUIRED when jev is asked
+  --log <path|postgres>
+                      append this decision to the escalation log: a path (JSON
+                      lines) or the word postgres, the decide_log table beside
+                      the card results. REQUIRED when jev is asked, and the sink
+                      is opened BEFORE the call, so a table that will not open is
+                      a refusal rather than a call with nowhere to record it
+  --dsn-env <NAME>    with --log postgres: the environment variable the DSN
+                      arrives in (default NOVA_DECIDE_LOG_DSN), put there by
+                      nova-secrets exec --only <NAME>. There is no --dsn: a
+                      connection string carries a password and never goes on argv
   --usage <path>      append what a provider call spent to this usage TSV, in
                       the fleet's own columns; a failed call is a row too, with
                       its cost unknown (a dash), never a zero. REQUIRED when jev
@@ -144,6 +155,8 @@ example:
   nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
   nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
   nova-decide log --log ./decide.jsonl --summary
+  nova-secrets exec --only NOVA_DECIDE_LOG_DSN -- nova-decide log migrate
+  nova-secrets exec --only NOVA_DECIDE_LOG_DSN -- nova-decide log --log postgres --summary
 `
 
 // version is empty in every ordinary build and is the one override: a release
