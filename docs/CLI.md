@@ -1225,7 +1225,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1326,6 +1326,13 @@ dry run over a directory of cards exercises the whole tick, lanes included:
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
 ```
 
+**`--session <id>` is stamped into every launched card's marker.** When `fill` moves a
+card into `--launched` it writes `<card>.launched` beside it — `lane`, `bench`, `label`,
+`session`, `card`, `at` — and that marker, not the card's own text, is what holds the
+lane. A live card whose text a worker rewrote still holds the lane it took, and a
+launcher that fails takes its marker with the card back to `--ready`. `harvest` reads
+the marker to release the lane and to know whose job it is looking at.
+
 ### fleet registry
 
 ```
@@ -1373,6 +1380,61 @@ MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 n
 refusal, because it is far more likely a typo than a fleet fact. The example registry is
 `internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
 `queue/control/machines.tsv`.
+
+### harvest
+
+```
+nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+```
+
+The first form folds one pulse's cards under a local root: it pushes and opens a PR for
+every card whose `RESULT.md` line 1 equals its contract line, sends every abstain to
+`retry.tsv`, and pulses again (SPEC-PULSE rules 11 to 15).
+
+**The second form harvests a bench**, and is the verb
+`~/rowan-working/bin/harvest-bench.sh` was the working sketch of. It lists every
+`<root>/<slot>/jobs/<label>` on the bench over `ssh`, reads each `RESULT.md` there, and
+folds the jobs that are this run's to fold:
+
+```
+nova-pulse harvest --bench hulk --root '~/rowan-swarm-root' --clone ~/rowan-working/nova-tools --clone mas-bandwidth/schema=~/rowan-working/schema --session s-42 --launched ./queue/launched
+```
+
+**The branch is pushed from here, never from the bench.** The job's clone is fetched over
+`ssh://<bench><job>/repo` into `refs/harvest/<branch>` in the clone `--clone` names, and
+pushed from there by explicit refspec — a bench holds no forge credential and never will.
+`--clone <dir>` is the clone for any repo and `--clone <owner>/<name>=<dir>` binds one,
+which is the two-repo table the script hardcoded. `--clone` is required with `--bench`.
+
+**A bench harvest wants no `--id`, no `--sources` and no `--templates`**: there is no pulse
+packet to name and no relaunch to feed, and a `cut --rows` produces none of the three.
+
+**The filter is the session and the branch prefix, never an age alone.** `--session` takes
+only jobs whose `RESULT.md` carries that `SESSION` line, `--branch-prefix` (default
+`rowan/`) only branches under it, and `--since` is an optional extra bound. The script took
+every `rowan/*` job under six hours, whoever cut it. **The base is the card's** — the
+`RESULT.md`'s `BASE` line, else `--base`, else `dev` — and it is both the base the
+no-commit guard counts against and the base the PR is opened against; the script hardcoded
+`origin/dev` for the first and `main` for the second. A job that committed nothing is not
+pushed. The PR title is cut at a word boundary and keeps its ` (<label>, <bench>)` suffix,
+whole title at most 110 bytes.
+
+```
+HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
+HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
+HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
+HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+```
+
+**`--launched <dir>` drains the queue, in either form.** Nothing but `manager` drained it,
+so a lane taken by a card that finished hours ago stayed occupied forever. A launched card
+whose job is done moves to `--done` (`<launched>/../done` by default), one whose job
+directory is gone moves to `--failed`, each with a marker naming the lane, the bench and
+why; one still running is left where it is. A harvested job is marked `.harvested` on the
+bench, so a second run opens no second PR. Exit is 0, 1 when a fetch, a push or the forge
+failed for a job, 2 on a refusal.
 
 ### fleet add
 

@@ -121,6 +121,7 @@ type FillInput struct {
 	Launched string        // the queue/launched directory they are moved into; its cards are live
 	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
 	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
+	Session  string        // the session id stamped into every launched card's marker
 	Benches  []string      // the benches to fill, in order
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
@@ -285,6 +286,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				// one place at every moment, and a card is never launched twice.
 				continue
 			}
+			writeLaunchedMarker(in, moved, base, lane, bench)
 			if lane != "" {
 				live[lane] = base
 			}
@@ -326,6 +328,9 @@ func failLaunch(in FillInput, moved, base, lane string, live map[string]string, 
 	if lane != "" && live[lane] == base {
 		delete(live, lane)
 	}
+	// The marker is what holds the lane, so it goes with the card: a marker left beside a
+	// card that went back to --ready holds a lane nobody is running.
+	_ = os.Remove(launchedMarker(in.Launched, base))
 	back := filepath.Join(in.Ready, base)
 	if err := os.Rename(moved, back); err != nil {
 		// The card could not be put back; it stays under --launched rather than
@@ -432,15 +437,70 @@ func laneTable(path string) map[string]bool {
 }
 
 // liveLanes reads the lane of every card already under --launched: the launched directory
-// is the live set, and a live card's lane is read from its own card file.
+// is the live set, and a live card's lane is the one its launched marker names. The marker
+// is the record of what the card TOOK, so the lane is released by name rather than by
+// parsing the card again -- a worker that rewrote its card, or a hand that edited it, does
+// not move a lane that is already held. A card with no marker (one launched before markers,
+// or moved in by hand) falls back to its own LANE: line, exactly as before.
 func liveLanes(launched string) map[string]string {
 	out := map[string]string{}
 	for _, card := range readyCards(launched) {
-		if lane := cardLane(card); lane != "" {
-			out[lane] = filepath.Base(card)
+		base := filepath.Base(card)
+		lane := readLaunchedMarker(launched, base)["lane"]
+		if lane == "" {
+			lane = cardLane(card)
+		}
+		if lane != "" {
+			out[lane] = base
 		}
 	}
 	return out
+}
+
+// launchedMarker is the path of a launched card's marker: <card>.launched, beside the card
+// under --launched. It is never a card-<n>.md, so every glob over the queue steps past it.
+func launchedMarker(dir, base string) string {
+	return filepath.Join(dir, base+".launched")
+}
+
+// writeLaunchedMarker records what the card took the moment it became live: the lane it
+// holds, the bench it went to, its label and the session that cut it. `harvest` reads this
+// to release the lane and to know whose job it is looking at.
+func writeLaunchedMarker(in FillInput, moved, base, lane, bench string) {
+	now := in.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	body := fmt.Sprintf("lane=%s\nbench=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
+		lane, bench, strings.TrimSuffix(base, ".md"), in.Session, base,
+		now().UTC().Format(time.RFC3339))
+	_ = os.WriteFile(launchedMarker(in.Launched, base), []byte(body), 0o644)
+}
+
+// readLaunchedMarker reads one launched marker into its key=value fields. A missing or
+// unreadable marker is an empty table, never a guess.
+func readLaunchedMarker(dir, base string) map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile(launchedMarker(dir, base))
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		if k = strings.TrimSpace(k); k != "" {
+			out[k] = strings.TrimSpace(v)
+		}
+	}
+	return out
+}
+
+// isDir says whether a path is a directory that is there.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // readyCards lists the ready card files in filename order, which is the order ls handed
