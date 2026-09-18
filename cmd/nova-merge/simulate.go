@@ -229,7 +229,7 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		}
 		poisonCheck := ""
 		for _, check := range checks {
-			out, err := runCheck(scratch, check, timeout)
+			out, err := runCheck(scratch, check, timeout, nil)
 			if err != nil {
 				poisonCheck = check
 				fmt.Fprintf(stdout, "SIMULATE POISON #%d check=%q %s\n",
@@ -363,15 +363,25 @@ func firstLine(out string, err error) string {
 // runCheck runs one check in the scratch worktree under its own deadline. The child is
 // its own process group so that a check which spawns children is killed whole when
 // --timeout expires; a deadline that kills only the shell leaves the tree running.
-func runCheck(dir, check string, timeout time.Duration) (string, error) {
+//
+// A nil env is this process's own CLEANED by goenv.Clean, which is what `simulate` hands
+// it; `batch` hands it an environment whose temp directory is the batch's own, so that two
+// gates running on one bench cannot write over each other's scratch -- built from
+// goenv.Clean too, because its steps are go commands whose output this verb parses.
+func runCheck(dir, check string, timeout time.Duration, env []string) (string, error) {
 	name, args := shellCommand(check)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	// The checks are go commands -- defaultChecks is `go build ./...,go test
 	// ./internal/ci/` -- and SIMULATE POISON quotes the first line of what they
 	// print. A caller's GOFLAGS=-json, which CI's `make test` exports, would make
-	// that first line a JSON object instead of the failure a reader needs.
-	cmd.Env = goenv.Clean(os.Environ())
+	// that first line a JSON object instead of the failure a reader needs. A nil
+	// env is therefore this process's environment CLEANED, never the raw one, and
+	// a caller that hands its own builds it from Clean the same way (ciTestEnv).
+	if env == nil {
+		env = goenv.Clean(os.Environ())
+	}
+	cmd.Env = env
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

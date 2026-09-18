@@ -61,8 +61,29 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
+
+batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, merges
+each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
+will not merge and says so, and then builds, vets, tests and runs the lisp suite over
+what is left, one progress line per step on stderr with the elapsed time. Green is
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list>" at exit 0, and
+red is the same line as BATCH FAIL naming the step, the failing packages and the failing
+tests at exit 1. Pushing that branch and opening the pull request is the caller's, who is
+the one who knows whether this is the batch they wanted. --base defaults to dev, which is
+where this repository's integration batches land; --root is rebuilt on every run, so give
+it a directory of the batch's own.
+
+THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
+runs -- go test -json -count=1 -timeout 5m -- over the whole merged tree, and its verdict
+is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
+that goes green here is a batch that ran what CI runs. integration-4 went green under a
+plain "go test ./..." and three CI legs then failed. The one thing not mirrored is CI's
+fair share of the machine, which is the machine's own fact and not a number this tool may
+write down: pass --gomaxprocs <n> on a bench that is also running CI, and the gate takes
+that many cores instead of all of them.
 
 simulate is the exception to the exit codes below: it exits 2 when it FINDS a poison
 entry -- the one that is green alone and red on top of the entries ahead of it -- and 1
@@ -295,6 +316,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdRebase(rest, stdout, stderr, deps)
 	case "react":
 		return cmdReact(rest, stdout, stderr, deps)
+	case "batch":
+		return cmdBatch(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -312,12 +335,12 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	}
 	creation := verb == "init" || verb == "quickstart"
 	// `wait` watches one pull request by polling the host, `sweep` reads a repository's
-	// merge queue, `simulate` names the repository it makes a scratch worktree from, and
-	// `rebase` is not a lane verb at all -- it reads the open list from a repository and
-	// cuts cards into a directory -- so all four name the repository outright rather than
-	// reading it from the lane's state, like `init` does; every other verb reads the
-	// lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase"
+	// merge queue, `simulate` names the repository it makes a scratch worktree from,
+	// `batch` names the one it clones, and `rebase` is not a lane verb at all -- it reads
+	// the open list from a repository and cuts cards into a directory -- so all five name
+	// the repository outright rather than reading it from the lane's state, like `init`
+	// does; every other verb reads the lane's.
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
@@ -330,8 +353,9 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		switch verb {
 		case "gate":
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
-		case "simulate":
-			// simulate predicts a queue onto a base branch; it does not own a lane's.
+		case "simulate", "batch":
+			// simulate predicts a queue onto a base branch and batch builds an
+			// integration branch on top of one; neither owns a lane's.
 		case "rebase":
 			// rebase cuts a card per open pull request against a base branch it names
 			// outright; it is not a lane verb, so it does not own a lane's --base either.

@@ -45,6 +45,10 @@ var mergeAudit = audit.Config{
 		"pass.go|discoverDefault|verb":                                  "the verb's own name, the literals \"RUN\" and \"STATUS\" at its three call sites in pass.go",
 		"classify.go|classifyPacketEntry|line":                          "the decision renderer decide.Line has already rendered every name and value through oneline.Field; escaping it again would turn its \\x3d escapes into literal backslashes",
 		"classify.go|classifyPacketEntry|mergePacketEvidence(e)":        "pr#<n> is digits, and branch#<name> renders the name through oneline.Field inside mergePacketEvidence",
+		// The two batch sites are the shape this walk cannot see: a value built above the
+		// print site. Each has a behavioral test of its own in batch_test.go.
+		"batch.go|runBatch|line":        "the five fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field where the line is built a few lines above; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
+		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -111,6 +115,11 @@ var mergeAudit = audit.Config{
 		// react.go publishes and reads through internal/ci, whose values are rendered
 		// through oneline before this package prints them.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
+		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
+		// Parse decodes newline-delimited JSON into structs and returns them, and the
+		// package and test names it returns reach a line through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
 	},
 	MinClassified: 60,
 }
