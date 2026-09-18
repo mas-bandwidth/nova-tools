@@ -14,6 +14,8 @@ package swarm
 // process, reaches no network, and owns no lease: a lease is section 3.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -23,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -107,57 +110,312 @@ func OwnedCards(benchDir, worker string) ([]string, error) {
 // being considered abandoned by a crashed or hung worker process.
 const ClaimTimeout = 10 * time.Second
 
+// emptyClaimGrace is the grace period before an unparseable or 0-byte claim file is
+// considered abandoned by a crashed process.
+var emptyClaimGrace = 20 * time.Millisecond
+
+var (
+	linkFile         = os.Link
+	noReplacePublish = noReplaceRename
+)
+
+var beforeReclaimLockHook func()
+
+var randFallbackCounter atomic.Uint64
+
+func newClaimToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), randFallbackCounter.Add(1))
+	}
+	return hex.EncodeToString(b[:])
+}
+
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	return Alive(pid, "")
+}
+
 // claimPath returns the exclusive claim record path for a card in taken/.
 func claimPath(takenDir, cardName string) string {
 	return filepath.Join(takenDir, cardName+".claim")
 }
 
-// claimCard attempts to acquire an exclusive, cross-process claim on cardName in takenDir.
-// The claim file is created with os.O_CREATE|os.O_EXCL, which is an atomic kernel operation
-// (CreateFile with CREATE_NEW on Windows, open with O_CREAT|O_EXCL on POSIX). If a claim file
-// already exists, it is checked for expiration (older than ClaimTimeout) or completion (if
-// the final taken/<winner>-<name>.card already exists). Stale claims are cleaned up, allowing
-// interrupted claims to recover.
-func claimCard(takenDir, cardName, worker string) (bool, error) {
-	path := claimPath(takenDir, cardName)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err == nil {
-		fmt.Fprintf(f, "%s %d %d\n", worker, os.Getpid(), time.Now().Unix())
-		f.Close()
-		return true, nil
+// claimReclaimPath returns the serialized reclaimer lock path for a card in taken/.
+func claimReclaimPath(takenDir, cardName string) string {
+	return filepath.Join(takenDir, cardName+".claim.reclaim")
+}
+
+type claimInfo struct {
+	raw       string
+	worker    string
+	pid       int
+	startTime time.Time
+	token     string
+	valid     bool
+	empty     bool
+}
+
+func parseClaim(raw []byte) claimInfo {
+	s := string(raw)
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return claimInfo{raw: s, empty: true}
 	}
-	if !errors.Is(err, os.ErrExist) {
-		return false, err
+	var info claimInfo
+	info.raw = s
+	info.worker = fields[0]
+	if len(fields) >= 2 {
+		info.pid, _ = strconv.Atoi(fields[1])
 	}
-	// Another worker holds a claim. Check if it is stale by reading its bytes:
-	// a claim record records the claimant worker, pid, and creation unix timestamp.
-	raw, readErr := os.ReadFile(path)
-	if readErr != nil {
-		if errors.Is(readErr, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, readErr
-	}
-	fields := strings.Fields(string(raw))
 	if len(fields) >= 3 {
-		if ts, pErr := strconv.ParseInt(fields[2], 10, 64); pErr == nil {
-			if time.Now().Unix()-ts > int64(ClaimTimeout/time.Second) {
-				_ = os.Remove(path)
-				f2, err2 := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-				if err2 == nil {
-					fmt.Fprintf(f2, "%s %d %d\n", worker, os.Getpid(), time.Now().Unix())
-					f2.Close()
-					return true, nil
-				}
+		if val, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
+			if val < 1e12 {
+				info.startTime = time.Unix(val, 0)
+			} else {
+				info.startTime = time.Unix(0, val)
 			}
 		}
 	}
-	return false, nil
+	if len(fields) >= 4 {
+		info.token = fields[3]
+		info.valid = true
+	} else if len(fields) == 3 && !info.startTime.IsZero() {
+		info.valid = true
+	}
+	return info
 }
 
-// releaseClaim removes the exclusive claim file after the card rename has completed or failed.
-func releaseClaim(takenDir, cardName string) {
+func isClaimStale(info claimInfo) bool {
+	if info.empty || !info.valid {
+		return true
+	}
+	if info.pid > 0 && !processAlive(info.pid) {
+		return true
+	}
+	if !info.startTime.IsZero() && time.Since(info.startTime) > ClaimTimeout {
+		return true
+	}
+	return false
+}
+
+func isReclaimLockStale(lockPath string) bool {
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) < 1 {
+		return true
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 || !processAlive(pid) {
+		return true
+	}
+	if len(fields) >= 2 {
+		if nano, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+			var startTime time.Time
+			if nano < 1e12 {
+				startTime = time.Unix(nano, 0)
+			} else {
+				startTime = time.Unix(0, nano)
+			}
+			if time.Since(startTime) > ClaimTimeout {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publishClaimFile writes content to a unique temporary file in takenDir and safely publishes
+// it to claimPath(takenDir, cardName) via linkFile (or noReplacePublish), ensuring no empty
+// or partially written file is ever left at the destination.
+func publishClaimFile(takenDir, cardName string, content []byte) error {
+	final := claimPath(takenDir, cardName)
+	temp := filepath.Join(takenDir, fmt.Sprintf(".claim-tmp-%d-%s", os.Getpid(), newClaimToken()))
+	f, err := os.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		_ = os.Remove(temp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(temp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(temp)
+		return err
+	}
+	linkErr := linkFile(temp, final)
+	if linkErr == nil {
+		_ = os.Remove(temp)
+		return nil
+	}
+	if errors.Is(linkErr, os.ErrExist) {
+		_ = os.Remove(temp)
+		return os.ErrExist
+	}
+	renameErr := noReplacePublish(temp, final)
+	_ = os.Remove(temp)
+	if renameErr == nil {
+		return nil
+	}
+	if errors.Is(renameErr, os.ErrExist) {
+		return os.ErrExist
+	}
+	return linkErr
+}
+
+// holdsClaim reports whether the claim file on disk for cardName currently holds token.
+func holdsClaim(takenDir, cardName, token string) bool {
+	if token == "" {
+		return false
+	}
+	raw, err := os.ReadFile(claimPath(takenDir, cardName))
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(raw))
+	return len(fields) >= 4 && fields[3] == token
+}
+
+// releaseClaim unlinks cardName.claim if and only if the file on disk currently holds token.
+// If the claim was replaced by another claimant, the replacement's record is never unlinked.
+func releaseClaim(takenDir, cardName, token string) {
+	if token == "" {
+		return
+	}
+	path := claimPath(takenDir, cardName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) >= 4 && fields[3] == token {
+		_ = os.Remove(path)
+	}
+}
+
+// claimCard attempts to acquire an exclusive, cross-process claim on cardName in takenDir.
+// It writes a unique claim token into the claim file: worker pid start_time_nano token\n.
+// Stale claims are reclaimed using serialized compare-and-delete under an exclusive reclaim lock.
+func claimCard(takenDir, cardName, worker string) (string, bool, error) {
+	if err := os.MkdirAll(takenDir, 0o755); err != nil {
+		return "", false, err
+	}
+	token := newClaimToken()
+	content := []byte(fmt.Sprintf("%s %d %d %s\n", worker, os.Getpid(), time.Now().UnixNano(), token))
+
+	err := publishClaimFile(takenDir, cardName, content)
+	if err == nil {
+		return token, true, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return "", false, err
+	}
+
+	raw, readErr := os.ReadFile(claimPath(takenDir, cardName))
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			if pErr := publishClaimFile(takenDir, cardName, content); pErr == nil {
+				return token, true, nil
+			}
+			return "", false, nil
+		}
+		return "", false, readErr
+	}
+
+	info := parseClaim(raw)
+
+	if (info.empty || !info.valid) && (info.pid <= 0 || processAlive(info.pid)) {
+		if emptyClaimGrace > 0 {
+			time.Sleep(emptyClaimGrace)
+		}
+		raw2, readErr2 := os.ReadFile(claimPath(takenDir, cardName))
+		if readErr2 != nil {
+			if errors.Is(readErr2, os.ErrNotExist) {
+				if pErr := publishClaimFile(takenDir, cardName, content); pErr == nil {
+					return token, true, nil
+				}
+				return "", false, nil
+			}
+			return "", false, readErr2
+		}
+		info2 := parseClaim(raw2)
+		info = info2
+		raw = raw2
+	}
+
+	if !isClaimStale(info) {
+		return "", false, nil
+	}
+
+	if beforeReclaimLockHook != nil {
+		beforeReclaimLockHook()
+	}
+
+	reclaimPath := claimReclaimPath(takenDir, cardName)
+	lockFile, err := os.OpenFile(reclaimPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if isReclaimLockStale(reclaimPath) {
+				_ = os.Remove(reclaimPath)
+				lockFile, err = os.OpenFile(reclaimPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+			}
+		}
+		if err != nil {
+			return "", false, nil
+		}
+	}
+	defer func() {
+		_ = os.Remove(reclaimPath)
+	}()
+	fmt.Fprintf(lockFile, "%d %d\n", os.Getpid(), time.Now().UnixNano())
+	_ = lockFile.Sync()
+	_ = lockFile.Close()
+
+	curRaw, curErr := os.ReadFile(claimPath(takenDir, cardName))
+	if curErr != nil {
+		if errors.Is(curErr, os.ErrNotExist) {
+			if pErr := publishClaimFile(takenDir, cardName, content); pErr == nil {
+				return token, true, nil
+			}
+			return "", false, nil
+		}
+		return "", false, curErr
+	}
+
+	curInfo := parseClaim(curRaw)
+
+	if info.token != "" {
+		if curInfo.token != info.token {
+			return "", false, nil
+		}
+	} else {
+		if string(curRaw) != string(raw) {
+			return "", false, nil
+		}
+	}
+
+	if !isClaimStale(curInfo) {
+		return "", false, nil
+	}
+
 	_ = os.Remove(claimPath(takenDir, cardName))
+
+	if pErr := publishClaimFile(takenDir, cardName, content); pErr != nil {
+		return "", false, pErr
+	}
+
+	return token, true, nil
 }
 
 // takeMu serializes the file rename step across concurrent workers in the same process.
@@ -191,7 +449,7 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 		return "", false, err
 	}
 	for _, name := range names {
-		claimed, err := claimCard(taken, name, worker)
+		token, claimed, err := claimCard(taken, name, worker)
 		if err != nil {
 			return "", false, err
 		}
@@ -201,9 +459,14 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 		dst := filepath.Join(taken, worker+"-"+name+CardExt)
 		src := filepath.Join(queue, name+CardExt)
 		takeMu.Lock()
+		if !holdsClaim(taken, name, token) {
+			takeMu.Unlock()
+			releaseClaim(taken, name, token)
+			continue
+		}
 		rErr := renameSteady(src, dst)
 		takeMu.Unlock()
-		releaseClaim(taken, name)
+		releaseClaim(taken, name, token)
 		if rErr != nil {
 			if errors.Is(rErr, os.ErrNotExist) {
 				continue // another worker took this card first
@@ -286,7 +549,7 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 		if err := os.MkdirAll(taken, 0o755); err != nil {
 			return stolen, err
 		}
-		claimed, cErr := claimCard(taken, names[0], worker)
+		token, claimed, cErr := claimCard(taken, names[0], worker)
 		if cErr != nil {
 			return stolen, cErr
 		}
@@ -296,9 +559,14 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 		src := filepath.Join(queue, names[0]+CardExt)
 		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
 		takeMu.Lock()
+		if !holdsClaim(taken, names[0], token) {
+			takeMu.Unlock()
+			releaseClaim(taken, names[0], token)
+			continue
+		}
 		rErr := renameSteady(src, dst)
 		takeMu.Unlock()
-		releaseClaim(taken, names[0])
+		releaseClaim(taken, names[0], token)
 		if rErr != nil {
 			if errors.Is(rErr, os.ErrNotExist) {
 				continue // another worker took this card first

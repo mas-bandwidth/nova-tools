@@ -397,3 +397,149 @@ func TestInterruptedClaimRecovery(t *testing.T) {
 		t.Fatalf("owned = %v, want [crashed]", owned)
 	}
 }
+
+// TestConcurrentStaleReclaimersWithReplacement asserts that when a reclaimer observes a stale
+// claim and prepares to reclaim it, but another process replaces the claim with a fresh live
+// claim before the reclaimer acquires the reclaim lock, the reclaimer detects the changed token
+// and does NOT unlink the replacement claim.
+func TestConcurrentStaleReclaimersWithReplacement(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "replaced")
+
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claim := filepath.Join(taken, "replaced.claim")
+	oldStamp := time.Now().UnixNano() - 2*int64(ClaimTimeout)
+	staleContent := fmt.Sprintf("stale-worker 99999 %d stale-token-123\n", oldStamp)
+	if err := os.WriteFile(claim, []byte(staleContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	freshToken := "fresh-token-456"
+	freshContent := fmt.Sprintf("fresh-worker %d %d %s\n", os.Getpid(), time.Now().UnixNano(), freshToken)
+
+	// Hook simulates a concurrent claimant replacing the stale claim between the reclaimer's
+	// initial observation and its reclaim lock acquisition.
+	beforeReclaimLockHook = func() {
+		_ = os.WriteFile(claim, []byte(freshContent), 0o644)
+	}
+	t.Cleanup(func() { beforeReclaimLockHook = nil })
+
+	name, ok, err := TakeCard(bench, "reclaimer")
+	if err != nil {
+		t.Fatalf("TakeCard failed: %v", err)
+	}
+	if ok || name != "" {
+		t.Fatalf("TakeCard = (%q, %t), want empty/false because claim was replaced by fresh live worker", name, ok)
+	}
+
+	// Verify the fresh claim on disk was NOT removed.
+	raw, err := os.ReadFile(claim)
+	if err != nil {
+		t.Fatalf("claim file was removed: %v", err)
+	}
+	if string(raw) != freshContent {
+		t.Fatalf("claim content = %q, want fresh content %q", string(raw), freshContent)
+	}
+
+	// Card remains in queue because reclaimer was rejected.
+	left, err := QueueCards(bench)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0] != "replaced" {
+		t.Fatalf("queue cards = %v, want [replaced]", left)
+	}
+}
+
+// TestFencedWorkerCannotRenameOrRelease simulates a slow or suspended worker whose claim
+// expired or was reclaimed. When the worker resumes, the owner-fencing check prevents it
+// from renaming the card, and releaseClaim refuses to remove the replacement claim.
+func TestFencedWorkerCannotRenameOrRelease(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "fenced")
+
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate slow worker w_slow claiming the card.
+	tokenSlow := "token-slow-111"
+	claim := filepath.Join(taken, "fenced.claim")
+	slowContent := fmt.Sprintf("w_slow %d %d %s\n", os.Getpid(), time.Now().UnixNano(), tokenSlow)
+	if err := os.WriteFile(claim, []byte(slowContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// While w_slow is paused, w_fast reclaims the card with tokenFast.
+	tokenFast := "token-fast-222"
+	fastContent := fmt.Sprintf("w_fast %d %d %s\n", os.Getpid(), time.Now().UnixNano(), tokenFast)
+	if err := os.WriteFile(claim, []byte(fastContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When w_slow wakes up, holdsClaim must return false (fenced).
+	if holdsClaim(taken, "fenced", tokenSlow) {
+		t.Fatalf("holdsClaim(tokenSlow) = true, want false (fenced by tokenFast)")
+	}
+
+	// w_slow calls releaseClaim with its old token; it must NOT unlink the claim held by tokenFast.
+	releaseClaim(taken, "fenced", tokenSlow)
+	raw, err := os.ReadFile(claim)
+	if err != nil {
+		t.Fatalf("claim was unlinked by slow worker: %v", err)
+	}
+	if string(raw) != fastContent {
+		t.Fatalf("claim content = %q, want %q", string(raw), fastContent)
+	}
+
+	// When w_fast releases its matching token, the claim is cleanly removed.
+	releaseClaim(taken, "fenced", tokenFast)
+	if _, err := os.Stat(claim); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("claim was not unlinked by owner: err=%v", err)
+	}
+}
+
+// TestEmptyOrTruncatedClaimRecovery asserts that an empty (0-byte) or truncated claim file
+// left by a crashed process is safely recovered without stalling the card or crashing.
+func TestEmptyOrTruncatedClaimRecovery(t *testing.T) {
+	bench := t.TempDir()
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Zero-byte empty claim file
+	plantCard(t, bench, "empty")
+	emptyClaim := filepath.Join(taken, "empty.claim")
+	if err := os.WriteFile(emptyClaim, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name, ok, err := TakeCard(bench, "w1")
+	if err != nil {
+		t.Fatalf("TakeCard with empty claim failed: %v", err)
+	}
+	if !ok || name != "empty" {
+		t.Fatalf("TakeCard = (%q, %t), want (empty, true)", name, ok)
+	}
+
+	// 2. Truncated malformed claim file (dead PID)
+	plantCard(t, bench, "truncated")
+	truncClaim := filepath.Join(taken, "truncated.claim")
+	if err := os.WriteFile(truncClaim, []byte("crashed-worker 99999\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name2, ok2, err2 := TakeCard(bench, "w2")
+	if err2 != nil {
+		t.Fatalf("TakeCard with truncated claim failed: %v", err2)
+	}
+	if !ok2 || name2 != "truncated" {
+		t.Fatalf("TakeCard = (%q, %t), want (truncated, true)", name2, ok2)
+	}
+}
