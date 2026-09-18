@@ -34,21 +34,34 @@ tags rather than about the names -- so a new bench needs a tag and no edit to th
 
 | machine | provider | `tailscale up --advertise-tags` |
 | --- | --- | --- |
-| `studio` | `tailnet` | `tag:coordination,tag:runner` |
-| `hulk` | `tailnet` | `tag:bench,tag:runner` |
-| `vision` | `tailnet` | `tag:bench,tag:runner` |
+| `studio` | `tailnet` | `tag:coordination` |
+| `hulk` | `tailnet` | `tag:bench` |
+| `vision` | `tailnet` | `tag:bench` |
 | `space` | `tailnet` | `tag:bench,tag:services` |
 | `mini` | `tailnet` | `tag:runner` |
 | `batman` | `tailnet` | `tag:runner` |
 | `superman` | `tailnet` | `tag:runner` |
 | `air` | `tailnet` | `tag:bud` |
 
-A machine that carries BOTH `tag:bench` and `tag:runner` is reachable as a bench, because
-a Tailscale ACL grants when any rule accepts. That is exactly what the dated
-`allow-shared=` note in the machines registry means, and it ends when that note does: when
-the pull worker runs cards in containers, the `runner` role comes off those lines and the
-machines stop being reachable at all. Until then, `runner hosts accept nothing` is true of
-every runner-only host and is the reason those lines carry a date.
+**An owner's own laptop joins UNTAGGED.** This is the one trap in the table above: a tag
+replaces a device's user identity, so a laptop that joined with `--advertise-tags=tag:bud`
+is a bud to the ACL and reaches benches and nothing else, whoever is typing on it. An
+owner's own machine runs plain `tailscale up`, is covered by `group:owners`, and reaches
+everything. Tag a bud only when it is somebody's machine and not one of the node's own
+people's -- a seat's bench-runner, a contractor's laptop.
+
+**`tag:runner` is advertised only by a machine that is a runner and nothing else.** A host
+that runs CI shards beside its cards is `tag:bench`, full stop: CI is a process on that
+machine, not a way of reaching it. Johnny's security read of 2026-09-18 is the reason:
+
+> A Tailscale ACL grants when any rule accepts, so `tag:bench`+`tag:runner` is reachable
+> as a bench and R3 is false for that host. The dated `allow-shared=` note is a hole with
+> a calendar, not a shape. One reach-role per machine.
+
+So the denial is TRUE rather than true-with-a-note: every machine carrying `tag:runner` is
+one nothing tagged reaches, and there is no overlapping accept to defeat it. The registry's
+`allow-shared=` note keeps its own job -- it is what stops a CARD being placed on a runner
+host -- and the two rules no longer have to agree for either to hold.
 
 ## The ACL is code, and Tailscale applies it
 
@@ -63,8 +76,12 @@ thing that checks it:
 
 * a **bud** may ssh to `bench` machines and to nothing else;
 * nothing reaches the **coordination** machine but the node's own people;
-* a **runner** host accepts nothing at all -- it talks out to the forge and that is its
-  whole network life (the lock of 2026-09-18: runner hosts are CI-only);
+* a **runner** host accepts nothing TAGGED -- no bud, no bench, no seat's machine. It talks
+  out to the forge and that is its whole network life (the lock of 2026-09-18: runner hosts
+  are CI-only). The node's own people are not a tagged thing and do reach it;
+* the node's own **people** reach every machine they own, on every port, over ssh, with no
+  check. Glenn, 2026-09-18, travelling: *"I want to work with all friends, including keeper
+  you and all fleet machines from the air with no restrictions."*
 * **services** are reachable from benches on the named ports only, never on ssh.
 
 ## One secret, in the forge

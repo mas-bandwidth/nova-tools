@@ -108,21 +108,35 @@ NO — not 2; the verb ran.
 > `TestNetStatusIsSilentAboutAMachineItWasNeverToldIsOnTheTailnet`,
 > `TestNetStatusRefusesRatherThanGuess`, `TestNetStatusParsesTailscalesOwnStatusDocument`.
 
-### R3 — a runner host accepts nothing
+### R3 — a runner host accepts nothing **tagged**
 
-No ACL rule names `tag:runner` as a destination. Not from a bench, not from a bud, not from
-the node's own people: a runner host talks **out** to the forge, and the forge never connects
-in, so inbound reach is not a capability it needs. This is the lock of 2026-09-18 — runner
-hosts are CI-only — written where the packets are. It is an ABSENCE, so the policy's `tests`
-section asserts the denial rather than trusting it, and a Go test refuses an accept rule that
-names the tag.
+No ACL rule lets anything tagged — a bud, a bench, a seat's machine — reach `tag:runner`. A
+runner host talks **out** to the forge, and the forge never connects in, so inbound peer
+reach is not a capability it needs. This is the lock of 2026-09-18 — runner hosts are
+CI-only — written where the packets are. The denial is an ABSENCE, so the policy's `tests`
+section asserts it rather than trusting it, and a Go test refuses an accept rule naming the
+tag from any tagged source.
 
-A machine carrying BOTH `tag:bench` and `tag:runner` is reachable as a bench, because a
-Tailscale ACL grants when any rule accepts. That is exactly what the dated `allow-shared=`
-note in the registry means, and it ends when that note does.
+**`tag:runner` is advertised only by a machine that is a runner and nothing else.** This is
+Johnny's security read of the same day, and it replaced a paragraph that merely admitted the
+problem:
 
-> Red: `TestNetInitLetsNothingReachARunnerHostNotEvenTheOwners`, and the policy's own
-> `tests` entry `{"src": "group:owners", "deny": ["tag:runner:22"]}`, run by
+> A Tailscale ACL grants when any rule accepts, so `tag:bench`+`tag:runner` is reachable as
+> a bench and R3 is false for that host. The dated `allow-shared=` note is a hole with a
+> calendar, not a shape. One reach-role per machine: a host that runs CI on a bench is
+> `tag:bench` only. CI is a process, not a tag.
+
+So a shared bench-and-runner host advertises `tag:bench`, full stop, and the denial is TRUE
+rather than true-with-a-note: every machine carrying `tag:runner` is one nothing tagged
+reaches, with no overlapping accept to defeat it. The registry's `allow-shared=` note keeps
+its own separate job — it is what stops a CARD being placed on a runner host — and the two
+rules no longer have to agree for either to hold.
+
+The node's own **people** are not a tagged thing; R13 is what they get.
+
+> Red: `TestNetInitLetsNothingTAGGEDReachARunnerHostAndLetsTheOwnersIn`,
+> `TestNetInitAdvertisesTagRunnerOnlyForARunnerOnlyMachine`, and the policy's own `tests`
+> entries denying `tag:runner:22` from `tag:bud` and `tag:bench`, run by
 > `tailscale acl test` in CI.
 
 ### R4 — (spec) `net acl` is the escape hatch, and the workflow is the road
@@ -317,6 +331,36 @@ between machines.
 > refuses anything shaped like a key in the generated workflow), and the existing
 > `fleet-join-keeps-the-auth-key-out-of-every-argv`.
 
+### R16 — the node's own people reach every machine they own
+
+Glenn, 2026-09-18, travelling:
+
+> If I am travelling, I want to work with all friends, including keeper you and all fleet
+> machines from the air with no restrictions.
+
+So `group:owners` is an accept to **every** tag — `tag:bench:*`, `tag:bud:*`,
+`tag:coordination:*`, `tag:services:*` — and an `ssh` rule to every machine, as
+`autogroup:nonroot` or `root`, **with no check**: a re-authentication prompt on an airport
+connection is the thing that stops the work. R3 is a rule about what the tailnet's *tagged*
+things may reach; it was never about the people whose tailnet it is.
+
+The one narrowing is a runner host, which the owners reach on **`tag:runner:22`** rather
+than on every port — Johnny's read: *"'Nothing but the forge' is no peer from buds or
+benches. `group:owners` is not the swarm. Add one accept: `src: group:owners`,
+`dst: tag:runner:22`."* An owner needs to administer the machine, not an arbitrary port on
+it. Q1 records the one-line difference between the two rulings.
+
+**An owner's own laptop joins UNTAGGED.** This is the trap, and it is worth saying twice: a
+tag replaces a device's user identity, so a laptop that joined with
+`--advertise-tags=tag:bud` is a bud to the ACL and reaches benches and nothing else, whoever
+is typing on it. An owner's machine runs plain `tailscale up` and is covered by this rule.
+Tag a bud only when it is not one of the node's own people's machines.
+
+> Red: `TestNetInitLetsNothingTAGGEDReachARunnerHostAndLetsTheOwnersIn`, and the policy's
+> own `tests` entry `{"src": "group:owners", "accept": [… "tag:runner:22" …]}`, which must
+> PASS under `tailscale acl test` while the `tag:bud` and `tag:bench` entries deny the same
+> destination.
+
 ---
 
 ## The output grammar
@@ -376,13 +420,24 @@ first. The other two are green when their rules are written, and until then they
 
 ## Open questions, each with a default, and the default stands unless somebody says otherwise
 
-**Q1 — may the node's own people reach a runner host?** *Default: no* (R3, as written). Glenn's
-words are "runner hosts accept nothing but the forge", and an exception for ourselves is how
-an invariant stops being one — so a runner host is administered at its console, from the
-machine itself, or from a machine that also carries `tag:bench`. On this node that means
-`mini`, `batman` and `superman` are not reachable over the tailnet at all once the policy is
-applied. If that is too strict, the change is one line in the generator and one entry in the
-policy's `tests`, and it should carry a date the way `allow-shared=` does.
+**Q1 — may the node's own people reach a runner host, and on which ports?** *Default: yes, on
+ssh only* (R16). This question was asked and answered twice on 2026-09-18, and the default
+below is where the two answers meet.
+
+The first draft said no — "runner hosts accept nothing but the forge", taken literally, with
+no exception for ourselves. Both reviews rejected it. Johnny: *"Too strict. 'Nothing but the
+forge' is no peer from buds or benches. `group:owners` is not the swarm. Console-only admin
+of mini/batman/superman is not how three machines are provisioned."* Glenn, travelling, went
+further: *"all fleet machines from the air with no restrictions."*
+
+So the owners reach every machine, and the one narrowing is the port range on a runner host:
+`tag:runner:22` rather than `tag:runner:*`, which is Johnny's shape. It costs Glenn nothing
+he asked for — ssh is how you work with a CI box — and it keeps the runner host's other
+ports as closed as R3 makes them for everything tagged. **If Glenn wants `tag:runner:*`, it
+is one line in `netAllTagDst` and one entry in the policy's `tests`.**
+
+The *shape* question underneath it — is a shared bench-and-runner host a hole? — is no
+longer open: R3 answers it by advertising `tag:runner` only on a runner-only machine.
 
 **Q2 — should `tag:bud` be reachable at all?** *Default: no rule names it as a destination,*
 so a bud is a source and never a target. A second bud cannot reach the first.

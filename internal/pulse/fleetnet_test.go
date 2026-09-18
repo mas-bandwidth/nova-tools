@@ -10,6 +10,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"strings"
 	"testing"
 	"time"
@@ -540,25 +542,119 @@ func netJob(src, key string) string {
 	return strings.Join(lines[start:], "\n")
 }
 
-// TestNetInitLetsNothingReachARunnerHostNotEvenTheOwners is R3's red test, and it is the
-// one that was nearly written wrong: the first generator gave the node's own people every
-// tag, runner included, which is how an invariant quietly stops being one. Glenn's words
-// are "runner hosts accept nothing but the forge", and the forge never connects in.
-func TestNetInitLetsNothingReachARunnerHostNotEvenTheOwners(t *testing.T) {
+// TestNetInitLetsNothingTAGGEDReachARunnerHostAndLetsTheOwnersIn is R3 after two rulings of
+// 2026-09-18, and it is the rule that was nearly written wrong twice.
+//
+// Glenn, travelling: "I want to work with all friends, including keeper you and all fleet
+// machines from the air with no restrictions." Johnny, on the security read: "'Nothing but
+// the forge' is no PEER from buds or benches. group:owners is not the swarm." So R3 is a
+// rule about what the tailnet's TAGGED things may reach, and the owners reach a runner host
+// on ssh -- Johnny's one accept, `src: group:owners, dst: tag:runner:22`.
+func TestNetInitLetsNothingTAGGEDReachARunnerHostAndLetsTheOwnersIn(t *testing.T) {
 	_, files, _, _ := initNode(t, exampleInit(t))
 	acls, ok := netSection(files[NetPolicyPath], "\"acls\": [")
 	if !ok {
 		t.Fatal("the policy has no acls section")
 	}
+	owners := 0
 	for _, line := range strings.Split(acls, "\n") {
-		if strings.Contains(line, "\"action\": \"accept\"") && strings.Contains(line, "tag:runner") {
-			t.Errorf("an acl rule accepts traffic to a runner host: %q", strings.TrimSpace(line))
+		if !strings.Contains(line, "\"action\": \"accept\"") || !strings.Contains(line, "tag:runner") {
+			continue
+		}
+		if !strings.Contains(line, "\"group:owners\"") {
+			t.Errorf("something TAGGED reaches a runner host: %q. The lock of 2026-09-18 is that runner hosts are CI-only", strings.TrimSpace(line))
+			continue
+		}
+		owners++
+		// Johnny scoped it to ssh: an owner needs to administer the machine, not to reach
+		// an arbitrary port on it.
+		if !strings.Contains(line, "tag:runner:22") {
+			t.Errorf("the owners' rule reaches a runner host on more than ssh: %q", strings.TrimSpace(line))
 		}
 	}
-	tests, _ := netSection(files[NetPolicyPath], "\"tests\": [")
-	if !strings.Contains(tests, `"deny": ["tag:runner:22"]`) {
-		t.Errorf("no test asserts that the node's own people are denied a runner host:\n%s", tests)
+	if owners != 1 {
+		t.Errorf("%d rules let the node's own people reach a runner host, want exactly 1", owners)
 	}
+
+	tests, _ := netSection(files[NetPolicyPath], "\"tests\": [")
+	// The owner test must PASS for a runner host...
+	if !strings.Contains(tests, `"src": "group:owners"`) || !strings.Contains(tests, `"tag:runner:22", "tag:services:22"`) {
+		t.Errorf("no test asserts that the node's own people reach a runner host on ssh:\n%s", tests)
+	}
+	// ...and the tagged ones must FAIL for it, and for the coordination machine.
+	for _, want := range []string{
+		`"src": "tag:bud"`,
+		`"src": "tag:bench"`,
+	} {
+		if !strings.Contains(tests, want) {
+			t.Errorf("the tests section has no entry for %s", want)
+		}
+	}
+	for _, entry := range netTestEntries(tests) {
+		if !strings.Contains(entry, `"src": "tag:bud"`) && !strings.Contains(entry, `"src": "tag:bench"`) {
+			continue
+		}
+		if !strings.Contains(entry, "tag:runner:22") || !strings.Contains(entry, `"deny"`) {
+			t.Errorf("a tagged source is not denied a runner host:\n%s", entry)
+		}
+		if strings.Contains(entry, `"src": "tag:bench"`) && strings.Contains(entry, `"accept"`) &&
+			!strings.Contains(entry, "tag:coordination:22") {
+			t.Errorf("a bench is not denied the coordination machine:\n%s", entry)
+		}
+	}
+}
+
+// TestNetInitAdvertisesTagRunnerOnlyForARunnerOnlyMachine is Johnny's shape, 2026-09-18:
+// "dual-tag is a hole, not a note ... one reach-role per machine. A host that runs CI on a
+// bench is tag:bench only. CI is a process, not a tag." A machine that advertised both tags
+// would be reachable as a bench, which makes the R3 denial false for that host however
+// firmly the policy states it.
+func TestNetInitAdvertisesTagRunnerOnlyForARunnerOnlyMachine(t *testing.T) {
+	reg, err := fleet.ReadRegistry("../fleet/testdata/machines.tsv")
+	if err != nil {
+		t.Fatalf("ReadRegistry: %v", err)
+	}
+	for _, m := range reg.Machines() {
+		tags := NetMachineTags(m)
+		hasRunnerTag := false
+		for _, tag := range tags {
+			if tag == "tag:"+fleet.RoleRunner {
+				hasRunnerTag = true
+			}
+		}
+		if hasRunnerTag && len(tags) != 1 {
+			t.Errorf("%s advertises %v: a machine carrying tag:runner beside another tag is reachable through the other tag, and R3 is false for it", m.Name, tags)
+		}
+		if m.HasRole(fleet.RoleRunner) && m.HasRole(fleet.RoleBench) && hasRunnerTag {
+			t.Errorf("%s is a shared bench-and-runner host and still advertises tag:runner; CI is a process on it, not a way of reaching it", m.Name)
+		}
+		if len(tags) == 0 {
+			t.Errorf("%s advertises no tag at all", m.Name)
+		}
+	}
+}
+
+// netTestEntries splits the tests section into one string per `{...}` entry, so an assertion
+// can be made about ONE entry rather than about the whole section -- which is what let an
+// earlier version of this test pass on a deny that belonged to a different source.
+func netTestEntries(section string) []string {
+	var out []string
+	var cur []string
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "{") {
+			cur = []string{line}
+			continue
+		}
+		if cur != nil {
+			cur = append(cur, line)
+			if strings.HasSuffix(trimmed, "},") {
+				out = append(out, strings.Join(cur, "\n"))
+				cur = nil
+			}
+		}
+	}
+	return out
 }
 
 // TestNetInitDocNamesTheTagEveryMachineAdvertises: the policy is written about tags, so the

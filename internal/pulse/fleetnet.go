@@ -453,11 +453,49 @@ func FleetNetInit(in FleetNetInitInput) int {
 // netTags is the tags a policy needs: one per role any machine in the registry carries, in
 // a fixed order so the generated file is byte-identical from one run to the next.
 func netTags(reg *fleet.Registry) []string {
+	seen := map[string]bool{}
 	var out []string
 	for _, role := range fleet.RoleNames() {
-		if len(reg.WithRole(role)) > 0 {
-			out = append(out, "tag:"+role)
+		for _, m := range reg.WithRole(role) {
+			for _, tag := range NetMachineTags(m) {
+				if !seen[tag] {
+					seen[tag] = true
+					out = append(out, tag)
+				}
+			}
 		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// NetMachineTags is the set of tags ONE machine advertises, and it is the answer to
+// Johnny's security read of 2026-09-18:
+//
+//	"A Tailscale ACL grants when any rule accepts, so tag:bench+tag:runner is reachable as a
+//	bench and R3 is false for that host. The dated allow-shared= note is a hole with a
+//	calendar, not a shape. One reach-role per machine: a host that runs CI on a bench is
+//	tag:bench only. CI is a process, not a tag."
+//
+// So `tag:runner` is advertised ONLY by a machine whose roles are runner and nothing else.
+// A shared bench-and-runner host is `tag:bench`, full stop -- which makes R3 TRUE rather
+// than true-with-a-note: every machine carrying tag:runner is a machine nothing tagged
+// reaches, and there is no overlapping accept to defeat the denial.
+//
+// Every other role is a genuine reach-role and a machine carries all of the ones it has: a
+// bench that also hosts the stack is reachable as a bench by the owners and on the stack's
+// named ports by other benches, and both of those are meant.
+func NetMachineTags(m fleet.Machine) []string {
+	var out []string
+	for _, role := range fleet.RoleNames() {
+		if !m.HasRole(role) {
+			continue
+		}
+		if role == fleet.RoleRunner && len(m.Roles) > 1 {
+			// CI is a process on this machine, not a way of reaching it.
+			continue
+		}
+		out = append(out, "tag:"+role)
 	}
 	return out
 }
@@ -535,25 +573,30 @@ func netPolicy(reg *fleet.Registry, node, owner string) (body string, rules, tes
 		rule("R12: the coordination machine accepts the node's OWN people and nobody else. No bench, no bud, no runner host, and no shared machine from another node: a friend's window is the one place that holds its whole context.",
 			[]string{"group:owners"}, []string{"tag:coordination:*"})
 	}
-	rule("The node's own people reach everything they own EXCEPT a runner host, which is R3 again: `runner hosts accept nothing but the forge` is what Glenn said, and an exception for ourselves is how an invariant stops being one. A runner host is administered at its console or from the machine itself. (docs/SPEC-FLEET-NET.md Q1 is the open question, and this is its default.)",
-		[]string{"group:owners"}, netOwnerDst(reg))
+	rule("R16: the node's own people reach EVERY machine they own, a runner host included. Glenn, 2026-09-18, travelling: `I want to work with all friends, including keeper you and all fleet machines from the air with no restrictions.` R3 is about what the tailnet's TAGGED things may reach -- seats, buds and benches -- never about the people whose tailnet it is. NOTE that this rule reaches an owner's device only while it is UNTAGGED: a laptop that joined with --advertise-tags=tag:bud is a bud and gets the bud's one destination.",
+		[]string{"group:owners"}, netAllTagDst(reg))
 	// R3 is the ABSENCE of a rule, and an absence has to be said out loud or the next
 	// person adds the rule that removes it.
-	p("    // R3: there is deliberately NO rule whose dst is tag:runner. A runner host accepts")
-	p("    // nothing from this tailnet at all -- it talks OUT to the forge and that is the whole")
-	p("    // of its network life. The lock of 2026-09-18 says runner hosts are CI-only; this is")
-	p("    // that lock written where the packets are. A rule added here would undo it silently,")
-	p("    // which is why the tests below assert the denial rather than trusting the absence.")
+	p("    // R3: no rule above lets anything TAGGED -- a bud, a bench, a seat's machine -- reach")
+	p("    // tag:runner. A runner host talks OUT to the forge and that is the whole of its network")
+	p("    // life; the lock of 2026-09-18 says runner hosts are CI-only, and this is that lock")
+	p("    // written where the packets are. The one rule that does reach it is the owners' rule")
+	p("    // just above, which is a person and not a workload. A rule added here would undo the")
+	p("    // lock silently, which is why the tests below assert the denials rather than trusting")
+	p("    // an absence.")
 	p("  ],")
 	p("")
 	p("  // R6: Tailscale SSH. The tailnet identity IS the authorization, so no authorized_keys is")
 	p("  // distributed to any machine and no key has to be rotated when a person leaves: the")
 	p("  // policy is edited here and the next connection is refused.")
 	p("  \"ssh\": [")
-	p("    // The node's own people, to any machine they may reach at all, as any user.")
+	p("    // R16: the node's own people, to EVERY machine they own, as any user, with no check.")
+	p("    // Glenn travelling is the case this is for: an owner at an airport gate must be able to")
+	p("    // reach every friend and every bench, and a re-authentication prompt on a bad connection")
+	p("    // is the thing that stops the work.")
 	p("    {\"action\": \"accept\", \"src\": [\"group:owners\"], \"dst\": [\"autogroup:self\"], \"users\": [\"autogroup:nonroot\", \"root\"]},")
-	if has(fleet.RoleBench) {
-		p("    {\"action\": \"accept\", \"src\": [\"group:owners\"], \"dst\": [\"tag:bench\"], \"users\": [\"autogroup:nonroot\", \"root\"]},")
+	for _, tag := range netTags(reg) {
+		p("    {\"action\": \"accept\", \"src\": [\"group:owners\"], \"dst\": [%q], \"users\": [\"autogroup:nonroot\", \"root\"]},", tag)
 	}
 	if has(fleet.RoleBud) && has(fleet.RoleBench) {
 		p("    // A bud gets a CHECK: a browser re-authentication every twelve hours. A laptop leaves")
@@ -593,16 +636,18 @@ func netPolicy(reg *fleet.Registry, node, owner string) (body string, rules, tes
 		test("R11 and R3: a bench reaches the stack on its named ports and another bench over ssh -- never the services host's ssh, never the coordination machine, never a runner.",
 			"tag:bench", accept, netBenchDeny(reg))
 	}
-	if has(fleet.RoleCoordination) {
-		ownerDeny := []string(nil)
-		if has(fleet.RoleRunner) {
-			ownerDeny = []string{"tag:runner:22"}
+	{
+		// R16: the owners reach everything. This test must PASS for a runner host, which is
+		// the half of R3 that is easy to break by tightening the rule above.
+		var accept []string
+		for _, tag := range netTags(reg) {
+			accept = append(accept, tag+":22")
 		}
-		test("R12 and R3 together: the node's own people reach the coordination machine, and not even they reach a runner host.",
-			"group:owners", []string{"tag:coordination:22"}, ownerDeny)
+		test("R16: the node's own people reach EVERY machine they own on ssh, a runner host and the coordination machine included -- Glenn travelling: `all fleet machines from the air with no restrictions`.",
+			"group:owners", accept, nil)
 	}
 	if has(fleet.RoleRunner) {
-		test("R3: a runner host is reachable from nothing on this tailnet. It is the lock of 2026-09-18, asserted rather than assumed.",
+		test("R3: a runner host is reachable from nothing TAGGED -- no bench, no bud, no seat's machine. It is the lock of 2026-09-18, asserted rather than assumed, and since Johnny's read of the same day it is true without a note: a shared bench-and-runner host advertises tag:bench only, so there is no overlapping accept to defeat this denial.",
 			"tag:bench", nil, []string{"tag:runner:22", "tag:runner:80", "tag:runner:443"})
 	}
 	p("  ],")
@@ -610,13 +655,20 @@ func netPolicy(reg *fleet.Registry, node, owner string) (body string, rules, tes
 	return b.String(), rules, tests
 }
 
-// netOwnerDst is every tag the node's own people may reach: all of them but tag:runner.
-// The runner host is the one machine nobody on this tailnet reaches, ourselves included,
-// which is the only shape in which "runner hosts accept nothing but the forge" is true.
-func netOwnerDst(reg *fleet.Registry) []string {
+// netAllTagDst is every tag as an all-ports destination: what the node's own people reach.
+// Every one, runner hosts included -- a person travelling must be able to work with every
+// machine they own, and the lock of 2026-09-18 is a rule about tagged things, not about
+// the people whose tailnet it is.
+func netAllTagDst(reg *fleet.Registry) []string {
 	var out []string
 	for _, tag := range netTags(reg) {
+		// A runner host is the one destination the owners get on SSH ALONE rather than on
+		// every port. Glenn travelling needs to reach every machine he owns; he does not
+		// need a runner host's arbitrary ports, and Johnny's read of 2026-09-18 asked for
+		// exactly this one accept: `src: group:owners, dst: tag:runner:22`. The two
+		// rulings meet here, and SPEC-FLEET-NET.md Q1 records the one-line difference.
 		if tag == "tag:"+fleet.RoleRunner {
+			out = append(out, tag+":22")
 			continue
 		}
 		out = append(out, tag+":*")
@@ -823,21 +875,28 @@ func netDoc(reg *fleet.Registry, in FleetNetInitInput) string {
 	p("| machine | provider | `tailscale up --advertise-tags` |")
 	p("| --- | --- | --- |")
 	for _, m := range reg.Machines() {
-		var tags []string
-		for _, role := range fleet.RoleNames() {
-			if m.HasRole(role) {
-				tags = append(tags, "tag:"+role)
-			}
-		}
-		p("| `%s` | `%s` | `%s` |", m.Name, m.Provider, strings.Join(tags, ","))
+		p("| `%s` | `%s` | `%s` |", m.Name, m.Provider, strings.Join(NetMachineTags(m), ","))
 	}
 	p("")
-	p("A machine that carries BOTH `tag:bench` and `tag:runner` is reachable as a bench, because")
-	p("a Tailscale ACL grants when any rule accepts. That is exactly what the dated")
-	p("`allow-shared=` note in the machines registry means, and it ends when that note does: when")
-	p("the pull worker runs cards in containers, the `runner` role comes off those lines and the")
-	p("machines stop being reachable at all. Until then, `runner hosts accept nothing` is true of")
-	p("every runner-only host and is the reason those lines carry a date.")
+	p("**An owner's own laptop joins UNTAGGED.** This is the one trap in the table above: a tag")
+	p("replaces a device's user identity, so a laptop that joined with `--advertise-tags=tag:bud`")
+	p("is a bud to the ACL and reaches benches and nothing else, whoever is typing on it. An")
+	p("owner's own machine runs plain `tailscale up`, is covered by `group:owners`, and reaches")
+	p("everything. Tag a bud only when it is somebody's machine and not one of the node's own")
+	p("people's -- a seat's bench-runner, a contractor's laptop.")
+	p("")
+	p("**`tag:runner` is advertised only by a machine that is a runner and nothing else.** A host")
+	p("that runs CI shards beside its cards is `tag:bench`, full stop: CI is a process on that")
+	p("machine, not a way of reaching it. Johnny's security read of 2026-09-18 is the reason:")
+	p("")
+	p("> A Tailscale ACL grants when any rule accepts, so `tag:bench`+`tag:runner` is reachable")
+	p("> as a bench and R3 is false for that host. The dated `allow-shared=` note is a hole with")
+	p("> a calendar, not a shape. One reach-role per machine.")
+	p("")
+	p("So the denial is TRUE rather than true-with-a-note: every machine carrying `tag:runner` is")
+	p("one nothing tagged reaches, and there is no overlapping accept to defeat it. The registry's")
+	p("`allow-shared=` note keeps its own job -- it is what stops a CARD being placed on a runner")
+	p("host -- and the two rules no longer have to agree for either to hold.")
 	p("")
 	p("## The ACL is code, and Tailscale applies it")
 	p("")
@@ -852,8 +911,12 @@ func netDoc(reg *fleet.Registry, in FleetNetInitInput) string {
 	p("")
 	p("* a **bud** may ssh to `bench` machines and to nothing else;")
 	p("* nothing reaches the **coordination** machine but the node's own people;")
-	p("* a **runner** host accepts nothing at all -- it talks out to the forge and that is its")
-	p("  whole network life (the lock of 2026-09-18: runner hosts are CI-only);")
+	p("* a **runner** host accepts nothing TAGGED -- no bud, no bench, no seat's machine. It talks")
+	p("  out to the forge and that is its whole network life (the lock of 2026-09-18: runner hosts")
+	p("  are CI-only). The node's own people are not a tagged thing and do reach it;")
+	p("* the node's own **people** reach every machine they own, on every port, over ssh, with no")
+	p("  check. Glenn, 2026-09-18, travelling: *\"I want to work with all friends, including keeper")
+	p("  you and all fleet machines from the air with no restrictions.\"*")
 	p("* **services** are reachable from benches on the named ports only, never on ssh.")
 	p("")
 	p("## One secret, in the forge")

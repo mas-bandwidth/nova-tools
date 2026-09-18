@@ -41,22 +41,31 @@
     {"action": "accept", "src": ["tag:bench"], "dst": ["tag:services:3100", "tag:services:3000", "tag:services:6379"]},
     // R12: the coordination machine accepts the node's OWN people and nobody else. No bench, no bud, no runner host, and no shared machine from another node: a friend's window is the one place that holds its whole context.
     {"action": "accept", "src": ["group:owners"], "dst": ["tag:coordination:*"]},
-    // The node's own people reach everything they own EXCEPT a runner host, which is R3 again: `runner hosts accept nothing but the forge` is what Glenn said, and an exception for ourselves is how an invariant stops being one. A runner host is administered at its console or from the machine itself. (docs/SPEC-FLEET-NET.md Q1 is the open question, and this is its default.)
-    {"action": "accept", "src": ["group:owners"], "dst": ["tag:bench:*", "tag:bud:*", "tag:coordination:*", "tag:services:*"]},
-    // R3: there is deliberately NO rule whose dst is tag:runner. A runner host accepts
-    // nothing from this tailnet at all -- it talks OUT to the forge and that is the whole
-    // of its network life. The lock of 2026-09-18 says runner hosts are CI-only; this is
-    // that lock written where the packets are. A rule added here would undo it silently,
-    // which is why the tests below assert the denial rather than trusting the absence.
+    // R16: the node's own people reach EVERY machine they own, a runner host included. Glenn, 2026-09-18, travelling: `I want to work with all friends, including keeper you and all fleet machines from the air with no restrictions.` R3 is about what the tailnet's TAGGED things may reach -- seats, buds and benches -- never about the people whose tailnet it is. NOTE that this rule reaches an owner's device only while it is UNTAGGED: a laptop that joined with --advertise-tags=tag:bud is a bud and gets the bud's one destination.
+    {"action": "accept", "src": ["group:owners"], "dst": ["tag:bench:*", "tag:bud:*", "tag:coordination:*", "tag:runner:22", "tag:services:*"]},
+    // R3: no rule above lets anything TAGGED -- a bud, a bench, a seat's machine -- reach
+    // tag:runner. A runner host talks OUT to the forge and that is the whole of its network
+    // life; the lock of 2026-09-18 says runner hosts are CI-only, and this is that lock
+    // written where the packets are. The one rule that does reach it is the owners' rule
+    // just above, which is a person and not a workload. A rule added here would undo the
+    // lock silently, which is why the tests below assert the denials rather than trusting
+    // an absence.
   ],
 
   // R6: Tailscale SSH. The tailnet identity IS the authorization, so no authorized_keys is
   // distributed to any machine and no key has to be rotated when a person leaves: the
   // policy is edited here and the next connection is refused.
   "ssh": [
-    // The node's own people, to any machine they may reach at all, as any user.
+    // R16: the node's own people, to EVERY machine they own, as any user, with no check.
+    // Glenn travelling is the case this is for: an owner at an airport gate must be able to
+    // reach every friend and every bench, and a re-authentication prompt on a bad connection
+    // is the thing that stops the work.
     {"action": "accept", "src": ["group:owners"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot", "root"]},
     {"action": "accept", "src": ["group:owners"], "dst": ["tag:bench"], "users": ["autogroup:nonroot", "root"]},
+    {"action": "accept", "src": ["group:owners"], "dst": ["tag:bud"], "users": ["autogroup:nonroot", "root"]},
+    {"action": "accept", "src": ["group:owners"], "dst": ["tag:coordination"], "users": ["autogroup:nonroot", "root"]},
+    {"action": "accept", "src": ["group:owners"], "dst": ["tag:runner"], "users": ["autogroup:nonroot", "root"]},
+    {"action": "accept", "src": ["group:owners"], "dst": ["tag:services"], "users": ["autogroup:nonroot", "root"]},
     // A bud gets a CHECK: a browser re-authentication every twelve hours. A laptop leaves
     // the house, and the machine it can reach from a cafe is the one that runs the work.
     {"action": "check", "src": ["tag:bud"], "dst": ["tag:bench"], "users": ["autogroup:nonroot"], "checkPeriod": "12h"},
@@ -74,11 +83,10 @@
     {"src": "tag:bench",
      "accept": ["tag:services:3100", "tag:bench:22"],
      "deny": ["tag:bud:22", "tag:coordination:22", "tag:runner:22", "tag:services:22"]},
-    // R12 and R3 together: the node's own people reach the coordination machine, and not even they reach a runner host.
+    // R16: the node's own people reach EVERY machine they own on ssh, a runner host and the coordination machine included -- Glenn travelling: `all fleet machines from the air with no restrictions`.
     {"src": "group:owners",
-     "accept": ["tag:coordination:22"],
-     "deny": ["tag:runner:22"]},
-    // R3: a runner host is reachable from nothing on this tailnet. It is the lock of 2026-09-18, asserted rather than assumed.
+     "accept": ["tag:bench:22", "tag:bud:22", "tag:coordination:22", "tag:runner:22", "tag:services:22"]},
+    // R3: a runner host is reachable from nothing TAGGED -- no bench, no bud, no seat's machine. It is the lock of 2026-09-18, asserted rather than assumed, and since Johnny's read of the same day it is true without a note: a shared bench-and-runner host advertises tag:bench only, so there is no overlapping accept to defeat this denial.
     {"src": "tag:bench",
      "deny": ["tag:runner:22", "tag:runner:80", "tag:runner:443"]},
   ],
