@@ -1070,10 +1070,10 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
 ```
 
-`batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
+`batch` is the landing gate and **without `--land` it pushes nothing**. It clones `--repo` under
 `--root`, merges each `--pr` head onto `--base` in the order given on a branch
 `rowan/<name>`, drops a head that will not merge and says so, then runs the suite —
 `build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
@@ -1118,6 +1118,63 @@ member of the next one. `--no-require-checks` waives the whole check and says so
 build-level half of the same class on the bench, in seconds, with no second machine; it
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
+
+#### `--land`: the seven steps after `BATCH OK`
+
+Rowan ran them **eight times on 2026-09-18**, by hand or by a child, and they were the
+same seven every time. `--land` is those steps, in the same run as the gate — so the
+evidence handed to the one door is the `BATCH OK` line printed a second earlier, over the
+tree in this clone, and not a line somebody retyped.
+
+1. **push** `rowan/<name>`: a plain push when the forge has no such branch, and **rule
+   21's compare-and-swap** when it has it at a head this run read — so a branch somebody
+   else moved is a refusal, never a silent overwrite of their work.
+2. **open** the pull request onto `--base`, with the `BATCH OK` line and the members and
+   drops as its body, or **update** the one that is already open.
+3. **wait** for that pull request's own `ci-ok`, polled every `--interval` (30s) and
+   bounded by `--timeout`.
+4. **on a red one**, read the failing test names off the run — the real implementation
+   fetches the job log, strips ANSI and reads `--- FAIL`, `<file>_test.go:<n>:` and
+   `panic:` — and rerun the **failed jobs** once when **every** failing test is on
+   `--flakes`. Anything else stops.
+5. **enqueue** at the front through `land`, the one door — that code and not a copy of it.
+6. **watch** the queue to the merge commit, or read the dequeue: only **cancelled darwin
+   shards** earn one re-enqueue (the fleet has two darwin runners and a group behind
+   another group waits for them), and a failed merge-group job is a red tree and stops.
+7. **close** every member with a comment pointing at the batch that carried it. A close
+   that fails is **not** a failed landing: the base has moved, and a `FAIL` after that
+   would send the next person to land it again.
+
+```
+BATCH LAND STEP <step> <fields> t=<seconds>
+BATCH LAND rerun=flake tests=<list>
+BATCH LAND requeue=cancelled jobs=<list>
+BATCH LAND OK name=<name> dev=<sha> members=<list>
+BATCH LAND FAIL step=<pr-ci|queue|land> job=<name> tests=<list> reason="<why>"
+BATCH LAND REFUSED step=<step>: <reason>
+```
+
+**Two channels, one rule.** Progress goes to stderr — every step, with its elapsed time,
+beside one structured `verb=batch-land` log line (SPEC-LOGS.md Part 2). **stdout carries
+only what a caller records**: the decisions this verb made on its own initiative and the
+verdict, and **the verdict is the last line**, because `land --receipt-file` takes the
+last line of a file a caller piped.
+
+**`--flakes` is shrink-only.** This repository ships `tools/ci/flakes.txt` with the two
+the fleet had on 2026-09-18, each with the reason it is on the list:
+
+```
+<package> <Test> <why it is on the list>
+```
+
+A rerun buys **one** round (`--max-rounds`, default 2: the first run and one rerun) and no
+more — a test that fails twice is a red tree, whatever the list says. A job that failed and
+named **no** test is never a flake: nobody knows what went wrong, and a rerun of an
+unexplained failure is a coin flipped on a landing. `internal/ci`'s
+`TestTheFlakeListOnlyShrinks` goes red on a third entry and on an entry whose reason is a
+word rather than a sentence; the way to take one off is to **fix the test**.
+
+`--flakes` without `--land` is exit 2: the list would be read and never used.
 
 ## nova-pulse
 
