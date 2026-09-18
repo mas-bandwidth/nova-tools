@@ -13,6 +13,28 @@ Emma reads it, and Freddy is asked by name where a practice touches his swarm (2
 16). Templates read: cards 05 (edit), 08 and 09 (reads) of 2026-09-14, sec38 card-04. A
 promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](SPEC-SWARM.md)).
 
+**The practices `nova-swarm lint --card` checks mechanically, by their rule tokens.** A card
+writer meets these tokens on a `LINT DRIFT` line and has to know which practice they belong
+to; before 2026-09-18 they were written down nowhere at all (#1464), and a bench's clone of
+the tool is months behind the binary installed on it. Each drift now carries its own remedy
+line, and `nova-swarm lint --rules` prints every token and what it wants — that listing, not
+this table, is what a bench with a stale clone reads.
+
+| rule token | practice |
+| --- | --- |
+| `result-first` | 1 — line 1 is the `RESULT: ` contract line |
+| `result-last` | 1, 25 — the last step writes `RESULT.md`, whose line 1 is that contract line |
+| `no-sandbox` | 2 — a card runs inside the wall and never invokes it |
+| `files-named` | 3 — the work is anchored to a named file or package |
+| `red-test` | 4, 23 — a reproducing test named, or `probe`/`read` for a card that only reads |
+| `test-command` | 5 — the gate written verbatim, or `no tests` said in words |
+| `clone-step` | 17, 25 — `STEP 1` clones or `cd`s into the repository |
+| `steps-numbered` | 17 — `STEP <n>.` lines, numbered 1, 2, 3 in order |
+| `deadline` | 17 — a deadline, or `finish within <n> minutes` |
+| `scratch-absolute` | 25 — scratch named against a root, never as a bare relative word |
+| `no-parent-path` | 25 — no `../` anywhere: the wall refuses every path above the job |
+| `size` | — the card is under the 12000-byte ceiling, so it is read in one window |
+
 The seven Mercury jobs cited below: 20260914T151824Z-card-03/04, 20260914T152306Z-card-02/05,
 20260914T154040Z-card-06/07, 20260914T153752Z-card-08 — all rc 0, 38 to 60 s, harness-reported
 usd 0.009 to 0.033, input 208k to 728k tokens per job, on OpenCode 1.18.29.
