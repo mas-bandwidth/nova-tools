@@ -212,7 +212,12 @@ func Triage(in TriageInput) int {
 			len(report.Items), report.Red(), report.Green(), report.NotDone(),
 			oneline.Escape(oneline.Cap(dashOr(report.Heading), oneline.TailBytes)))
 		if dd != nil && finished[sc.ID] {
-			if suffix, ok := dd.decideOne(sc, report.Class); ok {
+			suffix, ok := dd.decideOne(sc, report.Class)
+			if dd.lastErr != nil {
+				fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(dd.lastErr.Error()))
+				return 2
+			}
+			if ok {
 				line += suffix
 			}
 		}
