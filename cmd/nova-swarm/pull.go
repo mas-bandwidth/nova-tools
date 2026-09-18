@@ -21,16 +21,25 @@
 // HEAD when --base is absent.
 //
 // AFFINITY (docs/SPEC-JOBS.md section 4). A card carries a kind and a repo; pull prefers
+//
+// BACKPRESSURE (docs/SPEC-JOBS.md section 7): one worker takes cards from a bench's queue/
+// only while the bench's capacity line admits it. It reads the four probe numbers from
+// flags (never probes), computes min(cores*1.5-load1, (free_gb-25)/2, memfree_gb/2), takes
+// at most line-running cards by rename into taken/, and prints one PULL line. A full bench
+// takes nothing and leaves every card in queue/. An idle slot does not poll queue/: when
+// the take comes back empty the slot asks the coordinator for work by an event, nova-pulse
+// watch (internal/swarm SlotWait). This verb is the take; the ask is the watch.
 // the card whose repo the bench already holds in a kept worktree under
 // <slot>/worktrees/<owner>/<name>, so the clone is reused and cache warmth is kept. With
 // no warm card it falls back to the first card and a fetch from the bench mirror. Every
 // path comes from a flag; there is no default slot, queue or mirror.
 //
-// All four habits live on the one `pull` verb, and one run picks the shape from the flags
-// it was handed: the section 6 flags (--batch/--runner/--clone) are the batch, the section 4
-// flags (--slot/--queue/--mirror) are the warm-worktree prefer, the SPEC-STATE flags
-// (--stream and --redis/--dir) are the stream worker, and everything else is section 2's
-// per-bench queue pull.
+// All five habits live on the one `pull` verb, and one run picks the shape from the flags
+// it was handed: the section 6 flags (--batch/--runner/--clone) are the batch, the section 7
+// probe numbers (--cores/--load1/--free-gb/--memfree-gb/--running) are the backpressured
+// take, the section 4 flags (--slot/--queue/--mirror) are the warm-worktree prefer, the
+// SPEC-STATE flags (--stream and --redis/--dir) are the stream worker, and everything else
+// is section 2's per-bench queue pull.
 package main
 
 import (
@@ -76,6 +85,12 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	steal := f.fs.String("steal", "", "")
 	capacity := f.fs.Int("capacity", 0, "")
 	lastSteal := f.fs.String("last-steal", "", "")
+	// Section 7 (backpressure and idle): the four probe numbers, read, never probed.
+	cores := f.fs.Int("cores", -1, "")
+	load1 := f.fs.Int("load1", -1, "")
+	freeGB := f.fs.Int("free-gb", -1, "")
+	memFreeGB := f.fs.Int("memfree-gb", -1, "")
+	running := f.fs.Int("running", 0, "")
 	clone := f.fs.String("clone", "", "")
 	harvest := f.fs.String("harvest", "", "")
 	batch := f.fs.Int("batch", 0, "")
@@ -147,6 +162,11 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return pullRedis(*redisAddr, *stream, *bench, lanes, *wait, stdout, stderr)
 		}
 		return pullDirectory(*dir, *stream, *bench, lanes, stdout, stderr)
+	}
+	// Backpressure (section 7) is the shape whenever any probe number is present; without
+	// one, --bench and --worker are section 2's per-bench queue pull.
+	if *cores >= 0 || *load1 >= 0 || *freeGB >= 0 || *memFreeGB >= 0 || *running != 0 {
+		return pullBackpressure(f, *bench, *worker, *cores, *load1, *freeGB, *memFreeGB, *running, stdout, stderr)
 	}
 	return pullBench(f, *bench, *worker, *steal, *capacity, *lastSteal, stdout, stderr, now)
 }
@@ -431,6 +451,49 @@ func harvestPullResult(clone, result string) error {
 		return nil
 	}
 	return nil
+}
+
+// pullBackpressure is section 7's take: `nova-swarm pull --bench <dir> --worker <name>
+// --cores <n> --load1 <n> --free-gb <n> --memfree-gb <n> [--running <n>]`.
+func pullBackpressure(f *flags, bench, worker string, cores, load1, freeGB, memFreeGB, running int, stdout, stderr io.Writer) int {
+	f.want(bench, "bench", "the bench root holding queue/ and taken/")
+	f.want(worker, "worker", "this worker's name, written on every card it takes")
+	for _, c := range []struct {
+		val  int
+		name string
+	}{
+		{cores, "cores"}, {load1, "load1"}, {freeGB, "free-gb"}, {memFreeGB, "memfree-gb"},
+	} {
+		if c.val < 0 {
+			f.add(fmt.Sprintf("--%s is required and is 0 or more, got %d; the capacity line reads it, refusing to guess", oneline.Escape(c.name), c.val))
+		}
+	}
+	if running < 0 {
+		f.add(fmt.Sprintf("--running is 0 or more, got %d; it is the workers already on the bench", running))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	queue := filepath.Join(bench, "queue")
+	taken := filepath.Join(bench, "taken")
+	queued := countQueue(queue)
+	line := swarm.AdmissionLine(cores, load1, freeGB, memFreeGB)
+	admit := swarm.Admission(line, running, queued)
+	names, err := swarm.PullQueue(queue, taken, worker, admit)
+	if err != nil {
+		return refuse(stderr, " pull", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	fmt.Fprintf(stdout, "PULL bench=%s line=%d running=%d queued=%d taken=%d left=%d\n",
+		oneline.Field(filepath.Base(bench)), line, running, queued, len(names), queued-len(names))
+	return 0
+}
+
+// countQueue is how many cards wait in a bench's queue/: the pull's own read of the depth
+// that is the backpressure signal. It is nil-safe: a bench with no queue/ has none.
+func countQueue(queue string) int {
+	matches, _ := filepath.Glob(filepath.Join(queue, "*.card"))
+	return len(matches)
 }
 
 // refusePull writes the one line a pull that could not run owes its caller.

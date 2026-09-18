@@ -1,6 +1,8 @@
 package swarm
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -93,4 +95,90 @@ func TestTheCapacityTemplateIsTheCensusAndRoutingLogNotAScheduler(t *testing.T) 
 	if _, err := WrapTemplate("capacity", 3, []byte("a task")); err == nil {
 		t.Error("`capacity` is the issue #176 census-and-routing-log form and not a task template; add --template capacity must be refused the way ` result` and `setup` are")
 	}
+}
+
+// Red test: pull-never-exceeds-the-capacity-line (docs/SPEC-JOBS.md section 7).
+//
+// The capacity line min(cores*1.5 - load1, (free_gb-25)/2, memfree_gb/2) bounds how many
+// workers nova-swarm pull may start on a bench. A full bench stops pulling and leaves every
+// card in queue/.
+func TestPullNeverExceedsTheCapacityLine(t *testing.T) {
+	// The line is the smallest arm, floored at zero: CPU headroom, disk above the 25G
+	// floor, and memory.
+	for _, c := range []struct {
+		cores, load1, freeGB, memFreeGB, want int
+	}{
+		{8, 4, 100, 32, 8}, // cores*3/2 - load1 = 8 is the smallest
+		{16, 0, 30, 8, 2},  // (30-25)/2 = 2 is the smallest
+		{16, 0, 100, 8, 4}, // 8/2 = 4 is the smallest
+		{2, 10, 30, 2, 0},  // every arm is at or below zero: the line floors at 0
+		{0, 0, 0, 0, 0},    // no cores is no admission
+	} {
+		if got := AdmissionLine(c.cores, c.load1, c.freeGB, c.memFreeGB); got != c.want {
+			t.Errorf("AdmissionLine(%d,%d,%d,%d) = %d, want %d",
+				c.cores, c.load1, c.freeGB, c.memFreeGB, got, c.want)
+		}
+	}
+
+	// Admission is the line minus the workers already on it, never more than the queue
+	// holds, and never negative.
+	if got := Admission(8, 8, 3); got != 0 {
+		t.Fatalf("a full bench admits %d, want 0", got)
+	}
+	if got := Admission(8, 2, 3); got != 3 {
+		t.Fatalf("a bench with 6 free admits %d of 3 queued, want 3", got)
+	}
+	if got := Admission(4, 1, 10); got != 3 {
+		t.Fatalf("Admission(4,1,10) = %d, want 3 (the line, not the queue)", got)
+	}
+
+	bench := t.TempDir()
+	queue := filepath.Join(bench, "queue")
+	taken := filepath.Join(bench, "taken")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.card", "b.card", "c.card"} {
+		if err := os.WriteFile(filepath.Join(queue, name), []byte("card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A full bench admits nothing and leaves every card in queue/.
+	line := AdmissionLine(8, 4, 100, 32) // 8
+	if got := Admission(line, line, 3); got != 0 {
+		t.Fatalf("full bench admission = %d, want 0", got)
+	}
+	names, err := PullQueue(queue, taken, "w1", Admission(line, line, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("a full bench took %v, want none", names)
+	}
+	if got := countCards(t, queue); got != 3 {
+		t.Fatalf("a full bench left %d cards in queue/, want 3", got)
+	}
+
+	// Two workers on an 8-line bench may still take the three cards, and no more than the
+	// line allows. A pull that would exceed the line takes only up to the line.
+	names, err = PullQueue(queue, taken, "w1", Admission(line, 2, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 3 {
+		t.Fatalf("two workers took %v, want the 3 queued cards", names)
+	}
+	if got := countCards(t, queue); got != 0 {
+		t.Fatalf("after the pull queue/ holds %d cards, want 0", got)
+	}
+}
+
+func countCards(t *testing.T, dir string) int {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.card"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(matches)
 }
