@@ -51,6 +51,11 @@ var swarmAudit = audit.Config{
 		// the harness's own capture -- a file a card can write -- so nothing but the empty
 		// string and an oneline.Field-escaped path can come back.
 		"fenceSuffix",
+		// swarm.WallLine (issue #644's follow-up) builds the `WALL task=<id> path=<p>
+		// step=<n> [commits=<n> branch=<name>]` report line and puts every field through
+		// oneline.Field inside itself. The path and step come from the card's own log and
+		// the branch from the clone, so nothing but escaped fields can come back.
+		"swarm.WallLine",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -76,6 +81,12 @@ var swarmAudit = audit.Config{
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
+		// slot lease and the in-flight cap. It holds no writer of its own: every call
+		// either returns a value this package prints through oneline.Field or an error
+		// this package renders through oneline.Err, and the Lua scripts run inside Redis
+		// and write only that instance's own keys.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
 		// native.go (issue #296) needs these five and none of them writes a stream, so
 		// none can write past the escape. context only gives CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the

@@ -77,7 +77,7 @@ func TestCostPreservesUnknownUSD(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := newCostPool(t, tt.usd)
 			var stdout, stderr bytes.Buffer
-			if exit := Cost(p, "", 0, &stdout, &stderr); exit != 0 {
+			if exit := Cost(p, "", 0, "", false, &stdout, &stderr); exit != 0 {
 				t.Fatalf("Cost exited %d: %s", exit, stderr.String())
 			}
 			output := stdout.String()

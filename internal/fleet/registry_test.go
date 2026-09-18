@@ -167,7 +167,7 @@ func TestRequireBenchRefusesTheCoordinationHostAndAnUnknownMachine(t *testing.T)
 
 func TestRequireBenchAcceptsEveryBenchInTheFleet(t *testing.T) {
 	reg := example(t)
-	for _, name := range []string{"hulk", "vision", "space"} {
+	for _, name := range []string{"hulk", "vision", "threadripper-wsl", "space"} {
 		if err := reg.RequireBench(name); err != nil {
 			t.Errorf("%s is a bench, and was refused: %v", name, err)
 		}
@@ -180,11 +180,11 @@ func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
 	for _, m := range reg.WithRole(RoleBench) {
 		names = append(names, m.Name)
 	}
-	if strings.Join(names, ",") != "hulk,vision,space" {
-		t.Errorf("the benches are %v, want hulk, vision, space in file order", names)
+	if strings.Join(names, ",") != "hulk,vision,threadripper-wsl,space" {
+		t.Errorf("the benches are %v, want hulk, vision, threadripper-wsl, space in file order", names)
 	}
-	if got := len(reg.Machines()); got != 7 {
-		t.Errorf("the fleet has %d machines, want 7", got)
+	if got := len(reg.Machines()); got != 8 {
+		t.Errorf("the fleet has %d machines, want 8", got)
 	}
 	if reg.WithRole("builder") != nil {
 		t.Error("an unknown role listed machines")
@@ -192,18 +192,24 @@ func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
 }
 
 // TestTheExampleIsTheFleetWeHave holds the shipped example against the fleet as it stands
-// on 2026-09-18, so the file cannot drift into a shape the lock does not hold: the three
+// on 2026-09-18, so the file cannot drift into a shape the lock does not hold: the four
 // benches, and every runner host CI-only.
+//
+// threadripper-wsl is the fleet's Windows box and it is a LINUX line, which is the whole
+// point of it (Glenn 2026-09-18: "drop the native windows CI runners. WSL only from now
+// on."). WSL2 is what the cards and the CI runners see, so it takes the Linux bench
+// standard and the ordinary Linux runner labels, and no line in this file says `windows`.
 func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 	reg := example(t)
 	want := map[string]string{
-		"studio":   "coordination,runner",
-		"hulk":     "bench,runner",
-		"vision":   "bench,runner",
-		"space":    "bench,services",
-		"mini":     "runner",
-		"batman":   "runner",
-		"superman": "runner",
+		"studio":           "coordination,runner",
+		"hulk":             "bench,runner",
+		"vision":           "bench,runner",
+		"threadripper-wsl": "bench,runner",
+		"space":            "bench,services",
+		"mini":             "runner",
+		"batman":           "runner",
+		"superman":         "runner",
 	}
 	for name, roles := range want {
 		m, ok := reg.Lookup(name)
@@ -223,6 +229,15 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 	for _, name := range []string{"batman", "superman", "studio", "mini"} {
 		if err := reg.RequireBench(name); err == nil {
 			t.Errorf("the example lets a card reach %s", name)
+		}
+	}
+	// AND NO WINDOWS LINE. This is the ruling made mechanical rather than left in
+	// the file's header comment: a Windows box joins this fleet through WSL2, as a
+	// linux/x64 line with the Linux bench standard and ordinary Linux runner
+	// labels, or it does not join.
+	for _, m := range reg.Machines() {
+		if m.OS == "windows" {
+			t.Errorf("%s is a windows machine in the registry; the native windows CI runners were dropped on 2026-09-18 (Glenn: \"WSL only from now on\") and a Windows box joins as a linux/x64 line under WSL2, like threadripper-wsl", m.Name)
 		}
 	}
 }

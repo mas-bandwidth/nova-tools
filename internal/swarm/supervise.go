@@ -211,6 +211,21 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			if rc != 0 {
 				end = EndFailed
 			}
+			// A WALL DEATH IS NAMED HERE (issue #644's follow-up). The harness's own fence,
+			// or the OS wall, can stop the card at a path and the harness then exits with no
+			// RESULT.md; the pool read that absence as `no-result` -- the model's own doing --
+			// when the truth is the machinery shut a path. The supervisor owns `<job>/harness.log`,
+			// so it reads its own capture, and only when no result exists: a card that
+			// published despite the line is done, never an abstain. The report line names the
+			// path, the last STEP the card reached and the commits it left behind.
+			if wr, ok := wallRefusedInLog(filepath.Join(jobDir, "harness.log")); ok {
+				if _, published := FindCardResult(jobDir); !published {
+					branch, commits, _ := WallCommits(filepath.Join(jobDir, "repo"))
+					line := WallLine(in.Task, wr, branch, commits)
+					fmt.Fprintln(in.Stderr, line)
+					return ExitRecord{RC: rc, Signal: signal, End: EndWall, Spent: spent, Observed: observed, Partial: partial, Reason: line}
+				}
+			}
 			// ISSUE #163: A STRUCTURED SIGNAL BEFORE THE HEURISTIC. A harness adapter records
 			// the provider's refusal as a field -- class, value, limit -- and this
 			// supervisor reads that field and re-emits it as one line the next reader

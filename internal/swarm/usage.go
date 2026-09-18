@@ -42,7 +42,9 @@ const (
 	// after the third fast failure, is filed with the provider's own ref (issue #900).
 	EndProvider = "provider"
 	// EndWall is a job the harness's own fence stopped at a path outside it, with no
-	// RESULT.md: the death names the path and the commits ./repo kept (issue #918).
+	// RESULT.md: the death names the path and the commits ./repo kept (issue #918). It is
+	// also a card the harness's own fence or the OS wall stopped before it could publish:
+	// the machinery ended the task, not the model (wall.go, issue #644's follow-up).
 	EndWall = "wall"
 )
 

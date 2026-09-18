@@ -27,6 +27,35 @@ failing unless the fetch answers 200, so a bench enters the loop only after the
 SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
 one passed while every sandboxed card died.
 
+### The runners are Linux runners, everywhere, including on the Windows box
+
+Glenn, 2026-09-18: **"drop the native windows CI runners. WSL only from now
+on."** Every self-hosted runner in this fleet is a Linux or a macOS runner, and
+`ci.yml` runs no `windows-latest` leg at all — its one Windows guard is the
+`lint` job's `make vet-windows` (`GOOS=windows go vet ./...`), which
+cross-compiles and type-checks the whole tree, tests included, on a Linux runner
+in seconds.
+
+The Threadripper Pro is the fleet's Windows box and it joins as a **Linux**
+machine. WSL2 is the operating system its cards and its CI runners see, so it
+takes the Linux half of `tools/bench-standard.sh` above, the Linux `fleet
+standard` list, and the same runner labels every other Linux bench carries with
+its own name added:
+
+| bench | runner labels | registry line |
+| --- | --- | --- |
+| hulk | `linux,X64,hulk` | `hulk … linux/x64 bench,runner` |
+| vision | `linux,X64,vision` | `vision … linux/x64 bench,runner` |
+| the Threadripper | `linux,X64,threadripper` | `threadripper-wsl … linux/x64 bench,runner` |
+
+That is enforced in the registry rather than remembered:
+`internal/fleet/testdata/machines.tsv` carries `threadripper-wsl` as a
+`linux/x64` line, and `internal/fleet`'s example test refuses any machine whose
+`os` is `windows`. A machine that is both runner and bench still needs its dated
+`allow-shared=` note, and this one has it for the same reason hulk and vision
+do. The native Windows half of that box is parked: see
+`docs/BENCH-STANDARD-WINDOWS.md`.
+
 ### The four bench scripts, retired
 
 `fleet standard`, `fleet mirror`, `fleet join` and `fleet sleep` are the last
