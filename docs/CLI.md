@@ -70,7 +70,8 @@ the verbs come from the binaries or from this file, the runs come from
 receipts, and the gate is one exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check dogfood record --cli ./docs/CLI.md \
+    --tool nova-check --verb links --by Stella --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
 DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
@@ -1373,7 +1374,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--launcher-local <path>] [--host <name>] [--deadline <s>] [--launch-grace <d>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1469,6 +1470,17 @@ bench's, and draining `--launched` when it finishes is `manager`'s.
 `--capacity` is a fixed capacity for every bench and no `ssh` at all; `--launcher` is
 the program each card is handed to, `flash-native-bench.sh` when it is left out. A
 dry run over a directory of cards exercises the whole tick, lanes included:
+
+**A bench that IS this machine is reached without `ssh`.** Filling hulk from hulk asked
+hulk to `ssh` to itself and answered `glenn@hulk: Permission denied` — no machine in the
+fleet holds its own key, by design — so every card the tick would have placed there was
+lost to a transport error that had nothing to do with capacity (dogfood, 2026-09-18).
+`fill` resolves each `--bench` against the registry's own `ssh` column, once, before the
+first tick: a row whose target is this host has its capacity formula run here and its
+cards handed to `--launcher-local` (`flash-native-local.sh` by default), which takes no
+bench argument because there is none to reach. `--host <name>` names this machine for a
+test or a by-hand run; left out it is the short hostname. Every other bench is an `ssh`
+exactly as before.
 
 ```
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once

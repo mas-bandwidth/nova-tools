@@ -2107,12 +2107,41 @@ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<
    `<card>.launched` marker `fill` writes beside the card — `lane`, `bench`, `label`,
    `session`, `at` — so the release is by lane name and never by parsing the card again.
 
+9. **A RED result is never a done card.** The verdict is read before anything else: line
+   1 is the contract line and the first `DONE` below it is the only green word, so an
+   `ABSTAIN`, a `BLOCKED`, a `RED`, or a `RESULT.md` with no verdict at all is red — and
+   so is a job that committed nothing, whatever its verdict said. A red job is not
+   fetched, not pushed and gets no PR; it is marked `.harvested`, counted under `red=`
+   rather than `done=`, and its card leaves `--launched` for `--failed` with
+   `why=red-<verdict>` or `why=no-commit` on the marker. Before this, `harvest --bench`
+   read "has a `RESULT.md`" as done: on hulk the report read
+   `HARVEST BENCH RED ... skipped=0 drained=3` and every one of those three cards landed
+   in `done/` with its lane released as though the work had arrived, so none of them was
+   ever cut again and nobody was told. The grammar is one file, `internal/pulse/card.go`.
+
+10. **A job that cannot be harvested says so once, naming every field.** `BRANCH` absent,
+    `REPO` absent and no `--clone` for that repo were three guards, each returning before
+    the next one looked, so a person fixed one, ran again, and learnt the next. They are
+    one `reason=fields` line with `missing=<names>` and one remedy. `branch-prefix`,
+    `session` and `age` stay their own reasons: those are filters, not missing fields.
+
+11. **The template produces what the harvester reads.** `internal/pulse/card.go` holds the
+    front matter grammar — `BRANCH`, `REPO`, `BASE`, `SESSION`, the verdicts and
+    `<job>/repo` — and both ends go through it: `cut` renders the card's `BRANCH`, `REPO`
+    and `BASE` lines from it (the `<repo>` slot is the clone's own origin remote), the
+    shipped template's last step is its `ResultInstruction()` word for word, and
+    `harvest --bench` reads them back with `ResultField`. The shipped `rows.md` told the
+    worker only to "write RESULT.md with line 1 equal to this card's line 1" and cloned
+    into the job directory rather than `<job>/repo`, so the harvester refused what the
+    template produced and fetched a path that was never a repository.
+
 ```
 HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
+HARVEST RED bench=<name> label=<label> verdict=<word> branch=<name> (a red result is never done; nothing pushed, the card goes to failed)
 HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
-HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
-HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
-HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|fields|no-count> <detail>
+HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|red-<verdict>|no-commit|job-dir-gone>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> red=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
 ```
 
 Exit 0, 1 when a fetch, a push or the forge failed for any job, 2 on a refusal that never
@@ -2130,3 +2159,12 @@ git on PATH — no test opens a connection:
 8. `TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession`,
    `TestFillReadsTheLiveLaneFromTheMarkerNotTheCard` and
    `TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails` — rule 8's marker.
+9. `TestHarvestBenchNeverDrainsARedCardToDone`,
+   `TestHarvestBenchTakesANoCommitJobAsRed`,
+   `TestHarvestBenchRedJobIsDrainedEvenWhenAlreadyHarvested` and
+   `TestResultVerdictReadsTheContractsThreeWords` — rule 9.
+10. `TestHarvestBenchFoldsEveryMissingFieldIntoOneLine` — rule 10.
+11. `TestShippedRowsTemplateCutsACardHarvestCanRead` and
+    `TestShippedRowsTemplateRedResultIsNeverDone` — rule 11: a card is cut from the
+    SHIPPED template, the `RESULT.md` that card asks for is written through the same
+    `card.go` the harvest reads with, and the harvest opens its PR.

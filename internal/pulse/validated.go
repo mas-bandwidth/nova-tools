@@ -21,7 +21,7 @@ import (
 // namedSlots are the slots a validated template may declare (SPEC-PULSE, "Cut, from a
 // validated template"). cut fills every one it finds from the source it read; a declared
 // slot with no value is CUT REFUSED check=slot.
-var namedSlots = []string{"issue", "title", "body", "branch", "base", "row", "replay", "lane"}
+var namedSlots = []string{"issue", "title", "body", "branch", "base", "row", "replay", "lane", "repo"}
 
 // CutValidatedInput is everything the validated-template cut needs, held apart from flag
 // parsing so a test can drive it with a fixture gh and a fixture git.
@@ -93,6 +93,22 @@ func CutValidated(in CutValidatedInput) int {
 		}
 		if _, ok := load(cards[i].template); !ok {
 			return 2
+		}
+	}
+	// `<repo>` is the one slot the source never names: a card declares which repository
+	// its branch belongs to so the worker can write a REPO line and `harvest --bench` can
+	// read one, and the answer is the clone `--repo` already points every git call at.
+	// It is read once, and only when a template this cut loaded actually asks for it, so
+	// a cut whose templates predate the slot starts no extra child.
+	if slotIsDeclared(templates, "repo") {
+		slug := originSlug(in.Repo)
+		for i := range cards {
+			if cards[i].slots == nil {
+				cards[i].slots = map[string]string{}
+			}
+			if cards[i].slots["repo"] == "" {
+				cards[i].slots["repo"] = slug
+			}
 		}
 	}
 
@@ -395,6 +411,42 @@ func stepOneIsOneShellLine(tmpl string) (string, bool) {
 	return "", true
 }
 
+// slotIsDeclared says whether any loaded template asks for this slot.
+func slotIsDeclared(templates map[string]string, name string) bool {
+	for _, t := range templates {
+		if strings.Contains(t, "<"+name+">") {
+			return true
+		}
+	}
+	return false
+}
+
+// originSlug is `<owner>/<name>` from the clone's origin remote, which is where a card's
+// REPO line comes from. Both URL shapes git writes are read -- `git@github.com:o/n.git`
+// and `https://github.com/o/n` -- and anything else answers "", which the slot check then
+// refuses by name rather than rendering a card with a repo nobody can push to.
+func originSlug(clone string) string {
+	out, err := gitStdout(clone, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimSpace(out)
+	u = strings.TrimSuffix(u, ".git")
+	if _, rest, ok := strings.Cut(u, "://"); ok {
+		u = rest
+		if _, after, ok := strings.Cut(u, "/"); ok {
+			u = after
+		}
+	} else if _, rest, ok := strings.Cut(u, ":"); ok {
+		u = rest
+	}
+	owner, name, ok := strings.Cut(strings.Trim(u, "/"), "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	return owner + "/" + name
+}
+
 // missingSlot names the first declared slot with no value.
 func missingSlot(tmpl string, slots map[string]string) (string, bool) {
 	for _, name := range namedSlots {
@@ -434,6 +486,7 @@ func substituteSlots(s string, c validatedCard) string {
 		"<row>", c.slots["row"],
 		"<replay>", c.slots["replay"],
 		"<lane>", c.slots["lane"],
+		"<repo>", c.slots["repo"],
 	).Replace(s)
 }
 

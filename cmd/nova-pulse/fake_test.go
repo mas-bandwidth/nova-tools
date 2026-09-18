@@ -40,7 +40,11 @@ type fakeSpec struct {
 
 // fakeTools are the programs nova-pulse starts. A name with no spec in the test's
 // directory exits 97 and says so, which no real gh or git ever does.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "ssh"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "ssh",
+	// The local seam's three: the shell the capacity formula runs through when the bench
+	// IS this machine, and the two launchers. A test that proves fill opened no ssh has
+	// to be able to see what it ran instead.
+	"sh", "flash-native-bench.sh", "flash-native-local.sh"}
 
 var (
 	fakeRoot    string

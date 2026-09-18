@@ -54,15 +54,20 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
-  nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
+  nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]
                                                      one row per verb the command reference
                                                      declares: who has run it, when, and
                                                      whether it did what they needed
-  nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] --receipts <dir>
+  nova-check dogfood record (--cli <file> | --tools <dir>) --tool <t> --verb <v>
+                            --by <name> (--ok|--not-ok) --notes <text>
+                            [--issue <n>] --receipts <dir>
                                                      append one receipt: I ran this verb,
-                                                     on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all]
+                                                     on real work, and here is how it went.
+                                                     The verb list is named because record
+                                                     checks the spelling against it: a
+                                                     receipt for a verb nothing declares
+                                                     stranded nine real runs (2026-09-18)
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--require-all]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
                                                      the line the release lane calls
