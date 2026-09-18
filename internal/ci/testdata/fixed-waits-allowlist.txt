@@ -18,7 +18,6 @@ cmd/nova-bus/wait_test.go:369 elapsed 2026-09-17 a wall-clock measurement the te
 cmd/nova-bus/wait_test.go:416 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 cmd/nova-bus/wait_test.go:458 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-bus/wait_test.go:545 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-cmd/nova-merge/timeout_test.go:37 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-swarm/native_test.go:147 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/native_test.go:210 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/native_test.go:219 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
@@ -41,10 +40,6 @@ internal/bus/lock_test.go:157 elapsed 2026-09-17 a wall-clock measurement the te
 internal/bus/prepared_test.go:602 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/bus/prepared_test.go:651 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/bus/timeout_test.go:51 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/merge/lock_test.go:30 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/merge/lock_test.go:83 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
-internal/merge/state_test.go:318 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/merge/state_test.go:321 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/pulse/status_index_test.go:357 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/pulse/status_index_test.go:372 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/launch_bound_test.go:43 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
