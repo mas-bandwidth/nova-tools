@@ -202,10 +202,73 @@ mechanized"*). Three triggers:
 
 `--status` reads the record and reaches no machine: one line per machine and class, and
 exit 1 when any is stale, failed or missing. `--log <file>` writes one structured event per
-certificate through `internal/log` — the same Emitter `nova-pulse launch` uses — with
-`verb=certify`, `event=certify`, `bench=<machine>`, and the verdict in the level.
+certificate AND per escalation through `internal/log` — the same Emitter `nova-pulse launch`
+uses — with `verb=certify`, `event=certify`, `bench=<machine>`, and the verdict in the level;
+an escalation is ERROR and carries the classes and the remedy.
+
+### Fix, then prove, then escalate
+
+A verdict is not the end of the work. On 2026-09-18 the same four faults were found on four
+Linux machines, repaired BY HAND four times, and nothing in the tools remembered how by the
+evening. So the repairs are the provisioning standard itself, as remedies:
+
+```
+nova-pulse fleet standard --apply --machines <file> --machine <name> [--items <a,b>]
+  [--home <dir>] [--git-name <name>] [--git-email <addr>] [--ssh <path>] [--timeout <s>] [--dry-run]
+```
+
+`--apply` is the ONE mutating fleet verb. It names its machine through the machines REGISTRY
+— the file that decides where cards go — never through the benches file, never `--all`, and
+prints one line per item:
+
+```
+STANDARD APPLY <machine> <item> changed|unchanged|would|failed remedy=<-|adopt> detail="..."
+STANDARD APPLY OK machine=<m> items=<n> changed=<n> failed=<n>
+```
+
+The items, each an idempotent remedy for one check of the standard: `path-noninteractive`
+(one marker block at the TOP of `~/.bashrc`, above the interactive guard, because that guard
+is where a non-interactive shell returns), `gobin-shadow` (the `nova-*` binaries in
+`~/go/bin` MOVED to `~/nova-bench/stale-gobin-<date>/` and **never deleted**), `git-identity`
+(set when either half is empty, never overwritten), `runner-path-go` (the wanted Go on the
+first line of each runner's `.path`, both namings — asking for any `go` is how
+`/usr/bin/go` 1.22 passed for a toolchain go.mod refuses by name), and `nova-stamp`, **the
+one apply never runs**: a stale build is `nova-update release adopt`, which stops cards,
+swaps binaries and re-certifies, so apply says `remedy=adopt` and stops.
+
+Certification runs that apply itself. `--fix` is ON by default and `--no-fix` waives it out
+loud:
+
+1. A FAIL whose class maps to a standard item — the mapping is a table in code
+   (`internal/fleet.ItemsForClass`): `path-resolves` → `gobin-shadow`,
+   `path-noninteractive`; `go-on-path` → `path-noninteractive`; `release-path` →
+   `nova-stamp`, `path-noninteractive`; `git-identity` → `git-identity`; `runner-path` →
+   `runner-path-go` — is applied, on one `CERTIFY FIX machine=<m> round=<n> classes=<list>
+   items=<list> by-hand=<list>` line.
+2. The repaired classes are **certified again**, by the same workloads through the same wall
+   (`--max-fix-rounds`, default 1). A repair is never credit: what the class holds after a
+   fix is a real certificate or none.
+3. Whatever still fails is ONE line per machine, never one per class, and one note to the
+   fleet lane through the bus seam (`--bus <clone> --as <name> --to <names>`, `nova-bus
+   send`; without a bus the line and the event still happen and the run says
+   `escalation=unsent reason=no-bus`):
+
+```
+CERTIFY ESCALATE machine=hulk classes=go-test,path-resolves remedy="applied gobin-shadow,path-noninteractive and go-test,path-resolves still fails; go to hulk by hand"
+```
+
+A class no item repairs is never "repaired": `go-test` failing is a broken toolchain inside
+the wall and no line of `~/.bashrc` fixes it, so the escalation says exactly that rather than
+applying something plausible. **The failed classes stay uncertified either way**, so `fill`
+refuses cards for them until a real pass proves them.
 
 Red tests, fake-driven, no network and no wall-clock bound:
+`the-fix-mapping-names-a-standard-item-per-repairable-class`,
+`a-failed-class-is-repaired-and-certified-again`,
+`a-class-that-still-fails-escalates-once-and-stays-uncertified`,
+`a-failure-no-standard-item-repairs-escalates-without-touching-the-machine`,
+`an-escalation-is-an-event-through-the-emitter`,
+`apply-is-idempotent`, `apply-never-runs-the-adopt`, `no-remedy-deletes-anything`,
 `the-standard-workloads-are-the-shipped-classes`,
 `go-test-runs-inside-the-wall-with-the-toolchain-as-a-read-root`,
 `certified-is-true-only-for-the-current-build-and-hash`,

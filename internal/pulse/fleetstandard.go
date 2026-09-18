@@ -138,8 +138,14 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 			// all, so every fault there is invisible to every other check. space's sixteen
 			// carried the bare distro PATH -- no go -- and batman's six led with
 			// /usr/local/bin, where go is 1.25.5, below go.mod's line.
+			//
+			// It asks for the WANTED go and not for any `go`, which is what it asked for
+			// until 2026-09-18: hulk carries /usr/bin/go 1.22 on the distro PATH, go.mod
+			// refuses 1.22 by name, and `command -v go` called every runner on that machine
+			// healthy -- the same blindness that let a card die inside the wall while every
+			// check passed.
 			Name: "runner-path-go", Match: MatchEquals, Want: "ok",
-			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path "$HOME"/actions-runner-*/.path; do [ -f "$p" ] || continue; PATH="$(head -n 1 "$p")" command -v go >/dev/null 2>&1 || bad="$bad $(basename "$(dirname "$p")")"; done; [ -n "$bad" ] && echo "no go on the .path of:$bad" || echo ok`,
+			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path "$HOME"/actions-runner-*/.path; do [ -f "$p" ] || continue; PATH="$(head -n 1 "$p")" go version 2>/dev/null | grep -Fq "` + goWant + `" || bad="$bad $(basename "$(dirname "$p")")"; done; [ -n "$bad" ] && echo "no ` + goWant + ` on the .path of:$bad" || echo ok`,
 		},
 	}
 	out := make([]StandardCheck, 0, len(all))

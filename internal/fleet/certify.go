@@ -441,11 +441,20 @@ type CertifyInput struct {
 	Log       io.Writer // the structured event stream; nil writes none
 	Timeout   time.Duration
 	DryRun    bool
-	Remote    Remote
-	Forge     Forge
-	Now       func() time.Time
-	Stdout    io.Writer
-	Stderr    io.Writer
+	// Fix is the repair round: a FAIL whose class maps to an item of the provisioning
+	// standard is applied and certified ONCE more. The CLI has it on by default and
+	// `--no-fix` waives it out loud; the zero value here is off, so a caller that wants a
+	// verb that only reads gets one by saying nothing.
+	Fix          bool
+	MaxFixRounds int       // how many repair-and-recertify rounds; 0 is DefaultFixRounds
+	Fixer        Fixer     // the apply seam; nil with Fix on is an escalation, never a pass
+	Bus          BusPoster // where an escalation's note goes; nil sends none and says so
+	Lane         string    // the lane that note goes to; "" is DefaultLane
+	Remote       Remote
+	Forge        Forge
+	Now          func() time.Time
+	Stdout       io.Writer
+	Stderr       io.Writer
 }
 
 // Certify runs every workload of every named machine's roles, writes one certificate row
@@ -521,7 +530,7 @@ func Certify(in CertifyInput) int {
 		}
 	}
 
-	ok, fail, warn, skipped := 0, 0, 0, 0
+	ok, fail, warn, skipped, fixed := 0, 0, 0, 0, 0
 	for _, m := range machines {
 		loads := workloadsFor(in.Workloads, m)
 		if len(loads) == 0 {
@@ -544,6 +553,11 @@ func Certify(in CertifyInput) int {
 				continue
 			}
 		}
+		// The verdict of every class this machine ran, and what it said. They are a map and
+		// not a counter because the repair round runs a class AGAIN: what the run reports is
+		// each class's FINAL verdict, so a class that failed, was repaired and passed is one
+		// pass -- and a certificate -- rather than a failure the summary can never lose.
+		verdicts, evidence := map[string]string{}, map[string]string{}
 		for _, w := range loads {
 			// A forge question with no forge wired is SKIPPED, not failed: `release adopt`
 			// certifies over ssh and has no runner list to read, and a FAIL there would
@@ -562,30 +576,31 @@ func Certify(in CertifyInput) int {
 				ok++
 				continue
 			}
-			verdict, evidence := runWorkload(in, reg, m, w)
-			cert := Certificate{
-				Machine: m.Name, Build: build, Hash: in.Hash, Class: w.Class,
-				Verdict: verdict, Evidence: evidence, At: in.Now().UTC(),
-			}
-			if err := AppendCertificate(in.Certs, cert); err != nil {
+			if err := in.certifyOne(reg, m, w, build, verdicts, evidence); err != nil {
 				return certifyRefusal(in.Stderr, err)
 			}
-			in.event(cert)
-			line := fmt.Sprintf("CERTIFY %s %s %s evidence=%s",
-				oneline.Field(m.Name), oneline.Field(w.Class), verdict,
-				oneline.Quote(oneline.Cap(evidence, EvidenceCap)))
-			switch verdict {
+		}
+		// Fix, prove, escalate. Nothing here mutates a machine unless Fix is on, and even
+		// then only through the Fixer seam.
+		before := len(failedClasses(verdicts))
+		esc, err := in.repair(reg, m, build, loads, verdicts, evidence)
+		if err != nil {
+			return certifyRefusal(in.Stderr, err)
+		}
+		fixed += before - len(failedClasses(verdicts))
+		if esc != nil {
+			fmt.Fprintln(in.Stderr, esc.Line())
+			in.escalationEvent(*esc, build)
+			in.postEscalation(*esc, build)
+		}
+		for _, v := range verdicts {
+			switch v {
 			case VerdictOK:
 				ok++
-				fmt.Fprintln(in.Stdout, line)
 			case VerdictWarn:
-				// A WARN goes to stderr, where a person looking for what to do next looks,
-				// and changes neither the count that gates nor the exit.
 				warn++
-				fmt.Fprintln(in.Stderr, line)
 			default:
 				fail++
-				fmt.Fprintln(in.Stderr, line)
 			}
 		}
 	}
@@ -593,9 +608,142 @@ func Certify(in CertifyInput) int {
 	if fail > 0 {
 		w, result, code = in.Stderr, VerdictFail, 1
 	}
-	fmt.Fprintf(w, "CERTIFY %s machines=%d ok=%d fail=%d warn=%d skipped=%d\n",
-		result, len(machines), ok, fail, warn, skipped)
+	fmt.Fprintf(w, "CERTIFY %s machines=%d ok=%d fail=%d warn=%d skipped=%d fixed=%d\n",
+		result, len(machines), ok, fail, warn, skipped, fixed)
 	return code
+}
+
+// certifyOne runs ONE workload against ONE machine: the row, the event, the line, and the
+// verdict recorded under its class. It is one function because the repair round runs it a
+// second time, and two spellings of "certify this class" is two records of what happened.
+func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build string, verdicts, evidence map[string]string) error {
+	verdict, said := runWorkload(in, reg, m, w)
+	cert := Certificate{
+		Machine: m.Name, Build: build, Hash: in.Hash, Class: w.Class,
+		Verdict: verdict, Evidence: said, At: in.Now().UTC(),
+	}
+	if err := AppendCertificate(in.Certs, cert); err != nil {
+		return err
+	}
+	in.event(cert)
+	verdicts[w.Class], evidence[w.Class] = verdict, said
+	line := fmt.Sprintf("CERTIFY %s %s %s evidence=%s",
+		oneline.Field(m.Name), oneline.Field(w.Class), verdict,
+		oneline.Quote(oneline.Cap(said, EvidenceCap)))
+	if verdict == VerdictOK {
+		fmt.Fprintln(in.Stdout, line)
+		return nil
+	}
+	// A WARN and a FAIL both go to stderr, where a person looking for what to do next looks.
+	// A WARN changes neither the count that gates nor the exit.
+	fmt.Fprintln(in.Stderr, line)
+	return nil
+}
+
+// repair is the fix-then-prove round: apply the standard items the failed classes map to,
+// certify those classes once more, and answer the escalation for whatever still fails.
+//
+// It NEVER credits a repair. The classes it re-runs are run by the same workloads through
+// the same wall, and the certificate that comes out is the certificate `fill` reads.
+func (in CertifyInput) repair(reg *Registry, m Machine, build string, loads []Workload, verdicts, evidence map[string]string) (*escalation, error) {
+	if in.DryRun || len(failedClasses(verdicts)) == 0 {
+		return nil, nil
+	}
+	if !in.Fix {
+		// --no-fix: the failures are lines and rows, and the waiver is the person saying out
+		// loud that they will look. Nothing is applied and nobody is paged.
+		return nil, nil
+	}
+	e := &escalation{machine: m.Name, evidence: evidence}
+	rounds := in.MaxFixRounds
+	if rounds <= 0 {
+		rounds = DefaultFixRounds
+	}
+	for round := 1; round <= rounds; round++ {
+		failed := failedClasses(verdicts)
+		if len(failed) == 0 {
+			return nil, nil
+		}
+		items, byHand := ItemsForClasses(failed)
+		if len(items) == 0 {
+			// No item of the standard repairs any of these. Going to the machine anyway is a
+			// round of load and a lie in the record.
+			break
+		}
+		run := runnableItems(items)
+		e.applied, e.byHand = run, byHand
+		fmt.Fprintf(in.Stdout, "CERTIFY FIX machine=%s round=%d classes=%s items=%s by-hand=%s\n",
+			oneline.Field(m.Name), round, oneline.Field(strings.Join(failed, ",")),
+			oneline.Field(dash(strings.Join(run, ","))), oneline.Field(dash(strings.Join(byHand, ","))))
+		changed, err := in.apply(m.Name, run)
+		if err != nil {
+			e.failed = oneline.Err(err)
+			fmt.Fprintf(in.Stderr, "CERTIFY FIX machine=%s FAILED err=%s\n",
+				oneline.Field(m.Name), oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+			break
+		}
+		fmt.Fprintf(in.Stdout, "CERTIFY FIX machine=%s changed=%s\n",
+			oneline.Field(m.Name), oneline.Field(dash(strings.Join(changed, ","))))
+		for _, w := range loads {
+			if verdicts[w.Class] != VerdictFail || len(ItemsForClass(w.Class)) == 0 {
+				continue
+			}
+			if err := in.certifyOne(reg, m, w, build, verdicts, evidence); err != nil {
+				return nil, err
+			}
+		}
+	}
+	failed := failedClasses(verdicts)
+	if len(failed) == 0 {
+		return nil, nil
+	}
+	e.classes = failed
+	return e, nil
+}
+
+// apply is the one call that mutates a machine, and it is behind the seam. A Fix with no
+// Fixer is an error and never a silent pass: "on by default" cannot mean a guessed path.
+func (in CertifyInput) apply(machine string, items []string) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	if in.Fixer == nil {
+		return nil, fmt.Errorf("no apply is wired; run: nova-pulse fleet standard --apply --machine %s", machine)
+	}
+	return in.Fixer.Apply(machine, items)
+}
+
+// runnableItems is the items apply actually runs: everything but the ones that are named and
+// left to a person (`nova-update release adopt`).
+func runnableItems(items []string) []string {
+	var out []string
+	for _, item := range items {
+		if _, byHand := ByHandItems[item]; byHand {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// postEscalation carries the escalation to the lane through the bus seam. A run with no bus
+// wired says so on a line rather than dropping the escalation quietly.
+func (in CertifyInput) postEscalation(e escalation, build string) {
+	if in.Bus == nil {
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent reason=no-bus\n", oneline.Field(e.machine))
+		return
+	}
+	lane := strings.TrimSpace(in.Lane)
+	if lane == "" {
+		lane = DefaultLane
+	}
+	if err := in.Bus.Post(lane, e.subject(), e.note(in.Hash, build)); err != nil {
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent err=%s\n",
+			oneline.Field(e.machine), oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+		return
+	}
+	fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=sent lane=%s\n",
+		oneline.Field(e.machine), oneline.Field(lane))
 }
 
 // Stale says whether the newest certificate for one machine and class is missing, failed,
@@ -756,6 +904,28 @@ func (in CertifyInput) event(c Certificate) {
 	case VerdictWarn:
 		l.Level = "WARN"
 	}
+	_ = l.Write(in.Log)
+}
+
+// escalationEvent is the same stream, for the event a dashboard must never miss: a machine
+// the loop could not certify and could not repair. It is ERROR, it carries the machine and
+// the classes, and it is one event per machine, like the line.
+func (in CertifyInput) escalationEvent(e escalation, build string) {
+	if in.Log == nil {
+		return
+	}
+	clock := in.Now
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	l := log.New(Clock(clock), log.ProcessGUID, "nova-pulse")
+	l.Verb = "certify"
+	l.Event = "certify"
+	l.Level = "ERROR"
+	l.Bench = e.machine
+	l.Msg = fmt.Sprintf("certify escalate: %s classes=%s applied=%s build=%s remedy=%s",
+		e.machine, strings.Join(e.classes, ","), dash(strings.Join(e.applied, ",")), dash(build), e.remedy())
+	l.Err = e.remedy()
 	_ = l.Write(in.Log)
 }
 
