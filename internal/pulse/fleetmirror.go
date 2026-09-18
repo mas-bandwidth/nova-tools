@@ -1,6 +1,6 @@
 package pulse
 
-// `fleet mirror` is scripts/bench-mirror.sh as a verb: the bare mirror a card clones from
+// `fleet mirror` is the retired bench-mirror.sh as a verb: the bare mirror a card clones from
 // (`git clone --reference`), so a bench pulls only the delta from GitHub instead of a whole
 // repository per card. It creates the mirror when it is missing and fetches it when it is
 // there, and it deletes nothing -- a mirror verb that could remove a directory is one
