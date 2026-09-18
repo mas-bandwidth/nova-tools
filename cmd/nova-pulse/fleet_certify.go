@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -36,7 +37,34 @@ var (
 	fleetNewCertifyForge  = func(timeout time.Duration) fleet.Forge { return ghRunnerList{Timeout: timeout} }
 	fleetNewCertifyFixer  = func(f certifyFixer) fleet.Fixer { return f }
 	fleetNewCertifyBus    = func(b certifyBusPoster) fleet.BusPoster { return b }
+	// The local transport, behind a hook like every other one. It is a seam FOR SAFETY as
+	// much as for testing: a test that ran the real workloads would run them on whichever CI
+	// machine it landed on, and the machines in this fleet are named in the test registries.
+	fleetNewCertifyLocal = func() fleet.Remote { return localRunner{} }
+	// The machine this process is on. A test replaces it; nothing else reads the hostname,
+	// so "is this me" is decided in one place.
+	fleetLocalHost = func() string {
+		name, err := os.Hostname()
+		if err != nil {
+			return ""
+		}
+		return name
+	}
 )
+
+// localRunner runs a script HERE, with `bash -s` and no ssh, for the machine that is this
+// machine. hulk certifying hulk went through `ssh hulk` on the first real run of this verb
+// and died on its own host key -- a machine has no business proving itself over a transport
+// it does not need, and the host key, the agent and BatchMode are all of them ways for that
+// to fail for reasons that say nothing about the bench.
+type localRunner struct{}
+
+func (localRunner) Run(ctx context.Context, target, script string) (string, error) {
+	cmd := exec.CommandContext(ctx, "bash", "-s")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
 
 // ghRunnerList is the production forge: the reaper's own runner read, narrowed to the one
 // question certification asks.
@@ -92,7 +120,15 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, tab separated")
+	// --status touches no machine and reads one file, so it wants one file. It used to want
+	// the registry AND a provisioning standard above the working directory, which is how a
+	// reading verb becomes something nobody can run from anywhere.
+	if !*status {
+		f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, tab separated")
+	}
+	if *status {
+		f.want(*certs, "certs", "the certificates file to read back")
+	}
 	if !*dryRun {
 		f.want(*certs, "certs", "the certificates file appended to: machine, build, standard-hash, class, verdict, evidence, at")
 	}
@@ -131,15 +167,22 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	// The hash needs the provisioning standard, and a RUN needs the hash: a certificate
+	// written under an unknown standard is a certificate that can never expire. --status
+	// only compares against it, so a missing standard there costs the `standard-hash` line
+	// and nothing else, and the verb still answers.
 	standardPath, err := certifyStandardPath(*standard)
-	if err != nil {
+	if err != nil && !*status {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	hash, err := fleet.StandardHash(standardPath, loads)
-	if err != nil {
-		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
-		return 2
+	hash := ""
+	if err == nil {
+		hash, err = fleet.StandardHash(standardPath, loads)
+		if err != nil && !*status {
+			fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
 	}
 
 	if *status {
@@ -168,7 +211,7 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	wantFix := *fix && !*noFix
 	fixer := fleetNewCertifyFixer(certifyFixer{
 		Machines: *machines, SSH: *ssh, GitName: *gitName, GitEmail: *gitEmail,
-		Timeout: bound, Stdout: stdout, Stderr: stderr,
+		Timeout: bound, LocalHost: fleetLocalHost(), Stdout: stdout, Stderr: stderr,
 	})
 	var poster fleet.BusPoster
 	if strings.TrimSpace(*busDir) != "" {
@@ -183,6 +226,7 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		Timeout: bound, DryRun: *dryRun, IfStale: *ifStale, MaxAge: age, Log: events,
 		Fix: wantFix, MaxFixRounds: *maxFixRounds, Fixer: fixer, Bus: poster, Lane: *lane,
 		Remote: fleetNewCertifyRemote(*ssh), Forge: fleetNewCertifyForge(bound),
+		Local: fleetNewCertifyLocal(), LocalHost: fleetLocalHost(),
 		Now:    func() time.Time { return fleetNow().UTC() },
 		Stdout: stdout, Stderr: stderr,
 	})
@@ -194,19 +238,21 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 // because what a repair changed on a machine belongs in the same transcript as the failure
 // that asked for it.
 type certifyFixer struct {
-	Machines string
-	SSH      string
-	GitName  string
-	GitEmail string
-	Timeout  time.Duration
-	Stdout   io.Writer
-	Stderr   io.Writer
+	Machines  string
+	SSH       string
+	GitName   string
+	GitEmail  string
+	Timeout   time.Duration
+	LocalHost string
+	Stdout    io.Writer
+	Stderr    io.Writer
 }
 
 func (f certifyFixer) Apply(machine string, items []string) ([]string, error) {
 	out := pulse.FleetStandardApply(pulse.ApplyInput{
 		Machines: f.Machines, Name: machine, Items: items, SSH: f.SSH,
 		GitName: f.GitName, GitEmail: f.GitEmail, Timeout: f.Timeout,
+		Local: fleetNewCertifyLocal(), LocalHost: f.LocalHost,
 		Stdout: f.Stdout, Stderr: f.Stderr,
 	})
 	if out.Code != 0 {

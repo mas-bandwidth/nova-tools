@@ -252,8 +252,13 @@ type ApplyInput struct {
 	Timeout  time.Duration
 	DryRun   bool
 	Runner   FleetRunner
-	Stdout   io.Writer
-	Stderr   io.Writer
+	// Local runs the remedy HERE, with no ssh, when the machine being repaired is the
+	// machine running this. A machine repairing itself through `ssh <itself>` is how the
+	// first real run of certification died on its own host key.
+	Local     FleetRunner
+	LocalHost string
+	Stdout    io.Writer
+	Stderr    io.Writer
 }
 
 // FleetStandardApply applies the standard's remedies to one machine: one line per item, and
@@ -285,13 +290,19 @@ func FleetStandardApply(in ApplyInput) ApplyOutcome {
 		return ApplyOutcome{Code: applyRefusal(in.Stderr, err)}
 	}
 
-	run := in.Runner
+	run, where := in.Runner, "ssh"
 	if run == nil {
 		run = SSHRunner{Program: in.SSH}
 	}
+	if fleet.IsLocalMachine(m, in.LocalHost) {
+		where = "local"
+		if in.Local != nil {
+			run = in.Local
+		}
+	}
 	bound := fleetPowerTimeout(in.Timeout)
-	fmt.Fprintf(in.Stderr, "STANDARD APPLY WALK machine=%s os=%s items=%d dry-run=%t\n",
-		oneline.Field(m.Name), oneline.Field(m.OS), len(wanted), in.DryRun)
+	fmt.Fprintf(in.Stderr, "STANDARD APPLY WALK machine=%s os=%s items=%d transport=%s dry-run=%t\n",
+		oneline.Field(m.Name), oneline.Field(m.OS), len(wanted), where, in.DryRun)
 
 	out := ApplyOutcome{}
 	failed := 0

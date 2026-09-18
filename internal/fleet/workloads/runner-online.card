@@ -1,6 +1,7 @@
 roles: runner
 expect: ^RUNNER OK
 forge: runners
+where: coordinator
 
 # The forge decides this one. A runner host's own answer about its runners is what it
 # BELIEVES; the merge group is served by what the forge SEES, and on 2026-09-16 the two
