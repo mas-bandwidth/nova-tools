@@ -10,7 +10,7 @@ A verb earns its place by taking a hand-written script out of `~/rowan-working/b
 
 | script | the verb that replaces it |
 | --- | --- |
-| `status-page.sh` | `nova-pulse status --html <out> --benches <file> --queue <dir>` |
+| `status-page.sh` | `nova-pulse status --html <out> --machines <registry> --queue <dir>` |
 | `status.sh` | `nova-pulse status --queue <dir> --roots <dirs> --batches <dir>` |
 | `progress.sh` | `nova-pulse progress --queue <dir> --roots <dirs>` |
 | `board.sh` | `nova-board list`, `add`, `take`, `close`, `check` |
@@ -1784,6 +1784,39 @@ Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
 `COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
 `DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
 and each bench's `ADOPT/<friend>` files. Prototype: `bin/status.sh`.
+
+**The fleet page.**
+
+```
+nova-pulse status --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>]
+                  [--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
+                  [--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]
+```
+
+`--html` writes the fleet page and one seven-column `metrics.tsv` row beside
+it, and prints one `STATUS HTML` line. It reads the fleet from **the machines
+registry** — `--machines queue/control/machines.tsv`, the same file
+`fleet registry` prints and every fill refusal names. The benches read over ssh
+are its rows carrying the role `bench`; the page also carries a **machines**
+table naming every machine, its roles and its own note, so the page says which
+hosts serve the merge group's shards and may take no card, and says out loud
+that the Air is a fleet machine WHILE UP rather than showing a bare `DOWN` row
+every time the laptop is shut. The registry carries no home column and needs
+none: with no home the liveness script uses the login home, which is the home
+ssh lands in.
+
+`--benches` is the retired four-column file (`name`, ssh target, home, mac). It
+reads for one more release, and every run of it prints one `STATUS NOTE` line
+naming `--machines`. Given both, the registry decides and the run names the
+file it did not read: two files that disagree about what the fleet IS is how a
+runner host quietly becomes a bench.
+
+The forge rows (the branch tip and its run, merged since the day start, PRs
+opened in the last hour, the merge queue) are about the repo in `<queue>/REPO`,
+and failing that the origin of the clone the queue sits in, named on a
+`STATUS NOTE` line. With neither there is nobody to ask and the page says so;
+with a repo that did not answer it says that instead — they are different
+facts, and the page used to print the first for both.
 
 ## nova-review
 
