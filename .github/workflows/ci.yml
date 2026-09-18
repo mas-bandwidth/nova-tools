@@ -679,7 +679,11 @@ jobs:
           base="${{ github.event.merge_group.base_sha }}"
           git fetch -q --depth=1 origin "$base" 2>/dev/null || true
           if git diff --name-only "$base" HEAD | grep -q -E '^(go\.mod|go\.sum)$'; then
-            pkgs=$(go list ./...)
+            # One line: $GITHUB_OUTPUT takes key=value per line, and go list
+            # prints one package per line. The first go.mod change since this
+            # step was written (#1272, go-redis) wrote a multi-line value and
+            # every leg of the group failed with "Invalid format" (2026-09-18).
+            pkgs=$(go list ./... | tr '\n' ' ')
           else
             pkgs=""
             for d in $(git diff --name-only "$base" HEAD -- '*.go' | xargs -r -n1 dirname | sort -u); do

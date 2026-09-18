@@ -608,8 +608,10 @@ func probeNonce() ([probeNonceLen]byte, error) {
 //     <file>` truncated the file, exit 0).
 //  2. The bytes on the pipe, hex-encoded, equal the argv copy — compared in constant
 //     time. The argv copy is kept so that a mismatched pair still refuses.
-//  3. The parent process is THIS binary. sandbox-exec execs in place, so the probe's
-//     child has the tool for a parent; a child started by anything else does not.
+//  3. The parent process is running THIS FILE — the same device and inode, not the same
+//     name. sandbox-exec execs in place, so the probe's child has the tool for a parent; a
+//     child started by anything else does not, and a COPY of the tool is a different file
+//     however it is named or wherever it is resolved from (sameImage).
 //
 // The honest bound on all three is in docs/SPEC-SANDBOX.md's probe section: the verb
 // grants NO CAPABILITY THE CALLER LACKS, because everything it does is bounded by the wall
@@ -646,24 +648,94 @@ func notTheProbesChild(nonce string, env []string) string {
 	if err != nil {
 		return "this process cannot name its own path"
 	}
-	parent, err := parentExecutable(os.Getppid())
+	// An absolute path is what these syscalls promise; anything else is an answer this guard
+	// has no way to check, and an unchecked answer is a pass.
+	if !filepath.IsAbs(self) {
+		return "this process is not named by an absolute path"
+	}
+	return parentIsThisImage(self, os.Getppid, parentExecutable)
+}
+
+// parentIsThisImage is the parent half's ORDERING, lifted away from the two syscalls that
+// answer it so that the ordering itself can be tested rather than only described. It reads
+// the pid, the image, the pid again and THE IMAGE AGAIN, and it refuses if anything moved
+// between any two of those reads.
+//
+// Both re-reads are there because a pid and an image can each change under the other.
+//
+//   - The pid can go: os.Getppid() and the per-pid path read are two syscalls, and between
+//     them the parent can exit. This process is reparented, the old number is free, and on
+//     a busy machine it is handed out again within the same second — so asking a STALE
+//     number is asking about whatever process now wears it.
+//   - The IMAGE can go while the pid stays. exec(2) replaces a process's image IN PLACE and
+//     leaves its pid alone (Johnny's read on #1310): a parent that is this binary when the
+//     first read happens can exec something else and still be the same pid at the second
+//     read, so a pid that did not move proves nothing about the image that ran. The image
+//     is therefore read again, and the second read is a fresh stat: it catches both an exec
+//     of a different path and a different file put at the SAME path.
+//
+// The window cannot be closed to zero from inside the child — there is no call that hands a
+// process an atomic "my parent, now" — so what this does is make every read that the guard
+// rests on a read that was still true at the end of it, and refuse otherwise. Refusing is
+// the whole point: the probe's real parent does not exec anything, so the honest cost of
+// the re-reads is nil and the dishonest one is a refusal.
+func parentIsThisImage(self string, getppid func() int, imageOf func(pid int) (string, error)) string {
+	before := getppid()
+	first, err := imageOf(before)
 	if err != nil {
 		return "the parent process cannot be named"
 	}
-	if resolve(self) != resolve(parent) {
+	if !filepath.IsAbs(first) {
+		return "the parent process is not named by an absolute path"
+	}
+	if !sameImage(self, first) {
 		return "the parent process is not this binary"
+	}
+	after := getppid()
+	if after != before {
+		return "the parent process changed while the guard was reading it"
+	}
+	second, err := imageOf(after)
+	if err != nil {
+		return "the parent process cannot be named"
+	}
+	if !filepath.IsAbs(second) {
+		return "the parent process is not named by an absolute path"
+	}
+	if !sameImage(self, second) || !sameImage(first, second) {
+		return "the parent process changed the image it is running while the guard was reading it"
 	}
 	return ""
 }
 
-// resolve is EvalSymlinks with the unresolved path as its own answer: the two paths
-// compared above come from different syscalls (os.Executable and the OS's per-pid path),
-// and one of them may still be a symlink while the other is not.
-func resolve(path string) string {
-	if got, err := filepath.EvalSymlinks(path); err == nil {
-		return got
+// sameImage answers the question the guard actually has — "is the parent running THIS
+// FILE?" — and it answers it with the file's IDENTITY, device and inode, rather than with
+// its NAME.
+//
+// A name was the hole. The two paths compared here come from different syscalls that do
+// not even agree on the spelling of the same file: measured on darwin, os.Executable()
+// hands back the path as it was passed to exec (/tmp/x) while the kernel's per-pid path is
+// the resolved one (/private/tmp/x). The old form papered over that with EvalSymlinks and
+// a fallback — `if got, err := filepath.EvalSymlinks(p); err == nil { return got }; return p`
+// — which SWALLOWED its error: EvalSymlinks walks and Lstats every component, so a single
+// component it cannot read (a directory another test is removing, a step denied inside the
+// wall, an interrupted call on a loaded machine) silently turned the comparison back into
+// one between two spellings. Two spellings are not an identity either way round: a COPY of
+// the tool at a name that resolves the same way passes a name test and fails this one,
+// which is the defect this function closes.
+//
+// A stat that fails is a refusal, not a fallback: this is the half of the guard a caller
+// cannot supply, and a half that answers "I could not tell" must answer no.
+func sameImage(self, parent string) bool {
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		return false
 	}
-	return path
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(selfInfo, parentInfo)
 }
 
 // probeStepVerb is that child: one step, done in Go, exit 0 for allow and 1 for deny. Each
