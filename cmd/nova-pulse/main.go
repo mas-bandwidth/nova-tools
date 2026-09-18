@@ -38,6 +38,7 @@ nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evide
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+nova-pulse install --sha <7-40 hex> --build-bench <name> --benches <a,b,c> [--ssh <path>] [--timeout <duration>]
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -144,6 +145,20 @@ deadline, slot locks whose pid is dead, launched cards whose job directory is go
 example:
   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
 
+install builds nova-tools ONCE on --build-bench, caches the binaries under
+~/nova-bench/build/<full sha>, installs the same cache on every bench in
+--benches by copying each binary to a dotfile then renaming it into place, and
+verifies each bench's nova-swarm reports that commit. It prints one INSTALL
+BUILD line, then one line per bench -- INSTALL OK, INSTALL SKIP bench already at
+the sha, or INSTALL FAIL naming the copy, install or verify step -- and one
+INSTALL DONE summary; it exits 1 when any bench failed. Every bench name and the
+sha are validated before the first ssh, every remote command is one script on
+the ssh child's stdin, and cached builds beyond the newest five are
+removed only through internal/safepath under ~/nova-bench/build.
+
+example:
+  nova-pulse install --sha 5f544272a1b0 --build-bench hulk --benches hulk,vision,space,mini
+
 fleet survey runs tools/bench-standard.sh on every bench named in --benches
 (name, ssh target and home per tab-separated line) over the ssh command
 "ssh <target> bash -s", in parallel under --timeout, and prints one line per
@@ -222,6 +237,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSweep(rest, stdout, stderr)
 	case "reap":
 		return cmdReap(rest, stdout, stderr)
+	case "install":
+		return cmdInstall(rest, stdout, stderr)
 	case "fleet":
 		return cmdFleet(rest, stdout, stderr)
 	case "wake":
