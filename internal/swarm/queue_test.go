@@ -543,3 +543,145 @@ func TestEmptyOrTruncatedClaimRecovery(t *testing.T) {
 		t.Fatalf("TakeCard = (%q, %t), want (truncated, true)", name2, ok2)
 	}
 }
+
+// TestLiveAgedOwnerNotReclaimed proves that a claim older than ClaimTimeout whose
+// process is still alive is NEVER reclaimed by another worker.
+func TestLiveAgedOwnerNotReclaimed(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "live-aged")
+
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Claim file is aged well beyond ClaimTimeout, but the owning PID is os.Getpid() (alive).
+	claim := filepath.Join(taken, "live-aged.claim")
+	agedTime := time.Now().Add(-5 * ClaimTimeout).UnixNano()
+	tokenLive := "token-live-worker-1"
+	content := fmt.Sprintf("w_live %d %d %s\n", os.Getpid(), agedTime, tokenLive)
+	if err := os.WriteFile(claim, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another worker attempts to take the card; it must not reclaim the live owner.
+	name, ok, err := TakeCard(bench, "w_other")
+	if err != nil {
+		t.Fatalf("TakeCard failed: %v", err)
+	}
+	if ok {
+		t.Fatalf("TakeCard = (%q, true), want false: live owner must not be reclaimed regardless of age", name)
+	}
+
+	// The original claim must remain unmolested.
+	raw, err := os.ReadFile(claim)
+	if err != nil {
+		t.Fatalf("claim file missing: %v", err)
+	}
+	if string(raw) != content {
+		t.Fatalf("claim content = %q, want %q", string(raw), content)
+	}
+
+	// Once the owner is dead (e.g. deadPid), TakeCard succeeds and reclaims.
+	const deadPid = 2147483647
+	if Alive(deadPid, "") {
+		t.Skip("dead pid probe is alive here")
+	}
+	deadContent := fmt.Sprintf("w_dead %d %d %s\n", deadPid, agedTime, "token-dead-worker-2")
+	if err := os.WriteFile(claim, []byte(deadContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name2, ok2, err2 := TakeCard(bench, "w_other")
+	if err2 != nil {
+		t.Fatalf("TakeCard failed: %v", err2)
+	}
+	if !ok2 || name2 != "live-aged" {
+		t.Fatalf("TakeCard = (%q, %t), want (live-aged, true)", name2, ok2)
+	}
+}
+
+// TestCardLockExcludesConcurrentTakeCard asserts that while takeCardLock is held on a card,
+// any concurrent worker attempting TakeCard is excluded and cannot claim or take the card.
+func TestCardLockExcludesConcurrentTakeCard(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "locked-card")
+
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWait := cardLockWait
+	cardLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { cardLockWait = origWait })
+
+	// Acquire card lock externally to simulate an active critical section.
+	unlock, err := takeCardLock(taken, "locked-card", 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("takeCardLock failed: %v", err)
+	}
+
+	// Concurrent TakeCard attempt times out waiting for lock and returns ok=false.
+	name, ok, err := TakeCard(bench, "w_concurrent")
+	if err != nil {
+		t.Fatalf("TakeCard during locked state returned unexpected err: %v", err)
+	}
+	if ok {
+		t.Fatalf("TakeCard = (%q, true), want false while card lock is held", name)
+	}
+
+	// After unlocking, TakeCard succeeds immediately.
+	unlock()
+
+	name2, ok2, err2 := TakeCard(bench, "w_concurrent")
+	if err2 != nil {
+		t.Fatalf("TakeCard after unlock failed: %v", err2)
+	}
+	if !ok2 || name2 != "locked-card" {
+		t.Fatalf("TakeCard after unlock = (%q, %t), want (locked-card, true)", name2, ok2)
+	}
+}
+
+// TestCheckToActionReplacementBlocked proves that between claim validation and rename,
+// takeCardLock excludes concurrent callers from replacing or stealing the claim.
+func TestCheckToActionReplacementBlocked(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "fenced-action")
+
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWait := cardLockWait
+	cardLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { cardLockWait = origWait })
+
+	hookCalled := false
+	interloperBlocked := false
+
+	betweenClaimAndRenameHook = func() {
+		hookCalled = true
+		// Interloper attempts to steal or take the card while winner is between claim and rename.
+		name, ok, err := TakeCard(bench, "interloper")
+		if err == nil && !ok && name == "" {
+			interloperBlocked = true
+		}
+	}
+	t.Cleanup(func() { betweenClaimAndRenameHook = nil })
+
+	name, ok, err := TakeCard(bench, "winner")
+	if err != nil {
+		t.Fatalf("TakeCard winner failed: %v", err)
+	}
+	if !ok || name != "fenced-action" {
+		t.Fatalf("TakeCard winner = (%q, %t), want (fenced-action, true)", name, ok)
+	}
+	if !hookCalled {
+		t.Fatalf("betweenClaimAndRenameHook was not called")
+	}
+	if !interloperBlocked {
+		t.Fatalf("interloper was not blocked by takeCardLock during check-to-action window")
+	}
+}

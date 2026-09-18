@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -119,7 +118,11 @@ var (
 	noReplacePublish = noReplaceRename
 )
 
-var beforeReclaimLockHook func()
+var (
+	cardLockWait              = 2 * time.Second
+	beforeReclaimLockHook     func()
+	betweenClaimAndRenameHook func()
+)
 
 var randFallbackCounter atomic.Uint64
 
@@ -143,9 +146,44 @@ func claimPath(takenDir, cardName string) string {
 	return filepath.Join(takenDir, cardName+".claim")
 }
 
-// claimReclaimPath returns the serialized reclaimer lock path for a card in taken/.
-func claimReclaimPath(takenDir, cardName string) string {
-	return filepath.Join(takenDir, cardName+".claim.reclaim")
+func cardLockPath(takenDir, cardName string) string {
+	locksDir := filepath.Join(filepath.Dir(takenDir), ".locks")
+	_ = os.MkdirAll(locksDir, 0o755)
+	return filepath.Join(locksDir, cardName+".lock")
+}
+
+// takeCardLock takes an exclusive advisory flock on <cardName>.lock in .locks.
+// It synchronizes card claiming, renaming, and claim release across all processes.
+func takeCardLock(takenDir, cardName string, wait time.Duration) (func(), error) {
+	path := cardLockPath(takenDir, cardName)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open card lock %s: %w", path, err)
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		ok, lockErr := tryLockFile(f)
+		if lockErr != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("lock card %s: %w", path, lockErr)
+		}
+		if ok {
+			released := false
+			return func() {
+				if released {
+					return
+				}
+				released = true
+				unlockFile(f)
+				_ = f.Close()
+			}, nil
+		}
+		if !time.Now().Before(deadline) {
+			_ = f.Close()
+			return nil, fmt.Errorf("timeout waiting for card lock %s", path)
+		}
+		time.Sleep(lockPoll)
+	}
 }
 
 type claimInfo struct {
@@ -192,40 +230,12 @@ func isClaimStale(info claimInfo) bool {
 	if info.empty || !info.valid {
 		return true
 	}
-	if info.pid > 0 && !processAlive(info.pid) {
-		return true
+	if info.pid > 0 {
+		// A living process is never stale regardless of elapsed time.
+		return !processAlive(info.pid)
 	}
 	if !info.startTime.IsZero() && time.Since(info.startTime) > ClaimTimeout {
 		return true
-	}
-	return false
-}
-
-func isReclaimLockStale(lockPath string) bool {
-	raw, err := os.ReadFile(lockPath)
-	if err != nil {
-		return false
-	}
-	fields := strings.Fields(string(raw))
-	if len(fields) < 1 {
-		return true
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || pid <= 0 || !processAlive(pid) {
-		return true
-	}
-	if len(fields) >= 2 {
-		if nano, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
-			var startTime time.Time
-			if nano < 1e12 {
-				startTime = time.Unix(nano, 0)
-			} else {
-				startTime = time.Unix(0, nano)
-			}
-			if time.Since(startTime) > ClaimTimeout {
-				return true
-			}
-		}
 	}
 	return false
 }
@@ -287,12 +297,21 @@ func holdsClaim(takenDir, cardName, token string) bool {
 	return len(fields) >= 4 && fields[3] == token
 }
 
-// releaseClaim unlinks cardName.claim if and only if the file on disk currently holds token.
+// releaseClaim unlinks cardName.claim under takeCardLock if and only if the file on disk currently holds token.
 // If the claim was replaced by another claimant, the replacement's record is never unlinked.
 func releaseClaim(takenDir, cardName, token string) {
 	if token == "" {
 		return
 	}
+	unlock, err := takeCardLock(takenDir, cardName, cardLockWait)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	releaseClaimLocked(takenDir, cardName, token)
+}
+
+func releaseClaimLocked(takenDir, cardName, token string) {
 	path := claimPath(takenDir, cardName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -306,14 +325,24 @@ func releaseClaim(takenDir, cardName, token string) {
 
 // claimCard attempts to acquire an exclusive, cross-process claim on cardName in takenDir.
 // It writes a unique claim token into the claim file: worker pid start_time_nano token\n.
-// Stale claims are reclaimed using serialized compare-and-delete under an exclusive reclaim lock.
+// Stale claims from dead processes are reclaimed under takeCardLock.
 func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 	if err := os.MkdirAll(takenDir, 0o755); err != nil {
 		return "", false, err
 	}
+	unlock, err := takeCardLock(takenDir, cardName, cardLockWait)
+	if err != nil {
+		return "", false, nil
+	}
+	defer unlock()
+	return claimCardLocked(takenDir, cardName, worker)
+}
+
+func claimCardLocked(takenDir, cardName, worker string) (string, bool, error) {
 	token := newClaimToken()
 	content := []byte(fmt.Sprintf("%s %d %d %s\n", worker, os.Getpid(), time.Now().UnixNano(), token))
 
+	path := claimPath(takenDir, cardName)
 	err := publishClaimFile(takenDir, cardName, content)
 	if err == nil {
 		return token, true, nil
@@ -322,7 +351,7 @@ func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 		return "", false, err
 	}
 
-	raw, readErr := os.ReadFile(claimPath(takenDir, cardName))
+	raw, readErr := os.ReadFile(path)
 	if readErr != nil {
 		if errors.Is(readErr, os.ErrNotExist) {
 			if pErr := publishClaimFile(takenDir, cardName, content); pErr == nil {
@@ -334,12 +363,11 @@ func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 	}
 
 	info := parseClaim(raw)
-
 	if (info.empty || !info.valid) && (info.pid <= 0 || processAlive(info.pid)) {
 		if emptyClaimGrace > 0 {
 			time.Sleep(emptyClaimGrace)
 		}
-		raw2, readErr2 := os.ReadFile(claimPath(takenDir, cardName))
+		raw2, readErr2 := os.ReadFile(path)
 		if readErr2 != nil {
 			if errors.Is(readErr2, os.ErrNotExist) {
 				if pErr := publishClaimFile(takenDir, cardName, content); pErr == nil {
@@ -349,8 +377,7 @@ func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 			}
 			return "", false, readErr2
 		}
-		info2 := parseClaim(raw2)
-		info = info2
+		info = parseClaim(raw2)
 		raw = raw2
 	}
 
@@ -362,55 +389,19 @@ func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 		beforeReclaimLockHook()
 	}
 
-	reclaimPath := claimReclaimPath(takenDir, cardName)
-	lockFile, err := os.OpenFile(reclaimPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			if isReclaimLockStale(reclaimPath) {
-				_ = os.Remove(reclaimPath)
-				lockFile, err = os.OpenFile(reclaimPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-			}
-		}
-		if err != nil {
+	// Double check claim on disk hasn't changed before replacing.
+	curRaw, curErr := os.ReadFile(path)
+	if curErr == nil {
+		curInfo := parseClaim(curRaw)
+		if info.token != "" && curInfo.token != info.token {
 			return "", false, nil
 		}
-	}
-	defer func() {
-		_ = os.Remove(reclaimPath)
-	}()
-	fmt.Fprintf(lockFile, "%d %d\n", os.Getpid(), time.Now().UnixNano())
-	_ = lockFile.Sync()
-	_ = lockFile.Close()
-
-	curRaw, curErr := os.ReadFile(claimPath(takenDir, cardName))
-	if curErr != nil {
-		if errors.Is(curErr, os.ErrNotExist) {
-			if pErr := publishClaimFile(takenDir, cardName, content); pErr == nil {
-				return token, true, nil
-			}
-			return "", false, nil
-		}
-		return "", false, curErr
-	}
-
-	curInfo := parseClaim(curRaw)
-
-	if info.token != "" {
-		if curInfo.token != info.token {
-			return "", false, nil
-		}
-	} else {
-		if string(curRaw) != string(raw) {
+		if !isClaimStale(curInfo) {
 			return "", false, nil
 		}
 	}
 
-	if !isClaimStale(curInfo) {
-		return "", false, nil
-	}
-
-	_ = os.Remove(claimPath(takenDir, cardName))
-
+	_ = os.Remove(path)
 	if pErr := publishClaimFile(takenDir, cardName, content); pErr != nil {
 		return "", false, pErr
 	}
@@ -418,19 +409,10 @@ func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 	return token, true, nil
 }
 
-// takeMu serializes the file rename step across concurrent workers in the same process.
-// On POSIX platforms, directory renames are serialized atomically by the kernel VFS. On
-// Windows, MoveFileEx across concurrent callers on the same source path opens the source
-// with FILE_SHARE_DELETE, allowing multiple callers to link distinct destinations before
-// source deletion completes. Serializing the rename step ensures that the winner's move
-// completes before losers attempt it, so losers observe os.ErrNotExist cleanly.
-var takeMu sync.Mutex
-
 // TakeCard takes one card from a bench's queue by renaming it into the bench's
 // taken/ as taken/<worker>-<name>.card, and reports the card's name and whether one
-// was taken. The rename is atomic within the directory, so two workers racing for
-// one card cannot both take it: the loser sees the card gone and looks at the next
-// one. An empty queue is ("", false, nil), not an error.
+// was taken. Claiming, renaming, and claim cleanup are synchronized per card under
+// takeCardLock, eliminating all check-to-action windows across processes.
 func TakeCard(benchDir, worker string) (string, bool, error) {
 	worker = strings.TrimSpace(worker)
 	if worker == "" {
@@ -449,24 +431,27 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 		return "", false, err
 	}
 	for _, name := range names {
-		token, claimed, err := claimCard(taken, name, worker)
+		unlock, err := takeCardLock(taken, name, cardLockWait)
 		if err != nil {
+			continue // card lock held by another process
+		}
+		token, claimed, err := claimCardLocked(taken, name, worker)
+		if err != nil {
+			unlock()
 			return "", false, err
 		}
 		if !claimed {
-			continue // another worker claimed this card
+			unlock()
+			continue
+		}
+		if betweenClaimAndRenameHook != nil {
+			betweenClaimAndRenameHook()
 		}
 		dst := filepath.Join(taken, worker+"-"+name+CardExt)
 		src := filepath.Join(queue, name+CardExt)
-		takeMu.Lock()
-		if !holdsClaim(taken, name, token) {
-			takeMu.Unlock()
-			releaseClaim(taken, name, token)
-			continue
-		}
 		rErr := renameSteady(src, dst)
-		takeMu.Unlock()
-		releaseClaim(taken, name, token)
+		releaseClaimLocked(taken, name, token)
+		unlock()
 		if rErr != nil {
 			if errors.Is(rErr, os.ErrNotExist) {
 				continue // another worker took this card first
@@ -527,6 +512,7 @@ func FullestBench(benches []string) (name string, queued int, ok bool, err error
 // returns the names taken. It never empties the victim below its line: each card is
 // counted before it is renamed, and a victim at or below the line is left alone. A
 // negative capacity is an unbounded line and steals nothing.
+// Stealing is synchronized per card under takeCardLock.
 func Steal(victimDir, worker string, capacity int) ([]string, error) {
 	worker = strings.TrimSpace(worker)
 	if worker == "" {
@@ -549,31 +535,35 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 		if err := os.MkdirAll(taken, 0o755); err != nil {
 			return stolen, err
 		}
-		token, claimed, cErr := claimCard(taken, names[0], worker)
+		name := names[0]
+		unlock, err := takeCardLock(taken, name, cardLockWait)
+		if err != nil {
+			continue
+		}
+		token, claimed, cErr := claimCardLocked(taken, name, worker)
 		if cErr != nil {
+			unlock()
 			return stolen, cErr
 		}
 		if !claimed {
-			continue // another worker claimed this card
-		}
-		src := filepath.Join(queue, names[0]+CardExt)
-		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
-		takeMu.Lock()
-		if !holdsClaim(taken, names[0], token) {
-			takeMu.Unlock()
-			releaseClaim(taken, names[0], token)
+			unlock()
 			continue
 		}
+		if betweenClaimAndRenameHook != nil {
+			betweenClaimAndRenameHook()
+		}
+		src := filepath.Join(queue, name+CardExt)
+		dst := filepath.Join(taken, worker+"-"+name+CardExt)
 		rErr := renameSteady(src, dst)
-		takeMu.Unlock()
-		releaseClaim(taken, names[0], token)
+		releaseClaimLocked(taken, name, token)
+		unlock()
 		if rErr != nil {
 			if errors.Is(rErr, os.ErrNotExist) {
-				continue // another worker took this card first
+				continue
 			}
 			return stolen, rErr
 		}
-		stolen = append(stolen, names[0])
+		stolen = append(stolen, name)
 	}
 }
 
