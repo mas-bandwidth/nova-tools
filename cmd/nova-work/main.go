@@ -80,6 +80,8 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
+                      [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
                  [--reply-branch <name>] [--remote <name>] [--branch <name>]
@@ -104,6 +106,7 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work set check      reads the (work-set ...) form a coordinator writes and validates it whole
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
   nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
@@ -139,6 +142,26 @@ and an unknown :kind is refused naming the field. :needs is the reference edge a
 need is refused naming the field and the id, and a :needs cycle is refused by validator
 rule 3, both at load before the graph is published.
 
+set check reads the OTHER top form of the same language: not ` + "`(:plan ...)`" + `, the
+expander's, but ` + "`(work-set \"id\" ... :units ((unit ...)))`" + `, the one a coordinator
+writes. It is read by the SAME bounded reader -- three bounds, no eval, a dispatch macro
+refused at the byte that owes it -- and a key this reader does not know is KEPT, never
+refused: the work set is a person's document and a unit with a :pr or a :budget is still
+a unit with an owner. What set check then validates is the CONTENT, and the two exit
+codes say different things. Exit 2 is a refusal: this file could not be read at all.
+Exit 1 is findings: it was read whole and its content is wrong -- a duplicate id, a
+:needs naming a unit nobody defined, a cycle, an :owner no --minds registry names, a
+:lane no --lanes file names, a :deadline that is not an instant. Every rule runs over
+every unit in ONE pass, one SET line per finding, because a checker that stopped at the
+first would cost one round trip per defect. The SET OK line prints either way, and
+units = ready + blocked + done closes its arithmetic.
+
+--ready is the mechanical ready set, derived from the language rather than maintained by
+hand: a unit is done when it says so (:done, or a :status of closed, done, landed or
+merged) or when --done names it, and ready when it is not done and every need is done.
+Without --minds and without --lanes those two rules are OFF rather than run against a
+guessed file: there is no default registry and no discovery.
+
 events publishes the family's three event channels from two sources: the cards:done
 stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
 becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a changed
@@ -156,8 +179,19 @@ flags:
                   it, ready prints one row per node in seed order.
   --needs <ids>   a comma-separated list of needs for --node. --needs needs --node;
                   --node alone creates a node needing nothing.
-  --file <path>   plan check and plan expand: the plan to read. Required, always:
-                  there is no default file and no discovery from the working directory.
+  --file <path>   plan check and plan expand: the plan to read. set check: the work set.
+                  Required, always: there is no default file and no discovery from the
+                  working directory.
+  --minds <file>  set check: the registry an :owner must name, as the decide lane's
+                  ladder ({"minds":[{"name":"emma"}...]}), the bus roster
+                  ({"participants":[{"name":"Emma"}...]}) or a plain list, one name per
+                  line. The shape is READ, not guessed at from the name, and the match
+                  folds case. Without it no owner is checked.
+  --lanes <file>  set check: the lanes file a :lane must name, <name>\t<path prefixes>
+                  per line. Without it no lane is checked.
+  --done <ids>    set check: comma-separated unit ids that are done, beside what the
+                  file's own :done and :status say.
+  --ready         set check: also print one SET READY line per unit of the ready set.
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -188,14 +222,16 @@ flags:
                   the default is this run's clock and an unparsable one is a refusal
                   rather than a silent fall back to it.
 
-exit codes: 0 ran and passed; 2 could not run (bad invocation, an unreadable graph or
-plan, a :deps cycle, an unknown node, a refusal).
+exit codes: 0 ran and passed; 1 set check read the file whole and found something wrong
+with its content, one SET line per finding; 2 could not run (bad invocation, an
+unreadable graph, plan or work set, a :deps cycle, an unknown node, a refusal).
 
 example:
   nova-work dependencies --graph ./deps.json --node b
   nova-work dependencies --graph ./deps.json --node a --needs b
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
+  nova-work set check --file ./work-set.lisp --ready
   nova-work events --redis 127.0.0.1:6379 --once
 `
 
@@ -221,6 +257,7 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"ready":        cmdReady,
 	"clip":         cmdClip,
 	"plan":         cmdPlan,
+	"set":          cmdSet,
 	"ask":          cmdAsk,
 	"asks":         cmdAsks,
 }
