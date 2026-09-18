@@ -1,0 +1,108 @@
+roles: bench
+expect: ^DISPATCH OK
+warn: ^DISPATCH SEAT-KEY-UNKNOWN
+where: machine
+
+# THE ROLE'S OWN DISPATCH PATH, end to end, on the machine that claims the role (Stella,
+# 2026-09-18). Every other bench workload proves a PIECE: that a toolchain exists, that the
+# wall can be built, that a name resolves. This one proves the path a card actually takes --
+# `nova-swarm native` making its slot, its root and its wall, and the seat and config it is
+# handed -- because that is the path that died on hulk on the morning this verb was written,
+# with every piece of it passing its own check.
+#
+# WHAT IT DOES NOT DO: contact a model. The harness it dispatches is a three-line program
+# that prints and exits, so what is certified is the dispatch -- slot, root, wall, deadline,
+# seat, config -- and never a provider's availability, which is not a fact about this
+# machine and would cost real tokens every six hours on every bench in the fleet.
+#
+# THE SEAT IS READ AND NEVER PRINTED: `nova-secrets exec --only <NAME>` hands ONE key to a
+# child that reports whether it arrived, and the value never reaches this output, the
+# certificate, or the log.
+set -eu
+SWARM=$(command -v nova-swarm 2>/dev/null || true)
+if [ -z "$SWARM" ]; then
+  echo "DISPATCH FAIL no nova-swarm on this bench: a bench that cannot dispatch is not a bench"
+  exit 1
+fi
+JOB="$NOVA_HOME/working/tmp/nova-certify-dispatch-$$"
+trap 'rm -rf "$JOB"' EXIT INT TERM
+# The slot lives INSIDE the root: nova-swarm refuses a slot outside its configured root,
+# which is the containment rule this workload exists to exercise rather than argue with.
+mkdir -p "$JOB/root/slot"
+cat > "$JOB/harness" <<'NOVA_CERTIFY_HARNESS'
+#!/bin/sh
+echo "DISPATCH CARD RAN"
+exit 0
+NOVA_CERTIFY_HARNESS
+chmod +x "$JOB/harness"
+printf 'CARD: certify-role-dispatch\nPrint DISPATCH CARD RAN and stop.\n' > "$JOB/card.md"
+OUT=$("$SWARM" native --harness "$JOB/harness" --model local/certify --card "$JOB/card.md" \
+  --slot "$JOB/root/slot" --root "$JOB/root" --deadline 120s --label certify-role-dispatch 2>&1 || true)
+# The card's own words go to the job directory; what nova-swarm says on its stdout is the
+# NATIVE OK line, and that line is the evidence: it names the sandbox the card actually ran
+# behind (landlock on a Linux bench), the return code, and the config it was handed.
+case "$OUT" in
+  *"NATIVE OK"*) ;;
+  *)
+    echo "DISPATCH FAIL nova-swarm native did not run the card: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-400)"
+    exit 1 ;;
+esac
+RC=$(printf '%s' "$OUT" | tr ' ' '\n' | grep '^rc=' | head -n 1)
+SANDBOX=$(printf '%s' "$OUT" | tr ' ' '\n' | grep '^sandbox=' | head -n 1)
+CONFIG=$(printf '%s' "$OUT" | tr ' ' '\n' | grep '^config=' | head -n 1)
+if [ "$RC" != "rc=0" ]; then
+  echo "DISPATCH FAIL the card ran and came back $RC: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-300)"
+  exit 1
+fi
+
+# The seat, by name, one key, never printed. A bench with no seat column says so and is not
+# failed for it: a machine that carries no seat is a machine no keyed card is dealt to.
+SEAT="${NOVA_SEAT:-}"
+SEAT_REPORT="seat=none"
+if [ -n "$SEAT" ] && [ "$SEAT" != "-" ]; then
+  SECRETS=$(command -v nova-secrets 2>/dev/null || true)
+  STORE="${NOVA_SECRETS_STORE:-$NOVA_HOME/nova-bench/secrets}"
+  KEY="${NOVA_SEAT_KEY:-ANTHROPIC_API_KEY}"
+  # The seat's own private key file: the thing that makes this the MACHINE's seat and not
+  # anybody else's. It is named, never read by this card and never printed.
+  KEYFILE="${NOVA_SEAT_KEYFILE:-$NOVA_HOME/.config/nova-secrets/$SEAT.key}"
+  if [ -z "$SECRETS" ]; then
+    echo "DISPATCH FAIL the registry gives this bench the seat $SEAT and there is no nova-secrets on it"
+    exit 1
+  fi
+  if [ ! -d "$STORE" ]; then
+    echo "DISPATCH FAIL no secrets store at $STORE (set NOVA_SECRETS_STORE); the seat $SEAT cannot be opened"
+    exit 1
+  fi
+  if [ ! -f "$KEYFILE" ]; then
+    echo "DISPATCH FAIL the registry gives this bench the seat $SEAT and there is no key for it at $KEYFILE (set NOVA_SEAT_KEYFILE)"
+    exit 1
+  fi
+  SOPS="${NOVA_SOPS:-$NOVA_HOME/.local/bin/sops}"
+  if [ ! -x "$SOPS" ]; then
+    SOPS=$(command -v sops 2>/dev/null || true)
+  fi
+  if [ -z "$SOPS" ]; then
+    echo "DISPATCH FAIL the registry gives this bench the seat $SEAT and there is no sops on it to open the store"
+    exit 1
+  fi
+  SEATOUT=$("$SECRETS" exec --store "$STORE" --as "$SEAT" --key "$KEYFILE" --sops "$SOPS" --only "$KEY" -- \
+    sh -c 'if [ -n "${'"$KEY"':-}" ]; then echo SEAT KEY PRESENT; else echo SEAT KEY EMPTY; fi' 2>&1 || true)
+  case "$SEATOUT" in
+    *"SEAT KEY PRESENT"*) SEAT_REPORT="seat=$SEAT key=$KEY present" ;;
+    *"SEAT KEY EMPTY"*)
+      echo "DISPATCH FAIL the seat $SEAT opened and carries no $KEY; a card dealt here would find no key"
+      exit 1 ;;
+    *"not in"*)
+      # The seat OPENED -- this machine's own key unsealed its own file, which is what the
+      # dispatch path needs -- and the key NAME this card asked for is not one it carries.
+      # That is a fact about the fleet's naming, not a fault of the bench, so it is a note
+      # and not a refusal: name the right one with NOVA_SEAT_KEY.
+      echo "DISPATCH SEAT-KEY-UNKNOWN the seat $SEAT opened and carries no $KEY: name the key with NOVA_SEAT_KEY -- $(printf '%s' "$SEATOUT" | tr '\n' ' ' | cut -c1-160)"
+      exit 0 ;;
+    *)
+      echo "DISPATCH FAIL the seat $SEAT could not be opened: $(printf '%s' "$SEATOUT" | tr '\n' ' ' | cut -c1-200)"
+      exit 1 ;;
+  esac
+fi
+echo "DISPATCH OK card ran under the wall $SANDBOX $RC $CONFIG, $SEAT_REPORT"

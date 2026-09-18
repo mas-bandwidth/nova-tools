@@ -1,0 +1,50 @@
+roles: services
+expect: ^DISPATCH OK
+warn: ^DISPATCH AUTH-REQUIRED
+where: machine
+
+# THE SERVICES ROLE'S OWN DISPATCH PATH (Stella, 2026-09-18): a round trip through the
+# service, not a ping. `redis-ping` proves redis answers; this proves a VALUE written by this
+# machine comes back the way it was written and can then be taken away again -- which is what
+# every queue, lease and cursor in the loop actually does with it.
+#
+# The key is NAMESPACED and temporary: `certify:<machine>:<pid>`. It never touches a key any
+# other part of the system owns, and it is deleted on the way out, including when the round
+# trip fails.
+set -eu
+CLI=$(command -v redis-cli 2>/dev/null || true)
+if [ -z "$CLI" ]; then
+  echo "DISPATCH FAIL no redis-cli on the services host"
+  exit 1
+fi
+ADDR="${NOVA_SELF_ADDR:-localhost}"
+PORT="${NOVA_REDIS_PORT:-6379}"
+KEY="certify:${NOVA_MACHINE:-services}:$$"
+VALUE="dispatch-$$"
+cleanup() {
+  "$CLI" -h "$ADDR" -p "$PORT" del "$KEY" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+SET=$("$CLI" -h "$ADDR" -p "$PORT" set "$KEY" "$VALUE" 2>&1 || true)
+case "$SET" in
+  *OK*) ;;
+  *NOAUTH*|*DENIED*|*"protected mode"*|*WRONGPASS*)
+    # The service ANSWERED and wants the password: right address, right port, and a gate that
+    # lands through nova-secrets on somebody else's schedule.
+    echo "DISPATCH AUTH-REQUIRED redis $ADDR:$PORT answered and wants the password -- $SET"
+    exit 0 ;;
+  *)
+    echo "DISPATCH FAIL redis $ADDR:$PORT could not take a write to $KEY -- $SET"
+    exit 1 ;;
+esac
+GOT=$("$CLI" -h "$ADDR" -p "$PORT" get "$KEY" 2>&1 || true)
+if [ "$GOT" != "$VALUE" ]; then
+  echo "DISPATCH FAIL redis $ADDR:$PORT gave back '$GOT' for $KEY, wrote '$VALUE'"
+  exit 1
+fi
+DEL=$("$CLI" -h "$ADDR" -p "$PORT" del "$KEY" 2>&1 || true)
+if [ "$DEL" != "1" ]; then
+  echo "DISPATCH FAIL redis $ADDR:$PORT would not delete $KEY -- $DEL"
+  exit 1
+fi
+echo "DISPATCH OK redis $ADDR:$PORT set/get/del of $KEY round tripped"

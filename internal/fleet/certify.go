@@ -1535,6 +1535,11 @@ func certifyScript(in CertifyInput, reg *Registry, m Machine, w Workload) string
 	// purpose. The registry is the file that already knows where every machine is.
 	fmt.Fprintf(&b, "NOVA_SELF_ADDR=%q\nNOVA_SERVICES_ADDR=%q\nNOVA_SERVICES_HOST=%q\nexport NOVA_SELF_ADDR NOVA_SERVICES_ADDR NOVA_SERVICES_HOST\n",
 		MachineAddress(m), ServicesAddress(reg), ServicesName(reg))
+	// The machine's own name and its SEAT, from the registry row. The seat is a NAME, never
+	// a key: `role-dispatch-bench` opens it through `nova-secrets exec --only <KEY>` and the
+	// value reaches a child process and nothing else -- not this output, not the
+	// certificate, not the log.
+	fmt.Fprintf(&b, "NOVA_MACHINE=%q\nNOVA_SEAT=%q\nexport NOVA_MACHINE NOVA_SEAT\n", m.Name, m.Seat)
 	if !w.Wall {
 		b.WriteString("export NOVA_HOME\n")
 		b.WriteString(w.Body)

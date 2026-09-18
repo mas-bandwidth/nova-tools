@@ -1,0 +1,38 @@
+roles: coordination
+expect: ^DISPATCH OK
+where: coordinator
+
+# THE COORDINATION ROLE'S OWN DISPATCH PATH (Stella, 2026-09-18): the two interfaces a
+# window actually drives -- the merge queue and the forge -- exercised for real and bounded.
+#
+# It runs where the COORDINATOR is, because that is the machine that carries this role and
+# the one that has `gh`; and it uses a SCRATCH LANE of its own, made for the run and taken
+# away after it, so reading the queue's state can never disturb a real lane.
+set -eu
+MERGE=$(command -v nova-merge 2>/dev/null || true)
+if [ -z "$MERGE" ]; then
+  echo "DISPATCH FAIL no nova-merge on the coordination host"
+  exit 1
+fi
+JOB="$NOVA_HOME/working/tmp/nova-certify-dispatch-$$"
+trap 'rm -rf "$JOB"' EXIT INT TERM
+mkdir -p "$JOB/lane"
+QUEUE=$("$MERGE" queue --lane "$JOB/lane" status 2>&1 || true)
+case "$QUEUE" in
+  *QUEUE*) ;;
+  *)
+    echo "DISPATCH FAIL nova-merge queue status on a scratch lane said: $(printf '%s' "$QUEUE" | tr '\n' ' ' | cut -c1-300)"
+    exit 1 ;;
+esac
+GH=$(command -v gh 2>/dev/null || true)
+if [ -z "$GH" ]; then
+  echo "DISPATCH FAIL no gh on the coordination host: the forge reads every guard leans on live here"
+  exit 1
+fi
+REPO="${NOVA_REPO:-mas-bandwidth/nova-tools}"
+FORGE=$("$GH" api "repos/$REPO" --jq .full_name 2>&1 || true)
+if [ "$FORGE" != "$REPO" ]; then
+  echo "DISPATCH FAIL the forge read of $REPO answered: $(printf '%s' "$FORGE" | tr '\n' ' ' | cut -c1-200)"
+  exit 1
+fi
+echo "DISPATCH OK queue status on a scratch lane and one forge read of $REPO"

@@ -201,12 +201,28 @@ func TestTheForgeWorkloadsRunFromTheCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, w := range loads {
-		switch {
-		case w.Forge != "" && w.Where != WhereCoordinator:
+		if w.Forge != "" && w.Where != WhereCoordinator {
 			t.Errorf("%s asks the forge and is marked where=%s; gh runs where the coordinator is", w.Class, w.Where)
-		case w.Forge == "" && w.Where != WhereMachine:
-			t.Errorf("%s runs on the machine and is marked where=%s", w.Class, w.Where)
 		}
+		if w.Where != WhereMachine && w.Where != WhereCoordinator {
+			t.Errorf("%s is marked where=%s", w.Class, w.Where)
+		}
+	}
+	// Every workload that certifies what a MACHINE can do runs on that machine. The
+	// coordination role is the exception and says so by name: its dispatch path is the merge
+	// queue and the forge, which are this window's own interfaces.
+	byClass := map[string]Workload{}
+	for _, w := range loads {
+		byClass[w.Class] = w
+	}
+	for _, class := range []string{"go-test", "sbcl", "git-push", "services-reach", "role-dispatch-bench", "role-dispatch-services"} {
+		if byClass[class].Where != WhereMachine {
+			t.Errorf("%s is marked where=%s; it certifies what the machine can do", class, byClass[class].Where)
+		}
+	}
+	if byClass["role-dispatch-coordination"].Where != WhereCoordinator {
+		t.Errorf("role-dispatch-coordination is marked where=%s; the queue and the forge are driven from the window",
+			byClass["role-dispatch-coordination"].Where)
 	}
 }
 
@@ -640,5 +656,126 @@ func TestRedisAnsweringNOAUTHIsAWarnAndNeverAFailure(t *testing.T) {
 	}
 	if !Certified(mustRead(t, certs), "space", "services-reach", "v0.17.0", "h") {
 		t.Error("a WARN withheld the certificate; a WARN is a pass with a note")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// the role's own dispatch path (Stella, stella-b3c81a713a20)
+// ---------------------------------------------------------------------------
+
+// TestEachRoleCertifiesItsOwnDispatchPath: every other class proves a PIECE -- a toolchain
+// exists, the wall can be built, a name resolves -- and the card that died on hulk died on
+// the PATH with every piece passing. One class per role drives the path that role's work
+// actually takes.
+func TestEachRoleCertifiesItsOwnDispatchPath(t *testing.T) {
+	loads, err := StandardWorkloads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byClass := map[string]Workload{}
+	for _, w := range loads {
+		byClass[w.Class] = w
+	}
+	for role, class := range map[string]string{
+		RoleBench:        "role-dispatch-bench",
+		RoleServices:     "role-dispatch-services",
+		RoleCoordination: "role-dispatch-coordination",
+	} {
+		w, ok := byClass[class]
+		if !ok {
+			t.Errorf("no %s workload ships", class)
+			continue
+		}
+		if !w.AppliesTo(role) {
+			t.Errorf("%s does not apply to %s (roles=%v)", class, role, w.Roles)
+		}
+		if w.Wall {
+			t.Errorf("%s asks the engine for a wall; the dispatch path makes its OWN containment, and wrapping it certifies this wall instead", class)
+		}
+	}
+	// The bench one drives nova-swarm native and opens the seat BY NAME. The key's value
+	// reaches a child process and nothing else.
+	bench := byClass["role-dispatch-bench"].Body
+	for _, want := range []string{"nova-swarm", "native", "--slot", "--root", "nova-secrets", "--only"} {
+		if !strings.Contains(bench, want) {
+			t.Errorf("the bench dispatch does not drive %s:\n%s", want, bench)
+		}
+	}
+	if strings.Contains(bench, "echo \"$KEY\"") || strings.Contains(bench, "printf '%s' \"$KEY\"") {
+		t.Errorf("the bench dispatch prints a key:\n%s", bench)
+	}
+	// The services one is a ROUND TRIP under a namespaced key, and it takes the key away.
+	services := byClass["role-dispatch-services"].Body
+	for _, want := range []string{"set ", "get ", "del ", "certify:"} {
+		if !strings.Contains(services, want) {
+			t.Errorf("the services dispatch does not %q:\n%s", want, services)
+		}
+	}
+	// The coordination one drives the queue on a SCRATCH lane and reads the forge.
+	coord := byClass["role-dispatch-coordination"].Body
+	for _, want := range []string{"nova-merge", "queue", "--lane", "gh", "api"} {
+		if !strings.Contains(coord, want) {
+			t.Errorf("the coordination dispatch does not drive %s:\n%s", want, coord)
+		}
+	}
+	if !strings.Contains(coord, "rm -rf \"$JOB\"") {
+		t.Errorf("the coordination dispatch does not take its scratch lane away:\n%s", coord)
+	}
+}
+
+// TestTheDispatchScriptCarriesTheSeatAndTheMachineFromTheRegistry: the seat is a NAME handed
+// down from the registry row, never a key, and the machine's own name namespaces the
+// services round trip.
+func TestTheDispatchScriptCarriesTheSeatAndTheMachineFromTheRegistry(t *testing.T) {
+	remote := &fakeRemote{answers: benchOK()}
+	runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: writeFile(t, "certs.tsv", ""),
+		Remote: remote, Hash: "h", Now: fixedNow,
+	})
+	script := ""
+	for _, s := range remote.scripts() {
+		if scriptKey(s) == "role-dispatch-bench" {
+			script = s
+		}
+	}
+	if script == "" {
+		t.Fatal("the bench dispatch never ran")
+	}
+	// space's row in testRegistry carries the seat `rowan`.
+	if !strings.Contains(script, `NOVA_SEAT="rowan"`) {
+		t.Errorf("the script carries no seat from the registry:\n%s", script)
+	}
+	if !strings.Contains(script, `NOVA_MACHINE="space"`) {
+		t.Errorf("the script carries no machine name:\n%s", script)
+	}
+	if strings.Contains(script, "nova-sandbox") {
+		t.Errorf("the engine wrapped the dispatch in its own wall; nova-swarm native makes the wall a card gets:\n%s", script)
+	}
+}
+
+// TestADispatchFailureIsAFailureOfTheMachineAndIsRepairedByNobody: it is a FAIL, it is not a
+// standard item, and so it escalates to a person rather than being "repaired".
+func TestADispatchFailureIsAFailureOfTheMachineAndIsRepairedByNobody(t *testing.T) {
+	answers := benchOK()
+	failing(answers, "space", "role-dispatch-bench", "DISPATCH FAIL no nova-swarm on this bench")
+	fixer := &fakeFixer{}
+	bus := &fakeBus{}
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: writeFile(t, "certs.tsv", ""),
+		Remote: &fakeRemote{answers: answers}, Hash: "h", Now: fixedNow,
+		Fix: true, Fixer: fixer, Bus: bus, Lane: "fleet",
+	})
+	all := out + errs
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, all)
+	}
+	if len(ItemsForClass("role-dispatch-bench")) != 0 {
+		t.Error("the dispatch class maps to a standard item; no line of ~/.bashrc makes a bench able to dispatch")
+	}
+	if len(fixer.calls) != 0 {
+		t.Errorf("a dispatch failure was 'repaired': %v", fixer.calls)
+	}
+	if !strings.Contains(all, "CERTIFY ESCALATE machine=space classes=role-dispatch-bench") {
+		t.Errorf("a dispatch failure did not escalate:\n%s", all)
 	}
 }

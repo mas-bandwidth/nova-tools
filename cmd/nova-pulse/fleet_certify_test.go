@@ -105,17 +105,18 @@ func certifyFiles(t *testing.T) (machines, certs, standard string) {
 // spaceAnswers is a bench that passes everything.
 func spaceAnswers() map[string]string {
 	return map[string]string{
-		"space|build":          "nova-merge v0.17.0 linux/amd64\n",
-		"space|go-test":        "GO OK go version go1.26.5 linux/amd64 ok 0.4s\n",
-		"space|c-build":        "C OK cc 15.2.0\n",
-		"space|cpp-build":      "CPP OK c++ 15.2.0\n",
-		"space|sbcl":           "SBCL OK SBCL 2.6.0.debian\n",
-		"space|git-push":       "GIT PUSH OK head=deadbeef git=git version 2.43.0\n",
-		"space|path-resolves":  "PATH OK /home/ubuntu/.local/bin/nova-merge v0.17.0\n",
-		"space|go-on-path":     "GO PATH OK /home/ubuntu/go/bin/go go version go1.26.5 linux/amd64\n",
-		"space|git-identity":   "GIT IDENTITY OK Rowan Claude <rowan@mas-bandwidth.com>\n",
-		"space|wall-toolchain": "WALL TOOLCHAIN OK go version go1.26.5 linux/amd64\n",
-		"space|services-reach": "SERVICES OK name=space addr=100.115.99.19 redis=PONG loki=ready\n",
+		"space|build":               "nova-merge v0.17.0 linux/amd64\n",
+		"space|go-test":             "GO OK go version go1.26.5 linux/amd64 ok 0.4s\n",
+		"space|c-build":             "C OK cc 15.2.0\n",
+		"space|cpp-build":           "CPP OK c++ 15.2.0\n",
+		"space|sbcl":                "SBCL OK SBCL 2.6.0.debian\n",
+		"space|git-push":            "GIT PUSH OK head=deadbeef git=git version 2.43.0\n",
+		"space|path-resolves":       "PATH OK /home/ubuntu/.local/bin/nova-merge v0.17.0\n",
+		"space|go-on-path":          "GO PATH OK /home/ubuntu/go/bin/go go version go1.26.5 linux/amd64\n",
+		"space|git-identity":        "GIT IDENTITY OK Rowan Claude <rowan@mas-bandwidth.com>\n",
+		"space|wall-toolchain":      "WALL TOOLCHAIN OK go version go1.26.5 linux/amd64\n",
+		"space|services-reach":      "SERVICES OK name=space addr=100.115.99.19 redis=PONG loki=ready\n",
+		"space|role-dispatch-bench": "DISPATCH OK card ran under the wall, seat=rowan key=ANTHROPIC_API_KEY present\n",
 	}
 }
 
@@ -143,8 +144,20 @@ func TestCertifyVerbWiresTheSeamsAndWritesTheRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 11 {
-		t.Fatalf("wrote %d rows, want 11 (the bench classes)", len(rows))
+	// One row per bench class. The count is read from the shipped set rather than typed
+	// here, so a class added to the fleet is not a red test in the verb's wiring.
+	loads, err := fleet.StandardWorkloads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for _, w := range loads {
+		if w.AppliesTo(fleet.RoleBench) {
+			want++
+		}
+	}
+	if len(rows) != want {
+		t.Fatalf("wrote %d rows, want %d (the bench classes)", len(rows), want)
 	}
 	// The standard hash is computed here, from the standard file and the workloads, and it
 	// is the same on every row of one run.
@@ -172,7 +185,7 @@ func TestIfStaleSkipsAMachineWhoseEveryClassIsCurrent(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second run exit = %d\n%s%s", code, out, errs)
 	}
-	if !strings.Contains(out, "CERTIFY space CURRENT classes=11 build=v0.17.0") {
+	if !strings.Contains(out, "CERTIFY space CURRENT classes=12 build=v0.17.0") {
 		t.Fatalf("the current machine was not skipped:\n%s", out)
 	}
 	if !strings.Contains(out, "skipped=1") {
@@ -232,7 +245,7 @@ func TestStatusReadsTheRecordAndReachesNoMachine(t *testing.T) {
 	if !strings.Contains(errs, "CERTIFY STATUS batman runner-online NONE") {
 		t.Errorf("a class nobody ran is not reported as NONE:\n%s", errs)
 	}
-	if !strings.Contains(errs, "CERTIFY STATUS FAIL current=11 stale=") {
+	if !strings.Contains(errs, "CERTIFY STATUS FAIL current=12 stale=") {
 		t.Errorf("no closing status line:\n%s", errs)
 	}
 }
@@ -267,8 +280,12 @@ func TestTheLogFileCarriesOneStructuredEventPerCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 11 {
-		t.Fatalf("the stream holds %d events for 11 certificates", len(lines))
+	rows, err := fleet.ReadCertificates(certs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != len(rows) {
+		t.Fatalf("the stream holds %d events for %d certificates", len(lines), len(rows))
 	}
 	for _, want := range []string{
 		`"source":"nova-pulse"`, `"verb":"certify"`, `"event":"certify"`, `"bench":"space"`,
