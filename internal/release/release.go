@@ -68,8 +68,9 @@ type PR struct {
 	Members []int
 }
 
-// Forge is the edge between this tool and GitHub. Five questions, one gh
-// invocation each, and every one of them is a read except Tag.
+// Forge is the edge between this tool and GitHub. Seven questions, one gh
+// invocation each -- Tag is two, for the reason it gives -- and every one of
+// them is a read except Tag.
 type Forge interface {
 	// HeadSHA resolves a branch to the commit it points at.
 	HeadSHA(ctx context.Context, repo, branch string) (string, error)
@@ -79,9 +80,22 @@ type Forge interface {
 	Tags(ctx context.Context, repo string) ([]string, error)
 	// Compare lists the commits in base..head, oldest first.
 	Compare(ctx context.Context, repo, base, head string) ([]Commit, error)
-	// Tag creates an annotated-by-reference tag at sha. It is the one
-	// mutation on this interface and the only one `cut` performs.
-	Tag(ctx context.Context, repo, tag, sha string) error
+	// Files lists the paths base..head touched. It is a separate question
+	// from Compare because it is asked for a separate reason -- the
+	// classification `cut` makes against SensitivePaths -- and because its
+	// answer carries a ceiling of its own (CompareFileCap) that the commit
+	// list does not.
+	Files(ctx context.Context, repo, base, head string) ([]string, error)
+	// Tag creates an ANNOTATED tag at sha: a tag OBJECT carrying message,
+	// then the ref pointing at that object. It is the one mutation on this
+	// interface and the only one `cut` performs.
+	Tag(ctx context.Context, repo, tag, sha, message string) error
+	// TagMessage reads an existing annotated tag's message back. It is how
+	// `adopt` learns the digest a release was cut with without anybody
+	// retyping it: a tag object is a git object, so its message reached the
+	// adopting host through the repository rather than through the machine
+	// whose bits are being checked against it.
+	TagMessage(ctx context.Context, repo, tag string) (string, error)
 }
 
 // SSH is the edge to another machine: run a command there, or put a directory

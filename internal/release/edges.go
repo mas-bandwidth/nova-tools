@@ -178,13 +178,92 @@ func (g *GH) Compare(ctx context.Context, repo, base, head string) ([]Commit, er
 	return commits, nil
 }
 
-// Tag creates the tag ref. It is a create, never a force-move: a tag that can be
-// moved is a tag whose binaries and whose source can disagree, which is the one
-// state release.yml spends thirty lines refusing.
-func (g *GH) Tag(ctx context.Context, repo, tag, sha string) error {
-	_, err := g.api(ctx, "api", "--method", "POST", "repos/"+repo+"/git/refs",
-		"-f", "ref=refs/tags/"+tag, "-f", "sha="+sha)
+// Files lists the paths a compare range touched. One call, and the names are
+// deduplicated here because a paginated compare repeats the diff's file list on
+// each page it answers with.
+//
+// THE ANSWER IS BOUNDED BY THE FORGE at CompareFileCap files, which is why the
+// caller checks for a list at exactly that number rather than trusting a short
+// one; see CompareFileCap for what that means for the classification.
+func (g *GH) Files(ctx context.Context, repo, base, head string) ([]string, error) {
+	out, err := g.api(ctx, "api", "--paginate", "repos/"+repo+"/compare/"+base+"..."+head,
+		"--jq", ".files[]?.filename")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		files = append(files, line)
+	}
+	return files, nil
+}
+
+// tagObjectArgs and tagRefArgs are the two calls an annotated tag is, kept apart
+// from the exec so a test can read the exact arguments the forge would be handed
+// without a subprocess -- the same reason apiError is its own function.
+//
+// THE OBJECT FIRST, THEN THE REF. This verb used to POST `git/refs` alone, which
+// creates a LIGHTWEIGHT tag: a name pointing straight at the commit and carrying
+// nothing. Johnny's decision 2 on SPEC-RELEASE (#1337) is that the tag carries
+// the digest of the release's SHA256SUMS, so there has to be something to carry
+// it IN -- a tag object -- and the ref has to point at THAT, not at the commit,
+// or the annotation is orphaned and the tag still reads lightweight to everything
+// that looks at it.
+func tagObjectArgs(repo, tag, sha, message string) []string {
+	return []string{"api", "--method", "POST", "repos/" + repo + "/git/tags",
+		"-f", "tag=" + tag, "-f", "message=" + message, "-f", "object=" + sha, "-f", "type=commit",
+		"--jq", ".sha"}
+}
+
+func tagRefArgs(repo, tag, object string) []string {
+	return []string{"api", "--method", "POST", "repos/" + repo + "/git/refs",
+		"-f", "ref=refs/tags/" + tag, "-f", "sha=" + object}
+}
+
+// Tag creates the annotated tag. It is a create, never a force-move: a tag that
+// can be moved is a tag whose binaries and whose source can disagree, which is
+// the one state release.yml spends thirty lines refusing.
+func (g *GH) Tag(ctx context.Context, repo, tag, sha, message string) error {
+	out, err := g.api(ctx, tagObjectArgs(repo, tag, sha, message)...)
+	if err != nil {
+		return err
+	}
+	object := strings.TrimSpace(out)
+	if object == "" {
+		return refuse("create the tag by hand and read what the forge answered",
+			"the forge created no tag object for %s: it answered no sha", tag)
+	}
+	_, err = g.api(ctx, tagRefArgs(repo, tag, object)...)
 	return err
+}
+
+// TagMessage reads an annotated tag's message. Two reads: the ref, to learn what
+// it points at, and then the object. A ref pointing at a COMMIT is a lightweight
+// tag -- every tag this tool made before decision 2 -- and it is refused by name
+// rather than answered with an empty message, because "this tag carries no
+// annotation" and "this annotation carries no digest" are two different facts
+// with two different remedies.
+func (g *GH) TagMessage(ctx context.Context, repo, tag string) (string, error) {
+	out, err := g.api(ctx, "api", "repos/"+repo+"/git/ref/tags/"+tag,
+		"--jq", ".object.type + \" \" + .object.sha")
+	if err != nil {
+		return "", err
+	}
+	kind, object, _ := strings.Cut(strings.TrimSpace(out), " ")
+	if kind != "tag" {
+		return "", refuse("pass --expect-sums <sha256> instead, from the CHANGELOG entry the cut wrote",
+			"%s in %s is a lightweight tag: it points straight at a %s and carries no annotation", tag, repo, field(kind))
+	}
+	message, err := g.api(ctx, "api", "repos/"+repo+"/git/tags/"+strings.TrimSpace(object), "--jq", ".message")
+	if err != nil {
+		return "", err
+	}
+	return message, nil
 }
 
 // GoBuild is the production toolchain. CGO is off so the artifact runs on a

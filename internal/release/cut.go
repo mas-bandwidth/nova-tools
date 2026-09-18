@@ -185,6 +185,83 @@ func plural(n int, noun string) string {
 // into `adopt --expect-sums` are the same string.
 const SumsDigestPrefix = "SHA256SUMS digest: "
 
+// AnnotationSumsPrefix is how the TAG names the same digest, and it is written
+// on a line of its own so that reading it back is an anchored match rather than
+// a search through prose.
+const AnnotationSumsPrefix = "sums="
+
+// annotationSums reads the digest line and only the digest line. A sha
+// mentioned inside a release note is not the digest this release was cut with,
+// and a reader that took the first 64 hex characters it found would sometimes
+// be right, which is the worst way for a check like this to be wrong.
+var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a-f]{64})$`)
+
+// Annotation is the message the TAG OBJECT carries, composed in one place
+// because it is written by `cut` and read by `adopt` and the two have to agree
+// about where the digest is (Johnny's decision 2, #1337). A tag is the one
+// thing in this repository that cannot be quietly amended, so what it says
+// about a release is the most durable record the release has.
+func Annotation(version, sha, sumsDigest string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\nCut from %s.\n", version, sha)
+	if sumsDigest != "" {
+		fmt.Fprintf(&b, "%s%s\n", AnnotationSumsPrefix, sumsDigest)
+	}
+	return b.String()
+}
+
+// SumsInAnnotation reads the digest back out of a tag's message, or "" when
+// the tag carries none -- which is what a release cut before decision 2, or one
+// cut without --sums, looks like from here.
+func SumsInAnnotation(message string) string {
+	m := annotationSums.FindStringSubmatch(message)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// classify is the gate Johnny's decision 1 puts in front of the tag: which of
+// the paths this range touched are on SensitivePaths, and may this cut proceed.
+// It is its own function, and pure apart from the writer, because the decision
+// is the thing worth reading -- the cut around it is bookkeeping.
+//
+// The ORDER matters. A range with hits is named by its hits; a range too big to
+// classify is named by the ceiling. Both are got past the same way, and neither
+// is got past by trying again.
+func classify(files []string, securityRead string, out, errs io.Writer) error {
+	hits := Sensitive(files)
+	atCeiling := len(files) >= CompareFileCap
+	if securityRead != "" {
+		if err := ValidSecurityRead(securityRead); err != nil {
+			return err
+		}
+	}
+	if !atCeiling && len(hits) == 0 {
+		// The line exists to mark the exception. Printed every time, it is a
+		// line nobody reads, and then it is not a mark at all.
+		return nil
+	}
+	if securityRead == "" {
+		if len(hits) > 0 {
+			return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
+				"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
+		}
+		return refuse("get Johnny's read and name it with --security-read, or cut from a nearer tag so the list fits",
+			"the forge named %d files for this range, which is its ceiling of %d: a list that may be short cannot be classified against the sensitive paths",
+			len(files), CompareFileCap)
+	}
+	if atCeiling {
+		progress(errs, "the file list is at the forge's ceiling of %d, so the count below is of what could be seen", CompareFileCap)
+	}
+	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
+	// that crossed the sensitive list is a fact somebody reads off the
+	// terminal today and out of a log in six months, and `read=` is how they
+	// find what was actually said.
+	fmt.Fprintf(out, "RELEASE CUT SENSITIVE paths=%d read=%s\n", len(hits), field(securityRead))
+	return nil
+}
+
 // prependSection puts the new section above every other section and below the
 // file's title, and creates the file with a title when there is none. The new
 // section goes at the TOP because the question a changelog is opened with is
@@ -252,6 +329,21 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	prs := PullRequests(commits)
+	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
+	// tag exists (Johnny's decision 1, #1337). Asked BEFORE --dry-run branches
+	// and before anything is written: a dry run exists to find out what would
+	// happen, and what would happen is this refusal.
+	var files []string
+	if previous != "" {
+		progress(errs, "reading which paths %s..%s touched", previous, sha)
+		files, err = forge.Files(ctx, o.repo, previous, sha)
+		if err != nil {
+			return refusal(errs, "CUT", fmt.Errorf("cannot read the files in %s...%s: %w (ask again when the forge answers)", previous, sha, err))
+		}
+	}
+	if err := classify(files, o.securityRead, out, errs); err != nil {
+		return refusal(errs, "CUT", err)
+	}
 	// --sums names a SHA256SUMS this release's build already wrote; its digest
 	// is recorded in the section so that an adopt on another host can check a
 	// fetched release against something that did not travel with the bits.
@@ -271,8 +363,8 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err := prependSection(o.changelog, section); err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot write %s: %w (name a writable --changelog)", o.changelog, err))
 	}
-	progress(errs, "tagging %s at %s", o.version, sha)
-	if err := forge.Tag(ctx, o.repo, o.version, sha); err != nil {
+	progress(errs, "tagging %s at %s, annotated with the digest adopt will check", o.version, sha)
+	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest)); err != nil {
 		// The changelog is already written; say so, because the remedy is to
 		// tag by hand or to cut again, not to wonder which half happened.
 		fmt.Fprintf(errs, "CUT FAIL version=%s sha=%s: %s (the changelog section is written at %s; create the tag by hand or delete the section and cut again)\n",
