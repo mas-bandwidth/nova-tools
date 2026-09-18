@@ -78,10 +78,29 @@ var batchGate = []batchStep{
 	// file that does not compile for windows, a syscall that is not there, a constant
 	// that is unix-only. It does not catch a windows-only TEST failure, which is what
 	// the forge's own windows leg is for; the gate says what it checked and no more.
-	{name: "vet-windows", command: "go vet ./...", needs: "go", env: []string{"GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}},
+	{name: crossVetStep, command: "go vet ./...", needs: "go", env: []string{"GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}},
 	{name: "test", command: strings.Join(ciTestArgs(), " "), needs: "go", stream: true},
 	{name: "lisp", command: "sh tools/ci/lisp-test.sh", needs: "sbcl", file: "tools/ci/lisp-test.sh"},
 }
+
+// crossVetStep is the cross vet's name, and it is a constant because it is THE ONE STEP A
+// UNIT TEST MUST NOT RUN.
+//
+// Its cost is not its own compile: `GOOS=windows go vet ./...` has to build the WINDOWS
+// STANDARD LIBRARY into the build cache before it can type-check anything, which is ~5 s
+// on an idle 64-core bench with a cold cache and far more on a shared darwin runner --
+// eight of them run on one of those machines. Paid inside `go test`, that is wall clock
+// taken from the package's own -timeout, and the package's serial tests are what the
+// parallel ones are waiting behind: on 2026-09-18 it turned the merge group's
+// `test-hosted-merge (darwin, 1)` leg into `panic: test timed out after 1m40s` with ten
+// parallel tests reported at 14 s each -- not one of them slow, all of them starved,
+// every one blocked in Cmd.Wait on a git child that could not get the machine.
+//
+// So the step is in the product's gate, where it is paid once per bench and cached, and
+// the tests run Deps.BatchGate instead, which is this list without it.
+// TestTheGateCrossVetsForWindows pins the step in the real list, and pins that the tests'
+// list differs from it by this one name and no other.
+const crossVetStep = "vet-windows"
 
 // sdkDir is where this fleet's hand-installed toolchains live, under the home directory:
 // `sdk/go1.26.5/bin/go`, `sdk/sbcl-2.5.8-x86-64-linux/bin/sbcl`. A bench that HAS the
@@ -240,6 +259,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 	return runBatch(batchRun{
+		steps:        deps.BatchGate,
 		name:         *name,
 		base:         *base,
 		root:         *root,
@@ -257,6 +277,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 // batchRun is one batch's whole invocation, checked, so the run below reads as the steps
 // it performs rather than as a second pass over the flags.
 type batchRun struct {
+	// steps is the suite this run performs. Nil is batchGate, which is what every
+	// invocation of the binary uses; a caller injects a shorter one only through
+	// Deps.BatchGate, and only the tests do.
+	steps        []batchStep
 	name         string
 	base         string
 	root         string
@@ -354,7 +378,11 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		bin  string
 	}
 	var plan []ready
-	for _, step := range batchGate {
+	gate := in.steps
+	if gate == nil {
+		gate = batchGate
+	}
+	for _, step := range gate {
 		why, bin := stepUnavailable(step, clone)
 		if why == "" {
 			plan = append(plan, ready{step: step, bin: bin})

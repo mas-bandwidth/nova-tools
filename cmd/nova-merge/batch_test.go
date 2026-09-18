@@ -75,6 +75,7 @@ func remoteRefs(l *lab) string {
 // test turns the batch red: one line naming the step, the failing package and the
 // failing test, exit 1, and nothing pushed.
 func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	root := filepath.Join(l.dir, "batch")
 	before := len(l.pushes())
@@ -116,6 +117,7 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 // THE GREEN RUN, and the exact shape of the line a caller parses. #2 still conflicts and
 // is still dropped, out loud, and the head named is the branch the caller then pushes.
 func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	root := filepath.Join(l.dir, "batch")
 	before := len(l.pushes())
@@ -141,17 +143,74 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	// and EDGE 2 is that the skip is on the VERDICT line too, which the shape above
 	// pins: `skipped=lisp`.
 	contains(t, stderr, "BATCH SKIP lisp ")
-	// EDGE 25: the cross vet ran, so a member that does not compile for windows is
-	// caught here rather than on CI after the batch pull request is open.
-	contains(t, stderr, "BATCH STEP vet-windows ")
+	// EDGE 25's cross vet is NOT run here: its cost is a build of the windows standard
+	// library, which inside `go test` comes out of this package's own -timeout (see
+	// labBatchGate). That the product's gate carries it, after vet and with GOOS=windows,
+	// is TestTheGateCrossVetsForWindows below -- which is a read of the list and starts no
+	// subprocess at all.
+	absent(t, stderr, "BATCH STEP "+crossVetStep+" ")
 	if got := len(l.pushes()); got != before {
 		t.Errorf("the remote received %d new pushes; the batch pushes nothing", got-before)
 	}
 	absent(t, remoteRefs(l), "rowan/integration-2")
 }
 
+// THE STEP THE TESTS DO NOT RUN IS STILL THE STEP THE GATE RUNS, and this is what says so.
+//
+// It reads the two lists rather than starting anything: the product's gate must carry the
+// cross vet, immediately after `vet`, under GOOS=windows; and the list the tests run must
+// differ from it by THAT ONE NAME AND NO OTHER, so a second step can never be quietly
+// added to the exemption and go untested everywhere.
+func TestTheGateCrossVetsForWindows(t *testing.T) {
+	t.Parallel()
+	at := -1
+	for i, step := range batchGate {
+		if step.name == crossVetStep {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatalf("the gate no longer carries a %s step; the gate runs on one operating system and CI runs on three, and three members green here were red on CI's windows legs the day it did not", crossVetStep)
+	}
+	if at == 0 || batchGate[at-1].name != "vet" {
+		t.Errorf("%s does not follow vet in the gate; it is the same read on another platform and belongs beside it", crossVetStep)
+	}
+	var goos string
+	for _, kv := range batchGate[at].env {
+		if name, value, _ := strings.Cut(kv, "="); name == "GOOS" {
+			goos = value
+		}
+	}
+	if goos != "windows" {
+		t.Errorf("the %s step's GOOS is %q, want windows; a cross vet that does not cross checks the platform it already checked", crossVetStep, goos)
+	}
+
+	real, lab := map[string]bool{}, map[string]bool{}
+	for _, step := range batchGate {
+		real[step.name] = true
+	}
+	for _, step := range labBatchGate() {
+		lab[step.name] = true
+	}
+	var missing []string
+	for name := range real {
+		if !lab[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 1 || missing[0] != crossVetStep {
+		t.Errorf("the tests' gate omits %v; it may omit %s and nothing else, or a step goes untested on every bench and every runner", missing, crossVetStep)
+	}
+	for name := range lab {
+		if !real[name] {
+			t.Errorf("the tests' gate runs a step %q the real gate does not; a test of a suite nobody runs is not a test", name)
+		}
+	}
+}
+
 // The four flags nothing may guess, refused together in one go rather than one per run.
 func TestBatchRefusesTheFlagsItWillNotGuess(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	exit, stdout, stderr := l.run("batch")
 	if exit != 2 {
@@ -166,6 +225,7 @@ func TestBatchRefusesTheFlagsItWillNotGuess(t *testing.T) {
 // --name is the directory under --root and half the branch name, so it is ONE path
 // element and nothing that could climb out of the root the caller named.
 func TestBatchRefusesANameThatIsNotOnePathElement(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	for _, bad := range []string{"../escape", "a/b", "-x"} {
 		exit, stdout, stderr := l.run("batch", "--name", bad, "--pr", "1",
@@ -181,6 +241,7 @@ func TestBatchRefusesANameThatIsNotOnePathElement(t *testing.T) {
 // A --pr list holding something that is not a pull request number is refused before any
 // directory is removed or any clone is made.
 func TestBatchRefusesAPRListThatIsNotNumbers(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	exit, stdout, stderr := l.run("batch", "--name", "integration-3", "--pr", "1,two",
 		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"))

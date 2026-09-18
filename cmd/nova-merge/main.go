@@ -249,7 +249,13 @@ type Deps struct {
 	// Launcher starts one rebase card on a bench. The tests inject a fake.
 	Launcher merge.Launcher
 	Runner   merge.Runner
-	BuildID  func() string
+	// BatchGate is the suite `batch` runs, and a nil one -- which is what production()
+	// leaves it -- is the whole of batchGate. It is injected for ONE reason, written out
+	// at crossVetStep: the cross vet has to build the windows standard library before it
+	// can type-check anything, and a unit test that pays that inside `go test` spends the
+	// package's own -timeout on it and starves every parallel test behind it.
+	BatchGate []batchStep
+	BuildID   func() string
 	// Dial and Forge are the react verb's two edges: the pub/sub instance it subscribes
 	// to, and the forge it asks which PRs a base move made DIRTY. They are injected so a
 	// test drives a miniredis and a fake forge and reaches no network.

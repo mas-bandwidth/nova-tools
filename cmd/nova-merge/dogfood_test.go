@@ -30,6 +30,9 @@ import (
 // merge:queue`, and nothing in this tree reads `merge:queue`. THE PROOF IS THAT THE
 // ENTRY IS VISIBLE AFTERWARDS to the verb a person would look at it with.
 func TestReactEnqueuesIntoTheLanesQueueWhereQueueStatusCanSeeIt(t *testing.T) {
+	// Its lane, its bare repository, its fake host and its own miniredis are all this
+	// test's: nothing here is shared, so nothing here may hold another test up.
+	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", false)
 	if q := l.loadQueue(); !eqInts(q.Queued, []int{951}) {
@@ -58,6 +61,9 @@ func TestReactEnqueuesIntoTheLanesQueueWhereQueueStatusCanSeeIt(t *testing.T) {
 // held and the pull request in the lane's skip list, react still printed `REACT enqueue`,
 // and only `enqueue:hold` in redis stopped it. ONE HOLD, ONE SKIP SET.
 func TestReactObeysTheLanesOwnHoldAndSkipSet(t *testing.T) {
+	// Its lane, its bare repository, its fake host and its own miniredis are all this
+	// test's: nothing here is shared, so nothing here may hold another test up.
+	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", false)
 	if exit, _, errb := l.run("queue", "--lane", l.lane, "skip", "952"); exit != 0 {
@@ -303,6 +309,7 @@ func TestGoVersionsCompareNumerically(t *testing.T) {
 // EDGE 1, the refusal itself: a tree whose go.mod asks for a go this machine has not got
 // is ONE refusal with the remedy, before the first merge, and not a red build step.
 func TestBatchRefusesAToolchainThisMachineHasNot(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	// The fixture's base asks for a go nobody has. It is read out of the CLONE, so it
 	// is set at the remote and the batch finds it after the checkout.
@@ -330,6 +337,7 @@ func TestBatchRefusesAToolchainThisMachineHasNot(t *testing.T) {
 // over a suite that ran three of its four steps. --require-lisp is for the caller who
 // needs that step RUN.
 func TestBatchRequireLispFailsWhenTheStepCannotRun(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	exit, stdout, stderr := l.run("batch", "--name", "integration-lisp", "--pr", "1",
 		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev",
@@ -351,6 +359,7 @@ func TestBatchRequireLispFailsWhenTheStepCannotRun(t *testing.T) {
 // windows legs, and the batch pull request went red after the gate had said OK. A member
 // whose OWN head has no green ci-ok is dropped BEFORE the merge, by name.
 func TestBatchDropsAMemberWhoseOwnHeadIsNotGreen(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	// #1's own head is red on ci-ok; #3's has no ci-ok at all. Neither may be merged.
 	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "ci-ok", Conclusion: "failure", SHA: l.heads[1]})
@@ -372,6 +381,7 @@ func TestBatchDropsAMemberWhoseOwnHeadIsNotGreen(t *testing.T) {
 // EDGE 25, the override: --no-require-checks merges whatever the caller named and SAYS
 // SO on the verdict line, so a green batch never hides which admission it used.
 func TestBatchNoRequireChecksIsSaidOutLoud(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "ci-ok", Conclusion: "failure", SHA: l.heads[1]})
 
@@ -393,6 +403,7 @@ func TestBatchNoRequireChecksIsSaidOutLoud(t *testing.T) {
 // pull request whose CI is still running -- which is every batch pull request in the
 // minutes after it is opened -- could never be a member of the next batch.
 func TestBatchAdmitsAMemberTheGateItselfVouchedFor(t *testing.T) {
+	t.Parallel()
 	l := batchRepo(t)
 	// #1's own head is red on ci-ok, and it arrives on a batch's own branch.
 	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "ci-ok", Conclusion: "failure", SHA: l.heads[1]})
