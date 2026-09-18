@@ -143,42 +143,107 @@
 ;;; state-load-is-isolated (docs/SPEC-WORK.md:5896)
 ;;; ------------------------------------------------------------------
 
+(defvar *state-load-test-counter* 0)
+
+(defun test-state-load-dir (name)
+  "A fresh scratch parent for one state-load replay, so the three copies of this
+slice file (the loader list names it once per fold) never collide."
+  (let* ((base (uiop:default-temporary-directory))
+         (dir (merge-pathnames
+               (format nil "nova-work-state-load-~A-~D-~D/" name
+                       (get-universal-time) (incf *state-load-test-counter*))
+               base)))
+    (ensure-directories-exist dir)
+    (namestring dir)))
+
 (deftest "state-load-is-isolated" "docs/SPEC-WORK.md:5896"
     "expected=no-ownership-dispatch-replay-merge-resolver-network-or-repo-write;re-export-equal"
-  (let ((k (fresh)))
+  (let* ((base (test-state-load-dir "isolated"))
+         (k (fresh)))
     (ok (submit k (close-request :request "req-1")) "close refused")
     (let* ((source (kernel-state k))
-           (manifest (export-manifest source :id "exp-1"))
            (before-bytes (canonical-string (state-canonical-form source)))
            (before-rev (state-revision source))
            (before-hist (state-history source))
+           (export-dir (concatenate 'string base "export/"))
+           (snap-dir (concatenate 'string base "snap/"))
            (writes nil)
-           (snap nil))
+           (snap nil)
+           (line nil))
+      ;; A real export directory on disk is the load's `--from` input.
+      (multiple-value-bind (manifest manifest-hash member)
+          (write-state-export source export-dir :id "exp-1")
+        (declare (ignore manifest))
+        (ok (probe-file (merge-pathnames "MANIFEST.sexp" export-dir))
+            "the export wrote no MANIFEST.sexp")
+        (check-equal 64 (length manifest-hash) "the manifest hash is a SHA-256 hex")
+        (ok (probe-file member) "the export wrote no state member"))
+      ;; The load reads the directory and materialises one snapshot under
+      ;; `--into`, with every session-level effect left at zero.
       (with-isolation
-        (multiple-value-bind (loaded line)
-            (load-state manifest :into "snap" :max-bytes 1000000 :max-depth 10 :max-nodes 100)
-          (declare (ignore line))
-          (setf snap loaded))
+        (multiple-value-bind (loaded out)
+            (state-load :from export-dir :into snap-dir
+                        :max-bytes 1000000 :max-depth 10 :max-nodes 100)
+          (setf snap loaded line out))
         (setf writes (isolation-writes)))
-      (ok snap "the isolated load refused")
+      (ok snap "the isolated load refused: ~A" line)
+      (ok (search "LOAD OK" line) "the load line is not LOAD OK: ~A" line)
+      (ok (search (format nil "rev=~D" before-rev) line)
+          "the load line omits the captured revision: ~A" line)
+      (ok (search "manifest=" line) "the load line omits the manifest hash: ~A" line)
+      (ok (search (concatenate 'string (string-right-trim "/" snap-dir) "/snapshot.sexp") line)
+          "the load line omits the snapshot path: ~A" line)
+      (ok (search (concatenate 'string (string-right-trim "/" snap-dir) "/cache.sexp") line)
+          "the load line omits the cache path: ~A" line)
       (dolist (key '(:owners :dispatches :replays :merges :resolvers :network :repo-writes))
         (check-equal 0 (isolation-count key)
                      (format nil "~A happened during an isolated load" key)))
-      (check-equal '("snap") writes "the load wrote outside its declared exclusive path")
+      (check-equal (list snap-dir) writes
+                   "the load wrote outside its declared exclusive path")
       ;; No ownership change: the live source is untouched.
       (check-equal before-rev (state-revision source) "the load changed the source revision")
       (check-equal before-hist (state-history source) "the load changed the source history")
-      ;; The loaded snapshot answers `query --snapshot`.
-      (check-equal (state-open-count source) (snapshot-query snap)
-                   "the snapshot does not answer query --snapshot")
+      ;; One directory in the snapshot and cache schemas, and no daemon, socket,
+      ;; writable journal or OWNER.
+      (ok (probe-file (merge-pathnames "snapshot.sexp" snap-dir)) "no snapshot materialised")
+      (ok (probe-file (merge-pathnames "cache.sexp" snap-dir)) "no cache materialised")
+      (dolist (name '("OWNER" "journal" "owner"))
+        (ok (null (probe-file (merge-pathnames name snap-dir)))
+            "an isolated load created ~A" name))
+      ;; A fresh reader rebuilds the model from the stored bytes, and the loaded
+      ;; snapshot answers `query --snapshot`.
+      (let ((fresh (read-loaded-snapshot snap-dir)))
+        (check-equal (state-open-count source) (snapshot-query fresh)
+                     "the snapshot does not answer query --snapshot")
+        (check-string= before-bytes
+                       (canonical-string (state-canonical-form (snapshot-state fresh)))
+                       "the loaded snapshot re-exports differently"))
       ;; Refused as a `--session` by every mutation, replay, clip and handoff verb.
       (dolist (verb '(:state-to-done :state-to-doing :event-reopen :replay :clip :handoff))
         (check-equal nil (snapshot-accept-session-p snap verb)
                      (format nil "the snapshot was accepted as a --session for ~A" verb)))
-      ;; A re-export of the loaded snapshot compares equal in every field.
-      (check-string= before-bytes
-                     (canonical-string (state-canonical-form (snapshot-state snap)))
-                     "the loaded snapshot re-exports differently"))))
+      ;; No-replace: a second load into the same directory refuses.
+      (multiple-value-bind (again out)
+          (state-load :from export-dir :into snap-dir :max-bytes 1000000)
+        (ok (null again) "an existing destination was loaded over: ~A" out)
+        (ok (search "exists" out) "the refusal names the existing destination: ~A" out))
+      ;; A changed member digest is a gap, refuses, and leaves no destination.
+      (let* ((tampered (concatenate 'string base "tampered/"))
+             (dest (concatenate 'string base "tampered-load/")))
+        (write-state-export source tampered :id "exp-2")
+        (with-open-file (out (merge-pathnames "state/snapshot.sexp" tampered)
+                             :direction :output :if-exists :overwrite)
+          (write-string "((:id \"tampered\" :type :task :parent () :state :doing)) " out))
+        (multiple-value-bind (bad out) (state-load :from tampered :into dest :max-bytes 1000000)
+          (ok (null bad) "a changed member digest loaded: ~A" out)
+          (ok (search "changed digest" out) "the refusal names the digest: ~A" out)
+          (ok (null (probe-file dest)) "an incomplete load left a destination")))
+      ;; A bound breach refuses before anything is written.
+      (let ((dest (concatenate 'string base "overrun-load/")))
+        (multiple-value-bind (bad out) (state-load :from export-dir :into dest :max-bytes 1)
+          (ok (null bad) "an output overrun loaded: ~A" out)
+          (ok (search "overrun" out) "the refusal names the overrun: ~A" out)
+          (ok (null (probe-file dest)) "an overrun left a destination"))))))
 
 ;;; ------------------------------------------------------------------
 ;;; fenced-export-can-finish (docs/SPEC-WORK.md:5902)

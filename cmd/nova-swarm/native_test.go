@@ -24,34 +24,33 @@ import (
 
 func nativeHarness(t *testing.T) string {
 	t.Helper()
-	bin, err := build(t, t.TempDir(), "fake-harness", "./cmd/nova-swarm/testdata/fakeharness")
-	if err != nil {
-		t.Fatal(err)
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
 	}
-	return bin
+	return builtHarness
 }
 
-// nativeSandbox builds the fake sandbox of the seam tests: a stand-in for nova-sandbox that
+// nativeSandbox returns the fake sandbox of the seam tests: a stand-in for nova-sandbox that
 // records its argv and, under NOVA_FAKE_SANDBOX=hosts, reports hosts=enforceable so the
-// repo allow rule reaches the argv.
+// repo allow rule reaches the argv. Its compile is shared by every test that asks.
 func nativeSandbox(t *testing.T) string {
 	t.Helper()
-	bin, err := build(t, t.TempDir(), "fake-sandbox", "./cmd/nova-swarm/testdata/fakesandbox")
-	if err != nil {
-		t.Fatal(err)
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
 	}
-	return bin
+	return builtFakeSandbox
 }
 
 // nativeSandboxOnPath puts the fake sandbox on PATH under its own name (`nova-sandbox`), so
 // the native run resolves the wall itself rather than being handed a --sandbox path. It
-// returns the directory that now names the wall on PATH.
+// returns the directory that now names the wall on PATH; the stand-in itself is built once
+// and linked there, never compiled per test.
 func nativeSandboxOnPath(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	if _, err := build(t, dir, "nova-sandbox", "./cmd/nova-swarm/testdata/fakesandbox"); err != nil {
-		t.Fatal(err)
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
 	}
+	dir := builtPathBin
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return dir
 }
@@ -478,6 +477,106 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
 	}
 	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+}
+
+// TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
+// sees -- config=<sha8> -- which is the one token of issue #465's fix no other test pins on
+// the printed line: the carry test pins the struct's sha8 and the copied bytes, and the
+// OK-line tests pin sandbox= and harness=, but the token a caller reads to know a configured
+// provider was carried before the child ever ran is asserted by nothing.
+//
+// WHAT THE SHA8 IS, AND WHY IT IS NOT THE NAMED FILE'S OWN BYTES. writeJobConfig hashes the
+// bytes it WRITES to <dataHome>/.config/opencode/opencode.json, AFTER this job's own fence
+// block is merged into them (issue #644, #704) -- "the sha8 OF THE BYTES THE CHILD SEES,
+// which is the only config any later reader can check the run against". So the sha8 is of
+// the merged body and never of the caller's file, and there is no config=- case at all: the
+// fence block is written WHETHER OR NOT --config named a file, so a run without --config
+// still carries a config and still names its sha8. This test originally pinned the caller's
+// own bytes and a dash; both were the pre-#704 contract, and the two assertions below are
+// the contract the code now promises.
+func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+
+	// carriedSHA is the sha8 of the bytes that landed where the harness reads them, read back
+	// off the disk rather than recomputed from the inputs, so the assertion cannot agree with
+	// the code by repeating its arithmetic.
+	carriedSHA := func(t *testing.T, slot string) string {
+		t.Helper()
+		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+		if err != nil {
+			t.Fatalf("the run carries a config where the harness reads it: %v", err)
+		}
+		sum := sha256.Sum256(written)
+		return hex.EncodeToString(sum[:])[:8]
+	}
+
+	t.Run("with_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+		if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
+			strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("the --config run exits 0, got %d:\n%s", rc, stderr.String())
+		}
+		// The named provider is in the carried bytes -- config= names a config that really
+		// carried --config's provider, not merely some config.
+		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(written), `"baseURL"`) || !strings.Contains(string(written), "fake") {
+			t.Errorf("the carried config keeps --config's provider:\n%s", written)
+		}
+		wantSHA := carriedSHA(t, slot)
+		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
+			t.Fatalf("NATIVE OK names the sha8 %s of the config the child sees:\n%s", wantSHA, stdout.String())
+		}
+	})
+
+	t.Run("without_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--auth", auth, "--deadline", "30s", "--no-wall"},
+			strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("the run without --config exits 0, got %d:\n%s", rc, stderr.String())
+		}
+		// No --config, but the fence block is still written, so the line still names a sha8
+		// and NEVER a dash: a reader can check the fence the child ran under.
+		wantSHA := carriedSHA(t, slot)
+		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
+			t.Fatalf("NATIVE OK names the sha8 %s of the fence config carried without --config:\n%s", wantSHA, stdout.String())
+		}
+		if strings.Contains(stdout.String(), " config=- ") {
+			t.Fatalf("config= is never a dash: the fence block is carried whether or not --config named a file:\n%s", stdout.String())
+		}
+	})
 }
 
 // TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
@@ -1803,6 +1902,105 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ISSUE #881: secret implies env_var, and the model gate compares provider/model as one
+// name -- a description's model without a slash takes the description's provider as its
+// prefix. A secret-only description (no env_var) with provider opencode and model
+// deepseek-v4-flash runs under --model opencode/deepseek-v4-flash; --model opencode/other
+// is refused naming both; --model other/deepseek-v4-flash is refused too, because the
+// provider half matters.
+func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
+	bin := nativeHarness(t)
+	writeSecretOnly := func(t *testing.T) string {
+		t.Helper()
+		home := t.TempDir()
+		desc := map[string]any{
+			"name": "opencode-1", "provider": "opencode", "model": "deepseek-v4-flash",
+			"secret": "CARD881_SECRET", "usage": "opencode",
+			"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
+			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+		}
+		raw, err := json.MarshalIndent(desc, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "worker.json")
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	t.Setenv("CARD881_SECRET", fakeKey)
+
+	t.Run("qualified_match_is_accepted", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		desc := writeSecretOnly(t)
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
+			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("provider opencode model deepseek-v4-flash under --model opencode/deepseek-v4-flash is accepted, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("model_mismatch_is_refused_naming_both", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		desc := writeSecretOnly(t)
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "opencode/other",
+			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 2 {
+			t.Fatalf("--model opencode/other against model deepseek-v4-flash is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+		}
+		line := strings.TrimSpace(stderr.String())
+		mustContain(t, "the refusal", line, "opencode/other")
+		mustContain(t, "the refusal", line, "deepseek-v4-flash")
+	})
+
+	t.Run("provider_mismatch_is_refused", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// A description the CURRENT loader already accepts (env_var present beside
+		// secret), so this subtest isolates the gate: the model half matches, only
+		// the provider half differs, and the gate must still refuse.
+		home := t.TempDir()
+		desc := map[string]any{
+			"name": "opencode-1", "provider": "opencode", "model": "deepseek-v4-flash",
+			"env_var": "CARD881_ENV", "secret": "CARD881_SECRET", "usage": "opencode",
+			"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
+			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+		}
+		t.Setenv("CARD881_SECRET", fakeKey)
+		raw, err := json.MarshalIndent(desc, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		descPath := filepath.Join(t.TempDir(), "worker.json")
+		if err := os.WriteFile(descPath, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "other/deepseek-v4-flash",
+			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 2 {
+			t.Fatalf("--model other/deepseek-v4-flash against provider opencode is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+		}
+	})
 }
 
 // nativeWorkerDescription writes a worker description the native run can be pointed at: the

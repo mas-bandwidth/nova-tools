@@ -1,0 +1,11 @@
+# The os.RemoveAll calls this repository still permits outright, one `file:function`
+# per line. Every entry is a directory that came back from os.MkdirTemp in the SAME
+# function: the temp dir is the tool's own private scratch, made with a fresh unique
+# name, so there is no computed path to escape. Any other removal of a computed path
+# goes through safepath.RemoveUnder. This list only shrinks: the class test
+# (removeall_class_test.go) fails on an entry whose call has left as well as on a call
+# that is not listed.
+internal/pulse/run.go:busNotifier.Note
+internal/secrets/seal.go:sealDecrypt
+internal/secrets/seal.go:sealEncrypt
+internal/secrets/sops.go:DecryptFile

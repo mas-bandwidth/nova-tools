@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // openLane is what every verb but init does first: read the lane's state, and refuse a
@@ -214,7 +215,11 @@ func stripUserinfo(raw string) string {
 // not this tool's to throw away.
 func undoInit(lane string, existed bool) string {
 	if !existed {
-		if err := os.RemoveAll(lane); err == nil {
+		// The lane is a flag, so the flag is what a mistake can aim at the wrong
+		// directory. RemoveUnder refuses a lane that is its own parent's name, a
+		// symlink, an empty path, or a root that is "/" or the user's home: the
+		// removal only ever happens under the directory the lane sits in.
+		if err := safepath.RemoveUnder(filepath.Dir(lane), lane); err == nil {
 			return "; nothing was left behind, so running this again meets the same cause and not the wreckage"
 		}
 	}

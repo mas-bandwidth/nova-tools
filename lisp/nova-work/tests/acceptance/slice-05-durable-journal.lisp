@@ -155,20 +155,83 @@
 ;;; in this file or in the slice file named beside it.
 ;;; ------------------------------------------------------------------
 
+(defun short-socket-base (prefix)
+  "Create and answer a directory short enough to hold an AF_UNIX socket path.
+The kernel bounds a Unix-domain socket path (108 bytes on Linux), which a long
+TMPDIR can exceed, so try short roots first and create the first that works.
+Within each root the name is trimmed until <root>/<name>/l/w fits, because the
+sandbox's writable directory can itself sit far into a long path. A stale
+directory from an earlier run is cleared first so a rerun binds fresh."
+  (flet ((try-root (root)
+           (when root
+             (let* ((trimmed (string-right-trim "/" (namestring (pathname root))))
+                    ;; base + "/l/w" must stay inside the 108-byte sun_path
+                    (budget (- 103 (length trimmed) 1))
+                    (clean (remove-if-not #'alphanumericp prefix))
+                    (name (if (plusp budget)
+                              (subseq clean 0 (min (length clean) budget))
+                              ""))
+                    (base (concatenate 'string trimmed "/" name)))
+               (when (and (plusp (length name))
+                          (< (+ (length base) 4) 108))
+                 (ignore-errors
+                   (uiop:delete-directory-tree
+                    (uiop:ensure-directory-pathname base)
+                    :validate nil :if-does-not-exist :ignore))
+                 (when (ignore-errors (sb-posix:mkdir base #o700) t)
+                   base))))))
+    (or (some #'try-root
+              (list "/dev/shm"
+                    (format nil "/run/user/~D" (sb-posix:getuid))
+                    "/var/tmp"
+                    (uiop:getenv "TMPDIR")
+                    ;; the parent of TMPDIR is still short when TMPDIR itself
+                    ;; is not (the sandbox's sits under the job's working dir).
+                    (uiop:pathname-parent-directory-pathname
+                     (uiop:temporary-directory))))
+        (concatenate 'string
+                     (string-right-trim "/" (namestring (uiop:temporary-directory)))
+                     "/" prefix))))
+
 ;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2646-2653 / table :5727
 (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727"
     "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
   ;; the session's directory created 0700 and its socket 0600, both owned
   ;; by the running account; a pre-existing directory or socket with wider
   ;; modes refused rather than reused; no listener on any network address.
+  ;; A short relative base: the AF_UNIX sun_path is capped near 107 bytes and a
+  ;; deep TMPDIR (the card sandbox) overflows it, so the endpoint cannot bind.
+  ;; An AF_UNIX path is bounded (sun_path, about 108 bytes), so a deep TMPDIR
+  ;; cannot carry the session socket. Prefer a shorter writable root for the
+  ;; endpoint; the other replays' regular files keep the ambient directory.
   (let* ((tmp (namestring (uiop:temporary-directory)))
-         (base (if (< (length tmp) 80)
-                   (concatenate 'string tmp (format nil "n~D" (random 99999)))
-                   (format nil "n~D" (random 99999))))
+         (cwd (sb-posix:getcwd))
+         (*default-pathname-defaults* (pathname tmp))
+         (base (or (if (< (length tmp) 80)
+                       (concatenate 'string tmp (format nil "nw-~D" (random 1000000)))
+                       (short-socket-base (format nil "nw-~D" (random 1000000))))
+                   (if (< (length tmp) 80)
+                       (concatenate 'string tmp (format nil "n~D" (random 99999)))
+                       (format nil "nw-~D-~D" (sb-posix:getpid) (random 1000000)))))
          (dir (concatenate 'string base "/s"))
-         (sock (concatenate 'string dir "/w")))
+         (sock (concatenate 'string dir "/w"))
+         (wide (concatenate 'string base "/w"))
+         (d2 (concatenate 'string base "/d"))
+         (s2 (concatenate 'string d2 "/w")))
     (unwind-protect
          (progn
+           ;; Work under the temporary directory with a path short enough for an
+           ;; AF_UNIX socket: `probe-file` resolves a relative name against
+           ;; *DEFAULT-PATHNAME-DEFAULTS*, so it is bound to the same directory
+           ;; the filesystem calls are made relative to. Clear any path a prior
+           ;; run left behind so the fixture never silently reuses one.
+           (sb-posix:chdir tmp)
+           (ignore-errors (sb-posix:unlink sock))
+           (ignore-errors (sb-posix:rmdir dir))
+           (ignore-errors (sb-posix:unlink s2))
+           (ignore-errors (sb-posix:rmdir d2))
+           (ignore-errors (sb-posix:rmdir wide))
+           (ignore-errors (sb-posix:rmdir base))
            (unless (probe-file base) (sb-posix:mkdir base #o700))
            (let ((ep (make-session-endpoint dir sock)))
              (check-equal #o700 (session-endpoint-directory-mode ep)
@@ -179,32 +242,63 @@
              (check-equal (local-socket-family) (session-endpoint-socket-family ep)
                           "the socket is a local (AF_UNIX) socket")
              (ok (not (endpoint-network-listener-p ep)) "no network listener"))
+           ;; The local listener really binds, listens and accepts one local
+           ;; connection; the bound socket and its directory keep their modes.
+           (let* ((ld (concatenate 'string base "/l"))
+                  (ls (concatenate 'string ld "/w"))
+                  (lep (make-session-endpoint ld ls))
+                  (listener (make-local-listener lep)))
+             (unwind-protect
+                  (progn
+                    (ok (listener-open-p listener) "the local listener is open")
+                    (check-equal (local-socket-family) (listener-socket-family listener)
+                                 "the listening socket is AF_UNIX, never a network family")
+                    (check-equal #o600 (logand (sb-posix:stat-mode (sb-posix:stat ls)) #o777)
+                                 "the bound socket path is 0600")
+                    (check-equal #o700 (logand (sb-posix:stat-mode (sb-posix:stat ld)) #o777)
+                                 "the directory stays 0700")
+                    (let ((client (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+                      (unwind-protect
+                           (progn
+                             (sb-bsd-sockets:socket-connect client ls)
+                             (let ((accepted (listener-accept listener)))
+                               (ok accepted "the listener accepts the local connection")
+                               (ignore-errors (sb-bsd-sockets:socket-close accepted))))
+                        (ignore-errors (sb-bsd-sockets:socket-close client)))))
+               (listener-close listener))
+             (ignore-errors (sb-posix:unlink ls))
+             (ignore-errors (sb-posix:rmdir ld)))
+           ;; A network family is a different family, which is what "no network
+           ;; listener" means rather than a flag the endpoint asserts about itself.
+           (ok (not (eql (local-socket-family)
+                         (sb-bsd-sockets:socket-family
+                          (make-instance 'sb-bsd-sockets:inet-socket
+                                         :type :stream :protocol :tcp))))
+               "AF_UNIX and AF_INET are different families")
            ;; A pre-existing directory with wider modes refuses rather than reuses.
-           (let ((wide (concatenate 'string base "/w")))
-             (sb-posix:mkdir wide #o755)
-             (handler-case
-                 (progn (make-session-endpoint wide (concatenate 'string wide "/w"))
-                        (ok nil "a 0755 directory must be refused"))
-               (nova-work-error (c) (declare (ignore c))
-                 (ok t "a pre-existing 0755 directory is refused"))))
+           (sb-posix:mkdir wide #o755)
+           (handler-case
+               (progn (make-session-endpoint wide (concatenate 'string wide "/w"))
+                      (ok nil "a 0755 directory must be refused"))
+             (nova-work-error (c) (declare (ignore c))
+               (ok t "a pre-existing 0755 directory is refused")))
            ;; A pre-existing socket path with wider modes refuses the same way.
-           (let* ((d2 (concatenate 'string base "/d"))
-                  (s2 (concatenate 'string d2 "/w")))
-             (sb-posix:mkdir d2 #o700)
-             (with-open-file (f s2 :direction :output :if-exists :supersede)
-               (declare (ignore f)))
-             (sb-posix:chmod s2 #o644)
-             (handler-case
-                 (progn (make-session-endpoint d2 s2)
-                        (ok nil "a 0644 socket must be refused"))
-               (nova-work-error (c) (declare (ignore c))
-                 (ok t "a pre-existing 0644 socket is refused")))))
+           (sb-posix:mkdir d2 #o700)
+           (with-open-file (f s2 :direction :output :if-exists :supersede)
+             (declare (ignore f)))
+           (sb-posix:chmod s2 #o644)
+           (handler-case
+               (progn (make-session-endpoint d2 s2)
+                      (ok nil "a 0644 socket must be refused"))
+             (nova-work-error (c) (declare (ignore c))
+               (ok t "a pre-existing 0644 socket is refused"))))
       (ignore-errors (sb-posix:unlink sock))
       (ignore-errors (sb-posix:rmdir dir))
-      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/w")))
-      (ignore-errors (sb-posix:unlink (concatenate 'string base "/d/w")))
-      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/d")))
-      (ignore-errors (sb-posix:rmdir base)))))
+      (ignore-errors (sb-posix:rmdir wide))
+      (ignore-errors (sb-posix:unlink s2))
+      (ignore-errors (sb-posix:rmdir d2))
+      (ignore-errors (sb-posix:rmdir base))
+      (ignore-errors (sb-posix:chdir cwd)))))
 
 ;;; wire-integers-are-strings, protocol-version-negotiated-or-refused,
 ;;; pipeline-replies-are-correlated and disconnect-is-not-a-rollback are the
@@ -561,6 +655,10 @@
 ;; add-field-order-is-complete (SPEC-WORK.md:5337) --- the real replay now lives
 ;; in tests/replays-8641.lisp over src/replays-8641.lisp and src/node-verbs.lisp
 ;; (nova-tools #362).
+;; NEEDS-KERNEL: lease creation/binding and W entry; no lease or W index exists yet.
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) --- an accepted receipt after
+;; received creating exactly one :lease and one W entry, or binding a second attempt to the same
+;; holder's lease unchanged; converting and never doubling capacity.
 
 ;; as-of-reconstructs-settle-revive-settle now lives in
 ;; tests/acceptance/slice-04-doing-and-journal.lisp over the settle/revive
@@ -704,6 +802,15 @@
                                               (dispatch-offer "req-2" "root/f/t1" "carol" 2))
                  "no shadow lease: a cross-holder offer is refused")))
 
+;; dry-run-writes-nothing: a dry run validates and projects without mutating;
+;; after a green preview at revision R the --request id is still new to the
+;; dedup index and events=/pending=/pushed= are unchanged; an accepted mutation
+;; moves to R+1; apply --expect R is refused stale; apply at R+1 newly validates.
+;; NEEDS-KERNEL: a --dry-run projection path and SESSION OK counters.
+(deftest-pending "dry-run-writes-nothing" "docs/SPEC-WORK.md:5196"
+    "expected=preview-mutates-nothing;dedup-still-new;events-pending-pushed-unchanged"
+  "no dry-run projection exists in slice 1")
+
 ;; edit-is-atomic-and-replayable now lives in tests/acceptance.lisp over the
 ;; node-edit verb of src/node-verbs.lisp (nova-tools #362).
 ;; edit-is-atomic-and-replayable: a bad one-of-five patch writes nothing; an
@@ -733,6 +840,28 @@
 ;; endpoint-is-local-and-private is the executable replay earlier in this file
 ;; (a real deftest over src/replays-slice-05.lisp), so the duplicate stub is
 ;; deleted.
+
+;; NEEDS-KERNEL: a render path and link validation with a counting endpoint.
+(deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
+    "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
+  "no link render/fetch in slice 1")
+
+;; edit-undo-preserves-later-work: an edit undone restores :before; the same
+;; undo after an intervening edit is refused conflict, both events standing.
+;; NEEDS-KERNEL: an undo verb with a :before field and conflict detection.
+(deftest-pending "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
+    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
+  "no undo verb in slice 1")
+
+;; endpoint-is-local-and-private: the session's directory created 0700 and its
+;; socket 0600, both owned by the running account; a pre-existing directory or
+;; socket with wider modes refused rather than reused; the Windows named pipe
+;; created with FILE_FLAG_FIRST_PIPE_INSTANCE; no listener bound to a network
+;; address.
+;; NEEDS-KERNEL: a session socket/directory bootstrap and permission check.
+(deftest-pending "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
+    "expected=dir-0700;socket-0600;wider-modes-refused;no-network-listener"
+  "no session endpoint exists in slice 1")
 
 ;; explicit-rest-is-not-pinged: the configured silence threshold triggers one
 ;; bounded ping; a nonresponsive capacity marked unavailable with reason
@@ -837,8 +966,68 @@
     (check-equal "att-2" (attempt-id (second attempts))
                  "the retry keeps its own identity")))
 
+;; a-retry-does-not-overwrite-its-attempt: a retry never overwrites the attempt
+;; before it; concurrent attempts keep separate model and usage attribution.
+(deftest "a-retry-does-not-overwrite-its-attempt" "docs/SPEC-WORK.md:5222"
+    "expected=unknown-stays-unknown;attempts-separate-attribution;never-overwrite"
+  (let* ((first (make-attempt :id "att-1" :node "root/f/t1"
+                              :requested-model "astra" :observed nil :usage 10))
+         (retry (make-attempt :id "att-2" :node "root/f/t1"
+                              :requested-model "astra" :observed "beta" :usage 7))
+         (attempts (append-attempt (list first) retry)))
+    (check-equal 2 (length attempts) "the retry is a second attempt")
+    (check-equal t (equal first (first attempts))
+                 "the attempt before the retry is not overwritten")
+    (check-equal :unknown (attempt-observed-model (first attempts))
+                 "the first attempt's unknown observation survives the retry")
+    (check-equal 10 (attempt-usage (first attempts)) "the first attempt's usage is intact")
+    (check-equal "att-2" (attempt-id (second attempts))
+                 "the retry keeps its own identity")))
+
 ;; full-round-trip is the real deftest earlier in this file, over
 ;; state-canonical-form and reconstruct-state (nova-tools #362).
+;; full-round-trip: export a captured revision, load it in a fresh isolated
+;; engine, export again, and compare every semantic field, stable ids, Unicode
+;; and literal text, order where meaningful, links, evidence, roles, CONFIG,
+;; ACTIVE observations, model and rate records, O and C history, roadmaps and
+;; accounting provenance; derived caches rebuild to equivalent values.
+;; NEEDS-KERNEL: an export/import path over a durable captured revision.
+
+;; goal-stale-update-refuses: A and B both show at r; A writes update, r+1; B's
+;; update --expect r is refused `GOAL FAIL ... expect=r current=r+1: stale`,
+;; snapshot unchanged; B's next show prints A's evidence row; A writes stop, r+2;
+;; B's update --expect r+1 refused stale; B's next show prints stop=requested;
+;; B's update --expect r+2 refused `stop requested`; a goal set to a closed
+;; branch node refused `disposition=done`.
+;; NEEDS-KERNEL: a goal CLI with stale --expect detection and a snapshot.
+(deftest-pending "goal-stale-update-refuses" "docs/SPEC-WORK.md:5466"
+    "expected=stale-named;snapshot-unchanged;stop-requested-stands;closed-refused"
+  "no goal CLI in slice 1")
+
+;; goal-stop-is-a-request-not-evidence: goal update --stop prints GOAL OK
+;; change=stop kind=transition rev=r+1 and the event is a :transition :to
+;; :cancel-requested carrying :reason and no :evidence; check has no finding;
+;; state --to doing --reason by id is admitted (the withdrawal); event --kind
+;; cancel --evidence <pointer> makes show print stop=cancelled, terminal, and
+;; goal set --goal G refused disposition=cancelled; --stop on :review and :done
+;; refused `no edge`.
+;; NEEDS-KERNEL: a goal verb, stop/cancel/withdrawal transitions and a check.
+(deftest-pending "goal-stop-is-a-request-not-evidence" "docs/SPEC-WORK.md:5475"
+    "expected=stop=request-not-evidence;cancel=terminal;done-refused-no-edge"
+  "no goal verb in slice 1")
+
+;; goal-update-writes-only-existing-kinds: every goal update form written, then
+;; the journal read: each event is a :transition or an :evidence with exactly
+;; the field list of its kind, on the goal node and no other node; --progress
+;; <text> alone on a :todo node writes :to :doing with the text as :reason, and
+;; on a :doing node refused `no edge`; --progress with the evidence triple on a
+;; :doing node writes the :evidence event; goal set and goal set --clear each
+;; write one :goal event; a retried set with the same --request id and payload
+;; returns the same event id once.
+;; NEEDS-KERNEL: goal update forms with kind-owned field lists.
+(deftest-pending "goal-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5484"
+    "expected=only-transition-or-evidence;exact-kind-fields;goal-node-only"
+  "no goal verb in slice 1")
 
 ;;; ------------------------------------------------------------------
 ;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
@@ -864,6 +1053,26 @@
 
 ;; hold-survives-a-crash (SPEC-WORK.md:5254) now runs as the real deftest in
 ;; tests/acceptance/slice-09-replays-holds.lisp.
+;; ------------------------------------------------------------------
+;; hold-survives-a-crash   docs/SPEC-WORK.md:5254
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: crash durability of holds (crash after the hold recovers the
+;; same hold and target identities with no duplicate launch).
+;;(deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:5254"
+;;    "hold-durable,target-identities=recovered,duplicate-launch=0"
+;;  ;; a crash after the hold is durable and before capture/send recovering the
+;;  ;; same hold and target identities with no duplicate launch.)
+
+;; ------------------------------------------------------------------
+;; hostile-data   docs/SPEC-WORK.md:5602
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: hostile-data intake adapter (reader evaluation disabled;
+;; depth/byte/node limits; no command execution or authority change; quadratic
+;; copying avoided).
+;;(deftest "hostile-data" "docs/SPEC-WORK.md:5602"
+;;    "eval-disabled,limits=enforced,command-execution=0,authority=unchanged"
+;;  ;; reader evaluation disabled; pre-parse depth, byte and node limits
+;;  ;; enforced; imported prose cannot execute a command or alter authority.)
 
 ;; ------------------------------------------------------------------
 ;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
@@ -918,6 +1127,15 @@
                                         (request "mv-1")
                                         (stamp "2026-09-17T00:00:00Z"))
   (list :id id :from from :under under :reason reason :request request :stamp stamp))
+;; move-keeps-every-count   docs/SPEC-WORK.md:5360
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb (a required subtree moved keeps all counts
+;; consistent; no whole-set scan).
+;;(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
+;;    "source/dest=by-subtree,net=stable,visits=asserted"
+;;  ;; a required subtree moved between two features: the source's and
+;;  ;; destination's required sets and open counts move by the subtree, the
+;;  ;; common ancestor's net count is stable.)
 
 (deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
     "lease=same,attempt=same,usage=same,active-change=refused,privacy-reduction=refused"
@@ -1222,6 +1440,8 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
                                    verb))
             (check-equal 1 (length (state-history (kernel-state successor)))
                          (format nil "~A successor applied a second event" verb))))))))
+;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
+;; the pause/hold and dispatch gate it needed.
 
 ;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
 ;; the pause/hold and dispatch gate it needed.

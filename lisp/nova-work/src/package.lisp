@@ -63,6 +63,10 @@
    #:state-revision
    #:state-history
    #:state-closed-rows
+   ;; indexes: the write-maintained counters and indexes and their reconstruction
+   #:reconstruct-state-index
+   #:state-holder-index
+   #:state-index-mismatches
    #:node-open-count
    #:node-branch
    #:node-state
@@ -191,8 +195,16 @@
     #:cancel-state-export
     #:retention-pass
     #:load-state
+    ;; the isolated read-only load on its real export directory
+    ;; (SPEC-WORK.md:3225-3299): the writer seam, the verb and the fresh reader.
+    #:write-state-export
+    #:state-load
+    #:read-loaded-snapshot
     #:snapshot-state
     #:snapshot-revision
+    #:snapshot-directory
+    #:snapshot-cache
+    #:snapshot-manifest-hash
     #:snapshot-query
     #:snapshot-accept-session-p
     #:with-isolation
@@ -409,6 +421,13 @@
    #:observation-attempt
    #:observation-outcome
    #:observation-usage
+   #:observation-evidence-quality
+   #:observation-negative-lookup-p
+   #:observation-identity-bound-p
+   #:observation-launch-rejects-p
+   #:observation-queue-miss-p
+   #:stop-evidence-p
+   #:not-started-qualifies-p
    #:synthesised-usage
    #:reconcile-observations
    #:release-permitted-p
@@ -536,6 +555,54 @@
     #:endpoint-network-listener-p
     #:local-socket-family
     #:current-account-uid
+    ;; the local listener and the resident session server daemon
+    ;; (SPEC-WORK.md:2642-2655, :268-310)
+    #:make-local-listener
+    #:local-listener
+    #:local-listener-p
+    #:local-listener-endpoint
+    #:local-listener-socket
+    #:local-listener-open-p
+    #:listener-open-p
+    #:listener-socket-family
+    #:listener-accept
+    #:listener-close
+    #:session-server
+    #:session-server-p
+    #:session-server-session
+    #:session-server-listener
+    #:session-server-thread
+    #:session-server-running-p
+    #:session-server-path
+    #:session-server-owner
+    #:session-server-foreground
+    #:start-session-server
+    #:session-server-stop
+    #:serve-session-request
+    #:default-session-request-handler
+    #:session-identity-line
+    ;; session status, stop and handoff (SPEC-WORK.md:304-308, :814-828)
+    #:session-status-line
+    #:session-build-identity
+    #:session-owning-record
+    #:session-clip-line
+    #:session-stop-lifecycle
+    #:session-handoff
+   ;; `session export` / `session replay`: the request bundle, the one bus
+   ;; between two owners (SPEC-WORK.md:423-440, :2210-2251)
+   #:request-bundle
+   #:request-bundle-p
+   #:make-request-bundle
+   #:request-bundle-base
+   #:request-bundle-clipped-revision
+   #:request-bundle-requests
+   #:request-bundle-form
+   #:request-bundle-string
+   #:read-request-bundle
+   #:journal-accepted-records
+   #:export-request-bundle
+   #:replay-request-bundle
+   #:session-replay
    ;; wire codec, protocol handshake, pipelined correlation, disconnect
    ;; reconciliation and the long-operation registry (nova-tools card 8608)
    #:wire-encode-integer
@@ -597,6 +664,17 @@
    #:wire-frame-response
    #:independent-batch-results
    #:atomic-batch-validate
+   ;; the read bundle and the two batch modes over the kernel
+   ;; (SPEC-WORK.md:2762-2814, src/transport.lisp).
+   #:make-read-bundle
+   #:read-bundle-p
+   #:read-bundle-revision
+   #:read-bundle-watermark
+   #:read-bundle-ask
+   #:read-bundle-page
+   #:*long-operation-verbs*
+   #:independent-batch-run
+   #:atomic-batch-run
    #:make-wire-session
    #:wire-session-p
    #:wire-session-kernel
@@ -621,6 +699,23 @@
    #:wire-frame-reader-feed
    #:wire-frame-reader-buffered
    #:wire-frame-error
+   ;; `session replay` bundle intake (SPEC-WORK.md:2240-2251): the request
+   ;; bundle and the replay that applies it under coordinator authority.
+   #:make-request-bundle
+   #:request-bundle-p
+   #:request-bundle-base
+   #:request-bundle-clipped-revision
+   #:request-bundle-requests
+   #:read-request-bundle
+   #:session-replay
+   ;; the framed `hello` protocol-version handshake (SPEC-WORK.md:2662-2685)
+   #:wire-unframe
+   #:protocol-build-identity
+   #:protocol-version-list
+   #:protocol-hello-versions
+   #:protocol-hello-frame
+   #:protocol-hello-ok-text
+   #:protocol-hello-refused-text
    #:make-operation-registry
    #:operation-registry-p
    #:operation-registry-operations
@@ -690,6 +785,7 @@
     #:undo-request
     #:undo-plan
     #:record-external-effect
+    #:redo-plan
     #:moved-preconditions
     #:redo-request
     ;; roadmap replays (card 8621)
@@ -707,6 +803,10 @@
     #:+r8621-marker-start+ #:+r8621-marker-end+
     #:r8621-render-body #:r8621-render-chat #:r8621-marker-region
     #:r8621-render-file
+    ;; `axis --add|--remove` on a roadmap's stored view (src/roadmap.lisp)
+    #:axis
+    #:axis-add
+    #:axis-remove
     ;; roadmap scope revisions advanced by `node move` (src/roadmap.lisp)
     #:make-scope-roadmap
     #:scope-roadmap-id
@@ -742,6 +842,20 @@
     ;; the roadmap verbs (E04 row 8: percent --axis on a matrix, src/roadmap.lisp)
     #:roadmap-percent
     #:roadmap-cell-verified-p
+    ;; the `cell` verb and its reads (docs/SPEC-WORK.md:2329, :1183-1186)
+    #:roadmap-cell
+    #:roadmap-view-cells
+    #:roadmap-cell-ref
+    #:roadmap-cell-out-of-scope-p
+    #:roadmap-rows-count
+    #:roadmap-applicable-rows
+    #:roadmap-applicable-count
+    ;; `render --view` over a stored selection (src/roadmap.lisp)
+    #:roadmap-view-projection
+    #:roadmap-view-axis-members
+    #:render-view-selection
+    #:render-view-body
+    #:render-view
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p
@@ -1396,6 +1510,10 @@
     #:retained-disposition-record-hash
     #:retained-disposition-reply
     #:retained-disposition-boundary
+    #:make-receipt-ledger
+    #:receipt-ledger-record
+    #:receipt-ledger-lookup
+    #:receipt-ledger-retains-p
     #:make-coverage
     #:coverage-verified-p
     #:retire-reply
@@ -1464,6 +1582,7 @@
     #:journal-chain-segments
     #:rotate-journal
     #:journal-append-record
+    #:journal-segment-by-path
     #:savepoint-cut-reachable-p
     #:export-journal-bundle
     #:rule-2-check
@@ -1476,6 +1595,7 @@
     #:savepoint-retained-replies
     #:savepoint-write
     #:savepoint-list
+    #:savepoint-compare
     #:savepoint-verify
     #:savepoint-restore
     #:make-savepoint-load
@@ -1753,7 +1873,7 @@
     #:replay-index-ancestor-p
     #:holder-open-ids
     #:index-mismatches
-    ;; the `verify` verb and the verification cache
+    ;; E03 row 3: the `verify` verb and the verification cache
     #:verification-unreachable
     #:verification-resolver
     #:make-verification-resolver
@@ -1827,7 +1947,76 @@
     #:fake-decider-calls
     #:decide-consult
     #:kernel-default-answer
-    #:decide))
+    #:decide
+    ;; verdicts are state, not events (nova-tools#854)
+    #:make-verdict-row
+    #:verdict-row-p
+    #:verdict-row-node
+    #:verdict-row-reader
+    #:verdict-row-head
+    #:verdict-row-decision
+    #:verdict-row-merged
+    #:verdict-row-closed
+    #:verdict-row-state
+    #:verdict-approved-p
+    #:verdict-hold-p
+    #:verdict-terminal-p
+    #:tick-verdict-row
+    #:read-owed-p
+    ;; E02 source capture and import staging (SPEC-WORK.md:2721-2760): the long
+    ;; capture/import operation, the bounded staged bytes and the revision-fenced
+    ;; admission of a validated result.
+    #:*capture-stage-limits*
+    #:make-capture-stage
+    #:capture-stage-p
+    #:capture-stage-registry
+    #:capture-stage-inputs
+    #:capture-stage-limits
+    #:capture-stage-results
+    #:begin-source-capture
+    #:begin-import
+    #:capture-stage-input
+    #:capture-stage-bytes
+    #:capture-input-count
+    #:capture-admit-result
+    #:capture-result-of
+    #:capture-wire-op
+    ;; E02 `session export --state --at` (SPEC-WORK.md:3197-3223): the flag
+    ;; validation, the pinned revision, the resident one-long-operation form and
+    ;; the offline snapshot form.
+    #:validate-export-form
+    #:resolve-export-at
+    #:export-pin-p
+    #:export-pin-revision
+    #:export-pin-savepoint
+    #:export-pin-journal-prefix
+    #:begin-state-export
+    #:state-export-wait
+    #:snapshot-state-export
+    #:export-wire-op
+    #:state-export-cancel-ack
+    ;; notes (the coordinator's notes replays)
+    #:note-scope
+    #:note-author
+    #:note-date
+    #:note-source
+    #:note-kind
+    #:note-text
+    #:note-constraint
+    #:note-uncertain
+    #:note-superseded
+    #:note-did-for
+    #:make-notes-config
+    #:make-notes-store
+    #:notes-notes
+    #:note-by-id
+    #:active-note-p
+    #:notes-active
+    #:notes-active-count
+    #:notes-write
+    #:notes-supersede
+    #:check-not-weaker-kind
+    #:make-replacement-note))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

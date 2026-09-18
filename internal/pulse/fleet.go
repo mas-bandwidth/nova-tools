@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -135,14 +136,20 @@ type fleetPowerResult struct {
 	unreachable bool
 }
 
-// fleetPowerRefusal reads one requested name against the file. `studio` is refused for any
-// admin act; a name the file does not carry is refused rather than guessed.
-func fleetPowerRefusal(name string, benches map[string]FleetBench) (fleetPowerResult, bool) {
+// fleetPowerRefusal reads one requested name against the file and, when one was named,
+// against the machines registry. `studio` is refused for any admin act; a name the file does
+// not carry is refused rather than guessed; and a machine the registry does not call a bench
+// is refused with the lock's reason and remedy on the line (Glenn 2026-09-18: runner hosts
+// are CI-only). A nil registry leaves the first two refusals as the whole guard.
+func fleetPowerRefusal(name string, benches map[string]FleetBench, reg *fleet.Registry) (fleetPowerResult, bool) {
 	if strings.EqualFold(strings.TrimSpace(name), "studio") {
 		return fleetPowerResult{line: "FLEET REFUSED bench=" + oneline.Field(name), refused: true}, true
 	}
 	if _, ok := benches[name]; !ok {
 		return fleetPowerResult{line: "FLEET REFUSED bench=" + oneline.Field(name), refused: true}, true
+	}
+	if line, refused := fleetRoleRefusal(name, reg); refused {
+		return fleetPowerResult{line: line, refused: true}, true
 	}
 	return fleetPowerResult{}, false
 }
@@ -208,15 +215,16 @@ func fleetQuote(s string) string {
 // FleetSuspendInput is everything `fleet suspend` needs, apart from flag parsing, so a test
 // can drive it against a benches file and a fake ssh on PATH.
 type FleetSuspendInput struct {
-	Benches string
-	Names   []string
-	SSH     string // the ssh program; empty is "ssh"
-	Force   bool   // suspend even a busy bench
-	IfIdle  bool   // skip a busy bench instead of refusing it
-	Timeout time.Duration
-	Max     int // at most this many FLEET lines; 0 is all
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Benches  string
+	Machines string // the machines registry; empty leaves the older refusals as the guard
+	Names    []string
+	SSH      string // the ssh program; empty is "ssh"
+	Force    bool   // suspend even a busy bench
+	IfIdle   bool   // skip a busy bench instead of refusing it
+	Timeout  time.Duration
+	Max      int // at most this many FLEET lines; 0 is all
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // FleetSuspend sleeps each named bench: a bench holding a running card (a lease or a job
@@ -235,11 +243,15 @@ func FleetSuspend(in FleetSuspendInput) int {
 	if len(in.Names) == 0 {
 		return refusal(in.Stderr, "FLEET", fmt.Errorf("missing --bench; refusing to guess (name the bench or benches to suspend)"))
 	}
+	reg, code := fleetRegistry(in.Machines, in.Stderr)
+	if code != 0 {
+		return code
+	}
 
 	results := make([]fleetPowerResult, len(in.Names))
 	var wg sync.WaitGroup
 	for i, name := range in.Names {
-		if r, refused := fleetPowerRefusal(name, benches); refused {
+		if r, refused := fleetPowerRefusal(name, benches, reg); refused {
 			results[i] = r
 			continue
 		}
@@ -349,7 +361,11 @@ func fleetSuspendScript(home string, force, ifIdle bool) string {
 		`  fi`,
 		`fi`,
 		`if sudo systemctl suspend; then`,
-		`  printf 'FLEETSUSPENDED\n'`,
+		// The marker carries a field. fleetMarker reads `TOKEN<TAB>rest`, so a BARE
+		// `FLEETSUSPENDED` line matched nothing and every successful suspend printed
+		// `FLEET <name> UNREACHABLE no answer` and exited 3. Found 2026-09-18 by the first
+		// test to drive the success path (`fleet sleep`); only the busy path was covered.
+		`  printf 'FLEETSUSPENDED\tsystemctl suspend\n'`,
 		`else`,
 		`  printf 'FLEETFAIL\tsudo systemctl suspend failed\n'`,
 		`fi`,
@@ -362,17 +378,18 @@ func fleetSuspendScript(home string, force, ifIdle bool) string {
 // drive it against a benches file, a fake ssh on PATH and a sender that captures the
 // packet instead of opening a socket.
 type FleetWakeInput struct {
-	Benches string
-	Names   []string
-	SSH     string // the ssh program; empty is "ssh"
-	Wait    time.Duration
-	Timeout time.Duration
-	Max     int // at most this many FLEET lines; 0 is all
-	Now     func() time.Time
-	Sleep   func(time.Duration)
-	Send    func(packet []byte, addr string) error
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Benches  string
+	Machines string // the machines registry; empty leaves the older refusals as the guard
+	Names    []string
+	SSH      string // the ssh program; empty is "ssh"
+	Wait     time.Duration
+	Timeout  time.Duration
+	Max      int // at most this many FLEET lines; 0 is all
+	Now      func() time.Time
+	Sleep    func(time.Duration)
+	Send     func(packet []byte, addr string) error
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // FleetWake sends each named bench one Wake-on-LAN magic packet to its mac, then polls ssh
@@ -403,11 +420,15 @@ func FleetWake(in FleetWakeInput) int {
 	if wait <= 0 {
 		wait = fleetPowerDefaultWait
 	}
+	reg, code := fleetRegistry(in.Machines, in.Stderr)
+	if code != 0 {
+		return code
+	}
 
 	results := make([]fleetPowerResult, len(in.Names))
 	var wg sync.WaitGroup
 	for i, name := range in.Names {
-		if r, refused := fleetPowerRefusal(name, benches); refused {
+		if r, refused := fleetPowerRefusal(name, benches, reg); refused {
 			results[i] = r
 			continue
 		}
@@ -481,16 +502,17 @@ const fleetWakePollScript = "echo AWAKE"
 // FleetRebootInput is everything `fleet reboot` needs: the file, the names, the ssh path,
 // the wait and child bound, and the clock and sleep a test replaces.
 type FleetRebootInput struct {
-	Benches string
-	Names   []string
-	SSH     string // the ssh program; empty is "ssh"
-	Wait    time.Duration
-	Timeout time.Duration
-	Max     int // at most this many FLEET lines; 0 is all
-	Now     func() time.Time
-	Sleep   func(time.Duration)
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Benches  string
+	Machines string // the machines registry; empty leaves the older refusals as the guard
+	Names    []string
+	SSH      string // the ssh program; empty is "ssh"
+	Wait     time.Duration
+	Timeout  time.Duration
+	Max      int // at most this many FLEET lines; 0 is all
+	Now      func() time.Time
+	Sleep    func(time.Duration)
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // fleetRebootResult is one bench's one line and how it went.
@@ -520,10 +542,15 @@ func FleetReboot(in FleetRebootInput) int {
 		return 2
 	}
 
+	reg, code := fleetRegistry(in.Machines, in.Stderr)
+	if code != 0 {
+		return code
+	}
+
 	results := make([]fleetRebootResult, len(in.Names))
 	var wg sync.WaitGroup
 	for i, name := range in.Names {
-		results[i] = fleetRebootRefusal(name, benches)
+		results[i] = fleetRebootRefusal(name, benches, reg)
 		if results[i].refused {
 			continue
 		}
@@ -558,12 +585,15 @@ func FleetReboot(in FleetRebootInput) int {
 
 // fleetRebootRefusal reads one requested name against the file. `studio` is refused for any
 // admin act; a name the file does not carry is refused rather than guessed.
-func fleetRebootRefusal(name string, benches map[string]FleetBench) fleetRebootResult {
+func fleetRebootRefusal(name string, benches map[string]FleetBench, reg *fleet.Registry) fleetRebootResult {
 	if strings.EqualFold(strings.TrimSpace(name), "studio") {
 		return fleetRebootResult{line: "FLEET REFUSED bench=" + oneline.Field(name), refused: true}
 	}
 	if _, ok := benches[name]; !ok {
 		return fleetRebootResult{line: "FLEET REFUSED bench=" + oneline.Field(name), refused: true}
+	}
+	if line, refused := fleetRoleRefusal(name, reg); refused {
+		return fleetRebootResult{line: line, refused: true}
 	}
 	return fleetRebootResult{}
 }

@@ -232,7 +232,20 @@ rather than resumed."
   (page-bytes 4096 :type integer)
   (page-records 128 :type integer)
   (closed-window "14d")
-  (clip-cadence "5m"))
+  (clip-cadence "5m")
+  ;; The remaining SESSION OK fields of the output grammar
+  ;; (SPEC-WORK.md:5346): the clip cadence, the retention window and the
+  ;; counters the resident session reads rather than remembers.
+  (clip-every "5m")
+  (clip-after 0 :type integer)
+  (retain "14d")
+  (pushed "-")
+  (boundary 0 :type integer)
+  (pending 0 :type integer)
+  (findings 0 :type integer)
+  (parses 0 :type integer)
+  (replays 0 :type integer)
+  (emitted 0 :type integer))
 
 (defun session-check-admission (sess verb &key now)
   "Check admission for a request on SESS with VERB at timestamp NOW.
@@ -328,8 +341,12 @@ Checks completion before until, tip == base, and OWNER generation/token."
 (defun session-start (&key path (owner "emma") (state-seed nil) (journal nil)
                            (base "tip") (every "30s") (skew "5s") (token nil)
                            (journal-token nil) (owner-record nil) (now nil)
-                           (my-bench "") (lock-held t))
-  "Start or resume a session."
+                           (my-bench "") (lock-held t)
+                           (socket-path nil) (serve nil) (foreground t))
+  "Start or resume a session. With SERVE the session becomes the resident
+process: it binds the local listener at SOCKET-PATH and serves reads, and with
+FOREGROUND NIL the caller is the launcher, which gets the SESSION OK line and
+returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
   (multiple-value-bind (action record line exit-code)
       (evaluate-ownership-claim owner-record owner
                                :now (or now (format-rfc3339 (get-universal-time)))
@@ -355,4 +372,8 @@ Checks completion before until, tip == base, and OWNER generation/token."
                                    :base base
                                    :every every
                                    :skew skew)))
-          (values sess line 0)))))
+          (if serve
+              (start-session-server sess
+                                    :socket-path (or socket-path path)
+                                    :foreground foreground)
+              (values sess line 0))))))

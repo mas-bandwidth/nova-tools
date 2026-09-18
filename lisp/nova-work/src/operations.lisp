@@ -374,22 +374,6 @@ zero (SPEC-WORK.md:4852)."
           :gaps gaps :failed failed :cache-merged cache-merged :joined joined)))
 
 ;;; ------------------------------------------------------------------
-;;; Compaction keeps the last copy (SPEC-WORK.md:5791, 6280)
-;;; ------------------------------------------------------------------
-
-(defun compact-copies (copies)
-  "Plan a compaction that may never remove the only recoverable copy: the newest
-verified copy is kept, unverified and superseded copies are pruned, and when no
-copy is verified nothing is pruned (SPEC-WORK.md:5791, :6280)."
-  (let ((verified (remove-if-not (lambda (c) (getf c :verified)) copies)))
-    (if (null verified)
-        (list :keep (mapcar (lambda (c) (getf c :id)) copies) :pruned '())
-        (let ((keep (getf (car (last verified)) :id)))
-          (list :keep (list keep)
-                :pruned (remove keep (mapcar (lambda (c) (getf c :id)) copies)
-                                :test #'equal))))))
-
-;;; ------------------------------------------------------------------
 ;;; A copied journal grants nothing (SPEC-WORK.md:6017)
 ;;; ------------------------------------------------------------------
 
@@ -1243,14 +1227,12 @@ as an unsupported input."
     ((and (>= (length text) 2)
           (char= (char text 0) #\[)
           (char= (char text (1- (length text))) #\]))
-     (let ((inner (string-trim '(#\Space #\Tab #\Newline #\Return)
-                               (subseq text 1 (1- (length text))))))
-       (if (string= inner "")
+     (let ((body (wire-trim (subseq text 1 (1- (length text))))))
+       (if (string= body "")
            '()
            (mapcar (lambda (element)
-                     (wire-decode-value
-                      (string-trim '(#\Space #\Tab #\Newline #\Return) element)))
-                   (wire-split-top-level inner #\,)))))
+                     (wire-decode-value (wire-trim element)))
+                   (wire-split-top-level body #\,)))))
     ((and (>= (length text) 2)
           (char= (char text 0) #\")
           (char= (char text (1- (length text))) #\"))
@@ -1613,3 +1595,274 @@ handed to OUT or ERR by their second token, and count the bytes printed. Answer
       (finish-output err)
       (incf (cli-client-emitted client) emitted)
       (values exit emitted stdout stderr))))
+
+;;; ------------------------------------------------------------------
+;;; Reconciliation over observation manifests (SPEC-WORK.md:3994-4013)
+;;; ------------------------------------------------------------------
+;;;
+;;; `execution reconcile --from <manifest-id>` admits records binding control,
+;;; offer and attempt identity, node generation, source identity, observed
+;;; handle, observation time and an outcome in running, paused, stopped,
+;;; completed, not-started, unsupported, unknown, with result and usage
+;;; references where present. The reconcile keeps contradictions unresolved,
+;;; refuses silence, an expired lease and an elapsed estimate as stop evidence,
+;;; qualifies `not-started` only under a durable launch rejection, leaves
+;;; capacity for an unknown execution advertised nowhere free, and permits
+;;; capacity reconciliation only through the holder's own release.
+
+(defun make-observation (&key attempt outcome usage source control offer generation
+                              handle observed-at result
+                              negative-lookup-p identity-bound-p
+                              (evidence-quality :observed)
+                              launch-rejects-p queue-miss-p)
+  "One manifest record. Missing usage stays unknown; the evidence quality is
+the record's provenance and defaults to an observed report."
+  (list :attempt attempt :outcome outcome :usage usage :source source
+        :control control :offer offer :generation generation :handle handle
+        :observed-at observed-at :result result
+        :negative-lookup-p negative-lookup-p :identity-bound-p identity-bound-p
+        :evidence-quality evidence-quality
+        :launch-rejects-p launch-rejects-p :queue-miss-p queue-miss-p))
+
+(defun observation-attempt (o) (getf o :attempt))
+(defun observation-outcome (o) (getf o :outcome))
+(defun observation-usage (o) (getf o :usage))
+
+(defun observation-evidence-quality (o)
+  (let ((quality (getf o :evidence-quality)))
+    (if quality quality :observed)))
+
+(defun observation-negative-lookup-p (o) (getf o :negative-lookup-p))
+(defun observation-identity-bound-p (o) (getf o :identity-bound-p))
+(defun observation-launch-rejects-p (o) (getf o :launch-rejects-p))
+(defun observation-queue-miss-p (o) (getf o :queue-miss-p))
+
+(defun non-stop-evidence-quality-p (quality)
+  "Silence, an expired lease and an elapsed estimate are not stop evidence."
+  (member quality '(:silence :expired-lease :elapsed-estimate)))
+
+(defun stop-evidence-p (o)
+  "Only an observed stop is stop evidence. A negative process lookup counts
+only for its bound execution identity (SPEC-WORK.md:3996-3999)."
+  (and (eq (observation-outcome o) :stopped)
+       (not (non-stop-evidence-quality-p (observation-evidence-quality o)))
+       (or (not (observation-negative-lookup-p o))
+           (observation-identity-bound-p o))))
+
+(defun not-started-qualifies-p (o)
+  "`not-started` qualifies only when the launch authority durably rejects that
+exact assignment identity from future launch; a queue miss is not it
+(SPEC-WORK.md:4000-4002)."
+  (and (eq (observation-outcome o) :not-started)
+       (observation-launch-rejects-p o)
+       (not (observation-queue-miss-p o))))
+
+(defun synthesised-usage (o)
+  "Missing usage stays unknown and a stop report never synthesises zero cost
+(SPEC-WORK.md:3999)."
+  (let ((usage (observation-usage o)))
+    (if usage usage :absent)))
+
+(defun observation-conflicting-p (a b)
+  "Two observations conflict when one attempt is reported under two outcomes."
+  (and (equal (observation-attempt a) (observation-attempt b))
+       (not (equal (observation-outcome a) (observation-outcome b)))))
+
+(defun contradictory-attempts (observations)
+  "The attempt identities one manifest reports under two different outcomes,
+in first-seen order."
+  (let ((out '()))
+    (dolist (o observations)
+      (let ((attempt (observation-attempt o)))
+        (when (and (not (member attempt out :test #'equal))
+                   (some (lambda (other) (observation-conflicting-p o other))
+                         observations))
+          (push attempt out))))
+    (nreverse out)))
+
+(defun uncertain-execution-outcome-p (outcome)
+  "An outcome that settles nothing keeps its execution uncertain."
+  (member outcome '(:running :paused :unknown :unsupported)))
+
+(defun reconcile-observations (observations &key leases)
+  "The reconcile the paragraph at SPEC-WORK.md:3994-4013 promises. Every record
+is retained; contradictions are preserved unresolved, never last-write-wins;
+only a qualifying `not-started` releases its unlaunched reservation; capacity
+held for an unknown execution is never advertised free; W stays the live leases
+and ACTIVE keeps the uncertain executions W no longer names."
+  (let* ((unresolved (contradictory-attempts observations))
+         (not-started (loop for o in observations
+                            when (not-started-qualifies-p o)
+                              collect (observation-attempt o)))
+         (capacity (loop for o in observations
+                         when (and (not-started-qualifies-p o)
+                                   (not (member (observation-attempt o) unresolved
+                                                :test #'equal)))
+                           collect (observation-attempt o)))
+         (uncertain (loop for o in observations
+                          when (uncertain-execution-outcome-p (observation-outcome o))
+                            collect (observation-attempt o))))
+    (list :status (if unresolved :unresolved :resolved)
+          :retained observations
+          :unresolved unresolved
+          :stop-evidence (loop for o in observations
+                               when (stop-evidence-p o)
+                                 collect (observation-attempt o))
+          :not-started not-started
+          :capacity-released capacity
+          :uncertain (remove-duplicates uncertain :test #'equal)
+          :w (remove-if-not (lambda (lease) (getf lease :live)) leases)
+          :active (remove-if-not (lambda (lease) (not (getf lease :live))) leases))))
+
+(defun release-permitted-p (actor holder &key confirmed-exit-p)
+  "Confirmed termination permits capacity reconciliation but bypasses no
+holder-only release: the coordinator never signs for a holder
+(SPEC-WORK.md:4003)."
+  (declare (ignore confirmed-exit-p))
+  (equal actor holder))
+
+;;; ------------------------------------------------------------------
+;;; `session replay` bundle intake (SPEC-WORK.md:2214-2218, :2240-2251)
+;;; ------------------------------------------------------------------
+;;;
+;;; A request bundle is the bus's durable unit: "a request bundle is a file a
+;;; note carries, and `session replay --from` is its intake, so no second
+;;; transport is invented here". The replay applies the bundle one request at a
+;;; time, validated fresh against the live O. `--as` names the coordinator
+;;; applying the bundle and is recorded in `:generation-owner`; the event's
+;;; `:by` stays the request's own author, because a replay moves a request and
+;;; never re-authors it. A request whose `--expect` is behind its node's own
+;;; accepted event refuses `stale` naming the current revision, but the bundle's
+;;; own earlier requests are exactly what its later ones saw and never stale
+;;; them. A retry of a recorded request is answered by the journal's dedup
+;;; predicate with the recorded disposition and applies no second event.
+
+(defstruct (request-bundle
+             (:constructor make-request-bundle (base clipped-revision requests)))
+  "The parsed intake of `session replay --from`: the commit the bundle was
+written at, the clipped revision its requests expect, and the ordered requests."
+  base clipped-revision requests)
+
+(defun read-request-bundle (text)
+  "Read one restricted s-expression request bundle. The bundle is
+`(:request-bundle :base <sha> :clipped-revision <n> :requests (<request> ...))`
+where each request is a plist carrying `:verb`, `:node`, `:by`, `:request`,
+`:expect` and the verb's own fields. A malformed or absent boundary refuses
+rather than being guessed."
+  (let ((form (read-restricted text)))
+    (unless (and (consp form) (eq (first form) :request-bundle))
+      (error 'unsupported-input :what "not a request bundle"))
+    (let ((clipped (getf (rest form) :clipped-revision +absent+))
+          (requests (getf (rest form) :requests +absent+)))
+      (unless (and (integerp clipped) (not (minusp clipped)))
+        (error 'unsupported-input
+               :what "request bundle needs a nonnegative :clipped-revision"))
+      (unless (listp requests)
+        (error 'unsupported-input :what "request bundle needs a :requests list"))
+      (dolist (request requests)
+        (unless (and (consp request) (keywordp (first request)))
+          (error 'unsupported-input :what "a bundle request is not a plist"))
+        (unless (getf request :request)
+          (error 'unsupported-input :what "a bundle request carries no :request id")))
+      (make-request-bundle (getf (rest form) :base +absent+) clipped requests))))
+
+(defun %bundle-request (request coordinator &key now)
+  "The kernel request a bundle entry becomes. `--expect` is the replay's own
+precondition and is not a kernel field, so it is removed; the replayer replaces
+`:generation-owner`; the bundle's `:by` is left alone."
+  (let ((req (copy-list request)))
+    (remf req :expect)
+    (setf (getf req :generation-owner) coordinator)
+    (let ((stamp (getf req :stamp)))
+      (cond
+        (stamp (unless (getf req :clock) (setf (getf req :clock) :given)))
+        (now (setf (getf req :stamp) now (getf req :clock) :given))
+        (t (setf (getf req :stamp) "1970-01-01T00:00:00Z"
+                 (getf req :clock) :tool))))
+    req))
+
+(defun %bundle-apply (session request coordinator &key now)
+  "Apply one bundle request through the session's single writer and answer a
+verdict line for it."
+  (multiple-value-bind (okp line code)
+      (wire-session-mutate session (%bundle-request request coordinator :now now))
+    (if okp
+        (values t (format nil "REPLAY OK request=~A node=~A"
+                          (getf request :request) (getf request :node))
+                0)
+        (values nil (format nil "REPLAY FAIL request=~A node=~A: ~A"
+                            (getf request :request) (getf request :node)
+                            (or (and (stringp line) line)
+                                (format nil "exit ~A" code)))
+                1))))
+
+(defun %replay-verdict (session request coordinator baseline &key now)
+  "Answer (values OK-P LINE EXIT) for one bundle request. A recorded id is
+answered by the journal's dedup predicate; a fresh request whose node has
+accepted an event of its own after the revision `--expect` names is refused
+`stale`; otherwise it is applied."
+  (let* ((kernel (wire-session-kernel session))
+         (node (getf request :node))
+         (rid (getf request :request))
+         (expect (getf request :expect)))
+    (multiple-value-bind (found recorded-digest recorded-line)
+        (journal-lookup (kernel-journal kernel) rid)
+      (declare (ignore recorded-digest recorded-line))
+      (cond
+        ((eq found :unavailable)
+         (values nil (format nil "REPLAY FAIL request=~A node=~A: dedup unavailable" rid node) 1))
+        (found
+         ;; The id and body are already recorded: the kernel's dedup predicate
+         ;; returns the recorded disposition and applies no second event.
+         (%bundle-apply session request coordinator :now now))
+        ((null expect)
+         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect is required on a bundle request"
+                             rid node)
+                 1))
+        ((not (and (integerp expect) (not (minusp expect))))
+         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect must be a nonnegative revision"
+                             rid node)
+                 1))
+        ((let ((latest (gethash node baseline)))
+           (and latest (> latest expect)))
+         (values nil (format nil "REPLAY FAIL request=~A node=~A expect=~D current=~D: stale"
+                             rid node expect (gethash node baseline))
+                 1))
+        (t
+         (%bundle-apply session request coordinator :now now))))))
+
+(defun session-replay (session bundle &key as max now)
+  "Apply BUNDLE one request at a time through the session's kernel, bounded by
+MAX (NIL or 0 means every request; a negative bound refuses). `--as` names the
+coordinator applying the bundle and is recorded in `:generation-owner`, while
+the event's `:by` stays the request's own author. Answer (values OK-P LINES
+EXIT): one verdict line per request, exit 0 only when every one applied."
+  (unless (and (stringp as) (plusp (length as)))
+    (error 'unsupported-input :what "session replay needs --as <name>"))
+  (when (and max (minusp max))
+    (error 'unsupported-input :what "session replay: a negative --max is refused"))
+  (let* ((kernel (wire-session-kernel session))
+         (baseline (make-hash-table :test #'equal))
+         (requests (request-bundle-requests bundle))
+         (selected (if (or (null max) (zerop max))
+                       requests
+                       (subseq requests 0 (min max (length requests)))))
+         (lines '())
+         (exit 0))
+    ;; The per-node accepted-revision baseline is read once, before the replay,
+    ;; so a bundle's own earlier requests never stale its later ones.
+    (dolist (record (state-history (kernel-state kernel)))
+      (dolist (form (getf record :events))
+        (let ((node (getf form :node))
+              (rev (getf form :rev)))
+          (when (and (stringp node) (integerp rev)
+                     (or (null (gethash node baseline))
+                         (> rev (gethash node baseline))))
+            (setf (gethash node baseline) rev)))))
+    (dolist (request selected)
+      (multiple-value-bind (okp line code)
+          (%replay-verdict session request as baseline :now now)
+        (declare (ignore okp))
+        (push line lines)
+        (when (plusp code) (setf exit 1))))
+    (values (zerop exit) (nreverse lines) exit)))

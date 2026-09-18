@@ -30,6 +30,8 @@ const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REV
 usage:
   nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>] [--decide] [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY] [--base-url <url>]
   nova-review port --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
+  nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+                         revert every non-test hunk in a throwaway worktree at the head and run the changed tests: they must fail
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -72,6 +74,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return packet(args[1:], out, errOut)
 	case "port":
 		return port(args[1:], out, errOut)
+	case "mutate":
+		return mutate(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
@@ -1202,24 +1206,45 @@ func namedRules(ctx context.Context, repo, base, head string, specFlags, request
 	return strings.Join(out, "\n"), len(selected), nil
 }
 
+// viewPRIntent reads a pull request's title and body through the `gh` CLI. It is
+// a package variable, like openPortHost in port.go, so the package's tests inject
+// a fake and never reach the network: on a bench with gh installed the real call
+// goes to github.com and can hang until the command's context deadline, which is
+// how a packet --pr test sat in the CI-SLOW alert. The real implementation is
+// ghPRIntent, below.
+var viewPRIntent = ghPRIntent
+
+// ghPRIntent is the real viewPRIntent: it runs `gh pr view <n> --json title,body`
+// and reports ok=false on any failure, so getAuthorIntent falls back to reading
+// the head commit locally. It is the only place this package names gh.
+func ghPRIntent(ctx context.Context, pr int, hostRepo string) (title, body string, ok bool) {
+	c := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		return "", "", false
+	}
+	if err := c.Start(); err != nil {
+		return "", "", false
+	}
+	const maxRead = 1024 * 1024
+	b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+	if err != nil || len(b) > maxRead || c.Wait() != nil {
+		return "", "", false
+	}
+	var v struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), true
+}
+
 func getAuthorIntent(ctx context.Context, repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
 	if pr > 0 && hostRepo != "" {
-		c := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
-		stdout, err := c.StdoutPipe()
-		if err == nil {
-			if err := c.Start(); err == nil {
-				const maxRead = 1024 * 1024
-				b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
-				if err == nil && len(b) <= maxRead && c.Wait() == nil {
-					var v struct {
-						Title string `json:"title"`
-						Body  string `json:"body"`
-					}
-					if err := json.Unmarshal(b, &v); err == nil {
-						return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), nil
-					}
-				}
-			}
+		if t, b, ok := viewPRIntent(ctx, pr, hostRepo); ok {
+			return t, b, nil
 		}
 	}
 	if head != "" && repo != "" {

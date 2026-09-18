@@ -633,6 +633,23 @@ confident quiet over a bus that was refusing every read. The rule follows from
 that and is absolute: an allow-list decides what is *suppressed*, never what is
 *shown*, and a line this tool cannot classify is a line this tool prints.
 
+**Progress is not protocol, and is the one thing dropped before classification.**
+Glenn's rule has two halves: a program that takes longer than 0.1 s says what it
+is doing, on stderr — *and* a progress line never enters a protocol stream a
+consumer parses. `nova-bus`'s since-walk narrates
+`INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` on stderr, exactly as the
+first half asks, and this tool reads both streams together, so on 2026-09-18 that
+line reached the classifier above — whose default case *prints* — and was relayed
+as `WAKE BUS LINE INBOX WALK …`, counted as a change in the world, and ended a
+poll before the mail the watcher was waiting for came down. So a line carrying a
+**progress prefix** is dropped before anything else and is counted nowhere:
+`read=` is the lines of the *protocol* this poll read, and a sentence about how
+far a walk has got is not one of them. This is not a filter on the status line
+and does not weaken the rule above — the allow-list still decides only what is
+*suppressed*; this decides what was never protocol to begin with. The prefixes
+are `internal/bus.ProgressPrefixes`, one registry both programs read, so a new
+progress line is one entry and is safe in every consumer at once.
+
 **A refused or error line never re-wakes and is never silent.** The first sighting
 of an unrecognised line is a change. A subsequent run that sees the *same* line
 again — the same bytes, from the same source — prints it under `WAKE BUS

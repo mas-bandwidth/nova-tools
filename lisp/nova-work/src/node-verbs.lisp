@@ -270,10 +270,24 @@ and only once per collection; a roadmap is refused, naming its one creator."
 (defun node-view (state id) (wnode-view (%node-or-nil state id)))
 
 (defun %roadmap-axis-ids-p (axes)
-  "AXES is an ordered list of distinct non-empty axis id strings."
+  "AXES is an ordered list of distinct non-empty axis id strings, or of
+ (id . members) pairs whose ids are distinct non-empty strings. Both the bare
+ id list the configure and projection verbs use and the member-carrying list
+ the `cell` verb reads are admitted."
   (and (listp axes)
-       (every (lambda (a) (and (stringp a) (plusp (length a)))) axes)
-       (= (length axes) (length (remove-duplicates axes :test #'string=)))))
+       (every (lambda (a)
+                (let ((id (if (consp a) (car a) a)))
+                  (and (stringp id) (plusp (length id))
+                       (or (not (consp a))
+                           (and (listp (cdr a))
+                                (every (lambda (m)
+                                         (and (stringp m) (plusp (length m))))
+                                       (cdr a)))))))
+              axes)
+       (= (length axes)
+          (length (remove-duplicates
+                   (mapcar (lambda (a) (if (consp a) (car a) a)) axes)
+                   :test #'string=)))))
 
 (defun roadmap-create (kernel &key id parent title (row-kind :feature)
                                     (aggregation :required-members)
@@ -804,73 +818,5 @@ dependency, and names the dependency's resolver."
                       rows))))))
     (nreverse rows)))
 
-;;; ------------------------------------------------------------------
-;;; endpoint-is-local-and-private (SPEC-WORK.md:2646-2653, :5727)
-;;; ------------------------------------------------------------------
-;;;
-;;; The session's directory is created 0700 and its socket 0600, both owned by
-;;; the running account; a pre-existing directory or socket with wider modes is
-;;; refused rather than reused; and no listener is bound to any network address.
-
-(defstruct (session-endpoint
-             (:constructor %make-session-endpoint
-                 (directory socket-path directory-mode socket-mode owner socket-family)))
-  directory socket-path directory-mode socket-mode owner socket-family)
-
-(defun session-endpoint-dir-mode (endpoint) (session-endpoint-directory-mode endpoint))
-(defun session-endpoint-file-mode (endpoint) (session-endpoint-socket-mode endpoint))
-
-#+sbcl
-(defun %file-mode (path)
-  (logand (sb-posix:stat-mode (sb-posix:stat path)) #o777))
-
-#+sbcl
-(defun local-socket-family ()
-  "The family of a local socket, for the endpoint assertion."
-  (sb-bsd-sockets:socket-family (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
-
-#-sbcl
-(defun local-socket-family () :local)
-
-#+sbcl
-(defun current-account-uid () (sb-posix:getuid))
-
-#-sbcl
-(defun current-account-uid () 0)
-
-#+sbcl
-(defun make-session-endpoint (directory socket-path)
-  "Create or reuse DIRECTORY at 0700 and bind SOCKET-PATH at 0600. A pre-existing
-directory or socket with wider modes refuses; the socket is a local (AF_UNIX)
-socket and never a network listener."
-  (unless (probe-file directory)
-    (sb-posix:mkdir directory #o700))
-  (let ((dmode (%file-mode directory)))
-    (unless (eql dmode #o700)
-      (error 'unsupported-input
-             :what (format nil "endpoint: pre-existing directory ~A has mode ~O, not 0700"
-                           directory dmode))))
-  (when (probe-file socket-path)
-    (let ((smode (%file-mode socket-path)))
-      (unless (eql smode #o600)
-        (error 'unsupported-input
-               :what (format nil "endpoint: pre-existing socket ~A has mode ~O, not 0600"
-                             socket-path smode)))))
-  (let* ((sock (make-instance 'sb-bsd-sockets:local-socket :type :stream))
-         (family (sb-bsd-sockets:socket-family sock)))
-    (unwind-protect
-         (progn
-           (sb-bsd-sockets:socket-bind sock socket-path)
-           (sb-posix:chmod socket-path #o600))
-      (sb-bsd-sockets:socket-close sock))
-    (%make-session-endpoint directory socket-path #o700 #o600 (sb-posix:getuid) family)))
-
-#-sbcl
-(defun make-session-endpoint (directory socket-path)
-  (declare (ignore directory socket-path))
-  (error 'not-implemented))
-
-(defun endpoint-network-listener-p (endpoint)
-  "This scope binds no network address; the endpoint is local only."
-  (declare (ignore endpoint))
-  nil)
+;;; The socket endpoint, the local listener and the resident session daemon
+;;; live in src/transport.lisp (SPEC-WORK.md:2642-2655, :268-310).

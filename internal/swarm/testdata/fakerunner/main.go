@@ -203,11 +203,26 @@ func (r *runner) writeFile(path, body string, appendTo bool) {
 	if appendTo {
 		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
 	}
-	f, err := os.OpenFile(path, flags, 0o644)
-	must(err)
 	if body != "" && !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
+	if !appendTo {
+		// A whole-file write is published atomically: written beside the target and renamed
+		// into place. A test that waits for the file to EXIST and then fires the deadline must
+		// never be able to catch it created and still empty; that window turned
+		// result-after-deadline into line1-mismatch on the Studio (2026-09-17) once the
+		// runner started fast enough for the race to show.
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".fakerunner-*")
+		must(err)
+		_, err = tmp.WriteString(body)
+		must(err)
+		must(tmp.Chmod(0o644))
+		must(tmp.Close())
+		must(os.Rename(tmp.Name(), path))
+		return
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	must(err)
 	_, err = f.WriteString(body)
 	must(err)
 	must(f.Close())

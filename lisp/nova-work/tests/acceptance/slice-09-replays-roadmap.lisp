@@ -138,7 +138,61 @@
       (check-equal m bad "a flatten refusal wrote something"))
     (multiple-value-bind (flat line code) (r8621-matrix-flatten m '((:col "r1")))
       (check-equal 0 code "an explicit flatten refused")
-      (ok (getf flat :flattened) "an explicit flatten recorded no selection"))))
+      (ok (getf flat :flattened) "an explicit flatten recorded no selection")))
+  ;; The same retirement contract over the real kernel view record
+  ;; (docs/SPEC-WORK.md:3072-3129, :5438): `axis --add|--remove` mutates a
+  ;; roadmap's stored axes and cells, moves the first axis's required set,
+  ;; leaves the member's node and state standing, and refuses an absent member.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f2" :type :feature :parent "root" :state :unknown)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (roadmap-create k :id "root/rm" :parent "root" :title "M"
+                    :axes '("col" "row") :members '() :reason "new"
+                    :request "rm-axis" :stamp "2026-09-17T00:00:00Z")
+    (flet ((view () (node-view (kernel-state k) "root/rm")))
+      (multiple-value-bind (okp line code)
+          (axis k :roadmap "root/rm" :axis "col" :member "root/f1" :add t
+                :request "ax-add-1")
+        (ok okp "axis add of a first-axis member refused: ~A" line)
+        (check-equal 0 code "axis add exits 0"))
+      (axis k :roadmap "root/rm" :axis "col" :member "root/f2" :add t :request "ax-add-2")
+      (axis k :roadmap "root/rm" :axis "row" :member "root/f1" :add t :request "ax-add-3")
+      ;; Only the first axis holds the ordered rows; a second-axis member moves
+      ;; the revision and neither the set nor rows= (docs/SPEC-WORK.md:5597-5598).
+      (check-equal '("root/f1" "root/f2") (getf (view) :members)
+                   "the first axis did not hold the ordered rows")
+      (let ((rev (getf (view) :scope-revision)))
+        (axis k :roadmap "root/rm" :axis "row" :member "root/f2" :add t :request "ax-add-4")
+        (check-equal '("root/f1" "root/f2") (getf (view) :members)
+                     "a second-axis add moved the row set")
+        (ok (> (getf (view) :scope-revision) rev)
+            "a second-axis add moved no revision"))
+      ;; A cell coordinate holding the member retires with it, and the member's
+      ;; node and state stand (docs/SPEC-WORK.md:3103-3109).
+      (let ((stored (view)))
+        (setf (getf stored :cells) (list (list (list "col" "root/f1") "ref-1")
+                                         (list (list "row" "root/f1") "ref-2"))))
+      (multiple-value-bind (okp line code)
+          (axis k :roadmap "root/rm" :axis "col" :member "root/f1" :remove t
+                :request "ax-rm-1")
+        (ok okp "axis remove refused: ~A" line)
+        (check-equal 0 code "axis remove exits 0")
+        (ok (search "cells=1" line) "the retired cell count was not reported: ~A" line))
+      (check-equal '("root/f2") (getf (view) :members)
+                   "the first-axis removal did not retire the row from the set")
+      (check-equal 1 (length (getf (view) :cells))
+                   "the removal did not retire exactly its coordinate")
+      (check-equal :o (node-branch (kernel-state k) "root/f1")
+                   "the removal cancelled the member's node")
+      ;; An absent member refuses and writes nothing.
+      (let ((before (copy-tree (view))))
+        (multiple-value-bind (okp line code)
+            (axis k :roadmap "root/rm" :axis "col" :member "root/zz" :remove t
+                  :request "ax-rm-2")
+          (ok (not okp) "an absent member was not refused")
+          (check-equal 2 code "an absent-member removal exit code")
+          (check-equal before (view) "an absent-member refusal wrote something"))))))
 
 ;;; ------------------------------------------------------------------
 ;;; configure-no-effect-and-undo-conflict   docs/SPEC-WORK.md:5842
@@ -573,3 +627,188 @@
       (ok (null okp) "an axisless percent with --axis was accepted")
       (check-equal 2 code "non-matrix axis exit")
       (ok (search "--axis" line) "the non-matrix refusal did not name the flag: ~A" line))))
+
+
+;;; ------------------------------------------------------------------
+;;; cell                                     docs/SPEC-WORK.md:2329
+;;; ------------------------------------------------------------------
+
+(deftest "cell-moves-no-required-set" "docs/SPEC-WORK.md:2329"
+    "expected=ref-map-repoint-clear-move-no-rows;out-of-scope-leaves-applicable-rows;in-scope-restores;unknown-member-refused;duplicate-coordinate-refused"
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root" :state :doing)
+                 (:id "root/f2" :type :feature :parent "root" :state :doing)
+                 (:id "root/f3" :type :feature :parent "root" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R"
+                        :axes '(("lang" . ("root/f1" "root/f2" "root/f3"))
+                                ("platform" . ("linux" "mac")))
+                        :reason "new" :request "rm-1")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    ;; rows= is the live first-axis members and a reference moves it not.
+    (check-equal 3 (roadmap-rows-count k "rm") "rows= is not the live first axis")
+    (let ((rev (or (getf (node-view (kernel-state k) "rm") :revision) 0)))
+      ;; `cell --ref` maps a coordinate and moves neither the set nor the revision.
+      (multiple-value-bind (okp line code)
+          (roadmap-cell k :roadmap "rm" :coord '("root/f1" "linux")
+                        :ref "root/f1" :reason "map" :request "c1")
+        (ok okp "a mapping was refused: ~A" line)
+        (check-equal 0 code "mapping exit"))
+      (check-equal "root/f1" (roadmap-cell-ref k "rm" '("root/f1" "linux"))
+                   "the reference was not stored")
+      (check-equal 3 (roadmap-rows-count k "rm") "a reference moved the required set")
+      (check-equal rev (getf (node-view (kernel-state k) "rm") :revision)
+                   "a reference moved the scope revision")
+      ;; A re-point stores the new node and still moves no set.
+      (multiple-value-bind (okp line code)
+          (roadmap-cell k :roadmap "rm" :coord '("root/f1" "linux")
+                        :ref "root/f2" :reason "repoint" :request "c2")
+        (ok okp "a re-point was refused: ~A" line)
+        (check-equal 0 code "re-point exit"))
+      (check-equal "root/f2" (roadmap-cell-ref k "rm" '("root/f1" "linux"))
+                   "the re-point did not take")
+      (check-equal 3 (roadmap-rows-count k "rm") "a re-point moved the set")
+      ;; `--ref -` clears the mapping.
+      (multiple-value-bind (okp line code)
+          (roadmap-cell k :roadmap "rm" :coord '("root/f1" "linux")
+                        :ref "-" :reason "clear" :request "c3")
+        (ok okp "a clear was refused: ~A" line)
+        (check-equal 0 code "clear exit"))
+      (check-equal nil (roadmap-cell-ref k "rm" '("root/f1" "linux"))
+                   "the clear left the reference"))
+    ;; Applicable rows: all three for both platform members...
+    (check-equal 3 (roadmap-applicable-count k "rm" "linux")
+                 "the applicable count was not the live rows")
+    (check-equal 3 (roadmap-applicable-count k "rm" "mac")
+                 "another member's applicable rows moved")
+    ;; ...an out-of-scope cell leaves that member's applicable rows and never the set.
+    (multiple-value-bind (okp line code)
+        (roadmap-cell k :roadmap "rm" :coord '("root/f2" "linux")
+                      :out-of-scope t :reason "out" :request "c4")
+      (ok okp "an out-of-scope mark was refused: ~A" line)
+      (check-equal 0 code "out-of-scope exit"))
+    (ok (roadmap-cell-out-of-scope-p k "rm" '("root/f2" "linux"))
+        "the out-of-scope mark was not recorded")
+    (check-equal 2 (roadmap-applicable-count k "rm" "linux")
+                 "the out-of-scope cell left the applicable rows")
+    (check-equal 3 (roadmap-applicable-count k "rm" "mac")
+                 "an unrelated member's applicable rows moved")
+    (check-equal 3 (roadmap-rows-count k "rm")
+                 "an out-of-scope cell moved the required set")
+    ;; --in-scope brings the row back.
+    (multiple-value-bind (okp line code)
+        (roadmap-cell k :roadmap "rm" :coord '("root/f2" "linux")
+                      :in-scope t :reason "in" :request "c5")
+      (ok okp "an in-scope mark was refused: ~A" line)
+      (check-equal 0 code "in-scope exit"))
+    (check-equal 3 (roadmap-applicable-count k "rm" "linux")
+                 "the in-scope mark did not restore the applicable rows")
+    ;; An unknown axis member refuses.
+    (multiple-value-bind (okp line code)
+        (roadmap-cell k :roadmap "rm" :coord '("root/f1" "solaris")
+                      :ref "root/f1" :reason "bad" :request "c6")
+      (ok (null okp) "an unknown axis member was accepted")
+      (check-equal 2 code "unknown-member exit")
+      (ok (search "unknown member" line) "the unknown-member refusal: ~A" line))
+    ;; A duplicate coordinate refuses.
+    (multiple-value-bind (okp line code)
+        (roadmap-cell k :roadmap "rm" :coord '("root/f1" "root/f1")
+                      :ref "root/f1" :reason "bad" :request "c7")
+      (ok (null okp) "a duplicate coordinate was accepted")
+      (check-equal 2 code "duplicate-coordinate exit")
+      (ok (search "duplicate coordinate" line) "the duplicate refusal: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; render --view over a stored selection    docs/SPEC-WORK.md:3131-3136
+;;; ------------------------------------------------------------------
+
+(deftest "render-view-over-a-stored-selection" "docs/SPEC-WORK.md:3131"
+    "expected=projection-reads-its-stored-display-selection-not-its-file;matrix-names-its-selection;zero-or-one-axis-needs-none;the-two-forms-exclusive;unknown-missing-or-duplicate-axis-or-member-refused-bad-selection"
+  ;; SPEC-WORK.md:3133-3136 -- `render --view <id> --chat [--projection <id> |
+  ;; --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...]`:
+  ;; with a projection it reads that projection's display selection and not its
+  ;; file, without one a matrix names its selection and a zero- or one-axis
+  ;; view needs none, the two forms are exclusive, and a matrix selection
+  ;; naming an unknown, missing or duplicate axis or member refuses
+  ;; `bad selection`.
+  (let* ((view (list :axes '("col" "row" "x")
+                     :members '()
+                     :axis-members '(("col" . ("c1" "c2"))
+                                     ("row" . ("r1" "r2"))
+                                     ("x" . ("x1" "x2")))
+                     :private '()
+                     :revision 3
+                     :projections
+                     (list (list :id "p1" :root "root" :repo "acme/work"
+                                 :path "ROADMAP.md"
+                                 :start "<!-- ROADMAP:START -->"
+                                 :end "<!-- ROADMAP:END -->"
+                                 :policy :markdown-table
+                                 :row-axis "row" :column-axis "col"
+                                 :fixed '(("x" "x1")))
+                           (list :id "p2" :root "root" :repo "acme/work"
+                                 :path "ROADMAP.md"
+                                 :start "<!-- ROADMAP:START -->"
+                                 :end "<!-- ROADMAP:END -->"
+                                 :policy :markdown-table
+                                 :row-axis "row" :column-axis "col"
+                                 :fixed '(("x" "zz")))))))
+    ;; With a projection it reads that projection's stored display selection
+    ;; and not its file.
+    (multiple-value-bind (body line code) (render-view view :projection "p1")
+      (ok (eql 0 code) "the stored projection was refused: ~A" line)
+      (ok (search "row=r1 col=c1 x=x1" body)
+          "the stored display selection was not rendered: ~A" body)
+      (ok (not (search "x=x2" body))
+          "the projection's fixed member did not select a single coordinate")
+      (ok (not (search "ROADMAP.md" body)) "render read the projection's file")
+      (ok (not (search "<!-- ROADMAP" body)) "render read the projection's file"))
+    ;; The two forms are exclusive.
+    (multiple-value-bind (body line code)
+        (render-view view :projection "p1" :row-axis "row" :column-axis "col")
+      (check-equal 2 code "a projection plus an explicit selection was accepted")
+      (ok (search "exclusive" line) "the exclusivity refusal: ~A" line))
+    ;; A projection the view has not got refuses.
+    (multiple-value-bind (body line code) (render-view view :projection "nope")
+      (check-equal 2 code "an unknown projection was accepted")
+      (ok (search "no such projection" line) "the unknown-projection refusal: ~A" line))
+    ;; Without a projection a matrix names its selection.
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "row" :column-axis "col" :fixed '(("x" "x1")))
+      (ok (eql 0 code) "a matrix selection was refused: ~A" line)
+      (ok (search "row=r2 col=c2 x=x1" body) "the matrix selection was not rendered"))
+    ;; ...and a matrix with no selection refuses.
+    (multiple-value-bind (body line code) (render-view view)
+      (check-equal 2 code "a matrix with no selection was accepted")
+      (ok (search "bad selection" line) "the missing-selection refusal: ~A" line))
+    ;; A missing fixed axis, a duplicate or unknown axis and an unknown member
+    ;; all refuse `bad selection`.
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "row" :column-axis "col")
+      (check-equal 2 code "a matrix missing its fixed axis was accepted")
+      (ok (search "bad selection" line) "the missing-fixed refusal: ~A" line))
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "row" :column-axis "row" :fixed '(("x" "x1")))
+      (check-equal 2 code "a duplicate row/column axis was accepted")
+      (ok (search "bad selection" line) "the duplicate-axis refusal: ~A" line))
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "nope" :column-axis "col" :fixed '(("x" "x1")))
+      (check-equal 2 code "an unknown row axis was accepted")
+      (ok (search "bad selection" line) "the unknown-axis refusal: ~A" line))
+    (multiple-value-bind (body line code) (render-view view :projection "p2")
+      (check-equal 2 code "a selection with an unknown member was accepted")
+      (ok (search "bad selection" line) "the unknown-member refusal: ~A" line))
+    ;; A zero- or one-axis view needs no selection.
+    (let ((flat (list :axes '() :members '("t1" "t2") :private '() :projections '()))
+          (one (list :axes '("only") :members '("t1") :private '() :projections '())))
+      (multiple-value-bind (body line code) (render-view flat)
+        (ok (eql 0 code) "an axisless view needs no selection: ~A" line)
+        (ok (search "row=t2" body) "an axisless view dropped a row"))
+      (multiple-value-bind (body line code) (render-view one)
+        (ok (eql 0 code) "a one-axis view needs no selection: ~A" line))
+      (multiple-value-bind (body line code) (render-view flat :row-axis "row")
+        (check-equal 2 code "a zero-axis view accepted a selection")
+        (ok (search "bad selection" line) "the zero-axis refusal: ~A" line)))))
+

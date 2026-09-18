@@ -1,7 +1,8 @@
 // nova-check runs the record-layer checks described in SPEC.md: boot
 // attestation, link integrity, the kernel size budget, the self/machinery
-// separation, the SEED-CORE ↔ SEED.md floor-set parity, and the protected
-// corpus a line has chosen never to lose silently. Exit 0 pass,
+// separation, the SEED-CORE ↔ SEED.md floor-set parity, the protected
+// corpus a line has chosen never to lose silently, and the dogfood ledger --
+// whether anybody but a verb's own author has run it. Exit 0 pass,
 // 1 check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults:
@@ -21,7 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-check: record-layer checks for a nova self repo (see docs/SPEC.md)
+const usage = `nova-check: record-layer checks, for a nova self repo and for this family's own tools (see docs/SPEC.md)
 
 usage:
   nova-check version    print this build identity (--version also accepted)
@@ -53,6 +54,18 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
+  nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
+                                                     one row per verb the command reference
+                                                     declares: who has run it, when, and
+                                                     whether it did what they needed
+  nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok)
+                            --notes <text> [--issue <n>] --receipts <dir>
+                                                     append one receipt: I ran this verb,
+                                                     on real work, and here is how it went
+  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all]
+                                                     exit 1 with the verbs no non-author has
+                                                     run and the edges nobody has cleared;
+                                                     the line the release lane calls
 
   --fail-max <n>   on quickstart, attest, links, nocode and corpus: how many
                    FAIL lines to print before one MORE line stands for the
@@ -67,6 +80,7 @@ example:
   nova-check attest --home ./self --manifest ./self/MANIFEST
   nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
   nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
+  nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 
 ./self there is a directory of your own; cmd/nova-check/testdata/example-self
 in this repo is one the size of a first run, and every line above is run
@@ -113,6 +127,20 @@ func hintFor(name string) string {
 		return "  " + ledgerHint + "\n"
 	case "root":
 		return "  " + rootHint + "\n"
+	case "cli":
+		return "  " + cliHint + "\n"
+	case "tools":
+		return "  " + toolsHint + "\n"
+	case "receipts":
+		return "  " + receiptsHint + "\n"
+	case "tool":
+		return "  " + toolHint + "\n"
+	case "verb":
+		return "  " + verbHint + "\n"
+	case "by":
+		return "  " + byHint + "\n"
+	case "notes":
+		return "  " + notesHint + "\n"
 	}
 	return ""
 }
@@ -153,6 +181,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
+	case "dogfood":
+		return cmdDogfood(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

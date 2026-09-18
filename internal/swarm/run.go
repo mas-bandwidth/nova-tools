@@ -435,6 +435,11 @@ func Run(in RunInput) int {
 	}
 	tasks.More()
 
+	// ISSUE #1048: AT TASK END the finished slots' data/, tmp/ and jobs/*/scratch are freed,
+	// unless the worker description set keep_data=true. The shared per-bench caches under
+	// <root>/cache are never touched, because they are the thing every job reuses.
+	ReapAtTaskEnd(p.Dir, in.Worker, now)
+
 	pending, _ := p.List(Pending)
 	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d auto_retry=%t after=%s\n",
 		started, done, failed, killed, len(pending), recovered, !in.NoAutoRetry, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))

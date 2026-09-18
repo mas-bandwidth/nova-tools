@@ -34,8 +34,13 @@ var (
 
 	// mergeAppendRe is the append to the merge gate's `$pkgs`, outside any `||`
 	// fallback, so every group runs internal/ci and not only one that changed no
-	// Go package.
-	mergeAppendRe = regexp.MustCompile(`(?m)^\s*pkgs="\$pkgs \./internal/ci"\s*$`)
+	// Go package. A trailing `;;` is allowed because the append sits in a `case`
+	// arm since 2026-09-18: when the diff had ALREADY selected internal/ci, a
+	// bare append ran it twice in every shard of every leg (ten runs of it across
+	// the windows legs of run 35354900090 alone). The rule this pins is
+	// "unconditionally in scope", and a guard that only prevents a DUPLICATE
+	// keeps it.
+	mergeAppendRe = regexp.MustCompile(`(?m)^\s*(\*\)\s*)?pkgs="\$pkgs \./internal/ci"\s*(;;)?\s*$`)
 
 	// mergeFallback is the shape this card removes: internal/ci selected only
 	// when $pkgs is empty.

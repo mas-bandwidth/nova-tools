@@ -997,7 +997,9 @@ they are distinct kinds:
     (the tree it was read against), `:generation` (the node's, at the time of writing),
     `:attempt` (optional).
   - `:attempt` — `:model`, `:bench`, `:started`, `:ended`, `:result` (a pointer), `:usage` (a
-    pointer to a token record, #181), `:generation` (the task generation it answered).
+    `usage:<receipt-id>` pointer to a token record, #181; `receipt-id` is a 32-character
+    hexadecimal string naming the SPEC-TOKENS usage receipt, rule 32), `:generation` (the task
+    generation it answered).
   - `:correct` — a correction to a task: `:reason`; bumps the task's `:generation`
     (5653982211).
   - `:review-attest` — a reviewer's attestation that a result satisfies an `:attested`
@@ -4553,6 +4555,14 @@ counted. The coordination measure is cost per accepted decision across tiers, wi
 decisions and recovery latency as gates; equal correctness is proved before fewer turns is called a
 win (the duty-tier amendment, #500).
 
+**Verdicts are state, not events** (nova-tools#854 item 1, from pit stop 3 #828 D). A read's
+`APPROVE` or `HOLD` is a row on the PR node, keyed by the reader and the exact head it read, and it
+is re-evaluated every tick until the PR merges or closes; nothing is decided once at enqueue. A head
+move makes the row `stale` and a read owed, and the row stays on the node to be reconsidered at the
+new head rather than an approval being lost to a decision made once; a merged or closed PR makes the
+row final and owes no read. This retires the 51 approvals lost because enqueue was decided once. The
+witness is `verdict-is-state-on-the-node` in *Required replays*.
+
 ### The envelope up, and the no that survives the hop
 
 Glenn, 2026-09-14 (ideas#778, live 21:04Z to 21:16Z): *"each layer summarizes up. As above, so
@@ -4627,6 +4637,7 @@ model, and the replacement's kind inherited on `supersede`.
 | delegation-admission-gates | A packet lacking objective, source revision, criteria, scope, result contract, checkpoint or `:effort` is refused at gate 2; a dispatch that would cross the daily spend ceiling is refused at gate 3 naming the ceiling; each refusal names its gate and reason at exit 2. |
 | delegation-result-gates | An offer to a friend reading `asleep` or `unknown` is refused at gate 4; the requested execution limit and the observed expiry or stop outcome are recorded separately and a timeout is not termination; no second attempt starts silently after uncertainty about the first. |
 | receipt-at-exact-head | A child's result is booked as a machinery receipt at the exact head it ran against; a review verdict binds to `--head <sha>` and is not reused across a changed head or an unchecked rebase. |
+| verdict-is-state-on-the-node | A read's `APPROVE`/`HOLD` is a row on the PR node, re-evaluated every tick; a head move makes the row `stale` and a read owed rather than losing the decision, and a merged or closed PR makes the row final and owes no read. |
 | decision-packet-per-item-revision | Machinery builds one packet per item and revision; a newer revision supersedes it keeping its open findings; while the reader is busy the packet is amended, not duplicated; an empty pulse wakes no model and re-executes nothing. |
 | packet-is-smallest-sufficient | The packet carries the delta since this reader's recorded head, the rules it touches, the open findings with dispositions, the new behaviour with evidence pointers and links to the full sources; the whole diff only when this reader has never read the entry. |
 | no-receipt-of-receipt | A worker returns one structured result; a verdict is keyed (reader, sha) and a gate (base, head, integration) in one durable home; an independent review is not re-routed through the coordinator; a receipt of a receipt is refused as a duplicate. |

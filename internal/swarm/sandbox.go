@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // THE LAUNCH SEAM: every job runs inside nova-sandbox.
@@ -70,11 +71,16 @@ const SandboxBinary = "nova-sandbox"
 
 // SandboxJob is one job's wrap, and every field of it is the dispatcher's own.
 type SandboxJob struct {
-	Sandbox   string   // the resolved nova-sandbox binary
-	PoolName  string   // the container name on windows; accepted and ignored elsewhere
-	SlotDir   string   // the worker home for this job: the slot copy
-	JobDir    string   // the job directory: the first --write, and the cwd
-	DataHome  string   // the per-job data home, which is also the child's HOME
+	Sandbox  string // the resolved nova-sandbox binary
+	PoolName string // the container name on windows; accepted and ignored elsewhere
+	SlotDir  string // the worker home for this job: the slot copy
+	JobDir   string // the job directory: the first --write, and the cwd
+	DataHome string // the per-job data home, which is also the child's HOME
+	// CacheDir is the SHARED per-bench cache root under the swarm root (issue #1048). It is
+	// a --write BESIDE the job directory and the data home: the toolchain and modules are
+	// the same for every job under one root, so they live once. Empty when the caller has no
+	// shared cache root to name.
+	CacheDir  string
 	ReadRoots []string // toolchain roots the worker description named
 	Command   string   // the harness, resolved on PATH by the caller
 	Args      []string // the harness's own arguments
@@ -93,6 +99,12 @@ func (j SandboxJob) SandboxArgv() []string {
 	// directory default to it. The data home is named beside it because the spec names it
 	// -- it is where the harness keeps its database, and it is the child's HOME.
 	argv = append(argv, "--write", jobDir, "--write", absPath(j.DataHome), "--cwd", jobDir)
+	if j.CacheDir != "" {
+		// The shared per-bench cache root is a permitted write root beside the job directory
+		// and the data home (issue #1048, docs/SPEC-SANDBOX.md): one cache for every job
+		// under the swarm root, so the Go toolchain and modules are not downloaded per slot.
+		argv = append(argv, "--write", absPath(j.CacheDir))
+	}
 	if j.PoolName != "" {
 		// On windows the container name is required; on darwin and linux it is accepted
 		// and ignored, so one caller builds one argv for three platforms.
@@ -179,7 +191,7 @@ func SandboxGate(sandboxPath, poolDir, secret string, notes io.Writer) (reason, 
 	// it did not, and a directory that will not go away is not a reason to start no worker
 	// -- so it is said on stderr and the gate's answer is unchanged.
 	defer func() {
-		if err := os.RemoveAll(probeDir); err != nil && notes != nil {
+		if err := safepath.RemoveUnder(absPath(poolDir), probeDir); err != nil && notes != nil {
 			fmt.Fprintf(notes, "nova-swarm run: the probe directory %s could not be removed: %s\n",
 				oneline.Field(probeDir), oneline.Escape(redactedReason(err)))
 		}

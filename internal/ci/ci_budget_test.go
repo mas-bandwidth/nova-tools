@@ -47,6 +47,16 @@ var timeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*(\d+)$`)
 // has to be written into the workflow as that guard, not assumed here.
 var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.event_name == 'schedule'`)
 
+// perLegTimeoutRe matches a job ceiling carried per matrix leg rather than as one
+// number: `timeout-minutes: ${{ matrix.leg.timeout }}`.
+var perLegTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.leg\.timeout\s*\}\}\s*$`)
+
+// legNameRe and legTimeoutRe read a matrix leg's name and its own ceiling.
+var (
+	legNameRe    = regexp.MustCompile(`^-\s*name:\s*(\S+)$`)
+	legTimeoutRe = regexp.MustCompile(`^timeout:\s*(\d+)$`)
+)
+
 // usesRe matches an action reference pinned by its 40-hex commit SHA.
 var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 
@@ -104,11 +114,35 @@ func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
 	if !ok {
 		t.Fatal("test-hosted-merge declares no timeout-minutes; the allowance has nothing to hold")
 	}
-	if mins != mergeGateCeiling {
-		t.Errorf("test-hosted-merge timeout-minutes = %d, want %d: the merge gate is the one allowed exception to the two-minute law, at the recorded five minutes", mins, mergeGateCeiling)
+	if mins != mergeGateWindowsCeiling {
+		t.Errorf("test-hosted-merge's largest per-leg timeout-minutes = %d, want %d", mins, mergeGateWindowsCeiling)
 	}
-	if strings.TrimSpace(mergeGateReason) == "" {
-		t.Error("the merge gate allowance carries no reason; the exception must say why it exists")
+	// PER LEG, because one number for three platforms is what censored the
+	// windows leg: it was cancelled at 5:12 on a five-minute cap with fifteen of
+	// twenty-three packages still to run, and a cancelled shard drops the whole
+	// group. linux was measured at 41-94 s in the same run, so ITS five minutes is
+	// still a hang detector and stays. darwin's five did not survive batch 7 —
+	// shards 0 and 1 of run 35369433950 were cancelled at exactly five minutes —
+	// and is now mergeGateDarwinCeiling behind a plan that deals from darwin's own
+	// measured table.
+	legs := legTimeouts(jobBody(src, "test-hosted-merge"))
+	if len(legs) == 0 {
+		t.Fatal("test-hosted-merge declares no per-leg timeouts; one ceiling for three platforms is what cancelled the windows leg of run 35354900090 at 5:12")
+	}
+	for leg, want := range map[string]int{"linux": mergeGateCeiling, "darwin": mergeGateDarwinCeiling, "windows": mergeGateWindowsCeiling} {
+		got, ok := legs[leg]
+		if !ok {
+			t.Errorf("the %s leg of test-hosted-merge declares no timeout of its own", leg)
+			continue
+		}
+		if got != want {
+			t.Errorf("the %s leg of test-hosted-merge has timeout %d, want %d", leg, got, want)
+		}
+	}
+	for name, reason := range map[string]string{"merge gate": mergeGateReason, "merge gate windows leg": mergeGateWindowsReason, "merge gate darwin leg": mergeGateDarwinReason} {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("the %s allowance carries no reason; an exception must say why it exists", name)
+		}
 	}
 	if !strings.Contains(src, "the one allowed exception") && !strings.Contains(src, "the one exception") {
 		t.Error("the test-hosted-merge comment does not name the gate as the exception to the two-minute law")
@@ -325,6 +359,47 @@ const mergeGateCeiling = 5
 // so the number and the why cannot drift apart silently.
 const mergeGateReason = "the merge gate runs the full suite of the packages a group changes on three platforms; sharded by size; cancelled under load at 2:40 on 2026-09-17"
 
+// mergeGateWindowsCeiling is the SECOND number of that one exception, and it is
+// the windows leg's alone. Five minutes fits linux (41-94 s measured in run
+// 35354900090) and darwin (38-256 s) with room to spare. It does not fit
+// windows: five of six windows legs took 3:47 to 4:53 in that run and the sixth
+// was cancelled at 5:12, mid `go test -list` of its ninth of twenty-three
+// packages with fifteen still to go — genuinely unfinished, unlike the PR shards
+// that were killed two seconds after their last test. Its remaining work is
+// about another 95 s, which puts the true whole near 6:47, and twelve minutes is
+// about 1.8x that.
+//
+// It is a hang detector, not a budget: what holds the windows leg's wall clock
+// is the shard plan and testdata/ci/package-sizes-windows.tsv. And the asymmetry
+// in the cost of being wrong is the whole argument for the room — a cancelled
+// shard does not fail one leg, it drops the group and restarts every PR behind
+// it, while a cap that is too generous costs runner minutes only when something
+// is genuinely wedged.
+const mergeGateWindowsCeiling = 12
+
+// mergeGateWindowsReason is the record beside THAT number, asserted the same way.
+const mergeGateWindowsReason = "windows runs the same full suite on the slowest hosted platform: 3:47-4:53 measured over five legs in run 35354900090 and a sixth cancelled at 5:12 with fifteen of twenty-three packages still to run"
+
+// mergeGateDarwinCeiling is the THIRD number of the one exception, and 2026-09-18
+// is what bought it. Five minutes fit darwin while the leg ran small groups off
+// the Linux table (38-256 s in run 35354900090). It did not fit batch 7: in
+// merge-group run 35369433950 darwin shards 0 and 1 were CANCELLED at exactly
+// five minutes on superman, carrying a thirteen-member batch's packages dealt by
+// COUNT rather than by size, with cmd/nova-bus — 10.0 s in the Linux table and
+// minutes on an x64 Mac — inside shard 0.
+//
+// The shard plan is the real fix and it landed in the same change:
+// testdata/ci/package-sizes-darwin.tsv and DARWIN_TIMEOUT mean a darwin shard is
+// now dealt from darwin's own measurement. This number is what remains a HANG
+// DETECTOR behind that plan, and it carries the same room its Windows sibling
+// does, for the same asymmetry: a cap that is too generous costs runner minutes
+// when something is genuinely wedged, while a cap that is too thin drops the
+// group and restarts every PR behind it.
+const mergeGateDarwinCeiling = 10
+
+// mergeGateDarwinReason is the record beside THAT number, asserted the same way.
+const mergeGateDarwinReason = "darwin runs the full suite on the x64 Macs: shards 0 and 1 of run 35369433950 were cancelled at the five-minute cap carrying a thirteen-member batch dealt by count off the Linux table, so the leg now deals from package-sizes-darwin.tsv and this cap is the hang detector behind it"
+
 // clTierCeilings is where a job that does NOT cap at two minutes says so, and
 // says why. A number here is a claim about the machine the job runs on, so it
 // belongs in the repository beside the law rather than in a commit message.
@@ -332,19 +407,47 @@ var clTierCeilings = map[string]int{
 	// The aggregate reads results and checks nothing out.
 	"ci-ok": 1,
 
-	// The one allowed exception. The merge gate runs the full suite of the
-	// packages a group changes, on three platforms, sharded by size; it was
-	// cancelled under load at 2:40 (2026-09-17), and a cancelled shard drops the
-	// group. mergeGateReason carries the record the budget test asserts.
-	"test-hosted-merge": mergeGateCeiling,
+	// The one allowed exception, and the ceiling here is the LARGEST of its
+	// per-leg numbers, because this map answers "how long can this job run".
+	// linux carries mergeGateCeiling (5), darwin mergeGateDarwinCeiling (10) and
+	// windows mergeGateWindowsCeiling (12), each for the reason recorded beside
+	// it. The budget test reads the three apart out of the workflow's matrix.
+	"test-hosted-merge": mergeGateWindowsCeiling,
 
-	// The platform legs a PR runs only when it touches platform-specific paths
-	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
-	// runner starts cold (checkout, setup-go, cache restore) and cmd/nova-bus
-	// measured 439 s on windows-latest before its -short gate (#682); the leg
-	// runs -short, and 6 is the same cap the sharded matrix carries. A PR that
-	// does not touch those paths pays a checkout and skips. (2026-09-16)
+	// The sandbox leg a PR runs only when it touches internal/sandbox or a
+	// *_linux.go. A hosted runner starts cold (checkout, setup-go, cache
+	// restore) before it compiles anything, and 6 is the same cap the sharded
+	// matrix carries. A PR that does not touch those paths pays a checkout and
+	// skips. This job carried a windows entry too until 2026-09-18, when that
+	// entry was retired into test-windows-pr: on integration-4 it was CANCELLED
+	// by this very cap at 6 min 20 s, running unsharded the same packages the
+	// sharded leg had just passed. The number was never the problem; running
+	// them unsharded was. (2026-09-16, amended 2026-09-18)
 	"test-hosted-pr": 6,
+
+	// The Windows leg a pull request gets for the packages it changes, and since
+	// 2026-09-18 the ONLY Windows leg a PR runs. TEN, and it is a hang detector
+	// rather than a budget — the third and last number on this leg to be set by
+	// a measurement instead of by a convention.
+	//
+	// Six minutes sat ON the measurement. In run 35352593117 all three shards
+	// FINISHED their last package — ok internal/bus at 13:56:36.1, 13:56:34.6
+	// and 13:56:35.3 — and were killed two to four seconds later, in the
+	// post-checkout cleanup. The work was done; the cap reported a red about the
+	// clock. That is the same mistake the 100 s per-package ceiling made one
+	// tier down, at the job level: a limit that close to the thing it measures
+	// censors it.
+	//
+	// The measured whole is 6:00 a shard (13:50:36 to 13:56:36) for the whole
+	// tree over three shards, with twenty unmeasured packages needlessly dealt
+	// across all of them. The leg now runs four shards with every package
+	// measured, which is about 4:03 of the same work: 178 s of tests, ~40 s of
+	// compiles and listing, 25 s of setup. Ten minutes is 1.7x the largest whole
+	// ever observed and about 2.5x the expected one. What keeps the leg fast is
+	// the shard plan and the measurements in
+	// testdata/ci/package-sizes-windows.tsv, not this ceiling; this ceiling only
+	// stops a wedged process burning a runner. (2026-09-18)
+	"test-windows-pr": 10,
 
 	// The sharded test matrix, and the one number the move to self-hosted
 	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
@@ -385,6 +488,11 @@ func jobNames(src string) []string {
 	return names
 }
 
+// jobTimeouts returns each job's declared timeout-minutes. A job whose ceiling
+// differs per matrix leg declares `timeout-minutes: ${{ matrix.leg.timeout }}`
+// and carries the numbers in its matrix; for those the LARGEST leg value is
+// returned, because the budget question this answers is "how long can this job
+// run", and legTimeouts below is what reads them apart.
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""
@@ -400,6 +508,38 @@ func jobTimeouts(src string) map[string]int {
 			n, err := strconv.Atoi(m[1])
 			if err == nil {
 				out[cur] = n
+			}
+			continue
+		}
+		if perLegTimeoutRe.MatchString(line) {
+			for _, mins := range legTimeouts(jobBody(src, cur)) {
+				if mins > out[cur] {
+					out[cur] = mins
+				}
+			}
+		}
+	}
+	return out
+}
+
+// legTimeouts reads a job's per-leg ceilings out of its matrix: each `- name: X`
+// entry's `timeout: N`, keyed by the leg name. It is how the budget test can say
+// what windows is allowed without saying the same thing about linux and darwin.
+func legTimeouts(job string) map[string]int {
+	out := make(map[string]int)
+	name := ""
+	for _, line := range strings.Split(job, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if m := legNameRe.FindStringSubmatch(trimmed); m != nil {
+			name = m[1]
+			continue
+		}
+		if name == "" {
+			continue
+		}
+		if m := legTimeoutRe.FindStringSubmatch(trimmed); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				out[name] = n
 			}
 		}
 	}

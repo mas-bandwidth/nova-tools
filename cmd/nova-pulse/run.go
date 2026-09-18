@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
@@ -27,6 +29,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	deadline := f.fs.Int("deadline", int(pulse.DefaultCardDeadline/time.Second), "")
 	timeout := f.fs.Int("timeout", 120, "")
 	tempGlob := f.fs.String("temp-glob", "", "")
+	tempRoot := f.fs.String("temp-root", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
@@ -75,6 +78,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Timeout:  time.Duration(*timeout) * time.Second,
 		Max:      *max,
 		TempGlob: *tempGlob,
+		TempRoot: *tempRoot,
 		Now:      func() time.Time { return time.Now().UTC() },
 		Config:   func() pulse.Config { return cfg },
 	}))
@@ -88,6 +92,10 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 	out := f.fs.String("out", "", "")
 	ref := f.fs.String("ref", "", "")
 	evidence := f.fs.String("evidence", "", "")
+	decideOn := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", 0.9, "")
+	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
+	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -95,13 +103,24 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 	f.want(*kind, "case", "one of "+joinKinds())
 	f.want(*queue, "queue", "the queue directory holding RULES.tsv and the undecided evidence")
 	f.want(*out, "out", "the card file this packet is written to")
+	if *decideOn && (*floor < 0 || *floor > 1) {
+		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g", *floor))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
-	return pulse.Triage(pulse.TriageInput{
+	in := pulse.TriageInput{
 		Case: *kind, Queue: *queue, Out: *out, Ref: *ref, Evidence: *evidence,
 		Stdout: stdout, Stderr: stderr,
-	})
+	}
+	if *decideOn {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			return refuse(stderr, " triage", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		in.Decide, in.Floor, in.Decider = true, *floor, client
+	}
+	return pulse.Triage(in)
 }
 
 func joinKinds() string {

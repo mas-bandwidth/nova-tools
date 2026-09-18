@@ -73,7 +73,56 @@
   (check-equal nil (release-permitted-p "coordinator" "holder" :confirmed-exit-p t)
                "a confirmed exit makes no holder-only release")
   (check-equal t (release-permitted-p "holder" "holder" :confirmed-exit-p t)
-               "the holder's own release is admitted"))
+               "the holder's own release is admitted")
+  ;; any outcome other than stopped is not stop evidence at all.
+  (ok (not (stop-evidence-p (make-observation :attempt "a3" :outcome :running)))
+      "a running report is not stop evidence")
+  (ok (not (stop-evidence-p (make-observation :attempt "a3" :outcome :unknown)))
+      "an unknown report is not stop evidence")
+  ;; silence, an expired lease and an elapsed estimate are not stop evidence.
+  (dolist (q '(:silence :expired-lease :elapsed-estimate))
+    (ok (not (stop-evidence-p (make-observation :attempt "a3" :outcome :stopped
+                                                :evidence-quality q)))
+        "a ~A report is not stop evidence" q))
+  (ok (stop-evidence-p (make-observation :attempt "a3" :outcome :stopped
+                                         :evidence-quality :observed))
+      "an observed stop is stop evidence")
+  ;; a negative process lookup counts only for its bound execution identity.
+  (ok (not (stop-evidence-p (make-observation :attempt "a4" :outcome :stopped
+                                              :negative-lookup-p t
+                                              :identity-bound-p nil)))
+      "an unbound negative lookup is not stop evidence")
+  (ok (stop-evidence-p (make-observation :attempt "a4" :outcome :stopped
+                                         :negative-lookup-p t
+                                         :identity-bound-p t))
+      "a bound negative lookup counts")
+  ;; not-started qualifies only under a durable launch rejection, never a queue miss.
+  (ok (not (not-started-qualifies-p (make-observation :attempt "a5" :outcome :not-started)))
+      "a bare not-started does not qualify")
+  (ok (not (not-started-qualifies-p (make-observation :attempt "a5" :outcome :not-started
+                                                      :queue-miss-p t
+                                                      :launch-rejects-p t)))
+      "a queue miss is not a durable launch rejection")
+  (ok (not-started-qualifies-p (make-observation :attempt "a5" :outcome :not-started
+                                                 :launch-rejects-p t))
+      "a durable launch rejection qualifies not-started")
+  ;; the reconcile names its unresolved attempts and frees only an unlaunched
+  ;; reservation: capacity held for an unknown execution is never advertised free.
+  (let ((r (reconcile-observations
+            (list (make-observation :attempt "a1" :outcome :running :usage nil)
+                  (make-observation :attempt "a1" :outcome :stopped :usage nil)
+                  (make-observation :attempt "a6" :outcome :unknown :usage nil)
+                  (make-observation :attempt "a7" :outcome :not-started
+                                    :launch-rejects-p t)))))
+    (check-equal :unresolved (getf r :status) "a contradiction leaves the set unresolved")
+    (ok (member "a1" (getf r :unresolved) :test #'string=)
+        "the contradictory attempt is named unresolved")
+    (ok (not (member "a6" (getf r :capacity-released) :test #'string=))
+        "capacity held for an unknown execution is never advertised free")
+    (ok (member "a7" (getf r :capacity-released) :test #'string=)
+        "a qualifying not-started reservation alone is released")
+    (ok (member "a6" (getf r :uncertain) :test #'string=)
+        "an uncertain execution stays in ACTIVE")))
 
 ;;; ------------------------------------------------------------------
 ;;; resume-is-two-actions                             SPEC-WORK.md:4019

@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE FAKE RUNNER IS AN EXECUTABLE, NOT A SHELL SCRIPT (windows leg, 2026-09-15).
@@ -65,6 +67,7 @@ func builtFakeRunner(t *testing.T) string {
 		}
 		cmd := exec.Command("go", "build", "-o", bin, "./internal/swarm/testdata/fakerunner")
 		cmd.Dir = root
+		cmd.Env = goenv.Clean(os.Environ())
 		if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 			fakeRunnerErr = &buildError{out: string(out), err: cmdErr}
 			return
@@ -113,8 +116,18 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, raw, 0o755); err != nil {
-		t.Fatalf("placing the fake runner at %s: %v", path, err)
+	// A hard link, not a copy, wherever the filesystem allows it. On macOS every fresh
+	// COPY of an executable is a never-seen binary that the system policy scanner assesses
+	// on its first exec; one is quick, but a package run places dozens at once and they
+	// queue behind the scanner for longer than a test will wait (batman and the Studio,
+	// 2026-09-17: result-after-deadline timed out at 30 s only in the full package run).
+	// A link shares the inode the scanner has already passed. The copy stays as the
+	// fallback for a temp directory on another filesystem, and for Windows.
+	_ = os.Remove(path)
+	if runtime.GOOS == "windows" || os.Link(src, path) != nil {
+		if err := os.WriteFile(path, raw, 0o755); err != nil {
+			t.Fatalf("placing the fake runner at %s: %v", path, err)
+		}
 	}
 	if steps == nil {
 		steps = []runnerStep{}

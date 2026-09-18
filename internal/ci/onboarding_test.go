@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -135,6 +136,7 @@ func buildTool(t *testing.T, root, tool string) string {
 		bin += ".exe"
 	}
 	build := exec.Command("go", "build", "-o", bin, "./cmd/"+tool)
+	build.Env = goenv.Clean(os.Environ())
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building %s: %v\n%s", tool, err, out)

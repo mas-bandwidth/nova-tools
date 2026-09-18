@@ -12,6 +12,17 @@
 ;;;; `schema-evolution`, `shared-prerequisite-owned-once` and
 ;;;; `source-inventory` now run in tests/replays-8650.lisp (nova-tools #362).
 
+(deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
+    "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
+  ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
+  (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
+
+
+(deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
+    "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
+  ;; NEEDS-KERNEL: prerequisite ownership and per-cell references.
+  (ok t "slice 1 carries no prerequisites: NEEDS-KERNEL prerequisite ownership"))
+
 (deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
   ;; below the configured threshold there is no ping.
@@ -46,6 +57,11 @@
 
 ;; source-inventory now runs in lisp/nova-work/tests/replays-8650.lisp
 ;; (nova-tools #362).
+
+(deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
+    "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"
+  ;; NEEDS-KERNEL: verifier and staged admission.
+  (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
 
 (deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5874"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
@@ -82,7 +98,42 @@
       (multiple-value-bind (okp reason)
           (validate-export (capture-export new 3 :base 1 :end '(:sequence 3 :sha256 "h3")) split)
         (ok (not okp) "a cut inside an envelope was admitted")
-        (ok (search "cut inside" reason) "the refusal names the split envelope: ~A" reason)))))
+        (ok (search "cut inside" reason) "the refusal names the split envelope: ~A" reason))))
+  ;; `--state` is required with `--at`, and the request export refuses `--at`.
+  (multiple-value-bind (okp reason) (validate-export-form :state nil :at 2)
+    (ok (not okp) "the request export admitted --at")
+    (ok (search "--at" reason) "the refusal does not name --at: ~A" reason))
+  (multiple-value-bind (okp reason) (validate-export-form :state t)
+    (ok (not okp) "a state export without --at was admitted")
+    (ok (search "--at" reason) "the refusal does not name --at: ~A" reason))
+  ;; `range` requires both stamps; the other closed-history selections refuse them.
+  (multiple-value-bind (okp reason)
+      (validate-export-form :state t :at 2 :closed-history :range
+                            :from "2026-09-14T00:00:00Z")
+    (ok (not okp) "a range with one stamp was admitted")
+    (ok reason "the one-stamp refusal is named: ~A" reason))
+  (multiple-value-bind (okp reason)
+      (validate-export-form :state t :at 2 :closed-history :range
+                            :from "2026-09-14T00:00:00Z" :to "2026-09-15T00:00:00Z")
+    (ok okp "a half-open range was refused: ~A" reason))
+  (multiple-value-bind (okp reason)
+      (validate-export-form :state t :at 2 :closed-history :none
+                            :from "2026-09-14T00:00:00Z")
+    (ok (not okp) "a non-range selection admitted --from")
+    (ok reason "the stamp refusal is named: ~A" reason))
+  ;; `--at` resolves to a pinned revision and refuses outside recoverable retention.
+  (let* ((k (fresh))
+         (state (kernel-state k))
+         (r (state-revision state)))
+    (multiple-value-bind (pin line)
+        (resolve-export-at state r :savepoints (list r) :retain-from 0)
+      (ok pin "a recoverable revision did not resolve: ~A" line)
+      (check-equal r (export-pin-revision pin)
+                   "the pin does not name the captured revision"))
+    (multiple-value-bind (pin line)
+        (resolve-export-at state 0 :savepoints '(0) :retain-from 1)
+      (ok (null pin) "a revision outside retention resolved")
+      (ok (search "retention" line) "the refusal does not name retention: ~A" line))))
 
 (deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5885"
     "expected=blocked-export-acknowledges-at-once;wait-returns-the-captured-revision"
@@ -115,7 +166,41 @@
         (begin-operation reg :export 44 :inside-batch t :entry-id "batch-7")
       (check-equal nil id "an export inside an atomic batch was admitted")
       (check-equal 2 code "the batch refusal exit code")
-      (ok (search "batch-7" line) "the refusal names the entry id: ~A" line))))
+      (ok (search "batch-7" line) "the refusal names the entry id: ~A" line)))
+  ;; The resident form is one long operation over the durable accept record: the
+  ;; id is durable before it is printed and the ack names op=export and the wire
+  ;; op session.export (SPEC-WORK.md:3204-3208).
+  (let* ((journal (make-accept-journal))
+         (registry (make-operation-registry :journal journal))
+         (k (fresh))
+         (r (state-revision (kernel-state k))))
+    (multiple-value-bind (id op line code)
+        (begin-state-export registry (kernel-state k) :id "op-export-9"
+                            :request "req-export-9" :at r :savepoints (list r))
+      (check-equal "op-export-9" id "the export did not return its id")
+      (ok (search "OPERATION OK" line) "the ack is not an OPERATION OK: ~A" line)
+      (ok (search "op=export" line) "the ack does not name op=export: ~A" line)
+      (check-equal 0 code "the export did not acknowledge")
+      (check-equal "session.export" (export-wire-op) "the wire op is not session.export")
+      (ok (accept-record-of journal id) "the export id is not durable before it is printed")
+      ;; wait prints the terminal EXPORT OK at the captured revision.
+      (let ((terminal (state-export-wait op)))
+        (ok (search "EXPORT OK" terminal) "wait does not print EXPORT OK: ~A" terminal)
+        (ok (search (format nil "rev=~D" r) terminal)
+            "the terminal line does not carry the captured revision: ~A" terminal))))
+  ;; The offline `--snapshot` counterpart runs one finite process and names no
+  ;; operation; a mismatched --at refuses (SPEC-WORK.md:3216-3218).
+  (let* ((k (fresh))
+         (manifest (export-manifest (kernel-state k) :id "exp-snap"))
+         (snap (load-state manifest :max-bytes 1000000)))
+    (multiple-value-bind (result line code) (snapshot-state-export snap 0)
+      (declare (ignore result))
+      (check-equal 0 code "the snapshot export refused")
+      (ok (search "operation=-" line) "the snapshot form does not name operation=-: ~A" line))
+    (multiple-value-bind (result line code) (snapshot-state-export snap 5)
+      (declare (ignore result))
+      (check-equal 1 code "a mismatched snapshot export was admitted")
+      (ok (search "--at" line) "the refusal does not name --at: ~A" line))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.
@@ -363,6 +448,9 @@
         (declare (ignore after))
         (check-equal :uncertain (getf disposition :state)
                      "an uncertain external effect reads uncertain, never cancelled")))))
+(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
+  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
+  "REDO")
 
 (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5930-5934"
     "expected=clip-returns-OPERATION-OK;commit-is-the-snapshot-digest;push-moves-the-remote-tip;wait-prints-CLIP-OK;pushed-is-the-pinned-revision;raced-CLIP-RACED-pushes-nothing;session-stop-CLIP-then-SESSION"
@@ -461,6 +549,11 @@
 
 ;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
 ;; (nova-tools #362): "until-is-overdue-not-released".
+(needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
+  "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
+  "LEASE-UNTIL")
+;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
+;; (nova-tools #362): "until-is-overdue-not-released".
 
 (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
     "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
@@ -503,6 +596,13 @@
       (handler-case (wire-parse-json (format nil "{\"revision\": ~A}" number))
         (unsupported-input () (setf refused t)))
       (ok refused "a wire frame carrying the JSON number ~A is refused" number))))
+(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
+  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
+  "WORKING-SET")
+
+;; wire-integers-are-strings is now the executable replay in
+;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
+;; restricted reader.
 
 (deftest "wire-is-length-prefixed-utf8-json" "docs/SPEC-WORK.md:2661-2663"
     "expected=4-byte-big-endian-length;utf8-payload;fragments-buffered;oversized-refused-one-framed-error"
@@ -597,7 +697,7 @@
     (check-equal 2 (open-leaf-count k) "open leaf count after bug reopen")
     (check-equal :o (node-branch (kernel-state k) "root/f/b1") "bug moved back to O")))
 
-(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
+(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5765-5767"
     "expected=unsupported-version-refused-with-supported-list;no-request-before-handshake;oversized-frame-refused-with-one-framed-error"
   ;; A client offering an unsupported version is refused with the supported
   ;; list named and the connection closed (SPEC-WORK.md:2682-2685).
@@ -633,7 +733,64 @@
         "the real frame at the bound is admitted")
     (let ((line (protocol-framed-error sess "frame exceeds max-frame-bytes")))
       (ok (search "request=null" line) "one framed error carries a null id")
-      (ok (protocol-session-closed-p sess) "the connection is closed after it"))))
+      (ok (protocol-session-closed-p sess) "the connection is closed after it")))
+  ;; The real exchange: the client's first frame is the length-prefixed UTF-8
+  ;; JSON object {"op": "hello", "protocol": ["1"], "client": ...} and the
+  ;; session answers with the one version it will speak or refuses, naming what
+  ;; it supports, and closes (SPEC-WORK.md:2662-2666, :2682-2685, :2705-2708).
+  (let* ((sess (make-protocol-session :supported '("1") :max-frame-bytes 1024))
+         (hello (wire-frame
+                 "{\"op\": \"hello\", \"protocol\": [\"1\"], \"client\": \"build-x\"}")))
+    (multiple-value-bind (response version refusal) (protocol-hello-frame sess hello)
+      (check-string= "1" version "the session speaks the one version it supports")
+      (ok (null refusal) "a supported hello is not refused")
+      (ok (protocol-session-handshaken-p sess) "the handshake finishes")
+      (ok (not (protocol-session-closed-p sess)) "the connection stays open")
+      (multiple-value-bind (text complete) (wire-unframe response)
+        (ok complete "the answer is one complete framed message")
+        (ok (search "\"protocol\": \"1\"" text)
+            "the answer carries the version: ~A" text)
+        (let ((object (wire-object-decode text)))
+          (check-string= "hello-ok" (wire-field object "op")
+                        "the answer names the hello exchange")
+          (check-equal 1 (wire-field object "protocol") "the version decoded")
+          (ok (stringp (wire-field object "session"))
+              "the answer names the session build")))))
+  ;; An unsupported version is refused with the supported list named, and the
+  ;; connection is closed. A request after it is not admitted.
+  (let* ((sess (make-protocol-session :supported '("1") :max-frame-bytes 1024))
+         (hello (wire-frame
+                 "{\"op\": \"hello\", \"protocol\": [\"2\"], \"client\": \"build-x\"}")))
+    (multiple-value-bind (response version refusal) (protocol-hello-frame sess hello)
+      (ok (null version) "an unsupported version is not spoken")
+      (ok (stringp refusal) "the refusal carries a reason")
+      (ok (protocol-session-closed-p sess) "the connection is closed")
+      (multiple-value-bind (text complete) (wire-unframe response)
+        (ok complete "the refusal is one complete framed message")
+        (ok (search "\"supported\": [\"1\"]" text)
+            "the refusal names the supported list: ~A" text)
+        (let ((object (wire-object-decode text)))
+          (check-string= "hello-refused" (wire-field object "op")
+                        "the refusal names the exchange")))
+      (multiple-value-bind (admitted why) (protocol-admit sess "req-1")
+        (ok (null admitted) "no request is admitted after the refusal")
+        (ok (stringp why) "with a reason"))))
+  ;; A frame past --max-frame-bytes is refused with one framed error before the
+  ;; close, never truncated (SPEC-WORK.md:2663-2665).
+  (let* ((sess (make-protocol-session :supported '("1") :max-frame-bytes 16))
+         (hello (wire-frame
+                 "{\"op\": \"hello\", \"protocol\": [\"1\"], \"client\": \"build-x\"}")))
+    (ok (> (length hello) 16) "the hello frame is past the bound")
+    (multiple-value-bind (response version refusal) (protocol-hello-frame sess hello)
+      (ok (null version) "an oversized frame speaks no version")
+      (ok (stringp refusal) "the refusal carries a reason")
+      (ok (protocol-session-closed-p sess) "the connection is closed")
+      (multiple-value-bind (text complete) (wire-unframe response)
+        (ok complete "the refusal is one framed error")
+        (let ((object (wire-object-decode text)))
+          (check-string= "hello-refused" (wire-field object "op") "one framed error")
+          (ok (search "max-frame-bytes" (wire-field object "reason"))
+              "the error names the bound: ~A" (wire-field object "reason")))))))
 
 (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
     "expected=every-response-reaches-only-its-request;operation-id-distinct;same-id-in-flight-refused;unknown-duplicate-missing-close-and-reconcile;batches"
@@ -1030,3 +1187,105 @@
       (check-equal emitted (cli-client-emitted client)
                    "the client's own emitted count is the bytes it printed")))
 )
+
+;;; ------------------------------------------------------------------
+;;; session-replay-bundle-intake  SPEC-WORK.md:2214-2218, :2240, :2249-2251
+;;; ------------------------------------------------------------------
+;;;
+;;; `session replay --from` is the request bus's intake: a bundle is applied
+;;; one request at a time, validated fresh against the live O; `--as` names the
+;;; coordinator and is recorded in `:generation-owner`, while the event's `:by`
+;;; stays the request's own author; a request whose node has accepted its own
+;;; event after the revision its `--expect` names is refused `stale`, but the
+;;; bundle's own earlier requests do not stale its later ones, and a retry of a
+;;; recorded request returns its recorded disposition and applies nothing.
+
+(defun replay-bundle-text (clipped-revision &rest requests)
+  (canonical-string
+   (append (list :request-bundle :base "sha-1" :clipped-revision clipped-revision
+                 :requests requests))))
+
+(defun replay-history-events (kernel)
+  (loop for record in (state-history (kernel-state kernel))
+        append (getf record :events)))
+
+(deftest "session-replay-bundle-intake" "docs/SPEC-WORK.md:2240,2249-2251"
+    "expected=each-request-applied-in-order;by-stays-author;generation-owner-is-replayer;stale-refused-per-node;bundles-own-earlier-requests-not-stale;retry-returns-recorded-disposition;max-bounds"
+  (let* ((kernel (fresh))
+         (session (make-wire-session :kernel kernel :pushed "shared-1")))
+    ;; A direct accepted event on t1 gives it a revision the bundle did not see.
+    (multiple-value-bind (okp line code)
+        (submit kernel (close-request :node "acme/work/f1/t1" :request "pre-1"
+                                      :evidence '("ev-pre")))
+      (ok okp "the pre-event is accepted: ~A" line)
+      (check-equal 0 code "the pre-event exits 0"))
+    ;; A request whose --expect is behind a node's own accepted event refuses
+    ;; `stale`, naming the current revision.
+    (let ((stale (read-request-bundle
+                  (replay-bundle-text
+                   0 '(:verb :event-reopen :node "acme/work/f1/t1" :by "rowan"
+                       :request "b-stale" :expect 0
+                       :stamp "2026-09-14T12:10:00Z" :reason "undo it")))))
+      (multiple-value-bind (all-ok lines code) (session-replay session stale :as "coord")
+        (ok (null all-ok) "a stale request refuses the replay")
+        (check-equal 1 code "a stale bundle exits 1")
+        (ok (search "stale" (first lines))
+            "the stale refusal names the current revision: ~A" (first lines))
+        (ok (search "current=" (first lines)) "the refusal prints the current revision")))
+    ;; A fresh bundle replays whole, in order: the bundle's own earlier request
+    ;; does not stale its later request on the same node.
+    (let ((bundle (read-request-bundle
+                   (replay-bundle-text
+                    2 '(:verb :event-reopen :node "acme/work/f1/t1" :by "rowan"
+                        :request "b-1" :expect 2
+                        :stamp "2026-09-14T12:20:00Z" :reason "regressed")
+                      '(:verb :state-to-doing :node "acme/work/f1/t1" :by "rowan"
+                        :request "b-2" :expect 2
+                        :stamp "2026-09-14T12:21:00Z" :reason "picked up"
+                        :evidence ("ev-b2"))))))
+      (multiple-value-bind (all-ok lines code) (session-replay session bundle :as "coord")
+        (ok all-ok "a fresh bundle replays whole: ~S" lines)
+        (check-equal 0 code "a fresh bundle exits 0")
+        (check-equal 2 (length lines) "one verdict per request")
+        ;; The event's :by is the bundle's author; :generation-owner is the
+        ;; coordinator `--as` named, because a replay moves a request and never
+        ;; re-authors it.
+        (let* ((events (replay-history-events kernel))
+               (reopen (find "b-1" events :key (lambda (e) (getf e :request))
+                             :test #'string=)))
+          (ok reopen "the replayed reopen is in the history")
+          (check-string= "rowan" (getf reopen :by)
+                         "the event's :by stays the bundle's author")
+          (check-string= "coord" (getf reopen :generation-owner)
+                         "the replayer is recorded in :generation-owner")))
+      ;; A retry of the same id and body returns the recorded disposition and
+      ;; applies no second event.
+      (let ((before (length (state-history (kernel-state kernel)))))
+        (multiple-value-bind (all-ok2 lines2 code2) (session-replay session bundle :as "coord")
+          (ok all-ok2 "the retry replays without error")
+          (check-equal 0 code2 "the retry exits 0")
+          (check-equal 2 (length lines2) "the retry answers each request")
+          (check-equal before (length (state-history (kernel-state kernel)))
+                       "the retry applies no second event"))))
+    ;; `--max` bounds how many requests the bundle applies.
+    (let* ((max-bundle (read-request-bundle
+                        (replay-bundle-text
+                         5 '(:verb :state-to-done :node "acme/work/f1/t2" :by "rowan"
+                             :request "m-1" :expect 5
+                             :stamp "2026-09-14T12:30:00Z" :reason "shipped"
+                             :evidence ("ev-m1"))
+                           '(:verb :event-reopen :node "acme/work/f1/t1" :by "rowan"
+                             :request "m-2" :expect 5
+                             :stamp "2026-09-14T12:31:00Z" :reason "regressed"))))
+           (before (length (state-history (kernel-state kernel)))))
+      (multiple-value-bind (all-ok lines code) (session-replay session max-bundle :as "coord" :max 1)
+        (declare (ignore code))
+        (ok all-ok "--max 1 replays the one admitted request")
+        (check-equal 1 (length lines) "--max 1 answers one request")
+        (check-equal (1+ before) (length (state-history (kernel-state kernel)))
+                     "--max 1 applies exactly one request")))
+    ;; A negative bound is refused like every other listing.
+    (handler-case
+        (progn (session-replay session (read-request-bundle (replay-bundle-text 5)) :as "coord" :max -1)
+               (fail "a negative --max was admitted"))
+      (unsupported-input () t))))
