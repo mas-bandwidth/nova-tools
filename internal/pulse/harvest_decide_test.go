@@ -75,7 +75,7 @@ func oneDoneCard(t *testing.T, root string) {
 func TestHarvestDecideAsksTheClassQuestion(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
 	oneDoneCard(t, root)
 
 	states := make(chan string, 1)
@@ -137,7 +137,7 @@ func TestHarvestDecideAsksTheClassQuestion(t *testing.T) {
 func TestHarvestAlreadyFixedSkipsThePush(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
 	oneDoneCard(t, root)
 
 	dec := &fakeClassDecider{choice: "already-fixed", conf: 0.95}
@@ -167,7 +167,7 @@ func TestHarvestAlreadyFixedSkipsThePush(t *testing.T) {
 func TestHarvestNoChangeSkipsThePush(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
 	oneDoneCard(t, root)
 
 	dec := &fakeClassDecider{choice: "no-change", conf: 0.93}
@@ -190,7 +190,7 @@ func TestHarvestNoChangeSkipsThePush(t *testing.T) {
 func TestHarvestOffBranchPrintsTheRemedy(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
 	oneDoneCard(t, root)
 
 	dec := &fakeClassDecider{choice: "off-branch", conf: 0.97}
@@ -214,7 +214,7 @@ func TestHarvestOffBranchPrintsTheRemedy(t *testing.T) {
 func TestHarvestBelowFloorBehavesAsToday(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
 	oneDoneCard(t, root)
 
 	dec := &fakeClassDecider{choice: "no-change", conf: 0.60}
@@ -232,7 +232,7 @@ func TestHarvestBelowFloorBehavesAsToday(t *testing.T) {
 func TestHarvestDecideErrorBehavesAsToday(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
 	oneDoneCard(t, root)
 
 	dec := &fakeClassDecider{err: fmt.Errorf("provider down")}
