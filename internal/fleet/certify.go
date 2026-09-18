@@ -1237,6 +1237,16 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	if errors.Is(err, ErrTimeout) {
 		return VerdictTimeout, oneline.Err(err)
 	}
+	// AND A LINE IN THE CLASS'S OWN TOKEN IS THE MACHINE ANSWERING, whatever words are in it.
+	// The M2 Air's services-reach printed `SERVICES FAIL redis ... Connection refused` -- its
+	// own refusal, naming the address it tried, through an ssh that worked perfectly -- and
+	// the marker scan below read redis-cli's words as ssh's and threw the verdict away. The
+	// transport question is only asked of an answer the class never spoke in.
+	if MachineSpoke(w.Expect, out) {
+		if reason := firstAnswerLine(out); reason != "" {
+			return VerdictFail, reason
+		}
+	}
 	if reason, bad := TransportFailure(out, err); bad {
 		return VerdictUnreachable, reason
 	}
@@ -1260,7 +1270,11 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		// The forge did not answer. That is this tool failing to ask, exactly as a broken
+		// ssh is, and it is not a judgement about the machine: `gh` on the M2 Air is not
+		// authenticated for this repository, and both forge classes were written down as
+		// FAIL for it. No row, counted apart, never repaired.
+		return VerdictUnreachable, oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	online, stale := 0, []string{}
@@ -1448,7 +1462,8 @@ func TransportFailure(out string, err error) (string, bool) {
 func runnersOnline(in CertifyInput, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		// See registryTruth: a forge nobody could ask proves nothing about a runner host.
+		return VerdictUnreachable, oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	seen, offline := 0, []string{}
