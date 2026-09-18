@@ -295,6 +295,33 @@ func decodePR(out string, n int, repo string) (PR, error) {
 	}, nil
 }
 
+// CreatePR opens the one pull request a fold lands (docs/SPEC-MERGE.md "The fold
+// (#1142)"). It is not part of the Host interface the lane's pass uses: the fold reaches
+// it through a narrower interface of its own, so the merge path has no way to open one.
+func (h *GH) CreatePR(head, base, title, body string) (int, error) {
+	out, err := h.gh("pr", "create", "--repo", h.Repo, "--head", head, "--base", base,
+		"--title", title, "--body", body)
+	if err != nil {
+		return 0, err
+	}
+	// gh prints the pull request's URL; the number is its last path segment. A URL
+	// with no readable number is refused rather than guessed: FOLD OK names the PR.
+	u := strings.TrimSpace(out)
+	u = strings.TrimSuffix(u, "/")
+	if i := strings.LastIndex(u, "/"); i >= 0 {
+		if n, err := strconv.Atoi(u[i+1:]); err == nil {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("gh pr create did not name the pull request's number: %s", oneLineOf(out))
+}
+
+// ClosePR closes one folded pull request as superseded by the squash.
+func (h *GH) ClosePR(n int) error {
+	_, err := h.gh("pr", "close", strconv.Itoa(n), "--repo", h.Repo)
+	return err
+}
+
 // BranchOID resolves a branch entry's head through the host, so that a read-only verb
 // never depends on a clone's freshness (the prototype shelled into the clone).
 func (h *GH) BranchOID(branch string) (string, error) {
