@@ -1533,6 +1533,10 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work ask  --owner <friend> --unit <id> --units <file.json> --deadline <RFC3339> --bus <dir> --as <name>
+                 [--kind work|read] [--cc <names>] [--reply-branch <name>] [--remote <name>] [--branch <name>]
+                 [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
+  nova-work asks --units <file.json> [--owner <friend>] [--as <name>] [--bus <dir>] [--max <n>] [--max-bytes <n>] [--now <stamp>]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -1551,6 +1555,16 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
+  nova-work asks           the open asks, oldest first, with their age and their deadline
+
+THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
+asks. A unit whose owner is a friend is therefore never cut as a card: ask renders it as
+ONE note in the house shape -- To, Subject, the title, the needs, the acceptance, the
+deadline and the branch to reply on -- sends it through nova-bus's OWN send path, and
+records the bus's note id back on the unit, which is where asks reads it again. An ask
+that could not be sent records nothing, and an ask with no acceptance or no deadline is
+refused before it goes out rather than after.
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -1582,6 +1596,18 @@ flags:
                   refused at its opening byte.
   --max-nodes <n> plan check: the atom ceiling (default 4096). A plan past it is refused
                   at the atom's byte.
+  --units <file>  ask and asks: the work set, as JSON:
+                  {"units":[{"id":"u1","title":"...","owner":"Emma","needs":[...],
+                  "acceptance":[...],"branch":"..."}]}. Required on both; there is no
+                  default and no discovery. ask writes the ask back into this file.
+  --owner <name>  ask: the friend the unit belongs to, spelled the way the bus's roster
+                  spells it. asks: show only that friend's asks.
+  --deadline <t>  ask: when the answer is owed, RFC3339. Required and never defaulted; a
+                  deadline that is not after --now is refused before anything is sent.
+  --bus <dir>     ask: the bus checkout the note is sent on. asks: a filter, not a read.
+  --now <stamp>   ask and asks: the instant deadlines and ages are measured against,
+                  RFC3339; the default is this run's clock and an unparsable one is a
+                  refusal rather than a silent fall back to it.
 
 exit codes: 0 ran and passed; 2 could not run (bad invocation, an unreadable graph or
 plan, a :deps cycle, an unknown node, a refusal).
