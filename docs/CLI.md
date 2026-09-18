@@ -2342,7 +2342,9 @@ flags:
                   per line. Without it no lane is checked.
   --done <ids>    set check: comma-separated unit ids that are done, beside what the
                   file's own :done and :status say.
-  --ready         set check: also print one SET READY line per unit of the ready set.
+  --ready         set check: also print one SET READY line per unit of the ready set,
+                  each carrying its admission verdict (admit=go, or admit=held with the
+                  dimension or path that held it and the unit holding it).
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -2387,6 +2389,24 @@ example:
 ```
 
 The session verbs `session start`, `session status` and `session stop` speak the socket protocol; `SESSION OK` is one shape printed by all three alike. A missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. The graph and plan verbs read the JSON dependency graph and the bounded `.work` plan as data: `plan check` and `plan expand` require a plan path and default to 65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`, `--max-nodes`); unknown kinds, absent dependencies and dependency cycles refuse. `plan expand` writes card directories for explicit `:node` entries and does not launch them; existing cards are left unchanged when expanding again. `dependencies --graph <file>` reads the graph and `--node <id> --needs <id,id>` writes dependency edges; `ready` prints whether each requested node's dependencies are terminal and accepted without acquiring a lease or reserving a slot. `set check` reads the other top form of the same language — `(work-set "id" … :units ((unit …)))`, the one a coordinator writes by hand — through that same bounded reader, and validates its content: a duplicate id, a `:needs` naming a unit nobody defined, a cycle, an `:owner` no `--minds` registry names, a `:lane` no `--lanes` file names, a `:deadline` that is not an instant. Every rule runs over every unit in one pass and each finding is one `SET` line, so a defective set costs one run rather than one run per defect. The two exit codes stay apart: exit 2 is a file that could not be read at all, exit 1 is a file read whole whose content is wrong, and the `SET OK units=… ready=… blocked=… owned=…` summary prints either way. `--ready` adds the mechanical ready set — a unit is done when it says so (`:done`, or a `:status` of closed, done, landed or merged) or when `--done` names it, and ready when it is not done and every need is done — so what can be pulled is derived from the language rather than maintained by hand. `nova-work help` also describes `clip`, which commits and harvests a worker's result before resetting its worktree; use that mutating workflow only with the intended worktree, branch, base and harvest destination.
+
+Readiness is only half the question, so each SET READY line carries the other half: the
+ADMISSION verdict from internal/jobs (SPEC-JOBS section 9, SPEC-WORKLANG A5 to A9).
+`ready` is whether a unit's needs are closed, which the language answers; `admit` is
+whether its resource vector is free, which the kernel answers. The ready units are run
+through one admission in written order, so the ones marked `admit=go` are a set that may
+run TOGETHER -- one live unit per lane (A6), no two intersecting :writes (A7) -- rather
+than a list each of which could run if the others did not. A held unit prints what held
+it and who holds it:
+
+  SET READY unit=certify:verb owner=rowan-child lane=pulse deadline=- admit=go on=- by=-
+  SET READY unit=harvest:bench owner=rowan-child lane=pulse deadline=- admit=held on=lane:pulse by=certify:verb
+
+A held unit never holds the ones after it: A9 says a unit goes when its OWN needs are
+closed and its OWN vector is free, so the pass neither stops nor waits at a refusal. The
+authority here counts lanes and writes only -- set check reads a file and knows no bench
+-- so a unit naming cpu or memory is reported as held on that dimension rather than
+silently granted against a capacity nobody counted.
 
 ## nova-cairn
 

@@ -506,7 +506,7 @@ func TestLoadReadsTheLispFormThroughWorklang(t *testing.T) {
 	}
 	limits := worklang.DefaultLimits()
 	limits.MaxBytes = int(DefaultMaxBytes)
-	want, err := worklang.ParseWorkSet(path, raw, limits)
+	want, err := worklang.ParseWorkSetTolerant(path, raw, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,16 +519,16 @@ func TestLoadReadsTheLispFormThroughWorklang(t *testing.T) {
 	}
 	for i := range want.Units {
 		w, g := want.Units[i], got.Units[i]
-		if g.ID != w.ID || g.Title != w.Title || g.Owner != w.Owner || g.Lane != w.Lane {
+		if g.ID != w.ID || g.Title != w.Title() || g.Owner != w.Owner() || g.Lane != w.Lane() {
 			t.Errorf("unit %d differs: %+v vs %+v", i, g, w)
 		}
-		if w.Deadline == "" {
+		if w.Deadline() == "" {
 			if !g.Deadline.IsZero() {
 				t.Errorf("unit %q has no deadline in the file but one after the read", w.ID)
 			}
 			continue
 		}
-		at, err := worklang.ParseStamp(w.Deadline)
+		at, err := worklang.ParseStamp(w.Deadline())
 		if err != nil {
 			t.Fatal(err)
 		}

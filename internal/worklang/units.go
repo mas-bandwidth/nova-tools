@@ -27,6 +27,7 @@ var unitKeys = map[string]bool{
 	"findings": true, "pr": true, "prs": true, "card": true, "cards": true,
 	"spec": true, "sprint": true, "under": true, "kind": true, "repo": true,
 	"base": true, "output": true, "done-when": true, "units": true,
+	"branch": true,
 	// the amendment
 	"id": true, "was": true, "resources": true, "writes": true, "tools": true,
 	"collects": true, "warm": true, "attempts": true, "acceptance": true,
@@ -65,8 +66,11 @@ var numericResources = map[string]bool{
 
 // WorkSet is the reader's view of one (work-set ...) file.
 type WorkSet struct {
-	File    string
-	ID      string
+	File string
+	ID   string
+	// Title is the set's :title as written, kept beside Fields because it is
+	// the one field of the set a caller prints rather than walks.
+	Title   string
 	Fields  map[string]Form
 	Unknown map[string]Form
 	Units   []Unit
@@ -82,6 +86,11 @@ type Unit struct {
 	Offset  int
 	Fields  map[string]Form
 	Unknown map[string]Form
+
+	// keys is every key the form carried, known or not, in WRITTEN order. The
+	// two maps answer "what does this unit say about X"; this answers "what did
+	// the author write", which a map cannot give back.
+	keys []string
 }
 
 // Attempt is one record of one try at a unit: which rung ran it, who owned it,
@@ -132,8 +141,28 @@ type Criterion struct {
 
 // ParseWorkSet reads a work set and validates the shapes this reader owns: the
 // top form, every unit's id, and the shape of each amendment key. A refused set
-// is refused whole at exit 2, never half-read.
+// is refused whole at exit 2, never half-read. This is A2's door: a unit with no
+// id, an empty id, or an id another unit already carries is refused here.
 func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
+	return parseWorkSet(file, data, limits, true)
+}
+
+// ParseWorkSetTolerant reads the same form but carries a broken IDENTITY through
+// instead of refusing it: a member of :units that is not a unit, an empty id and
+// a repeated id all come back as units at their own byte, for Check to report as
+// findings in one pass. Everything else -- a file that cannot be read, a :units
+// that is not a list, an amendment key whose shape is wrong -- is still a
+// refusal, because those are not findings about one unit.
+//
+// The two doors exist because the two callers want different answers. A kernel
+// loading a set wants A2 enforced before anything is scheduled; a checker wants
+// every defect of the file in one pass, and a reader that stopped at the first
+// would cost its caller a round trip per defect.
+func ParseWorkSetTolerant(file string, data []byte, limits Limits) (*WorkSet, error) {
+	return parseWorkSet(file, data, limits, false)
+}
+
+func parseWorkSet(file string, data []byte, limits Limits, strict bool) (*WorkSet, error) {
 	root, err := Read(file, data, limits)
 	if err != nil {
 		return nil, err
@@ -153,6 +182,7 @@ func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
 		index:   map[string]int{},
 	}
 	body := root.List[2:]
+	sawUnits := false
 	for i := 0; i < len(body); i += 2 {
 		key := body[i]
 		if key.Kind != Keyword {
@@ -163,29 +193,39 @@ func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
 			return nil, refuse(file, fmt.Sprintf(":%s has no value; refusing to guess", key.Value))
 		}
 		val := body[i+1]
-		if key.Value == "units" {
+		switch key.Value {
+		case "units":
 			if val.Kind != List {
 				return nil, refuse(file, ":units must be a list of (unit \"<id>\" ...) forms")
 			}
+			sawUnits = true
 			for _, form := range val.List {
-				u, err := parseUnit(file, form)
+				u, err := parseUnit(file, form, strict)
 				if err != nil {
 					return nil, err
 				}
 				if _, dup := ws.index[u.ID]; dup {
-					return nil, refuse(file, fmt.Sprintf(
-						"duplicate unit id %q at byte=%d; an id is minted once and never reused",
-						u.ID, u.Offset))
+					if strict {
+						return nil, refuse(file, fmt.Sprintf(
+							"duplicate unit id %q at byte=%d; an id is minted once and never reused",
+							u.ID, u.Offset))
+					}
+				} else if u.ID != "" {
+					ws.index[u.ID] = len(ws.Units)
 				}
-				ws.index[u.ID] = len(ws.Units)
 				ws.Units = append(ws.Units, u)
 			}
+		case "title":
+			ws.Title = val.Text()
 		}
 		if unitKeys[key.Value] {
 			ws.Fields[key.Value] = val
 		} else {
 			ws.Unknown[key.Value] = val
 		}
+	}
+	if !sawUnits {
+		return nil, refuse(file, "the work set carries no :units; refusing to guess which forms are its units")
 	}
 	return ws, nil
 }
@@ -212,17 +252,25 @@ func (w *WorkSet) WithoutAcceptance() []string {
 	return out
 }
 
-func parseUnit(file string, form Form) (Unit, error) {
+func parseUnit(file string, form Form, strict bool) (Unit, error) {
 	u := Unit{Offset: form.Offset, Fields: map[string]Form{}, Unknown: map[string]Form{}}
 	if form.Kind != List || len(form.List) == 0 ||
 		!(form.List[0].Kind == Symbol && form.List[0].Value == "unit") {
-		return u, refuse(file, fmt.Sprintf(
-			`expected a (unit "<id>" ...) form at byte=%d`, form.Offset))
+		if strict {
+			return u, refuse(file, fmt.Sprintf(
+				`expected a (unit "<id>" ...) form at byte=%d`, form.Offset))
+		}
+		// The member is IN the set: saying nothing about it would hide it, so it
+		// comes back with no id at its own byte and Check reports it.
+		return u, nil
 	}
 	if len(form.List) < 2 || form.List[1].Kind != String || form.List[1].Value == "" {
-		return u, refuse(file, fmt.Sprintf(
-			"a unit needs a non-empty id as its first element, at byte=%d; an id is stable and never display text",
-			form.Offset))
+		if strict {
+			return u, refuse(file, fmt.Sprintf(
+				"a unit needs a non-empty id as its first element, at byte=%d; an id is stable and never display text",
+				form.Offset))
+		}
+		return u, nil
 	}
 	u.ID = form.List[1].Value
 	body := form.List[2:]
@@ -240,6 +288,7 @@ func parseUnit(file string, form Form) (Unit, error) {
 		if err := checkUnitField(file, u.ID, key, val); err != nil {
 			return u, err
 		}
+		u.keys = append(u.keys, key.Value)
 		if unitKeys[key.Value] {
 			u.Fields[key.Value] = val
 		} else {
@@ -462,9 +511,23 @@ func checkAcceptance(file, id string, val Form) error {
 			id))
 	}
 	for _, entry := range val.List {
+		// Two spellings of one key, and both are read. A14 fixes the CRITERION
+		// -- (:id ... :kind ... :subject ... :predicate ...) -- and that shape
+		// is checked against its two closed sets. A bare string is the older
+		// spelling the sets on the bench actually write, a sentence a person
+		// wrote, and refusing it here would make the amendment unable to read
+		// the files it was written for.
+		if entry.Kind == String {
+			if entry.Value == "" {
+				return refuse(file, fmt.Sprintf(
+					":acceptance in unit %q holds an empty criterion at byte=%d", id, entry.Offset))
+			}
+			continue
+		}
 		if entry.Kind != List {
 			return refuse(file, fmt.Sprintf(
-				":acceptance in unit %q holds a non-list criterion at byte=%d", id, entry.Offset))
+				":acceptance in unit %q holds a criterion that is neither a sentence nor a (:id ...) form, at byte=%d",
+				id, entry.Offset))
 		}
 		if _, ok := plistString(entry.List, "id"); !ok {
 			return refuse(file, fmt.Sprintf("a criterion of unit %q carries no :id", id))
@@ -581,6 +644,48 @@ func (u Unit) Owner() string {
 	return ""
 }
 
+// Keys returns every key the unit's form carried, known or not, in written
+// order. It is what lets a later slice read what this one ignores without a
+// second reader over the same bytes.
+func (u Unit) Keys() []string { return append([]string(nil), u.keys...) }
+
+// Title is the unit's display text. The id is never it: A2 keeps the two apart
+// so a rename is a new id carrying :was, not a re-pointed one.
+func (u Unit) Title() string {
+	if f, ok := u.Fields["title"]; ok {
+		return f.Text()
+	}
+	return ""
+}
+
+// Status is the :status value as written -- "closed", :review -- one of the
+// three ways a unit says it has finished. The other two are :done and the
+// caller's own list.
+func (u Unit) Status() string {
+	if f, ok := u.Fields["status"]; ok {
+		return atomText(f)
+	}
+	return ""
+}
+
+// Deadline is the :deadline text EXACTLY as written. It is parsed by the caller,
+// because an unreadable deadline is a finding about one unit and never a refusal
+// of the whole set.
+func (u Unit) Deadline() string {
+	if f, ok := u.Fields["deadline"]; ok {
+		return f.Text()
+	}
+	return ""
+}
+
+// Done reports the :done key, read as true for the handful of spellings a person
+// writes for yes. Anything else is false: a :done nobody can read is not a unit
+// this tool will call finished.
+func (u Unit) Done() bool {
+	f, ok := u.Fields["done"]
+	return ok && truthy(f)
+}
+
 // State returns the unit's state, "open" when it carries none. `uncertain` is a
 // state of its own.
 func (u Unit) State() string {
@@ -673,8 +778,45 @@ func (u Unit) Warm() WarmState {
 	return w
 }
 
-// Acceptance returns the unit's acceptance criteria: the evidence that closes
-// it. A unit with none names no finish line.
+// AcceptanceText is the unit's acceptance in the older spelling: the sentences a
+// person wrote, which is what the sets on the bench carry and what an ask note
+// renders. A criterion written as a (:id ...) form contributes its subject, so
+// one caller reads both spellings and there is no second reader of the key.
+func (u Unit) AcceptanceText() []string {
+	f, ok := u.Fields["acceptance"]
+	if !ok || f.Kind != List {
+		return nil
+	}
+	var out []string
+	for _, entry := range f.List {
+		switch entry.Kind {
+		case String:
+			if entry.Value != "" {
+				out = append(out, entry.Value)
+			}
+		case List:
+			if subject, ok := plistString(entry.List, "subject"); ok {
+				out = append(out, subject)
+			}
+		}
+	}
+	return out
+}
+
+// Branch is the :branch a unit's owner replies on. It is read HERE with every
+// other key because there is ONE reader of this form: a key only the ask side
+// read would be the second reader of the work set growing back.
+func (u Unit) Branch() string {
+	if f, ok := u.Fields["branch"]; ok {
+		return atomText(f)
+	}
+	return ""
+}
+
+// Acceptance returns the unit's acceptance criteria in A14's schema: the
+// evidence that closes the unit. A criterion written as a bare sentence is not
+// one of these -- it is in AcceptanceText -- because a sentence names no
+// predicate a tool can read.
 func (u Unit) Acceptance() []Criterion {
 	f, ok := u.Fields["acceptance"]
 	if !ok || f.Kind != List {

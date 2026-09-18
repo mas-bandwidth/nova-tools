@@ -39,6 +39,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -105,10 +106,7 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 		writeFinding(stdout, f)
 	}
 	if *ready {
-		for _, u := range ws.Ready(opts.Done) {
-			fmt.Fprintf(stdout, "SET READY unit=%s owner=%s lane=%s deadline=%s\n",
-				oneline.Field(u.ID), field(u.Owner), field(u.Lane), field(u.Deadline))
-		}
+		writeReady(stdout, ws, opts.Done)
 	}
 	// The summary prints whether or not there were findings: a caller that wants
 	// the shape of the set gets it in the same breath as the defects, and
@@ -119,6 +117,43 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// writeReady prints the ready set, each unit carrying the ADMISSION verdict
+// beside its readiness. The two are different questions and the line says both:
+// `ready` is whether a unit's needs are closed, which the language answers;
+// `admit` is whether its resource vector is free, which the kernel answers
+// (internal/jobs, SPEC-JOBS section 9).
+//
+// Asking only the first is what let the loop hand out two cards in one lane and
+// two units one file. The pass runs the ready units through one Admission in
+// written order, so the units marked `go` are a set that may run TOGETHER --
+// one live unit per lane (A6), no two intersecting :writes (A7) -- rather than
+// a list each of which could run if the others did not.
+//
+// A9 is why a held unit does not stop the ones after it: the pass never waits
+// and never stops, so a unit whose own vector is free goes whatever the unit
+// before it is doing. The line names what held a unit and who holds it, so the
+// remedy is a reading rather than a hunt.
+func writeReady(stdout io.Writer, ws *worklang.WorkSet, done map[string]bool) {
+	// The authority counts no cpu or memory here: `set check` reads a file and
+	// knows no bench. What it CAN account for is what the file itself names --
+	// the lanes, whose capacity is 1 by A6, and the writes -- so that is what
+	// it admits over, and a unit naming a counted resource is reported as held
+	// on it rather than silently granted.
+	a := jobs.New(nil)
+	defer a.Close()
+	units := ws.Ready(done)
+	for i, ad := range a.Admit(worklang.Requests(units)) {
+		u := units[i]
+		fmt.Fprintf(stdout, "SET READY unit=%s owner=%s lane=%s deadline=%s",
+			oneline.Field(u.ID), field(u.Owner()), field(u.Lane()), field(u.Deadline()))
+		if ad.Go {
+			fmt.Fprint(stdout, " admit=go on=- by=-\n")
+			continue
+		}
+		fmt.Fprintf(stdout, " admit=held on=%s by=%s\n", field(ad.On()), field(ad.By()))
+	}
 }
 
 // writeFinding prints one finding as one line: the rule as a bare word a caller

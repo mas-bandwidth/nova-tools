@@ -265,6 +265,34 @@ barrier, only on its own needs and its own resources.
 `jobs-a-unit-without-acceptance-is-refused-at-load`;
 `work-ask-reads-the-same-set-as-the-pull-worker`.
 
+### What the kernel slice implements (internal/jobs, 2026-09-18)
+
+`internal/jobs.Admission` is the authority: a `Grant` over a resource vector, a `Release`
+and a `Snapshot` for the status line. It is deterministic, in-memory and single-writer --
+one goroutine owns the state, like redis -- and it holds no condition variable, no queue
+of waiters and no timeout, because A9 says a request is granted NOW or refused NOW, and a
+waiter inside admission would BE the barrier A9 removes. Only `Release` frees a
+reservation: no clock does, because an expiry is unknown until termination is proved.
+`internal/worklang`'s `Unit.Request` is the one place a unit's form becomes a request, so
+`nova-work set check --ready`, the pull worker and the kernel cannot drift apart.
+
+Green here, each named as this section names it: `jobs-admission-is-atomic-no-partial-grant`,
+`jobs-a-nested-grant-draws-from-its-parent`, `jobs-intersecting-writes-serialize-across-lanes`,
+`jobs-a-ready-unit-goes-with-no-global-barrier`, `jobs-double-reservation-is-a-refusal-not-a-wait`,
+`jobs-one-live-unit-per-lane`, `jobs-unrelated-lanes-scatter`,
+`jobs-a-download-asks-for-network-and-no-cpu`. The rest of the list above -- the lease,
+the uncertain reservation, the tool key, the collection harvest, acceptance at load and
+the executor seam -- are still red and still unimplemented.
+
+The pinned reading is the real set of 2026-09-18 (20 units, `work/pitstop-2026-09-18-units.lisp`,
+copied verbatim into `internal/worklang/testdata`): 11 units have their needs closed and
+8 of those may go, the other 3 held by A6 on the merge, pulse and ci lanes. On that file
+the lane rule dominates and the writes intersection never fires among ready units,
+because every pair that shares a path also shares a lane -- which is a reading about the
+set, not about the rule: `certify:verb` and `certify:launchd` share
+`fleet/launchd/com.rowan.fleet-certify.plist` and serialize on it with their lanes forced
+apart.
+
 ### The executor seam
 
 An assignment may name an external execution engine for its validation graph: the engine owns action

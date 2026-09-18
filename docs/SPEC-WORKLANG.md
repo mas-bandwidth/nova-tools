@@ -552,6 +552,13 @@ The reader in `internal/worklang` accepts and shape-checks every key above, read
 admission, no lane serialization, no writes intersection, no lease, no reaper, no grant. Those are
 the `jobs-*` tests named above, they belong to the kernel, and they are Stella's and Emma's.
 
+**The kernel's first slice has since landed** (`internal/jobs.Admission`, SPEC-JOBS section 9,
+"What the kernel slice implements"): A5's vector, A6's lane of capacity 1, A7's writes
+intersection, A8's atomic and nested grant, and A9's barrier-free pass are green, and
+`nova-work set check --ready` computes the ready set THROUGH admission. A3's lease, A4's
+uncertain reservation, A10's tool key, A11's harvest, A12's warm split and A14's refusal
+at load are still red.
+
 ### Rule numbering is pinned
 
 `internal/docs/worklang_amendment_test.go` pins this part: the rules are A1 to A14 in order, each
