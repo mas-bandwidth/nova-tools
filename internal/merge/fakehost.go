@@ -13,6 +13,8 @@ type FakeHost struct {
 	PRs      map[int]PR
 	Branches map[string]string
 	ChecksBy map[string]Checks
+	// MergeGroupRuns holds one merge-group run per id, the evidence `classify` judges.
+	MergeGroupRuns map[int64]MergeRun
 	// CheckResults is a rollup whose every entry carries the commit it ran on,
 	// so a test can put an old failure on one sha and an in-progress run on the
 	// head and see which one the wait verb judges. Checks answers these for any
@@ -35,11 +37,13 @@ type FakeHost struct {
 	// base really moved -- so that the read-back of rule 21 is exercised rather than
 	// skipped. A nil Do records the call and moves nothing.
 	Do func(n int, headOID, baseSHA, mergeSHA string) error
+	// Open is the open pull request list OpenPRs answers: the rebase cutter's whole input.
+	Open []RebasePR
 }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
-	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}}
+	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}}
 }
 
 func (f *FakeHost) PR(n int) (PR, error) {
@@ -57,6 +61,15 @@ func (f *FakeHost) PR(n int) (PR, error) {
 		return PR{}, fmt.Errorf("this fake host has no pull request %d", n)
 	}
 	return pr, nil
+}
+
+// OpenPRs answers the list a test set, or this fake's error, the way the real host answers
+// gh's one call.
+func (f *FakeHost) OpenPRs() ([]RebasePR, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return f.Open, nil
 }
 
 func (f *FakeHost) BranchOID(branch string) (string, error) {
@@ -94,6 +107,18 @@ func (f *FakeHost) Checks(oid string) (Checks, error) {
 func (f *FakeHost) Ready(n int) error {
 	f.Readied = append(f.Readied, n)
 	return nil
+}
+
+// MergeGroupRun answers one run a test set, or an error naming the id when it set none.
+func (f *FakeHost) MergeGroupRun(id int) (MergeRun, error) {
+	if f.Err != nil {
+		return MergeRun{}, f.Err
+	}
+	run, ok := f.MergeGroupRuns[int64(id)]
+	if !ok {
+		return MergeRun{}, fmt.Errorf("this fake host has no merge-group run %d", id)
+	}
+	return run, nil
 }
 
 func (f *FakeHost) AtomicMerge() bool { return f.Atomic }

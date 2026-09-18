@@ -472,14 +472,22 @@ const (
 // On unix replaceRefusal is a compile-time false: rename never fails for a reader there,
 // so the loop runs once, the retry costs nothing, and nothing about it is platform code.
 func replaceState(tmp, path string) error {
-	deadline := time.Now().Add(replaceWriteWindow)
+	return replaceStateWait(tmp, path, Now, Sleep)
+}
+
+// replaceStateWait is replaceState with its clock injected: now says when the writer's
+// window has run out and sleep is the wait between renames. A test that must run the bounded
+// retry to its end advances the injected clock through sleep, so the window is exercised in
+// full with no wall time and no assertion against elapsed seconds.
+func replaceStateWait(tmp, path string, now func() time.Time, sleep func(time.Duration)) error {
+	deadline := now().Add(replaceWriteWindow)
 	poll := replaceWritePoll
 	for {
 		err := os.Rename(tmp, path)
-		if err == nil || errors.Is(err, fs.ErrNotExist) || !replaceRefusal(err) || !time.Now().Before(deadline) {
+		if err == nil || errors.Is(err, fs.ErrNotExist) || !replaceRefusal(err) || !now().Before(deadline) {
 			return err
 		}
-		time.Sleep(poll)
+		sleep(poll)
 		if poll *= 2; poll > replaceWritePollMax {
 			poll = replaceWritePollMax
 		}
@@ -531,6 +539,11 @@ func NotALaneRefusal(lane string) string {
 // The caller holds the lane's state lock. SaveTo does not take it, because the lock's
 // scope is one read-modify-write and taking it here would leave the read outside.
 func (s *State) SaveTo(lane string) error {
+	return s.saveToWait(lane, Now, Sleep)
+}
+
+// saveToWait is SaveTo with its clock injected, so the replace retry is the caller's seam.
+func (s *State) saveToWait(lane string, now func() time.Time, sleep func(time.Duration)) error {
 	raw, err := s.Encode()
 	if err != nil {
 		return err
@@ -542,7 +555,7 @@ func (s *State) SaveTo(lane string) error {
 	if err := writeWhole(tmp, raw, 0o644); err != nil {
 		return err
 	}
-	if err := replaceState(tmp, StatePath(lane)); err != nil {
+	if err := replaceStateWait(tmp, StatePath(lane), now, sleep); err != nil {
 		os.Remove(tmp)
 		return err
 	}

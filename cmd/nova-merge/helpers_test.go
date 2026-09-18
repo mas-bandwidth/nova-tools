@@ -102,10 +102,13 @@ type lab struct {
 	host   *merge.FakeHost
 	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
 	// gh of these tests, and it reaches nothing.
-	queue  QueueReader
-	now    time.Time
-	build  string
-	runner merge.Runner
+	queue QueueReader
+	// launcher is the fake the rebase verb's cards are handed to, so a test proves the
+	// launch without a bench.
+	launcher *fakeLauncher
+	now      time.Time
+	build    string
+	runner   merge.Runner
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
@@ -119,12 +122,13 @@ func newLab(t *testing.T) *lab {
 	dir := t.TempDir()
 	l := &lab{
 		t: t, dir: dir,
-		remote: filepath.Join(dir, "remote.git"),
-		work:   filepath.Join(dir, "work"),
-		lane:   filepath.Join(dir, "lane"),
-		host:   merge.NewFakeHost(),
-		now:    time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
-		build:  "aaaaaaaaaaaa",
+		remote:   filepath.Join(dir, "remote.git"),
+		work:     filepath.Join(dir, "work"),
+		lane:     filepath.Join(dir, "lane"),
+		host:     merge.NewFakeHost(),
+		launcher: &fakeLauncher{},
+		now:      time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
+		build:    "aaaaaaaaaaaa",
 	}
 	// The bare repository, its first commit and the clone are BUILT ONCE for the
 	// process and COPIED here. Building them is six git subprocesses, and 82 newLab
@@ -329,7 +333,9 @@ func (l *lab) deps() Deps {
 			}
 			return nil
 		},
-		BuildID: func() string { return l.build },
+		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
+		Launcher:      l.launcher,
+		BuildID:       func() string { return l.build },
 	}
 }
 
