@@ -66,7 +66,11 @@ func TestNoQueueSubverbSilentlyDropsAnExtraPositional(t *testing.T) {
 		t.Parallel()
 		l := newLab(t)
 		l.init("main")
-		if exit, stdout, stderr := l.run("queue", "--lane", l.lane, "hold", "several", "words", "of", "reason"); exit != 0 {
+		// `hold` grew a required --who while this branch was out: a hold is a person's,
+		// and one nobody owns is one nobody can release. The rule under test here is the
+		// positionals -- a multi-word reason is still ONE reason and not three dropped
+		// words -- so the flag is given and the assertion is unchanged.
+		if exit, stdout, stderr := l.run("queue", "--lane", l.lane, "hold", "several", "words", "of", "reason", "--who", "rowan"); exit != 0 {
 			t.Fatalf("a multi-word hold reason: exit %d\n%s\n%s", exit, stdout, stderr)
 		}
 		if exit, stdout, stderr := l.run("queue", "--lane", l.lane, "release"); exit != 0 {
