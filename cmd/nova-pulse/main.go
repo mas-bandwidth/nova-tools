@@ -37,6 +37,8 @@ nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   secrets --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -143,6 +145,18 @@ UNREACHABLE <error>). --max caps the lines; 0 means all.
 
 example:
   nova-pulse fleet survey --benches ./fleet.tsv
+
+wake and sleep are the Mac benches' power verbs (Glenn 2026-09-17: each iMac Pro
+draws 100 W and the fleet runs on solar). --registry is one name,mac,lan-bench
+per line, validated whole before any ssh. To wake a bench the magic packet is
+built in Go and sent three times from the named lan-bench to UDP broadcast port
+9; then ssh is polled for up to ninety seconds, a user-activity assertion turns
+the dark wake into a full one, and the bench is awake only when its runners show
+online in GitHub inside --timeout; the line is WAKE <bench> up after <s>s
+runners=<n> or WAKE FAIL <bench> <stage> <reason>. sleep refuses while any of
+the bench's runners is busy (SLEEP REFUSED <bench> busy=<n>) and otherwise sets
+idle sleep, printing SLEEP <bench> idle=<m>. Both take the benches as a
+repeatable --bench or as bare arguments.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -197,6 +211,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdReap(rest, stdout, stderr)
 	case "fleet":
 		return cmdFleet(rest, stdout, stderr)
+	case "wake":
+		return cmdWake(rest, stdout, stderr)
+	case "sleep":
+		return cmdSleep(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
@@ -226,6 +244,16 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 	}
 	if n := f.fs.NArg(); n > 0 {
 		fmt.Fprintf(stderr, "nova-pulse %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
+		return false
+	}
+	return true
+}
+
+// parseAny is parse for a verb that also reads positional arguments (wake and sleep take
+// the bench names either as a repeatable --bench or bare).
+func (f *flags) parseAny(args []string, stderr io.Writer) bool {
+	if err := f.fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-pulse %s: %s\n", f.verb, err)
 		return false
 	}
 	return true
