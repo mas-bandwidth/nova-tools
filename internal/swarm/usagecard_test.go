@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -28,12 +29,52 @@ func cardUsageWindow() (time.Time, time.Time) {
 	return t, t
 }
 
+// sqliteRuns reports whether the sqlite3 PATH resolves to actually executes. LookPath
+// alone is not enough: a stale or non-executable sqlite3 ahead of the real one resolves
+// but fails to exec, which must skip the fixture and never fatal it.
+func sqliteRuns() bool {
+	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+		return false
+	}
+	return exec.Command(SQLiteBinary, "-version").Run() == nil
+}
+
+// runnableSqliteDir is the first PATH directory whose sqlite3 actually runs, or "" when
+// none does.
+func runnableSqliteDir() string {
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		for _, name := range []string{"sqlite3", "sqlite3.exe"} {
+			if exec.Command(filepath.Join(dir, name), "-version").Run() == nil {
+				return dir
+			}
+		}
+	}
+	return ""
+}
+
+// ensureSqlite puts a runnable sqlite3 first on PATH when this host has one anywhere on
+// PATH, so the test runs; it reports whether a runnable sqlite3 is now on PATH.
+func ensureSqlite(t *testing.T) bool {
+	t.Helper()
+	if sqliteRuns() {
+		return true
+	}
+	if dir := runnableSqliteDir(); dir != "" {
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		return true
+	}
+	return false
+}
+
 // loadCardUsageStoreAt builds the fixture sqlite store (schema + three assistant rows) at the
 // named path and returns it.
 func loadCardUsageStoreAt(t *testing.T, path string) string {
 	t.Helper()
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
-		t.Skipf("%s is not on PATH", SQLiteBinary)
+	if !ensureSqlite(t) {
+		t.Skipf("%s is not on PATH or does not run", SQLiteBinary)
 	}
 	raw, err := os.ReadFile(filepath.Join("testdata", "card-usage.sql"))
 	if err != nil {
@@ -53,8 +94,8 @@ func loadCardUsageStoreAt(t *testing.T, path string) string {
 // loadCardUsageSQL runs one raw SQL body (schema and rows) into a fresh store at path.
 func loadCardUsageSQL(t *testing.T, path, body string) string {
 	t.Helper()
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
-		t.Skipf("%s is not on PATH", SQLiteBinary)
+	if !ensureSqlite(t) {
+		t.Skipf("%s is not on PATH or does not run", SQLiteBinary)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -65,6 +106,22 @@ func loadCardUsageSQL(t *testing.T, path, body string) string {
 		t.Fatalf("building the fixture store: %v\n%s", err, out)
 	}
 	return path
+}
+
+// a sqlite3 whose interpreter does not exist resolves on PATH but cannot run; that is the
+// stale-shim shape the old LookPath-only check mistook for a usable fixture builder.
+func TestEnsureSqliteRejectsANonRunnableSqlite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the bad-interpreter shim is a unix fact")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sqlite3"), []byte("#!/nonexistent/interpreter\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if ensureSqlite(t) {
+		t.Fatal("a sqlite3 that resolves but cannot run must not read as usable")
+	}
 }
 
 // cardUsageSchema is the schema the harness's own store has: a `message` table whose `data`
