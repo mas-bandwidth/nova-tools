@@ -788,6 +788,12 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	if deadKilled {
 		return "abstain", "result-after-deadline", "", ""
 	}
+	// A read verdict or a BRANCH whose run carries a known failure signature was not earned:
+	// the run failed mechanically (the toolchain, the packages, the fence or a permission),
+	// never by judgement, and the signature is checked before the result is scored done.
+	if sig, class, ok := failureSignatureInFile(filepath.Join(job, "harness-output.log")); ok {
+		return "abstain", fmt.Sprintf("signature sig=%q class=%s", sig, class), "", ""
+	}
 	return "done", "", "", two
 }
 

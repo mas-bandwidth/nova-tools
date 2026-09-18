@@ -1136,6 +1136,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
 | `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
+| `signature` | carried a read verdict or a BRANCH whose run's `harness-output.log` holds a known failure signature — the toolchain, the packages, the fence or a permission — so the verdict was not earned; the signature and its class follow the token (see the failure-signature table below) |
 
 **The RESULT is the contract, and `harness-silent` is for a card that has none.**
 A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit
@@ -1171,6 +1172,27 @@ idle monitor watched, or `job=<dir>`, the job directory that holds no result.
 is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
 its line.
 
+**A read verdict or a BRANCH whose run carries a known failure signature is
+`ABSTAIN reason=signature sig="<signature>" class=<class>`, never `done`.** A
+`go test` that could not run — the toolchain missing, no packages named, the
+fence or a permission stopping it — is not evidence for a verdict, and a read
+that printed APPROVE while its run's tail said the toolchain was not available
+recorded a verdict the run did not earn (Glenn, 2026-09-16: reads on Space).
+The signature is read out of the job's `harness-output.log` — the run's own
+capture (issue #608), never `harness.log` — and is checked before the result
+is scored `done`; `verify` checks the same file beside `RESULT.md`. The table
+below lives in the spec and in the binary as one slice, and the two agree (a
+test reads the spec):
+
+| signature | class | remedy |
+|---|---|---|
+| `toolchain not available` | `toolchain` | pin the Go toolchain in go.mod, or install it |
+| `no packages to test` | `packages` | name the packages to test; an empty list proves nothing |
+| `auto-rejecting` | `fence` | the harness fence auto-rejected a path; re-run walled |
+| `permission denied` | `permission` | the sandbox refused a read or write; keep the work inside the job directory |
+| `command not found: go` | `toolchain` | install Go and put it on PATH before the run |
+| `cannot find package` | `packages` | the package path is wrong, or its module is not in go.mod |
+
 The copied-up result above is the same rule the bench pull holds under
 **Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
 line. Replays this section demands, beside the tests #577 named:
@@ -1198,7 +1220,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1522,7 +1544,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>

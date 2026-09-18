@@ -84,6 +84,15 @@ func CheckResult(resultPath string, c Contract) (Outcome, error) {
 	if len(evidence) > bound {
 		evidence = evidence[:bound]
 	}
+	// A read verdict whose run's capture carries a known failure signature was not earned:
+	// verify scans RESULT.md and the harness-output.log beside it, and a matching report is
+	// ABSTAIN reason=signature, never the verdict the card wrote (a go test that could not
+	// run is not evidence for one).
+	if sig, class, ok := failureSignatureInFile(harnessOutputBeside(resultPath)); ok {
+		out.OK = false
+		out.Line = fmt.Sprintf("ABSTAIN %s reason=signature sig=%q class=%s", oneline.Quote(c.Label), sig, class)
+		return out, nil
+	}
 	out.Evidence = evidence
 	out.OK = true
 	out.Line = fmt.Sprintf("RESULT OK %s line2=%s", oneline.Quote(c.Label), oneline.Quote(out.Line2))
