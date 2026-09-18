@@ -1916,6 +1916,65 @@ and explicit argv; paths or arguments containing spaces belong in a wrapper scri
 `--remote` and `--branch`. A busy snapshot wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
+### The release verb
+
+`nova-update release` is the last mile: a green commit becomes a version, a set of stamped binaries,
+and the same binaries answering for themselves on every bench in the fleet. Five verbs, each of which
+can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
+[docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+
+```sh
+nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
+```
+
+`cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
+changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. It also
+classifies the range since the previous tag against the sensitive path list and refuses until
+`--security-read <note id|url>` names Johnny's read. A compare the forge could only answer in part —
+300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
+past it: classify from a complete local list instead, with `--local-diff <checkout>` to produce one
+(`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
+`--dry-run` decides and prints and writes nothing.
+
+```sh
+nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
+```
+
+`build` compiles every `cmd/nova-*` for every platform named — `--platform` is repeatable **and**
+comma-separated — writes and verifies a `SHA256SUMS` per platform, and writes that file's own sha256
+to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the first compile, so no
+half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
+`RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…>`.
+
+```sh
+nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
+```
+
+`install` verifies the checksums, puts the binaries in place by rename, skips what is already current
+and clears this release's own files out of `--retire`. Run it **on the coordinator before adopting**:
+`adopt` fans out with the nova-update this host is holding, and a coordinator behind the release
+refuses and says so.
+
+```sh
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from hulk:/home/gaffer/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+```
+
+`adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
+release is fetched once into `--stage` and checked against a digest that did **not** travel with the
+bits: `--repo <owner/name>` reads it off the annotated tag, `--expect-sums-from <SUMS.digest>` reads
+it out of this host's own build (which is how a release with no tag is adopted at all), or
+`--expect-sums <sha256>` names it outright. The digest file must be local. `--machines` is one machine
+per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` asks every machine what
+it holds and installs nothing.
+
+```sh
+nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/nova-release' --reason "shipped a key"
+```
+
+`pull` withdraws a release: the artifacts go here and on every machine, by name, from that release's
+own `SHA256SUMS` — never recursively — and the tag stays while the changelog section is marked with
+the date and `--reason`. `--dry-run` says what would be deleted and deletes nothing.
+
 ## nova-version
 
 `nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
