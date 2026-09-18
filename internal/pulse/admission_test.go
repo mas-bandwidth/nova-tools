@@ -128,11 +128,11 @@ func TestLaunchAdmitsTheCardThatNamesTheRed(t *testing.T) {
 		t.Fatal(err)
 	}
 	fix := filepath.Join(src, "card-8140")
-	if err := os.WriteFile(fix, []byte("RESULT card-8140 sha=000000000000 fix #828\nbody\n"), 0o644); err != nil {
+	if err := os.WriteFile(fix, []byte(Stamp("RESULT card-8140 sha=000000000000 fix #828\nbody\n", "test")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	other := filepath.Join(src, "card-8141")
-	if err := os.WriteFile(other, []byte("RESULT card-8141 sha=000000000000 fix #900\nbody\n"), 0o644); err != nil {
+	if err := os.WriteFile(other, []byte(Stamp("RESULT card-8141 sha=000000000000 fix #900\nbody\n", "test")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cards := filepath.Join(root, "cards.tsv")

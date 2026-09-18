@@ -35,7 +35,9 @@ func writeCards(t *testing.T, root string, n int) (string, []string) {
 	for i := 0; i < n; i++ {
 		label := "card-" + strings.Repeat("x", 0) + string(rune('a'+i))
 		path := filepath.Join(cardsDir, label)
-		if err := os.WriteFile(path, []byte("RESULT "+label+" sha=000000000000\nbody "+label+"\n"), 0o644); err != nil {
+		// Class P (#828): launch admits only a card the cutter signed, so the fixtures are
+		// stamped exactly as `cut --kind` stamps them.
+		if err := os.WriteFile(path, []byte(Stamp("RESULT "+label+" sha=000000000000\nbody "+label+"\n", "test")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		paths[i] = path

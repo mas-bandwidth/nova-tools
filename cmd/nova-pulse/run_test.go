@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
 func invokePulse(t *testing.T, args ...string) (int, string, string) {
@@ -40,7 +42,7 @@ func TestRunOnceIsOneWidthLineAndOneVerdict(t *testing.T) {
 	queue, root := t.TempDir(), t.TempDir()
 	write(t, filepath.Join(queue, "pulse.toml"), "[slots]\nstudio = 2\nspace = 0\nlocal = 0\n")
 	write(t, filepath.Join(queue, "pending", "card-5.md"),
-		"RESULT: CARD-5 nova-tools #777 fixed with its red test first: a card waiting\nSTEP 1. do the thing\n")
+		pulse.Stamp("RESULT: CARD-5 nova-tools #777 fixed with its red test first: a card waiting\nSTEP 1. do the thing\n", "devel"))
 
 	exit, out, errs := invokePulse(t, "run", "--queue", queue, "--roots", root,
 		"--repo", "mas-bandwidth/nova-tools", "--branch", "dev", "--once",
