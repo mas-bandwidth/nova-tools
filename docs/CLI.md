@@ -1506,15 +1506,19 @@ that acts on a machine, resolve `--bench` through this file and refuse a machine
 lack `bench`, **by name and before any ssh**:
 
 ```
-FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, space"
+FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, threadripper-wsl, space"
 ```
 
 The reason is one of `runner-host`, `coordination-host`, `services-host`, `not-a-bench` or
 `unknown-machine`. A machine that is **both** `runner` and `bench` is the exception and must
-say so in its notes, with the day it was made: `allow-shared=<YYYY-MM-DD> <why>`. hulk and
-vision carry one today because the pull worker still runs a card in the bench's own home;
-when it runs cards in containers the runner role comes off both lines and the exception goes
-with it. A shared line without the dated note is a refusal, and so is an unknown role, a
+say so in its notes, with the day it was made: `allow-shared=<YYYY-MM-DD> <why>`. hulk,
+vision and threadripper-wsl carry one today because the pull worker still runs a card in the
+bench's own home; when it runs cards in containers the runner role comes off those lines and
+the exception goes with it. There is **no `windows` line** and there is not meant to be
+(Glenn 2026-09-18: "drop the native windows CI runners. WSL only from now on."): the
+Threadripper Pro joins as `threadripper-wsl`, a `linux/x64` machine under WSL2 with CI
+runners labelled `linux,X64,threadripper`, and `internal/fleet`'s example test refuses any
+machine whose `os` is `windows`. A shared line without the dated note is a refusal, and so is an unknown role, a
 name twice, a missing column or cores that are not a number — the registry is read whole or
 not at all, because the half that reads is the half that lets a card through.
 
