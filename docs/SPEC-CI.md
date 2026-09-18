@@ -939,8 +939,9 @@ repository's own top-level directories (`cmd`, `internal`, `docs`, `tools`,
 name a file or a directory that is in the tree, or be named in the allowlist
 with its reason.
 **The hurt.** `cmd/nova-pulse/fleet_verbs.go:6` and
-`internal/pulse/fleetstandard.go:6` both named `scripts/bench-standard.sh`. The
-file is `tools/bench-standard.sh` and has been since it moved, so a friend
+`internal/pulse/fleetstandard.go:6` both named `bench-standard.sh` as though it
+sat under `scripts/`. The file is `tools/bench-standard.sh` and has been since
+it moved, so a friend
 following either comment found nothing — and nine such references were in the
 tree when the rule landed, because a path inside a comment or a string is just
 text to Go and nothing in CI had an opinion about it. Glenn's law of 2026-09-17
