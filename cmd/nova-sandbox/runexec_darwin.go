@@ -25,22 +25,22 @@ import (
 // startInOwnGroup applies the policy, starts the command in a new process group, and
 // hands back the two things the supervisor needs: the channel the status arrives on, and
 // the function that signals the WHOLE group.
-func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (<-chan int, func(syscall.Signal), error) {
+func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 	// Rule 2: no root, the same as the bare form. A wall measured for an unprivileged
 	// user says nothing about a root child, and a root child could delete far more than
 	// its own volume.
 	if os.Geteuid() == 0 {
-		return nil, nil, sandbox.Refusal{Reason: "sandbox_failed",
+		return startedRun{}, sandbox.Refusal{Reason: "sandbox_failed",
 			Text: "this tool does not run as root: the wall holds for an ordinary unprivileged user, and a disposable volume made and deleted by root is not the thing this verb was measured as"}
 	}
 	backend, ok := sandbox.Available()
 	if !ok {
-		return nil, nil, sandbox.Refusal{Reason: "no_sandbox",
+		return startedRun{}, sandbox.Refusal{Reason: "no_sandbox",
 			Text: "sandbox-exec is on no PATH entry; this tool does not run a command it cannot contain, disposable volume or not"}
 	}
 	text, params, err := sandbox.DarwinProfile(p)
 	if err != nil {
-		return nil, nil, sandbox.Refusal{Reason: "sandbox_failed", Text: fmt.Sprintf("the profile could not be generated: %v", err)}
+		return startedRun{}, sandbox.Refusal{Reason: "sandbox_failed", Text: fmt.Sprintf("the profile could not be generated: %v", err)}
 	}
 	// Inline with -p, as the bare form does: no profile file anywhere, so there is nothing
 	// on the boot volume to unlink when the run dies.
@@ -59,7 +59,7 @@ func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, s
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		return nil, nil, sandbox.Refusal{Reason: "sandbox_failed", Text: fmt.Sprintf("%s could not be started: %v", backend, err)}
+		return startedRun{}, sandbox.Refusal{Reason: "sandbox_failed", Text: fmt.Sprintf("%s could not be started: %v", backend, err)}
 	}
 	// Setpgid makes the child the LEADER of a new group, so the group's id is its pid.
 	// The negative pid is the group, and it is the only thing this verb ever signals.
@@ -71,7 +71,7 @@ func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, s
 		waitErr := cmd.Wait()
 		done <- statusOfRun(waitErr, cmd.ProcessState)
 	}()
-	return done, killGroup, nil
+	return startedRun{done: done, kill: killGroup, pid: pgid}, nil
 }
 
 // statusOfRun is the wrapped command's status in env(1)'s terms: its own code, or 128+N

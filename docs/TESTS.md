@@ -135,6 +135,8 @@ The last run is the whole tool in three lines: the job's own write landed, and t
 
     go test -tags novadisk -run TestARealRunLeavesNothingBehind ./cmd/nova-sandbox/
 
+`nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
+
 Measured on the Studio, macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
 ## nova-secrets

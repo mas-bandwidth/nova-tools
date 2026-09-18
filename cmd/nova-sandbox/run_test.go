@@ -32,10 +32,12 @@ type fakeVolumes struct {
 	calls        []string
 	exists       bool
 	used         int64
+	listed       []diskVolume
 	containerErr error
 	existsErr    error
 	createErr    error
 	deleteErr    error
+	listErr      error
 }
 
 func (f *fakeVolumes) Container() (string, error) {
@@ -49,6 +51,11 @@ func (f *fakeVolumes) Container() (string, error) {
 func (f *fakeVolumes) Exists(name string) (bool, error) {
 	f.calls = append(f.calls, "exists:"+name)
 	return f.exists, f.existsErr
+}
+
+func (f *fakeVolumes) List() ([]diskVolume, error) {
+	f.calls = append(f.calls, "list")
+	return f.listed, f.listErr
 }
 
 func (f *fakeVolumes) Create(container, name, size string) (diskVolume, error) {
@@ -90,10 +97,14 @@ func newRunBench(t *testing.T, code int) *runBench {
 
 	runVolumes = b.vols
 	runSignals = func() (<-chan os.Signal, func()) { return b.sigs, func() {} }
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (<-chan int, func(syscall.Signal), error) {
+	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		done := make(chan int, 1)
 		done <- code
-		return done, func(sig syscall.Signal) { b.killed = append(b.killed, sig) }, nil
+		return startedRun{
+			done: done,
+			kill: func(sig syscall.Signal) { b.killed = append(b.killed, sig) },
+			pid:  4242,
+		}, nil
 	}
 	return b
 }
@@ -407,5 +418,192 @@ func TestTheTempDirectoryIsOnTheVolume(t *testing.T) {
 	tmp := filepath.Join(b.vols.mount, ".nova-sandbox-tmp")
 	if _, err := os.Stat(tmp); err != nil {
 		t.Fatalf("the one directory this tool makes is not on the volume: %s", err)
+	}
+}
+
+// `nova-sandbox run --help` printed FOUR REFUSALS — one for the missing --name, one for
+// the missing --size, one for --help itself not being a flag, one for the missing -- —
+// and exit 125. Measured 2026-09-18 by a non-author dogfooding the verb. Asking a tool how
+// to use it is not a mistake, and a tool that answers a question with four complaints
+// teaches the reader to stop asking.
+func TestRunAnswersHelpWithItsUsage(t *testing.T) {
+	for _, flag := range []string{"--help", "-h", "help"} {
+		var out, errb bytes.Buffer
+		code := runVerb([]string{flag}, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+		if code != 0 {
+			t.Errorf("`run %s` exited %d, want 0: asking how to use a verb is not a mistake\nstderr:\n%s", flag, code, errb.String())
+		}
+		if strings.Contains(errb.String(), "REFUSED") {
+			t.Errorf("`run %s` refused instead of answering:\n%s", flag, errb.String())
+		}
+		if !strings.Contains(out.String(), "nova-sandbox run") || !strings.Contains(out.String(), "--size") {
+			t.Errorf("`run %s` did not print the verb's usage on stdout:\n%s", flag, out.String())
+		}
+	}
+}
+
+// --go is the flag the measured failure asks for: every card that builds Go needs the
+// toolchain root and the module cache, and naming them by hand in every argv is a step
+// that will be forgotten.
+func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
+	root, mod := t.TempDir(), t.TempDir()
+	old := runGoEnv
+	t.Cleanup(func() { runGoEnv = old })
+	runGoEnv = func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil }
+
+	f := runFlags{useGo: true, reads: []string{"/usr"}}
+	var errb bytes.Buffer
+	if r := applyGoReads(&f, &errb); r != nil {
+		t.Fatalf("--go refused with a real toolchain: %s", r.Text)
+	}
+	if !contains(f.reads, root) || !contains(f.reads, mod) {
+		t.Fatalf("--go did not add GOROOT and GOMODCACHE to the reads: %v", f.reads)
+	}
+	if !contains(f.reads, "/usr") {
+		t.Errorf("--go dropped a --read the caller named: %v", f.reads)
+	}
+	if !strings.Contains(errb.String(), "SANDBOX NOTE") {
+		t.Errorf("--go added two read roots and said nothing about it:\n%s", errb.String())
+	}
+}
+
+// A module cache that is not there yet is SKIPPED, not refused: it is a path the tool
+// derived, not one the caller named, and rule 5's refusal-for-absence is about the
+// caller's own paths.
+func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
+	root := t.TempDir()
+	old := runGoEnv
+	t.Cleanup(func() { runGoEnv = old })
+	runGoEnv = func() (goDirs, error) {
+		return goDirs{Root: root, ModCache: filepath.Join(root, "not", "there")}, nil
+	}
+	f := runFlags{useGo: true}
+	var errb bytes.Buffer
+	if r := applyGoReads(&f, &errb); r != nil {
+		t.Fatalf("--go refused because a derived path was absent: %s", r.Text)
+	}
+	if len(f.reads) != 1 || f.reads[0] != root {
+		t.Fatalf("--go added %v, want just the toolchain root", f.reads)
+	}
+	if !strings.Contains(errb.String(), "not there") && !strings.Contains(errb.String(), "skipped") {
+		t.Errorf("--go skipped a path without saying which:\n%s", errb.String())
+	}
+}
+
+// No go on the PATH is a refusal naming the flag, not a run that fails later inside the
+// wall for a reason nothing explains.
+func TestGoRefusesWhenThereIsNoGoToAsk(t *testing.T) {
+	old := runGoEnv
+	t.Cleanup(func() { runGoEnv = old })
+	runGoEnv = func() (goDirs, error) {
+		return goDirs{}, errors.New("exec: \"go\": executable file not found in $PATH")
+	}
+	f := runFlags{useGo: true}
+	var errb bytes.Buffer
+	r := applyGoReads(&f, &errb)
+	if r == nil {
+		t.Fatalf("--go with no go on the PATH did not refuse")
+	}
+	if r.Reason != "bad_read" || !strings.Contains(r.Text, "--go") {
+		t.Errorf("the refusal does not name the flag: %+v", r)
+	}
+}
+
+// The whole point of the line: a command that failed is told what the wall refused.
+func TestAFailedRunIsToldWhatTheWallDenied(t *testing.T) {
+	b := newRunBench(t, 2)
+	// /opt is a directory of the machine the DENIAL came from, not of the machine reading
+	// this test: the windows leg has none and the remedy came out as `--read \` there.
+	posixDirs(t, "/opt")
+	oldDenials := runDenials
+	t.Cleanup(func() { runDenials = oldDenials })
+	runDenials = func(int, int) []deniedPath {
+		return []deniedPath{{Path: "/opt", Op: "read", PID: 999}}
+	}
+	code, errOut := runOnce(t, b, runFlagsFor(t)...)
+	if code != 2 {
+		t.Fatalf("the command's status is still the command's: got %d", code)
+	}
+	if !strings.Contains(errOut, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`) {
+		t.Errorf("a failed run did not say what the wall denied:\n%s", errOut)
+	}
+}
+
+// Edge 3 of the 20-run soak, measured on the Studio 2026-09-18. A run that hit its
+// --timeout spent two seconds asking the OS what it had denied and then printed
+//
+//	SANDBOX NOTE the command failed and this OS reported no seatbelt denials for it;
+//	... add a --read, or --go
+//
+// A TIMEOUT IS NOT A DENIAL. Nothing was refused: the command was still working when its
+// deadline passed, and a hint pointing at the read set sends the reader to widen a wall
+// that was never in the way. The probe is skipped and the one true sentence is printed.
+func TestATimeoutNeverAsksWhatWasDeniedAndSaysItTimedOut(t *testing.T) {
+	newRunBenchNeverFinishes(t, 137)
+	oldDenials := runDenials
+	t.Cleanup(func() { runDenials = oldDenials })
+	asked := false
+	runDenials = func(int, int) []deniedPath { asked = true; return nil }
+
+	var out, errb bytes.Buffer
+	f := parseRun(runFlagsFor(t, "--timeout", "1ns"))
+	// The deadline this verb was given, in the units the verb takes it. The command
+	// under it never finishes, so the deadline is the only thing that can end this run.
+	code := runDisposable(f, time.Nanosecond, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	errOut := errb.String()
+
+	if code != exitTimeout {
+		t.Fatalf("a run that passed its deadline is exit %d: got %d\n%s", exitTimeout, code, errOut)
+	}
+	if asked {
+		t.Errorf("a timed-out run asked the operating system what it had denied; that is a bounded two-second query spent on a question nobody asked -- nothing was refused, the deadline passed")
+	}
+	if !strings.Contains(errOut, "SANDBOX TIMEOUT after=") {
+		t.Errorf("a timed-out run did not say so in one line:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "add a --read") {
+		t.Errorf("a timed-out run printed the no-denials hint; the wall denied nothing and the remedy it names is not the one:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "SANDBOX DONE name=j1") {
+		t.Errorf("the timed-out run left no receipt, so its volume's fate is unstated:\n%s", errOut)
+	}
+}
+
+// newRunBenchNeverFinishes is newRunBench for the one case it cannot express: a command
+// that does not exit on its own, so that the deadline is the only thing that can end the
+// run. Its status arrives when the group is KILLED, which is what a real one does.
+func newRunBenchNeverFinishes(t *testing.T, code int) *runBench {
+	t.Helper()
+	b := newRunBench(t, code)
+	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+		done := make(chan int, 1)
+		return startedRun{
+			done: done,
+			kill: func(sig syscall.Signal) {
+				b.killed = append(b.killed, sig)
+				select {
+				case done <- code:
+				default:
+				}
+			},
+			pid: 4242,
+		}, nil
+	}
+	return b
+}
+
+// A run that SUCCEEDED asks the OS nothing: the reader costs a process, and a clean run
+// has no question to answer.
+func TestACleanRunNeverAsksWhatWasDenied(t *testing.T) {
+	b := newRunBench(t, 0)
+	oldDenials := runDenials
+	t.Cleanup(func() { runDenials = oldDenials })
+	asked := false
+	runDenials = func(int, int) []deniedPath { asked = true; return nil }
+	if _, errOut := runOnce(t, b, runFlagsFor(t)...); strings.Contains(errOut, "SANDBOX DENIED") {
+		t.Errorf("a clean run printed a denial:\n%s", errOut)
+	}
+	if asked {
+		t.Errorf("a clean run asked the operating system what it had denied; that is a process spent on a question nobody has")
 	}
 }

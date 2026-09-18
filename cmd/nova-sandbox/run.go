@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -35,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
@@ -75,6 +77,11 @@ type volumeManager interface {
 	Container() (string, error)
 	// Exists reports whether a volume of this name is already on the machine.
 	Exists(name string) (bool, error)
+	// List is every volume on this machine whose name begins with the run verb's own
+	// prefix, with the disk and the mount point of each. It is what the reap verb reads,
+	// and it is on this interface rather than beside it because one seam means one fake
+	// and one place where a volume can be named.
+	List() ([]diskVolume, error)
 	// Create exports a new volume with a quota and returns it mounted.
 	Create(container, name, size string) (diskVolume, error)
 	// Used is the bytes the volume holds, asked BEFORE the delete, because after it
@@ -84,8 +91,17 @@ type volumeManager interface {
 	Delete(disk string) error
 }
 
-// The three seams. Each is a var so a test can replace it, and none of them is reachable
-// from caller input.
+// startedRun is what the executor hands back: the channel the status arrives on, the
+// function that signals the WHOLE group, and the leader's pid — which is the floor the
+// denial reader filters a shared machine's log by.
+type startedRun struct {
+	done <-chan int
+	kill func(syscall.Signal)
+	pid  int
+}
+
+// The seams. Each is a var so a test can replace it, and none of them is reachable from
+// caller input.
 var (
 	runVolumes volumeManager = newPlatformVolumes()
 	runExec                  = startInOwnGroup
@@ -98,9 +114,54 @@ type runFlags struct {
 	name, size, container, timeout string
 	reads                          []string
 	argv                           []string
+	useGo                          bool
+	help                           bool
 	sawDashDash                    bool
 	bad                            []sandbox.Refusal
 }
+
+// runUsage is the verb's own banner. It exists because `nova-sandbox run --help` printed
+// FOUR REFUSALS and exit 125 — one for the missing --name, one for the missing --size, one
+// for --help not being a flag of the verb, one for the missing -- (measured 2026-09-18 by
+// a non-author dogfooding the verb). ONBOARDING.md point 2 puts the banner behind `help`
+// rather than in front of every mistake; asking how to use a verb is not a mistake, and a
+// tool that answers the question with four complaints teaches the reader to stop asking.
+const runUsage = `nova-sandbox run: one command, in a DISPOSABLE place that is deleted on exit (darwin)
+
+usage:
+  nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
+                   [--container <disk>] -- <command> <args...>
+
+  --name <n>      the volume is nova-<n>, mounted at /Volumes/nova-<n>. Letters,
+                  digits, - _ and . REQUIRED.
+  --size <s>      the volume's quota, e.g. 8g or 64m. REQUIRED: a disposable place
+                  with no ceiling can fill the boot disk.
+  --timeout <d>   a Go duration after which the whole process group is killed and
+                  the volume deleted anyway. Exit 124.
+  --go            add the Go toolchain's own roots as --read: GOROOT and GOMODCACHE,
+                  as ` + "`go env`" + ` reports them. A toolchain outside the roots the
+                  profile already grants is unreadable inside the wall, and a module
+                  cache lives under the caller's home, which the wall denies -- so a
+                  card that builds Go wants this flag, and the alternative is naming
+                  both by hand in every argv.
+  --read <dir>    readable, recursively, and NOT writable. Repeatable.
+  --container <d> the APFS container to make the volume in. Default: the container
+                  the boot volume is in.
+
+The volume is the run's ONLY writable directory: the working directory is
+<volume>/work, HOME is <volume>/home and TMPDIR is on it too. On exit -- normal,
+error, signal or --timeout -- the whole process group is killed and the volume is
+unmounted and DELETED, so there is no cleanup step. A delete that fails prints
+SANDBOX LEAK with the one command that removes it and exits 3.
+
+When a contained command exits non-zero, the tool asks the operating system what it
+refused and prints one SANDBOX DENIED line per path, with the flag that would have
+allowed it. docs/SPEC-SANDBOX.md says what that can and cannot see on this macOS.
+
+example:
+  nova-sandbox run --name card1 --size 8g --timeout 30m --go \
+                   -- /bin/sh -c 'cd repo && go build ./...'
+`
 
 func parseRun(args []string) runFlags {
 	var f runFlags
@@ -135,6 +196,10 @@ func parseRun(args []string) runFlags {
 			if v := want("--read"); v != "" {
 				f.reads = append(f.reads, v)
 			}
+		case "--go":
+			f.useGo = true
+		case "help", "--help", "-h":
+			f.help = true
 		default:
 			add("no_command", oneline.Escape(a)+" is not a flag of the run verb; run: nova-sandbox help")
 		}
@@ -199,10 +264,90 @@ func okContainer(s string) bool {
 	return true
 }
 
+// goDirs is what `go env` answers about the toolchain: the root it was installed at and
+// the module cache it downloads into. Neither is a path the caller typed, and neither is
+// guessed — both come from the toolchain itself.
+type goDirs struct{ Root, ModCache string }
+
+// runGoEnv is the seam --go reaches the toolchain through, so a test asks a function and
+// never a machine's real Go.
+var runGoEnv = readGoEnv
+
+// readGoEnv asks the go on the caller's PATH where it lives. The child's environment is
+// goenv.Clean's, because this reads a go command's OUTPUT: a GOFLAGS=-json inherited from
+// a Makefile would turn these two lines into a JSON document and the paths below into
+// nonsense (internal/goenv, and the class test that enforces it).
+func readGoEnv() (goDirs, error) {
+	bin, err := exec.LookPath("go")
+	if err != nil {
+		return goDirs{}, err
+	}
+	cmd := exec.Command(bin, "env", "GOROOT", "GOMODCACHE")
+	cmd.Env = goenv.Clean(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return goDirs{}, err
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return goDirs{}, fmt.Errorf("go env answered %d lines, want GOROOT and GOMODCACHE", len(lines))
+	}
+	return goDirs{Root: strings.TrimSpace(lines[0]), ModCache: strings.TrimSpace(lines[1])}, nil
+}
+
+// applyGoReads is --go: the toolchain's own roots, added to the read set.
+//
+// Measured 2026-09-18, dogfooding the verb on a real card step: a `go build` inside the
+// wall died with `go: cannot find GOROOT directory: 'go' binary is trimmed and GOROOT is
+// not set`, which names nothing about a sandbox. The root cause of THAT one is fixed in
+// the optional roots' ancestors, but the class remains — a toolchain installed anywhere
+// the profile's root table does not already cover is unreadable inside the wall, and the
+// module cache lives under the caller's home, which the wall denies by design.
+//
+// A path that is not there is SKIPPED with a note, not refused: rule 5's
+// refusal-for-absence is about the paths the CALLER named, and an empty module cache on a
+// machine that has never downloaded a module is not a misconfiguration.
+func applyGoReads(f *runFlags, stderr io.Writer) *sandbox.Refusal {
+	if !f.useGo {
+		return nil
+	}
+	dirs, err := runGoEnv()
+	if err != nil {
+		return &sandbox.Refusal{Reason: "bad_read",
+			Text: "--go asks the go on this PATH where its roots are, and there is no go to ask: " + oneline.Err(err) + ". Install go, or name the roots yourself with --read"}
+	}
+	var added, skipped []string
+	for _, dir := range []string{dirs.Root, dirs.ModCache} {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			skipped = append(skipped, dir)
+			continue
+		}
+		f.reads = append(f.reads, dir)
+		added = append(added, dir)
+	}
+	if len(added) > 0 {
+		fmt.Fprintf(stderr, "SANDBOX NOTE --go added %d read root(s) from go env: %s\n",
+			len(added), oneline.Escape(strings.Join(added, " ")))
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(stderr, "SANDBOX NOTE --go skipped %s: go env names it and it is not there, so there is nothing to grant\n",
+			oneline.Escape(strings.Join(skipped, " ")))
+	}
+	return nil
+}
+
 // runVerb is the verb. It returns the status the tool exits with: the command's own,
 // 124 for a --timeout, 125 for a refusal of the tool's own, and 3 for a leak.
 func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
 	f := parseRun(args)
+	// The question, before every complaint about the argv that did not ask it.
+	if f.help {
+		fmt.Fprint(stdout, runUsage)
+		return 0
+	}
 	if !okName(f.name) {
 		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_name",
 			Text: "--name wants one short name out of letters, digits, - _ and . : it becomes the volume nova-<n> and the directory under /Volumes"})
@@ -245,6 +390,14 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitRefused
+	}
+	// --go is resolved AFTER the platform is known and BEFORE anything is made: its two
+	// roots are ordinary reads by the time the policy is built, so nothing below this line
+	// knows the flag exists.
+	if r := applyGoReads(&f, stderr); r != nil {
+		code := refuseAll(stderr, []sandbox.Refusal{*r})
+		fmt.Fprintln(stderr, runRemedy)
+		return code
 	}
 	return runDisposable(f, deadline, stdin, stdout, stderr, env)
 }
@@ -324,6 +477,13 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 			return refuse("volume_failed", "%s could not be made on the disposable volume: %s", oneline.Escape(d), oneline.Err(err))
 		}
 	}
+	// The owner marker, before the command starts. It is what lets `nova-sandbox reap`
+	// tell this volume — a run that is working — from the one a SIGKILLed run left
+	// mounted with its orphaned children still holding it open. A reaper that cannot make
+	// that distinction is one nobody dares to run.
+	if err := writeOwnerMarker(vol.Mount, os.Getpid()); err != nil {
+		return refuse("volume_failed", "the owner marker could not be written at %s: %s", oneline.Escape(vol.Mount), oneline.Err(err))
+	}
 
 	// The wall: the volume is the ONE --write, so the only place on this machine the
 	// command may write is the place that is about to be deleted. Rule 8's temp directory
@@ -347,7 +507,9 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 		oneline.Field(p.Net()), oneline.Field(p.Cwd), base64Cwd(p.Cwd), p.AncestorCount(),
 		oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
 
-	done, killGroup, err := runExec(p, childEnv, stdin, stdout, stderr)
+	startedAt := runNow()
+	started, err := runExec(p, childEnv, stdin, stdout, stderr)
+	done, killGroup := started.done, started.kill
 	if err != nil {
 		var r sandbox.Refusal
 		if asRefusal(err, &r) {
@@ -370,10 +532,48 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	defer stop()
 
 	code, timedOut := supervise(done, deadlineC, grace.C, sigs, killGroup)
+	// A TIMEOUT IS NOT A DENIAL, and this is the difference between the two sentences a
+	// failed run can be told. Measured in the 20-run soak (Studio, 2026-09-18): a run that
+	// passed its --timeout paid the bounded two-second denials query and was then told
+	// "this OS reported no seatbelt denials ... add a --read, or --go" — a remedy for a
+	// wall that was never in the way. The command was still working when its deadline
+	// passed; nothing refused it. So the probe is skipped and the one true line is printed.
 	if timedOut {
-		fmt.Fprintf(stderr, "SANDBOX NOTE the command did not finish inside --timeout %s; its whole process group was killed and the volume goes with it\n", oneline.Field(f.timeout))
+		fmt.Fprintf(stderr, "SANDBOX TIMEOUT after=%s name=%s\n", oneline.Field(deadline.String()), oneline.Field(f.name))
+		return code
+	}
+	if code != 0 {
+		reportDenials(stderr, p, started.pid, runNow().Sub(startedAt))
 	}
 	return code
+}
+
+// reportDenials is the answer to the silence: a command that failed is told what the wall
+// refused, one line per path, with the flag that would have allowed it. It runs ONLY on a
+// non-zero exit — it costs a process, and a clean run has no question to ask.
+//
+// The allowed set the denials are filtered against is the policy's own, so a denial on a
+// path the caller already named is not reported: that is some other operation on a granted
+// path, and a remedy naming a flag already in the argv sends a reader to fix what is not
+// broken.
+func reportDenials(stderr io.Writer, p *sandbox.Policy, pid int, ran time.Duration) {
+	// The window is the run's, rounded up: the log is asked about the seconds the command
+	// was alive and no more, so a neighbour's violation from before it started is not this
+	// card's problem.
+	window := int(ran.Seconds()) + 2
+	denied, _ := step(stderr, "denials", func() ([]deniedPath, error) { return runDenials(window, pid), nil })
+	allowed := append(append([]string{}, p.Reads...), p.Writes...)
+	allowed = append(allowed, p.OptRoots...)
+	denied = outsideTheWall(denied, allowed)
+	if len(denied) == 0 {
+		// Nothing to report is not the same as nothing denied, and saying so is the whole
+		// difference between this run and the one that was measured. See denied.go: this
+		// macOS does not report a `sandbox-exec -p` profile's violations at all.
+		fmt.Fprintf(stderr, "SANDBOX NOTE the command failed and this OS reported no seatbelt denials for it; if it died on a path, the wall allowed read=%d write=%d and nothing else -- add a --read, or --go for a Go toolchain\n",
+			len(p.Reads), len(p.Writes))
+		return
+	}
+	printDenied(stderr, denied, maxDenied)
 }
 
 // supervise waits for whichever of three things happens first — the command finished, the
