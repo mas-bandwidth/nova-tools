@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -20,21 +21,21 @@ type fakePortHost struct {
 	files    map[string]map[string]string
 	trees    map[string][]string
 	diff     string
-	calls    int
+	calls    atomic.Int64
 }
 
 func (f *fakePortHost) Head(pr int) (string, error) {
-	f.calls++
+	f.calls.Add(1)
 	return f.headSHA, nil
 }
 
 func (f *fakePortHost) Base(pr int) (string, string, error) {
-	f.calls++
+	f.calls.Add(1)
 	return f.baseName, f.baseSHA, nil
 }
 
 func (f *fakePortHost) File(sha, p string) ([]byte, error) {
-	f.calls++
+	f.calls.Add(1)
 	m := f.files[sha]
 	if m == nil {
 		return nil, os.ErrNotExist
@@ -47,12 +48,12 @@ func (f *fakePortHost) File(sha, p string) ([]byte, error) {
 }
 
 func (f *fakePortHost) List(sha string) ([]string, error) {
-	f.calls++
+	f.calls.Add(1)
 	return f.trees[sha], nil
 }
 
 func (f *fakePortHost) Diff(base, head string) (string, error) {
-	f.calls++
+	f.calls.Add(1)
 	return f.diff, nil
 }
 
@@ -228,8 +229,8 @@ func TestPortMissingFlagsRefuseBeforeHostCalls(t *testing.T) {
 			if !strings.Contains(errb, "refusing to guess") {
 				t.Fatalf("missing %s did not refuse: %s", tc.name, errb)
 			}
-			if f.calls != 0 {
-				t.Fatalf("missing %s made %d host calls", tc.name, f.calls)
+			if n := f.calls.Load(); n != 0 {
+				t.Fatalf("missing %s made %d host calls", tc.name, n)
 			}
 		})
 	}
