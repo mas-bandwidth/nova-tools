@@ -2,9 +2,9 @@ package pulse
 
 // `fleet standard` is tools/bench-standard.sh and the Mac bench's provisioning standard,
 // run as a verb over ssh (SPEC-PULSE ## Fleet: "fleet standard is the standard itself, run
-// locally or over ssh, whose checks are the contract below"). It retires
-// scripts/bench-standard.sh, which refused to run anywhere but ON a Linux bench and could
-// say nothing at all about a Mac one.
+// locally or over ssh, whose checks are the contract below"). It retires the old
+// bench-standard.sh, since gone from the tree, which refused to run anywhere but ON a Linux
+// bench and could say nothing at all about a Mac one.
 //
 // The checks are DATA, one table per operating system, so the standard is read rather than
 // traced through a shell script: each check is a one-line probe and the answer it must
