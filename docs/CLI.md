@@ -1098,6 +1098,73 @@ An unreadable probe record is `FLEET REFUSED bench=<name>: the fleet-probe recor
 unreadable`, which is the verb saying it has no evidence rather than admitting a
 bench on none (nova-tools #875).
 
+### fleet standard / mirror / join / sleep
+
+```
+nova-pulse fleet standard --benches <file> --bench <name> [--want <stamp>] [--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet mirror   --benches <file> --bench <name> --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet join     --benches <file> --bench <name> --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet sleep    --benches <file> --bench <name> [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+```
+
+The four verbs that retire the last four hand-run bench scripts (#1142):
+`bench-standard.sh`, `bench-mirror.sh`, `ts-join-one.sh` and the Linux half of
+`fleet-sleep.sh`. Each acts on ONE bench of `--benches`, takes every path from a flag,
+runs one bounded remote script through `ssh <target> bash -s` (`--ssh`, so a test fakes
+it), refuses `studio` and a name the file does not carry **before any ssh**, and exits
+0 ok / 2 refused-or-drift / 3 unreachable with one remedy line per refusal.
+
+`fleet standard` holds a bench against the provisioning standard and prints one line per
+check and a verdict:
+
+```
+STANDARD <bench> <check> OK got=<value>
+STANDARD <bench> <check> DRIFT want=<match>:<want> got=<value>
+FLEET <bench> STANDARD OK checks=<n>
+FLEET <bench> STANDARD DRIFT drift=<k>/<n>
+```
+
+The checks are **data, one table per operating system** (`pulse.FleetStandardChecks`), so
+the standard is read rather than traced through a shell script. Linux: the Go toolchain at
+`--go` (default `go1.26.5`), `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one
+seat key, and free space at `--min-free` (default 25 GB). darwin: the Go SDK and `sbcl`
+under `~/sdk`, real git ahead of the Xcode shim, and every runner's `.path` carrying it,
+with the stamp, seat and space checks shared. Left out, `--os` is asked of the bench with
+`uname -s`. With no `--want` the stamp check reports what the bench has instead of
+demanding one.
+
+`fleet mirror` creates the bare mirror a card clones from, or fetches the one already
+there, and **deletes nothing**:
+
+```
+FLEET <bench> MIRROR <path> created|refreshed head=<sha> size=<n>K
+```
+
+`--repo` must be an https remote and `--path` an absolute clean path, both free of shell
+metacharacters — the two are pasted into a remote command line, so a guessed one is a
+bench cloning something nobody named.
+
+`fleet join` joins a bench to the tailnet: `FLEET <bench> JOINED ip=<addr>`. **The auth key
+is never a flag value.** It reaches the process only through the environment variable
+`--authkey-env` names, and the bench only on the remote shell's stdin, piped into
+`tailscale up --auth-key=file:/dev/stdin`, so it is in no argv on either machine and
+nothing prints it:
+
+```
+nova-secrets exec --as rowan -- nova-pulse fleet join --benches ./fleet.tsv --bench vision \
+  --tailscale /usr/bin/tailscale --authkey-env TAILSCALE_AUTH_KEY
+```
+
+`fleet sleep` puts one bench to sleep and is `fleet suspend` over one name — the same busy
+rule, decided in one place: a lease or a job directory with a live pid under either swarm
+root, or a `Runner.Worker`, is `FLEET <bench> BUSY <what>`, exit 2, and is never suspended
+(`--force` overrides, `--if-idle` skips instead of refusing). An idle bench runs
+`sudo systemctl suspend` and prints `FLEET <bench> SUSPENDED`.
+
+Each verb narrates on stderr while it waits on a machine (`STANDARD WALK bench=… checks=…`,
+`STANDARD DONE … elapsed=…`), so a step over a tenth of a second says what it is doing; the
+bench lines themselves stay on stdout.
+
 ### status
 
 ```

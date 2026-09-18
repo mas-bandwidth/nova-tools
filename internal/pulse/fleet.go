@@ -349,7 +349,11 @@ func fleetSuspendScript(home string, force, ifIdle bool) string {
 		`  fi`,
 		`fi`,
 		`if sudo systemctl suspend; then`,
-		`  printf 'FLEETSUSPENDED\n'`,
+		// The marker carries a field. fleetMarker reads `TOKEN<TAB>rest`, so a BARE
+		// `FLEETSUSPENDED` line matched nothing and every successful suspend printed
+		// `FLEET <name> UNREACHABLE no answer` and exited 3. Found 2026-09-18 by the first
+		// test to drive the success path (`fleet sleep`); only the busy path was covered.
+		`  printf 'FLEETSUSPENDED\tsystemctl suspend\n'`,
 		`else`,
 		`  printf 'FLEETFAIL\tsudo systemctl suspend failed\n'`,
 		`fi`,
