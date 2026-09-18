@@ -1637,9 +1637,52 @@ boot volume to clean. It needs no `sudo`. A delete that fails prints
 `SANDBOX LEAK` with the one `diskutil` command that removes it and exits 3,
 never silently.
 
-Every other platform refuses `run` with one remedy line: on linux a card is
-already disposable — it runs inside its image — so name the image root as
-`--write` on the bare form instead.
+On linux `run` refuses with one remedy line: a card is already disposable there
+— it runs inside its image — so name the image root as `--write` on the bare
+form instead.
+
+### The same place, on windows
+
+`run` on windows is **the same verb**: the same five steps, the same receipt, the
+same `SANDBOX LEAK` and the same exit codes. What differs is the place and a
+handful of flags ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), rules W1–W12):
+
+```
+$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 \
+               -- cmd.exe /c "go build ./..."
+```
+
+- **The place is a Job Object plus `<scratch>\nova-<n>`, and the two are one
+  unit.** The job is what the darwin side gets from a process group: closing the
+  tool's last handle terminates the whole tree, including a grandchild a harness
+  abandoned, because the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and
+  never permits breakaway. The child is put in the job **at creation**, with
+  `PROC_THREAD_ATTRIBUTE_JOB_LIST` on the same attribute list as the wall, so
+  there is no window in which it is alive and outside one.
+- **`--scratch` is required** and must be an existing absolute path. There is no
+  default: not the TEMP variable, not the user profile.
+- **`--size` is refused**, with `reason=size_unenforceable`. NTFS quotas are per
+  user per volume, a directory quota is a server role and a per-run quota is a
+  VHDX needing administrator rights. A ceiling the tool only measures is not a
+  ceiling, so this is a refusal and not a note — the same rule `--net-deny`
+  already follows. Both remedies are on the line.
+- **`--memory` and `--cpu` are the job's caps**, and they are the one place this
+  tool limits memory or CPU at all. Both are accepted and ignored on darwin and
+  linux, so one caller writes one argv for three platforms.
+- **`--place wsb`** is Windows Sandbox: full disposability, because the guest's
+  disk is discarded when the window closes. It is Pro and Enterprise only, it is
+  **one instance per machine** — so it is the review place and never the swarm's
+  — and it requires `--timeout`, because the guest's status comes back through a
+  file in the mapped folder or not at all.
+- **WSL is never the answer**, not as the wall, not as the place and not as a
+  fallback: containment that only holds inside WSL is containment on a machine
+  the card was not sent to.
+
+**This is not measured on a Windows machine.** The estate has none as of
+2026-09-18. The verb's sequence is proven against a fake on every host, the
+binary cross-compiles and vets for `GOOS=windows`, and until the **wall**
+(AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
+the half that is missing — a place without a wall is hygiene, not containment.
 
 **A card that builds Go wants `--go`**, which adds the toolchain's own two roots
 to the read set — `GOROOT` and `GOMODCACHE`, as `go env` reports them — so that

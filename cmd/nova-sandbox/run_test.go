@@ -229,11 +229,19 @@ func TestRunNamesEveryBadFlagAtOnce(t *testing.T) {
 
 // The verb refuses where there is no disposable place, and says where the disposable
 // place is on that platform instead.
+//
+// windows LEFT this list on 2026-09-18: docs/SPEC-SANDBOX.md's "Windows — the disposable
+// place" (W1..W12) is built in runwin.go as a Job Object plus a per-run scratch directory,
+// so the verb no longer refuses there for want of a PLACE. It still refuses there for want
+// of the WALL, which is a different refusal in a different line — see
+// TestWindowsRefusesWhileTheWallIsNotBuilt.
 func TestTheVerbRefusesWherethereIsNoDisposableBody(t *testing.T) {
-	if _, _, refused := noDisposableBody("darwin"); refused {
-		t.Fatalf("darwin has the body and must not refuse")
+	for _, built := range []string{"darwin", "windows"} {
+		if _, _, refused := noDisposableBody(built); refused {
+			t.Fatalf("%s has the body and must not refuse for want of a place", built)
+		}
 	}
-	for _, goos := range []string{"linux", "windows"} {
+	for _, goos := range []string{"linux"} {
 		line, remedy, refused := noDisposableBody(goos)
 		if !refused {
 			t.Fatalf("%s has no disposable-volume body and must refuse rather than use an ordinary directory", goos)
