@@ -176,10 +176,32 @@ less — `remedy="--budget must be a whole number of seconds greater than zero"`
 missing or unreadable invocation is the tool’s own one-line refusal ending `run:
 nova-ci help`.
 
+**The budget is per platform.** The verb judges a LIVE run against the
+`--budget` it is handed; `docs/TEST-DURATIONS.md` is the recorded half, and
+since the record grew a `## Bench:` section per machine the ceiling a package is
+judged against there is ITS OWN PLATFORM'S. A section may state a
+`budget-factor:` in its heading -- what the same suite costs on that platform
+relative to the budget bench -- and its rows are judged at `60 s x factor` when
+the record's own check in `tools/testdur` is running on that
+`runtime.GOOS/GOARCH`. darwin/arm64's factor is 2.2, the whole-suite ratio
+measured on the Air (#1411). The `[budget]` bench's rows are judged at a plain
+sixty everywhere, and a platform with no section of its own falls back to that,
+so a platform is never silently unbudgeted. A `budget-factor:` that is not a
+positive number is a refusal and never a silent fallback, because a ceiling
+quietly set to the wrong number is worse than no ceiling: no ceiling at least
+reads as no ceiling. `tools/testdur` heads each table it prints with the
+platform it measured, so a regenerated table cannot be pasted under another
+bench's heading, and a bench's package table is the one directly under its
+heading -- a table under a `###` inside the section is prose, not a second
+measurement of the same packages.
+
 **The mistake it removes.** `nova-secrets` sat at 120 seconds in the suite and
 nothing noticed, because nothing summed the per-package elapsed time `go test
 -json` was already printing. A green that hides a doubling suite is the same
-mistake as a flaky wait, one layer up.
+mistake as a flaky wait, one layer up. The same mistake one layer out is a
+number RECORDED and enforced against nothing: `cmd/nova-wake` was recorded at
+62.9 s on the Air -- over a minute -- and until the per-platform ceiling above,
+nothing read it.
 
 **Red tests.** `internal/ci/slowtests/slowtests_test.go` feeds canned TestEvent
 lines through the parser and the summer, and `cmd/nova-ci/main_test.go` runs the
@@ -493,7 +515,9 @@ package over it is named every time.
 kept, sorted worst first and capped at three, purely so a finding can say where
 the time went. It sees one run on one machine, so a package that is fast on hulk
 and slow on windows-latest is two measurements, which is why the Windows sizes
-table exists. Full section: *The per-package test time budget*.
+table exists — and why the RECORD holds one `## Bench:` section per machine,
+each with its own ceiling, checked by `tools/testdur`'s own tests against
+`docs/TEST-DURATIONS.md`. Full section: *The per-package test time budget*.
 
 ### `removeall` — no `os.RemoveAll` of a computed path
 
