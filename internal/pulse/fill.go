@@ -20,6 +20,10 @@ package pulse
 // where an exit-7 launcher left a card under --launched holding its lane forever while the
 // tick read launched=1.
 //
+// WHOM it fills is not a list in this file either: with no bench named, the pool is every
+// machine in the registry that carries the `bench` role and a `certified=<YYYY-MM-DD>` note.
+// A bench certified tonight is filled tonight, by its row and not by a release.
+//
 // WHERE a card may go is not the caller's opinion: --machines names the machines registry
 // (internal/fleet), and a bench whose roles lack `bench` is refused BY NAME before any ssh
 // is opened -- exit 2, nothing launched. That is Glenn's lock of 2026-09-18: runner hosts
@@ -176,6 +180,18 @@ func Fill(in FillInput) int {
 	reg, err := fleet.ReadRegistry(in.Machines)
 	if err != nil {
 		return refusal(in.Stderr, "FILL", err)
+	}
+	// THE POOL (#1476): with no bench named, the tick fills every certified bench the
+	// registry carries. The pool was a Go literal -- `hulk, vision, space` -- so a bench
+	// certified last night was not filled until someone edited a tool and cut a release.
+	// Now the row IS the enrolment, and the tool holds no fleet name at all.
+	if len(in.Benches) == 0 {
+		in.Benches = reg.CertifiedBenchNames()
+		if len(in.Benches) == 0 {
+			return refusal(in.Stderr, "FILL", fmt.Errorf(
+				"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
+				in.Machines))
+		}
 	}
 	if code := refuseNonBenches(in.Stderr, reg, in.Benches); code != 0 {
 		return code
