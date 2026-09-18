@@ -56,6 +56,14 @@ Pick the row that is your actual problem today. One tool is a fine number.
   start workers; dispatch still belongs to your chosen coordinator.
 - `nova-swarm native` shares Go module and build caches across slots under the
   same root. `nova-ci slowtests` reports packages over your chosen time budget.
+- Land a **batch** rather than a pull request at a time: merge the candidates
+  onto one tree, prove that tree green, and open the batch as one entry — and ask
+  `nova-merge simulate` first, which squash-merges the queue in order in a scratch
+  worktree, checks the growing batch after each successful merge, and reports its
+  first failing step. Cards that touch the same area of the code declare a **lane**
+  (`LANE: <name>`); `nova-pulse fill` keeps at most one card per lane live and
+  holds the rest in order, which is what stops a batch from being a pile of
+  conflicts.
 
 The [command reference](docs/CLI.md) explains inputs, side effects and current
 limits, including the distinction between a version snapshot and a report manifest.

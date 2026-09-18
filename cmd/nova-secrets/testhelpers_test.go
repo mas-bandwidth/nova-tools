@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 type keyPair struct {
@@ -162,7 +164,9 @@ func buildNovaSecrets(t *testing.T) string {
 			// streams -- indistinguishable from a tool that refused without a word.
 			builtBin += ".exe"
 		}
-		buildOut, buildErr = exec.Command("go", "build", "-o", builtBin, ".").CombinedOutput()
+		build := exec.Command("go", "build", "-o", builtBin, ".")
+		build.Env = goenv.Clean(os.Environ())
+		buildOut, buildErr = build.CombinedOutput()
 	})
 	if buildErr != nil {
 		t.Fatalf("failed to build nova-secrets: %v, out: %s", buildErr, string(buildOut))

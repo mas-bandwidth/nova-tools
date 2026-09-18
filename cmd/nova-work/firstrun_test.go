@@ -34,13 +34,36 @@ func runCLI(t *testing.T, args ...string) (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
-func localize(t *testing.T, line string) []string {
+// firstRunDir is the working directory ONE transcript runs in: a temp dir holding
+// the plan the `./work.work` lines read. It is made once per test rather than once
+// per line because the lines are a sequence -- `dependencies --node b`, then
+// `--node a --needs b`, then `ready` -- and the graph they build has to survive
+// from one line to the next.
+func firstRunDir(t *testing.T) string {
 	t.Helper()
-	plan := filepath.Join(t.TempDir(), "work.work")
-	if err := os.WriteFile(plan, []byte(firstRunPlan), 0o644); err != nil {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "work.work"), []byte(firstRunPlan), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return strings.Fields(strings.ReplaceAll(line, "./work.work", plan))
+	return dir
+}
+
+// localize rewrites EVERY `./x` token in an example into dir, rather than the one
+// `./work.work` this used to know about. The one it did not know about was
+// `./deps.json`, which the `dependencies` verb WRITES: relative to the test's own
+// working directory, every run of this package left a deps.json in
+// cmd/nova-work/. The examples are still run verbatim in shape -- what changes is
+// the directory the paths in them point at, so a relative path added to the usage
+// banner or to docs/TESTS.md tomorrow lands in the temp dir too.
+func localize(t *testing.T, dir, line string) []string {
+	t.Helper()
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		if rest, ok := strings.CutPrefix(f, "./"); ok {
+			fields[i] = filepath.Join(dir, rest)
+		}
+	}
+	return fields
 }
 
 // TestBareNovaWorkRefusesInOneLine: no verb is not an invocation, and the refusal says
@@ -79,8 +102,15 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 			return &fakeForge{}
 		},
 	}
+	dir := firstRunDir(t)
 	for _, ex := range examples {
-		args := localize(t, ex)[1:]
+		fields := localize(t, dir, ex)
+		if len(fields) < 2 || fields[0] != "nova-work" {
+			t.Fatalf("usage example %q is not a nova-work command", ex)
+		}
+		args := fields[1:]
+		// The events example names the default redis address. This run points it at
+		// the test's miniredis, so the example runs as written and reaches no network.
 		for i, a := range args {
 			if a == "127.0.0.1:6379" {
 				args[i] = mr.Addr()
@@ -106,10 +136,11 @@ func TestTESTSFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := firstRunDir(t)
 	var printed map[string]bool
 	for _, line := range lines {
 		if cmd, ok := strings.CutPrefix(line, "$ nova-work "); ok {
-			fields := localize(t, cmd)
+			fields := localize(t, dir, cmd)
 			code, stdout, stderr := runCLI(t, fields...)
 			if code != 0 {
 				t.Fatalf("the TESTS.md command %q does not run: exit %d, stderr: %s", line, code, stderr)

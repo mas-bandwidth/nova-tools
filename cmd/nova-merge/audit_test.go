@@ -78,6 +78,12 @@ var mergeAudit = audit.Config{
 		// result is rendered through oneline.Field at its print site.
 		`"net/url"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		// goenv holds no writer of its own: Clean is a pure transform over a slice of
+		// environment strings -- it drops GOFLAGS and the rest of its documented list
+		// and returns what is left -- and it prints nothing. simulate hands its result
+		// to each check's Env so that a caller's GOFLAGS cannot reshape the output
+		// SIMULATE POISON quotes.
+		`"github.com/mas-bandwidth/nova-tools/internal/goenv"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
 		// safepath holds no writer of its own: RemoveUnder only decides whether a path
 		// may be removed and returns an os error, which every caller renders through

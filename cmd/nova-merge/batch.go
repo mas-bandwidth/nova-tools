@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -381,7 +382,12 @@ func parsePRList(raw string) ([]int, error) {
 // GOMAXPROCS is what ci.yml's fair-share step sets and the only environment variable that
 // step sets; a zero share is this process's own, which is every core.
 func ciTestEnv(tmp string, gomaxprocs int) []string {
-	env := privateTempEnv(os.Environ(), tmp)
+	// goenv.Clean FIRST: every step below is a go command whose output this verb
+	// parses into packages and test names, and a caller's GOFLAGS=-json -- which CI's
+	// own `make test` exports -- would turn that output into a JSON stream the parser
+	// reads as a different result. The temp directory and GOMAXPROCS are appended
+	// after Clean, where the last value wins.
+	env := privateTempEnv(goenv.Clean(os.Environ()), tmp)
 	if gomaxprocs > 0 {
 		env = append(env, "GOMAXPROCS="+strconv.Itoa(gomaxprocs))
 	}
