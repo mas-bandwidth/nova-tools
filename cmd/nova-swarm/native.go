@@ -673,8 +673,18 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	// the bench's own `go` and left the card the distribution's 1.22.2, which `go.mod`
 	// refuses under GOTOOLCHAIN=local. Read-only, skipped if absent, and nothing else under
 	// HOME is named.
+	//
+	// ONE LIST, TWO KINDS, and the kind comes from the list rather than from here: `--read`
+	// for the sdk tree, whose `go` the card must RUN, and `--read-noexec` for the module
+	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
+	// so the cache under that flag would put every dependency's own files one exec away from
+	// running inside the wall (Johnny's security read of #1364).
 	for _, root := range swarm.ToolchainRoots(benchHome(cfg)) {
-		argv = append(argv, "--read", root)
+		flag := "--read-noexec"
+		if root.Exec {
+			flag = "--read"
+		}
+		argv = append(argv, flag, root.Path)
 	}
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)

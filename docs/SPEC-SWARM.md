@@ -923,21 +923,27 @@ bench's own `go` (`Permission denied`), the only reachable Go was the distributi
 `/usr/bin/go` under the `/usr` root, and `GOTOOLCHAIN=local` — which is right, and stays —
 turned that into `go: go.mod requires go >= 1.26 (running go 1.22.2; GOTOOLCHAIN=local)` on
 every Go card on hulk (found by the schema dogfood loop, 2026-09-18). Two contracts
-contradicted each other. So `native`'s implicit worker description now names those three
-root exactly as `read_roots` names one for an explicit worker: one `--read`, which carries
-execute on both bodies, **read-only**, and **skipped if absent** — rule 5 refuses a
-`--read` naming a path that is not there, and a darwin bench has no `~/sdk`. **`~/sdk` is the only one granted, and it is the only home directory the wall grants execute
-on.** A `--read` root CARRIES EXECUTE on both bodies, so `~/go/bin` is deliberately left
-out: it is GOPATH/bin, every `go install` lands there, the bench user can write to it, and a
-card that could exec that tree could run bench-user tools inside the wall. Nothing is lost —
-`~/go/bin/go` is a symlink into the sdk tree and the kernel checks the resolved target, so a
-card whose `PATH` finds it first still runs the granted toolchain, while a real binary
-sitting in that directory is `Permission denied` (measured on hulk). `~/go/pkg/mod` wants
-read WITHOUT execute; `Policy.ReadsNoExec` and both bodies carry that grant, but
-`nova-sandbox` has no `--read-noexec` flag to reach it yet, so until that lands the module
-cache is **not granted at all** — which costs a card nothing, since its `GOMODCACHE` is the
-per-bench writable cache under `<root>/cache`. The list is
-written ONCE, in `internal/swarm/toolchain.go`; `tools/bench-standard.sh` carries the same
+contradicted each other. So `native`'s implicit worker description now names those
+roots exactly as `read_roots` names one for an explicit worker: **read-only**, and
+**skipped if absent** — rule 5 refuses a path that is not there, and a darwin bench has no
+`~/sdk`. It is **ONE LIST WITH TWO KINDS**, because a `--read` root CARRIES EXECUTE on both
+bodies (landlock's read subset is `EXECUTE|READ_FILE|READ_DIR`, and the darwin profile
+grants `process-exec*` globally):
+
+- **`~/sdk` as `--read`**, read and execute. It is the Go the card must run, and it is the
+  only home directory the wall grants execute on.
+- **`~/go/pkg/mod` as `--read-noexec`**, read WITHOUT execute. The card reads a module's
+  sources out of the cache and never runs them; every `go mod download` on the bench lands
+  there and the bench user can write to it, so the exec-carrying kind would put a
+  dependency's own files one exec away from running inside the wall.
+
+`~/go/bin` is granted under NEITHER kind: it is GOPATH/bin, every `go install` lands there,
+the bench user can write to it, a card that could exec that tree could run bench-user tools
+inside the wall, and read-without-execute buys nothing in a directory of binaries. Nothing
+is lost — `~/go/bin/go` is a symlink into the sdk tree and the kernel checks the resolved
+target, so a card whose `PATH` finds it first still runs the granted toolchain, while a real
+binary sitting in that directory is `Permission denied` (measured on hulk). The list is
+written ONCE, in `internal/swarm/toolchain.go`, and the kind is part of it; `tools/bench-standard.sh` carries the same
 names between its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and a class
 test in `internal/ci` fails when the two lists disagree. Nothing else under `HOME` is named:
 not `~/.config/nova-secrets`, not `~/.ssh`, not the home itself. The card's WRITABLE Go

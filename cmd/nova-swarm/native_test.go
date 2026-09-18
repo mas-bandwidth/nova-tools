@@ -124,20 +124,59 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	}
 	cfg := nativeRunConfig{slotDir: slot, benchHome: home}
 	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
-	for _, name := range swarm.ToolchainRootNames() {
-		root := filepath.Join(home, filepath.FromSlash(name))
-		if !hasFlagPair(argv, "--read", root) {
-			t.Errorf("the wall argv does not read the toolchain root %s:\n%s", root, strings.Join(argv, " "))
+	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
+	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
+	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
+	// read-only root that slipped onto --read is exactly the widening Johnny's security
+	// read of #1364 refused.
+	for _, root := range swarm.ToolchainRootList() {
+		path := filepath.Join(home, filepath.FromSlash(root.Name))
+		want, wrong := "--read-noexec", "--read"
+		if root.Exec {
+			want, wrong = "--read", "--read-noexec"
 		}
-		if hasFlagPair(argv, "--write", root) {
-			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", root, strings.Join(argv, " "))
+		if !hasFlagPair(argv, want, path) {
+			t.Errorf("the wall argv does not carry the toolchain root %s as %s:\n%s", path, want, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, wrong, path) {
+			t.Errorf("the toolchain root %s is on %s, which is the other kind:\n%s", path, wrong, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, "--write", path) {
+			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", path, strings.Join(argv, " "))
 		}
 	}
+	// THE MODULE CACHE BY NAME, because it is the root this argv form was added for: READ
+	// WITHOUT EXECUTE, never read+execute. Every `go mod download` on the bench lands
+	// there and the bench user can write to it, so a card able to execute out of it could
+	// run whatever a dependency shipped.
+	modCache := filepath.Join(home, filepath.FromSlash("go/pkg/mod"))
+	if !hasFlagPair(argv, "--read-noexec", modCache) {
+		t.Errorf("the module cache is not granted read-without-execute:\n%s", strings.Join(argv, " "))
+	}
+	if hasFlagPair(argv, "--read", modCache) {
+		t.Errorf("the module cache is on --read, which CARRIES EXECUTE:\n%s", strings.Join(argv, " "))
+	}
 	// NOTHING ELSE UNDER HOME. The wall gained the toolchain and not the home: the key
-	// store and an ssh directory beside it stay outside every named path.
+	// store and an ssh directory beside it stay outside every named path, on either flag.
 	for _, other := range append(others, home) {
-		if hasFlagPair(argv, "--read", other) || hasFlagPair(argv, "--write", other) {
-			t.Errorf("the wall argv names %s, which is not a toolchain root:\n%s", other, strings.Join(argv, " "))
+		for _, flag := range []string{"--read", "--read-noexec", "--write"} {
+			if hasFlagPair(argv, flag, other) {
+				t.Errorf("the wall argv names %s on %s, and it is not a toolchain root:\n%s", other, flag, strings.Join(argv, " "))
+			}
+		}
+	}
+	// ~/go/bin is granted BY NEITHER KIND (Johnny's security read of #1364): every
+	// `go install` on the bench lands there and the bench user can write to it. On a
+	// provisioned bench ~/go/bin/go is a symlink into the sdk tree and the kernel checks
+	// the resolved target, so a card's PATH still finds the granted toolchain.
+	goBin := filepath.Join(home, filepath.FromSlash("go/bin"))
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv = nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for _, flag := range []string{"--read", "--read-noexec", "--write"} {
+		if hasFlagPair(argv, flag, goBin) {
+			t.Errorf("the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
 		}
 	}
 }
@@ -155,8 +194,11 @@ func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 	home := t.TempDir() // empty: not one root exists under it
 	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for i, a := range argv {
-		if a == "--read" && i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
-			t.Errorf("the wall argv reads %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
+		if a != "--read" && a != "--read-noexec" {
+			continue
+		}
+		if i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
+			t.Errorf("the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
 		}
 	}
 }

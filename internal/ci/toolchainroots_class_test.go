@@ -50,18 +50,37 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		t.Errorf("the provisioning standard and the wall name different toolchain roots:\n  %s: %v\n  internal/swarm/toolchain.go: %v\nThey are ONE list. Edit internal/swarm/toolchain.go and the marked block in the script together.",
 			benchStandardScript, fromScript, fromWall)
 	}
-	// THE ROOTS THAT MUST STAY OUT, named here so a later widening is a red run and not a
-	// judgement call. A `--read` root carries EXECUTE on both bodies, so:
-	//   go/bin      is GOPATH/bin -- every `go install` lands there and the bench user can
-	//               write to it, so granting it would let a card exec bench-user tools.
-	//   go/pkg/mod  wants read WITHOUT exec, and nova-sandbox has no --read-noexec flag
-	//               yet. Until it does, the cache is not granted at all.
-	for _, forbidden := range []string{"go/bin", "go/pkg/mod"} {
-		for _, got := range fromWall {
-			if got == forbidden {
-				t.Errorf("the wall grants the toolchain root ~/%s: a --read root carries EXECUTE, and this one must not be granted that way (Johnny's security read of #1364)", forbidden)
-			}
+	// ONE LIST, TWO KINDS, and the kind is the security decision. A `--read` root carries
+	// EXECUTE on both bodies -- landlock's read subset is EXECUTE|READ_FILE|READ_DIR and the
+	// darwin profile grants process-exec* globally -- so what a root is granted AS is as
+	// load-bearing as whether it is granted at all (Johnny's security read of #1364).
+	kind := map[string]bool{} // HOME-relative name -> carries execute
+	for _, r := range swarm.ToolchainRootList() {
+		if _, twice := kind[r.Name]; twice {
+			t.Errorf("the toolchain list names ~/%s twice; one root, one kind", r.Name)
 		}
+		kind[r.Name] = r.Exec
+	}
+	// go/pkg/mod IS granted and is granted READ WITHOUT EXECUTE. Every `go mod download` on
+	// the bench lands there and the bench user can write to it, so execute on that tree
+	// would let a card run whatever a dependency shipped.
+	if exec, granted := kind["go/pkg/mod"]; !granted {
+		t.Error("the wall does not grant the module cache ~/go/pkg/mod at all; it is the read-without-execute kind")
+	} else if exec {
+		t.Error("the wall grants the module cache ~/go/pkg/mod EXECUTE: it is the read-without-execute kind (Johnny's security read of #1364)")
+	}
+	// The sdk tree is the card's own `go`, and it is the ONE home directory that carries
+	// execute.
+	if exec, granted := kind["sdk"]; !granted || !exec {
+		t.Errorf("the wall does not grant ~/sdk execute (granted=%v exec=%v); it is the card's own toolchain", granted, exec)
+	}
+	// AND THE ROOT THAT STAYS OUT ENTIRELY, named here so a later widening is a red run and
+	// not a judgement call: ~/go/bin is GOPATH/bin, every `go install` lands there and the
+	// bench user can write to it, so granting it under EITHER kind hands a card the bench
+	// user's own tools. Nothing is lost -- ~/go/bin/go is a symlink into the sdk tree and
+	// the kernel checks the resolved target.
+	if _, granted := kind["go/bin"]; granted {
+		t.Error("the wall grants the toolchain root ~/go/bin: it is granted under neither kind (Johnny's security read of #1364)")
 	}
 	// The standard must also CHECK them, not merely declare them: a bench missing a root
 	// has to drift before a card discovers it.
