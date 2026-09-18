@@ -75,6 +75,12 @@ var swarmAudit = audit.Config{
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
+		// slot lease and the in-flight cap. It holds no writer of its own: every call
+		// either returns a value this package prints through oneline.Field or an error
+		// this package renders through oneline.Err, and the Lua scripts run inside Redis
+		// and write only that instance's own keys.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
 		// native.go (issue #296) needs these five and none of them writes a stream, so
 		// none can write past the escape. context only gives CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
