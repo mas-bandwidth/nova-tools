@@ -47,6 +47,7 @@ nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot> --home <dir>
 nova-pulse hygiene drop-cache --home <dir>
 nova-pulse hygiene log [n] --home <dir>
+nova-pulse hygiene --lane-dirs <root> [--dry-run] [--older-than <n>d] [--max <n>]
 nova-pulse fleet survey --benches <file> [--machines <file>] [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -208,8 +209,22 @@ resolved and checked to sit strictly below its root, and a target that is not â€
 outside the roots, holding "..", or a symlink escape â€” is refused, exit 2, one
 line. Each deletion is one <utc> <verb> <path> line in <home>/hygiene.log.
 
+hygiene --lane-dirs <root> is the seventh mode and the one that takes no
+subcommand: it walks the immediate children of <root>, one level, and removes
+the lane clones whose work is finished AND elsewhere. Four questions, cheapest
+first, and the first no keeps the directory: the path resolves strictly below
+<root> and is not a symlink; git status --porcelain says nothing; no commit on a
+local branch is missing from every remote; and the forge says the PR whose head
+is the checked-out branch is MERGED or CLOSED. Everything else is one
+HYGIENE KEEP dir=<d> reason=<token> line, and a read that FAILED is a keep --
+this verb never removes on a guess. --older-than takes a whole number of days
+with a d suffix and nothing else; --dry-run prints the same lines with
+removed=no and is OFF by default; --max caps the per-candidate lines at 20 and 0
+prints them all.
+
 example:
   nova-pulse hygiene run --home "$HOME"
+  nova-pulse hygiene --lane-dirs "$HOME/rowan-working/tmp" --older-than 2d --dry-run
 
 fleet survey runs tools/bench-standard.sh on every bench named in --benches
 (name, ssh target and home per tab-separated line) over the ssh command

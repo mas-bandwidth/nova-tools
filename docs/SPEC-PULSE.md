@@ -623,6 +623,44 @@ The general lesson, and the one to carry to the next cleaner written: *a window 
 that rotates itself is not a bound. Set the window from the rate the tree actually rotates at,
 and put a size ceiling behind it for the day the rate changes.*
 
+**The lane-clone sweep removes a clone only when the work in it is finished and elsewhere.**
+`nova-pulse hygiene --lane-dirs <root>` is the one flag-form mode — no subcommand, no `--home`
+— and it walks the **immediate children** of `<root>`, one level, never recursively. A child
+is a candidate when it holds a `.git` entry, or when exactly one directory inside it does
+(`<root>/lane-foo/repo`, the shape today's lane workers write); a `.git` file counts as much as
+a `.git` directory, so a worktree is a candidate too, and a child holding **more than one**
+checkout is kept, because two checkouts are two branches and it would have to remove both to
+remove either.
+
+Four questions, in this order, and the first one that answers no keeps the directory:
+
+1. **safepath** — the path resolves strictly below the resolved `<root>` and is not a symlink.
+2. **clean** — `git status --porcelain` says nothing.
+3. **pushed** — `git rev-list --branches --not --remotes` says nothing: no commit on a local branch that no remote has. It is stricter than asking about each branch's head, and the stricter answer is the one that keeps the directory.
+4. **settled** — the forge says the pull request whose head is the checked-out branch is `MERGED` or `CLOSED`.
+
+**A read that failed is a keep.** The git reads come before the forge read on purpose, so a
+merged pull request can never talk the verb past an uncommitted file. Every other outcome is one
+`HYGIENE KEEP dir=<d> reason=<token>` line, one token each: `unsafe`, `many-checkouts`, `fresh`,
+`dirty`, `unpushed`, `detached`, `git`, `forge`, `no-pr`, `open`, `unknown-state`. Each clone it
+acts on is `HYGIENE LANE dir=<d> pr=<n> state=<s> removed=<yes|no>`, the per-candidate lines are
+capped at 20 (`--max`, `0` for all) with one `HYGIENE MORE` line standing for the rest, and the
+run ends with `HYGIENE LANES root=<r> candidates=<n> remove=<n> removed=<n> kept=<n>
+dry-run=<yes|no>` — `remove` is what it decided, `removed` is what went. `--dry-run` prints the
+same lines with `removed=no` and touches nothing; it is **off** by default. `--older-than` has one
+spelling, a whole number of days with a `d` suffix, and refuses every other — exit 2, naming the
+flag. Both reads of the world are seams (`pulse.LaneGit`, `pulse.LanePRSource`), so no test of
+this verb runs git or reaches the network, and the one removal goes through `internal/safepath`
+below the root the caller named.
+
+The mistake it removes, measured on the Studio on 2026-09-18: **92 `lane-*` and `dogfood-*`
+clone directories** under `~/rowan-working/tmp`, one per lane worker of the day, and nothing that
+ever took one away. `hygiene run` does not: those are swarm slots, with a jobs directory and a
+liveness rule, and a lane clone is neither. Nor can a lane clone be swept the way scratch is
+swept, by age or by name — it holds a branch, and a branch may be the only copy of somebody's
+work. *The rule for deleting somebody else's working directory is not "is it old" but "is every
+byte of it somewhere else".*
+
 Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
 (run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
 bench=<name> no-systemd (install the timer by hand)`; `studio` from any hygiene act,
@@ -660,6 +698,16 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 17. `hygiene-diag-never-follows-a-symlink-out`: a symlink inside `_diag` pointing at a file outside the runner directory survives with its target, while a cap of one byte proves the prune did delete something.
 18. `hygiene-diag-flags-refuse-nonsense`: `--diag-days` and `--diag-max-bytes` each refuse a non-number and a negative, exit 2, naming the flag; a prune never runs on a guess.
 19. `hygiene-diag-default-cap-is-two-gibibytes`: the shipped defaults are pinned at two days and 2 GiB, so a change to either is a change to this test.
+20. `hygiene-lane-dirs-removes-a-merged-or-closed-clone`: a flat clone whose PR is `MERGED` and a nested `<root>/lane-foo/repo` clone whose PR is `CLOSED` both go, each named on its own `HYGIENE LANE` line, and the summary counts two.
+21. `hygiene-lane-dirs-keeps-open-and-unknown-branches`: an `OPEN` pull request and a branch the forge knows no pull request for are `reason=open` and `reason=no-pr`, and both directories survive.
+22. `hygiene-lane-dirs-keeps-dirty-and-unpushed`: a checkout `git status --porcelain` speaks for, and one holding a commit no remote has, are kept as `reason=dirty` and `reason=unpushed` even though both branches are `MERGED` — and the forge is never asked, because the git reads come first.
+23. `hygiene-lane-dirs-refuses-a-path-outside-the-root`: a symlink child pointing at a clone outside `<root>` is `reason=unsafe`, the target and the link both survive, and the forge is never asked.
+24. `hygiene-lane-dirs-dry-run-removes-nothing`: `--dry-run` prints the same `HYGIENE LANE` line with `removed=no`, keeps every directory, and its summary reads `remove=1 removed=0`.
+25. `hygiene-lane-dirs-older-than-skips-a-fresh-clone`: with a fake clock and `--older-than 2d`, a merged clone three days old goes and one touched an hour ago is `reason=fresh`, unasked about on the forge.
+26. `hygiene-lane-dirs-flags-refuse-nonsense`: `36h`, a bare `2`, `0d` and a missing value each refuse naming `--older-than`; a root that is relative or is not a directory refuses naming `--lane-dirs`; a subcommand alongside `--lane-dirs` refuses; `--older-than` without `--lane-dirs` refuses rather than being ignored; and a bare `nova-pulse hygiene` still prints the usage and exits 2.
+27. `hygiene-lane-dirs-output-is-bounded`: 30 candidates print 20 item lines and one `HYGIENE MORE kind=lane shown=20 total=30`, while the summary still counts 30 — and `--max 0` prints all 30 and no `MORE` line.
+28. `hygiene-lane-dirs-ignores-what-is-not-a-checkout`: a plain directory and a loose file under the root are not candidates, are not counted and are never removed.
+29. `os-lane-git-reads-a-real-checkout`: the one test that drives the real git seam, against a real `git init` in its own temporary directory — local only, no network — because a seam nobody has run against the real thing proves nothing.
 
 `fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
 2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
