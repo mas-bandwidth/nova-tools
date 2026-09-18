@@ -70,8 +70,9 @@ func TestRouteHoldsTheRungOnAnUnterminatedTimeout(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"route", "--no-jev", "--unit-id", "t-1", "--kind", "fix-with-red-test",
 		"--files", "3", "--packages", "1", "--attempt", "opus:timeout", "--log", log}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
+	// A wait is not permission, and only exit 0 is permission (SPEC.md).
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (stderr=%q)", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "rung=opus") {
 		t.Errorf("the rung is still occupied: %s", stdout.String())

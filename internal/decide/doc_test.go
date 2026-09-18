@@ -66,6 +66,13 @@ func TestSpecDecideNamesTheLadder(t *testing.T) {
 		"expiry UNKNOWN",
 		"awaiting_termination",
 		"NaN compares false against",
+		// Stella's re-review at 833514e1: R1, R3 and R5.
+		"public-data boundary is explicit",
+		"No registry string crosses",
+		"opaque ids",
+		"a wait is not permission",
+		"What a call spent is kept",
+		"SPEC-TOKENS rule 14",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-DECIDE.md does not name the ladder rule keyed by %q", phrase)

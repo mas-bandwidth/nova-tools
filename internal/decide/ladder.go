@@ -310,29 +310,69 @@ func (u Unit) thin() bool {
 // RouteResult is one routing decision: the rung, the number the floor was
 // applied to, the floor, why, and -- for the log -- what the rules alone would
 // have picked.
-type RouteResult struct {
-	Unit                string
-	Kind                string
-	Rung                Mind
-	Confidence          float64
-	Floor               float64
-	Reason              string
-	SteppedUp           bool
-	Escalated           bool
-	Designated          bool
-	AwaitingTermination bool
-	Source              string
-	RulesRung           string
-	Offered             []string
+// The typed actions a route answers with beside the rung. A wait is NOT
+// permission to retry: the rung named is the one an attempt may still be
+// running on, and the caller's next move is to establish what happened to it.
+const (
+	// WaitNone is the absence, rendered as a dash so every line carries the
+	// field and no reader has to infer it.
+	WaitNone = "-"
+	// WaitAwaitingTermination is the lease rule: an attempt timed out, its
+	// expiry is UNKNOWN, and nothing is dispatched until it is known dead.
+	WaitAwaitingTermination = "awaiting_termination"
+)
+
+// RouteUsage is what one routing decision spent with the provider: how many
+// calls, the tokens it reported, and whether those numbers are known at all. A
+// call that failed spent something we cannot measure, and UNKNOWN is not zero
+// (SPEC-TOKENS rule 14).
+type RouteUsage struct {
+	Calls        int
+	InputTokens  int
+	OutputTokens int
+	Known        bool
+	Failed       bool
 }
+
+// RouteResult is one routing decision: the rung, the number the floor was
+// applied to, the floor, why, the typed wait, what it spent, and -- for the
+// log -- what the rules alone would have picked.
+type RouteResult struct {
+	Unit       string
+	Kind       string
+	Rung       Mind
+	Confidence float64
+	Floor      float64
+	Reason     string
+	Wait       string
+	SteppedUp  bool
+	Escalated  bool
+	Designated bool
+	Source     string
+	RulesRung  string
+	Offered    []string
+	Usage      RouteUsage
+}
+
+// AwaitingTermination reports whether this decision is a wait on an attempt
+// that is not known to have terminated.
+func (r RouteResult) AwaitingTermination() bool { return r.Wait == WaitAwaitingTermination }
+
+// Dispatchable reports whether the caller may hand the unit to the rung named.
+// A wait is an answer about WHO owns the work, not permission to start it.
+func (r RouteResult) Dispatchable() bool { return r.Wait == WaitNone || r.Wait == "" }
 
 // Line is the one line a route decision prints: the unit (the evidence
 // pointer), the rung, the confidence, the floor it was gated on, the reason and
 // how that rung is asked.
 func (r RouteResult) Line() string {
-	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f reason=%s ask=%s",
+	wait := r.Wait
+	if wait == "" {
+		wait = WaitNone
+	}
+	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s reason=%s ask=%s",
 		oneline.Field(r.Unit), oneline.Field(r.Rung.Name), r.Confidence, r.Floor,
-		oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
+		oneline.Field(wait), oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
 }
 
 // The rule confidences. They are the machinery's own numbers, stated here so a
@@ -364,15 +404,20 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 			return RouteResult{}, fmt.Errorf("decide: unit %s attempted rung %q, which the registry does not hold", u.ID, a.Rung)
 		}
 	}
-	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules}
+	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone}
 
 	burned, tried, failedAt := burnedHeight(reg, u)
 	res.Escalated = len(u.Attempts) > 0
+	open, openRung, hasOpen := openAttempt(reg, u)
 
 	// Security first, and absolutely. It is a KIND and not a height, so the
 	// height rules -- sideways, up, the floor, never down -- do not apply to it
 	// at all: the designated rung answers on every path, and where that rung
 	// cannot, the work WAITS for it rather than spilling onto another mind.
+	//
+	// The owner and the wait are two different facts, and neither hides the
+	// other: where an attempt on this unit is still open, the answer names the
+	// designated owner AND waits.
 	if u.Security() {
 		m, err := securityRung(reg, u)
 		if err != nil {
@@ -383,19 +428,22 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 		res.Designated = true
 		res.Reason = fmt.Sprintf("security is a kind and not a height: %s is %s's always, at any height, at any floor and after any attempt", u.securityWhy(), m.Name)
 		res.RulesRung = m.Name
+		if hasOpen {
+			res.Wait = WaitAwaitingTermination
+			res.Reason += "; " + waitReason(open, openRung)
+		}
 		return res, nil
 	}
 
 	// An attempt that timed out with no proof it died leaves its rung occupied.
 	// The lease rule: expiry stays UNKNOWN until termination, so the answer is
 	// the SAME rung -- not the next one -- until the attempt is known dead.
-	if a, m, ok := openAttempt(reg, u); ok {
-		res.Rung = m
+	if hasOpen {
+		res.Rung = openRung
 		res.Confidence = confDesignated
-		res.AwaitingTermination = true
-		res.Reason = fmt.Sprintf("the attempt on %s timed out and is not known to have terminated: its expiry is UNKNOWN, so the answer is the same rung until there is termination proof (%s)",
-			m.Name, oneline.Field(a.Outcome))
-		res.RulesRung = m.Name
+		res.Wait = WaitAwaitingTermination
+		res.Reason = waitReason(open, openRung)
+		res.RulesRung = openRung.Name
 		return res, nil
 	}
 
@@ -501,6 +549,14 @@ func (u Unit) securityWhy() string {
 		return "no touch named"
 	}
 	return strings.Join(why, ", ")
+}
+
+// waitReason says what is being waited on and, in as many words, that waiting
+// is not permission to retry: the rung named owns the work, and the next move
+// is to find out what happened to the attempt, not to start another one.
+func waitReason(a Attempt, m Mind) string {
+	return fmt.Sprintf("the attempt on %s timed out (%s) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first",
+		m.Name, oneline.Field(a.Outcome))
 }
 
 // openAttempt is the most recent attempt that timed out with no proof it
@@ -661,7 +717,7 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	if err != nil {
 		return RouteResult{}, err
 	}
-	if d == nil || rules.Designated || rules.AwaitingTermination || u.Security() {
+	if d == nil || rules.Designated || rules.AwaitingTermination() || u.Security() {
 		return rules, nil
 	}
 	_, tried, failedAt := burnedHeight(reg, u)
@@ -671,8 +727,19 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		rules.Reason += "; one eligible rung, so no decision to ask"
 		return rules, nil
 	}
-	answers, _, err := d.Decide(ctx, unitState(reg, u), map[string]Question{RungQuestion: rungQuestion(offered)})
+	state, err := unitState(reg, u)
 	if err != nil {
+		// The boundary refused: nothing goes to the provider, and the rules
+		// answer -- which needed no provider -- stands.
+		rules.Reason += fmt.Sprintf("; the public projection refused (%s), so nothing was sent and the rules answer stands", oneline.Err(err))
+		return rules, nil
+	}
+	answers, usage, err := d.Decide(ctx, state, map[string]Question{RungQuestion: rungQuestion(offered, u)})
+	// A call was made, and what it spent is part of the record whether it
+	// answered or not: a failed call's cost is UNKNOWN, never zero.
+	rules.Usage = RouteUsage{Calls: 1, InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, Known: err == nil, Failed: err != nil}
+	if err != nil {
+		rules.Usage.InputTokens, rules.Usage.OutputTokens = 0, 0
 		rules.Reason += fmt.Sprintf("; the provider refused (%s), so the rules answer stands", oneline.Err(err))
 		return rules, nil
 	}
@@ -732,15 +799,34 @@ func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt ma
 	return out
 }
 
+// optionID is the opaque name one offered rung is known by on the wire:
+// position in the offered set and nothing else. A mind's name, its lineage and
+// the lanes it owns never leave this process, so the provider chooses between
+// "rung-1" and "rung-2" and the answer is mapped back here.
+func optionID(i int) string { return fmt.Sprintf("rung-%d", i+1) }
+
 // rungQuestion is the one typed choice: which of these rungs answers this unit
-// right on the FIRST attempt.
-func rungQuestion(offered []Mind) Question {
+// right on the FIRST attempt. Every option is an opaque id, and every fact
+// about it is one of our own enumerations -- the step above the lowest rung
+// offered, a per-call lineage LABEL (so "same lineage" and "another lineage"
+// survive without the lineage's name), whether that mind owns the unit's lane,
+// and how it is asked (bus | card | child, the closed set the registry schema
+// enforces).
+func rungQuestion(offered []Mind, u Unit) Question {
+	base := offered[0].Height
+	labels := map[string]string{}
 	criteria := make(map[string]string, len(offered))
-	for _, m := range offered {
-		criteria[m.Name] = fmt.Sprintf("the %s lineage at rung %d, asked by %s", m.Lineage, m.Height, m.Ask)
+	for i, m := range offered {
+		label, ok := labels[m.Lineage]
+		if !ok {
+			label = fmt.Sprintf("lineage-%c", 'a'+len(labels))
+			labels[m.Lineage] = label
+		}
+		criteria[optionID(i)] = fmt.Sprintf("step %d above the lowest rung offered, %s, owns this lane: %s, asked by %s",
+			m.Height-base, label, yesNo(m.Owns(u.LaneOwner)), m.Ask)
 	}
 	return Question{
-		Instructions: "which of these minds gets this unit of work right on the FIRST attempt? Pick the LOWEST rung the evidence supports; where two rungs are the same height, prefer the lineage that has not failed this unit.",
+		Instructions: "which of these rungs gets this unit of work right on the FIRST attempt? Pick the LOWEST step the evidence supports; where two rungs are the same step, prefer a lineage that has not failed this unit.",
 		Choice:       criteria,
 	}
 }
@@ -761,19 +847,36 @@ var (
 	DeadlineBuckets = []string{"none", "under-10m", "under-2h", "over-2h"}
 )
 
-// shapeFields is the order the enumerated evidence is rendered in. The set is
+// shapeFields is the order the public projection is rendered in. The set is
 // closed: a field added here is a field the provider starts seeing, which is a
 // decision about rule 4 and belongs in the spec first.
 var shapeFields = []string{"kind", "files", "packages", "lanes", "lane", "attempts", "platform", "security", "deadline"}
 
-// EvidenceShape reduces a unit to the typed, enumerated evidence the provider
-// is given: the kind, size buckets, the lane (only ever a lane the registry
-// itself holds, else "other"), an attempt count bucket, a platform flag, a
-// security flag and a deadline bucket. Nothing else about the unit is
-// representable here, which is the point -- the unit's id, its lane's spelling,
-// its platform's name and every attempt reason stay in this process.
-func EvidenceShape(reg *Registry, u Unit) map[string]string {
-	return map[string]string{
+// publicAllowlist IS the public-data boundary: every field the provider may be
+// told, and the closed set of values each may carry. Nothing reaches a payload
+// without passing checkPublic, so a string that is not on this list -- a lane's
+// own spelling, a mind's name, a lineage, a path, a title -- cannot leave this
+// process, whatever a registry or a caller puts in it. Being configured locally
+// does not make a value public (Stella, #1327).
+var publicAllowlist = map[string][]string{
+	"kind":     Kinds,
+	"files":    SizeBuckets,
+	"packages": SizeBuckets,
+	"lanes":    SizeBuckets,
+	"lane":     {"none", "owned", "other"},
+	"attempts": AttemptBuckets,
+	"platform": PlatformBuckets,
+	"security": {"yes", "no"},
+	"deadline": DeadlineBuckets,
+}
+
+// Public is the unit's public projection: the typed, enumerated evidence the
+// provider is given, and the whole of what it is given about the unit. The
+// unit's id, its lane's spelling, its platform's name, its deadline and every
+// attempt reason stay here. A value that is not on the allowlist is a refusal
+// rather than a payload.
+func (u Unit) Public(reg *Registry) (map[string]string, error) {
+	shape := map[string]string{
 		"kind":     u.Kind,
 		"files":    sizeBucket(u.Files),
 		"packages": sizeBucket(u.Packages),
@@ -784,17 +887,47 @@ func EvidenceShape(reg *Registry, u Unit) map[string]string {
 		"security": yesNo(u.Security()),
 		"deadline": deadlineBucket(u),
 	}
+	if err := checkPublic(shape); err != nil {
+		return nil, err
+	}
+	return shape, nil
 }
 
-// unitState renders the enumerated evidence as the bounded state text, one
+// checkPublic is the boundary check: every field named, every value on its
+// allowlist. It runs on the way out, so a future field that forgets to bucket
+// its input is a refusal here rather than a disclosure there.
+func checkPublic(shape map[string]string) error {
+	for field, value := range shape {
+		allowed, ok := publicAllowlist[field]
+		if !ok {
+			return fmt.Errorf("decide: %q is not a public field; the provider is told only %s", field, strings.Join(shapeFields, ", "))
+		}
+		found := false
+		for _, a := range allowed {
+			if a == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("decide: the field %s cannot carry %q to a provider; it is one of %s", field, value, strings.Join(allowed, ", "))
+		}
+	}
+	return nil
+}
+
+// unitState renders the public projection as the bounded state text, one
 // `field: value` line per field, in a fixed order.
-func unitState(reg *Registry, u Unit) string {
-	shape := EvidenceShape(reg, u)
+func unitState(reg *Registry, u Unit) (string, error) {
+	shape, err := u.Public(reg)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	for _, field := range shapeFields {
 		fmt.Fprintf(&b, "%s: %s\n", field, shape[field])
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // sizeBucket puts a count in its bucket.
@@ -827,9 +960,10 @@ func attemptBucket(n int) string {
 	}
 }
 
-// laneBucket answers with a lane the REGISTRY holds, so the value is one of a
-// closed set the registry defines rather than whatever a caller typed. A lane
-// nobody owns is "other", and no lane at all is "none".
+// laneBucket answers whether the unit's lane is one a mind on this ladder OWNS,
+// and never which lane it is. A registry's lane strings are the registry's
+// business: validation does not make them public, and a lane copied out of a
+// private project must not become provider input.
 func laneBucket(reg *Registry, lane string) string {
 	lane = strings.TrimSpace(lane)
 	if lane == "" {
@@ -837,10 +971,8 @@ func laneBucket(reg *Registry, lane string) string {
 	}
 	if reg != nil {
 		for _, m := range reg.Minds {
-			for _, owned := range m.Lanes {
-				if strings.EqualFold(owned, lane) {
-					return owned
-				}
+			if m.Owns(lane) {
+				return "owned"
 			}
 		}
 	}
@@ -880,10 +1012,13 @@ func yesNo(b bool) string {
 	return "no"
 }
 
-// findMind finds one offered mind by name.
-func findMind(offered []Mind, name string) (Mind, bool) {
-	for _, m := range offered {
-		if m.Name == strings.TrimSpace(name) {
+// findMind maps an opaque option id back to the mind it stands for. Nothing
+// else is accepted: an answer naming a mind outright is an answer to a question
+// this process never asked.
+func findMind(offered []Mind, id string) (Mind, bool) {
+	id = strings.TrimSpace(id)
+	for i, m := range offered {
+		if optionID(i) == id {
 			return m, true
 		}
 	}

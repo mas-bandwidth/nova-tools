@@ -36,10 +36,12 @@ usage:
                    (the decisions table: refuse a floor with no rows behind it)
 
   nova-decide route --unit <json file|inline json> [--registry <path>] [--log <path>]
-                    [--floor 0.9] [--jev|--no-jev] [--base-url <url>] [--key-env JEV_API_KEY]
+                    [--usage <path>] [--floor 0.9] [--jev|--no-jev] [--base-url <url>]
+                    [--key-env JEV_API_KEY]
   nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                     [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
-                    [--guard] [--secrets] [--fresh-take] [--deadline 45m] [--no-jev]
+                    [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
+                    [--fresh-take] [--deadline 45m] [--no-jev]
 
   nova-decide help --state <json file|inline json>
   nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
@@ -81,25 +83,40 @@ are chosen by KIND, not height, and by machinery rather than the provider:
 security -- a guard, secrets, the sandbox, sudo, deploy keys, the network -- and
 a fresh take. Friends first: the DeepSeek rungs take mechanical kinds only.
 
+An attempt that timed out and is not known to have terminated leaves its rung
+OCCUPIED: the answer is the same rung with wait=awaiting_termination, and that
+is a WAIT, never permission to retry. Only what the provider is told is typed
+and enumerated -- buckets and flags, never a unit's id, a lane's spelling, a
+platform's name or an attempt's reason, and the rungs it chooses between are
+opaque ids rather than any mind's name.
+
   --unit <file>       the unit's evidence as JSON (inline JSON also accepted):
                       id, kind, files, packages, lanes, lane_owner, attempts
-                      (rung, outcome, reason), platform, guard, secrets,
-                      fresh_take, deadline
+                      (rung, outcome, reason, terminated), platform, guard,
+                      secrets, touches, fresh_take, deadline
   --registry <path>   the registry of minds (name, lineage, height, kinds it is
                       designated for, owned lanes, availability, ask); the
                       embedded ladder when absent
   --log <path>        append this decision to the escalation log (JSON lines)
+  --usage <path>      append what a provider call spent to this usage TSV, in
+                      the fleet's own columns; a failed call is a row too, with
+                      its cost unknown (a dash), never a zero
   --floor <f>         confidence floor; below it the answer steps UP (default 0.9)
   --no-jev            answer by the rules alone: no key, no network, deterministic
   --kind <kind>       rebase | stack | fixture-retarget | fleet-chore |
                       fix-with-red-test | new-verb | spec | design | guard |
                       cause-to-find
+  --attempt <a>       rung:outcome[:reason]; outcome is ok | failed | timeout |
+                      timeout-terminated | abandoned. A bare timeout is a
+                      silence; timeout-terminated is the proof it is dead
+  --touches <t>       guard | secrets | sandbox | sudo | deploy-keys | network
   --summary           (log) escalations per kind and the regenerated start rung
 
-exit codes: 0 every answer at or above the floor, 3 any answer below it (a
-suggestion), 2 refusal: no key, bad questions, bad evidence, provider error.
-tune exits 2 when fewer than 10 labeled rows (a floor with no rows behind it is
-untuned).
+exit codes: 0 the answer may be acted on, 1 the verb ran and said NOT YET (a
+wait: the rung named owns the work and an attempt on it is not known dead), 3
+any answer below the floor (a suggestion), 2 refusal: no key, bad questions, bad
+evidence, provider error. Only exit 0 is permission to dispatch. tune exits 2
+when fewer than 10 labeled rows (a floor with no rows behind it is untuned).
 
 example:
   nova-decide --questions ./questions.json --state ./state.md --floor 0.9

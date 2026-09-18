@@ -390,7 +390,8 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 ```
 nova-decide route --unit <json file|inline json> [--registry <path>] [--log <path>]
-                  [--floor 0.9] [--jev|--no-jev] [--base-url <url>] [--key-env JEV_API_KEY]
+                  [--usage <path>] [--floor 0.9] [--jev|--no-jev] [--base-url <url>]
+                  [--key-env JEV_API_KEY]
 nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                   [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
@@ -405,21 +406,29 @@ Two rungs are chosen by **kind** and not by height, and by machinery rather than
 
 **Security never falls through.** `--guard`, `--secrets`, `--kind guard` and each `--touches` value resolve to the designated rung on every path — Jev on or off, at any floor, after any attempt, including an attempt by that rung itself. It is a kind and not a height, so sideways, up, the floor and never-down do not apply to it. If no mind is designated, or every designated one is asleep, the work **waits**: that is a refusal, not a route to somebody else.
 
-**A timeout is not a death.** `--attempt opus:timeout` says the attempt fell silent; its expiry is UNKNOWN until something proves it dead, so the answer is the **same** rung, the row is marked `awaiting_termination`, the floor does not move it and the provider is not asked. `--attempt opus:timeout-terminated:killed at 10m` is the proof, and only then does the ladder move on. `failed` and `abandoned` are confirmed failures and move it as before.
+**A timeout is not a death, and a wait is not permission.** `--attempt opus:timeout` says the attempt fell silent; its expiry is UNKNOWN until something proves it dead, so the answer is the **same** rung with `wait=awaiting_termination` on the line, the floor does not move it and the provider is not asked. The same rung is an answer about who owns the work, **not permission to retry**: establish what happened to the attempt first. The exit code says it too — **1 is the verb saying NOT YET**, and only exit 0 is permission to dispatch. A security unit whose designated rung timed out carries both facts: `rung=johnny` *and* the wait. `--attempt opus:timeout-terminated:killed at 10m` is the proof of death, and only then does the ladder move on; `failed` and `abandoned` are confirmed failures and move it as before.
 
 `--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
 
-**What Jev is told is typed and enumerated**, and it is less than the evidence: one `field: value` line each for the kind, size buckets, the lane (only ever a lane the registry holds, else `other`), an attempt-count bucket, a platform flag (`ordinary` or `named`), a security flag and a deadline bucket — every value a token from a closed set. The unit's id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in the process, so no title, path or error text rides out on a state line. `--floor` refuses NaN, an infinity, a negative and anything above one, with one remedy line.
+**What Jev is told is typed and enumerated**, and it is less than the evidence: one `field: value` line each for the kind, size buckets, whether the lane is one a mind on the ladder **owns** (`none`, `owned`, `other` — never which lane), an attempt-count bucket, a platform flag (`ordinary` or `named`), a security flag and a deadline bucket — every value checked against the closed set its field allows before anything is sent, so the boundary fails closed. **No registry string crosses it either**: a mind's name, its lineage and its lanes are local configuration, not public data, so the rungs Jev chooses between are **opaque ids** (`rung-1`, `rung-2`) described only by the step above the lowest rung offered, a per-call lineage label, whether that mind owns the lane, and how it is asked. The answer is mapped back to a mind here. The unit's id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in the process. `--floor` refuses NaN, an infinity, a negative and anything above one, with one remedy line.
+
+**What a call spent is kept.** `--usage <path>` appends one row of the fleet's usage TSV — the same columns, through the same appender, that a swarm card's usage is written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call that **failed** is a row too, with a non-zero `rc` and its tokens as `-`: its cost is real and unmeasured, and a field the provider did not report is a dash and never a zero. A decision that made no call writes no row. The `--log` row carries the same numbers as `calls`, `tokens_in` and `tokens_out`, absent rather than zero where nothing was measured.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 reason="kind rebase starts at rung flash" ask=card
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
 
 $ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
-ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
+ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
 ```
 
-**Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 at or above the floor, 3 below it (the line already carries the rung it stepped up to), 2 on refusal.
+```
+$ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
+ROUTE unit=t-1 rung=opus confidence=1.00 floor=0.90 wait=awaiting_termination reason="the attempt on opus timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=child
+exit=1
+```
+
+**Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the typed `wait` (`-` or `awaiting_termination`), the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 the answer may be acted on, **1 the verb ran and said NOT YET** (a wait: the rung named owns the work and an attempt on it is not known dead), 3 below the floor (the line already carries the rung it stepped up to), 2 on refusal. Only exit 0 is permission to dispatch.
 
 ### help — continue, ask all friends, ask Glenn
 

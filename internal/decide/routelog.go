@@ -47,10 +47,22 @@ type Entry struct {
 	Outcome       string  `json:"outcome,omitempty"`
 	RungSucceeded string  `json:"rung_succeeded,omitempty"`
 
-	// AwaitingTermination says this decision is an await, not a move: the rung
-	// named is the one an attempt may still be running on, and the lease rule
-	// keeps its expiry UNKNOWN until there is termination proof.
+	// Wait is the typed action beside the rung: "-" for a decision the caller
+	// may act on, awaiting_termination for one it may not.
+	Wait string `json:"wait,omitempty"`
+	// AwaitingTermination is the same fact as a boolean, for a reader that
+	// gates on it: the rung named is the one an attempt may still be running
+	// on, and the lease rule keeps its expiry UNKNOWN until termination.
 	AwaitingTermination bool `json:"awaiting_termination,omitempty"`
+
+	// What the decision spent. Calls is the number of provider calls it made;
+	// TokensIn and TokensOut are ABSENT rather than zero where no call was made
+	// or the call failed, because a zero is a measurement and an absence is not
+	// (SPEC-TOKENS rule 14). UsageFailed marks a call whose cost is unknown.
+	Calls       int  `json:"calls,omitempty"`
+	TokensIn    *int `json:"tokens_in,omitempty"`
+	TokensOut   *int `json:"tokens_out,omitempty"`
+	UsageFailed bool `json:"usage_failed,omitempty"`
 }
 
 // EntryFor is the row one route decision writes. The outcome and the rung that
@@ -73,8 +85,32 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 		RowanPick:  res.RulesRung,
 		Reason:     res.Reason,
 
-		AwaitingTermination: res.AwaitingTermination,
+		Wait:                waitOrDash(res.Wait),
+		AwaitingTermination: res.AwaitingTermination(),
+		Calls:               res.Usage.Calls,
+		TokensIn:            tokens(res.Usage, res.Usage.InputTokens),
+		TokensOut:           tokens(res.Usage, res.Usage.OutputTokens),
+		UsageFailed:         res.Usage.Failed,
 	}
+}
+
+// waitOrDash renders an unset wait as the dash the line uses, so a row read
+// back never has to tell an absent field from an absent wait.
+func waitOrDash(wait string) string {
+	if wait == "" {
+		return WaitNone
+	}
+	return wait
+}
+
+// tokens reports a token count only where the provider reported one. An
+// unmeasured cost is an absence in the row, never a zero.
+func tokens(u RouteUsage, n int) *int {
+	if !u.Known {
+		return nil
+	}
+	v := n
+	return &v
 }
 
 // AppendEntry appends one row to the log at path, creating it if it is not

@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // deciderOpener opens the typed-decision client. It is the seam a test replaces
@@ -58,6 +60,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	unitPath := fs.String("unit", "", "a JSON file (or inline JSON) holding the unit of work's evidence")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	logPath := fs.String("log", "", "append the decision to this log (JSON lines)")
+	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung")
 	useJev := fs.Bool("jev", true, "ask Jev among the eligible rungs")
 	noJev := fs.Bool("no-jev", false, "answer by the rules alone: no key, no network, deterministic")
@@ -132,12 +135,56 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "ROUTE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
 	}
+	// What a provider call spent goes to the shared accounting, in the columns
+	// the rest of the fleet writes and nova-tokens reads. A call that failed is
+	// a row too: its cost is unknown, and an unknown is not a zero.
+	if strings.TrimSpace(*usagePath) != "" && res.Usage.Calls > 0 {
+		if err := appendUsage(*usagePath, res, unit); err != nil {
+			return refuse(stderr, "ROUTE", "bad-usage", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+	}
 	fmt.Fprintln(stdout, res.Line())
-	if res.Confidence < *floor {
+	switch {
+	case !res.Dispatchable():
+		// The verb ran and said NOT YET. Only exit 0 is permission (SPEC.md),
+		// and a wait is not permission: the rung named owns the work, and the
+		// caller's next move is to establish what happened to the attempt.
+		return 1
+	case res.Confidence < *floor:
 		return 3
 	}
 	return 0
 }
+
+// appendUsage writes one row of the fleet's usage TSV for the provider call
+// this decision made: the same columns, written by the same appender, that
+// nova-swarm writes for a card, so nova-tokens reads a decision's spend the way
+// it reads everything else. A field the provider did not report is the literal
+// "-" and never a 0 (SPEC-TOKENS rule 14), so a failed call's tokens are an
+// absence rather than a claim that it was free.
+func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
+	row := swarm.UsageRow{
+		"job":      u.ID,
+		"attempt":  strconv.Itoa(len(u.Attempts) + 1),
+		"started":  now().UTC().Format(time.RFC3339),
+		"ended":    now().UTC().Format(time.RFC3339),
+		"rc":       "0",
+		"provider": usageProvider,
+		"model":    decide.DefaultModel,
+	}
+	if res.Usage.Known {
+		row["tokens_in"] = strconv.Itoa(res.Usage.InputTokens)
+		row["tokens_out"] = strconv.Itoa(res.Usage.OutputTokens)
+	}
+	if res.Usage.Failed {
+		row["rc"] = "2"
+	}
+	return swarm.AppendCardUsage(path, row)
+}
+
+// usageProvider is who the tokens were spent with, in the usage file's own
+// vocabulary: the Jev endpoint is TypeSafe's.
+const usageProvider = "typesafe"
 
 // buildUnit reads the evidence: a --unit file (or inline JSON), or the unit
 // flags, never both. It returns the unit and 0, or a refusal's exit code.

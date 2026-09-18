@@ -149,11 +149,19 @@ the right one is busy is the failure this rule exists to prevent.
 
 **A timeout is not a death.** An attempt that timed out with no proof it terminated leaves its
 expiry UNKNOWN (Stella's lease rule), and a rung whose attempt may still be running is not a rung
-to step off: the answer is the SAME rung until there is termination proof, the decision is recorded
-as an await (`awaiting_termination`), the floor does not move it, and the provider is not asked —
-there is no choice to make while an attempt may be alive. Only a CONFIRMED failure — `failed`,
-`abandoned`, or a `timeout` marked terminated — moves the ladder on, and only confirmed failures
-are counted when the starting rung is regenerated.
+to step off: the answer is the SAME rung until there is termination proof, the floor does not move
+it, and the provider is not asked — there is no choice to make while an attempt may be alive. Only
+a CONFIRMED failure — `failed`, `abandoned`, or a `timeout` marked terminated — moves the ladder
+on, and only confirmed failures are counted when the starting rung is regenerated.
+
+**A wait is typed, and a wait is not permission.** The waiting is carried in a field of its own —
+`wait=awaiting_termination` on the line, `wait` and `awaiting_termination` in the log row — never
+as prose a reader has to parse; a decision that is not a wait carries `wait=-`, so the field is
+always there to gate on. The same rung is an answer about WHO owns the work, not permission to
+start it again: the caller's next move is to establish what happened to the attempt. The CLI says
+so in its exit code, where only 0 is permission (SPEC.md): **1 is the verb running and saying NOT
+YET**. The owner and the wait are two facts and neither hides the other — a security unit whose
+designated rung timed out answers with that rung AND the wait.
 
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
 `fixture-retarget`, `fleet-chore`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
@@ -161,12 +169,25 @@ The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `s
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
 
-**What the provider sees is typed and enumerated**, and it is less than the evidence: a kind, size
-buckets, the lane (only ever a lane the registry itself holds, else `other`), an attempt-count
-bucket, a platform flag (`ordinary` or `named`, never which platform), a security flag and a
-deadline bucket — one `field: value` line each, every value a token from a closed set. The unit's
-id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in this
-process, so no title, path, branch name or error text can ride out on a state line.
+**The public-data boundary is explicit, and it is an allowlist.** What the provider sees is
+typed and enumerated: a `Public()` projection of the unit and nothing else — a kind, size
+buckets, whether the lane is one a
+mind on the ladder OWNS (`none`, `owned`, `other` — never which lane), an attempt-count bucket, a
+platform flag (`ordinary` or `named`, never which platform), a security flag and a deadline bucket
+— one `field: value` line each, every value checked against the closed set its field allows before
+anything is sent. A value that is not on the allowlist is a refusal, not a payload, so the boundary
+fails closed.
+
+**No registry string crosses that boundary either.** A registry is local configuration, and being
+configured locally does not make a value public: a mind's name, its lineage and the lanes it owns
+are as private as the project they came from. The rungs the provider chooses between are therefore
+**opaque ids** — `rung-1`, `rung-2`, by position in the offered set — described only by our own
+enumerations: the step above the lowest rung offered, a per-call lineage LABEL (so "the same
+lineage" and "another lineage" survive without the lineage's name), whether that mind owns the
+unit's lane, and how it is asked. The answer is mapped back to a mind here; an answer naming a mind
+outright is an answer to a question this process never asked. The unit's id, its lane's spelling,
+its platform's name, its deadline and every attempt reason stay in this process, so no title, path,
+branch name or error text can ride out on a payload.
 
 The provider is offered only the eligible rungs at the
 supported height and the one above it, so a typed answer can advise sideways or up but never down;
@@ -177,10 +198,18 @@ every bound and would otherwise gate a decision on a number that is not one. `--
 the rules alone, with no key and no network, so the loop runs where the API does not.
 
 Every decision is logged (rule 8): the evidence, the rung tried, the confidence and floor, the
-outcome and the rung that succeeded — and beside it `rowan_pick`, what the rules alone would have
-chosen, which is how the route is measured against the coordinator's own hand. `nova-decide log
---summary` regenerates the starting rung per kind from those rows, and a kind with no success keeps
-the rung it started from.
+wait, the outcome and the rung that succeeded — and beside it `rowan_pick`, what the rules alone
+would have chosen, which is how the route is measured against the coordinator's own hand.
+`nova-decide log --summary` regenerates the starting rung per kind from those rows, and a kind with
+no success keeps the rung it started from.
+
+**What a call spent is kept, not dropped.** A routing decision that called the provider records its
+usage: the call count and the tokens in the log row, and one row of the fleet's own usage TSV at
+`--usage` — the same columns, written through the same appender, that a swarm card's usage is
+written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call
+that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured, and a field the
+provider did not report is the literal `-` and never a `0` (SPEC-TOKENS rule 14). A decision that
+made no call writes no row, because an empty row would be a claim that a call was made.
 
 The second decision, `help`, answers continue | ask-all-friends | ask-glenn over hours on the same
 problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
@@ -189,9 +218,13 @@ ask-all-friends. Red tests: `a-failed-attempt-steps-sideways-before-up`,
 `below-the-floor-steps-up-never-down`, `security-is-johnnys-by-kind-not-by-height`,
 `a-designation-makes-no-provider-call`, `ask-glenn-only-after-ask-all-friends`,
 `the-provider-sees-only-typed-enumerated-evidence`, `security-never-falls-through` (a table over
-the provider on and off, every floor and every prior attempt), `a-timeout-does-not-advance-the-rung`
-and `a-floor-that-is-not-a-number-is-refused`, all against a fake decider, with no network and no
-key on disk.
+the provider on and off, every floor and every prior attempt), `a-timeout-does-not-advance-the-rung`,
+`a-floor-that-is-not-a-number-is-refused`, `no-registry-string-reaches-the-provider` (a registry of
+synthetic private markers, checked over the state AND the questions),
+`an-opaque-choice-maps-back-to-its-mind`, `public-is-an-allowlist`,
+`the-wait-is-typed-on-the-line`, `security-and-wait-together` and
+`the-provider-usage-is-kept-including-a-failed-call`, all against a fake decider, with no network
+and no key on disk.
 
 ### manager abstain / needs_human
 

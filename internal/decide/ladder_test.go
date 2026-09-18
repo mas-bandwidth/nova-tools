@@ -274,13 +274,14 @@ func TestJevChoiceNeverStepsBelowTheRules(t *testing.T) {
 	if res.Rung.Lineage == "deepseek" {
 		t.Errorf("a spec is not DeepSeek's, and the option was never offered: got %s", res.Rung.Name)
 	}
+	// The options are opaque ids and never a mind's own name (Stella's R1), so
+	// what is asserted here is opacity: no registry name is ever an option.
 	for _, opt := range fake.options {
-		m, ok := reg.ByName(opt)
-		if !ok {
-			t.Fatalf("jev was offered a rung the registry does not hold: %q", opt)
+		if _, ok := reg.ByName(opt); ok {
+			t.Errorf("jev was offered the registry name %q; the options are opaque ids", opt)
 		}
-		if m.Lineage == "deepseek" {
-			t.Errorf("friends first: a spec offered the DeepSeek rung %s", opt)
+		if !strings.HasPrefix(opt, "rung-") {
+			t.Errorf("the option %q is not an opaque id", opt)
 		}
 	}
 	if res.RulesRung == "" {
@@ -293,7 +294,7 @@ func TestJevChoiceNeverStepsBelowTheRules(t *testing.T) {
 func TestJevBelowFloorStepsUp(t *testing.T) {
 	reg := testRegistry(t)
 	u := Unit{ID: "j2", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
-	sure := &fakeDecider{choice: "opus", conf: 0.97}
+	sure := &fakeDecider{choice: "rung-1", conf: 0.97} // rung-1 is opus, the lowest offered
 	high, err := RouteJev(context.Background(), sure, reg, u, DefaultFloor)
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +305,7 @@ func TestJevBelowFloorStepsUp(t *testing.T) {
 	if high.Source != SourceJev {
 		t.Errorf("source = %q, want %q", high.Source, SourceJev)
 	}
-	unsure := &fakeDecider{choice: "opus", conf: 0.40}
+	unsure := &fakeDecider{choice: "rung-1", conf: 0.40}
 	low, err := RouteJev(context.Background(), unsure, reg, u, DefaultFloor)
 	if err != nil {
 		t.Fatal(err)

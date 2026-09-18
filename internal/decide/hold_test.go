@@ -198,7 +198,7 @@ func TestATimeoutDoesNotAdvanceTheRung(t *testing.T) {
 	if res.Rung.Name != "opus" {
 		t.Errorf("the attempt on opus is not known dead: the answer is the same rung, got %s (%s)", res.Rung.Name, res.Reason)
 	}
-	if !res.AwaitingTermination {
+	if !res.AwaitingTermination() {
 		t.Error("a timeout with no termination proof is an await, and the result must say so")
 	}
 	if res.SteppedUp {
@@ -223,7 +223,7 @@ func TestATimeoutDoesNotAdvanceTheRung(t *testing.T) {
 	if res.Rung.Name != "sol" {
 		t.Errorf("a confirmed timeout is a failure: sideways to sol, got %s (%s)", res.Rung.Name, res.Reason)
 	}
-	if res.AwaitingTermination {
+	if res.AwaitingTermination() {
 		t.Error("a terminated attempt is not an await")
 	}
 
@@ -234,8 +234,8 @@ func TestATimeoutDoesNotAdvanceTheRung(t *testing.T) {
 		{Rung: "opus", Outcome: OutcomeTimeout},
 	}
 	res = mustRoute(t, reg, mixed, DefaultFloor)
-	if res.Rung.Name != "opus" || !res.AwaitingTermination {
-		t.Errorf("an open timeout holds the answer to its own rung, got %s awaiting=%v (%s)", res.Rung.Name, res.AwaitingTermination, res.Reason)
+	if res.Rung.Name != "opus" || !res.AwaitingTermination() {
+		t.Errorf("an open timeout holds the answer to its own rung, got %s awaiting=%v (%s)", res.Rung.Name, res.AwaitingTermination(), res.Reason)
 	}
 }
 
@@ -251,8 +251,8 @@ func TestJevIsNotAskedWhileAnAttemptMayStillBeAlive(t *testing.T) {
 	if fake.calls != 0 {
 		t.Errorf("the provider was asked %d times about a rung that is still occupied", fake.calls)
 	}
-	if res.Rung.Name != "opus" || !res.AwaitingTermination {
-		t.Errorf("got %s awaiting=%v, want opus awaiting (%s)", res.Rung.Name, res.AwaitingTermination, res.Reason)
+	if res.Rung.Name != "opus" || !res.AwaitingTermination() {
+		t.Errorf("got %s awaiting=%v, want opus awaiting (%s)", res.Rung.Name, res.AwaitingTermination(), res.Reason)
 	}
 }
 
