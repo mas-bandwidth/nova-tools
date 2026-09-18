@@ -13,9 +13,17 @@
 // verb that puts work on a machine asks the registry first, and a name whose roles lack
 // `bench` is refused by name, with the reason and the remedy on the line.
 //
-// The file is data, tab separated, kept in git beside the lanes file:
+// The file is data, tab separated, kept in git beside the lanes file, in either of two
+// forms -- the seven-column form it was born with, and the eight-column form that carries
+// how the machine is REACHED:
 //
 //	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+//	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>provider<TAB>notes
+//
+// Both forms read (SPEC-FLEET-NET.md R1). A seven-column line says `tailnet`, which is what
+// every line meant on the day the column was added: no registry in the world has to be
+// rewritten to read under the new reader, and a node that is NOT on a tailnet says so by
+// writing the eighth column rather than by being guessed at.
 //
 // It is read WHOLE and validated whole: a partially-read registry is worse than none,
 // because the half that read is the half that lets a card through.
@@ -43,7 +51,18 @@ const (
 	RoleCoordination = "coordination"
 	// RoleServices says the stack lives here: Loki, Grafana, Redis.
 	RoleServices = "services"
+	// RoleBud says a person's own small machine: a laptop that reaches the benches and
+	// nothing else. It permits no work -- a bud is not a bench -- and it is the role the
+	// tailnet policy narrows hardest (SPEC-FLEET-NET.md R5).
+	RoleBud = "bud"
 )
+
+// roleNames is the roles as a refusal prints them, in one place so a new role is added
+// once. Sorted, because a refusal that reorders itself between runs is a diff nobody wants.
+var roleNames = []string{RoleBench, RoleBud, RoleCoordination, RoleRunner, RoleServices}
+
+// RoleNames is every role the registry knows, for a caller that generates from them.
+func RoleNames() []string { return append([]string(nil), roleNames...) }
 
 // knownRoles is the whole set. A role outside it is a typo, and a typo in this file is how
 // a runner host would quietly become a bench, so it is a refusal rather than an ignored
@@ -53,7 +72,23 @@ var knownRoles = map[string]bool{
 	RoleRunner:       true,
 	RoleCoordination: true,
 	RoleServices:     true,
+	RoleBud:          true,
 }
+
+// The providers: HOW a machine is reached, which is a different question from what it is.
+// No verb may hardcode a tailnet address, so the answer is a column and not a convention
+// (Glenn, 2026-09-18: the bus is the federation, not a merged tailnet).
+const (
+	// ProviderTailnet says the machine is a node of THIS node's own tailnet.
+	ProviderTailnet = "tailnet"
+	// ProviderLAN says the machine is reached on the local network, by name or address,
+	// with no tailnet at all. A node with no tailnet is still a node.
+	ProviderLAN = "lan"
+	// ProviderSharedPrefix is how a machine that belongs to ANOTHER node says so:
+	// `shared-from:<node>`, a Tailscale node share accepted into this tailnet. It is
+	// never a merged tailnet, and the other node's name is on the line.
+	ProviderSharedPrefix = "shared-from:"
+)
 
 // The reasons a machine may not take work. They are tokens, not prose, so a loop reading
 // the line can branch on one and a person reading it learns the same thing.
@@ -61,6 +96,7 @@ const (
 	ReasonRunnerHost       = "runner-host"       // it serves the merge group's shards
 	ReasonCoordinationHost = "coordination-host" // a friend's window lives there
 	ReasonServicesHost     = "services-host"     // the stack lives there and nothing else may
+	ReasonBudHost          = "bud-host"          // it is a person's own small machine
 	ReasonNotABench        = "not-a-bench"       // it carries no role that permits work
 	ReasonUnknown          = "unknown-machine"   // the registry does not carry the name
 )
@@ -87,6 +123,22 @@ type Machine struct {
 	Cores int      // whole cores, as the machine counts them
 	Notes string   // free text; "" when the line said `-`
 	Line  int      // the line of the file this came from, for a refusal that can be found
+
+	// Provider is HOW the machine is reached: `tailnet`, `lan` or `shared-from:<node>`.
+	// A seven-column line has none written and reads as ProviderTailnet.
+	Provider string
+	// ProviderStated says whether the eighth column was on the line. A verb that reports a
+	// finding on a tailnet machine with no node needs to know the difference between a
+	// registry that SAID tailnet and one that was read under the old shape.
+	ProviderStated bool
+}
+
+// SharedFrom reads the node a shared machine came from: `shared-from:<node>`.
+func (m Machine) SharedFrom() (node string, ok bool) {
+	if !strings.HasPrefix(m.Provider, ProviderSharedPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(m.Provider, ProviderSharedPrefix), true
 }
 
 // HasRole says whether the machine carries one role.
@@ -275,6 +327,8 @@ func notBenchReason(m Machine) string {
 		return ReasonCoordinationHost
 	case m.HasRole(RoleServices):
 		return ReasonServicesHost
+	case m.HasRole(RoleBud):
+		return ReasonBudHost
 	}
 	return ReasonNotABench
 }
@@ -322,21 +376,26 @@ func ReadRegistry(path string) (*Registry, error) {
 		reg.machines = append(reg.machines, m)
 	}
 	if len(reg.machines) == 0 {
-		return nil, fmt.Errorf("%s names no machine; refusing to guess (a machines file is name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes)", path)
+		return nil, fmt.Errorf("%s names no machine; refusing to guess (a machines file is name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes, or with provider between cores and notes)", path)
 	}
 	return reg, nil
 }
 
-// machineFields is the shape of one line. Seven, always: a column nobody filled says `-`,
-// so a reader can see at a glance that it was answered and not forgotten.
-const machineFields = 7
+// The two shapes of one line. A column nobody filled says `-`, so a reader can see at a
+// glance that it was answered and not forgotten. Seven is the form the registry was born
+// with and it still reads; eight carries the provider between cores and notes, so the free
+// text stays last where free text belongs.
+const (
+	machineFieldsShort = 7
+	machineFieldsLong  = 8
+)
 
-// readMachine reads and validates one line.
+// readMachine reads and validates one line, in either form.
 func readMachine(line string, n int) (Machine, error) {
 	f := strings.Split(line, "\t")
-	if len(f) != machineFields {
-		return Machine{}, fmt.Errorf("wants %d tab-separated fields name, ssh, os/arch, roles, seat, cores, notes; got %d",
-			machineFields, len(f))
+	if len(f) != machineFieldsShort && len(f) != machineFieldsLong {
+		return Machine{}, fmt.Errorf("wants %d tab-separated fields name, ssh, os/arch, roles, seat, cores, notes, or %d with provider between cores and notes; got %d",
+			machineFieldsShort, machineFieldsLong, len(f))
 	}
 	m := Machine{
 		Name: strings.TrimSpace(f[0]),
@@ -367,7 +426,20 @@ func readMachine(line string, n int) (Machine, error) {
 		return Machine{}, fmt.Errorf("%s wants whole cores as a number above zero, got %q", m.Name, strings.TrimSpace(f[5]))
 	}
 	m.Cores = cores
-	m.Notes = undash(f[6])
+
+	// The eighth column, and with it the notes. The short form says `tailnet` and says so
+	// out loud in Provider, but ProviderStated stays false so a verb can tell the two apart.
+	if len(f) == machineFieldsLong {
+		provider, err := readProvider(f[6])
+		if err != nil {
+			return Machine{}, fmt.Errorf("%s %w", m.Name, err)
+		}
+		m.Provider, m.ProviderStated = provider, true
+		m.Notes = undash(f[7])
+	} else {
+		m.Provider, m.ProviderStated = ProviderTailnet, false
+		m.Notes = undash(f[6])
+	}
 
 	// The one rule the file itself enforces: a machine that is both a CI runner host and a
 	// card bench is the exception the lock permits for now, and it must say why and when.
@@ -381,6 +453,28 @@ func readMachine(line string, n int) (Machine, error) {
 	return m, nil
 }
 
+// readProvider reads the eighth column. `-` is not a provider: a line that bothered to
+// write the column must say which of the three it is, because "how is this machine
+// reached" has no empty answer.
+func readProvider(field string) (string, error) {
+	p := strings.TrimSpace(field)
+	switch {
+	case p == ProviderTailnet, p == ProviderLAN:
+		return p, nil
+	case strings.HasPrefix(p, ProviderSharedPrefix):
+		node := strings.TrimSpace(strings.TrimPrefix(p, ProviderSharedPrefix))
+		if node == "" {
+			return "", fmt.Errorf("carries the provider %q with no node after it; a shared machine names the node that shared it: `%s<node>`", p, ProviderSharedPrefix)
+		}
+		if strings.ContainsAny(node, " \t,") {
+			return "", fmt.Errorf("carries the provider %q; the node after `%s` is one name", p, ProviderSharedPrefix)
+		}
+		return ProviderSharedPrefix + node, nil
+	}
+	return "", fmt.Errorf("carries the unknown provider %q; a machine is reached over %s, over %s, or as %s<node> (a Tailscale node share). A seven-column line leaves the column out and reads as %s",
+		p, ProviderTailnet, ProviderLAN, ProviderSharedPrefix, ProviderTailnet)
+}
+
 // readRoles reads the roles set: comma separated, at least one, each known, none twice.
 func readRoles(field string) ([]string, error) {
 	seen := map[string]bool{}
@@ -391,8 +485,8 @@ func readRoles(field string) ([]string, error) {
 			continue
 		}
 		if !knownRoles[role] {
-			return nil, fmt.Errorf("carries the unknown role %q; the roles are %s, %s, %s, %s",
-				role, RoleBench, RoleRunner, RoleCoordination, RoleServices)
+			return nil, fmt.Errorf("carries the unknown role %q; the roles are %s",
+				role, strings.Join(roleNames, ", "))
 		}
 		if seen[role] {
 			return nil, fmt.Errorf("names the role %q twice; roles are a set", role)
@@ -401,8 +495,8 @@ func readRoles(field string) ([]string, error) {
 		out = append(out, role)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("carries no role; every machine is at least one of %s, %s, %s, %s",
-			RoleBench, RoleRunner, RoleCoordination, RoleServices)
+		return nil, fmt.Errorf("carries no role; every machine is at least one of %s",
+			strings.Join(roleNames, ", "))
 	}
 	sort.Strings(out)
 	return out, nil

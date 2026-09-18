@@ -1609,6 +1609,63 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 `internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
 `queue/control/machines.tsv`.
 
+The roles are `bench`, `runner`, `coordination`, `services` and **`bud`** — a person's own
+laptop, which reaches the benches and runs no card. A line may carry an eighth column,
+**`provider`**, between `cores` and `notes`: `tailnet`, `lan`, or `shared-from:<node>` for a
+machine another node shared in. A seven-column line reads as `tailnet`, so no registry has to
+be rewritten ([SPEC-FLEET-NET.md](SPEC-FLEET-NET.md) R1).
+
+### fleet net
+
+```
+nova-pulse fleet net status --machines <file> [--tailscale <path>] [--max <n>] [--timeout <s>]
+nova-pulse fleet net init   --machines <file> --node <name> --tailnet <name> --owner <login> --out <dir>
+                            [--action-sha <sha> --action-version <tag>] [--force]
+nova-pulse fleet net acl|ssh|join|expiry|names|share|serve ...
+```
+
+`fleet net` is the tailnet of THIS node. Every node — a team of humans and AI seats — runs
+its own; cross-node reach is a Tailscale node share written into the registry as
+`shared-from:<node>`, never a merged tailnet, and a node with no tailnet is still a node.
+The design and the numbered rules are [SPEC-FLEET-NET.md](SPEC-FLEET-NET.md); the generated
+page for this node is [TAILNET.md](TAILNET.md).
+
+`fleet net status` crosses `tailscale status --json` with the registry and prints one line
+per machine, then one per finding:
+
+```
+NET MACHINE hulk provider=tailnet roles=bench,runner online=yes addr=100.1.2.3 last-seen=-
+NET FINDING machine=studio reason=no-tailnet-node (...)
+NET STATUS OK machines=8 online=8 findings=0
+```
+
+The two findings are the two directions of the cross: a machine the registry calls `tailnet`
+with no node, and a node the registry does not carry. A `lan` machine and a `shared-from:`
+machine are not findings. **Exit 1** on a finding — the tool saying NO — and 2 only when it
+could not run. It is read-only, it is behind a seam, and no test of it opens a socket.
+
+`fleet net init` is the one command a new node runs. Out of the registry it already keeps it
+writes `fleet/tailnet-policy.hujson` (Tailscale's own policy file, with Tailscale's own
+`tests` section carrying the invariants), `.github/workflows/tailnet-acl.yml` (Tailscale's
+official GitOps action, pinned by sha: `acl test` on every pull request, `apply` on the
+default branch) and `docs/TAILNET.md`. Every rule is written from the registry's **roles**,
+never from a machine's name, so it is the same command for any node. It is deterministic, it
+touches no machine, and it overwrites nothing without `--force`:
+
+```
+nova-pulse fleet net init --machines internal/fleet/testdata/machines.tsv \
+    --node rowan --tailnet mas-bandwidth.com --owner glenn@mas-bandwidth.com --out .
+NET WROTE fleet/tailnet-policy.hujson rules=5 tests=4
+NET INIT OK node=rowan files=3 machines=8 rules=5 tests=4
+```
+
+`acl`, `ssh`, `join`, `expiry`, `names`, `share` and `serve` are specified and not yet
+written. Each refuses by name with the rule that specifies it:
+
+```
+NET REFUSED verb=ssh reason=not-implemented: fleet net ssh is specified and not yet written (the rule is R6 in docs/SPEC-FLEET-NET.md; ...)
+```
+
 ### harvest
 
 ```

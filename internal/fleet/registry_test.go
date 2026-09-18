@@ -183,8 +183,10 @@ func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
 	if strings.Join(names, ",") != "hulk,vision,threadripper-wsl,space" {
 		t.Errorf("the benches are %v, want hulk, vision, threadripper-wsl, space in file order", names)
 	}
-	if got := len(reg.Machines()); got != 8 {
-		t.Errorf("the fleet has %d machines, want 8", got)
+	// Nine since the M2 Air joined as a bud (SPEC-FLEET-NET.md R5): a machine that reaches
+	// the benches and runs no card is still a machine the registry carries.
+	if got := len(reg.Machines()); got != 9 {
+		t.Errorf("the fleet has %d machines, want 9", got)
 	}
 	if reg.WithRole("builder") != nil {
 		t.Error("an unknown role listed machines")
@@ -210,6 +212,7 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 		"mini":             "runner",
 		"batman":           "runner",
 		"superman":         "runner",
+		"air":              "bud",
 	}
 	for name, roles := range want {
 		m, ok := reg.Lookup(name)
@@ -226,7 +229,7 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"batman", "superman", "studio", "mini"} {
+	for _, name := range []string{"batman", "superman", "studio", "mini", "air"} {
 		if err := reg.RequireBench(name); err == nil {
 			t.Errorf("the example lets a card reach %s", name)
 		}
@@ -260,4 +263,119 @@ func example(t *testing.T) *Registry {
 		t.Fatalf("the shipped example does not read: %v", err)
 	}
 	return reg
+}
+
+// ---------------------------------------------------------------------------
+// The provider column (SPEC-FLEET-NET.md R1): both forms of the line read.
+// ---------------------------------------------------------------------------
+
+// TestReadRegistryReadsBothFormsOfTheLine is R1's red test. The registry was born with
+// seven columns and every one of them is still a legal line: the eighth column is how a
+// machine is REACHED, and a file written before there was such a question must not have to
+// be rewritten to be read. A short line says `tailnet` -- what every line meant that day --
+// and says so with ProviderStated false, so a verb can tell a registry that ANSWERED from
+// one that was never asked.
+func TestReadRegistryReadsBothFormsOfTheLine(t *testing.T) {
+	path := write(t,
+		row("hulk", "hulk", "linux/x64", "bench", "swarm-hulk", "64", "seven columns, as it always was")+
+			row("air", "air", "darwin/arm64", "bud", "-", "8", "tailnet", "eight columns, provider before notes")+
+			row("nas", "nas", "linux/x64", "services", "-", "4", "lan", "a node with no tailnet is still a node")+
+			row("ada", "ada", "linux/x64", "bench", "-", "16", "shared-from:stella", "another node's machine, shared in"))
+	reg, err := ReadRegistry(path)
+	if err != nil {
+		t.Fatalf("ReadRegistry: %v", err)
+	}
+	for _, c := range []struct {
+		name     string
+		provider string
+		stated   bool
+		notes    string
+	}{
+		{"hulk", ProviderTailnet, false, "seven columns, as it always was"},
+		{"air", ProviderTailnet, true, "eight columns, provider before notes"},
+		{"nas", ProviderLAN, true, "a node with no tailnet is still a node"},
+		{"ada", ProviderSharedPrefix + "stella", true, "another node's machine, shared in"},
+	} {
+		m, ok := reg.Lookup(c.name)
+		if !ok {
+			t.Errorf("%s is not in the registry", c.name)
+			continue
+		}
+		if m.Provider != c.provider {
+			t.Errorf("%s provider read back as %q, want %q", c.name, m.Provider, c.provider)
+		}
+		if m.ProviderStated != c.stated {
+			t.Errorf("%s ProviderStated = %v, want %v", c.name, m.ProviderStated, c.stated)
+		}
+		if m.Notes != c.notes {
+			t.Errorf("%s notes read back as %q, want %q; the eighth column must not eat the free text", c.name, m.Notes, c.notes)
+		}
+	}
+	node, ok := reg.machines[3].SharedFrom()
+	if !ok || node != "stella" {
+		t.Errorf("SharedFrom() = %q, %v; want stella, true -- the node that shared the machine is on the line", node, ok)
+	}
+	if _, ok := reg.machines[0].SharedFrom(); ok {
+		t.Error("a tailnet machine reports a sharing node")
+	}
+}
+
+// TestReadRegistryRefusesAProviderItDoesNotKnow keeps the column from becoming free text.
+// `how is this machine reached` has three answers and no empty one, and a typo in this
+// column is how a machine would quietly be looked for on the wrong network.
+func TestReadRegistryRefusesAProviderItDoesNotKnow(t *testing.T) {
+	for _, c := range []struct{ provider, want string }{
+		{"tailscale", "unknown provider"},
+		{"-", "unknown provider"},
+		{"", "unknown provider"},
+		{"shared-from:", "no node after it"},
+		{"shared-from:a b", "one name"},
+	} {
+		path := write(t, row("hulk", "hulk", "linux/x64", "bench", "-", "64", c.provider, "-"))
+		_, err := ReadRegistry(path)
+		if err == nil {
+			t.Errorf("the provider %q was accepted", c.provider)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "line 1") {
+			t.Errorf("the refusal for %q is %q; want it to name line 1 and %q", c.provider, err, c.want)
+		}
+	}
+}
+
+// TestReadRegistryRefusesALineOfTheWrongWidth: seven or eight, and the refusal says both,
+// because the whole point of the second form is that nobody has to guess which one they are
+// looking at.
+func TestReadRegistryRefusesALineOfTheWrongWidth(t *testing.T) {
+	path := write(t, strings.Join([]string{"hulk", "hulk", "linux/x64", "bench", "-", "64", "tailnet", "-", "nine"}, "\t")+"\n")
+	_, err := ReadRegistry(path)
+	if err == nil {
+		t.Fatal("a nine-column line was accepted")
+	}
+	for _, want := range []string{"7", "8", "provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+}
+
+// TestABudIsNotABench: the fifth role permits no work either, and it is refused BY NAME so
+// the person whose laptop it is reads why (SPEC-FLEET-NET.md R5).
+func TestABudIsNotABench(t *testing.T) {
+	path := write(t, benchRow+row("air", "air", "darwin/arm64", "bud", "-", "8", "tailnet", "Glenn's M2 Air"))
+	reg, err := ReadRegistry(path)
+	if err != nil {
+		t.Fatalf("ReadRegistry: %v", err)
+	}
+	err = reg.RequireBench("air")
+	if err == nil {
+		t.Fatal("a card reached a bud")
+	}
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Reason != ReasonBudHost {
+		t.Errorf("a bud is refused as %v, want reason %s", err, ReasonBudHost)
+	}
+	if got := len(RoleNames()); got != 5 {
+		t.Errorf("RoleNames() has %d roles, want 5 (bench, bud, coordination, runner, services)", got)
+	}
 }

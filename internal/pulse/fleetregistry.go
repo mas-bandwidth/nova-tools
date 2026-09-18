@@ -68,8 +68,8 @@ func FleetRegistry(in FleetRegistryInput) int {
 // machineLine is one machine as one line. Every column the file carries is on it, so a
 // reader never has to open the file to learn what a refusal was about.
 func machineLine(m fleet.Machine) string {
-	return fmt.Sprintf("MACHINE %s ssh=%s os=%s/%s roles=%s seat=%s cores=%d notes=%s",
+	return fmt.Sprintf("MACHINE %s ssh=%s os=%s/%s roles=%s seat=%s cores=%d provider=%s notes=%s",
 		oneline.Field(m.Name), oneline.Field(m.SSH), oneline.Field(m.OS), oneline.Field(m.Arch),
 		oneline.Field(m.RoleList()), oneline.Field(dash(m.Seat)), m.Cores,
-		oneline.Quote(dash(m.Notes)))
+		oneline.Field(m.Provider), oneline.Quote(dash(m.Notes)))
 }
