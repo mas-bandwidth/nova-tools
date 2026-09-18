@@ -568,6 +568,81 @@ func TestGitPushMakesItsOwnScratchRemoteAndTakesItAway(t *testing.T) {
 	}
 }
 
+// TestRunnerPathProbesBothSystemdScopesAndBothUnitNamings is a correction, and it is the
+// most expensive lesson of 2026-09-18: the first version of the check probed
+// `systemctl --user` only, called space's sixteen SYSTEM units unmanaged, and acting on that
+// finding installed svc.sh beside them -- thirty-two Runner.Listener processes for sixteen
+// units, both halves taking merge-group shards, for ten minutes. A check that can be wrong
+// in that direction must hold the listener count against the unit count.
+func TestRunnerPathProbesBothSystemdScopesAndBothUnitNamings(t *testing.T) {
+	body := workloadBody(t, "runner-path")
+	for _, want := range []string{
+		"--system", "--user", "nova-runner-*", "actions.runner.*", "launchctl",
+		"Runner.Listener", "double registration",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("runner-path does not probe %q:\n%s", want, body)
+		}
+	}
+	// The listener count must be COMPARED, not merely read: a count nobody compares is a
+	// number in a log.
+	if !strings.Contains(body, `[ "$LISTENERS" -gt "$UNITS" ]`) {
+		t.Errorf("runner-path reads the listeners and never holds them against the units:\n%s", body)
+	}
+}
+
+// TestDiagSizeReportsTheRateAndNotOnlyTheSize: hulk held 3576 MB with nothing older than two
+// days -- about 1.8 GB a day -- so a seven-day retention rule cannot bound it and a size read
+// alone cannot say so.
+func TestDiagSizeReportsTheRateAndNotOnlyTheSize(t *testing.T) {
+	body := workloadBody(t, "diag-size")
+	for _, want := range []string{"MB/day", "oldest", "RATE=$((TOTAL / DAYS))"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("diag-size does not report the growth rate (%q missing):\n%s", want, body)
+		}
+	}
+}
+
+// TestServicesReachDistinguishesRefusedFromDeniedFromPONG. The three answers have three
+// different remedies, and one word for all of them sends a person to the wrong machine:
+// redis on space is bound on the tailnet with protected mode and no password, so a PING from
+// a bench is DENIED -- the name and the path work and only the password gate remains.
+func TestServicesReachDistinguishesRefusedFromDeniedFromPONG(t *testing.T) {
+	body := workloadBody(t, "services-reach")
+	for _, want := range []string{"PONG", "protected mode", "refused", "requirepass", "nova-secrets"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("services-reach does not name %q:\n%s", want, body)
+		}
+	}
+	// Only PONG is OK: the two other cases must exit non-zero before the OK line.
+	denied := strings.Index(body, "denied (protected mode)")
+	ok := strings.LastIndex(body, "SERVICES OK $TRIED")
+	if denied < 0 || ok < 0 || denied > ok {
+		t.Errorf("the denied case does not come before the OK line:\n%s", body)
+	}
+	// And no tailnet address is REQUIRED: the Studio has none and a LAN address is as good
+	// an answer, so the check is that the name resolves at all.
+	if strings.Contains(body, "100.") {
+		t.Errorf("services-reach hard-codes a tailnet address; the check is that the NAME resolves:\n%s", body)
+	}
+}
+
+// workloadBody is one shipped workload's body, by class.
+func workloadBody(t *testing.T, class string) string {
+	t.Helper()
+	loads, err := StandardWorkloads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range loads {
+		if w.Class == class {
+			return w.Body
+		}
+	}
+	t.Fatalf("no %s workload ships", class)
+	return ""
+}
+
 // TestRunnerOnlineAsksTheForgeAndNamesTheRunnerThatIsNot.
 func TestRunnerOnlineAsksTheForgeAndNamesTheRunnerThatIsNot(t *testing.T) {
 	forge := fakeForge{runners: map[string][]RunnerStatus{

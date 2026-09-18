@@ -1640,11 +1640,11 @@ The shipped classes, and the fault each one names:
 | `path-resolves` | all | `nova-merge` not on any non-interactive PATH; 18 stale `~/go/bin` shadows |
 | `go-on-path` | bench, runner | three machines had no `go` at all non-interactively |
 | `git-identity` | bench | `user.name`/`user.email` empty on all four Linux machines |
-| `services-reach` | bench | redis bound to 127.0.0.1; `space` resolving nowhere; evidence names the address tried |
+| `services-reach` | bench | redis bound to 127.0.0.1; `space` resolving nowhere. The evidence names the address tried and tells `refused` from `denied (protected mode)` from `PONG` — only `PONG` is OK |
 | `runner-online` | runner | the forge says every `<machine>-nova-*` is online, and names the one that is not |
-| `runner-path` | runner | 16 `.path` files with no Go; 16 runners with no unit behind them |
+| `runner-path` | runner | 16 `.path` files with no Go. Both systemd scopes and both unit namings, and the listener count held against the unit count — probing `--user` only called 16 system units unmanaged, and acting on it made 32 listeners for 16 units |
 | `registry-truth` | all | 16 online runners on a machine the registry called `bench,services` |
-| `diag-size` | runner | 15.7 GB of `_diag` — a `WARN`, on purpose |
+| `diag-size` | runner | 15.7 GB of `_diag`, growing ~1.8 GB/day — the line carries MB, the age of the oldest log and the rate. A `WARN`, on purpose |
 | `loki-ready`, `redis-ping`, `postgres-ready` | services | the stack answers locally |
 | `bus-push`, `release-path` | coordination | the bus is clean and in sync; `nova-update` is on PATH |
 
