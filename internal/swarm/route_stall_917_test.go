@@ -90,15 +90,16 @@ func TestRouteInflightCountsBenchLeases(t *testing.T) {
 
 // TestRunHoldsARouteAtItsInFlightCap is the card's first red test: a route at cap 2 with
 // three tasks runs two at once, the STATUS line says inflight=2 cap=2, and the third waits
-// in pending/ until one ends. It drives the real dispatcher and the real supervisor, with
-// the fake runner as the harness, so the count is the count a bench would see.
+// in pending/ until one ends. It drives the real dispatcher, but the supervisor it
+// re-invokes is the package's fake runner, not the real nova-swarm: a unit test builds no
+// product binary (and no per-platform one), and the fixture is the one executable the
+// package already builds for every platform (fakerunner_test.go). Its `supervise` step
+// identifies the launch, holds the lane 700ms, and ends cleanly, so the count is the count
+// a bench would see.
 func TestRunHoldsARouteAtItsInFlightCap(t *testing.T) {
 	dir := t.TempDir()
 	p, w := recoveryPool(t, dir)
-	harness := runnerDoing(t, dir, "cap-harness",
-		runnerStep{Op: "stdout", Body: "working on it", Ms: 700})
-	w.Harness = harness
-	w.HarnessArgs = []string{"cap", "1", "{model}", "{prompt}", "{prompt}"}
+	supervisor := runnerDoing(t, dir, "cap-supervisor", runnerStep{Op: "supervise", Ms: 700})
 	w.EnvVar = "FAKE_KEY"
 	w.Usage = UsageNone
 	w.Route = "fake/fake-model"
@@ -125,7 +126,7 @@ func TestRunHoldsARouteAtItsInFlightCap(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Run(RunInput{
 		Pool: p, Worker: w, Workers: 3, Hours: 0.005, Stdout: &out, Stderr: &errb,
-		NoSandbox: true, Supervisor: buildNovaSwarm(t), WorkerFile: workerFile,
+		NoSandbox: true, Supervisor: supervisor, WorkerFile: workerFile,
 		LaunchTimeout: 8 * time.Second, Now: func() time.Time { return time.Now().UTC() },
 	})
 	stdout := out.String()
@@ -140,6 +141,46 @@ func TestRunHoldsARouteAtItsInFlightCap(t *testing.T) {
 	}
 	if code != 0 {
 		t.Errorf("a drained capped run exits 0, got %d:\n%s%s", code, stdout, errb.String())
+	}
+}
+
+// TestFakeSupervisorIdentifiesAndFinishes pins the one step this card adds to the fake
+// runner. Given a reserved slot and the nonce the dispatcher drew, the `supervise` step
+// writes a launched identity and the attested completion evidence the dispatcher's `finish`
+// reads, so `run`'s launch path can be driven with no product binary.
+func TestFakeSupervisorIdentifiesAndFinishes(t *testing.T) {
+	dir := t.TempDir()
+	p, w := recoveryPool(t, dir)
+	supervisor := runnerDoing(t, dir, "one-shot-supervisor", runnerStep{Op: "supervise"})
+
+	id := NewID(time.Now().UTC(), "fake-supervise")
+	jobDir := w.JobDir(1, id)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nonce := "0123456789abcdef"
+	if _, err := p.claimFree(1, map[int]bool{}, id, nonce, os.Getpid(), time.Now().UTC(),
+		func(n int) string { return w.JobDir(n, id) }); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(supervisor, "supervise", "--pool", p.Dir, "--task", id,
+		"--slot", "1", "--nonce", nonce, "--no-sandbox")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the fake supervisor: %v\n%s", err, out)
+	}
+	sf, err := p.ReadSlot(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf.State != SlotLaunched || sf.Nonce != nonce || sf.JobDir != jobDir {
+		t.Fatalf("the fake supervisor identifies the launch: %+v", sf)
+	}
+	var rec ExitRecord
+	if err := ReadJSON(ExitPath(jobDir), &rec); err != nil {
+		t.Fatalf("the fake supervisor leaves completion evidence: %v", err)
+	}
+	if rec.End != EndDone || rec.Nonce != nonce || !ExitAttestOK(rec.Attest, sf.ExitAttest) {
+		t.Errorf("exit evidence wants end=%s nonce=%s attested, got %+v", EndDone, nonce, rec)
 	}
 }
 
@@ -283,22 +324,4 @@ func TestAStalledTaskIsRequeuedOnceAndNotTwice(t *testing.T) {
 			}
 		})
 	}
-}
-
-// buildNovaSwarm builds the real dispatcher/supervisor binary once per test so the cap test
-// can drive `run`'s launch path without a network or a fake supervisor.
-func buildNovaSwarm(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "nova-swarm")
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/nova-swarm")
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building nova-swarm for the cap test: %v\n%s", err, out)
-	}
-	return bin
 }
