@@ -99,6 +99,26 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "ROUTE", "bad-floor",
 			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
+	// Accounting is not optional. Token spend reporting is an obligation and
+	// every decision is logged (Glenn), so a route that is going to call the
+	// provider says where the spend and the decision will be written BEFORE it
+	// calls: a call nobody can account for is refused rather than made. With
+	// --no-jev there is no call and nothing to account for, so both stay
+	// optional there.
+	if *useJev && !*noJev {
+		var missing []string
+		if strings.TrimSpace(*usagePath) == "" {
+			missing = append(missing, "--usage")
+		}
+		if strings.TrimSpace(*logPath) == "" {
+			missing = append(missing, "--log")
+		}
+		if len(missing) > 0 {
+			return refuse(stderr, "ROUTE", "no-accounting", fmt.Sprintf(
+				"a jev call must be accounted for: %s missing; pass %s, or --no-jev to answer by the rules alone with no call to account for",
+				strings.Join(missing, " and "), remedyFor(missing)))
+		}
+	}
 	unit, code := buildUnit(*unitPath, set, stderr, decide.Unit{
 		ID: *id, Kind: *kind, Files: *files, Packages: *packages, Lanes: *lanes,
 		LaneOwner: *laneOwner, Platform: *platform, Guard: *guard, Secrets: *secrets,
@@ -214,6 +234,23 @@ func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
 // usageProvider is who the tokens were spent with, in the usage file's own
 // vocabulary: the Jev endpoint is TypeSafe's.
 const usageProvider = "typesafe"
+
+// remedyFor is the line a person can paste: the missing accounting flags with a
+// path each, rather than the name of a flag they then have to look up.
+func remedyFor(missing []string) string {
+	out := make([]string, 0, len(missing))
+	for _, flag := range missing {
+		switch flag {
+		case "--usage":
+			out = append(out, "--usage ./usage.tsv")
+		case "--log":
+			out = append(out, "--log ./decide.jsonl")
+		default:
+			out = append(out, flag)
+		}
+	}
+	return strings.Join(out, " ")
+}
 
 // buildUnit reads the evidence: a --unit file (or inline JSON), or the unit
 // flags, never both. It returns the unit and 0, or a refusal's exit code.

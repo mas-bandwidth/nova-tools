@@ -210,6 +210,13 @@ written with, so `nova-tokens` reads a decision's spend the way it reads everyth
 that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that
 made no call writes no row, because an empty row would be a claim that a call was made.
 
+**Accounting is not optional.** Token spend reporting is an obligation and every decision is
+logged (Glenn), so the route verb REFUSES to ask the provider at all unless it has been told where
+both records go: `--usage` and `--log` are required whenever jev is asked, and the refusal comes
+before the call, in one line naming the missing flag. A call nobody can account for is refused
+rather than made and then forgotten. `--no-jev` makes no call and has nothing to account for, so
+both stay optional there.
+
 **A successful answer is not evidence of reported usage.** Presence is tracked PER COUNTER, from
 the decoder outward: a 200 that carries a valid answer and no `usage` object, or one naming only
 some of the counters, has said nothing about the rest — and nothing is not zero. An unreported
@@ -238,8 +245,8 @@ synthetic private markers, checked over the state AND the questions),
 `the-wait-is-typed-on-the-line`, `security-and-wait-together` and
 `the-provider-usage-is-kept-including-a-failed-call`, `usage-presence-is-per-counter`,
 `an-unreported-counter-is-a-dash-and-a-reported-zero-is-a-zero` and
-`a-routing-refusal-still-persists-the-call`, all against a fake decider, with no network and no key
-on disk.
+`a-routing-refusal-still-persists-the-call` and `a-jev-call-with-no-accounting-is-refused-before-it-is-made`,
+all against a fake decider, with no network and no key on disk.
 
 ### manager abstain / needs_human
 

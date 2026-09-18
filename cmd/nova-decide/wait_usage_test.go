@@ -165,9 +165,10 @@ func TestRouteWritesUsageForAFailedCall(t *testing.T) {
 	useFake(t, &fake{err: errors.New("provider down")})
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.tsv")
+	log := filepath.Join(dir, "decide.jsonl")
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--unit-id", "u-2", "--kind", "new-verb", "--files", "3", "--packages", "1",
-		"--lanes", "1", "--usage", usage}, &stdout, &stderr); code != 0 {
+		"--lanes", "1", "--usage", usage, "--log", log}, &stdout, &stderr); code != 0 {
 		t.Fatalf("a provider error falls back to the rules, exit = %d (stderr=%q)", code, stderr.String())
 	}
 	raw, err := os.ReadFile(usage)

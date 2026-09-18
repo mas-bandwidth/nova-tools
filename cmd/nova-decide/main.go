@@ -35,10 +35,11 @@ usage:
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
 
-  nova-decide route --unit <json file|inline json> [--registry <path>] [--log <path>]
-                    [--usage <path>] [--floor 0.9] [--jev|--no-jev] [--base-url <url>]
+  nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                    [--registry <path>] [--floor 0.9] [--base-url <url>]
                     [--key-env JEV_API_KEY]
-  nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
+                    (--usage and --log are REQUIRED whenever jev is asked)
+  nova-decide route --unit-id <id> --kind <kind> --no-jev [--files n] [--packages n] [--lanes n]
                     [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                     [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
                     [--fresh-take] [--deadline 45m] [--no-jev]
@@ -97,10 +98,13 @@ opaque ids rather than any mind's name.
   --registry <path>   the registry of minds (name, lineage, height, kinds it is
                       designated for, owned lanes, availability, ask); the
                       embedded ladder when absent
-  --log <path>        append this decision to the escalation log (JSON lines)
+  --log <path>        append this decision to the escalation log (JSON lines);
+                      REQUIRED when jev is asked
   --usage <path>      append what a provider call spent to this usage TSV, in
                       the fleet's own columns; a failed call is a row too, with
-                      its cost unknown (a dash), never a zero
+                      its cost unknown (a dash), never a zero. REQUIRED when jev
+                      is asked: a call nobody can account for is refused before
+                      it is made, never made and then forgotten
   --floor <f>         confidence floor; below it the answer steps UP (default 0.9)
   --no-jev            answer by the rules alone: no key, no network, deterministic
   --kind <kind>       rebase | stack | fixture-retarget | fleet-chore |
@@ -112,6 +116,11 @@ opaque ids rather than any mind's name.
   --touches <t>       guard | secrets | sandbox | sudo | deploy-keys | network
   --summary           (log) escalations per kind and the regenerated start rung
 
+Accounting is not optional. Token spend reporting is an obligation and every
+decision is logged, so a route that will call the provider is refused unless it
+says where both go. --no-jev makes no call, so there is nothing to account for
+and both stay optional.
+
 exit codes: 0 the answer may be acted on, 1 the verb ran and said NOT YET (a
 wait: the rung named owns the work and an attempt on it is not known dead), 3
 any answer below the floor (a suggestion), 2 refusal: no key, bad questions, bad
@@ -122,7 +131,7 @@ example:
   nova-decide --questions ./questions.json --state ./state.md --floor 0.9
   nova-decide tune --decisions ./decisions.jsonl
   nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-  nova-decide route --unit ./unit.json --log ./decide.jsonl --no-jev
+  nova-decide route --unit ./unit.json --usage ./usage.tsv --log ./decide.jsonl
   nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
   nova-decide log --log ./decide.jsonl --summary
 `

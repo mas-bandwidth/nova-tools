@@ -77,9 +77,10 @@ func TestRouteWritesAReportedZero(t *testing.T) {
 	useFake(t, &fake{conf: 0.97, usage: decide.Usage{HasInput: true, HasOutput: true}})
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.tsv")
+	log := filepath.Join(dir, "decide.jsonl")
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--unit-id", "u-1", "--kind", "new-verb", "--files", "3",
-		"--packages", "1", "--lanes", "1", "--usage", usage}, &stdout, &stderr); code != 0 {
+		"--packages", "1", "--lanes", "1", "--usage", usage, "--log", log}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	got := tsvRow(t, usage)

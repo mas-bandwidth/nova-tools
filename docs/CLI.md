@@ -389,9 +389,11 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 ### route — the ladder of minds
 
 ```
-nova-decide route --unit <json file|inline json> [--registry <path>] [--log <path>]
-                  [--usage <path>] [--floor 0.9] [--jev|--no-jev] [--base-url <url>]
-                  [--key-env JEV_API_KEY]
+nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                  [--registry <path>] [--floor 0.9] [--base-url <url>] [--key-env JEV_API_KEY]
+                  (--usage and --log are REQUIRED whenever jev is asked)
+nova-decide route --unit <json file|inline json> --no-jev [--registry <path>]
+                  [--usage <path>] [--log <path>] [--floor 0.9]
 nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                   [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
@@ -411,6 +413,13 @@ Two rungs are chosen by **kind** and not by height, and by machinery rather than
 `--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
 
 **What Jev is told is typed and enumerated**, and it is less than the evidence: one `field: value` line each for the kind, size buckets, whether the lane is one a mind on the ladder **owns** (`none`, `owned`, `other` — never which lane), an attempt-count bucket, a platform flag (`ordinary` or `named`), a security flag and a deadline bucket — every value checked against the closed set its field allows before anything is sent, so the boundary fails closed. **No registry string crosses it either**: a mind's name, its lineage and its lanes are local configuration, not public data, so the rungs Jev chooses between are **opaque ids** (`rung-1`, `rung-2`) described only by the step above the lowest rung offered, a per-call lineage label, whether that mind owns the lane, and how it is asked. The answer is mapped back to a mind here. The unit's id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in the process. `--floor` refuses NaN, an infinity, a negative and anything above one, with one remedy line.
+
+**Accounting is not optional.** Token spend reporting is an obligation and every decision is logged, so **`--usage` and `--log` are required whenever jev is asked**. A route that would call the provider without them is refused *before* the call, in one line naming the missing flag and the line to paste — a call nobody can account for is refused rather than made and then forgotten. `--no-jev` makes no call, so there is nothing to account for and both stay optional there.
+
+```
+$ nova-decide route --unit-id u --kind rebase --files 2 --packages 1
+ROUTE REFUSED reason=no-accounting a jev call must be accounted for: --usage and --log missing; pass --usage ./usage.tsv --log ./decide.jsonl, or --no-jev to answer by the rules alone with no call to account for
+```
 
 **What a call spent is kept.** `--usage <path>` appends one row of the fleet's usage TSV — the same columns, through the same appender, that a swarm card's usage is written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call that **failed** is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that made no call writes no row. The `--log` row carries the same numbers as `calls`, `tokens_in` and `tokens_out`.
 

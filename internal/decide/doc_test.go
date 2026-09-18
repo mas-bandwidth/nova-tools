@@ -77,6 +77,9 @@ func TestSpecDecideNamesTheLadder(t *testing.T) {
 		"not evidence of reported usage",
 		"PER COUNTER",
 		"cannot unspend a call",
+		// Glenn's direction: accounting is not optional.
+		"Accounting is not optional",
+		"required whenever jev is asked",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-DECIDE.md does not name the ladder rule keyed by %q", phrase)
