@@ -110,7 +110,7 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
@@ -190,7 +190,7 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
@@ -390,7 +390,7 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
@@ -828,7 +828,7 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
@@ -961,7 +961,7 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
