@@ -1071,6 +1071,50 @@ audit's --disable-auto`.
 — the rule is about what runs. A spelling assembled at run time from separate
 words is not seen.
 
+### `nightly-tags` — every tagged suite is run by a scheduled job
+
+**The rule.** Every opt-in build tag a `_test.go` carries is named by a
+SCHEDULED workflow, either literally on a `go test`/`go vet` line
+(`go test -tags perf ./...`) or as a `tag:` entry of a job's matrix the step
+then expands (`go test -tags ${{ matrix.tag }} ./...`). Platform and toolchain
+constraints are not opt-ins and are out of scope: `//go:build darwin` says where
+a test runs, not whether it runs, and a negation (`!windows`) is on by default
+everywhere else.
+**The hurt.** A build tag is how this tree takes a test off the per-change path,
+and `go test ./...` without the tag compiles the file away silently. So a tag no
+scheduled job passes to `go test -tags` is not a slower tier, it is a deleted
+test that still looks like a test in the tree. One tag was in exactly that
+state: `//go:build darwin && novadisk`
+(`cmd/nova-sandbox/run_e2e_darwin_test.go`, the one real end-to-end run of the
+sandbox — a real APFS volume made, used and destroyed) had never been compiled
+by any workflow, and its own comment said "run it by hand, on a Mac". Nobody
+did. Two more were worse than uncovered: `internal/ci`'s net checker EXEMPTS a
+file carrying `//go:build nightly` or `//go:build soak` from the
+no-real-network rule (`ci_net.go`, `ci_net_test.go` cases 3 and 4), and no
+workflow ran either tag — a real-network test could be written, waved through by
+the checker, and never execute once.
+**The test.** `TestEveryTestBuildTagIsRunBySomeScheduledJob`,
+`TestTheNetworkExemptTagsHaveAHomeInTheSchedule` and
+`TestSomeScheduledJobRunsTheRaceDetector`
+(`internal/ci/nightlytags_class_test.go`). The first is the class and names no
+tag: it walks every `_test.go` for the tags that HIDE a file, reads every tag
+the scheduled workflows name, and refuses the difference with the files that
+would have gone unrun, so a tag invented tomorrow is covered the day its first
+test file lands. The second holds the net checker's two exempt tags to a leg
+whether or not a file carries one today. The third holds `race` — implicit,
+because it comes from the `-race` flag rather than from `-tags` — to a scheduled
+job that actually passes `-race`.
+**Its allowlist.** None. The walk reads the tree rather than a list, so a tag
+added tomorrow is held on the day its first test file lands.
+**Its remedy line.** ``build tag "<tag>" hides <n> test file(s) and NO scheduled
+job runs it: <files> — remedy: add a `tag: <tag>` leg to nightly-slow.yml's
+matrix (or `go test -tags <tag>` to another scheduled workflow), or drop the tag
+from those files``.
+**Its narrowings.** Only SCHEDULED workflows count, and only what actually
+reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
+tag never stands in for a job that runs it. A tag assembled at run time, or
+passed through a variable the step does not expand inline, is not seen.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
