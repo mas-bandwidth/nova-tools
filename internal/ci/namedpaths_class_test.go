@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -217,8 +218,29 @@ func namedPathTrimmed(name string) string {
 
 // namedPathExists reports whether the name is in the tree. A name written with a trailing
 // slash must be a directory; anything else may be either.
+//
+// A `testdata/...` name is the one relative name this repository writes, because a
+// fixture path is always written from the package that owns it -- every class test in this
+// package holds its allowlist as `const … = "testdata/…"` -- so such a name is looked for
+// under every package, not only at the root.
 func namedPathExists(root, name string) bool {
-	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(name, "/"))))
+	if namedPathAt(root, name) {
+		return true
+	}
+	if !strings.HasPrefix(name, "testdata/") {
+		return false
+	}
+	for _, dir := range namedPathTestdataDirs(root) {
+		if namedPathAt(dir, strings.TrimPrefix(name, "testdata/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// namedPathAt is the plain question: is this name a file or a directory under base?
+func namedPathAt(base, name string) bool {
+	info, err := os.Stat(filepath.Join(base, filepath.FromSlash(strings.TrimSuffix(name, "/"))))
 	if err != nil {
 		return false
 	}
@@ -227,6 +249,31 @@ func namedPathExists(root, name string) bool {
 	}
 	return true
 }
+
+// namedPathTestdataDirs is every `testdata` directory in the tree, found once and kept,
+// because the existence question above asks for them on every candidate.
+var namedPathTestdataDirs = func() func(root string) []string {
+	var once sync.Once
+	var dirs []string
+	return func(root string) []string {
+		once.Do(func() {
+			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+				if err != nil || !d.IsDir() {
+					return nil //nolint:nilerr // an unreadable directory holds no fixtures we can name
+				}
+				if d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				if d.Name() == "testdata" {
+					dirs = append(dirs, path)
+					return filepath.SkipDir
+				}
+				return nil
+			})
+		})
+		return dirs
+	}
+}()
 
 // namedPathSources lists what the rule reads, repo-relative and slash-separated: every
 // non-test `.go` file in the tree, and every `.md` file under `docs/`. Test files and
