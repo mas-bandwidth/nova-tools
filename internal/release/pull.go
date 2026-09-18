@@ -90,12 +90,19 @@ func MarkPulled(text, version, note string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
-// pullNames is what a pull deletes: the release's own files and its checksum
-// file, and nothing else in the directory. The names come from SHA256SUMS for
-// the same reason `--retire` takes its names from the set it installed -- a
-// directory listing would delete whatever somebody had left there.
+// pullNames is what a pull deletes: the release's own files, its checksum file
+// and that file's digest, and nothing else in the directory. The names come
+// from SHA256SUMS for the same reason `--retire` takes its names from the set
+// it installed -- a directory listing would delete whatever somebody had left
+// there.
+//
+// DigestFile is named here for a reason worth keeping: it is the one file
+// `build` writes that SHA256SUMS does not list, so a pull that took only the
+// listed names would leave it behind, and the `rmdir` that follows -- which
+// refuses a directory that is not empty, deliberately -- would fail on every
+// machine for a file this tool wrote itself.
 func pullNames(arts []Artifact) ([]string, error) {
-	names := make([]string, 0, len(arts)+1)
+	names := make([]string, 0, len(arts)+2)
 	for _, a := range arts {
 		if !remoteArtifactName.MatchString(a.Name) {
 			return nil, refuse("build the release again with `nova-update release build`",
@@ -103,7 +110,7 @@ func pullNames(arts []Artifact) ([]string, error) {
 		}
 		names = append(names, a.Name)
 	}
-	return append(names, SumsFile), nil
+	return append(names, SumsFile, DigestFile), nil
 }
 
 // pullHere deletes the release's own files from one local artifact directory,

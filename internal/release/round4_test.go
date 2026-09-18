@@ -453,6 +453,30 @@ func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
 	}
 }
 
+// AND `pull` TAKES IT WITH THE REST. SUMS.digest is the one file `build`
+// writes that SHA256SUMS does not list, so a pull deleting only the listed
+// names would leave it behind -- and the `rmdir` that follows refuses a
+// directory that is not empty, deliberately, which would have turned a file
+// this tool wrote into a refusal on every machine in the fleet.
+func TestPullDeletesTheDigestFileToo(t *testing.T) {
+	built, version := stagedRelease(t)
+	root := filepath.Dir(filepath.Dir(built))
+	changelog := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	if err := os.WriteFile(changelog, []byte("# nova-tools changelog\n\n## "+version+" — 2026-09-18\n\n- #1 x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	if code := Run("nova-update", []string{"pull", "--version", version, "--out", root,
+		"--changelog", changelog, "--platform", "linux-amd64", "--reason", "a test"},
+		&out, &errs, Deps{}); code != 0 {
+		t.Fatalf("code=%d errs=%s", code, errs.String())
+	}
+	if _, err := os.Stat(built); !os.IsNotExist(err) {
+		left, _ := os.ReadDir(built)
+		t.Fatalf("the artifact directory survived the pull, holding %v", left)
+	}
+}
+
 // buildSource is a --source that looks like a nova-tools checkout: three
 // cmd/nova-* directories and nothing else the build reads.
 func buildSource(t *testing.T) string {

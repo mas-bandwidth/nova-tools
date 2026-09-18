@@ -250,7 +250,8 @@ and `adopt --expect-sums-from <that file>` reads it there. The file is **local b
 `--expect-sums-from host:path` is refused by name, and no verb in this package ever asks a machine to
 hash anything — not `sha256sum`, not `shasum`, not `openssl dgst`. `SUMS.digest` is not listed in the
 `SHA256SUMS` it is the digest of, or its own value would depend on the last time the directory was
-built.
+built — and `pull` names it alongside the listed artifacts, because the `rmdir` that ends a pull
+refuses a directory that is not empty and one file this tool wrote itself must not be what stops it.
 
 Precedence when more than one is given: `--expect-sums` (a digest a person typed deliberately is a
 decision), then `--expect-sums-from`, then `--repo`.
