@@ -321,9 +321,9 @@ tree, built and tested there, and then opened as a single entry that carries the
 list of what is in it; the queue round lands the batch, and the members are closed
 with a pointer to it. What makes that affordable is asking first: `nova-merge
 simulate --repo <clone> --base <branch>` squash-merges the queue's entries in
-order in a scratch worktree, runs your checks after each one, and names the entry
-that was green alone and red on top of the entries ahead of it — the one a queue
-finds an hour later, and by then it has taken the others down with it. The other
+order in a scratch worktree, runs your checks after each successful merge, and
+reports the growing batch's first failing step while skipping conflicts. It does
+not separately prove that entry green on its own. The other
 half is upstream of the merge: a card that touches one area of the code declares a
 **lane** with a `LANE: <name>` line, and `nova-pulse fill` keeps at most one card
 per lane live at a time and holds the rest in order, so two workers do not spend an

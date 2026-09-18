@@ -737,12 +737,12 @@ The things a first run gets wrong, and what each one wants:
 nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
 ```
 
-`simulate` answers the one question a red merge queue asks: which entry is green
-on its own and red **on top of the entries ahead of it**. It fetches
-`origin/<base>`, makes a scratch worktree under the repository's own `.git` — never
-the system temp directory — squash-merges each entry's `pull/<n>/head` in queue
-order, and runs every check after each merge. The first entry whose checks fail is
-the poison, and the pass stops on it.
+`simulate` checks a queue as a growing batch. It fetches `origin/<base>`, makes a
+scratch worktree under the repository's own `.git` — never the system temp
+directory — squash-merges each entry's `pull/<n>/head` in queue order, and runs
+every check after each successful merge. A conflicting entry is reported and
+skipped. The pass stops at the first step whose configured checks fail; it does
+not separately prove that entry green on its own or identify a unique culprit.
 
 `--repo` is a local clone whose origin holds the queue's heads. `--entries` is a
 file of pull request numbers, one per line; with no `--entries` the queue itself is
@@ -765,10 +765,11 @@ SIMULATE DONE entries=<n> ok=<n> conflicts=<n> poison=<#n|none>
 A conflict is counted, the worktree is reset and the pass carries on, because an
 entry that will not merge is not the entry that turns the base red.
 
-**The exit codes are this verb's own, and they are the other way round.** Exit 2 is
-a poison this verb **found**; exit 1 is the verb that could not run at all. Every
-other nova-merge verb spends 2 on a bad invocation, but a tool that could not run is
-not a red queue, and the two answers must not share a number.
+Exit 0 means no configured check failed; conflicts, reported separately, do not
+change that result. Exit 2 means either a configured check failed or the invocation
+was invalid, including an empty `--checks`. Exit 1 is a preparation or runtime
+refusal. Read the `SIMULATE` output with the exit code to
+distinguish these cases; the code alone is not the whole result.
 
 ### rebase, react and classify — the lane's three ticks
 

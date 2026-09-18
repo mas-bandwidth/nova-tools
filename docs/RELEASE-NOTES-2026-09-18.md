@@ -19,10 +19,11 @@ merged tree before the batch was pushed.
 
 - **#1267** — **new verb `nova-merge simulate`**: squash-merges a queue's entries onto
   the base in order in a scratch worktree, runs every `--checks` command after each,
-  and names the entry that is green alone and red on top of the ones ahead of it;
-  exit 2 is a poison it *found*, exit 1 is the verb that could not run.
+  and reports the growing batch's first failing step while skipping conflicts;
+  exit 0 has no configured check failure, exit 2 is a check failure or invalid
+  invocation, and exit 1 is a preparation or runtime refusal.
 - **#1171** — **`nova-pulse cut` from a validated template**: `--issue`, `--rows` and
-  `--branch-from` beside `--pool`, with five checks — branch, base, `STEP 1`, row,
+  `--branch-from` beside `--pool`, with five checks — branch, base, `STEP 1`, slot,
   result — run before a byte is written, each refusing on its own line.
 - **#1076** — `nova-pulse fleet add` refuses a bench whose fleet-probe record is not
   all green, naming the runner that is not and the run it read (#875, red test first).

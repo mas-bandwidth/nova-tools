@@ -59,8 +59,8 @@ Pick the row that is your actual problem today. One tool is a fine number.
 - Land a **batch** rather than a pull request at a time: merge the candidates
   onto one tree, prove that tree green, and open the batch as one entry — and ask
   `nova-merge simulate` first, which squash-merges the queue in order in a scratch
-  worktree and names the entry that is green alone and red on top of the ones
-  ahead of it. Cards that touch the same area of the code declare a **lane**
+  worktree, checks the growing batch after each successful merge, and reports its
+  first failing step. Cards that touch the same area of the code declare a **lane**
   (`LANE: <name>`); `nova-pulse fill` keeps at most one card per lane live and
   holds the rest in order, which is what stops a batch from being a pile of
   conflicts.
