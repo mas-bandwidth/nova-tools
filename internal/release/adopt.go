@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -22,25 +23,55 @@ var machineName = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
 // receipt is read from what the remote SAID, never from its exit code: a shell
 // that could not find the binary exits non-zero for the same reason a disk that
 // filled up does, and only one of those is worth the same remedy.
-var installedLine = regexp.MustCompile(`RELEASE INSTALLED version=(\S+) tools=(\d+) skipped=(\d+)`)
+// retired= is optional in the match so that a receipt from an install that
+// predates it still parses; every install this verb runs is the one it just
+// sent, but a parser that needs a field to exist is a parser that turns one
+// added field into a fleet-wide refusal.
+var installedLine = regexp.MustCompile(`RELEASE INSTALLED version=(\S+) tools=(\d+) skipped=(\d+)(?: retired=(\d+))?`)
 
-// Machines reads the machine list: one name per line, blanks and `#` comments
-// skipped, every name checked before ssh is reached. The file is a flag because
-// the fleet is not a constant -- it was four benches, then five, and the day the
-// iMac Pro joined nothing in a tool should have needed editing.
-func Machines(r io.Reader) ([]string, error) {
-	var machines []string
+// Machines reads the machine list. MachinesShape is that format said once: one
+// machine per line, optionally followed by TAB-separated --bin and --dest
+// overrides for that machine, blanks and `#` comments skipped, every name
+// checked before ssh is reached. The file is a flag because the fleet is not a
+// constant -- it was four benches, then five, and the day the iMac Pro joined
+// nothing in a tool should have needed editing.
+func Machines(r io.Reader) ([]Machine, error) {
+	var machines []Machine
 	s := bufio.NewScanner(r)
 	for line := 1; s.Scan(); line++ {
-		name := strings.TrimSpace(s.Text())
-		if name == "" || strings.HasPrefix(name, "#") {
+		// Only the line ENDING is trimmed here, never the tabs: trimming the
+		// whole line first would turn "vision<TAB>" -- a column somebody meant
+		// to fill -- into a plain one-field line, and the refusal below would
+		// never fire. Each FIELD is trimmed after the split instead.
+		text := strings.TrimRight(s.Text(), "\r\n")
+		if trimmed := strings.TrimSpace(text); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if !machineName.MatchString(name) {
-			return nil, refuse("one machine name per line, letters, digits, dot, dash, underscore or @",
-				"line %d is not a machine name: %q", line, name)
+		// TAB-separated, like every other hand-written table in this estate
+		// (SPEC-UPDATE rule 2's manifest), so a path may carry a space.
+		fields := strings.Split(text, "\t")
+		if len(fields) > 3 {
+			return nil, refuse("a line is <name>, optionally TAB <bin>, optionally TAB <dest>",
+				"line %d has %d tab-separated fields: %s", line, len(fields), MachinesShape)
 		}
-		machines = append(machines, name)
+		m := Machine{Name: strings.TrimSpace(fields[0])}
+		if !machineName.MatchString(m.Name) {
+			return nil, refuse("one machine name per line, letters, digits, dot, dash, underscore or @",
+				"line %d is not a machine name: %q", line, m.Name)
+		}
+		// An empty override column is a column somebody meant to fill, and
+		// falling back to the flag would be falling back to exactly the thing
+		// they were overriding -- silently, onto a path on their machine.
+		for i, into := range []*string{nil, &m.Bin, &m.Dest} {
+			if i == 0 || len(fields) <= i {
+				continue
+			}
+			if *into = strings.TrimSpace(fields[i]); *into == "" {
+				return nil, refuse("fill the column or remove it",
+					"line %d leaves %s's column %d empty", line, m.Name, i+1)
+			}
+		}
+		machines = append(machines, m)
 	}
 	if err := s.Err(); err != nil {
 		return nil, err
@@ -50,6 +81,68 @@ func Machines(r io.Reader) ([]string, error) {
 			"the machine list names no machine")
 	}
 	return machines, nil
+}
+
+// remotePathShape is what may be interpolated into a command the far side's
+// shell will see. It is narrow on purpose (Johnny's security read, 2026-09-18):
+// `adopt` composes `mkdir -p <dest> && tar -C <dest> -xf -`, which the remote
+// shell parses, so a path carrying `;`, `&`, `|`, `$`, a backtick, a quote, a
+// redirect, a glob or a newline would not be a path, it would be a command. A
+// path is checked BEFORE any remote command is composed, never after.
+var remotePathShape = regexp.MustCompile(`^(/|~/)[A-Za-z0-9_.@/+-]*$`)
+
+// sha256Hex is the shape of a digest this host was handed out of band.
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// ValidRemotePath refuses anything that could be more than a path on the far
+// side. It also refuses a RELATIVE path, because the binary this verb runs
+// there must be named absolutely: a relative path resolves against whatever
+// directory the remote shell happens to start in, and a bare name would resolve
+// against $PATH -- which is how a machine ends up running a nova-update that is
+// not the one just verified and sent.
+func ValidRemotePath(what, p string) error {
+	remedy := "pass an absolute path, or one rooted at ~/, with no shell metacharacters"
+	if strings.TrimSpace(p) == "" {
+		return refuse(remedy, "%s is empty", what)
+	}
+	if !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "~/") {
+		return refuse(remedy, "%s %q is not absolute; the far side would resolve it against a directory or a $PATH nobody here chose", what, p)
+	}
+	if !remotePathShape.MatchString(p) {
+		return refuse(remedy, "%s %q carries a character the remote shell would read as syntax rather than as a path", what, p)
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return refuse(remedy, "%s %q climbs out of itself with ..", what, p)
+		}
+	}
+	return nil
+}
+
+// RemoteFrom splits a --from that names another machine, as `host:dir`.
+//
+// THIS IS THE ANSWER TO THE ONE THING THE DOGFOOD PASS COULD NOT DO. adopt was
+// written assuming it runs on the build host and fans out from there; on this
+// fleet it cannot, because no bench has ssh trust to any other bench -- only the
+// Studio does, and 3 of 3 machines refused with `Permission denied (publickey)`
+// (receipt 20260918T144929Z, rowan-child). The fix that needs NO NEW TRUST is
+// to run adopt from the host that already has it and let it read the artifacts
+// from the host that built them. A jump host (`ssh -J`) would not have helped:
+// -J forwards the connection but still authenticates to the target with the
+// CALLING host's key, so fanning out from hulk would still need hulk's key on
+// every bench -- new trust between benches, which is the thing we do not want,
+// and the Studio is Glenn's and not ours to hand out keys for.
+//
+// The host part must be a machine name of at least two characters, so a windows
+// path (`C:\releases`) reads as a local path rather than as a host called C.
+// That is the one ambiguity a colon introduces, resolved in favour of the local
+// path because it is the common case and the mistake is loud either way.
+func RemoteFrom(value string) (host, dir string, remote bool) {
+	before, after, found := strings.Cut(value, ":")
+	if !found || len(before) < 2 || after == "" || !machineName.MatchString(before) {
+		return "", value, false
+	}
+	return before, after, true
 }
 
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
@@ -66,7 +159,89 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "ADOPT", err)
 	}
-	local := ArtifactDir(o.from, o.version, goos, goarch)
+	// EVERY HOST AND PATH IS VALIDATED BEFORE ANY REMOTE COMMAND IS COMPOSED,
+	// not while it is being composed (Johnny, 2026-09-18). The names came from
+	// a file and the paths from flags; both are interpolated into a line the
+	// far side's shell parses, and a check that happens after the string is
+	// built is a check that has already lost.
+	for _, p := range []struct{ what, v string }{{"--bin", o.bin}, {"--dest", o.dest}, {"--retire", o.retire}} {
+		if p.v == "" {
+			continue
+		}
+		if err := ValidRemotePath(p.what, p.v); err != nil {
+			return refusal(errs, "ADOPT", err)
+		}
+	}
+	for _, m := range machines {
+		for _, p := range []struct{ what, v string }{{"the bin column", m.Bin}, {"the dest column", m.Dest}} {
+			if p.v == "" {
+				continue
+			}
+			if err := ValidRemotePath(p.what+" for "+m.Name, p.v); err != nil {
+				return refusal(errs, "ADOPT", err)
+			}
+		}
+	}
+	ssh := deps.SSH
+	if ssh == nil {
+		ssh = ExecSSH{Path: o.ssh}
+	}
+	// --from may name another machine. The artifacts are pulled ONCE into
+	// --stage and pushed from there, rather than streamed host-to-machine per
+	// machine: one fetch, one verification of what was fetched, and then every
+	// machine gets bytes this host has already checked.
+	fromHost, fromDir, remoteFrom := RemoteFrom(o.from)
+	localRoot := o.from
+	if remoteFrom {
+		if o.stage == "" {
+			return refusal(errs, "ADOPT", refuse("pass --stage <dir> to say where the fetched release lands",
+				"--from names the machine %s, so the release has to be fetched somewhere first", fromHost))
+		}
+		// THE DIGEST IS NOT ALLOWED TO TRAVEL WITH THE BITS. SHA256SUMS
+		// arriving from the build host proves only that the bits agree with a
+		// file that came from the same place; anybody who could change one
+		// could change the other. So a remote --from must be given the digest
+		// this host ALREADY HOLDS -- from the tag annotation or the CHANGELOG
+		// entry the cut wrote, which reached here through git rather than
+		// through the machine being read (Johnny, 2026-09-18).
+		if o.expectSums == "" {
+			return refusal(errs, "ADOPT", refuse(
+				"pass --expect-sums <sha256 of SHA256SUMS>, the digest the cut recorded in the tag or the CHANGELOG",
+				"--from names the machine %s, and a release fetched from a machine cannot be verified by the checksum file that came with it", fromHost))
+		}
+		if err := ValidRemotePath("--from's directory", fromDir); err != nil {
+			return refusal(errs, "ADOPT", err)
+		}
+		if !sha256Hex.MatchString(o.expectSums) {
+			return refusal(errs, "ADOPT", refuse("pass the 64 hex characters of `sha256sum SHA256SUMS`",
+				"--expect-sums %q is not a sha256", o.expectSums))
+		}
+		localRoot = o.stage
+		into := ArtifactDir(o.stage, o.version, goos, goarch)
+		if err := os.MkdirAll(into, 0o755); err != nil {
+			return refusal(errs, "ADOPT", fmt.Errorf("cannot create %s: %w (name a writable --stage)", into, err))
+		}
+		remoteArtifacts := path.Join(fromDir, o.version, goos+"-"+goarch)
+		progress(errs, "fetching %s from %s:%s", o.version, fromHost, remoteArtifacts)
+		if output, err := ssh.Fetch(ctx, fromHost, remoteArtifacts, into); err != nil {
+			return refusal(errs, "ADOPT", fmt.Errorf("cannot fetch %s from %s: %s (check `ssh %s` reaches it and that %s holds this release)", remoteArtifacts, fromHost, oneLine(output, err), fromHost, fromDir))
+		}
+		// Checked BEFORE the checksum file is so much as read, so nothing
+		// this host does downstream is steered by a file it has not vouched
+		// for. Both digests are named: which one is wrong is the whole
+		// question, and a refusal that shows one of them cannot answer it.
+		got, err := fileSum(filepath.Join(into, SumsFile))
+		if err != nil {
+			return refusal(errs, "ADOPT", fmt.Errorf("cannot read the fetched %s: %w (the fetch did not bring a checksum file)", SumsFile, err))
+		}
+		if got != o.expectSums {
+			return refusal(errs, "ADOPT", refuse(
+				"do not adopt this release; the bits on that machine are not the bits that were cut",
+				"the %s fetched from %s has digest %s, but the release %s was cut with digest %s", SumsFile, fromHost, got, o.version, o.expectSums))
+		}
+		progress(errs, "the fetched %s matches the digest %s was cut with", SumsFile, o.version)
+	}
+	local := ArtifactDir(localRoot, o.version, goos, goarch)
 	arts, err := ReadSums(local)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -74,6 +249,13 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout> --platform %s-%s", o.version, o.from, goos, goarch),
 				"there is nothing to adopt: no %s for %s at %s", o.version, goos+"-"+goarch, local))
 		}
+		return refusal(errs, "ADOPT", err)
+	}
+	// VERIFIED HERE TOO, not only on each machine. A truncated fetch caught
+	// once on this host is one refusal; caught on each machine it is four, and
+	// the fleet is left in four different states while somebody reads them.
+	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
+	if err := VerifyArtifacts(local, arts); err != nil {
 		return refusal(errs, "ADOPT", err)
 	}
 	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote
@@ -96,27 +278,38 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "ADOPT", refuse("build from a checkout that has cmd/nova-update",
 			"this release carries no %s, so no machine could run the install", updateFile))
 	}
-	ssh := deps.SSH
-	if ssh == nil {
-		ssh = ExecSSH{Path: o.ssh}
-	}
-	// Remote paths are slash paths whatever this host is: a release cut on the
-	// Studio installs onto Linux benches, and filepath.Join on darwin would be
-	// right by accident and on windows wrong on purpose.
-	remoteDir := path.Join(o.dest, o.version, goos+"-"+goarch)
 	adopted, refused := 0, 0
-	for _, machine := range machines {
+	for _, entry := range machines {
+		machine := entry.Name
+		// The file's columns win over the flags, for this machine only: the
+		// fleet has three home directories and one of them is the odd one out.
+		bin, dest := o.bin, o.dest
+		if entry.Bin != "" {
+			bin = entry.Bin
+		}
+		if entry.Dest != "" {
+			dest = entry.Dest
+		}
+		// Remote paths are slash paths whatever this host is: a release
+		// adopted from the Studio lands on Linux benches, and filepath.Join
+		// on darwin would be right by accident and on windows wrong on
+		// purpose. A leading ~ is left alone for the remote shell to expand,
+		// which is how one --bin names three different home directories.
+		remoteDir := path.Join(dest, o.version, goos+"-"+goarch)
 		progress(errs, "sending %s to %s:%s", o.version, machine, remoteDir)
 		if output, err := ssh.Send(ctx, machine, local, path.Dir(remoteDir)); err != nil {
 			refused++
-			fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (check `ssh %s` reaches it and that %s is writable there)\n",
-				field(machine), field(o.version), oneLine(output, err), machine, o.dest)
+			fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (check `ssh %s` reaches it and that %s is writable there; adopt runs from the host that has ssh to every machine)\n",
+				field(machine), field(o.version), oneLine(output, err), machine, dest)
 			continue
 		}
 		argv := []string{
 			path.Join(remoteDir, updateFile), "release", "install",
-			"--from", o.dest, "--version", o.version, "--bin", o.bin,
+			"--from", dest, "--version", o.version, "--bin", bin,
 			"--platform", goos + "-" + goarch,
+		}
+		if o.retire != "" {
+			argv = append(argv, "--retire", o.retire)
 		}
 		progress(errs, "installing on %s", machine)
 		output, err := ssh.Run(ctx, machine, argv)
@@ -140,8 +333,12 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			continue
 		}
 		adopted++
-		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s bin=%s\n",
-			field(machine), field(o.version), field(m[2]), field(m[3]), field(o.bin))
+		retired := m[4]
+		if retired == "" {
+			retired = "0"
+		}
+		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s retired=%s bin=%s\n",
+			field(machine), field(o.version), field(m[2]), field(m[3]), field(retired), field(bin))
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
