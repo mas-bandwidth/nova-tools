@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/board"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // --------------------------------------------------------------------------------- 3
@@ -499,6 +500,7 @@ func fakeGH(t *testing.T) (store, argv string) {
 		prog += ".exe"
 	}
 	build := exec.Command("go", "build", "-o", prog, "./testdata/fakegh/main.go")
+	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the fake gh: %v\n%s", err, out)
 	}
@@ -750,7 +752,9 @@ func buildBoard(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		prog += ".exe"
 	}
-	if out, err := exec.Command("go", "build", "-o", prog, ".").CombinedOutput(); err != nil {
+	build := exec.Command("go", "build", "-o", prog, ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building nova-board: %v\n%s", err, out)
 	}
 	return prog

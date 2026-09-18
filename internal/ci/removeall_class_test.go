@@ -141,18 +141,6 @@ func removeAllFuncName(fn *ast.FuncDecl) string {
 	return fn.Name.Name
 }
 
-func receiverName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.StarExpr:
-		return receiverName(t.X)
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr:
-		return receiverName(t.X)
-	}
-	return "?"
-}
-
 // mkdirTempVars is the set of identifiers in fn assigned from os.MkdirTemp. The
 // allowlist rule names exactly these: a temp dir the same function made is the
 // only raw os.RemoveAll this repository permits.

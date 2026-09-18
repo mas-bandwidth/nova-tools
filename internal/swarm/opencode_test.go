@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS ACTUALLY WRITES (rule 12, rule 13).
@@ -27,6 +29,7 @@ func fakeSQLite3(t *testing.T) string {
 		bin += ".exe"
 	}
 	cmd := exec.Command("go", "build", "-o", bin, "./testdata/fakesqlite")
+	cmd.Env = goenv.Clean(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building the fake sqlite3: %v\n%s", err, out)
 	}

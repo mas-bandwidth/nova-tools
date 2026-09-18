@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE CONTRACT TESTS. Every one of them runs against the FAKE HARNESS binary on PATH,
@@ -234,6 +236,7 @@ func buildWith(into, name, pkg string, tags ...string) (string, error) {
 	}
 	cmd := exec.Command("go", args...)
 	cmd.Dir = root
+	cmd.Env = goenv.Clean(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("building %s: %v\n%s", pkg, err, out)
 	}

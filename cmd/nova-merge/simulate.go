@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -366,6 +367,11 @@ func runCheck(dir, check string, timeout time.Duration) (string, error) {
 	name, args := shellCommand(check)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	// The checks are go commands -- defaultChecks is `go build ./...,go test
+	// ./internal/ci/` -- and SIMULATE POISON quotes the first line of what they
+	// print. A caller's GOFLAGS=-json, which CI's `make test` exports, would make
+	// that first line a JSON object instead of the failure a reader needs.
+	cmd.Env = goenv.Clean(os.Environ())
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
