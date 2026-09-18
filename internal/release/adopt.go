@@ -257,21 +257,47 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// THE DIGEST IS NOT ALLOWED TO TRAVEL WITH THE BITS. SHA256SUMS
 		// arriving from the build host proves only that the bits agree with a
 		// file that came from the same place; anybody who could change one
-		// could change the other. So a remote --from must be given the digest
-		// this host ALREADY HOLDS -- from the tag annotation or the CHANGELOG
-		// entry the cut wrote, which reached here through git rather than
-		// through the machine being read (Johnny, 2026-09-18).
-		if o.expectSums == "" {
+		// could change the other. So a remote --from is checked against a
+		// digest this host got some OTHER way -- the tag object the cut
+		// annotated, or the CHANGELOG entry it wrote, both of which reached
+		// here through git rather than through the machine being read
+		// (Johnny, 2026-09-18).
+		//
+		// --repo is the way that needs no transcription (decision 2, #1337): a
+		// tag object is a git object, and its `sums=` line is the digest the
+		// release was cut with. --expect-sums stays for a release cut before
+		// the tags were annotated, and WINS when both are given -- a digest a
+		// person typed deliberately is a decision, not a default.
+		expectSums, sumsFrom := o.expectSums, "--expect-sums"
+		if expectSums == "" && o.repo != "" {
+			forge := deps.Forge
+			if forge == nil {
+				forge = NewGH(o.timeout)
+			}
+			progress(errs, "reading the %s tag object on %s for the digest it was cut with", o.version, o.repo)
+			message, err := forge.TagMessage(ctx, o.repo, o.version)
+			if err != nil {
+				return refusal(errs, "ADOPT", fmt.Errorf("cannot read the %s tag of %s: %w", o.version, o.repo, err))
+			}
+			if expectSums = SumsInAnnotation(message); expectSums == "" {
+				return refusal(errs, "ADOPT", refuse(
+					"pass --expect-sums <sha256 of SHA256SUMS> from that release's CHANGELOG entry",
+					"the %s tag of %s carries no %s<digest> line, so that release was cut without one", o.version, o.repo, AnnotationSumsPrefix))
+			}
+			sumsFrom = "the " + o.version + " tag object of " + o.repo
+			progress(errs, "the %s tag says this release was cut with %s", o.version, expectSums)
+		}
+		if expectSums == "" {
 			return refusal(errs, "ADOPT", refuse(
-				"pass --expect-sums <sha256 of SHA256SUMS>, the digest the cut recorded in the tag or the CHANGELOG",
+				"pass --repo <owner/name> to read the digest off the tag the cut annotated, or --expect-sums <sha256 of SHA256SUMS> to name it outright",
 				"--from names the machine %s, and a release fetched from a machine cannot be verified by the checksum file that came with it", fromHost))
 		}
 		if err := ValidRemotePath("--from's directory", fromDir); err != nil {
 			return refusal(errs, "ADOPT", err)
 		}
-		if !sha256Hex.MatchString(o.expectSums) {
+		if !sha256Hex.MatchString(expectSums) {
 			return refusal(errs, "ADOPT", refuse("pass the 64 hex characters of `sha256sum SHA256SUMS`",
-				"--expect-sums %q is not a sha256", o.expectSums))
+				"the digest from %s, %q, is not a sha256", sumsFrom, expectSums))
 		}
 		localRoot = o.stage
 		into := ArtifactDir(o.stage, o.version, goos, goarch)
@@ -291,10 +317,10 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if err != nil {
 			return refusal(errs, "ADOPT", fmt.Errorf("cannot read the fetched %s: %w (the fetch did not bring a checksum file)", SumsFile, err))
 		}
-		if got != o.expectSums {
+		if got != expectSums {
 			return refusal(errs, "ADOPT", refuse(
 				"do not adopt this release; the bits on that machine are not the bits that were cut",
-				"the %s fetched from %s has digest %s, but the release %s was cut with digest %s", SumsFile, fromHost, got, o.version, o.expectSums))
+				"the %s fetched from %s has digest %s, but %s says the release %s was cut with digest %s", SumsFile, fromHost, got, sumsFrom, o.version, expectSums))
 		}
 		progress(errs, "the fetched %s matches the digest %s was cut with", SumsFile, o.version)
 	}

@@ -395,15 +395,16 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--dry-run] [--timeout <d>]
+nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 nova-update help
 ```
 
-Those nine usage lines are the string `nova-update help` prints, byte for byte: one string
-in the binary, so the spec and the help cannot drift apart; the four `release` lines are
+Those ten usage lines are the string `nova-update help` prints, byte for byte: one string
+in the binary, so the spec and the help cannot drift apart; the five `release` lines are
 `release.Verbs`, spliced into that one string rather than copied beside it. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
@@ -425,15 +426,24 @@ inside one nested `ssh` quoting, so when four benches ran six-hour-old tools whi
 coordinator believed they were current, nothing in the loop could say which step had not
 happened.
 
-Four verbs, and each one can refuse:
+Five verbs, and each one can refuse. Three of the refusals are gates rather than steps, and
+[SPEC-RELEASE.md](SPEC-RELEASE.md) is where they are written out for a person who is not
+reading the Go: the sensitive-path list `cut` classifies against, what the annotated tag
+carries, and what `pull` deletes.
 
 - **`cut`** resolves `--from` on the forge, reads every check run on that commit, and
   REFUSES unless all of them completed and none failed — a commit no run has judged is not
   green either. It then reads the highest existing version tag, compares it to the head,
-  writes a new `--changelog` section from the pull requests merged since (their numbers,
-  their titles, and for an integration batch the members named in its own body, so a batch
-  does not hide ten pieces of work behind one number), creates the tag, and prints
-  `RELEASE CUT version=… sha=… prs=…`. `--dry-run` decides everything and writes nothing.
+  **classifies the range against the sensitive path list** (SPEC-RELEASE §1: a range that
+  touches one of those prefixes, or that is too big for the forge to list, refuses until
+  `--security-read` names Johnny's read, and then says so on a
+  `RELEASE CUT SENSITIVE paths=… read=…` line), writes a new `--changelog` section from the
+  pull requests merged since (their numbers, their titles, and for an integration batch the
+  members named in its own body, so a batch does not hide ten pieces of work behind one
+  number), creates the tag — **annotated**, its message carrying `sums=<digest of
+  SHA256SUMS>` when `--sums` names one (SPEC-RELEASE §2) — and prints
+  `RELEASE CUT version=… sha=… prs=…`. `--dry-run` decides everything, including both
+  refusals, and writes nothing.
   A version that could not survive `-X main.version=`, a printf format or the field law —
   whitespace, `%`, `=` — is refused here, the same refusal
   `.github/scripts/release-ldflags.sh` makes for the same reasons.
@@ -453,6 +463,12 @@ Four verbs, and each one can refuse:
   receipt per machine, read from what the remote SAID and not from its exit code, or one
   `RELEASE REFUSED machine=… : <cause> (<remedy>)`, and a final count. Exit 1 if any
   machine refused: the other machines are still reported.
+- **`pull`** withdraws a release that should never have shipped (SPEC-RELEASE §3): the
+  release's own files, by name, deleted from `--out` here and from `--dest` on every machine
+  in `--machines`, one `RELEASE PULLED machine=…` receipt each. **The tag stays** — a tag
+  that vanishes is a history that cannot be read — and the `--changelog` section is marked
+  pulled with the date and `--reason` instead. Nothing recursive, nothing that was not in
+  that release's `SHA256SUMS`, and no installed binary touched.
 
 ### Where adopt runs, and why it is not the build host
 

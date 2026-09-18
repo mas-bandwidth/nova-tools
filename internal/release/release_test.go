@@ -23,13 +23,22 @@ import (
 // ---------------------------------------------------------------------------
 
 type fakeForge struct {
-	head     map[string]string
-	checks   map[string][]CheckRun
-	tags     []string
-	commits  map[string][]Commit
-	tagged   []string
-	failTag  error
-	failHead error
+	head    map[string]string
+	checks  map[string][]CheckRun
+	tags    []string
+	commits map[string][]Commit
+	// files is what the compare endpoint names as touched, keyed the same way
+	// as commits: `cut` classifies the range against the sensitive list and
+	// the list of paths is the only input to that decision.
+	files  map[string][]string
+	tagged []string
+	// messages is the annotation each tag OBJECT carries, keyed by tag: a
+	// lightweight ref carries none, and the whole point of decision 2 is that
+	// this map is not empty.
+	messages  map[string]string
+	failTag   error
+	failHead  error
+	failFiles error
 }
 
 func (f *fakeForge) HeadSHA(_ context.Context, _, branch string) (string, error) {
@@ -49,12 +58,29 @@ func (f *fakeForge) Tags(_ context.Context, _ string) ([]string, error) { return
 func (f *fakeForge) Compare(_ context.Context, _, base, head string) ([]Commit, error) {
 	return f.commits[base+"..."+head], nil
 }
-func (f *fakeForge) Tag(_ context.Context, _, tag, sha string) error {
+func (f *fakeForge) Files(_ context.Context, _, base, head string) ([]string, error) {
+	if f.failFiles != nil {
+		return nil, f.failFiles
+	}
+	return f.files[base+"..."+head], nil
+}
+func (f *fakeForge) Tag(_ context.Context, _, tag, sha, message string) error {
 	if f.failTag != nil {
 		return f.failTag
 	}
 	f.tagged = append(f.tagged, tag+" "+sha)
+	if f.messages == nil {
+		f.messages = map[string]string{}
+	}
+	f.messages[tag] = message
 	return nil
+}
+func (f *fakeForge) TagMessage(_ context.Context, _, tag string) (string, error) {
+	message, ok := f.messages[tag]
+	if !ok {
+		return "", fmt.Errorf("no tag object for %s", tag)
+	}
+	return message, nil
 }
 
 type fakeToolchain struct {
@@ -898,12 +924,12 @@ func TestAForgeReadThatFillsTheCeilingSaysSoRatherThanKilled(t *testing.T) {
 // the verb itself
 // ---------------------------------------------------------------------------
 
-func TestReleaseRefusesAnUnknownSubverbAndNamesTheFour(t *testing.T) {
+func TestReleaseRefusesAnUnknownSubverbAndNamesTheFive(t *testing.T) {
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"ship"}, &o, &e, Deps{}); code != 2 {
 		t.Fatal(code)
 	}
-	for _, verb := range []string{"cut", "build", "install", "adopt"} {
+	for _, verb := range []string{"cut", "build", "install", "adopt", "pull"} {
 		if !strings.Contains(e.String(), verb) {
 			t.Fatalf("the refusal does not name %s: %s", verb, e.String())
 		}
@@ -1219,6 +1245,21 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 	for _, s := range []string{"one machine per line", "TAB", "user@host", "expands a leading ~", "host:dir", "--retire"} {
 		if !strings.Contains(o.String(), s) {
 			t.Errorf("the help does not carry %q:\n%s", s, o.String())
+		}
+	}
+	// And the three gates (Johnny's decisions on SPEC-RELEASE, #1337), because
+	// a gate a person meets as a refusal and not as a sentence in the help is a
+	// gate they meet at the worst moment.
+	for _, s := range []string{"--security-read", "RELEASE CUT SENSITIVE", "sums=", "THE TAG STAYS"} {
+		if !strings.Contains(o.String(), s) {
+			t.Errorf("the help does not carry %q:\n%s", s, o.String())
+		}
+	}
+	// The sensitive list is COMPOSED into the help from the one list, so the
+	// help cannot fall behind the gate.
+	for _, prefix := range SensitivePaths {
+		if !strings.Contains(o.String(), prefix) {
+			t.Errorf("the help does not name the sensitive path %q:\n%s", prefix, o.String())
 		}
 	}
 }
@@ -1786,7 +1827,7 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 // question. It prints the verb's own usage, and exits 0 because asking for
 // help is not an error.
 func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
-	for _, verb := range []string{"cut", "build", "install", "adopt"} {
+	for _, verb := range []string{"cut", "build", "install", "adopt", "pull"} {
 		for _, flagSpelling := range []string{"--help", "-h"} {
 			t.Run(verb+" "+flagSpelling, func(t *testing.T) {
 				var o, e bytes.Buffer
@@ -1800,7 +1841,7 @@ func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
 				if !strings.Contains(o.String(), "nova-update release "+verb+" ") {
 					t.Fatalf("%s's usage is not what was printed:\n%s", verb, o.String())
 				}
-				// ONE verb's usage, not all four: the person asked about one.
+				// ONE verb's usage, not all five: the person asked about one.
 				if strings.Count(o.String(), "nova-update release ") != 1 {
 					t.Fatalf("%s --help printed more than its own line:\n%s", verb, o.String())
 				}

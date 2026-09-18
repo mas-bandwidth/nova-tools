@@ -13,18 +13,29 @@ import (
 )
 
 // Verbs is the usage block `nova-update help` prints for this verb, and the same
-// four lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
+// five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
 // release cut from a laptop and a release cut from a bench are the same release.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
+
+// CutNote is the gate in front of a tag, said where a person will meet it
+// (Johnny's decision 1 on SPEC-RELEASE, #1337). It is a var rather than a const
+// because it names the list, and the list has ONE home: composing this from
+// SensitivePaths is why the help cannot fall behind the gate.
+var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
+	"(" + SensitiveShape + "). A range that touches one of them, or that is too big for the forge to list, REFUSES until --security-read names Johnny's read -- a note id or the url of his comment -- " +
+	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
+	"The tag is annotated, and the annotation carries `sums=<sha256 of SHA256SUMS>` when --sums names the built checksum file, which is the digest `adopt --repo` reads back."
 
 // AdoptNote is what a person needs before their first adopt, and every sentence
 // of it is something the first dogfood pass had to find out by failing.
 const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fans out from there; it never needs the machines to reach each other. " +
-	"When the release was built elsewhere, --from may name that machine as host:dir, --stage <dir> says where to fetch it first, and --expect-sums <sha256> is the digest the cut recorded -- a release fetched from a machine is never verified by the checksum file that came with it. " +
+	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
+	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, or --expect-sums <sha256> names it outright. " +
 	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
 	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
 	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
@@ -43,11 +54,11 @@ type Deps struct {
 	VersionOf func(ctx context.Context, path string) (string, error)
 }
 
-// options are every flag the four verbs take, in one struct, because the four
-// share --version, --from and --timeout and a reader should see that once.
+// options are every flag the five verbs take, in one struct, because they share
+// --version, --from and --timeout and a reader should see that once.
 type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
-	stage, retire, expectSums, sums                                                 string
+	stage, retire, expectSums, sums, securityRead, reason                           string
 	platforms                                                                       platformList
 	dryRun                                                                          bool
 	timeout                                                                         time.Duration
@@ -106,18 +117,20 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		deps.Now = time.Now
 	}
 	if len(args) == 0 {
-		return refusal(errs, "RELEASE", fmt.Errorf("a release verb is required: cut, build, install or adopt (run %s help)", name))
+		return refusal(errs, "RELEASE", fmt.Errorf("a release verb is required: cut, build, install, adopt or pull (run %s help)", name))
 	}
 	verb := args[0]
 	args = args[1:]
 	switch verb {
-	case "cut", "build", "install", "adopt":
+	case "cut", "build", "install", "adopt", "pull":
 	case "help", "--help", "-h":
 		fmt.Fprintln(out, Verbs)
+		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, AdoptNote)
+		fmt.Fprintln(out, PullNote)
 		return 0
 	default:
-		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %s (use cut, build, install or adopt)", verb))
+		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %s (use cut, build, install, adopt or pull)", verb))
 	}
 	o := options{timeout: 10 * time.Minute}
 	f := flag.NewFlagSet("release "+verb, flag.ContinueOnError)
@@ -134,7 +147,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.from, "from", "", "branch")
 		f.StringVar(&o.changelog, "changelog", "", "CHANGELOG.md path")
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
-		f.StringVar(&o.sums, "sums", "", "a built SHA256SUMS whose digest the section records")
+		f.StringVar(&o.sums, "sums", "", "a built SHA256SUMS whose digest the section and the tag record")
+		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of Johnny's read, required when the range touches a sensitive path")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "artifact root")
@@ -155,6 +169,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
 		f.StringVar(&o.stage, "stage", "", "where to fetch a host:dir --from to")
 		f.StringVar(&o.expectSums, "expect-sums", "", "sha256 of SHA256SUMS, as the cut recorded it")
+		f.StringVar(&o.repo, "repo", "", "owner/name, to read that digest off the annotated tag instead")
 		f.StringVar(&o.retire, "retire", "", "second directory on each machine to clear")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
 		f.BoolVar(&o.dryRun, "dry-run", false, "probe every machine and stream nothing")
@@ -163,6 +178,19 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// the directory already says. Two releases there is the case where a
 		// guess would be wrong, and it refuses naming both.
 		required = []string{"from", "bin", "machines", "ssh", "dest"}
+	case "pull":
+		f.StringVar(&o.out, "out", "", "artifact root holding the release to withdraw")
+		f.StringVar(&o.changelog, "changelog", "", "CHANGELOG.md path; its section is marked pulled")
+		f.StringVar(&o.machines, "machines", "", MachinesShape)
+		f.StringVar(&o.ssh, "ssh", "", "the ssh binary")
+		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
+		f.StringVar(&o.reason, "reason", "", "why it was withdrawn; it goes in the changelog")
+		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
+		f.BoolVar(&o.dryRun, "dry-run", false, "say what would be deleted and delete nothing")
+		// --machines is OPTIONAL and the three fleet flags go together: a
+		// release that never left this host is pulled from this host alone,
+		// and the verb should not demand a machine list to say so.
+		required = []string{"version", "out", "changelog"}
 	}
 	token := strings.ToUpper(verb)
 	if err := f.Parse(args); err != nil {
@@ -174,8 +202,13 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// because asking is not an error.
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(out, VerbUsage(verb))
-			if verb == "adopt" {
+			switch verb {
+			case "cut":
+				fmt.Fprintln(out, CutNote)
+			case "adopt":
 				fmt.Fprintln(out, AdoptNote)
+			case "pull":
+				fmt.Fprintln(out, PullNote)
 			}
 			return 0
 		}
@@ -213,6 +246,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		return build(ctx, o, deps, out, errs)
 	case "install":
 		return install(ctx, o, deps, out, errs)
+	case "pull":
+		return pull(ctx, o, deps, out, errs)
 	default:
 		return adopt(ctx, o, deps, out, errs)
 	}
