@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,27 +36,38 @@ type benchRow struct {
 	secs  float64
 }
 
-// readRecord reads the file into its bench sections. A row outside any bench
-// section is REPORTED rather than ignored: the file is hand-edited, and a table
-// that drifted above the first heading is a measurement nothing is holding.
-func readRecord(t *testing.T) (rows []benchRow, benches []string, loose []string) {
-	t.Helper()
-	raw, err := os.ReadFile(durationsPath())
-	if err != nil {
-		t.Fatalf("the recorded durations are missing: %v", err)
-	}
-	bench := ""
-	for _, line := range strings.Split(string(raw), "\n") {
+// benchSection is one `## Bench:` section: its heading, the platform and budget
+// factor read out of that heading, and its package rows.
+type benchSection struct {
+	heading  string
+	platform string  // the `<goos>/<goarch>` the heading names, "" when it names none
+	budget   bool    // marked [budget]
+	factor   float64 // the heading's `budget-factor:`, 1 when it states none
+	rows     []benchRow
+}
+
+// parseRecord splits the record's TEXT into its bench sections. It takes text
+// rather than a path so the shapes below can be pinned against a record written
+// out in the test, which is the only way to prove what the parser does with a
+// heading the real file does not happen to carry today.
+//
+// A row outside any bench section is REPORTED rather than ignored: the file is
+// hand-edited, and a table that drifted above the first heading is a measurement
+// nothing is holding.
+func parseRecord(text string) (benches []benchSection, loose []string, err error) {
+	cur := -1
+	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(line, benchHeading) {
-			bench = strings.TrimSpace(strings.TrimPrefix(line, benchHeading))
-			benches = append(benches, bench)
+			heading := strings.TrimSpace(strings.TrimPrefix(line, benchHeading))
+			benches = append(benches, benchSection{heading: heading, factor: 1})
+			cur = len(benches) - 1
 			continue
 		}
 		// Another TOP-LEVEL heading closes the bench's section, so a table
 		// written after one cannot be read as that bench's. A `###` inside the
 		// section -- the tests over five seconds -- does not close it.
 		if strings.HasPrefix(line, "## ") {
-			bench = ""
+			cur = -1
 			continue
 		}
 		// The table rows are `| <package> | <seconds> | <slowest test> |`; the
@@ -67,17 +79,51 @@ func readRecord(t *testing.T) (rows []benchRow, benches []string, loose []string
 			continue
 		}
 		pkg := strings.TrimSpace(cells[0])
-		secs, err := strconv.ParseFloat(strings.TrimSpace(cells[1]), 64)
-		if err != nil {
+		secs, perr := strconv.ParseFloat(strings.TrimSpace(cells[1]), 64)
+		if perr != nil {
 			continue
 		}
-		if bench == "" {
+		if cur < 0 {
 			loose = append(loose, pkg)
 			continue
 		}
-		rows = append(rows, benchRow{bench: bench, pkg: pkg, secs: secs})
+		benches[cur].rows = append(benches[cur].rows, benchRow{bench: benches[cur].heading, pkg: pkg, secs: secs})
+	}
+	return benches, loose, nil
+}
+
+// readRecord reads the file and parses it.
+func readRecord(t *testing.T) (rows []benchRow, benches []string, loose []string) {
+	t.Helper()
+	raw, err := os.ReadFile(durationsPath())
+	if err != nil {
+		t.Fatalf("the recorded durations are missing: %v", err)
+	}
+	sections, loose, perr := parseRecord(string(raw))
+	if perr != nil {
+		t.Fatalf("%s: %v", durationsPath(), perr)
+	}
+	for _, s := range sections {
+		benches = append(benches, s.heading)
+		rows = append(rows, s.rows...)
 	}
 	return rows, benches, loose
+}
+
+// budgetFor answers the ceiling a package total is judged against when the suite
+// is running on `platform`, and the bench that ceiling came from.
+//
+// TODAY IT IGNORES THE PLATFORM. The budget is the `[budget]` bench's sixty
+// seconds wherever the suite runs, which is why a Mac has no ceiling at all --
+// `cmd/nova-wake` at 62.9 s on the Air is over a minute and nothing reads it.
+// platform_budget_test.go is the red that says what this should answer instead.
+func budgetFor(benches []benchSection, platform string) (float64, benchSection, error) {
+	for _, b := range benches {
+		if strings.Contains(b.heading, budgetMark) {
+			return budgetSeconds, b, nil
+		}
+	}
+	return 0, benchSection{}, fmt.Errorf("no `%s … %s` section: the budget has to belong to a named bench", benchHeading, budgetMark)
 }
 
 // budgetBench is the one bench the budget is enforced against, refusing if the
