@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestFleetPlanReportsTheHandEditOverFakeSSH(t *testing.T) {
 	declared := hex.EncodeToString(sum[:])
 
 	module := t.TempDir()
-	manifest := `{"runner-1":{"path":"` + remote + `","sha256":"` + declared + `","witness":true,"content":"declared\n"}}`
+	manifest := `{"runner-1":{"path":` + strconv.Quote(remote) + `,"sha256":"` + declared + `","witness":true,"content":"declared\n"}}`
 	if err := os.WriteFile(filepath.Join(module, "files.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

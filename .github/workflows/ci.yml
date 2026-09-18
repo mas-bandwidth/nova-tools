@@ -1032,17 +1032,18 @@ jobs:
           t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
           echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 
-  terraform-validate:
-    # THE TERRAFORM TIER (SPEC-FLEET-KUBE, Part 1): fmt and validate the fleet
-    # module so a declaration that does not parse never reaches an apply. No
-    # apply runs in this card: the module is additive to a spare bench and the
-    # only thing this job proves is that the declaration is well-formed. It runs
-    # on the Linux space runners like the other CL-tier jobs; terraform is
-    # installed from the pinned release if the machine does not carry it, so no
-    # action needs to be trusted and the two-minute budget holds.
+  terraform-changes:
+    # THE PATH FILTER for the terraform tier, the same shape as lisp-changes:
+    # answer "did infra/terraform or this workflow move?" so the validate job
+    # does not run terraform for a change that cannot move the module. The
+    # answer is read by terraform-validate below; when it is false the job is
+    # skipped and ci-ok counts a skip as ok. Like lisp-changes it runs on one
+    # Linux runner and is a gate, not a check.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -1053,19 +1054,48 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: terraform, from the pinned release when the machine has none
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v terraform >/dev/null 2>&1; then
-            ver=1.9.8
-            tmp="$(mktemp -d)"
-            curl -fsSL "https://releases.hashicorp.com/terraform/${ver}/terraform_${ver}_linux_amd64.zip" -o "$tmp/terraform.zip"
-            unzip -o -q "$tmp/terraform.zip" -d "$tmp/bin"
-            echo "$tmp/bin" >> "$GITHUB_PATH"
-            export PATH="$tmp/bin:$PATH"
-          fi
-          terraform version
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          # A merge group has no pull_request payload, so paths-filter would fall
+          # back to diffing the group against the repository's DEFAULT branch
+          # (main) and report every dev commit as changed. base_sha is the branch
+          # the group was built on and sha is the group commit, so the diff is the
+          # group's own change; the same explicit base keeps a push honest.
+          base: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || '' }}
+          ref: ${{ github.sha }}
+          filters: |
+            changed:
+              - 'infra/terraform/**'
+              - '.github/workflows/ci.yml'
+
+  terraform-validate:
+    # THE TERRAFORM TIER (SPEC-FLEET-KUBE, Part 1): fmt and validate the fleet
+    # module so a declaration that does not parse never reaches an apply. No
+    # apply runs in this card: the module is additive to a spare bench and the
+    # only thing this job proves is that the declaration is well-formed.
+    #
+    # It runs on GitHub-hosted ubuntu-latest, NOT the self-hosted runners: those
+    # carry no terraform binary, and the previous attempt to fetch one inside the
+    # job made the check red in EVERY merge group on 2026-09-17, so every entry
+    # queued behind it inherited the failure for an hour. hashicorp/setup-terraform
+    # is pinned by commit sha like every other action here, and terraform_version
+    # is pinned, so the toolchain is the same on every run and needs no trust in a
+    # mutable tag. It only starts when terraform-changes saw infra/terraform or
+    # this workflow move; the two-minute ceiling is the CL law.
+    needs: terraform-changes
+    if: needs.terraform-changes.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.9.8"
+          # The wrapper only decorates output; off, so `terraform` is the binary
+          # itself and -chdir behaves exactly as it does locally.
+          terraform_wrapper: false
 
       - name: fmt
         # gofmt's shape, for HCL: fmt -check prints the files that would change
@@ -1133,11 +1163,15 @@ jobs:
             # lisp is gated on the path filter and is skipped when lisp/ and
             # docs/SPEC-WORK.md did not move; a skipped lisp is a pass. A red
             # lisp still blocks the merge.
+            # terraform-validate is gated on terraform-changes and is skipped
+            # when infra/terraform and this workflow did not move; a skipped
+            # terraform-validate is a pass, and a red one still blocks the merge.
             # test-hosted-merge runs only on the merge group's own commit, so a
             # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
+            [ "$job" = "terraform-validate" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-merge" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" != "merge_group" ] && continue
             bad=$((bad + 1))
