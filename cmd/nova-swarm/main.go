@@ -1035,8 +1035,8 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	return swarm.Triage(swarm.TriageInput{
 		Pool: p, Batch: *batch, Since: *since, All: *all, NoState: *noState, Max: *max,
-		Owed:      owedList,
-		Decide:    *decide, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
+		Owed:   owedList,
+		Decide: *decide, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		UsagePath: *usage,
 		Stdout:    stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})

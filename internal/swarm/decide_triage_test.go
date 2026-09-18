@@ -316,7 +316,7 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 		Pool: p, Max: 0, All: true,
 		Decide: true, Floor: 0.9, decideDo: withUsage,
 		UsagePath: customUsage,
-		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
 	})
 	if rc != 0 {
 		t.Fatalf("triage rc = %d, stderr: %s", rc, errOut.String())
@@ -375,7 +375,7 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 		Pool: p, Max: 0, All: true,
 		Decide: true, Floor: 0.9, decideDo: withUsage,
 		UsagePath: customUsage,
-		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
 	})
 	if rc2 != 0 {
 		t.Fatalf("second triage rc = %d", rc2)
@@ -401,7 +401,7 @@ func TestTriageDecideUsageOnFailure(t *testing.T) {
 		Pool: p, Max: 0, All: true,
 		Decide: true, Floor: 0.9, decideDo: failedCall,
 		UsagePath: usageFile,
-		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
 	})
 	if rc != 0 {
 		t.Fatalf("triage rc = %d", rc)
