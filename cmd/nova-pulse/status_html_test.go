@@ -63,7 +63,9 @@ func TestStatusHTMLWritesPageAndMetricsFromRunningProcesses(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("status --html exit = %d, want 0; stderr=%s", exit, stderr)
 	}
-	if want := "STATUS HTML wrote=" + out + " live=4 queue=1\n"; stdout != want {
+	// down= counts the benches that did not answer: a fleet partly unseen is not a fleet
+	// with nothing to do, and the one line says which of the two this is.
+	if want := "STATUS HTML wrote=" + out + " live=4 queue=1 down=0\n"; stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
 
