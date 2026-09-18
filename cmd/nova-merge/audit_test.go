@@ -58,6 +58,11 @@ var mergeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`,
 		`"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
+		// context, os/exec and syscall are simulate's: it runs each check as a child
+		// under a deadline, in its own process group, and none of them writes to a
+		// stream this package prints -- the child's output is captured and rendered
+		// through oneline.Escape before it reaches a line.
+		`"context"`, `"os/exec"`, `"syscall"`,
 		// net/url holds no writer of its own: Parse and String are pure string transforms,
 		// and the one use here strips a URL's userinfo so a token is never printed; the
 		// result is rendered through oneline.Field at its print site.
@@ -68,6 +73,7 @@ var mergeAudit = audit.Config{
 		// may be removed and returns an os error, which every caller renders through
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
 		// escape.
+		// safepath removes the scratch worktree this verb computed; it holds no writer.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
 	},
 	MinClassified: 60,

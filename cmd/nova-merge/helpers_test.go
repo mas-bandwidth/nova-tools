@@ -58,6 +58,9 @@ type lab struct {
 	work   string // a clone the test uses to make commits
 	lane   string
 	host   *merge.FakeHost
+	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
+	// gh of these tests, and it reaches nothing.
+	queue  QueueReader
 	now    time.Time
 	build  string
 	runner merge.Runner
@@ -278,6 +281,12 @@ func (l *lab) deps() Deps {
 			return l.remote
 		},
 		NewHost: func(string, time.Duration) merge.Host { return l.host },
+		NewQueue: func(string, time.Duration) QueueReader {
+			if l.queue != nil {
+				return l.queue
+			}
+			return nil
+		},
 		BuildID: func() string { return l.build },
 	}
 }
