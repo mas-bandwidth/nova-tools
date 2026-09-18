@@ -21,15 +21,25 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 )
 
 // Reactor is the stateful subscriber. sent remembers the rebase-wanted it already
 // published per head, so a republished dev-moved does not cut the same rebase twice.
+//
+// Events is the structured sink of SPEC-LOGS.md Part 2 (internal/log). It is the REACTOR's
+// half of the stream: one line per message it reacted to, whose KIND IS THE CHANNEL NAME
+// the message arrived on, so the vocabulary a LogQL query selects on is the vocabulary the
+// bus carries, and whose message says what the reactor did about it -- enqueue, skip, hold,
+// rebase-wanted, or nothing at all. A nil Events writes nothing, so every caller and every
+// test that predates this keeps its exact output.
 type Reactor struct {
 	RDB     *redis.Client
 	Forge   Forge
 	Enqueue func(ctx context.Context, pr int, head string) error
 	Log     io.Writer
+	Events  *novalog.Emitter
 
 	sent map[int]string
 }
@@ -60,7 +70,10 @@ func (r *Reactor) Handle(ctx context.Context, channel, payload string) error {
 	switch channel {
 	case ChannelCardDone:
 		// The recorder and the harvester consume the stream directly, as the card says;
-		// republishing card-done must not make the reactor do anything at all.
+		// republishing card-done must not make the reactor do anything at all. It is
+		// still emitted: "the reactor saw this and did nothing on purpose" is an answer,
+		// and a channel with no line at all reads as a reactor that was not listening.
+		r.reacted(channel, 0, "action=none reason=the recorder reads the stream directly")
 		return nil
 	case ChannelPRChecksDone:
 		return r.onChecksDone(ctx, payload)
@@ -85,6 +98,7 @@ func (r *Reactor) onChecksDone(ctx context.Context, payload string) error {
 	}
 	if skip {
 		r.line("REACT skip pr=%d head=%s reason=skip-set\n", e.Number, e.Head)
+		r.reacted(ChannelPRChecksDone, e.Number, "action=skip reason=skip-set head="+e.Head)
 		return nil
 	}
 	held, err := r.RDB.Exists(ctx, KeyEnqueueHold).Result()
@@ -93,12 +107,14 @@ func (r *Reactor) onChecksDone(ctx context.Context, payload string) error {
 	}
 	if held > 0 {
 		r.line("REACT hold pr=%d head=%s reason=hold-key\n", e.Number, e.Head)
+		r.reacted(ChannelPRChecksDone, e.Number, "action=hold reason=hold-key head="+e.Head)
 		return nil
 	}
 	if err := r.Enqueue(ctx, e.Number, e.Head); err != nil {
 		return fmt.Errorf("enqueue %d: %w", e.Number, err)
 	}
 	r.line("REACT enqueue pr=%d head=%s\n", e.Number, e.Head)
+	r.reacted(ChannelPRChecksDone, e.Number, "action=enqueue head="+e.Head)
 	return nil
 }
 
@@ -125,6 +141,7 @@ func (r *Reactor) onDevMoved(ctx context.Context, payload string) error {
 			return fmt.Errorf("publish %s: %w", ChannelRebaseWanted, err)
 		}
 		r.line("REACT rebase-wanted pr=%d head=%s base=%s\n", pr.Number, pr.Head, e.SHA)
+		r.reacted(ChannelDevMoved, pr.Number, "action=rebase-wanted head="+pr.Head+" base="+e.SHA)
 	}
 	return nil
 }
@@ -167,6 +184,19 @@ func (r *Reactor) RunOnce(ctx context.Context) error {
 		return err
 	}
 	return r.Handle(ctx, msg.Channel, msg.Payload)
+}
+
+// reacted is the structured half of every action above: one line whose kind is the channel
+// the message arrived on and whose message says what was done about it. A nil Events
+// emitter writes nothing (internal/log), so this costs a nil check on a quiet reactor.
+func (r *Reactor) reacted(channel string, pr int, msg string) {
+	if r.Events == nil {
+		return
+	}
+	l := r.Events.Line(channel)
+	l.PR = pr
+	l.Msg = msg
+	r.Events.Send(l)
 }
 
 // line writes one action line. A nil log discards it.

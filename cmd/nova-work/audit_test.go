@@ -26,6 +26,12 @@ var workAudit = audit.Config{
 	// same shape. It cannot return an unescaped string, so the tripwire counts it.
 	Escapers: []string{"oneline.Quote", "field"},
 	Imports: []string{
+		// internal/log holds the structured JSON line of SPEC-LOGS.md Part 2. It cannot
+		// write past the escape: its one writer is the sink the verb hands it, every
+		// field whose content comes from outside the program goes through oneline and
+		// then Redact inside Line.Write, and the object is rendered by log/slog's own
+		// JSON handler, which escapes a newline as \n rather than ending the line.
+		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 		// buildinfo answers which build this is; its Line renders every field through
 		// oneline.Field itself, and the version print site wraps the result in
 		// oneline.Escape so the tripwire sees the escape.

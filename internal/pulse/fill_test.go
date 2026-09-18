@@ -8,7 +8,9 @@ package pulse
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,3 +235,145 @@ func TestLaneTableReadsNames(t *testing.T) {
 		t.Fatalf("lane table = %v, want exactly two lanes", table)
 	}
 }
+
+// ---- fill-tick, the structured event ----
+//
+// The ready-card count was the second of the two numbers the fleet dashboard still read out
+// of the status page's metrics.tsv (#1326). It is an event now, emitted where it is known:
+// the tick that reads the ready directory. One fill-tick per bench per tick, carrying what
+// that bench took and what it could not take.
+
+// tickEvent is one fill-tick line, decoded.
+type tickEvent struct {
+	Source string `json:"source"`
+	Verb   string `json:"verb"`
+	Bench  string `json:"bench"`
+	Event  string `json:"event"`
+	Msg    string `json:"msg"`
+	Level  string `json:"level"`
+}
+
+func decodeTicks(t *testing.T, raw string) []tickEvent {
+	t.Helper()
+	var out []tickEvent
+	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var e tickEvent
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("a logged line is not one JSON object: %v\n%s", err, line)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// ONE FILL-TICK PER BENCH, with what it launched, what it held and what it refused, and the
+// ready count that is left when the tick ends.
+func TestFillEmitsOneTickPerBench(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "LANE: pulse\n")
+	writeCard(t, ready, "card-002.md", "LANE: pulse\n")   // held behind card-001
+	writeCard(t, ready, "card-003.md", "LANE: nowhere\n") // refused: no such lane
+	writeCard(t, ready, "card-004.md", "a card with no lane\n")
+	lanes := laneFile(t, dir, "pulse\tinternal/pulse/")
+
+	var events bytes.Buffer
+	em := novalog.NewEmitter(&events, "nova-pulse", "fill", "hulk")
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched, Lanes: lanes,
+		Benches:  []string{"bench-a", "bench-b"},
+		Machines: machinesFile(t, dir, []string{"bench-a", "bench-b"}, nil),
+		Once:     true,
+		Stdout:   &bytes.Buffer{},
+		Stderr:   &bytes.Buffer{},
+		Capacity: laneCap{"bench-a": 10, "bench-b": 10},
+		Launcher: &laneLauncher{},
+		Events:   em,
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0", code)
+	}
+
+	var ticks []tickEvent
+	for _, e := range decodeTicks(t, events.String()) {
+		if e.Event == "fill-tick" {
+			ticks = append(ticks, e)
+		}
+	}
+	if len(ticks) != 2 {
+		t.Fatalf("one fill-tick per bench, got %d", len(ticks))
+	}
+	for _, tk := range ticks {
+		if tk.Source != "nova-pulse" || tk.Verb != "fill" || tk.Bench != "hulk" {
+			t.Errorf("the labels a query selects on are wrong: %+v", tk)
+		}
+		for _, want := range []string{"bench=", "tick=1", "launched=", "held=", "refused=", "ready="} {
+			if !strings.Contains(tk.Msg, want) {
+				t.Errorf("fill-tick does not carry %q: %q", want, tk.Msg)
+			}
+		}
+	}
+	// bench-a is first in order, so it takes the launchable cards; card-002 is held
+	// behind card-001's lane and card-003 is refused for naming a lane the file does not.
+	if !strings.Contains(ticks[0].Msg, "bench=bench-a") {
+		t.Fatalf("the first tick is not the first bench: %q", ticks[0].Msg)
+	}
+	if !strings.Contains(ticks[0].Msg, "launched=2") {
+		t.Errorf("bench-a launched the lane's first card and the card with no lane: %q", ticks[0].Msg)
+	}
+	if !strings.Contains(ticks[0].Msg, "held=1") {
+		t.Errorf("card-002 is held behind card-001: %q", ticks[0].Msg)
+	}
+	if !strings.Contains(ticks[0].Msg, "refused=1") {
+		t.Errorf("card-003 names a lane the file does not: %q", ticks[0].Msg)
+	}
+	// THE READY COUNT IS THE PANEL'S NUMBER: what is still in the directory when the tick
+	// ends, which is the held card and the refused one.
+	if !strings.Contains(ticks[1].Msg, "ready=2") {
+		t.Errorf("the ready count is what is left in the directory: %q", ticks[1].Msg)
+	}
+}
+
+// A bench whose capacity could not be read is an event too, at WARN: a fleet whose fill
+// went quiet because ssh failed must not look like a fleet with nothing to do.
+func TestFillEmitsTheBenchItCouldNotRead(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "a card\n")
+	var events bytes.Buffer
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched, Lanes: laneFile(t, dir, "pulse\tinternal/pulse/"),
+		Benches:  []string{"bench-a"},
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
+		Once:     true,
+		Stdout:   &bytes.Buffer{},
+		Stderr:   &bytes.Buffer{},
+		Capacity: errCap{},
+		Launcher: &laneLauncher{},
+		Events:   novalog.NewEmitter(&events, "nova-pulse", "fill", "hulk"),
+	})
+	if code != 0 {
+		t.Fatalf("a bench that could not be read is a NOTE and not a refusal, got %d", code)
+	}
+	ticks := decodeTicks(t, events.String())
+	var warn *tickEvent
+	for i, e := range ticks {
+		if e.Event == "fill-tick" && e.Level == "WARN" {
+			warn = &ticks[i]
+		}
+	}
+	if warn == nil {
+		t.Fatalf("no WARN tick for the bench that could not be read: %q", events.String())
+	}
+	if !strings.Contains(warn.Msg, "capacity=unknown") {
+		t.Errorf("the tick does not say the capacity is unknown: %q", warn.Msg)
+	}
+}
+
+// errCap is a bench whose capacity cannot be read at all.
+type errCap struct{}
+
+func (errCap) Capacity(string) (int, error) { return 0, fmt.Errorf("ssh: connection refused") }

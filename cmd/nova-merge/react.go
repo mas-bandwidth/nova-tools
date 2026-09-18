@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -28,6 +29,9 @@ func cmdReact(args []string, stdout, stderr io.Writer, deps Deps) int {
 	deadline := f.fs.Int("deadline", 60, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	once := f.fs.Bool("once", false, "")
+	// The structured sink of SPEC-LOGS.md Part 2 (cmd/nova-merge/events.go).
+	logPath := f.fs.String("log", "", "")
+	bench := f.fs.String("bench", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -42,35 +46,49 @@ func cmdReact(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 
+	em, closeEvents, code := openEmitter("react", *bench, *logPath, stderr, deps)
+	if code != 0 {
+		return code
+	}
+	defer closeEvents()
+	started := time.Now()
+
 	rdb := deps.Dial(*addr)
 	defer rdb.Close()
 
 	var forge ci.Forge
 	if *lane != "" {
-		st, code := openLane("react", *lane, stderr)
+		st, laneCode := openLane("react", *lane, stderr)
 		if st == nil {
-			return code
+			refuseEvent(em, "react: the lane could not be opened", started, errors.New("no lane at the path given"))
+			return laneCode
 		}
 		forge = deps.Forge(st.Repo, st.Base, time.Duration(*timeout)*time.Second)
 	}
 
 	r := ci.NewReactor(rdb, forge, nil, stdout)
+	r.Events = em
+	em.Announce(log.EventStart, fmt.Sprintf("react: subscribed with deadline=%ds once=%t", *deadline, *once), 0, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*deadline)*time.Second)
 	defer cancel()
 
 	if *once {
 		if err := r.RunOnce(ctx); err != nil && !isDeadline(err) {
 			fmt.Fprintf(stderr, "REACT FAIL: %s\n", oneline.Err(err))
+			em.Announce(log.EventRefuse, "react: the subscription failed", time.Since(started), err)
 			return 1
 		}
 		fmt.Fprintf(stdout, "REACT OK once=true\n")
+		em.Announce(log.EventDone, "react: one message handled", time.Since(started), nil)
 		return 0
 	}
 	if err := r.Run(ctx); err != nil && !isDeadline(err) {
 		fmt.Fprintf(stderr, "REACT FAIL: %s\n", oneline.Err(err))
+		em.Announce(log.EventRefuse, "react: the subscription failed", time.Since(started), err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "REACT OK once=false deadline=%ds\n", *deadline)
+	em.Announce(log.EventDone, fmt.Sprintf("react: the reactor reached its deadline %ds", *deadline), time.Since(started), nil)
 	return 0
 }
 

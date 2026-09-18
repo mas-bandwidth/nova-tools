@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -44,13 +46,18 @@ func scanQueueArgs(args []string, known map[string]bool) (map[string]string, []s
 	return opts, pos, nil
 }
 
-func queueRefuse(stderr io.Writer, reason string) int {
+// queueRefuse is the queue's "could not run": one line on stderr, exit 2, and one refuse
+// event so a refusal is on the stream beside the reads that worked. The emitter may be the
+// provisional stderr one (see cmdQueue) when the line could not even be scanned.
+func queueRefuse(em *log.Emitter, stderr io.Writer, reason string) int {
 	fmt.Fprintf(stderr, "QUEUE REFUSED: %s\n", oneline.Escape(oneline.Cap(reason, oneline.TailBytes)))
+	emitErr(em, log.EventRefuse, "queue: the read was refused", errors.New(oneline.Cap(reason, oneline.TailBytes)))
 	return 2
 }
 
-func classifyRefuse(stderr io.Writer, reason string) int {
+func classifyRefuse(em *log.Emitter, stderr io.Writer, reason string) int {
 	fmt.Fprintf(stderr, "CLASSIFY REFUSED: %s\n", oneline.Escape(oneline.Cap(reason, oneline.TailBytes)))
+	emitErr(em, log.EventRefuse, "queue classify: the record was refused", errors.New(oneline.Cap(reason, oneline.TailBytes)))
 	return 2
 }
 
@@ -64,6 +71,11 @@ func hasInt(list []int, n int) bool {
 }
 
 func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
+	// THE PROVISIONAL EMITTER. The sink --log names is on the line this function has not
+	// scanned yet, and a line that cannot be scanned is still a refusal somebody must see
+	// on the stream; so the emitter starts on stderr -- which under systemd is the unit's
+	// journal -- and is replaced by the real one the moment the flags are read.
+	em := log.NewEmitter(stderr, sourceMerge, "queue", "")
 	// `classify` is the one subverb with a flag set of its own (--run, --verdict, --head,
 	// --note, --pr, --branch, --test), so it is taken off the line before the queue's own
 	// flags are scanned -- scanQueueArgs refuses a flag it does not know, and those are
@@ -78,14 +90,21 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if len(args) > 0 && args[0] == "audit" {
 		return cmdQueueAudit(auditArgsFor(args[1:]), stdout, stderr, deps)
 	}
-	known := map[string]bool{"lane": true, "timeout": true, "max": true, "who": true, "window": true}
+	known := map[string]bool{"lane": true, "timeout": true, "max": true, "who": true, "window": true,
+		"log": true, "bench": true}
 	opts, pos, err := scanQueueArgs(args, known)
 	if err != nil {
-		return queueRefuse(stderr, err.Error())
+		return queueRefuse(em, stderr, err.Error())
 	}
+	realEm, closeEvents, code := openEmitter("queue", opts["bench"], opts["log"], stderr, deps)
+	if code != 0 {
+		return code
+	}
+	defer closeEvents()
+	em = realEm
 	lane := opts["lane"]
 	if strings.TrimSpace(lane) == "" {
-		return queueRefuse(stderr, "--lane is required and is the lane's own directory; refusing to guess")
+		return queueRefuse(em, stderr, "--lane is required and is the lane's own directory; refusing to guess")
 	}
 	st, code := openLane("queue", lane, stderr)
 	if st == nil {
@@ -95,12 +114,12 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if raw, ok := opts["timeout"]; ok {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
-			return queueRefuse(stderr, fmt.Sprintf("--timeout is a number of seconds, got %q", raw))
+			return queueRefuse(em, stderr, fmt.Sprintf("--timeout is a number of seconds, got %q", raw))
 		}
 		timeout = time.Duration(n) * time.Second
 	}
 	if len(pos) == 0 {
-		return queueRefuse(stderr, "queue wants one of hold, release, skip, unskip, front, sweep, classify, audit: "+
+		return queueRefuse(em, stderr, "queue wants one of hold, release, skip, unskip, front, sweep, classify, audit: "+
 			`nova-merge queue --lane <dir> hold "<reason>" | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration> | classify --run <id> --verdict <verdict>`)
 	}
 	sub, rest := pos[0], pos[1:]
@@ -108,7 +127,7 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	case "hold":
 		reason := strings.TrimSpace(strings.Join(rest, " "))
 		if reason == "" {
-			return queueRefuse(stderr, `a hold wants a reason; a hold nobody can read is not a hold: nova-merge queue hold "<reason>"`)
+			return queueRefuse(em, stderr, `a hold wants a reason; a hold nobody can read is not a hold: nova-merge queue hold "<reason>"`)
 		}
 		by := opts["who"]
 		if by == "" {
@@ -116,26 +135,30 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 		}
 		release, err := merge.Lock(filepath.Join(lane, merge.StateLock), timeout)
 		if err != nil {
-			return queueRefuse(stderr, oneline.Err(err))
+			return queueRefuse(em, stderr, oneline.Err(err))
 		}
 		if err := merge.WriteHold(lane, reason, by, deps.Now()); err != nil {
 			release()
-			return queueRefuse(stderr, oneline.Err(err))
+			return queueRefuse(em, stderr, oneline.Err(err))
 		}
 		release()
 		merge.Appendf(lane, deps.Now(), "QUEUE HOLD reason=%s by=%s", reason, by)
 		fmt.Fprintf(stdout, "QUEUE HOLD reason=%s path=%s by=%s\n",
 			oneline.Field(reason), oneline.Field(merge.HoldPath(lane)), oneline.Field(by))
+		// A hold stops the whole lane, so the audit names no entry and the depth that
+		// follows it reports nothing running.
+		emitQueueAudit(em, 0, "hold", reason+" (by "+by+")")
+		emitLaneDepth(em, "hold", lane, st, true)
 		return 0
 	case "release":
 		release, err := merge.Lock(filepath.Join(lane, merge.StateLock), timeout)
 		if err != nil {
-			return queueRefuse(stderr, oneline.Err(err))
+			return queueRefuse(em, stderr, oneline.Err(err))
 		}
 		h, present, err := merge.ClearHold(lane)
 		release()
 		if err != nil {
-			return queueRefuse(stderr, oneline.Err(err))
+			return queueRefuse(em, stderr, oneline.Err(err))
 		}
 		held := time.Duration(0)
 		if present && h.At != "" {
@@ -146,14 +169,15 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 		merge.Appendf(lane, deps.Now(), "QUEUE RELEASE held=%s", held)
 		fmt.Fprintf(stdout, "QUEUE RELEASE held=%s path=%s\n",
 			oneline.Field(held.String()), oneline.Field(merge.HoldPath(lane)))
+		emitLaneDepth(em, "release", lane, st, false)
 		return 0
 	case "skip", "unskip":
 		prs, err := parsePRs(rest)
 		if err != nil {
-			return queueRefuse(stderr, fmt.Sprintf("%s: %s; nova-merge queue %s <pr>...", oneline.Field(sub), oneline.Escape(err.Error()), oneline.Field(sub)))
+			return queueRefuse(em, stderr, fmt.Sprintf("%s: %s; nova-merge queue %s <pr>...", oneline.Field(sub), oneline.Escape(err.Error()), oneline.Field(sub)))
 		}
 		if len(prs) == 0 {
-			return queueRefuse(stderr, fmt.Sprintf("nova-merge queue %s <pr>...", oneline.Field(sub)))
+			return queueRefuse(em, stderr, fmt.Sprintf("nova-merge queue %s <pr>...", oneline.Field(sub)))
 		}
 		q, err := merge.UpdateQueue(lane, st, timeout, func(q *merge.Queue) error {
 			for _, pr := range prs {
@@ -173,7 +197,7 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 			return nil
 		})
 		if err != nil {
-			return queueRefuse(stderr, oneline.Err(err))
+			return queueRefuse(em, stderr, oneline.Err(err))
 		}
 		for _, pr := range prs {
 			verb := "SKIP"
@@ -181,33 +205,37 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 				verb = "UNSKIP"
 			}
 			fmt.Fprintf(stdout, "QUEUE %s entry=%d skipped=%d queued=%d\n", oneline.Field(verb), pr, len(q.Skipped), len(q.Queued))
+			if sub == "skip" {
+				emitQueueAudit(em, pr, "skip", "a hand took this entry out of the lane's order")
+			}
 		}
 		merge.Appendf(lane, deps.Now(), "QUEUE %s %v", strings.ToUpper(sub), prs)
+		emitQueueDepth(em, sub, q, holdStands(lane))
 		return 0
 	case "front":
 		if len(rest) != 1 {
-			return queueRefuse(stderr, "front wants one pull request: nova-merge queue front <pr>")
+			return queueRefuse(em, stderr, "front wants one pull request: nova-merge queue front <pr>")
 		}
 		pr, err := strconv.Atoi(rest[0])
 		if err != nil || pr < 1 {
-			return queueRefuse(stderr, fmt.Sprintf("front wants a pull request's number, got %q", rest[0]))
+			return queueRefuse(em, stderr, fmt.Sprintf("front wants a pull request's number, got %q", rest[0]))
 		}
 		id := strconv.Itoa(pr)
 		if st.Find(id) == nil {
-			return queueRefuse(stderr, fmt.Sprintf("pull request %d is not in this lane: nova-merge add --lane %s --pr %d", pr, oneline.Field(lane), pr))
+			return queueRefuse(em, stderr, fmt.Sprintf("pull request %d is not in this lane: nova-merge add --lane %s --pr %d", pr, oneline.Field(lane), pr))
 		}
 		host := deps.NewHost(st.Repo, timeout)
 		if data, err := host.PR(pr); err != nil {
-			return queueRefuse(stderr, fmt.Sprintf("pull request %d could not be read: %s", pr, oneline.Err(err)))
+			return queueRefuse(em, stderr, fmt.Sprintf("pull request %d could not be read: %s", pr, oneline.Err(err)))
 		} else if data.Merged || data.Closed {
-			return queueRefuse(stderr, fmt.Sprintf("pull request %d is not open; front moves an open pull request: nova-merge add --lane %s --pr %d", pr, oneline.Field(lane), pr))
+			return queueRefuse(em, stderr, fmt.Sprintf("pull request %d is not open; front moves an open pull request: nova-merge add --lane %s --pr %d", pr, oneline.Field(lane), pr))
 		} else {
 			checks, err := host.Checks(data.HeadOID)
 			if err != nil {
-				return queueRefuse(stderr, fmt.Sprintf("pull request %d's checks could not be read: %s", pr, oneline.Err(err)))
+				return queueRefuse(em, stderr, fmt.Sprintf("pull request %d's checks could not be read: %s", pr, oneline.Err(err)))
 			}
 			if checks.Red > 0 || checks.Pending > 0 || checks.Total() == 0 {
-				return queueRefuse(stderr, fmt.Sprintf("pull request %d is not green (%s); front moves a green pull request", pr, oneline.Field(checks.Field())))
+				return queueRefuse(em, stderr, fmt.Sprintf("pull request %d is not green (%s); front moves a green pull request", pr, oneline.Field(checks.Field())))
 			}
 		}
 		var displaced int
@@ -226,15 +254,16 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 			return nil
 		})
 		if err != nil {
-			return queueRefuse(stderr, oneline.Err(err))
+			return queueRefuse(em, stderr, oneline.Err(err))
 		}
 		merge.Appendf(lane, deps.Now(), "QUEUE FRONT entry=%d displaced=%d", pr, displaced)
 		fmt.Fprintf(stdout, "QUEUE FRONT entry=%d position=1 queued=%d displaced=%d\n", pr, len(q.Queued), displaced)
+		emitQueueDepth(em, "front", q, holdStands(lane))
 		return 0
 	case "sweep":
-		return cmdQueueSweep(lane, opts, st, timeout, stdout, stderr, deps)
+		return cmdQueueSweep(lane, opts, st, timeout, stdout, stderr, deps, em)
 	}
-	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep, classify, audit", sub))
+	return queueRefuse(em, stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep, classify, audit", sub))
 }
 
 func parsePRs(args []string) ([]int, error) {
@@ -265,36 +294,38 @@ type poisonHost interface {
 	IssueFor(pr int) string
 }
 
-func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout time.Duration, stdout, stderr io.Writer, deps Deps) int {
+func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout time.Duration, stdout, stderr io.Writer, deps Deps, em *log.Emitter) int {
 	rawWindow, ok := opts["window"]
 	if !ok || strings.TrimSpace(rawWindow) == "" {
-		return queueRefuse(stderr, "a sweep wants the session window it walks; --window <duration>  # a sweep with no window would enqueue the world")
+		return queueRefuse(em, stderr, "a sweep wants the session window it walks; --window <duration>  # a sweep with no window would enqueue the world")
 	}
 	window, err := time.ParseDuration(rawWindow)
 	if err != nil || window <= 0 {
-		return queueRefuse(stderr, fmt.Sprintf("--window wants a duration, got %q; --window <duration>", rawWindow))
+		return queueRefuse(em, stderr, fmt.Sprintf("--window wants a duration, got %q; --window <duration>", rawWindow))
 	}
 	if h, present, err := merge.ReadHold(lane); err != nil {
-		return queueRefuse(stderr, oneline.Err(err))
+		return queueRefuse(em, stderr, oneline.Err(err))
 	} else if present {
-		return queueRefuse(stderr, fmt.Sprintf("a hold is standing (%s): %s; nova-merge queue release", oneline.Field(h.Reason), oneline.Field(h.By)))
+		return queueRefuse(em, stderr, fmt.Sprintf("a hold is standing (%s): %s; nova-merge queue release", oneline.Field(h.Reason), oneline.Field(h.By)))
 	}
 	host := deps.NewHost(st.Repo, timeout)
 	lister, ok := host.(queueHost)
 	if !ok {
-		return queueRefuse(stderr, "this host cannot list open pull requests, and a sweep walks them: no host, no sweep")
+		return queueRefuse(em, stderr, "this host cannot list open pull requests, and a sweep walks them: no host, no sweep")
 	}
 	prs, err := lister.QueuePRs()
 	if err != nil {
-		return queueRefuse(stderr, oneline.Err(err))
+		return queueRefuse(em, stderr, oneline.Err(err))
 	}
 	classifyRecs, err := merge.LoadClassifies(lane)
 	if err != nil {
-		return queueRefuse(stderr, oneline.Err(err))
+		return queueRefuse(em, stderr, oneline.Err(err))
 	}
 	ph, _ := host.(poisonHost)
-	var scanned, green, queued, already, skipped, dirty, parked, staleRed, rerun int
+	var scanned, green, queued, already, skipped, dirty, parkedCount, staleRed, rerun int
 	var parkLines []string
+	var parked []merge.Park
+	var depth *merge.Queue
 	if _, err := merge.UpdateQueue(lane, st, timeout, func(q *merge.Queue) error {
 		for _, pr := range prs {
 			if pr.Closed || pr.Merged {
@@ -308,7 +339,7 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 			scanned++
 			switch {
 			case q.IsParked(pr.Number):
-				parked++
+				parkedCount++
 			case q.HasSkip(pr.Number):
 				skipped++
 			case strings.EqualFold(pr.Mergeable, "CONFLICTING"):
@@ -329,7 +360,8 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 							q.Parked = append(q.Parked, p)
 							q.Skipped = append(q.Skipped, pr.Number)
 							q.Queued = merge.QueueRemove(q.Queued, pr.Number)
-							parked++
+							parkedCount++
+							parked = append(parked, p)
 							parkLines = append(parkLines, line)
 						}
 					}
@@ -355,20 +387,52 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 				}
 			}
 		}
+		depth = q
 		return nil
 	}); err != nil {
-		return queueRefuse(stderr, oneline.Err(err))
+		return queueRefuse(em, stderr, oneline.Err(err))
 	}
 	for _, line := range parkLines {
 		fmt.Fprintln(stdout, oneline.Escape(line))
 	}
+	// One audit per entry the sweep itself took out of the lane: the poison detector's
+	// park is the queue turning an entry's automatic merge off, and the test that armed
+	// it is the reason.
+	for _, p := range parked {
+		emitQueueAudit(em, p.PR, "park",
+			fmt.Sprintf("%s failed %d times in %s; issue %s",
+				oneline.Field(p.Test), p.Runs, oneline.Field(p.Package), oneline.Field(p.Issue)))
+	}
 	fmt.Fprintf(stdout, "QUEUE SWEEP window=%s scanned=%d green=%d queued=%d already=%d skipped=%d dirty=%d parked=%d stale_red=%d rerun=%d\n",
-		oneline.Field(mergeWindow(window)), scanned, green, queued, already, skipped, dirty, parked, staleRed, rerun)
+		oneline.Field(mergeWindow(window)), scanned, green, queued, already, skipped, dirty, parkedCount, staleRed, rerun)
 	merge.Appendf(lane, deps.Now(), "QUEUE SWEEP window=%s scanned=%d queued=%d rerun=%d", mergeWindow(window), scanned, queued, rerun)
+	if depth != nil {
+		emitQueueDepth(em, "sweep", depth, false)
+	}
 	return 0
 }
 
 func mergeWindow(d time.Duration) string { return d.String() }
+
+// holdStands is whether a hold is standing over this lane right now. It is what makes
+// `running` zero on the depth line: a held lane is acting on nothing at all. A hold file
+// that cannot be read is no hold, because the depth line is an observation and never a gate.
+func holdStands(lane string) bool {
+	_, present, err := merge.ReadHold(lane)
+	return err == nil && present
+}
+
+// emitLaneDepth is emitQueueDepth for the two subverbs that do not open the queue
+// themselves -- hold and release, which write the hold file. The queue is read here so that
+// EVERY read of the lane puts one depth line on the stream, which is what the panel counts
+// on: a lane held for an hour must not go quiet on the dashboard.
+func emitLaneDepth(e *log.Emitter, sub, lane string, st *merge.State, held bool) {
+	q, err := merge.LoadQueue(lane, st)
+	if err != nil {
+		return
+	}
+	emitQueueDepth(e, sub, q, held)
+}
 
 // hasStaleRed reports whether this commit carries a red conclusion on a sha it has moved past.
 func hasStaleRed(c merge.Checks, oid string) bool {
@@ -421,33 +485,41 @@ func poison(ph poisonHost, recs map[string]merge.ClassRecord, pr merge.PR) (merg
 // a failed merge-group run and records nothing: two different asks, so two verbs.
 func cmdQueueClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
 	known := map[string]bool{"lane": true, "timeout": true, "run": true, "head": true,
-		"verdict": true, "note": true, "pr": true, "branch": true, "test": true, "who": true}
+		"verdict": true, "note": true, "pr": true, "branch": true, "test": true, "who": true,
+		"log": true, "bench": true}
+	em := log.NewEmitter(stderr, sourceMerge, "queue", "")
 	opts, _, err := scanQueueArgs(args, known)
 	if err != nil {
-		return classifyRefuse(stderr, err.Error())
+		return classifyRefuse(em, stderr, err.Error())
 	}
+	realEm, closeEvents, code := openEmitter("queue", opts["bench"], opts["log"], stderr, deps)
+	if code != 0 {
+		return code
+	}
+	defer closeEvents()
+	em = realEm
 	lane := opts["lane"]
 	if strings.TrimSpace(lane) == "" {
-		return classifyRefuse(stderr, "--lane is required and is the lane's own directory; refusing to guess")
+		return classifyRefuse(em, stderr, "--lane is required and is the lane's own directory; refusing to guess")
 	}
 	if strings.TrimSpace(opts["run"]) == "" {
-		return classifyRefuse(stderr, "classify wants the run id it is about; --run <id>")
+		return classifyRefuse(em, stderr, "classify wants the run id it is about; --run <id>")
 	}
 	verdict := opts["verdict"]
 	if !merge.ValidClass(verdict) {
-		return classifyRefuse(stderr, fmt.Sprintf("--verdict is %s, %s or %s, got %q; refusing to guess",
+		return classifyRefuse(em, stderr, fmt.Sprintf("--verdict is %s, %s or %s, got %q; refusing to guess",
 			oneline.Field(merge.ClassFlaky), oneline.Field(merge.ClassOwnChange),
 			oneline.Field(merge.ClassEnvironment), oneline.Escape(verdict)))
 	}
-	st, code := openLane("classify", lane, stderr)
+	st, laneCode := openLane("classify", lane, stderr)
 	if st == nil {
-		return code
+		return laneCode
 	}
 	timeout := 120 * time.Second
 	if raw, ok := opts["timeout"]; ok {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
-			return classifyRefuse(stderr, fmt.Sprintf("--timeout is a number of seconds, got %q", raw))
+			return classifyRefuse(em, stderr, fmt.Sprintf("--timeout is a number of seconds, got %q", raw))
 		}
 		timeout = time.Duration(n) * time.Second
 	}
@@ -459,11 +531,11 @@ func cmdQueueClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
 	}
 	sub, err := merge.NewSubmission(deps.Now())
 	if err != nil {
-		return classifyRefuse(stderr, oneline.Err(err))
+		return classifyRefuse(em, stderr, oneline.Err(err))
 	}
 	item, rec, err := merge.NewClassRecord(opts["run"], opts["head"], entry, verdict, opts["note"], opts["who"], sub)
 	if err != nil {
-		return classifyRefuse(stderr, oneline.Err(err))
+		return classifyRefuse(em, stderr, oneline.Err(err))
 	}
 	test := opts["test"]
 	if test == "" {

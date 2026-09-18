@@ -60,19 +60,38 @@ usage:
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
-  nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>]
+  nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>] [--bench <name>] [--log <path>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--bench <name>] [--log <path>]
   nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
 
-  nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
+  nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>] [--bench <name>] [--log <path>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
-  nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+  nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>] [--bench <name>] [--log <path>]
 
 queue classify RECORDS a verdict somebody already reached, as one immutable record the
 queue sweep then reads; the top-level classify ASKS for one about a failed merge-group
 run. Two asks, two verbs, one word each way round.
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
+
+STRUCTURED EVENTS, BESIDE THE LINES ABOVE (SPEC-LOGS.md Part 2). batch, queue and react
+each write one JSON object per state change as well as their own human line: batch-start,
+batch-member (merged, or dropped with the reason), batch-verdict (OK, or FAIL with the
+step, the packages and the tests) and batch-enqueued; queue-depth (running, waiting,
+unmergeable) on EVERY read of the queue, and queue-audit per entry whose automatic merge
+the queue turned off; and, from react, one line per message it reacted to, whose kind is
+the channel the message arrived on and whose text says what was done about it. Every verb
+writes the start/done/refuse spine too, so a verb that began and never finished is a start
+with no done rather than a silence.
+
+  --log <path>    append those lines to this file, which is the file Alloy tails. Without
+                  it they go to stderr, which under systemd is the unit's journal and so a
+                  source Alloy already reads: there is no new agent and no shipper of our
+                  own. A path that cannot be opened is refused naming --log, never a
+                  silent run with no log.
+  --bench <name>  the fleet name of this machine, the bench label on every line. Without
+                  it, $NOVA_BENCH, else the short hostname.
+
 
 batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, merges
 each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that

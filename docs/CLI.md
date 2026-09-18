@@ -986,7 +986,7 @@ a `gh` read of the live queue that did not answer.
 
 ```
 nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
-nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
+nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>] [--bench <name>] [--log <path>]
 nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
 
@@ -1050,6 +1050,52 @@ are the decide route's, as everywhere else; a run the host cannot read, a route 
 will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
 exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
 risk; never a merge*.
+
+### The structured stream — batch, queue and react on Loki
+
+`batch`, `queue` and `react` each write one JSON object per state change as well as
+the human line they already print, the shape of [SPEC-LOGS.md](SPEC-LOGS.md) Part 2:
+the same fifteen fields, and the labels Alloy promotes out of them — `source`,
+`verb`, `event`, `level` — beside the `bench` label the target carries. They go
+through the one emitter `nova-work events` writes through (`internal/log`), so a
+query that answers "what did the bridge do" answers "what did the lane do" with the
+labels changed and nothing else.
+
+```
+--log <path>    append the lines to this file, which is the file Alloy tails.
+                Without it they go to stderr, which under systemd is the unit's
+                journal and so a source Alloy already reads: no new agent and no
+                shipper of our own. A path that cannot be opened is refused naming
+                --log, never a silent run with no log.
+--bench <name>  the fleet name of this machine, the bench label on every line.
+                Without it, $NOVA_BENCH, else the short hostname.
+```
+
+The kinds are nouns of this lane, and every verb writes the `start`, `done`,
+`refuse` spine as well, so a verb that began and never finished is a start with no
+done rather than a silence:
+
+| kind | written by | what the message carries |
+| --- | --- | --- |
+| `batch-start` | `batch` | `name`, `base`, the base `head`, and how many pull requests were offered |
+| `batch-member` | `batch` | `pr` and `state=merged`, or `state=dropped` with the reason |
+| `batch-verdict` | `batch` | `verdict=OK`, or `verdict=FAIL` at `level=ERROR` with the `step`, the failing `packages` and `tests` |
+| `batch-enqueued` | `batch` | the `branch` a green batch built and the `head` a caller pushes; a red batch writes none |
+| `queue-depth` | `queue` | `running`, `waiting`, `unmergeable`, on EVERY read of the queue |
+| `queue-audit` | `queue` | one entry whose automatic merge the queue turned off — `action=skip`, `park` or `hold` — and why |
+| the channel's own name | `react` | one line per message reacted to, `action=enqueue`, `skip`, `hold`, `rebase-wanted` or `none` |
+
+`running` is the head of the queue, because the lane merges one entry at a time, and
+zero while a hold stands; `waiting` is what is behind that head; `unmergeable` is the
+skipped and the parked, counted once each. `queue-audit` is the audit trail the house
+rule needs — merge only after the checks show zero failures, never `--auto` — so an
+entry that stopped merging for a reason nobody wrote down cannot happen quietly.
+
+The numbers live in the message as `name=value` pairs rather than in fields of their
+own: the line's fifteen fields are fixed by the spec, and a sixteenth would break
+every `| json` query the fleet already runs. A panel reads one with `line_format
+"{{.msg}}"` and a regexp, which is what
+`fleet/logstack/nova-events-dashboard.json` does.
 
 ## nova-pulse
 
@@ -1172,7 +1218,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once] [--label <name>] [--log <path>]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1182,6 +1228,17 @@ the claim, so a card another hand already took is skipped rather than launched
 twice. With no `--bench` the benches are `hulk`, `vision` and `space`; `--once` runs
 exactly one tick, and without it the loop runs until it is killed. One line per
 tick:
+
+`fill` also writes one structured JSON line per bench per tick (SPEC-LOGS.md Part 2):
+`event="fill-tick"`, carrying that bench's `capacity`, what it `launched`, what was
+`held` behind a live lane card, what was `refused` for naming a lane the lanes file
+does not, and the `ready` count left in the directory when the tick ended — the
+number the fleet dashboard read out of the status page's `metrics.tsv` until this
+existed. A bench whose capacity could not be read is `capacity=unknown` at
+`level=WARN`: a fleet whose fill went quiet because `ssh` failed must not look like a
+fleet with nothing to do. `--log` and the sink are as they are for `nova-merge`
+above; `--label` is the fleet name of THIS machine, while the bench each tick FILLS
+is a field of the line, because one fill loop fills many benches from one machine.
 
 ```
 FILL tick=<n> <bench>:launched=<n> ... ready=<n>

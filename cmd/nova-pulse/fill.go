@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
@@ -47,6 +49,14 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	once := f.fs.Bool("once", false, "")
 	var benches benchFlag
 	f.fs.Var(&benches, "bench", "")
+	// The structured sink of SPEC-LOGS.md Part 2: stderr by default -- which under systemd
+	// is the unit's journal and so a source Alloy already reads -- or the file --log names,
+	// which Alloy tails. --label is the fleet name of THIS machine, the bench label every
+	// line carries; the bench each tick FILLS is a field of the message, because one fill
+	// loop fills many benches from one machine. A --log that cannot be opened is a refusal
+	// before a single ssh, never a silent run with no log.
+	logPath := f.fs.String("log", "", "")
+	label := f.fs.String("label", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -60,6 +70,19 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(benches) == 0 {
 		benches = fillBenches
 	}
+	events, closer, err := novalog.Sink(*logPath, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "FILL REFUSED: --log %s cannot be opened for append: %s\n",
+			oneline.Field(*logPath), oneline.Err(err))
+		return 2
+	}
+	if closer != nil {
+		defer closer.Close()
+	}
+	// The emitter's clock is the REAL one and not this run's `now`: a fill loop ticks
+	// every five minutes for hours, and a fixed clock would stamp every tick of a night
+	// with the minute the process started -- which is a log a query cannot order.
+	em := novalog.NewEmitter(events, "nova-pulse", "fill", novalog.BenchName(*label))
 	return pulse.Fill(pulse.FillInput{
 		Ready:    *ready,
 		Launched: *launched,
@@ -72,6 +95,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Now:      func() time.Time { return now },
 		Capacity: sshCapacity{},
 		Launcher: flashLauncher{},
+		Events:   em,
 	})
 }
 

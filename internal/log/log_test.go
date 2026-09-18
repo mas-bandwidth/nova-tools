@@ -53,7 +53,7 @@ func TestLineCarriesTheSpecFieldsAndNoMore(t *testing.T) {
 		"slot":   "",
 		"guid":   "a1b2c3",
 		"event":  "done",
-		"msg":    oneline.Field("one card launched"),
+		"msg":    "one card launched",
 		"dur_ms": float64(0),
 		"err":    "",
 	}
@@ -87,9 +87,11 @@ func TestLineWritesAbsentIdsAsEmptyNotOmitted(t *testing.T) {
 	}
 }
 
-// a-msg-with-a-newline-is-escaped-through-oneline-field: the sentence cannot add a second
-// line, and the value a reader parses back is the oneline.Field rendering.
-func TestLineEscapesMsgThroughOnelineField(t *testing.T) {
+// a-msg-with-a-newline-is-escaped-through-oneline-escape: the sentence cannot add a second
+// line, and the value a reader parses back is the oneline.Escape rendering -- ESCAPE and
+// not FIELD, because msg is a sentence a person reads and a panel matches on, not one token
+// a scanner splits a line into. See Line.Write.
+func TestLineEscapesMsgThroughOnelineEscape(t *testing.T) {
 	l := newLine()
 	l.Event = "start"
 	l.Msg = "line one\nline two\twith = and space"
@@ -108,8 +110,11 @@ func TestLineEscapesMsgThroughOnelineField(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatalf("not one JSON object: %v\n%s", err, raw)
 	}
-	if want := oneline.Field(l.Msg); got.Msg != want {
-		t.Fatalf("msg = %q, want the oneline.Field rendering %q", got.Msg, want)
+	if want := oneline.Escape(l.Msg); got.Msg != want {
+		t.Fatalf("msg = %q, want the oneline.Escape rendering %q", got.Msg, want)
+	}
+	if !strings.Contains(got.Msg, "with = and space") {
+		t.Fatalf("the sentence lost its spaces or its equals sign: %q", got.Msg)
 	}
 	if strings.ContainsAny(got.Msg, "\n\t") {
 		t.Fatalf("msg still holds a raw control character: %q", got.Msg)
