@@ -1509,30 +1509,91 @@ See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work
 
-The command provides a job dependency graph and a bounded `.work` reader.
-It checks plans as data, without evaluating Lisp code, and reports why a node
-is blocked. The broader scheduling design is in [SPEC-JOBS.md](SPEC-JOBS.md)
-and [SPEC-WORKLANG.md](SPEC-WORKLANG.md).
+`nova-work` is both the thin client of the resident work session ([docs/SPEC-WORK.md](SPEC-WORK.md), "The engine and its client") and the in-process reader of the job graph and bounded `.work` plans ([SPEC-JOBS.md](SPEC-JOBS.md), [SPEC-WORKLANG.md](SPEC-WORKLANG.md)). As a client it sends one request line over the Unix socket `--session` names and prints the session's one answer line, byte for byte; the session is the engine and owns every fact, so the client refuses to guess and second-guesses nothing. The graph and plan verbs read files as data, never as programs.
 
-```sh
-nova-work plan check --file ./work.work
-nova-work plan expand --file ./work.work --out ./cards
-nova-work ready --graph ./graph.json --node task-a
+```
+nova-work: the thin client, the job graph and the bounded .work reader (see docs/SPEC-WORK.md, docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
+
+usage:
+  nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
+                           --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
+                           --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
+                           --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
+                           [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session status --session <path>
+  nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
+                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
+                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
+                           [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
+  nova-work version        print this build identity (--version also accepted)
+  nova-work help
+  nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
+  nova-work ready --node X --graph <file>
+  nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
+  nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+
+wire:
+  one line in, one line out over the Unix socket --session names. The request
+  line is the verb and its flags in the order above, each as --name <value>,
+  values escaped through internal/oneline's field form (one token per value:
+  a space is \x20, an equals is \x3d), bools as --name true, the whole line
+  newline-terminated. The reply is the session's own answer line, printed byte
+  for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
+  to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
+  stderr, exit 2, ending "run: nova-work help". Values travel as given: the
+  session validates every one and refuses with its own naming.
+
+verbs:
+  nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
+  nova-work ready --node X is the ready set
+  nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
+  nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
+  nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+
+A node is ready only when every need is terminal accepted, and every row that cannot
+proceed prints its exact blocker and its resolver. A :deps cycle is refused before
+publication, so the ready set is finite and the graph can never deadlock.
+
+A plan is read as data, never as a program: a `#.` dispatch macro anywhere in code
+position is refused at exit 2 naming its byte offset, string and comment text is opaque,
+and an unknown :kind is refused naming the field. :needs is the reference edge and
+:blocks its inverse, so the kernel derives whichever a node did not give; an absent
+need is refused naming the field and the id, and a :needs cycle is refused by validator
+rule 3, both at load before the graph is published.
+
+flags:
+  --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
+                  Required on both graph verbs; there is no default and no discovery.
+  --node <id>     dependencies: the node to write a needs edge to, creating it when the
+                  graph does not hold it yet. ready: the one node to evaluate; without
+                  it, ready prints one row per node in seed order.
+  --needs <ids>   a comma-separated list of needs for --node. --needs needs --node;
+                  --node alone creates a node needing nothing.
+  --file <path>   plan check and plan expand: the plan to read. Required, always:
+                  there is no default file and no discovery from the working directory.
+  --out <dir>     plan expand: the directory to write one card per node into. Required;
+                  a card already there is left byte-identical, so a re-expansion appends
+                  only the new card and mints no id.
+  --max-bytes <n> plan check: the byte ceiling (default 65536). A file past it is
+                  refused before a byte is parsed, never truncated.
+  --max-depth <n> plan check: the nesting ceiling (default 64). A form past it is
+                  refused at its opening byte.
+  --max-nodes <n> plan check: the atom ceiling (default 4096). A plan past it is refused
+                  at the atom's byte.
+
+exit codes: 0 ran and passed; 2 could not run (bad invocation, an unreadable graph or
+plan, a :deps cycle, an unknown node, a refusal).
+
+example:
+  nova-work dependencies --graph ./deps.json --node b
+  nova-work dependencies --graph ./deps.json --node a --needs b
+  nova-work ready --node a --graph ./deps.json
+  nova-work plan check --file ./work.work --max-bytes 65536
 ```
 
-`plan check` and `plan expand` require a plan path; the default reader limits are
-65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`,
-`--max-nodes`). Unknown kinds, absent dependencies and dependency cycles refuse.
-`plan expand` writes card directories for explicit `:node` entries; it does not
-launch them. Existing cards are left unchanged when expanding again.
-
-The graph is a separate JSON file with a `nodes` array. `dependencies --graph
-<file>` reads it; adding `--node <id> --needs <id,id>` writes dependency edges.
-`ready` reads the graph and prints whether each requested node's dependencies
-are terminal and accepted; it does not acquire a lease or reserve a slot.
-`nova-work help` also describes `clip`, which commits and harvests a worker's
-result before resetting its worktree. Use that mutating workflow only with the
-intended worktree, branch, base and harvest destination.
+The session verbs `session start`, `session status` and `session stop` speak the socket protocol; `SESSION OK` is one shape printed by all three alike. A missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. The graph and plan verbs read the JSON dependency graph and the bounded `.work` plan as data: `plan check` and `plan expand` require a plan path and default to 65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`, `--max-nodes`); unknown kinds, absent dependencies and dependency cycles refuse. `plan expand` writes card directories for explicit `:node` entries and does not launch them; existing cards are left unchanged when expanding again. `dependencies --graph <file>` reads the graph and `--node <id> --needs <id,id>` writes dependency edges; `ready` prints whether each requested node's dependencies are terminal and accepted without acquiring a lease or reserving a slot. `nova-work help` also describes `clip`, which commits and harvests a worker's result before resetting its worktree; use that mutating workflow only with the intended worktree, branch, base and harvest destination.
 
 ## nova-cairn
 

@@ -1,26 +1,20 @@
-// nova-work is the kernel's side of the work description language
-// (docs/SPEC-WORKLANG.md) and the job graph of docs/SPEC-JOBS.md: it reads a `.work`
-// plan file as data, never as a program, and holds it to the three bounds the kernel
-// already carries.
+// nova-work is both the thin client of the resident work session (docs/SPEC-WORK.md,
+// "The engine and its client") and the kernel's side of the work description language
+// (docs/SPEC-WORKLANG.md) and the job graph of docs/SPEC-JOBS.md.
+//
+// The client sends ONE request line over the Unix socket --session names,
+// newline-terminated, and prints the ONE line the session answers, byte for byte: OK, ROW,
+// NOTE and MORE to stdout and exit 0, FAIL, RACED and REFUSED to stderr and exit 1. What
+// cannot run at all -- no verb, no --session, no socket that answers -- is one WORK REFUSED
+// line on stderr, exit 2, ending "run: nova-work help". The values travel as the caller
+// spelled them and the session validates every one.
 //
 // The bounded reader: `plan check` reads one plan under --max-bytes, --max-depth and
-// --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses
-// any input past a bound whole rather than truncated, and refuses an unknown `:kind` by
-// field name. It then closes the plan's needs/blocks graph at load: `:needs` is the
-// reference edge and `:blocks` its inverse, an absent need is refused naming the field
-// and the id, and a `:needs` cycle is refused by validator rule 3 before publication. A
-// well-formed plan prints one line; a refusal is exit 2 with one remedy line.
-//
-// The job graph: typed needs and blocks edges, refused acyclic at seed by validator rule
-// 3, and the mechanical ready set launch reads. A node is ready only when every need is
-// terminal accepted. Every row that cannot proceed prints its exact blocker and its
-// resolver; a card whose need is an open PR is never on a slot. This slice owns the
-// in-process graph and the ready reading only: no Redis, no network, no launch, no lease.
-//
-// Every path comes from a flag. There is no default file and no discovery: a missing
-// flag is a refusal, never a guess. Output is one line per verb. Exit 0 ran and passed;
-// exit 2 could not run -- a missing flag, an unreadable graph or plan, a :deps cycle, an
-// unknown node, a refusal.
+// --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses any
+// input past a bound whole rather than truncated, and refuses an unknown `:kind` by field
+// name. The job graph: typed needs and blocks edges, refused acyclic at seed by validator
+// rule 3, and the mechanical ready set launch reads. Every path comes from a flag: there is
+// no default file and no discovery.
 package main
 
 import (
@@ -33,20 +27,48 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
+// version is empty in ordinary builds and is filled only by a release stamp.
 var version string
 
-const usage = `nova-work: the job graph and the bounded .work reader (see docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
+// usage is what help prints and what docs/CLI.md's nova-work section carries byte for byte.
+// The session verb lines are the spec's own verbs block (docs/SPEC-WORK.md) and the graph
+// and plan verb lines are docs/SPEC-JOBS.md and docs/SPEC-WORKLANG.md.
+const usage = `nova-work: the thin client, the job graph and the bounded .work reader (see docs/SPEC-WORK.md, docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
 
 usage:
-  nova-work version
+  nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
+                           --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
+                           --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
+                           --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
+                           [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session status --session <path>
+  nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
+                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
+                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
+                           [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
+  nova-work version        print this build identity (--version also accepted)
+  nova-work help
   nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
   nova-work ready --node X --graph <file>
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+
+wire:
+  one line in, one line out over the Unix socket --session names. The request
+  line is the verb and its flags in the order above, each as --name <value>,
+  values escaped through internal/oneline's field form (one token per value:
+  a space is \x20, an equals is \x3d), bools as --name true, the whole line
+  newline-terminated. The reply is the session's own answer line, printed byte
+  for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
+  to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
+  stderr, exit 2, ending "run: nova-work help". Values travel as given: the
+  session validates every one and refuses with its own naming.
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
@@ -103,28 +125,66 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+// refused is what could not run at all costs: ONE line on stderr naming what was wrong
+// and the door to the usage, exit 2 -- the client spec's own remedy spelling.
+func refused(stderr io.Writer, what string) int {
+	fmt.Fprintf(stderr, "WORK REFUSED: %s; run: nova-work help\n", oneline.Escape(what))
+	return 2
+}
 
-func run(args []string, stdout, stderr io.Writer) int {
+// legacyVerbs are the in-process graph and plan verbs, dispatched without a switch so
+// that the verb switch a reader (and TestHelpListsEveryVerbTheSwitchAccepts) walks holds
+// exactly the socket verbs.
+var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
+	"dependencies": cmdDependencies,
+	"ready":        cmdReady,
+	"clip":         cmdClip,
+	"plan":         cmdPlan,
+}
+
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, version)) }
+
+func run(args []string, stdout, stderr io.Writer, stamp ...string) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `plan check` reads a plan and `ready --node X` only looks")
+		return refused(stderr, "a verb is required")
 	}
-	switch args[0] {
-	case "help", "-h", "--help":
+	if h, ok := legacyVerbs[args[0]]; ok {
+		return h(args[1:], stdout, stderr)
+	}
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "help", "--help", "-h":
+		if len(rest) != 0 {
+			return refused(stderr, "help takes no arguments")
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		return cmdVersion(args[1:], stdout, stderr)
-	case "dependencies":
-		return cmdDependencies(args[1:], stdout, stderr)
-	case "ready":
-		return cmdReady(args[1:], stdout, stderr)
-	case "clip":
-		return cmdClip(args[1:], stdout, stderr)
-	case "plan":
-		return cmdPlan(args[1:], stdout, stderr)
+		if len(rest) != 0 {
+			return refused(stderr, "version takes no arguments")
+		}
+		shown := version
+		if len(stamp) > 0 {
+			shown = stamp[0]
+		}
+		fmt.Fprintln(stdout, oneline.Escape(buildinfo.Line("nova-work", shown)))
+		return 0
+	case "session":
+		if len(rest) == 0 {
+			return refused(stderr, "session needs one of start, status or stop")
+		}
+		sub, rest := rest[0], rest[1:]
+		switch sub {
+		case "start", "status", "stop":
+			return sessionVerb("session "+sub, rest, stdout, stderr)
+		default:
+			return refused(stderr, fmt.Sprintf("unknown session verb %q", sub))
+		}
+	case "query":
+		return queryVerb(rest, stdout, stderr)
+	default:
+		return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
 }
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
@@ -359,4 +419,158 @@ func cmdPlanExpand(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "PLAN EXPANDED file=%s out=%s nodes=%d cards=%d\n",
 		oneline.Field(*file), oneline.Field(*out), len(cards), written)
 	return 0
+}
+
+// flagSpec is one flag of one socket verb. A bool flag is a switch serialized
+// as --name true when set; a multi flag is repeatable and serializes one
+// --name per value in the order the caller gave them; every other value
+// travels as the caller spelled it, a string, because the session validates
+// and a thin client never second-guesses the engine's bounds.
+type flagSpec struct {
+	name  string
+	multi bool
+	bool  bool
+}
+
+// verbFlags is each socket verb's flag surface and its canonical order, the
+// spec's verbs block in the same order it prints them, so the request line a
+// session reads is spelled the way its own spec names the flags.
+var verbFlags = map[string][]flagSpec{
+	"session start": {
+		{name: "session"},
+		{name: "as"},
+		{name: "file"},
+		{name: "journal"},
+		{name: "cache"},
+		{name: "repo"},
+		{name: "remote"},
+		{name: "branch"},
+		{name: "max-bytes"},
+		{name: "max-depth"},
+		{name: "max-nodes"},
+		{name: "every"},
+		{name: "skew"},
+		{name: "clip-every"},
+		{name: "clip-after"},
+		{name: "retain"},
+		{name: "savepoint-every"},
+		{name: "savepoint-after"},
+		{name: "max-frame-bytes"},
+		{name: "silence-ping"},
+		{name: "index-cache"},
+		{name: "page-bytes"},
+		{name: "page-records"},
+		{name: "closed-window"},
+		{name: "render-root", multi: true},
+		{name: "resolver", multi: true},
+		{name: "git-timeout"},
+		{name: "attempts"},
+		{name: "repair", bool: true},
+		{name: "foreground", bool: true},
+		{name: "max"},
+		{name: "now"},
+	},
+	"session status": {
+		{name: "session"},
+	},
+	"session stop": {
+		{name: "session"},
+		{name: "git-timeout"},
+		{name: "attempts"},
+		{name: "no-clip", bool: true},
+	},
+}
+
+// repeatFlag is a --flag that may be given more than once.
+type repeatFlag []string
+
+func (r *repeatFlag) String() string { return strings.Join(*r, ",") }
+func (r *repeatFlag) Set(v string) error {
+	*r = append(*r, v)
+	return nil
+}
+
+func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
+	specs := verbFlags[verb]
+	f := flag.NewFlagSet(verb, flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	strs := map[string]*string{}
+	bools := map[string]*bool{}
+	mults := map[string]*repeatFlag{}
+	for _, s := range specs {
+		switch {
+		case s.bool:
+			bools[s.name] = f.Bool(s.name, false, "")
+		case s.multi:
+			m := &repeatFlag{}
+			f.Var(m, s.name, "")
+			mults[s.name] = m
+		default:
+			strs[s.name] = f.String(s.name, "", "")
+		}
+	}
+	if err := f.Parse(args); err != nil {
+		return refused(stderr, verb+": "+err.Error())
+	}
+	if f.NArg() != 0 {
+		return refused(stderr, verb+" takes no positional arguments (got "+oneline.Quote(f.Arg(0))+")")
+	}
+	socket := *strs["session"]
+	if socket == "" {
+		return refused(stderr, "--session is required; refusing to guess (the socket has no default path)")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s", oneline.Escape(verb))
+	for _, s := range specs {
+		switch {
+		case s.bool:
+			if *bools[s.name] {
+				fmt.Fprintf(&b, " --%s true", oneline.Field(s.name))
+			}
+		case s.multi:
+			for _, v := range *mults[s.name] {
+				fmt.Fprintf(&b, " --%s %s", oneline.Field(s.name), oneline.Field(v))
+			}
+		default:
+			if v := *strs[s.name]; v != "" {
+				fmt.Fprintf(&b, " --%s %s", oneline.Field(s.name), oneline.Field(v))
+			}
+		}
+	}
+	return ask(socket, b.String(), stdout, stderr)
+}
+
+// ask is the whole wire: one line in, one line out, newline-terminated both
+// ways. The dial and the read live in internal/workclient so that this package
+// keeps a single print path; here only the reply is classified.
+func ask(socket, request string, stdout, stderr io.Writer) int {
+	line, err := workclient.Exchange(socket, request)
+	if err != nil {
+		return refused(stderr, "no such session: cannot reach "+socket+": "+err.Error())
+	}
+	return printReply(line, stdout, stderr)
+}
+
+// printReply splits the session's line by the second token and by nothing
+// else, the spec's own client rule: OK, ROW, NOTE and MORE to stdout; FAIL,
+// RACED and REFUSED -- the session answered, and what it answered was no, the
+// spec's exit 1 -- to stderr the same way. Anything else is not a line the
+// grammar spells, and the client refuses rather than guessing a verdict. The
+// line is rendered through oneline.Escape, which is the identity on a
+// well-formed one-line reply and so keeps the byte-for-byte promise.
+func printReply(line string, stdout, stderr io.Writer) int {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return refused(stderr, "the session's reply is not an answer line: "+line)
+	}
+	switch fields[1] {
+	case "OK", "ROW", "NOTE", "MORE":
+		fmt.Fprintln(stdout, oneline.Escape(line))
+		return 0
+	case "FAIL", "RACED", "REFUSED":
+		fmt.Fprintln(stderr, oneline.Escape(line))
+		return 1
+	default:
+		return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
+	}
 }
