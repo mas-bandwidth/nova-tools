@@ -1295,6 +1295,50 @@ reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
 
+### `cardtemplates` — no card template carries a command only one platform has
+
+**The rule.** A card template is the text a worker is handed verbatim; nothing
+rewrites it between `cut` and the shell. The estate is mixed — hulk, vision,
+space and mini are linux, the Studio and the Air are darwin — so a shipped
+template may spell only commands BOTH answer. The portable spellings are
+`command -v <name>` for presence, `go version`, `dotnet --version` and
+`java -version 2>&1` for the three toolchains that each spell it differently,
+and a `uname`-chosen pair (`sysctl -n hw.ncpu` on darwin, `nproc` elsewhere) for
+a fact only one platform reports. A card reports its work, not its machine:
+timing comes from the harness's own line, never from GNU `time(1)`.
+**The hurt.** Measured 2026-09-18 by the schema dogfood. The round-1 card
+templates spelt `/usr/bin/time -f`, `nproc`, `go --version` and `java
+--version`. All four are fine on hulk; the first card cut for the Air died
+inside the worker, minutes in, with a shell error that named nothing about
+portability — not at cut time, not at admission, where it would have cost
+nothing.
+**The test.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
+(`internal/ci/ci_cardtemplates_test.go`), over the checker in
+`internal/ci/ci_cardtemplates.go`, which reads every `*.md` and `*.card` under
+`CardTemplateDirs` (`cmd/nova-pulse/testdata/templates`,
+`cmd/nova-swarm/testdata/templates`, `docs/templates`, `tools/templates`) as
+text. A directory that is not there yet is skipped; a run that reads NO
+template at all is red, because that is how the directory list goes stale.
+**Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
+`file spell date reason` per row — empty today, matched by file and spelling and never by line; shrink-only in both
+directions, so a row whose spelling has left is as red as a spelling with no
+row.
+**Its remedy lines.** One per rule, carried on the finding and printed with it:
+e.g. ``cores=$(if [ "$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else
+nproc; fi)`` for `nproc`, ``go version — the go command has no --version and
+exits 2 with a usage wall`` for `go_version`, ``there is no /usr/bin/time on a
+stock Mac; report the harness's own timing line instead of measuring it in the
+card`` for `gnu_time`.
+**Its narrowings.** The rule list GROWS (the allowlist is the one that shrinks):
+it knows the spellings that have hurt us, not every difference between GNU and
+BSD userland. It is line-oriented and literal — a command assembled from
+variables, or spelt across two lines, is not seen — and a rule whose line also
+names its portable other half (`nproc` beside `hw.ncpu`, `readlink -f` beside a
+`||` fallback) is not refused, because that IS the portable spelling. A `.tsv`
+beside the templates is a table and is not read. Prose that merely discusses a
+spelling is refused like any other line: a template is not the place to write
+about commands it does not run.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
