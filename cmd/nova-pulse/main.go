@@ -21,10 +21,10 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -698,6 +698,9 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	templates := f.fs.String("templates", "", "")
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
+	repo := f.fs.String("repo", "", "")
+	base := f.fs.String("base", "dev", "")
+	cardsTSV := f.fs.String("cards", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	probe := f.fs.Bool("probe", false, "")
 	history := f.fs.String("history", "", "")
@@ -718,7 +721,16 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	}
 	f.want(*templates, "templates", "the directory holding the typed templates and benches.tsv (or routes.tsv)")
 	f.want(*out, "out", "the directory the cut cards go into")
-	f.want(*root, "root", "the state root; skipped.tsv is written here")
+	// --root is the pool form's alone: skipped.tsv is written under it, and the
+	// validated-template forms write nothing there. It was required of all four and used
+	// by one, so a caller passed a path that was never opened.
+	validated := *issue != "" || *rows != "" || *branchFrom != ""
+	if !validated {
+		f.want(*root, "root", "the state root; --pool writes skipped.tsv here")
+	}
+	if validated {
+		f.want(*repo, "repo", "the clone every git call runs in (git -C); cut never reads the working directory")
+	}
 	if *max < 0 {
 		f.problems = append(f.problems, fmt.Sprintf("--max is the number of cards to cut, 0 or more, got %d; 0 already means no bound", *max))
 	}
@@ -728,18 +740,18 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case *issue != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
-			Source: "issue", Issue: *issue, Templates: *templates, Out: *out, Root: *root,
-			Max: *max, Stdout: stdout, Stderr: stderr,
+			Source: "issue", Issue: *issue, Templates: *templates, Out: *out, Repo: *repo,
+			Base: *base, Cards: *cardsTSV, Max: *max, Stdout: stdout, Stderr: stderr,
 		})
 	case *rows != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
-			Source: "rows", Rows: *rows, Templates: *templates, Out: *out, Root: *root,
-			Max: *max, Stdout: stdout, Stderr: stderr,
+			Source: "rows", Rows: *rows, Templates: *templates, Out: *out, Repo: *repo,
+			Base: *base, Cards: *cardsTSV, Max: *max, Stdout: stdout, Stderr: stderr,
 		})
 	case *branchFrom != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
-			Source: "branch-from", BranchFrom: *branchFrom, Templates: *templates, Out: *out, Root: *root,
-			Max: *max, Stdout: stdout, Stderr: stderr,
+			Source: "branch-from", BranchFrom: *branchFrom, Templates: *templates, Out: *out, Repo: *repo,
+			Base: *base, Cards: *cardsTSV, Max: *max, Stdout: stdout, Stderr: stderr,
 		})
 	}
 	return pulse.Cut(pulse.CutInput{

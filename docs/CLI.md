@@ -1229,7 +1229,22 @@ line with the swarm's reason.
 ### cut
 
 ```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
+```
+
+**`--root` belongs to the pool form and `--repo` to the validated forms**, and each
+is required of the form that uses it and of no other. `--root` is where `--pool`
+writes `skipped.tsv`; the validated forms write nothing under it, and used to demand
+a path they never opened. `--repo` is the clone every `git` call runs in — `git -C
+<repo> ls-remote`, `git -C <repo> cat-file` — because a command that reads the
+working directory answers differently depending on where a hand happened to stand. It
+is a path here; `cut --kind` is a different cutter and its own `--repo` is an
+`<owner>/<name>`. A `--repo` that is not a directory is one refusal before any child
+runs:
+
+```
+CUT REFUSED: --repo <path> is not a directory (name the clone every git call runs in; cut never reads the working directory)
 ```
 
 `cut` reads **one** source and refuses none and refuses two: naming no source is
@@ -1256,21 +1271,55 @@ CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 the template is the source's own name: `--issue` wants `<templates>/issue.md`,
 `--rows` wants `rows.md`, `--branch-from` wants `branch-from.md`, and a missing one
 is `CUT REFUSED: --templates wants <source>.md`. A template declares named slots —
-`issue`, `title`, `body`, `branch`, `base`, `row`, `replay` — and the source fills
-every one it declares.
+`issue`, `title`, `body`, `branch`, `base`, `row`, `replay`, `lane` — and the source
+fills every one it declares.
 
 - `--issue <owner>/<repo>#<n>` reads that issue's title and body through `gh`,
   verbatim, and derives the branch `rowan/issue-<n>-<slug of the title>` onto `dev`.
 - `--rows <file.tsv>` is one card per row: `label`, `base`, `row`, `replay`,
-  `branch`, tab separated. An empty `base` is `dev`, an empty `label` is the slug of
-  the row, and a separator or header row is skipped and counted as skipped.
+  `branch`, `lane`, `template`, tab separated. An empty `base` is `--base` (`dev`
+  unless you say otherwise — a repo without a `dev` branch used to spell it in every
+  row), an empty `label` is the slug of the row, and a separator or header row is
+  skipped and counted as skipped. **`lane` is the card's own** — it fills the `<lane>`
+  slot, so one cut fills as many lanes as it has rows rather than putting every card
+  in the one lane the template named. **`template` is the card's own too**: it names
+  another `<templates>/<name>.md`, so one table cuts N different tasks instead of
+  wanting N cuts and N template directories; a row that names none takes the source's
+  own `rows.md`, and a template the directory does not hold is `CUT REFUSED:
+  --templates wants <name>.md`.
 - `--branch-from <owner>/<repo>#<n>` reads that pull request's head ref through `gh`
   and cuts one card on that exact branch onto `dev`.
+
+**One example of each of the three ships in the repo**, and they are the shape a
+template of your own takes: `cmd/nova-pulse/testdata/templates/issue.md`, `rows.md`
+and `branch-from.md`. Each one passes the five checks and cuts a card, which is what
+the tests assert, so a first run is the line below with nothing of your own written
+yet:
+
+```
+nova-pulse cut --issue mas-bandwidth/nova-tools#42 --templates cmd/nova-pulse/testdata/templates --out ./queue/ready --repo .
+```
+
+**`--cards <file.tsv>`** names where the `cards.tsv` goes; without it the table lands
+beside the cards, which in real use is a queue directory the table does not belong in.
+
+**A label never carries the `card-` prefix.** It belongs to the filename: a label spelt
+`card-9601` to make `fill` see the card rendered `CARD-card-9601` into the RESULT line
+and rode from there into a PR title, so `cut` strips it and the label is `9601`.
+
+**Every card is written as `card-<label>.md`** — the one filename contract the queue
+directories keep and the one `fill` globs. `cut` wrote `<label>.md` until
+2026-09-18, and a directory of cut cards sat in a `--ready` that every tick stepped
+over in silence. A **second cut into the same `--out` appends** to `cards.tsv` rather
+than overwriting it: two cuts into one queue are two batches of cards, and a row
+already in the table is not written twice, so cutting the same source again is the
+same table.
 
 **Five checks run in order before a byte is written**, and the first that fails is
 the whole answer, exit 2, one line:
 
 ```
+CUT REFUSED check=branch branch=<name> (<why git refuses the name>: git check-ref-format --branch refuses this name)
 CUT REFUSED check=branch branch=<name> (pass --branch-from <pr>, or rename the issue)
 CUT REFUSED check=base path=<path> not at <base> (fix the row, or add the file)
 CUT REFUSED check=step1 (<what is wrong with the line>)
@@ -1278,11 +1327,15 @@ CUT REFUSED check=slot slot=<name> (named slot with no value: fill it, or drop i
 CUT REFUSED check=result (the RESULT line is more than one line: fix the template)
 ```
 
-The branch check is `git ls-remote origin <branch>`: a branch that already exists is
+The branch check is two questions. First, **is it a branch name at all**: the rules
+of `git check-ref-format --branch` are applied in process, no subprocess, so a space,
+a control character, `..`, `@{`, a trailing dot, a `.lock` component or a leading dash
+is refused by name — `rowan/has a space` was `CUT OK` on 2026-09-18 because nobody
+asked. Then `git -C <repo> ls-remote origin <branch>`: a branch that already exists is
 a card that would collide, and it is refused. `--branch-from` names its exact head
-ref, so that one check is skipped for it and only for it. The base check is
-`git cat-file -e <base>:<path>` for every file a row names, so a card never asks a
-worker to edit a file that is not there. `step1` is parsed as one shell line
+ref, so both are skipped for it and only for it. The base check is
+`git -C <repo> cat-file -e <base>:<path>` for every file a row names, so a card never
+asks a worker to edit a file that is not there. `step1` is parsed as one shell line
 in process, never run. Success is one line naming the source:
 
 ```
@@ -1295,11 +1348,11 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
-`ssh`, pops that many `card-*.md` from `--ready` in filename order, moves them into
+`ssh`, pops that many `card-<n>.md` from `--ready` in filename order, moves them into
 `--launched` and hands each to the per-card launcher. The move out of `--ready` is
 the claim, so a card another hand already took is skipped rather than launched
 twice. With no `--bench` the benches are `hulk`, `vision` and `space`; `--once` runs
@@ -1307,17 +1360,40 @@ exactly one tick, and without it the loop runs until it is killed. One line per
 tick:
 
 ```
-FILL tick=<n> <bench>:launched=<n> ... ready=<n>
+FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
 ```
+
+**A launcher that fails is not a card that ran.** The card goes back to `--ready`,
+its lane is released, the tick counts it under `failed=` and never under `launched=`,
+and a marker beside it carries the attempt and the reason:
+
+```
+<ready>/card-<n>.md.failed-<attempt>
+```
+
+The card is ready again on the next tick and the markers are the count of how often
+it has failed. An exit-7 launcher used to leave its card under `--launched` holding
+its lane forever while the line read `launched=1` (dogfood, 2026-09-18). The
+launcher's own last line of stderr is kept, bounded, and joined to its exit status
+in one note, so `exit status 255` says why:
+
+```
+FILL NOTE tick=<n>: capacity on <bench>: exit status 255: ssh: connect to host <bench> port 22: Connection refused
+```
+
+Exit is 0, or **1 when every named bench failed the tick** — a bench whose capacity
+could not be read, or whose every launch failed. A whole tick of `exit status 255`
+answering 0 is a fleet nobody can see.
 
 **A card may name a lane, and a lane is a serial queue over one area of the
 codebase.** The line is `LANE: <name>` in the card's own text — the exact field
 prefix and nothing else, so a `LANES:` line is prose — and at most one card per lane
 is live at a time. A ready card whose lane already has a live card under
-`--launched` waits its turn, in order, and stays ready:
+`--launched` waits its turn, in order, and stays ready. **Both cards are named the
+same way**, by the filename the queue holds:
 
 ```
-FILL HELD card=<n> lane=<name> live=<the card holding it>
+FILL HELD card=card-<n>.md lane=<name> live=<the card holding it>
 ```
 
 `--lanes` names the lanes file, `queue/control/lanes.tsv` by default: one
@@ -1326,14 +1402,52 @@ is what `fill` matches; the prefixes are the area the lane serializes. **A lane 
 file does not name is a refusal, not a guess**, and the refusal carries the remedy:
 
 ```
-FILL REFUSED card=<n> lane=<name> remedy="add the lane to <file> or drop the LANE line"
+FILL REFUSED card=card-<n>.md lane=<name> remedy="add the lane to <file> or drop the LANE line"
 ```
 
-A missing lanes file is an empty table, so every card naming a lane is then refused
-by name — which is the file saying it has not been written yet, rather than a fill
+It is printed **once per card per lanes-file mtime**, remembered by a marker beside
+the card (`card-<n>.md.refused-<mtime>`), the way `nova-merge rebase --markers`
+remembers: a refusal that reprints every five minutes is noise nobody reads, and
+editing the lanes file is a new answer, so every refusal speaks again and the stale
+marker goes. A missing lanes file is an empty table, so every card naming a lane is
+refused by name — the file saying it has not been written yet, rather than a fill
 that serializes nothing. A card with no `LANE:` line is launched exactly as before.
+
+**`card-<n>.md` is the contract, and a ready directory holding anything else is a
+refusal**, one line per tick naming the first and counting the rest:
+
+```
+FILL REFUSED ready=<dir> file=<name> more=<n> remedy="fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut"
+```
+
 One bench takes at most 30 cards in a tick, whatever its capacity says, because the
 rest of the machine is not the fill's to spend.
+
+**`--only <glob>` is the whitelist of cards this run may launch**, repeatable and
+comma-separated, matched against the card's filename with or without the `card-`
+prefix and the `.md` suffix — `--only 96*`, `--only card-9601.md` and `--only 9601`
+all name the same card. A ready directory is shared, and a fill with no filter
+launched another line's cards on its own benches. A card nobody selected is left in
+`--ready`, untouched and unrefused: it is not this run's to judge.
+
+**`--deadline <s>`** is the card's deadline handed to the launcher, 2400 by default —
+it was a number hardcoded in the script. **`--launch-grace <d>`** is how long `fill`
+waits on a launcher before taking the card as launched, `10s` by default and `0` to
+wait for the launcher to finish. Launching used to wait for the whole card: one tick
+launched three cards one after another and blocked for nine minutes. A launcher that
+fails, fails at once — a missing binary, a refused ssh, a bad argument — so the grace
+catches the failure without waiting for the work, and the child is waited on in the
+background rather than left a zombie. What happens to a card after that is the
+bench's, and draining `--launched` when it finishes is `manager`'s.
+
+**`--capacity <n>` and `--launcher <path>` make the tick runnable without a bench.**
+`--capacity` is a fixed capacity for every bench and no `ssh` at all; `--launcher` is
+the program each card is handed to, `flash-native-bench.sh` when it is left out. A
+dry run over a directory of cards exercises the whole tick, lanes included:
+
+```
+nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
+```
 
 ### fleet registry
 

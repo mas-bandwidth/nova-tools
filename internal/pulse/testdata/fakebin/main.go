@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type rule struct {
@@ -39,6 +40,7 @@ type rule struct {
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
+	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 
@@ -82,6 +84,9 @@ func main() {
 			r = cand
 			break
 		}
+	}
+	if r.SleepMS > 0 {
+		time.Sleep(time.Duration(r.SleepMS) * time.Millisecond)
 	}
 	if r.StdoutFile != "" {
 		out, err := os.ReadFile(r.StdoutFile)
