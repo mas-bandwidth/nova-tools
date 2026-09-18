@@ -814,10 +814,11 @@ coordinator must act on, like `PULSE UNDER-WIDTH`.
 
 ### The fleet page
 
-`nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>]
-[--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
-[--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]` is the fleet page as a verb
-(`bin/status-page.sh`). It reads every bench in `--benches` over `ssh <target> bash -s`, in
+`nova-pulse status --html <out> --machines <registry> [--benches <file>, retired]
+[--queue <dir>] [--ssh <path>] [--timeout <s|duration>] [--publish <host:dir>]
+[--self <name>] [--loop <label>=<pattern>]... [--branch <name>] [--day-start <HH:MMZ>]
+[--gh-config <dir>]` is the fleet page as a verb
+(`bin/status-page.sh`). It reads every bench over `ssh <target> bash -s`, in
 parallel and bounded by `--timeout`, counting live cards from running card processes — a
 process whose command line names a job directory, or whose cwd is under the slot, the
 authoritative shape `bench-hygiene.sh`'s `live_slot` uses — and never from log age, which
@@ -835,11 +836,38 @@ been learned twice. A bench that does not answer is `DOWN (no answer over ssh)`,
 a dash in the metrics row, it adds nothing to `live`, and it is counted in `down=`: a row of
 zeros reads as a bench with nothing to do, which is how a fleet nobody could see looked
 healthy on 2026-09-17. An answer that cannot be parsed is no answer and says DOWN too. With
-no `<queue>/REPO` there is nobody to ask the forge, so `merged`, `opened` and the merge
-queue read as a dash on the page, in the series and on the STATUS HTML line, and the chart
-plots a gap rather than a flat line at zero — a flat line is a claim.
+no `<queue>/REPO` **and no origin on the clone the queue sits in** there is nobody to ask the
+forge, so `merged`, `opened` and the merge queue read as a dash on the page, in the series
+and on the STATUS HTML line, and the chart plots a gap rather than a flat line at zero — a
+flat line is a claim. "Nobody to ask" and "asked and got nothing" are DIFFERENT facts and
+the page says which: a queue that named a repo and got no answer is a forge to go and look
+at, not a fleet file to go and edit.
 
-The rule was learned a third time by probing the real fleet: a `--benches` home that is not
+**The fleet comes from the machines registry.** `--machines <file>` is the registry of
+**The machines registry** above — seven columns and roles, the file `fleet registry` prints
+and every fill refusal names. The benches read over ssh are its rows carrying the role
+`bench`, in file order; a registry no machine of which carries `bench` is a refusal, because
+a fleet with nowhere to put a card is not a page of nothing. The page also carries a
+**machines** table — name, os/arch, roles, cores, notes — so it answers the question people
+were answering by hand ("can I fill batman?") and shows each machine's own word about
+itself: the Air is a fleet machine WHILE UP, and a bare `DOWN` row every time a laptop is
+shut is a page people learn to ignore. A DOWN bench's row carries its registry note beside
+the ssh reason for the same reason.
+
+The registry carries no home column and needs none: with no home the liveness script leaves
+`HOME` alone and uses the login home, which is the home ssh lands in.
+
+`--benches` is the retired four-column file (`name`, ssh target, home, mac). It reads for
+one more release and every run of it prints one `STATUS NOTE` line naming `--machines`.
+Given both, the registry decides and the run names the file it did not read: two files that
+disagree about what the fleet IS is how a runner host quietly becomes a bench. Replays:
+`status-machines-reads-the-registry`, `status-machines-shows-the-runners`,
+`status-machines-shows-the-air-while-up-note`,
+`status-machines-refuses-a-registry-with-no-bench`,
+`status-benches-is-deprecated-for-one-release`, `status-machines-wins-over-benches`,
+`status-derives-the-repo-from-the-queue-origin`, `status-repo-file-wins-over-the-origin`.
+
+The rule was learned a third time by probing the real fleet: a fleet-file home that is not
 a directory on the bench — a typo, a user renamed, a machine reinstalled — let `df` answer
 nothing, and every row read `0 GB free, allowed 0` from benches that had answered perfectly.
 So the home is checked first, before any of the work it would make pointless, and the row

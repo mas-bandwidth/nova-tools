@@ -30,7 +30,7 @@ nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
-nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
+nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
@@ -562,6 +562,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	oneLine := f.fs.Bool("oneline", false, "")
 	html := f.fs.String("html", "", "")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	publish := f.fs.String("publish", "", "")
 	ghConfig := f.fs.String("gh-config", "", "")
@@ -591,15 +592,20 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		f.add(fmt.Sprintf("--expanding-hours wants a whole number of hours, got %d", *expandingHours))
 	}
 	// --html is the fleet status page as a verb (status-page.sh folded in). It reads the
-	// benches file and the queue, counts live cards from running card processes, and prints
-	// one STATUS HTML line; the eight-line report and --oneline are untouched.
+	// machines registry and the queue, counts live cards from running card processes, and
+	// prints one STATUS HTML line; the eight-line report and --oneline are untouched.
+	// --benches is the retired four-column file, read for one more release.
 	if *html != "" {
-		f.want(*benches, "benches", "the fleet file: name, ssh target, home, mac one per line")
+		if strings.TrimSpace(*machines) == "" && strings.TrimSpace(*benches) == "" {
+			f.want(*machines, "machines", "the machines registry, as in --machines queue/control/machines.tsv "+
+				"(the retired --benches file still reads for one release)")
+		}
 		if f.refused(stderr) {
 			return 2
 		}
 		return pulse.StatusHTML(pulse.StatusHTMLInput{
 			HTML:     *html,
+			Machines: *machines,
 			Benches:  *benches,
 			Queue:    *queue,
 			SSH:      *ssh,

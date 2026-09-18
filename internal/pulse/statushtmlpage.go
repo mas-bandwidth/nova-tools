@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -33,6 +34,7 @@ type pageData struct {
 	now        time.Time
 	dayStart   string // the boundary the merged count is from, as HH:MMZ
 	branch     string
+	repo       string // the repo the forge rows are about; empty is nobody to ask
 	tipSHA     string
 	tipRun     string
 	tipKnown   bool
@@ -47,6 +49,9 @@ type pageData struct {
 	hygiene    int
 	readings   []BenchReading
 	self       *SelfReading
+	// machines is the registry, when the page was made from one: what every machine in the
+	// fleet IS, which is the question "can I fill batman?" people were answering by hand.
+	machines []fleet.Machine
 }
 
 // fleetPage renders the page.
@@ -60,10 +65,17 @@ func fleetPage(p pageData) string {
 
 	// The tip and its run: which commit the fleet is actually building on, and whether that
 	// build is green. A red tip is the one fact that stops every other number mattering.
+	// "Nobody to ask" and "asked and got nothing" are different facts, and the page said the
+	// first for both. A queue with no REPO file and no origin has nobody to ask; a queue that
+	// named a repo and got no answer has a forge that did not answer, which is a thing to go
+	// and look at rather than a fleet file to go and edit.
 	tip := "unknown (no repo to ask)"
-	if p.tipKnown {
+	switch {
+	case p.tipKnown:
 		// The branch and the sha are tokens; the run's verdict is two words a person reads.
 		tip = fmt.Sprintf("%s %s, its run: %s", oneline.Field(p.branch), oneline.Field(p.tipSHA), htmlText(p.tipRun))
+	case p.repo != "":
+		tip = fmt.Sprintf("%s %s: unknown (%s did not answer)", oneline.Field(p.repo), oneline.Field(p.branch), oneline.Field(p.repo))
 	}
 	fmt.Fprintf(&b, "<p>%s. Merged since %s: <b>%s</b>. PRs opened last hour: <b>%s</b>.</p>\n",
 		tip, oneline.Field(p.dayStart), p.merged, p.opened)
@@ -106,6 +118,20 @@ func fleetPage(p pageData) string {
 		}
 	}
 	b.WriteString("</table>\n")
+
+	// The registry, when the page was made from one. The slots table says how the benches are
+	// doing; this says what every machine IS -- which of them serve the merge group's shards
+	// and may take no card (the lock, Glenn 2026-09-18), and what a machine's own line says
+	// about it, such as the Air being a fleet machine WHILE UP.
+	if len(p.machines) > 0 {
+		b.WriteString("<h3>machines</h3><table><tr><th>machine</th><th>os/arch</th><th>roles</th><th>cores</th><th>notes</th></tr>\n")
+		for _, m := range p.machines {
+			fmt.Fprintf(&b, "<tr><td>%s</td><td>%s/%s</td><td>%s</td><td>%d</td><td>%s</td></tr>\n",
+				oneline.Field(m.Name), htmlText(m.OS), htmlText(m.Arch), htmlText(m.RoleList()), m.Cores, htmlText(m.Notes))
+		}
+		b.WriteString("</table>\n")
+		b.WriteString("<p>roles are a set, not a rank. Only <b>bench</b> permits a card; a <b>runner</b> host serves the merge group's CI shards and takes no card, probe or load, and a machine that is both carries the dated <code>allow-shared=</code> exception that says what ends it.</p>\n")
+	}
 
 	if p.self != nil && len(p.self.Loops) > 0 {
 		parts := make([]string, 0, len(p.self.Loops))
