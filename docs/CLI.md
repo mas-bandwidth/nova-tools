@@ -2165,6 +2165,32 @@ it merges, returns to the previous store branch, pulls and checks that the seat
 can decrypt. An `open (gate not yet approved)` receipt means the PR is still
 pending; it does not mean the replacement is active.
 
+### Give a new seat its first values
+
+```sh
+nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan \
+  --only GH_TOKEN,DEEPSEEK_API_KEY --key /path/to/rowan.key --sops /path/to/sops
+```
+
+`seal` cannot do this: it decrypts a seat file before it writes one, and only the
+new seat's own key opens the new seat's file. `seat add` re-seals the `--only`
+values out of `--from`, a seat this machine can already open, into a new
+`<seat>.yaml`, writing that seat's `.sops.yaml` rule first so sops has recipients
+to encrypt to. `--pub` is the new bench's **public** key, taken from its own
+`keygen` receipt.
+
+It refuses, changing nothing, when the source seat cannot be opened with `--key`
+here, when `<seat>.yaml` already exists, when a rule already matches that file, or
+when `--from` does not carry one of the `--only` names. It prints no value on any
+line. It commits nothing: the receipt names the two changed files, and the store's
+gate reads them in a pull request as it does every other recipient change.
+
+### Reading a `keygen` receipt
+
+`keygen` prints the `.sops.yaml` rule block first, then a `SECRETS RULE NEXT:` line
+saying what to do with it, then `SECRETS KEYGEN OK` **last**. A run that ends on the
+OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
+
 ## nova-post
 
 Prepares outward messages for Ghost, Bluesky, email or Discord. `draft` saves the
