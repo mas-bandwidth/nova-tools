@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -101,6 +102,14 @@ func OwnedCards(benchDir, worker string) ([]string, error) {
 	return names, nil
 }
 
+// takeMu serializes the file rename step across concurrent workers in the same process.
+// On POSIX platforms, directory renames are serialized atomically by the kernel VFS. On
+// Windows, MoveFileEx across concurrent callers on the same source path opens the source
+// with FILE_SHARE_DELETE, allowing multiple callers to link distinct destinations before
+// source deletion completes. Serializing the rename step ensures that the winner's move
+// completes before losers attempt it, so losers observe os.ErrNotExist cleanly.
+var takeMu sync.Mutex
+
 // TakeCard takes one card from a bench's queue by renaming it into the bench's
 // taken/ as taken/<worker>-<name>.card, and reports the card's name and whether one
 // was taken. The rename is atomic within the directory, so two workers racing for
@@ -124,16 +133,15 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 		return "", false, err
 	}
 	for _, name := range names {
-		claim := filepath.Join(taken, name+".claim")
+		dst := filepath.Join(taken, worker+"-"+name+CardExt)
 		src := filepath.Join(queue, name+CardExt)
-		if err := renameSteady(src, claim); err != nil {
-			if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) {
+		takeMu.Lock()
+		err := renameSteady(src, dst)
+		takeMu.Unlock()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
 				continue // another worker took this card first
 			}
-			return "", false, err
-		}
-		dst := filepath.Join(taken, worker+"-"+name+CardExt)
-		if err := renameSteady(claim, dst); err != nil {
 			return "", false, err
 		}
 		return name, true, nil
@@ -213,15 +221,14 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 			return stolen, err
 		}
 		src := filepath.Join(queue, names[0]+CardExt)
-		claim := filepath.Join(taken, names[0]+".claim")
-		if err := renameSteady(src, claim); err != nil {
-			if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) {
+		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
+		takeMu.Lock()
+		err = renameSteady(src, dst)
+		takeMu.Unlock()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
 				continue // another worker took this card first
 			}
-			return stolen, err
-		}
-		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
-		if err := renameSteady(claim, dst); err != nil {
 			return stolen, err
 		}
 		stolen = append(stolen, names[0])
