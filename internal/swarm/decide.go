@@ -169,6 +169,70 @@ func decideAttempt(p *Pool, sc Sidecar) int {
 // vocabulary: the Jev endpoint is TypeSafe's.
 const usageProvider = "typesafe"
 
+// ValidateUsageDestination ensures that path is not an existing directory,
+// its parent directory exists and is a directory, and the target is writable.
+func ValidateUsageDestination(path string) error {
+	cleaned := filepath.Clean(path)
+	fi, err := os.Stat(cleaned)
+	if err == nil {
+		if fi.IsDir() {
+			return fmt.Errorf("usage destination %q is a directory", path)
+		}
+		f, err := os.OpenFile(cleaned, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("usage destination %q not writable: %w", path, err)
+		}
+		_ = f.Close()
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("usage destination %q inaccessible: %w", path, err)
+	}
+	dir := filepath.Dir(cleaned)
+	if dir == "" {
+		dir = "."
+	}
+	dfi, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("usage destination directory %q does not exist: %w", dir, err)
+	}
+	if !dfi.IsDir() {
+		return fmt.Errorf("usage destination directory %q is not a directory", dir)
+	}
+	probe := filepath.Join(dir, fmt.Sprintf(".usage_probe_%d_%d", os.Getpid(), time.Now().UnixNano()))
+	pf, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("usage destination directory %q not writable: %w", dir, err)
+	}
+	_ = pf.Close()
+	_ = os.Remove(probe)
+	return nil
+}
+
+func canonicalUsagePath(p string) string {
+	cleaned := filepath.Clean(p)
+	abs, err := filepath.Abs(cleaned)
+	if err != nil {
+		abs = cleaned
+	}
+	if target, err := filepath.EvalSymlinks(abs); err == nil {
+		return target
+	}
+	dir := filepath.Dir(abs)
+	if targetDir, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(targetDir, filepath.Base(abs))
+	}
+	return abs
+}
+
+type retainedDecideCall struct {
+	Answers map[string]decide.Answer `json:"answers"`
+	Usage   decide.Usage             `json:"usage"`
+	Failed  bool                     `json:"failed"`
+	Start   time.Time                `json:"start"`
+	End     time.Time                `json:"end"`
+}
+
 // taskDecider carries one triage run's Decide call, floor and the set of
 // (task, attempt) pairs already logged, so a second run adds nothing.
 type taskDecider struct {
@@ -177,8 +241,9 @@ type taskDecider struct {
 	pool      *Pool
 	now       func() time.Time
 	usagePath string
-	seen      map[string]bool
+	seen      map[string]decisionEntry
 	seenUsage map[string]bool
+	lastErr   error
 }
 
 // decideFunc is one typed decision: the seam the httptest fake in tests and
@@ -196,7 +261,7 @@ func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time,
 		pool:      p,
 		now:       now,
 		usagePath: usagePath,
-		seen:      map[string]bool{},
+		seen:      map[string]decisionEntry{},
 		seenUsage: map[string]bool{},
 	}
 	raw, err := readRegular(p.Path(DecisionsFile))
@@ -209,30 +274,113 @@ func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time,
 			continue
 		}
 		key := fmt.Sprintf("%s\x00%d", e.Task, e.Attempt)
-		d.seen[key] = true
+		d.seen[key] = e
 		d.seenUsage[key] = true
 	}
 	return d
+}
+
+func (d *taskDecider) retainedCallPath(id string, attempt int) string {
+	if d.pool == nil {
+		return ""
+	}
+	return d.pool.Path(Usage, fmt.Sprintf("%s-%d.decide.json", id, attempt))
+}
+
+func (d *taskDecider) destinations(sc Sidecar) ([]string, error) {
+	var candidates []string
+	if d.usagePath != "" {
+		candidates = append(candidates, d.usagePath)
+	}
+	if sc.Job != "" {
+		if fi, err := os.Stat(sc.Job); err == nil && fi.IsDir() {
+			candidates = append(candidates, filepath.Join(sc.Job, "usage.tsv"))
+		}
+	}
+	if d.pool != nil {
+		candidates = append(candidates, d.pool.Path("usage.tsv"))
+	}
+
+	seen := make(map[string]bool)
+	var unique []string
+	for _, raw := range candidates {
+		if raw == "" {
+			continue
+		}
+		if err := ValidateUsageDestination(raw); err != nil {
+			return nil, err
+		}
+		canonical := canonicalUsagePath(raw)
+		if !seen[canonical] {
+			seen[canonical] = true
+			unique = append(unique, raw)
+		}
+	}
+	return unique, nil
 }
 
 // decideOne asks the one typed decision for a finished task and renders the
 // suffix for its TRIAGE REPORT line. ok is false when the provider errored or
 // answered without a reason: the caller then keeps today's bare line.
 func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok bool) {
-	state := buildDecideState(d.pool, sc)
-	start := d.now()
-	answers, usage, err := d.do(context.Background(), state, decideQuestions())
-	end := d.now()
-	d.recordUsage(sc, start, end, usage, err != nil)
+	attempt := decideAttempt(d.pool, sc)
+	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
+	if e, found := d.seen[key]; found {
+		suffix = fmt.Sprintf(" decide=%s conf=%.2f needs_human=%.2f floor=%.2f",
+			oneline.Field(e.Decision), e.Confidence, e.NeedsHuman, e.Floor)
+		return suffix, true
+	}
+
+	dests, err := d.destinations(sc)
 	if err != nil {
+		d.lastErr = err
 		return "", false
 	}
-	reason, ok := answers["reason"]
+
+	var call retainedDecideCall
+	retainedPath := d.retainedCallPath(sc.ID, attempt)
+	hasRetained := false
+	if retainedPath != "" {
+		if raw, rerr := os.ReadFile(retainedPath); rerr == nil {
+			if jerr := json.Unmarshal(raw, &call); jerr == nil {
+				hasRetained = true
+			}
+		}
+	}
+
+	if !hasRetained {
+		state := buildDecideState(d.pool, sc)
+		start := d.now()
+		answers, usage, err := d.do(context.Background(), state, decideQuestions())
+		end := d.now()
+		call = retainedDecideCall{
+			Answers: answers,
+			Usage:   usage,
+			Failed:  err != nil,
+			Start:   start,
+			End:     end,
+		}
+		if retainedPath != "" {
+			if raw, jerr := json.Marshal(call); jerr == nil {
+				_ = os.WriteFile(retainedPath, raw, 0o644)
+			}
+		}
+	}
+
+	if err := d.recordUsage(sc, dests, call.Start, call.End, call.Usage, call.Failed); err != nil {
+		d.lastErr = err
+		return "", false
+	}
+	if call.Failed {
+		return "", false
+	}
+
+	reason, ok := call.Answers["reason"]
 	if !ok || reason.Choice == "" {
 		return "", false
 	}
 	human := 0.0
-	if h, ok := answers["needs_human"]; ok {
+	if h, ok := call.Answers["needs_human"]; ok {
 		human = h.Noul
 	}
 	decision := reason.Choice
@@ -241,17 +389,24 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 	}
 	suffix = fmt.Sprintf(" decide=%s conf=%.2f needs_human=%.2f floor=%.2f",
 		oneline.Field(decision), reason.Confidence, human, d.floor)
-	d.log(sc, class, decision, reason.Confidence, human)
+	if err := d.log(sc, class, decision, reason.Confidence, human); err != nil {
+		d.lastErr = err
+		return "", false
+	}
+	if retainedPath != "" {
+		_ = os.Remove(retainedPath)
+	}
 	return suffix, true
 }
 
-// recordUsage appends one row to the usage TSV for this provider call through
-// the card-usage contract (AppendCardUsage), matching nova-decide route.
-func (d *taskDecider) recordUsage(sc Sidecar, start, end time.Time, usage decide.Usage, failed bool) {
+// recordUsage appends one row to each unique usage TSV destination for this
+// provider call through the card-usage contract (AppendCardUsage), matching
+// nova-decide route.
+func (d *taskDecider) recordUsage(sc Sidecar, dests []string, start, end time.Time, usage decide.Usage, failed bool) error {
 	attempt := decideAttempt(d.pool, sc)
 	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
-	if d.seenUsage[key] || d.seen[key] {
-		return
+	if d.seenUsage[key] {
+		return nil
 	}
 	row := UsageRow{
 		"job":      sc.ID,
@@ -271,25 +426,26 @@ func (d *taskDecider) recordUsage(sc Sidecar, start, end time.Time, usage decide
 	if failed {
 		row["rc"] = "2"
 	}
-	if d.usagePath != "" {
-		_ = AppendCardUsage(d.usagePath, row)
+	var writeErrs []error
+	for _, dst := range dests {
+		if err := AppendCardUsage(dst, row); err != nil {
+			writeErrs = append(writeErrs, fmt.Errorf("%s: %w", dst, err))
+		}
 	}
-	if sc.Job != "" {
-		_ = AppendCardUsage(filepath.Join(sc.Job, "usage.tsv"), row)
-	}
-	if d.pool != nil {
-		_ = AppendCardUsage(d.pool.Path("usage.tsv"), row)
+	if len(writeErrs) > 0 {
+		return fmt.Errorf("append usage: %v", writeErrs)
 	}
 	d.seenUsage[key] = true
+	return nil
 }
 
 // log appends one JSON line per task to <pool>/decisions.log, idempotent per
 // (task, attempt).
-func (d *taskDecider) log(sc Sidecar, class, decision string, conf, human float64) {
+func (d *taskDecider) log(sc Sidecar, class, decision string, conf, human float64) error {
 	attempt := decideAttempt(d.pool, sc)
 	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
-	if d.seen[key] {
-		return
+	if _, ok := d.seen[key]; ok {
+		return nil
 	}
 	e := decisionEntry{
 		Task: sc.ID, Attempt: attempt, Class: class, Decision: decision,
@@ -297,13 +453,19 @@ func (d *taskDecider) log(sc Sidecar, class, decision string, conf, human float6
 	}
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(d.pool.Path(DecisionsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
-		return
+		return err
 	}
-	_, _ = f.Write(append(raw, '\n'))
-	_ = f.Close()
-	d.seen[key] = true
+	if _, err := f.Write(append(raw, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	d.seen[key] = e
+	return nil
 }

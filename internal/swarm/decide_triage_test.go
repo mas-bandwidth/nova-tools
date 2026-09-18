@@ -304,7 +304,9 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	customUsage := filepath.Join(t.TempDir(), "custom-usage.tsv")
 
+	callCount := 0
 	withUsage := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		callCount++
 		return map[string]decide.Answer{
 			"reason":      {Type: "choice", Choice: "provider_error", Probabilities: map[string]float64{"provider_error": 0.95}, Confidence: 0.95},
 			"needs_human": {Type: "noul", Noul: 0.10, Confidence: 0.10},
@@ -320,6 +322,9 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 	})
 	if rc != 0 {
 		t.Fatalf("triage rc = %d, stderr: %s", rc, errOut.String())
+	}
+	if callCount != 1 {
+		t.Fatalf("callCount = %d, want 1 after first triage run", callCount)
 	}
 
 	// Verify custom usage TSV was written
@@ -370,7 +375,7 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 		t.Fatalf("pool usage.tsv content mismatch:\n%s", string(poolRaw))
 	}
 
-	// Second run must be idempotent: does not duplicate usage rows for the same (task, attempt)
+	// Second run must be idempotent: replays stored decision without calling provider again
 	rc2 := Triage(TriageInput{
 		Pool: p, Max: 0, All: true,
 		Decide: true, Floor: 0.9, decideDo: withUsage,
@@ -380,10 +385,153 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 	if rc2 != 0 {
 		t.Fatalf("second triage rc = %d", rc2)
 	}
+	if callCount != 1 {
+		t.Fatalf("second triage run must not call provider again: callCount = %d, want 1", callCount)
+	}
 	raw2, _ := os.ReadFile(customUsage)
 	lines2 := strings.Split(strings.TrimRight(string(raw2), "\n"), "\n")
 	if len(lines2) != 2 {
 		t.Fatalf("second triage run must not duplicate usage row, got %d lines", len(lines2))
+	}
+}
+
+// Supplying --usage pointing to an existing pool or job file path (alias)
+// must not append the usage row twice into one file.
+func TestTriageDecideDeduplicatesAliases(t *testing.T) {
+	p, id := decideTestPool(t, "starting up\nInternal server error\n")
+	poolUsage := p.Path("usage.tsv")
+
+	withUsage := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		return map[string]decide.Answer{
+			"reason":      {Type: "choice", Choice: "provider_error", Probabilities: map[string]float64{"provider_error": 0.95}, Confidence: 0.95},
+			"needs_human": {Type: "noul", Noul: 0.10, Confidence: 0.10},
+		}, decide.Usage{InputTokens: 10, OutputTokens: 5, HasInput: true, HasOutput: true}, nil
+	}
+
+	var out, errOut bytes.Buffer
+	rc := Triage(TriageInput{
+		Pool: p, Max: 0, All: true,
+		Decide: true, Floor: 0.9, decideDo: withUsage,
+		UsagePath: poolUsage,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
+	})
+	if rc != 0 {
+		t.Fatalf("triage rc = %d, stderr: %s", rc, errOut.String())
+	}
+
+	raw, err := os.ReadFile(poolUsage)
+	if err != nil {
+		t.Fatalf("pool usage.tsv was not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("pool usage.tsv with alias must hold exactly header + 1 row (no double-append), got %d lines:\n%s", len(lines), string(raw))
+	}
+	if !strings.Contains(lines[1], id) {
+		t.Fatalf("usage row missing id %s: %s", id, lines[1])
+	}
+}
+
+// An invalid destination directory passed via --usage is caught before any
+// provider call is made; provider call count must be 0 and triage exits 2.
+func TestTriageDecideDeterministicInvalidDestination(t *testing.T) {
+	p, _ := decideTestPool(t, "starting up\nInternal server error\n")
+	invalidDir := t.TempDir() // a directory, not a TSV file!
+
+	callCount := 0
+	countingDo := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		callCount++
+		return map[string]decide.Answer{
+			"reason": {Type: "choice", Choice: "provider_error", Probabilities: map[string]float64{"provider_error": 0.95}, Confidence: 0.95},
+		}, decide.Usage{InputTokens: 10, OutputTokens: 5}, nil
+	}
+
+	var out, errOut bytes.Buffer
+	rc := Triage(TriageInput{
+		Pool: p, Max: 0, All: true,
+		Decide: true, Floor: 0.9, decideDo: countingDo,
+		UsagePath: invalidDir,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
+	})
+	if rc != 2 {
+		t.Fatalf("triage with invalid destination directory must exit 2, got %d", rc)
+	}
+	if !strings.Contains(errOut.String(), "TRIAGE REFUSED") || !strings.Contains(errOut.String(), "directory") {
+		t.Fatalf("stderr must refuse invalid destination directory: %s", errOut.String())
+	}
+	if callCount != 0 {
+		t.Fatalf("provider call count = %d, want 0 when destination is invalid", callCount)
+	}
+}
+
+// When writing usage to a destination fails post-call, the call is retained;
+// a subsequent repair run recovers accounting without making another provider request.
+func TestTriageDecidePostCallPersistenceFailureAndRepair(t *testing.T) {
+	p, id := decideTestPool(t, "starting up\nInternal server error\n")
+	dir := t.TempDir()
+	validUsage := filepath.Join(dir, "valid-usage.tsv")
+
+	callCount := 0
+	countingDo := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		callCount++
+		return map[string]decide.Answer{
+			"reason":      {Type: "choice", Choice: "provider_error", Probabilities: map[string]float64{"provider_error": 0.95}, Confidence: 0.95},
+			"needs_human": {Type: "noul", Noul: 0.10, Confidence: 0.10},
+		}, decide.Usage{InputTokens: 77, OutputTokens: 33, HasInput: true, HasOutput: true}, nil
+	}
+
+	// Simulate post-call retention: a previous run made a provider call which was
+	// retained on disk in <pool>/usage/<id>-<attempt>.decide.json before a write error occurred.
+	retainedPath := p.Path(Usage, fmt.Sprintf("%s-1.decide.json", id))
+	call := retainedDecideCall{
+		Answers: map[string]decide.Answer{
+			"reason":      {Type: "choice", Choice: "provider_error", Probabilities: map[string]float64{"provider_error": 0.95}, Confidence: 0.95},
+			"needs_human": {Type: "noul", Noul: 0.10, Confidence: 0.10},
+		},
+		Usage:  decide.Usage{InputTokens: 77, OutputTokens: 33, HasInput: true, HasOutput: true},
+		Start:  decideTestNow(),
+		End:    decideTestNow().Add(time.Second),
+		Failed: false,
+	}
+	callRaw, err := json.Marshal(call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(retainedPath, callRaw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Repair run: triage recovers accounting from the retained call without calling provider again
+	var out, errOut bytes.Buffer
+	rc := Triage(TriageInput{
+		Pool: p, Max: 0, All: true,
+		Decide: true, Floor: 0.9, decideDo: countingDo,
+		UsagePath: validUsage,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
+	})
+	if rc != 0 {
+		t.Fatalf("repair triage run must exit 0, got %d, stderr: %s", rc, errOut.String())
+	}
+	if callCount != 0 {
+		t.Fatalf("repair run must not call provider (callCount=%d, want 0)", callCount)
+	}
+
+	// Verify validUsage has the recovered usage tokens
+	raw, err := os.ReadFile(validUsage)
+	if err != nil {
+		t.Fatalf("valid-usage.tsv was not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("valid-usage.tsv want 2 lines, got %d:\n%s", len(lines), string(raw))
+	}
+	if !strings.Contains(string(raw), "77") || !strings.Contains(string(raw), "33") {
+		t.Fatalf("valid-usage.tsv does not carry recovered usage tokens:\n%s", string(raw))
+	}
+
+	// Retained file must be removed after successful persistence
+	if _, err := os.Stat(retainedPath); !os.IsNotExist(err) {
+		t.Errorf("retained call file %s should be cleaned up after successful accounting, err: %v", retainedPath, err)
 	}
 }
 

@@ -132,6 +132,12 @@ func Triage(in TriageInput) int {
 	var dd *taskDecider
 	finished := map[string]bool{}
 	if in.Decide {
+		if in.UsagePath != "" {
+			if err := ValidateUsageDestination(in.UsagePath); err != nil {
+				fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(err.Error()))
+				return 2
+			}
+		}
 		floor := in.Floor
 		if floor == 0 {
 			floor = DefaultDecideFloor
@@ -211,6 +217,10 @@ func Triage(in TriageInput) int {
 			}
 		}
 		reports.Line(line)
+	}
+	if dd != nil && dd.lastErr != nil {
+		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(dd.lastErr.Error()))
+		return 2
 	}
 	reports.More()
 
