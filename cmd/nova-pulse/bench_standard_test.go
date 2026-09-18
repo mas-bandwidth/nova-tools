@@ -134,6 +134,11 @@ func TestBenchStandardDriftNamesBinary(t *testing.T) {
 	}
 }
 
+// THE SANDBOX NETWORK PROBE IS LINUX'S (bench-standard.sh check 3b, guarded by
+// `[ "$OS" = "Linux" ]`): nova-sandbox is a linux sandbox, so on any other bench the
+// probe is not attempted and there is nothing for it to drift about. The test mirrors
+// that guard instead of asserting linux behaviour everywhere -- it asserted the drift
+// on every platform, and the darwin runners are where CI found that out.
 func TestBenchStandardDriftNamesSandboxNetwork(t *testing.T) {
 	want := "v9.9.9-bench-test"
 	goVer := "go1.26.5"
@@ -141,6 +146,15 @@ func TestBenchStandardDriftNamesSandboxNetwork(t *testing.T) {
 	// The sandbox answers, but curl inside it cannot reach the network.
 	writeBenchExe(t, filepath.Join(bin, "curl"), "#!/bin/sh\necho 000\n")
 	out, code := runBenchStandard(t, home, bin, want, goVer)
+	if runtime.GOOS != "linux" {
+		if code != 0 {
+			t.Fatalf("bench-standard exit = %d on %s, want 0: the probe is linux's\n%s", code, runtime.GOOS, out)
+		}
+		if strings.Contains(out, "sandbox-network") {
+			t.Fatalf("the sandbox network probe ran on %s, where it is skipped:\n%s", runtime.GOOS, out)
+		}
+		return
+	}
 	if code == 0 {
 		t.Fatalf("bench-standard drift exit = 0, want non-zero\n%s", out)
 	}
