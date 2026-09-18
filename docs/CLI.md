@@ -1297,18 +1297,28 @@ verdict). `--if-stale` skips a machine whose every class is current, where stale
 build or hash moved, the verdict was FAIL, or the row is older than `--max-age` (default
 24h). `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours.
 
-**A transport failure is not a verdict.** `UNREACHABLE` is its own token, its own count and
-its own exit (3, what every fleet verb answers for a machine it could not reach):
+**Neither a transport failure nor a timeout is a verdict.** `UNREACHABLE` is its own token,
+its own count and its own exit (3), and so is `TIMEOUT` -- work the run never let finish is
+not a judgement on a machine. Both write no row and are never repaired:
 
 ```
 CERTIFY hulk go-test UNREACHABLE reason="Host key verification failed."
-CERTIFY UNREACHABLE machines=1 ok=1 fail=0 warn=0 skipped=0 unreachable=10 fixed=0
+CERTIFY UNREACHABLE machines=1 ok=1 fail=0 warn=0 skipped=0 unreachable=10 timeout=0 fixed=0
 ```
 
 **No certificate row is written**, no repair runs, and the build column holds a parsed
 version or `-` and never a sentence. The first transport failure of a machine ends that
 machine's ssh work — its classes carry that reason — while its `where: coordinator` classes
 are still answered, because the forge knows what it knows.
+
+**One row per (machine, class) per run.** The repair round certifies a class a second time,
+and appending both left the record holding two verdicts for one pass -- the first of them a
+failure that was no longer true when the run ended. A machine's rows are held and written
+once its pass is over, carrying the verdict the run ENDED on, and a class that ends
+UNREACHABLE or TIMEOUT writes nothing at all.
+
+**A `where: coordinator` workload never opens an ssh**, whether it asks the forge or runs a
+body: its body runs HERE. The branch is taken before the run, not after it.
 
 **A machine certifies ITSELF without ssh.** When the machine named is the machine running the
 verb (by registry name, ssh target or short host name) the workload runs here through `bash

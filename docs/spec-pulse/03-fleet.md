@@ -167,7 +167,10 @@ bytes, so either half moving expires every certificate written under the old pai
 goes through `internal/oneline`, so a tab or a newline in what a machine said cannot become
 a column or a row.
 
-**A transport failure is not a verdict.** `UNREACHABLE` is its own token and its own count:
+**Neither a transport failure nor a timeout is a verdict.** `UNREACHABLE` is its own token
+and its own count, and so is `TIMEOUT` -- work the run never let finish (`exec sleep 5` under
+a one-millisecond `--timeout`) is not a judgement on a machine. Both write no row, are never
+repaired, and exit 3:
 `CERTIFY <machine> <class> UNREACHABLE reason="Host key verification failed."`, **no
 certificate row**, no repair, and exit 3 — what every other fleet verb answers for a machine
 it could not reach. The first real run of this verb, by somebody who did not write it, wrote
@@ -177,6 +180,15 @@ build column holds a parsed version or `-`, never a line. The first transport fa
 machine ends that machine's ssh work: its classes carry that reason, and its `coordinator`
 classes are still answered.
 
+**One row per (machine, class) per run.** The repair round certifies a class a second time,
+and appending both left the record holding two verdicts for one pass -- the first of them a
+failure that was no longer true when the run ended. A machine's rows are held and written
+once its pass is over, carrying the verdict the run ENDED on, and a class that ends
+UNREACHABLE or TIMEOUT writes nothing at all.
+
+**A `where: coordinator` workload never opens an ssh**, whether it asks the forge or runs a
+body: its body runs HERE. The branch is taken before the run, not after it.
+
 **A machine certifies ITSELF without ssh.** When the machine named is the machine running the
 verb — by registry name, ssh target or short host name — the workload runs here through
 `bash -s`, and `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so
@@ -184,10 +196,10 @@ once. hulk certifying hulk went through `ssh hulk` and died on its own host key.
 
 **The output.** One `CERTIFY <machine> <class> OK|FAIL|WARN evidence="..."` line per
 workload, `CERTIFY <machine> CURRENT classes=<n> build=<v>` for a machine `--if-stale`
-skipped, and `CERTIFY OK|FAIL|UNREACHABLE machines=<n> ok=<n> fail=<n> warn=<n> skipped=<n>
-unreachable=<n> fixed=<n>` at the end. A dry run ends `CERTIFY DRY-RUN machines=<n>
+skipped, and `CERTIFY OK|FAIL|UNREACHABLE|TIMEOUT machines=<n> ok=<n> fail=<n> warn=<n> skipped=<n>
+unreachable=<n> timeout=<n> fixed=<n>` at the end. A dry run ends `CERTIFY DRY-RUN machines=<n>
 would=<n>` and **never** says OK: a run that reached nothing has no passes to report.
-Exit 1 on any FAIL, 3 when a machine could only not be reached, 2 on a refusal. A forge question with no forge wired is SKIPPED with
+Exit 1 on any FAIL, 3 when a machine was only unreachable or out of time, 2 on a refusal. A forge question with no forge wired is SKIPPED with
 `CERTIFY NOTE machine=<m> class=<c> skipped=no-forge` and writes no row — "this tool could
 not ask" is not "this machine is wrong".
 
