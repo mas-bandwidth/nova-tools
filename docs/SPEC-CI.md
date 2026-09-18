@@ -1343,3 +1343,48 @@ fix and integration-4 is what it costs`.
 **Its narrowings.** It counts jobs that name `windows-latest` AND the
 `pull_request` event in their text; a Windows runner reached through a reusable
 workflow or a matrix value built elsewhere would not be counted.
+
+## How the class tests read the tree: one walk, one parse, in parallel
+
+Every rule above is a sweep of this repository's own source, and for a while
+every rule paid for its own sweep: `filepath.WalkDir` over `cmd/` and
+`internal/`, `os.ReadFile` on each of the 1,052 `.go` files, and `go/parser`
+over each of them again. Eight rules, eight walks, eight parses of the same
+bytes. Measured on hulk at `dev` `04bb4e1c`, `go test ./internal/ci/ -count=1`
+took 10.2 s and 10.4 s, and `-race` took 49.4 s — for a package the CL tier is
+held to a two-minute budget with.
+
+**One walk, one parse, per test process.** `internal/ci/tree_test.go` holds the
+shared tree: a `sync.Once` walks the repository root exactly once, reads the
+bytes of every `.go` file and of everything under `.github/`, and parses the
+`.go` files into ONE `token.FileSet`. `repoTree(t)` hands every rule the same
+index; `.git` is never descended into. The contract is pinned by
+`TestSharedRepoTreeListsAndParsesTheRepository` and
+`TestSharedRepoTreeSkipsTheGitDirectory` — the tree is this repository and not
+empty, every `.go` file it lists carries a usable syntax tree, and the loader
+runs exactly once however many callers ask for it. A cache that reloads is a
+walk with extra bookkeeping.
+
+**The rules are READ-ONLY over the tree.** No test in this package writes a file
+the walk can see, so nothing invalidates the cache and the second walk was never
+buying anything. That is also why the rules are safe to run concurrently: each
+class test carries `t.Parallel()` and reads the shared tree and its own
+`testdata/` allowlist, and writes only to its own `t.TempDir()`. A test that
+chdirs, sets an environment variable, or writes shared state does NOT get
+`t.Parallel()`, and the shared tree is not a licence to add one.
+
+**Each rule filters the tree itself.** It does not ask for a pre-filtered list,
+because the filters differ in ways that decide whether a rule holds: the
+wall-clock budget rule reads `testdata` (it holds its own fixtures to the law),
+the shared-temp and output-path rules skip it (they would otherwise find the
+offenders they plant), and the build-tag rule skips `vendor` and `node_modules`
+as well. Skipping the wrong one is the difference between a rule that holds and
+a rule that passes by checking nothing.
+
+**On parse mode.** The tree is parsed with mode `0`, because every rule that
+reads it walks declarations and expressions and none of them reads a comment.
+The production checkers that DO want comments — `CheckNet`, which reads
+`// net-ok:` reasons — take a caller-supplied root, are not tests, and keep
+their own walk. A rule here that ever needs comments caches a SECOND variant
+keyed by `parser.Mode` rather than widening this one, so that changing the mode
+can never quietly change what an existing rule sees.
