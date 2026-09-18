@@ -187,10 +187,34 @@ func inferVersion(root, goos, goarch string, errs io.Writer) (string, error) {
 	}
 }
 
+// olderThan says whether the version this binary is stamped with is BEHIND the
+// release it has been asked to fan out. It answers false for anything it cannot
+// read -- an unstamped dev binary, a string that is not a version -- because a
+// gate that refuses on a value it does not understand is a gate that stops the
+// work it exists to protect.
+func olderThan(self, release string) bool {
+	if ValidVersion(self) != nil || ValidVersion(release) != nil {
+		return false
+	}
+	return lessVersion(versionParts(self), versionParts(release))
+}
+
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	goos, goarch, err := Platform(o.platform)
 	if err != nil {
 		return refusal(errs, "ADOPT", err)
+	}
+	// A DIGEST FILE ON THE FAR SIDE IS NOT A DIGEST. --expect-sums-from names
+	// the DigestFile that THIS host's `release build` wrote; a path with a
+	// machine in front of it would be the machine holding the bits vouching
+	// for them, which is the exact circle Johnny's decision 2 exists to break.
+	// Checked before anything is opened, fetched or composed.
+	if o.expectSumsFrom != "" {
+		if host, _, remote := RemoteFrom(o.expectSumsFrom); remote {
+			return refusal(errs, "ADOPT", refuse(
+				"name the "+DigestFile+" that THIS host's `release build` wrote, or pass --expect-sums <sha256>",
+				"--expect-sums-from %q names the machine %s, and a digest computed where the bits live is that machine vouching for itself", o.expectSumsFrom, host))
+		}
 	}
 	f, err := os.Open(o.machines)
 	if err != nil {
@@ -215,6 +239,20 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "ADOPT", err)
 		}
 		o.version = v
+	}
+	// INSTALL ON THE COORDINATOR FIRST, THEN ADOPT. `adopt` is not a courier:
+	// it is this host's nova-update reading a release, verifying it, and
+	// running THIS RELEASE'S install on every machine. A coordinator behind
+	// the release it is fanning out is a coordinator whose own verb may not
+	// understand what it is holding -- and the fourth dogfood met exactly that
+	// as a Studio that could not adopt the fleet at all, because the `--from`
+	// it needed ships inside the release it had not installed.
+	if deps.Self != nil {
+		if self := deps.Self(); olderThan(self, o.version) {
+			return refusal(errs, "ADOPT", refuse(
+				fmt.Sprintf("install it here first: nova-update release install --from %s --version %s --bin <dir>, then adopt with the new binary", o.from, o.version),
+				"this nova-update is %s and the release being adopted is %s: the install every machine runs is the one this host is holding", self, o.version))
+		}
 	}
 	// EVERY HOST AND PATH IS VALIDATED BEFORE ANY REMOTE COMMAND IS COMPOSED,
 	// not while it is being composed (Johnny, 2026-09-18). The names came from
@@ -269,6 +307,18 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// the tags were annotated, and WINS when both are given -- a digest a
 		// person typed deliberately is a decision, not a default.
 		expectSums, sumsFrom := o.expectSums, "--expect-sums"
+		// A DEV BUILD HAS NO TAG, so it has no annotation to read and no
+		// CHANGELOG entry to copy from: the digest of the only release that
+		// exists is the one the build wrote beside the artifacts, HERE. That
+		// file is read locally and never hashed remotely.
+		if expectSums == "" && o.expectSumsFrom != "" {
+			digest, err := ReadDigestFile(o.expectSumsFrom)
+			if err != nil {
+				return refusal(errs, "ADOPT", err)
+			}
+			expectSums, sumsFrom = digest, o.expectSumsFrom
+			progress(errs, "%s says this release's %s hashes to %s", o.expectSumsFrom, SumsFile, expectSums)
+		}
 		if expectSums == "" && o.repo != "" {
 			forge := deps.Forge
 			if forge == nil {
@@ -289,7 +339,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		if expectSums == "" {
 			return refusal(errs, "ADOPT", refuse(
-				"pass --repo <owner/name> to read the digest off the tag the cut annotated, or --expect-sums <sha256 of SHA256SUMS> to name it outright",
+				"pass --repo <owner/name> to read the digest off the tag the cut annotated, --expect-sums-from <"+DigestFile+"> to read it out of this host's own build, or --expect-sums <sha256 of SHA256SUMS> to name it outright",
 				"--from names the machine %s, and a release fetched from a machine cannot be verified by the checksum file that came with it", fromHost))
 		}
 		if err := ValidRemotePath("--from's directory", fromDir); err != nil {
@@ -475,6 +525,25 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s dry-run=%s\n",
 		result, len(machines), adopted, refused, field(o.version), map[bool]string{true: "yes", false: "no"}[o.dryRun])
 	return code
+}
+
+// ReadDigestFile reads a DigestFile: the sha256 of a release's SHA256SUMS, as
+// `release build` wrote it. The first whitespace-separated token is taken, so a
+// file produced by `sha256sum SHA256SUMS` -- which is `<digest>  SHA256SUMS` --
+// reads too, and a person who made one by hand that way is not punished for it.
+// The path is LOCAL: this function opens a file, and nothing in this package
+// ever asks a machine to hash anything.
+func ReadDigestFile(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot read --expect-sums-from %s: %w (name the %s that `release build` wrote beside the artifacts)", path, err, DigestFile)
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 || !sha256Hex.MatchString(fields[0]) {
+		return "", refuse(fmt.Sprintf("name the %s that `release build` wrote, whose first token is the 64 hex characters of `sha256sum %s`", DigestFile, SumsFile),
+			"%s does not start with a sha256", path)
+	}
+	return fields[0], nil
 }
 
 // errNoReceipt gives oneLine something to fold when the remote's failure is that

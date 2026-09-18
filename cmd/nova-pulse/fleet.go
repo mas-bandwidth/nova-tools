@@ -463,6 +463,19 @@ func readBenchStandard() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return readBenchStandardFrom(dir)
+}
+
+// readBenchStandardFrom is the walk itself, taking its starting directory, so a test
+// can drive it without moving the process.
+//
+// IT SAYS WHERE IT LOOKED. The fourth release dogfood (2026-09-18) ran `fleet survey`
+// from a home directory and read `tools/bench-standard.sh not found above the working
+// directory` as "the script is missing", when what it means is that this verb wants a
+// nova-tools CHECKOUT as its working directory. A refusal naming the first directory it
+// tried and the last is one a person can act on without reading the source.
+func readBenchStandardFrom(dir string) (string, error) {
+	started, last := dir, dir
 	for i := 0; i < 16; i++ {
 		candidate := filepath.Join(dir, "tools", "bench-standard.sh")
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -472,13 +485,15 @@ func readBenchStandard() (string, error) {
 			}
 			return string(raw), nil
 		}
+		last = dir
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 		dir = parent
 	}
-	return "", fmt.Errorf("tools/bench-standard.sh not found above the working directory")
+	return "", fmt.Errorf("tools/bench-standard.sh not found: looked in every directory from %s up to %s; "+
+		"fleet survey reads the script out of a nova-tools checkout, so run it with a checkout as the working directory", started, last)
 }
 
 // surveyBenches holds every bench in the benches file against the machines registry. It

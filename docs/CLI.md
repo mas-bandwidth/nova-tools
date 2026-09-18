@@ -1011,26 +1011,44 @@ REBASE NOTE PR #<n> card=<name> is cut and marked and was not launched: <reason>
 ```
 
 `react` is the lane's subscriber, and it holds no timer of its own: it blocks on the
-pub/sub channels until a message lands or `--deadline` is reached — 60 seconds by
-default — and acts once per message. A `pr-checks-done` that succeeded enqueues the
-pull request unless the skip set or a live hold key stops it; a `dev-moved` asks for
-a rebase unit for every pull request the move made `DIRTY`; a `card-done` does
-nothing, because the recorder and the harvester read the stream themselves. `--lane`
-is optional and is how the reactor learns the repository and base the `dev-moved` arm
-needs; without it only the enqueue arm runs.
+pub/sub channels until a message lands or `--deadline` is reached, and acts once per
+message. A `pr-checks-done` that succeeded **enqueues the pull request into
+`<lane>/queue.json`** — the one queue this tree has, the one `nova-merge queue` writes
+and `nova-merge run` walks — unless that queue's skip set or `<lane>/hold` stops it; a
+`dev-moved` asks for a rebase unit for every pull request the move made `DIRTY`; a
+`card-done` does nothing, because the recorder and the harvester read the stream
+themselves.
+
+**`--lane` is required, and it is the queue.** It used to be optional, and without it
+the reactor enqueued into a redis set called `merge:queue` that nothing in this tree
+ever read: `REACT enqueue pr=<n>`, exit 0, and nothing reachable afterwards. There is
+**one hold and one skip set**, the lane's; the redis `enqueue:hold` and `enqueue:skip`
+are gone, because two mechanisms wearing the same words are one mechanism nobody can
+reason about — a held lane with the pull request skipped still printed `REACT enqueue`.
+
+**`--once` or `--deadline <seconds>` is required.** The loop form with neither ran a
+60-second loop and exited 0 although the help said one was required; it is now refused
+by name, like `nova-work events`. `--once` with no `--deadline` waits 60 seconds for
+its one message.
 
 ```
 REACT enqueue pr=<n> head=<sha>
-REACT skip pr=<n> head=<sha> reason=skip-set
-REACT hold pr=<n> head=<sha> reason=hold-key
+REACT skip pr=<n> head=<sha> reason=queue-skip
+REACT hold pr=<n> head=<sha> reason=<the hold's own reason>
 REACT rebase-wanted pr=<n> head=<sha> base=<sha>
-REACT OK once=true
-REACT OK once=false deadline=<n>s
+REACT DROP channel=<name> reason=<why the payload could not be read>
+REACT OK once=true dropped=<n>
+REACT OK once=false deadline=<n>s dropped=<n>
 ```
 
 **Returning at the deadline is the design and not a failure**, so a window in which
 nothing was published is still `REACT OK`, exit 0; `REACT FAIL` on stderr, exit 1, is
-the reactor that could not read its channels.
+the reactor that could not read its channels. **One malformed payload is one message
+dropped**, said on a `REACT DROP` line and counted in `dropped=<n>` on the closing
+line — it used to kill the whole reactor at exit 1, although an unknown channel was
+already ignored. go-redis's own connection-pool chatter is silenced before the first
+dial, so a bus this verb cannot reach is one `REACT FAIL` line and not five `redis:
+… pool.go` lines in front of it.
 
 `classify` asks one typed decision about **one failed merge-group run**: was the
 failure flaky under the queue's load, the environment, or the pull request's own
@@ -1050,6 +1068,111 @@ are the decide route's, as everywhere else; a run the host cannot read, a route 
 will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
 exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
 risk; never a merge*.
+
+### queue
+
+```
+nova-merge queue --lane <dir> (status | hold "<reason>" --who <name> | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration>) [--timeout <seconds>] [--max <n>]
+nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--head <sha>] [--pr <n>|--branch <name>] [--test <name>] [--note <text>] [--who <name>]
+```
+
+`queue` is the mechanical hand that keeps the lane's order. One queue
+(`<lane>/queue.json`: `queued`, `skipped`, `parked`), one hold (`<lane>/hold`), one
+order — the order `run` walks. Every write is a read-modify-write under the lane's own
+lock through a fixed temp name.
+
+**`status`** reads the two files and nothing else — no forge, no clone, no lock — so it
+runs on a bench with no `gh` and no token:
+
+```
+QUEUE ENTRY pos=<n> entry=<pr> state=queued
+QUEUE ENTRY pos=- entry=<pr> state=skipped|parked
+QUEUE STATUS lane=<dir> queued=<n> skipped=<n> parked=<n> hold=<reason|-> by=<who|->
+```
+
+Before it existed there was no way to see the queue at all: a lane standing still under
+a hold read exactly like a lane with nothing to do, and a skipped pull request read
+exactly like one nobody had queued.
+
+**`hold "<reason>" --who <name>`** writes the reason into `<lane>/hold`. **`--who` is
+required**: it was undocumented and optional, and a hold written without it said
+`by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release. This
+tool reads no environment variable, so `$USER` is the caller's to pass. While a hold
+stands, the sweep refuses, `front` and every enqueue refuse, **`run` refuses** —
+`RUN REFUSED: a hold is standing (<reason>) by <who>` at exit 2, read at the top of
+every pass so a hold written during a `--loop` stops the next one — and `react` prints
+`REACT hold` instead of enqueueing. **`release`** removes the file and prints how long
+it stood.
+
+**`skip`/`unskip`/`front`** are **local**: they reorder numbers in a file and reach no
+forge. `front` used to read the pull request and its checks from the host first, which
+made the one local verb of the family need a network, a `gh` and a token, over a
+judgement `run` makes again on every pass anyway; the one thing it still checks is that
+the entry is in this lane.
+
+**`sweep --window <duration>`** walks the open pull requests the host reports inside the
+session window and enqueues each that is green, not skipped, not parked, not dirty and
+not already queued. It **runs against a real repository now**: `QueuePRs`,
+`PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so
+every real invocation answered `QUEUE REFUSED: this host cannot list open pull requests
+… no host, no sweep` — the verb passed its tests and had never once run.
+
+**A `queue.json` that does not parse is `QUEUE REFUSED` / `RUN REFUSED` at exit 2 naming
+the file.** The error used to be swallowed, which left the walk order empty — and an
+empty walk order meant "walk everything", so a corrupt file **silently un-skipped every
+skip and every parked poison**.
+
+### batch
+
+```
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+```
+
+`batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
+`--root`, merges each `--pr` head onto `--base` in the order given on a branch
+`rowan/<name>`, drops a head that will not merge and says so, then runs the suite —
+`build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
+
+```
+BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
+BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<the first line that is not a notice>"
+BATCH DROP #<n> reason="the merge conflicts with the members ahead"
+BATCH DROP #<n> reason="head <sha> has no green ci-ok (state=<pending|failure|none>)"
+BATCH SKIP <step> reason="<why it could not run>"
+BATCH STEP <step> command="<what it runs>"
+BATCH NOTE checks=waived reason="<what the caller took on>"
+BATCH NOTE #<n> checks=<batch-branch|receipt> reason="<the gate's own evidence for this member>"
+BATCH REFUSED: <reason>
+```
+
+`skipped=<list>` **names every step that did not run**, so a green line never claims a
+suite it only ran part of: `BATCH SKIP lisp` went to stderr and `BATCH OK` said nothing
+about it. **`--require-lisp`** turns a skipped lisp step into `BATCH FAIL` for a caller
+who needs it run. A program that is not on `PATH` is also looked for under
+`~/sdk/<toolchain>/bin` — this fleet's toolchains live there — before its step is
+skipped.
+
+**The toolchain is checked against the tree's `go.mod` before the first merge.** With
+`go1.22` on `PATH` and a `go.mod` asking for 1.26 the whole gate ran and the failure
+surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a progress
+notice naming nothing to fix. It is now one `BATCH REFUSED` with the remedy, and a
+`go: downloading …` line is never what a `reason=` quotes.
+
+**`checks=required` is the default (edge 25).** A member whose own head has no green
+`ci-ok` is **dropped before the merge**, by name and with the state it was in. The gate
+runs on one operating system and CI runs on three: three members went green under the
+gate on linux and red on CI's windows legs, and the batch pull request went red after
+the gate had said OK. A member that has not been green on its own is a member nobody
+has judged on every platform, and putting it in a batch asks this gate a question it
+cannot answer. A member whose head is **a batch's own branch** (`rowan/integration-*`) or is named by a
+`BATCH OK` line in **`--receipt-file`** is admitted on the gate's own evidence instead of
+the forge's rollup — that is the same receipt `nova-merge land` takes, read by the same
+parser — so a batch pull request whose own CI is still running is never refused as a
+member of the next one. `--no-require-checks` waives the whole check and says so on
+`BATCH NOTE` and on the verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
+build-level half of the same class on the bench, in seconds, with no second machine; it
+does not catch a windows-only **test** failure, which is what the forge's own windows
+leg is for.
 
 ## nova-pulse
 
@@ -2080,6 +2203,65 @@ and explicit argv; paths or arguments containing spaces belong in a wrapper scri
 `--remote` and `--branch`. A busy snapshot wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
 
+### The release verb
+
+`nova-update release` is the last mile: a green commit becomes a version, a set of stamped binaries,
+and the same binaries answering for themselves on every bench in the fleet. Five verbs, each of which
+can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
+[docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+
+```sh
+nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
+```
+
+`cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
+changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. It also
+classifies the range since the previous tag against the sensitive path list and refuses until
+`--security-read <note id|url>` names Johnny's read. A compare the forge could only answer in part —
+300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
+past it: classify from a complete local list instead, with `--local-diff <checkout>` to produce one
+(`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
+`--dry-run` decides and prints and writes nothing.
+
+```sh
+nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
+```
+
+`build` compiles every `cmd/nova-*` for every platform named — `--platform` is repeatable **and**
+comma-separated — writes and verifies a `SHA256SUMS` per platform, and writes that file's own sha256
+to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the first compile, so no
+half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
+`RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…>`.
+
+```sh
+nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
+```
+
+`install` verifies the checksums, puts the binaries in place by rename, skips what is already current
+and clears this release's own files out of `--retire`. Run it **on the coordinator before adopting**:
+`adopt` fans out with the nova-update this host is holding, and a coordinator behind the release
+refuses and says so.
+
+```sh
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from hulk:/home/gaffer/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+```
+
+`adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
+release is fetched once into `--stage` and checked against a digest that did **not** travel with the
+bits: `--repo <owner/name>` reads it off the annotated tag, `--expect-sums-from <SUMS.digest>` reads
+it out of this host's own build (which is how a release with no tag is adopted at all), or
+`--expect-sums <sha256>` names it outright. The digest file must be local. `--machines` is one machine
+per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` asks every machine what
+it holds and installs nothing.
+
+```sh
+nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/nova-release' --reason "shipped a key"
+```
+
+`pull` withdraws a release: the artifacts go here and on every machine, by name, from that release's
+own `SHA256SUMS` — never recursively — and the tag stays while the changelog section is marked with
+the date and `--reason`. `--dry-run` says what would be deleted and deletes nothing.
+
 ## nova-version
 
 `nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
@@ -2190,7 +2372,8 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. It also reports its own build with `nova-ci version`.
+a budget, and reads a CI run's failing jobs and reports the failing tests they
+held. It also reports its own build with `nova-ci version`.
 
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
@@ -2202,6 +2385,40 @@ separately. `slowtests` checks timing, not whether the tests passed. The default
 budget is 60 seconds per package; exit 2 means an over-budget package or unusable
 input, and exit 0 means no package exceeded the budget. CI exceptions belong in
 the dated project policy, not in an assumed higher tool default.
+
+The `failed` verb reads the other end of the same run: it asks a forge, through
+`gh`, for the jobs of one run that did not succeed, and prints the failing tests
+those jobs held instead of their logs.
+
+```sh
+nova-ci failed --repo owner/name --run 35375346271
+nova-ci failed --repo owner/name --pr 1375 --merge-group
+nova-ci failed --repo owner/name --branch dev --job "test (3/4 studio)" --max-lines 4
+nova-ci failed --help
+```
+
+Name exactly one run: `--run <id>`, `--pr <n>` (the newest run of that pull
+request's head commit, or `--merge-group` for the newest merge-queue run of its
+queue branch) or `--branch <name>`. `--repo` is required and has no default.
+`--job <text>` keeps the jobs whose name contains that text and reads no other
+job's log, which is what turns a forty-leg matrix into one call; if it matches no
+failing job it refuses, naming the jobs that did fail, rather than printing a
+green report. `--max-lines`
+(default 8) bounds each test's own message lines and counts the rest; `--gh`
+names the executable and `--timeout` (default 2m) budgets one call to it.
+
+Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
+at=<file:line>` line with that test's own words indented under it; a cancelled
+step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
+than its log, and a timed-out package is `TIMEOUT job="<name>" pkg=<pkg>
+running=<tests>`. A job whose log the forge will not hand over — a job cancelled
+while its run is still in progress, whose log blob answers 404 — is
+`NOLOG job="<name>" reason="<why>"` and an `unread=<n>` in the closing count, so
+one missing log never sinks the other jobs' reds. The closing
+`FAILED OK jobs=<n> tests=<n>` always prints. It is
+a reader, so exit 1 means the run said something red, exit 0 means it said
+nothing, and exit 2 is a refusal — a bad flag, no such run, or a `gh` that could
+not answer. It runs `gh` for reading only and never merges, enqueues or comments.
 See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work
@@ -2342,7 +2559,9 @@ flags:
                   per line. Without it no lane is checked.
   --done <ids>    set check: comma-separated unit ids that are done, beside what the
                   file's own :done and :status say.
-  --ready         set check: also print one SET READY line per unit of the ready set.
+  --ready         set check: also print one SET READY line per unit of the ready set,
+                  each carrying its admission verdict (admit=go, or admit=held with the
+                  dimension or path that held it and the unit holding it).
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -2387,6 +2606,24 @@ example:
 ```
 
 The session verbs `session start`, `session status` and `session stop` speak the socket protocol; `SESSION OK` is one shape printed by all three alike. A missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. The graph and plan verbs read the JSON dependency graph and the bounded `.work` plan as data: `plan check` and `plan expand` require a plan path and default to 65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`, `--max-nodes`); unknown kinds, absent dependencies and dependency cycles refuse. `plan expand` writes card directories for explicit `:node` entries and does not launch them; existing cards are left unchanged when expanding again. `dependencies --graph <file>` reads the graph and `--node <id> --needs <id,id>` writes dependency edges; `ready` prints whether each requested node's dependencies are terminal and accepted without acquiring a lease or reserving a slot. `set check` reads the other top form of the same language — `(work-set "id" … :units ((unit …)))`, the one a coordinator writes by hand — through that same bounded reader, and validates its content: a duplicate id, a `:needs` naming a unit nobody defined, a cycle, an `:owner` no `--minds` registry names, a `:lane` no `--lanes` file names, a `:deadline` that is not an instant. Every rule runs over every unit in one pass and each finding is one `SET` line, so a defective set costs one run rather than one run per defect. The two exit codes stay apart: exit 2 is a file that could not be read at all, exit 1 is a file read whole whose content is wrong, and the `SET OK units=… ready=… blocked=… owned=…` summary prints either way. `--ready` adds the mechanical ready set — a unit is done when it says so (`:done`, or a `:status` of closed, done, landed or merged) or when `--done` names it, and ready when it is not done and every need is done — so what can be pulled is derived from the language rather than maintained by hand. `nova-work help` also describes `clip`, which commits and harvests a worker's result before resetting its worktree; use that mutating workflow only with the intended worktree, branch, base and harvest destination.
+
+Readiness is only half the question, so each SET READY line carries the other half: the
+ADMISSION verdict from internal/jobs (SPEC-JOBS section 9, SPEC-WORKLANG A5 to A9).
+`ready` is whether a unit's needs are closed, which the language answers; `admit` is
+whether its resource vector is free, which the kernel answers. The ready units are run
+through one admission in written order, so the ones marked `admit=go` are a set that may
+run TOGETHER -- one live unit per lane (A6), no two intersecting :writes (A7) -- rather
+than a list each of which could run if the others did not. A held unit prints what held
+it and who holds it:
+
+  SET READY unit=certify:verb owner=rowan-child lane=pulse deadline=- admit=go on=- by=-
+  SET READY unit=harvest:bench owner=rowan-child lane=pulse deadline=- admit=held on=lane:pulse by=certify:verb
+
+A held unit never holds the ones after it: A9 says a unit goes when its OWN needs are
+closed and its OWN vector is free, so the pass neither stops nor waits at a refusal. The
+authority here counts lanes and writes only -- set check reads a file and knows no bench
+-- so a unit naming cpu or memory is reported as held on that dimension rather than
+silently granted against a capacity nobody counted.
 
 ## nova-cairn
 

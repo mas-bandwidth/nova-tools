@@ -474,9 +474,42 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b := newBench(t)
 		b.inject()
 		taskID := b.add("task between exit and exit.json\nFAKE-FINDINGS 0\n")
+		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=between-exit-and-exit-json"}
 		b.run()
 		b.extraEnv = nil
+
+		// THE FIRST RUN RETURNING IS NOT THE BOUNDARY, and assuming it was is what made this
+		// subtest flaky under load: it failed once on space with the package's parallel tests
+		// squeezed onto one core, and passed alone every time. This kill point kills its
+		// PARENT first -- the dispatcher that b.run() is waiting on -- and only then itself
+		// (killpoint_unix.go), so b.run() returns while the supervisor is still runnable and
+		// nothing but the scheduler decides when it dies. Measured on hulk with the package
+		// squeezed onto one core: in 9 runs of 12 the supervisor was STILL ALIVE at the
+		// moment the first run returned. On an idle box it died during the second
+		// dispatcher's own start-up, which is the only reason this ever passed.
+		//
+		// A supervisor that outlives that moment is a DIFFERENT answer from Pool.Decide: a
+		// live pid with a matching start stamp is an adopt, and a live member of the job's
+		// group is a quarantine. Neither prints `RUN RECLAIM ... end=unknown`, which is
+		// exactly the red that was seen.
+		//
+		// So the second dispatcher runs on OBSERVABLES: the supervisor pid is gone, the group
+		// it led is gone, and exit.json was never published. Those three ARE the transaction
+		// boundary this subtest is about -- the supervisor died between the harness's exit and
+		// the rename that would have published its evidence -- so the state is established
+		// rather than waited out, and the assertion below is on the decision, not the clock.
+		supPID := readSupervisorPID(t, jobDir)
+		noteSupervisor(t, supPID)
+		sf, err := mustOpenPool(t, b.pool).ReadSlot(1)
+		if err != nil {
+			t.Fatalf("could not read slot 1: %v", err)
+		}
+		waitGone(t, supPID)
+		waitGroupGone(t, sf.JobPgid, sf.JobStarted, "the job group of the supervisor killed between exit and exit.json")
+		if _, err := os.Stat(filepath.Join(jobDir, "exit.json")); err == nil {
+			t.Fatalf("exit.json exists: the supervisor was killed AFTER the transaction it was meant to die inside")
+		}
 
 		exit, stdout, _ := b.run()
 		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unknown dest=failed usage=")
@@ -557,15 +590,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b.run()
 		b.extraEnv = nil
 
-		// Read supervisor PID
-		rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
-		if err != nil {
-			t.Fatalf("could not read supervisor.pid: %v", err)
-		}
-		supPID, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
-		if err != nil {
-			t.Fatalf("bad supervisor pid: %v", err)
-		}
+		supPID := readSupervisorPID(t, jobDir)
 		noteSupervisor(t, supPID)
 
 		// Second run on pool with --workers 1 and a pending task finds the reserved slot
@@ -664,14 +689,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b.run()
 		b.extraEnv = nil
 
-		rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
-		if err != nil {
-			t.Fatalf("could not read supervisor.pid: %v", err)
-		}
-		supPID, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
-		if err != nil {
-			t.Fatalf("bad supervisor pid: %v", err)
-		}
+		supPID := readSupervisorPID(t, jobDir)
 		noteSupervisor(t, supPID)
 		if _, err := os.Stat(mark); err != nil {
 			t.Fatalf("the supervisor never reached its pause point, so no hangup was staged: %v", err)
@@ -797,6 +815,41 @@ func waitGone(t *testing.T, pid int) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("supervisor %d was still alive 30s after its SIGCONT", pid)
+}
+
+// waitGroupGone waits for a process GROUP to be gone, and it has a deadline. It is the
+// second half of "the launch transaction is over": a supervisor's pid can be gone while a
+// member of the job's group is still draining, and Pool.Decide reads that survivor as a
+// quarantine rather than the reclaim the caller is about to assert. A pgid of zero is a
+// group that was never recorded, which is nothing to wait for.
+func waitGroupGone(t *testing.T, pgid int, started, what string) {
+	t.Helper()
+	if pgid <= 0 {
+		return
+	}
+	bound := testWaitBound()
+	for waited := time.Duration(0); waited < bound; waited += 5 * time.Millisecond {
+		if !swarm.GroupAlive(pgid, started) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s: process group %d was still alive after %s", what, pgid, bound)
+}
+
+// readSupervisorPID reads the pid the dispatcher wrote before its handshake. Every subtest
+// that needs to wait on a supervisor it did not fork starts here.
+func readSupervisorPID(t *testing.T, jobDir string) int {
+	t.Helper()
+	rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
+	if err != nil {
+		t.Fatalf("could not read supervisor.pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
+	if err != nil {
+		t.Fatalf("bad supervisor pid: %v", err)
+	}
+	return pid
 }
 
 // waitStopped waits for a process to actually be stopped, and it has a deadline. `ps` is

@@ -168,7 +168,11 @@ func parseLisp(path string, raw []byte, maxBytes int64) (*WorkSet, error) {
 	if maxBytes > 0 {
 		limits.MaxBytes = int(maxBytes)
 	}
-	set, err := worklang.ParseWorkSet(path, raw, limits)
+	// The tolerant door: a member that is not a (unit "id" ...) is a FINDING of
+	// `set check`, reported there in one pass, and it is skipped below. The
+	// strict door refuses the whole file for it, which is right for a kernel
+	// loading a set and wrong for an ask that only wants one unit of it.
+	set, err := worklang.ParseWorkSetTolerant(path, raw, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -181,11 +185,11 @@ func parseLisp(path string, raw []byte, maxBytes int64) (*WorkSet, error) {
 			continue
 		}
 		unit := Unit{
-			ID: u.ID, Title: u.Title, Owner: u.Owner, Lane: u.Lane,
-			Branch: u.Branch, Needs: u.Needs, Acceptance: u.Acceptance, Source: path,
+			ID: u.ID, Title: u.Title(), Owner: u.Owner(), Lane: u.Lane(),
+			Branch: u.Branch(), Needs: u.Needs(), Acceptance: u.AcceptanceText(), Source: path,
 		}
-		if u.Deadline != "" {
-			at, err := ParseStamp(u.Deadline)
+		if u.Deadline() != "" {
+			at, err := ParseStamp(u.Deadline())
 			if err != nil {
 				return nil, fmt.Errorf("%s: unit %q has a :deadline this reader cannot read: %w", path, u.ID, err)
 			}
