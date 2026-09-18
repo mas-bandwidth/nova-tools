@@ -447,11 +447,10 @@ is the day it was learned.
 
 ```
 nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
-                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
-                    [--provider <label>=<file>]...
-                    [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                    [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
-                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
@@ -882,7 +881,7 @@ order is `TOKENS UNPARSED` naming the file and the first wrong column.
 
 For a harness that records nothing (rule 21). The file is the provider's own
 export, unmodified; the label names the provider and the parser (`google`,
-`xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
+`openai`, `xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
 with the first unparsed line quoted, never a guess. Rows land with repo
 `unattributed` and the model as the export names it; a type the export has
 no column for is `-`, and `reports=` on the source line names the columns it
@@ -899,7 +898,12 @@ array, chosen by the file's leading `{` or `[`), folding each turn into the
 same rows: `endedAt` is the day, `primaryModelId` the model, and
 `inputTokens`/`outputTokens`/`cacheCreationTokens`/`cachedReadTokens`/
 `reasoningTokens` the five counts, with a field the turn did not carry left
-a `-`, never a zero.
+a `-`, never a zero. `costUsdTicks` is the turn's cost, an integer count of
+micro-dollar ticks — the unit `usd=` holds — folded into the model's `usd=`
+on the day's `TOKENS AVG` lines (rule 20's amendment: the cost is "from the
+usage `usd` column or a cost tick the source reported"); a lexeme that is
+not a non-negative integer is an absence, and `usd=` is `0` where no source
+reported one.
 
 ### `--bus <dir>`: friends' self-reports
 
@@ -2220,8 +2224,10 @@ seen red before it is trusted.
     `TOKENS MIXED` for that row.
 21. A fixture Google export and a fixture xAI export fold to rows with repo
     `unattributed`, the parser name in `sources`, `-` in every type the
-    export has no column for, and `day_basis` per demanded test 17; an
-    export with one unknown column is `TOKENS UNREADABLE` quoting that line;
+    export has no column for, and `day_basis` per demanded test 17; a
+    `grok usage` JSON turn carrying `costUsdTicks` folds its cost into the
+    model's `usd=` on the day's `TOKENS AVG` line, never `usd=0` where the
+    source reported a tick; an export with one unknown column is `TOKENS UNREADABLE` quoting that line;
     a friend's tokens note whose body is one `# repos: schema, serialize`
     line and nothing else is a valid note with zero rows, yields
     `TOKENS TOUCHED … repos=schema,serialize`, and changes no count.
