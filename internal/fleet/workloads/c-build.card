@@ -1,7 +1,7 @@
 roles: bench
 expect: ^C OK
 wall: yes
-reads: /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+reads: /usr, /bin, /lib, /lib64, /etc, /opt/homebrew/Cellar/gcc, /opt/homebrew/Cellar/llvm, /opt/homebrew/lib, /opt/homebrew/include, /Library/Developer/CommandLineTools
 
 # A bench compiles and RUNS what it compiled, inside the wall. A compiler that is present
 # and a compiler that can link are two different machines.

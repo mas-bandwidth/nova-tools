@@ -1,7 +1,7 @@
 roles: bench
 expect: ^GIT PUSH OK
 wall: yes
-reads: $HOME/sdk, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew
+reads: $HOME/sdk, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew/Cellar/git, /opt/homebrew/lib, /opt/homebrew/share, /Library/Developer/CommandLineTools
 
 # Every card ends in a push, and a push from inside the wall is the step that fails on a
 # bench whose git is the Xcode shim or whose config the wall cannot read. The remote is a

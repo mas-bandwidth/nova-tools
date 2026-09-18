@@ -1,7 +1,7 @@
 roles: bench
 expect: ^WALL TOOLCHAIN OK
 wall: yes
-reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew/Cellar/go, /opt/homebrew/Cellar/sbcl, /opt/homebrew/opt, /opt/homebrew/lib, /opt/homebrew/share, /Library/Java/JavaVirtualMachines, /usr/local/share/dotnet, /Library/Developer/CommandLineTools
 
 # THE HURT ITSELF, as its own class.
 #
@@ -11,8 +11,19 @@ reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/h
 # wall's read roots, not of the machine. go-test proves a module builds; this proves the
 # VERSION the wall lets through is the one go.mod asks for, which is the half that was
 # silent.
+#
+# AND THE DARWIN HALF (#1419). A Mac's toolchains are installed AND on PATH and still die
+# inside a bare wall: /opt/homebrew/bin/go is a symlink into /opt/homebrew/Cellar/go/<ver>/
+# libexec, each toolchain resolves its runtime from the directory of the launcher that ran
+# it, and the grant is checked against the RESOLVED target. So the roots here are the Cellar
+# TREES -- never /opt/homebrew/bin, which is a directory of launchers a card could exec out
+# of -- and the body looks in the tree first and only then at whatever PATH resolves.
 set -eu
-GO=$(command -v go 2>/dev/null || true)
+GO=""
+for candidate in /opt/homebrew/Cellar/go/*/libexec/bin/go "$NOVA_HOME/sdk/$NOVA_GO/bin/go"; do
+  if [ -x "$candidate" ]; then GO="$candidate"; break; fi
+done
+if [ -z "$GO" ]; then GO=$(command -v go 2>/dev/null || true); fi
 if [ -z "$GO" ]; then
   echo "WALL TOOLCHAIN FAIL no go is reachable inside the wall: PATH=$PATH"
   exit 1
@@ -25,12 +36,11 @@ if [ "$LOWEST" != "$WANT" ] && [ "$HAVE" != "$WANT" ]; then
   echo "WALL TOOLCHAIN FAIL inside the wall go is $GOT at $GO, below $NOVA_GO; name the SDK root in the card's read roots"
   exit 1
 fi
-SBCL=$(command -v sbcl 2>/dev/null || true)
-if [ -z "$SBCL" ]; then
-  for candidate in "$NOVA_HOME"/sdk/sbcl*/run-sbcl.sh "$NOVA_HOME"/.local/bin/sbcl; do
-    if [ -x "$candidate" ]; then SBCL="$candidate"; break; fi
-  done
-fi
+SBCL=""
+for candidate in /opt/homebrew/Cellar/sbcl/*/bin/sbcl "$NOVA_HOME"/sdk/sbcl*/run-sbcl.sh "$NOVA_HOME"/.local/bin/sbcl; do
+  if [ -x "$candidate" ]; then SBCL="$candidate"; break; fi
+done
+if [ -z "$SBCL" ]; then SBCL=$(command -v sbcl 2>/dev/null || true); fi
 if [ -z "$SBCL" ]; then
   echo "WALL TOOLCHAIN FAIL go is $GOT but no sbcl is reachable inside the wall"
   exit 1

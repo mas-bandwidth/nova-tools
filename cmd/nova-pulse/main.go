@@ -569,6 +569,11 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dayStart := f.fs.String("day-start", "", "")
 	branch := f.fs.String("branch", "", "")
 	self := f.fs.String("self", "", "")
+	// --certs is the certificates file `fleet certify` appends to. With it the page gains
+	// one certification cell per machine; without it every cell is a dash, which says
+	// "nobody asked" and never "nothing is certified".
+	certs := f.fs.String("certs", "", "")
+	certMaxAge := f.fs.String("cert-max-age", "24h", "")
 	var loops repeatable
 	f.fs.Var(&loops, "loop", "")
 	// --timeout takes a bare number of seconds or a duration. It was seconds only while the
@@ -591,6 +596,13 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *expandingHours < 1 {
 		f.add(fmt.Sprintf("--expanding-hours wants a whole number of hours, got %d", *expandingHours))
 	}
+	certAge, cerr := time.ParseDuration(*certMaxAge)
+	if cerr != nil || certAge <= 0 {
+		f.add(fmt.Sprintf("--cert-max-age wants a positive duration such as 24h or 90m, got %q", *certMaxAge))
+	}
+	if strings.TrimSpace(*certs) != "" && *html == "" {
+		f.add("--certs is the fleet page's certification column and belongs with --html; the reading verb for the record itself is `nova-pulse fleet certify --status`")
+	}
 	// --html is the fleet status page as a verb (status-page.sh folded in). It reads the
 	// benches file and the queue, counts live cards from running card processes, and prints
 	// one STATUS HTML line; the eight-line report and --oneline are untouched.
@@ -600,23 +612,25 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		return pulse.StatusHTML(pulse.StatusHTMLInput{
-			HTML:     *html,
-			Benches:  *benches,
-			Queue:    *queue,
-			SSH:      *ssh,
-			Publish:  *publish,
-			GhConfig: *ghConfig,
-			DayStart: *dayStart,
-			Branch:   *branch,
-			Self:     *self,
-			Loops:    loops,
-			Timeout:  timeout,
-			Reader:   statusHTMLReader,
-			SelfRead: statusHTMLSelfReader,
-			Ship:     statusHTMLPublisher,
-			Now:      func() time.Time { return now },
-			Stdout:   stdout,
-			Stderr:   stderr,
+			HTML:       *html,
+			Benches:    *benches,
+			Queue:      *queue,
+			SSH:        *ssh,
+			Publish:    *publish,
+			GhConfig:   *ghConfig,
+			DayStart:   *dayStart,
+			Branch:     *branch,
+			Self:       *self,
+			Certs:      *certs,
+			CertMaxAge: certAge,
+			Loops:      loops,
+			Timeout:    timeout,
+			Reader:     statusHTMLReader,
+			SelfRead:   statusHTMLSelfReader,
+			Ship:       statusHTMLPublisher,
+			Now:        func() time.Time { return now },
+			Stdout:     stdout,
+			Stderr:     stderr,
 		})
 	}
 	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")

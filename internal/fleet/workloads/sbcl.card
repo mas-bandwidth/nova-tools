@@ -1,17 +1,18 @@
 roles: bench
 expect: ^SBCL OK
 wall: yes
-reads: $HOME/sdk, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew
+reads: $HOME/sdk, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew/Cellar/sbcl, /opt/homebrew/lib, /opt/homebrew/share, /opt/homebrew/opt
 
-# The lisp leg runs from inside the wall like every other card, and sbcl on a bench lives
-# under ~/sdk rather than on the system PATH. Both halves are checked here.
+# The lisp leg runs from inside the wall like every other card. sbcl on a LINUX bench lives
+# under ~/sdk rather than on the system PATH; on a DARWIN bench it is brew's, in the Cellar
+# tree behind /opt/homebrew/bin/sbcl -- which is a directory of launchers and never a granted
+# root. All of them are checked here, the tree before the launcher.
 set -eu
-SBCL=$(command -v sbcl 2>/dev/null || true)
-if [ -z "$SBCL" ]; then
-  for candidate in "$NOVA_HOME"/sdk/sbcl*/run-sbcl.sh "$NOVA_HOME"/sdk/bin/sbcl "$NOVA_HOME"/.local/bin/sbcl; do
-    if [ -x "$candidate" ]; then SBCL="$candidate"; break; fi
-  done
-fi
+SBCL=""
+for candidate in /opt/homebrew/Cellar/sbcl/*/bin/sbcl "$NOVA_HOME"/sdk/sbcl*/run-sbcl.sh "$NOVA_HOME"/sdk/bin/sbcl "$NOVA_HOME"/.local/bin/sbcl; do
+  if [ -x "$candidate" ]; then SBCL="$candidate"; break; fi
+done
+if [ -z "$SBCL" ]; then SBCL=$(command -v sbcl 2>/dev/null || true); fi
 if [ -z "$SBCL" ]; then
   echo "SBCL FAIL no sbcl is reachable inside the wall (name the SDK root in the workload's reads)"
   exit 1

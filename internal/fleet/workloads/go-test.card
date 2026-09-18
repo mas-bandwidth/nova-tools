@@ -1,14 +1,14 @@
 roles: bench
 expect: ^GO OK
 wall: yes
-reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew/Cellar/go, /opt/homebrew/opt, /opt/homebrew/lib, /Library/Developer/CommandLineTools
 
 # THE CARD THAT DIED ON HULK, as a check. A Go card builds and tests a module inside the
 # wall; hulk could not, because $HOME/sdk was not a readable root and /usr/bin/go is 1.22.
 set -eu
 JOBDIR="$PWD"
 GO=""
-for candidate in "$NOVA_HOME/sdk/$NOVA_GO/bin/go" "$NOVA_HOME/go/bin/go" "$NOVA_HOME/.local/go/bin/go"; do
+for candidate in "$NOVA_HOME/sdk/$NOVA_GO/bin/go" /opt/homebrew/Cellar/go/*/libexec/bin/go "$NOVA_HOME/go/bin/go" "$NOVA_HOME/.local/go/bin/go"; do
   if [ -x "$candidate" ]; then GO="$candidate"; break; fi
 done
 if [ -z "$GO" ]; then GO=$(command -v go 2>/dev/null || true); fi

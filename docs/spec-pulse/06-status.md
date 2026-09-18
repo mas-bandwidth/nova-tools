@@ -61,7 +61,8 @@ under #500. Replay: `status-expanding-after-two-hours-above-one`.
 
 `nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>]
 [--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
-[--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]` is the fleet page as a verb
+[--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>] [--certs <file>]
+[--cert-max-age <d>]` is the fleet page as a verb
 (`bin/status-page.sh`). It reads every bench in `--benches` over `ssh <target> bash -s`, in
 parallel and bounded by `--timeout`, counting live cards from running card processes — a
 process whose command line names a job directory, or whose cwd is under the slot, the
@@ -106,6 +107,20 @@ correctly refused over twelve gaps.
 - one row per bench, and one for `--self`: the host running the verb is a bench too, with
   its own columns (CI runners, cores, load, free disk, orphans). The Studio drowned at load
   147 on 2026-09-17 while the page showed four Linux benches idling;
+- **a certification cell per machine**, read from `--certs` and from nothing else — no ssh,
+  no forge, no registry, because a page that guesses what it did not measure is the DOWN row
+  again. It reads `certified=<k>/<n> stale=<m>`: of the classes that machine has ever had a
+  row for, how many are current under the `(build, standard-hash)` pair of the machine's
+  **own** newest row and inside `--cert-max-age` (default 24h). The pair is per machine and
+  not per fleet, because the machines do not take a release at one minute and two of them
+  mid-release disagree on purpose. `WARN` counts as certified, exactly as `Certified` counts
+  it. A machine with no row, and every machine when no `--certs` was given, is a **dash**:
+  `certified=0/0` would read as a machine that failed, and "nobody has ever certified it
+  here" is not that claim. A **DOWN** bench keeps its cell — the row is read over ssh and the
+  record is read from a file, and "DOWN and certified 14/14 an hour ago" sends a person
+  somewhere different from "DOWN and never certified". A certificates file that will not read
+  is one `STATUS NOTE certs=<path> unread=<why>` on stderr and a page of dashes, never a page
+  of zeros and never a failed run;
 - the loops on the `--self` host, counted by the pattern the CALLER names. No loop name is
   baked into this tool: a verb carrying `harvest-loop.sh` in its source would freeze the
   scripts it exists to retire, and `--loop` without `--self` is refused because there is no

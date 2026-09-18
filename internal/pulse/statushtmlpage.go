@@ -47,6 +47,21 @@ type pageData struct {
 	hygiene    int
 	readings   []BenchReading
 	self       *SelfReading
+	// certs is the certification cell per machine name, read from the certificates file.
+	// nil is "no --certs was given"; a name missing from a non-nil map is a machine with no
+	// row, and both print a dash. A zero here would read as "nothing is certified".
+	certs map[string]string
+}
+
+// certCell is the certification cell for one machine: what the record says, or a dash.
+func (p pageData) certCell(name string) string {
+	if p.certs == nil {
+		return "-"
+	}
+	if cell, ok := p.certs[name]; ok && cell != "" {
+		return cell
+	}
+	return "-"
 }
 
 // fleetPage renders the page.
@@ -80,29 +95,33 @@ func fleetPage(p pageData) string {
 	fmt.Fprintf(&b, "<tr><td>hygiene actions, last hour</td><td>%d</td><td>reaps and deletions across the benches</td></tr></table>\n", p.hygiene)
 
 	b.WriteString("<h3>slots</h3>\n")
-	b.WriteString("<table><tr><th>bench</th><th>live cards</th><th>cores</th><th>load</th><th>free disk</th><th>free mem</th><th>allowed</th></tr>\n")
+	b.WriteString("<table><tr><th>bench</th><th>live cards</th><th>cores</th><th>load</th><th>free disk</th><th>free mem</th><th>allowed</th><th>certification</th></tr>\n")
 	for _, r := range p.readings {
 		if r.Down {
 			note := r.Note
 			if note == "" {
 				note = "no answer over ssh"
 			}
-			fmt.Fprintf(&b, "<tr><td>%s</td><td colspan=\"6\"><b>DOWN</b> (%s)</td></tr>\n",
-				oneline.Field(r.Name), htmlText(note))
+			// A bench that did not answer over ssh still has a RECORD, and the record is
+			// read from a file: "DOWN, and it was certified 14/14 an hour ago" and "DOWN,
+			// and it has never been certified" send a person to two different places.
+			fmt.Fprintf(&b, "<tr><td>%s</td><td colspan=\"6\"><b>DOWN</b> (%s)</td><td>%s</td></tr>\n",
+				oneline.Field(r.Name), htmlText(note), htmlText(p.certCell(r.Name)))
 			continue
 		}
-		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d GB</td><td>%d GB</td><td>%d</td></tr>\n",
-			oneline.Field(r.Name), r.Live, r.Cores, r.Load, r.FreeGB, r.MemGB, r.Allowed)
+		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d GB</td><td>%d GB</td><td>%d</td><td>%s</td></tr>\n",
+			oneline.Field(r.Name), r.Live, r.Cores, r.Load, r.FreeGB, r.MemGB, r.Allowed, htmlText(p.certCell(r.Name)))
 	}
 	// The host running the verb is a bench too, and its columns are its own: CI runners
 	// where a bench counts cards, orphans where a bench counts headroom.
 	if p.self != nil {
 		if p.self.Unknown {
-			fmt.Fprintf(&b, "<tr><td>%s</td><td colspan=\"6\"><b>UNKNOWN</b> (the host could not be read)</td></tr>\n",
-				oneline.Field(p.self.Name))
+			fmt.Fprintf(&b, "<tr><td>%s</td><td colspan=\"6\"><b>UNKNOWN</b> (the host could not be read)</td><td>%s</td></tr>\n",
+				oneline.Field(p.self.Name), htmlText(p.certCell(p.self.Name)))
 		} else {
-			fmt.Fprintf(&b, "<tr><td>%s</td><td>ci=%d</td><td>%d</td><td>%d</td><td>%d GB</td><td>-</td><td>orphans=%d</td></tr>\n",
-				oneline.Field(p.self.Name), p.self.CIRunners, p.self.Cores, p.self.Load, p.self.FreeGB, p.self.Orphans)
+			fmt.Fprintf(&b, "<tr><td>%s</td><td>ci=%d</td><td>%d</td><td>%d</td><td>%d GB</td><td>-</td><td>orphans=%d</td><td>%s</td></tr>\n",
+				oneline.Field(p.self.Name), p.self.CIRunners, p.self.Cores, p.self.Load, p.self.FreeGB, p.self.Orphans,
+				htmlText(p.certCell(p.self.Name)))
 		}
 	}
 	b.WriteString("</table>\n")
@@ -115,7 +134,7 @@ func fleetPage(p pageData) string {
 		fmt.Fprintf(&b, "<p>loops on %s: %s</p>\n", oneline.Field(p.self.Name), strings.Join(parts, " "))
 	}
 
-	b.WriteString("<p>live cards are running card processes per bench. allowed = min(cores*1.5 - load, (free_gb - 25)/2, memfree_gb/2). A bench that does not answer says DOWN and a number nobody measured is a dash: a row of zeros would read as a bench with nothing to do. Page rewritten every minute; refreshes itself every minute.</p>\n")
+	b.WriteString("<p>live cards are running card processes per bench. allowed = min(cores*1.5 - load, (free_gb - 25)/2, memfree_gb/2). A bench that does not answer says DOWN and a number nobody measured is a dash: a row of zeros would read as a bench with nothing to do. certification is what the certificates file records for that machine -- classes current under the build and standard its own newest row was written with, out of the classes it has ever run -- and a dash there means nobody has certified it, never that it failed. Page rewritten every minute; refreshes itself every minute.</p>\n")
 	b.WriteString(timeSeries)
 	b.WriteString("</body></html>\n")
 	return b.String()

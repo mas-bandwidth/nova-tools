@@ -7,6 +7,13 @@ expect: ^RUNNER PATH OK
 # no toolchain; batman's six led with /usr/local/bin, where go is 1.25.5, shadowing the
 # 1.27.1 later in the same line.
 #
+# AND ON DARWIN, BOTH FACTS. `launchctl list` says what is LOADED NOW; the LaunchAgent plist
+# under ~/Library/LaunchAgents is what brings it back after a reboot, and they are two
+# different things. The M2 Air serves the ARM64 shards from
+# actions.runner.mas-bandwidth-nova-tools.air-nova-{1,2}, and a loaded job with no plist
+# behind it is exactly the unmanaged runner this check exists to find -- invisible to
+# `launchctl list`, which would have reported it healthy.
+#
 # BOTH SCOPES AND BOTH NAMINGS. The first version of this check probed `systemctl --user`
 # only and reported space's sixteen runners as unmanaged. They were already sixteen SYSTEM
 # units, nova-runner-1..16.service, enabled with Restart=always -- and acting on that wrong
@@ -41,6 +48,8 @@ if [ -n "$BAD" ]; then
 fi
 # Units, in BOTH scopes and BOTH namings. launchd is asked the same question its own way.
 UNITS=0
+AGENTS=0
+AGENT_WORD="-"
 if command -v systemctl >/dev/null 2>&1; then
   for scope in "--system" "--user"; do
     for pattern in 'nova-runner-*' 'actions.runner.*'; do
@@ -50,6 +59,15 @@ if command -v systemctl >/dev/null 2>&1; then
   done
 elif command -v launchctl >/dev/null 2>&1; then
   UNITS=$(launchctl list 2>/dev/null | grep -c -e 'actions\.runner\.' -e 'nova-runner-' || true)
+  for plist in "$NOVA_HOME"/Library/LaunchAgents/actions.runner.*.plist "$NOVA_HOME"/Library/LaunchAgents/nova-runner-*.plist; do
+    [ -f "$plist" ] || continue
+    AGENTS=$((AGENTS + 1))
+  done
+  AGENT_WORD="$AGENTS"
+  if [ "$AGENTS" -lt "$UNITS" ]; then
+    echo "RUNNER PATH FAIL $UNITS launchd job(s) loaded and $AGENTS LaunchAgent plist(s) in $NOVA_HOME/Library/LaunchAgents; a loaded job with no plist does not survive a reboot"
+    exit 1
+  fi
 fi
 LISTENERS=$(pgrep -f 'Runner.Listener' 2>/dev/null | grep -c . || true)
 if [ "$UNITS" = "0" ]; then
@@ -60,4 +78,4 @@ if [ "$LISTENERS" -gt "$UNITS" ]; then
   echo "RUNNER PATH FAIL $LISTENERS Runner.Listener processes for $UNITS unit(s): a double registration, and both halves take shards"
   exit 1
 fi
-echo "RUNNER PATH OK runners=$DIRS units=$UNITS listeners=$LISTENERS go>=$NOVA_GO"
+echo "RUNNER PATH OK runners=$DIRS units=$UNITS agents=$AGENT_WORD listeners=$LISTENERS go>=$NOVA_GO"

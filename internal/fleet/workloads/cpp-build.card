@@ -1,7 +1,7 @@
 roles: bench
 expect: ^CPP OK
 wall: yes
-reads: /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+reads: /usr, /bin, /lib, /lib64, /etc, /opt/homebrew/Cellar/gcc, /opt/homebrew/Cellar/llvm, /opt/homebrew/lib, /opt/homebrew/include, /Library/Developer/CommandLineTools
 
 # The C++ half: a standard library that is present to the compiler and absent to the linker
 # is the specimen, and only building AND running finds it.

@@ -501,10 +501,15 @@ type CertifyInput struct {
 	// transport it does not need.
 	Local     Remote
 	LocalHost string // this machine's hostname; "" never matches anything
-	Forge     Forge
-	Now       func() time.Time
-	Stdout    io.Writer
-	Stderr    io.Writer
+	// LocalAddrs is every address this machine answers on. A registry row may name a machine
+	// by ADDRESS rather than by name -- the Air is `air<TAB>glenn@100.117.59.68` and calls
+	// itself `macbook` -- and without this the Air certifying the Air opened an ssh to its
+	// own tailnet address and reported twelve of its fourteen classes UNREACHABLE.
+	LocalAddrs []string
+	Forge      Forge
+	Now        func() time.Time
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // Certify runs every workload of every named machine's roles, writes one certificate row
@@ -1232,6 +1237,16 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	if errors.Is(err, ErrTimeout) {
 		return VerdictTimeout, oneline.Err(err)
 	}
+	// AND A LINE IN THE CLASS'S OWN TOKEN IS THE MACHINE ANSWERING, whatever words are in it.
+	// The M2 Air's services-reach printed `SERVICES FAIL redis ... Connection refused` -- its
+	// own refusal, naming the address it tried, through an ssh that worked perfectly -- and
+	// the marker scan below read redis-cli's words as ssh's and threw the verdict away. The
+	// transport question is only asked of an answer the class never spoke in.
+	if MachineSpoke(w.Expect, out) {
+		if reason := firstAnswerLine(out); reason != "" {
+			return VerdictFail, reason
+		}
+	}
 	if reason, bad := TransportFailure(out, err); bad {
 		return VerdictUnreachable, reason
 	}
@@ -1255,7 +1270,11 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		// The forge did not answer. That is this tool failing to ask, exactly as a broken
+		// ssh is, and it is not a judgement about the machine: `gh` on the M2 Air is not
+		// authenticated for this repository, and both forge classes were written down as
+		// FAIL for it. No row, counted apart, never repaired.
+		return VerdictUnreachable, oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	online, stale := 0, []string{}
@@ -1322,10 +1341,49 @@ func runHere(in CertifyInput, class, script string) (string, error) {
 // machine, ssh otherwise. It answers whether it chose the local one, so the run can say so
 // on a line -- "it ran here" is the kind of thing a person needs told once, not guessed.
 func (in CertifyInput) remoteFor(m Machine) (Remote, bool) {
-	if in.Local != nil && IsLocalMachine(m, in.LocalHost) {
+	if in.Local != nil && IsLocalMachineAt(m, in.LocalHost, in.LocalAddrs) {
 		return in.Local, true
 	}
 	return in.Remote, false
+}
+
+// IsLocalMachineAt is IsLocalMachine plus the ADDRESSES this machine answers on.
+//
+// A registry row may name a machine by address rather than by name, and one does: the M2 Air
+// is `air<TAB>glenn@100.117.59.68`, and the machine calls itself `macbook`. Neither the row's
+// name nor its ssh target is any spelling of the host name, so on 2026-09-18 the Air
+// certifying the Air opened an ssh to its own tailnet address and reported twelve of its
+// fourteen classes UNREACHABLE -- a fleet machine that could never certify itself.
+//
+// The addresses are passed IN rather than read here, because reading this machine's
+// interfaces is the coordinator's business and a test must be able to say what they are.
+func IsLocalMachineAt(m Machine, localHost string, localAddrs []string) bool {
+	if IsLocalMachine(m, localHost) {
+		return true
+	}
+	host := hostOf(m.SSH)
+	if host == "" || len(localAddrs) == 0 {
+		return false
+	}
+	for _, a := range localAddrs {
+		if a = strings.TrimSpace(a); a != "" && strings.EqualFold(a, host) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOf is an ssh target with any user and port taken off and the domain LEFT ON: the
+// address half of `glenn@100.117.59.68` is the whole address, not `100`.
+func hostOf(v string) string {
+	v = strings.TrimSpace(v)
+	if i := strings.LastIndex(v, "@"); i >= 0 {
+		v = v[i+1:]
+	}
+	if i := strings.Index(v, ":"); i >= 0 {
+		v = v[:i]
+	}
+	return v
 }
 
 // IsLocalMachine says whether a registry machine is the machine this process runs on. The
@@ -1345,14 +1403,13 @@ func IsLocalMachine(m Machine, localHost string) bool {
 	return false
 }
 
-// shortHost is a host name with any user, port and domain taken off.
+// shortHost is a host name with any user, port and domain taken off. An IPv4 LITERAL is left
+// whole: `100.117.59.68` cut at the first dot is `100`, which would make the Air's row match
+// a machine somebody called `100` -- an address is not a dotted host name.
 func shortHost(v string) string {
-	v = strings.TrimSpace(v)
-	if i := strings.LastIndex(v, "@"); i >= 0 {
-		v = v[i+1:]
-	}
-	if i := strings.Index(v, ":"); i >= 0 {
-		v = v[:i]
+	v = hostOf(v)
+	if isIPv4Literal(v) {
+		return v
 	}
 	if i := strings.Index(v, "."); i >= 0 {
 		v = v[:i]
@@ -1405,7 +1462,8 @@ func TransportFailure(out string, err error) (string, bool) {
 func runnersOnline(in CertifyInput, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		// See registryTruth: a forge nobody could ask proves nothing about a runner host.
+		return VerdictUnreachable, oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	seen, offline := 0, []string{}
@@ -1493,4 +1551,80 @@ func firstAnswerLine(out string) string {
 		}
 	}
 	return ""
+}
+
+// isIPv4Literal says whether a target is four dotted decimal octets. It is deliberately not
+// net.ParseIP: a registry target is text a person typed, and `100.117.59.68` is the only
+// shape that ever collides with the short-host cut.
+func isIPv4Literal(v string) bool {
+	parts := strings.Split(v, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" || len(p) > 3 {
+			return false
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// AnswerToken is the word a class SPEAKS IN, read off its expect: `^SERVICES OK` is the
+// class that says SERVICES, and every line it writes -- the pass and each of its refusals --
+// begins with that word.
+//
+// It is how "the machine answered" is told from "nobody reached the machine". A workload's
+// own evidence may carry ssh's exact words -- `Could not connect to Redis at
+// 69.67.149.151:6379: Connection refused` was written by redis-cli on the M2 Air, through an
+// ssh that worked perfectly -- and the marker scan read it as the transport failing and threw
+// the verdict away.
+//
+// An expect that is not anchored, or whose first word is not a plain literal, has no token:
+// this promises something about the START OF A LINE, so it is read only from `^` followed by
+// letters. Nothing is guessed.
+func AnswerToken(re *regexp.Regexp) string {
+	if re == nil {
+		return ""
+	}
+	src := strings.TrimPrefix(re.String(), "(?m)")
+	if !strings.HasPrefix(src, "^") {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range src[1:] {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+			continue
+		}
+		break
+	}
+	token := b.String()
+	// The token must be the whole first word of the pattern: `^[A-Z]+ OK` starts with a
+	// character class and `^GO(OD)? OK` is not the literal `GO`.
+	rest := src[1+len(token):]
+	if token == "" || (rest != "" && rest[0] != ' ') {
+		return ""
+	}
+	return token
+}
+
+// MachineSpoke says whether any line of the answer begins with the class's own token, which
+// means the body ran and wrote it.
+func MachineSpoke(re *regexp.Regexp, out string) bool {
+	token := AnswerToken(re)
+	if token == "" {
+		return false
+	}
+	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == token || strings.HasPrefix(line, token+" ") {
+			return true
+		}
+	}
+	return false
 }

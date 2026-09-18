@@ -10,7 +10,13 @@ report: yes
 # than two days -- about 1.8 GB a day -- so a seven-day retention rule cannot bound it and a
 # size read alone cannot say so. The line carries MB, the age of the oldest log, and the
 # rate, so the hygiene that follows is argued from a rate and not from a snapshot.
+#
+# THE OLDEST-LOG READ CHOOSES ITS SPELLING AT RUNTIME. It was `find -printf '%T@'`, which is
+# GNU: BSD find has none, so on the M2 Air the read came back EMPTY, the age fell back to one
+# day, and the card reported the SIZE as the rate and said OK. A silent wrong number is worse
+# than a failure, so the age is `unknown` when nothing could be read and the line says so.
 set -eu
+if [ "$(uname -s)" = Darwin ]; then MTIME="stat -f %m"; else MTIME="stat -c %Y"; fi
 TOTAL=0
 DIRS=0
 OLDEST=""
@@ -19,7 +25,7 @@ for d in "$NOVA_HOME"/runner-nova-tools-*/_diag "$NOVA_HOME"/actions-runner-*/_d
   DIRS=$((DIRS + 1))
   mb=$(du -sm "$d" 2>/dev/null | awk '{print $1}')
   [ -n "$mb" ] && TOTAL=$((TOTAL + mb))
-  o=$(find "$d" -type f -name '*.log' -printf '%T@\n' 2>/dev/null | sort -n | head -n 1)
+  o=$(find "$d" -type f -name '*.log' -exec $MTIME {} + 2>/dev/null | sort -n | head -n 1)
   if [ -n "$o" ]; then
     if [ -z "$OLDEST" ] || [ "${o%%.*}" -lt "${OLDEST%%.*}" ]; then OLDEST="$o"; fi
   fi
@@ -30,15 +36,17 @@ if [ "$DIRS" = "0" ]; then
 fi
 DAYS=1
 RATE="$TOTAL"
+AGE_WORD="unknown"
 if [ -n "$OLDEST" ]; then
   NOW=$(date +%s)
   AGE=$(( (NOW - ${OLDEST%%.*}) / 86400 ))
   [ "$AGE" -lt 1 ] && AGE=1
   DAYS="$AGE"
   RATE=$((TOTAL / DAYS))
+  AGE_WORD="${DAYS}d"
 fi
 if [ "$TOTAL" -ge 2048 ]; then
-  echo "DIAG OVER $TOTAL MB across $DIRS _diag directories, oldest ${DAYS}d, about $RATE MB/day, over the 2048 MB watch line"
+  echo "DIAG OVER $TOTAL MB across $DIRS _diag directories, oldest $AGE_WORD, about $RATE MB/day, over the 2048 MB watch line"
   exit 1
 fi
-echo "DIAG OK $TOTAL MB across $DIRS _diag directories, oldest ${DAYS}d, about $RATE MB/day"
+echo "DIAG OK $TOTAL MB across $DIRS _diag directories, oldest $AGE_WORD, about $RATE MB/day"
