@@ -479,19 +479,38 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
 }
 
-// TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the carried provider
-// config -- config=<sha8> when --config named one and config=- when it named none -- which
-// is the one token of issue #465's fix no other test pins on the printed line: the carry
-// test pins the struct's sha8 and the copied bytes, and the OK-line tests pin sandbox= and
-// harness=, but the token a caller reads to know a configured provider was carried before
-// the child ever ran is asserted by nothing. The sha8 is of the config's own bytes, so the
-// line names exactly which opencode.json the run carried.
+// TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
+// sees -- config=<sha8> -- which is the one token of issue #465's fix no other test pins on
+// the printed line: the carry test pins the struct's sha8 and the copied bytes, and the
+// OK-line tests pin sandbox= and harness=, but the token a caller reads to know a configured
+// provider was carried before the child ever ran is asserted by nothing.
+//
+// WHAT THE SHA8 IS, AND WHY IT IS NOT THE NAMED FILE'S OWN BYTES. writeJobConfig hashes the
+// bytes it WRITES to <dataHome>/.config/opencode/opencode.json, AFTER this job's own fence
+// block is merged into them (issue #644, #704) -- "the sha8 OF THE BYTES THE CHILD SEES,
+// which is the only config any later reader can check the run against". So the sha8 is of
+// the merged body and never of the caller's file, and there is no config=- case at all: the
+// fence block is written WHETHER OR NOT --config named a file, so a run without --config
+// still carries a config and still names its sha8. This test originally pinned the caller's
+// own bytes and a dash; both were the pre-#704 contract, and the two assertions below are
+// the contract the code now promises.
 func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
-	wantSum := sha256.Sum256([]byte(config))
-	wantSHA := hex.EncodeToString(wantSum[:])[:8]
+
+	// carriedSHA is the sha8 of the bytes that landed where the harness reads them, read back
+	// off the disk rather than recomputed from the inputs, so the assertion cannot agree with
+	// the code by repeating its arithmetic.
+	carriedSHA := func(t *testing.T, slot string) string {
+		t.Helper()
+		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+		if err != nil {
+			t.Fatalf("the run carries a config where the harness reads it: %v", err)
+		}
+		sum := sha256.Sum256(written)
+		return hex.EncodeToString(sum[:])[:8]
+	}
 
 	t.Run("with_config", func(t *testing.T) {
 		root, slot := aSlot(t)
@@ -515,8 +534,18 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("the --config run exits 0, got %d:\n%s", rc, stderr.String())
 		}
+		// The named provider is in the carried bytes -- config= names a config that really
+		// carried --config's provider, not merely some config.
+		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(written), `"baseURL"`) || !strings.Contains(string(written), "fake") {
+			t.Errorf("the carried config keeps --config's provider:\n%s", written)
+		}
+		wantSHA := carriedSHA(t, slot)
 		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
-			t.Fatalf("NATIVE OK names the carried config's sha8 %s:\n%s", wantSHA, stdout.String())
+			t.Fatalf("NATIVE OK names the sha8 %s of the config the child sees:\n%s", wantSHA, stdout.String())
 		}
 	})
 
@@ -538,8 +567,14 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("the run without --config exits 0, got %d:\n%s", rc, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), " config=- ") {
-			t.Fatalf("NATIVE OK names an absent config with the dash:\n%s", stdout.String())
+		// No --config, but the fence block is still written, so the line still names a sha8
+		// and NEVER a dash: a reader can check the fence the child ran under.
+		wantSHA := carriedSHA(t, slot)
+		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
+			t.Fatalf("NATIVE OK names the sha8 %s of the fence config carried without --config:\n%s", wantSHA, stdout.String())
+		}
+		if strings.Contains(stdout.String(), " config=- ") {
+			t.Fatalf("config= is never a dash: the fence block is carried whether or not --config named a file:\n%s", stdout.String())
 		}
 	})
 }
