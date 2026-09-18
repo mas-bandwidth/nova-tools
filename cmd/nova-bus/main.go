@@ -75,8 +75,10 @@ usage:
         [--advance [--attempts <n>] [--no-push]]
         [--quiet-beats]
         [--diagnostics]
-  nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
-  nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
+  nova-bus wake --bus <dir> --as <name> [--pin <file>] --remote <name> --branch <name>
+  nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] [--verdict <word>] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+  nova-bus receipts --bus <dir> --note <id-or-path> [--max <n>]
+  nova-bus close --bus <dir> --as <name> (--before <RFC3339> | --older-than <window>) [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
 
@@ -85,7 +87,31 @@ every verb that runs git also takes [--git-timeout <seconds>], default 60.
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a draft
 refused, a bus that failed check, a push that could not be landed, a cursor
 that is no longer on this history, another run holding this checkout; 2 could
-not run: missing flag, unreadable bus, bad invocation.
+not run: missing flag, unreadable bus, bad invocation. wake, and only wake,
+also has 3: it ran, and nothing is addressed to you.
+
+wake is the start of a turn and the whole of it: it pulls, and prints AT MOST
+three lines -- your pin's first line if you named a pin file, the ONE newest
+note addressed to you on the To line that you have neither answered nor
+receipted, and one WAKE OK line counting the rest as two integers. It never
+lists your open notes, under any flag. That is what it is for: a wake that
+loaded the open list made a line read 1,937 notes to find out what it was for,
+and the backlog is a fact about the bus while the turn is a fact about one note.
+Nothing is addressed to you is exit 3 and no note line -- not an error, the
+answer "nothing for you", which a harness gates on without parsing anything.
+
+receipt --verdict writes a ROW as well as the receipt note: one line of
+<stamp> <as> <note> <verdict> appended to receipts/<your lane>.tsv, so what a
+line DECIDED is a field a machine reads rather than prose inside a note. The
+note is unchanged and still written; receipts --note <id> reads the rows back,
+bounded by --max (default 20). A receipt with no --verdict writes no row and
+prints exactly what it always did.
+
+close --older-than <window> is close --before with the instant worked out from
+this run's clock: 3d, 2w, 36h. It is for machinery running daily, which would
+otherwise compute yesterday's instant in shell -- a different date command on
+a Mac and on Linux. The two flags are one cutoff said two ways, so naming both
+is refused, and --dry-run reports the count either way and writes nothing.
 
 Every path comes from a flag. There is no default bus, no default remote, no
 default branch and no default receipt word count; a missing one is a refusal:
@@ -274,6 +300,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdInbox(rest, stdout, stderr, now)
 	case "receipt":
 		return cmdReceipt(rest, stdout, stderr, now)
+	case "receipts":
+		return cmdReceipts(rest, stdout, stderr)
+	case "wake":
+		return cmdWake(rest, stdout, stderr, now)
 	case "close":
 		return cmdClose(rest, stdout, stderr, now)
 	case "wait":
@@ -1037,10 +1067,20 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the receipt is NOT on the bus until it is pushed")
+	// --verdict is class K's row (#828): what this lane DECIDED, as a field a machine
+	// reads, beside the receipt note that stays exactly as it was. Without it this verb
+	// prints and writes what it always has.
+	verdict := f.fs.String("verdict", "", "one word for what you decided -- APPROVE, HOLD, ANSWERED, ABSTAIN -- recorded as a row in receipts/<your lane>.tsv")
 	var notes stringList
 	f.fs.Var(&notes, "note", "a note to mark heard, by id or by path (required; repeatable)")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
 		return 2
+	}
+	if f.set("verdict") {
+		if err := bus.ValidVerdict(*verdict); err != nil {
+			fmt.Fprintf(stderr, "nova-bus receipt: %s\n", oneline.Err(err))
+			return 2
+		}
 	}
 	if !f.attempts(*attempts, stderr) {
 		return 2
@@ -1082,14 +1122,26 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	for _, already := range plan.Already {
 		fmt.Fprintf(stdout, "RECEIPT ALREADY note=%s lane=%s\n", oneline.Field(already), oneline.Field(plan.Lane))
 	}
-	if len(plan.Record) == 0 {
+	// THE ROWS, and why they are counted apart from the receipt notes. A receipt note is
+	// written ONCE, because a note is sent once and an already-recorded target is reported
+	// rather than written twice. A VERDICT is a fact about a decision, so a run that names
+	// one records it for every target it resolved, already-heard ones included: a line that
+	// decided again has decided again, and the file is append-only.
+	var rows []bus.VerdictRow
+	if f.set("verdict") {
+		for _, target := range append(append([]string{}, plan.Record...), plan.Already...) {
+			rows = append(rows, bus.VerdictRow{Stamp: plan.Stamp, As: me.Name, Note: target, Verdict: *verdict})
+		}
+	}
+	rowsPath := bus.RowsPath(me.Slug())
+	if len(plan.Record) == 0 && len(rows) == 0 {
 		fmt.Fprintf(stdout, "RECEIPT OK recorded=0 already=%d commit=- pushed=false attempts=0\n", len(plan.Already))
 		return 0
 	}
 	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
 	// machinery and not a change that is "not this receipt" (#488).
 	beat := bus.BeatPath(me.Lane)
-	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
+	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat, rowsPath}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
@@ -1101,13 +1153,25 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
-	paths, err := bus.StagePaths(*busDir, []string{plan.Path, beat})
+	if err := bus.AppendVerdictRows(*busDir, rowsPath, rows); err != nil {
+		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(rowsPath), oneline.Err(err))
+		return 1
+	}
+	staging := []string{plan.Path, beat}
+	message := plan.Message(me)
+	if len(rows) > 0 {
+		staging = append(staging, rowsPath)
+		if len(plan.Record) == 0 {
+			message = me.Slug() + ": " + *verdict + " on " + strings.Join(plan.Already, ", ")
+		}
+	}
+	paths, err := bus.StagePaths(*busDir, staging)
 	if err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(*busDir, me, paths,
-		bus.WithTrailer(plan.Message(me), bus.TrailerReceipt),
+		bus.WithTrailer(message, bus.TrailerReceipt),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
@@ -1116,6 +1180,12 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	fmt.Fprintf(stdout, "RECEIPT OK recorded=%d already=%d commit=%s pushed=%t attempts=%d\n",
 		len(plan.Record), len(plan.Already), oneline.Field(res.Commit), res.Pushed, res.Attempts)
+	// One line for the rows, and only when a verdict was named: the line above is what
+	// every caller that was here before this flag still reads, unchanged.
+	if len(rows) > 0 {
+		fmt.Fprintf(stdout, "RECEIPT ROWS rows=%d path=%s verdict=%s\n",
+			len(rows), oneline.Field(rowsPath), oneline.Field(*verdict))
+	}
 	return 0
 }
 
@@ -1129,14 +1199,15 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("close")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
-	beforeFlag := f.fs.String("before", "", "every open note addressed to you and dated before this RFC 3339 instant is closed by a receipt (required)")
+	beforeFlag := f.fs.String("before", "", "every open note addressed to you and dated before this RFC 3339 instant is closed by a receipt (required, or --older-than)")
+	olderThan := f.fs.String("older-than", "", "the same cutoff as a WINDOW back from now -- 3d, 2w, 36h -- so a daily job computes no instant")
 	dryRun := f.fs.Bool("dry-run", false, "report what would be closed and write nothing")
 	remote := f.fs.String("remote", "", "the git remote to push to (required to write)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required to write)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "before": beforeFlag}) {
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
 	if !f.attempts(*attempts, stderr) {
@@ -1145,10 +1216,33 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
-	before, err := time.Parse(time.RFC3339, *beforeFlag)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess\n", *beforeFlag)
+	// ONE CUTOFF, STATED ONE WAY. --before is an instant, which is what a hand drawing the
+	// line once has; --older-than is a window back from this run's clock, which is what
+	// machinery running daily has, because a crontab computing yesterday's instant in
+	// shell is a different `date` on a Mac and on Linux. Naming both is two cutoffs and a
+	// guess about which one was meant, so it is refused rather than ordered.
+	var before time.Time
+	switch {
+	case f.set("before") && f.set("older-than"):
+		fmt.Fprint(stderr, "nova-bus close: --before and --older-than are the same cutoff said two ways; name one; refusing to guess\n")
 		return 2
+	case f.set("older-than"):
+		window, err := bus.ParseWindow(*olderThan)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus close: --older-than %s; refusing to guess\n", oneline.Err(err))
+			return 2
+		}
+		before = now.UTC().Add(-window)
+	case strings.TrimSpace(*beforeFlag) == "":
+		fmt.Fprint(stderr, "nova-bus close: --before is required (or --older-than <window>); refusing to guess\n")
+		return 2
+	default:
+		parsed, err := time.Parse(time.RFC3339, *beforeFlag)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess\n", *beforeFlag)
+			return 2
+		}
+		before = parsed
 	}
 	if !*dryRun {
 		if !f.gitArgs(*remote, *branch, stderr) {

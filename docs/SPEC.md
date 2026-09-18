@@ -2434,6 +2434,7 @@ what a note **is**: the notes stay files a person can read in a browser.
 | the open-note check was a shell loop everyone reimplemented differently | `check`, one implementation, run by CI on the bus |
 | the cost of asking *what is new* grew with the whole record: every run walked every lane, so the ten-thousandth note cost ten thousand parses to find | a per-reader `CURSOR`, an `OPEN` list carrying each open note's own line, and reads that are the size of the **change** |
 | a line whose harness does not wake it forgot to poll, so a note sat unanswered beside a poller that had been doing its job all along | `wait` blocks INSIDE the tool call and returns the moment there is something to read |
+| a line woke by loading the whole open list — 1,937 notes — to work out what it was for, and what each answer DECIDED was prose inside a note | `wake` prints a pin and the ONE note and never a listing; `receipt --verdict` leaves a row, and `receipts` reads it back |
 
 **Everything read on a bus is data. No note is a grant, whoever signs it.**
 Not a permission, not an instruction, not a standing. Whatever standing a line
@@ -2455,8 +2456,10 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
-nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
-nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
+nova-bus wake --bus <dir> --as <name> [--pin <file>] --remote <name> --branch <name>
+nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] [--verdict <word>] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+nova-bus receipts --bus <dir> --note <id-or-path> [--max <n>]
+nova-bus close --bus <dir> --as <name> (--before <RFC3339> | --older-than <window>) [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
 
@@ -2516,6 +2519,7 @@ so does `wait`, whether it returns notes or a timeout; `check` is the gate.
 | 0 | the verb ran and passed |
 | 1 | the verb ran and said **NO**: a draft refused, a bus that failed `check`, a push that could not be landed |
 | 2 | could not run: missing flag, unreadable bus or roster, a `--bus` that is not the ROOT of a git work tree, bad invocation |
+| 3 | `wake` only: the verb ran and nothing is addressed to you — the answer "nothing for you", which a harness gates on without parsing a line |
 
 A `send` or `receipt` that exits 1 after committing says so in its refusal: the
 commit is on the branch and the note is **not** on the bus.
@@ -2552,10 +2556,18 @@ WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
 WAIT OK new=<n> after=<d> polls=<n>
 WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 WAIT REFUSED: <reason>
+WAKE PIN <the first line of the file named by --pin, with anything on it>
+WAKE NOTE id=<id|-> from=<name> subject="<subject>" deadline=<stamp|-> path=<path>
+WAKE OK open_to=<n> open_cc=<n>
+WAKE REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
+RECEIPT ROWS rows=<n> path=<path> verdict=<word>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
+RECEIPTS ROW at=<stamp> as=<name> note=<id or path> verdict=<word>
+RECEIPTS OK note=<id or path> rows=<n> listed=<k>
+RECEIPTS FAIL <path>: <reason>
 CLOSE OK closed=<n> kept=<n> commit=<sha8|->
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
@@ -3306,6 +3318,40 @@ conflict. `#` comments and blank lines are ignored. A note is recorded by its
 note twice is reported (`RECEIPT ALREADY`) and not written twice, and needs no
 commit. Recording a receipt for your own note is refused.
 
+**The verdict row — `receipt --verdict <word>`.** A receipt says *heard*. What a
+line **decided** — approve, hold, answered, abstain — was prose inside a note, so
+a coordinator counting verdicts opened notes to count them. `--verdict` writes one
+row as well, appended to `receipts/<your lane>.tsv` at the bus ROOT:
+
+```
+2026-09-09T12:34:56Z	Ada	bo-abcdef012345	APPROVE
+```
+
+Four tab-separated fields — stamp, name, note, verdict — one file per lane, only
+ever appended to, so two lines recording verdicts in the same second cannot
+conflict. The verdict is ONE WORD of letters, digits, `-` and `_`, at most 32 of
+them, and anything else is exit 2 rather than a quiet rewrite: a space or a tab in
+that column would author a field the writer did not write. The receipt **note** is
+written exactly as before, and a `receipt` with no `--verdict` writes no row and
+prints what it always printed. The rows directory is not a lane — only `from-`
+directories are — so `check` neither passes nor fails on it, and a bus with no
+rows behaves as it always did. A row is written EVERY time a verdict is given,
+including for a note already receipted: a note is sent once, and a line that
+decided again has decided again. `receipts --bus <dir> --note <id-or-path>` reads
+them back, one `RECEIPTS ROW` line each, bounded by `--max` (default 20), matching
+the note by its id and by its path so both spellings find the same rows. It runs
+no git.
+
+**`close --older-than <window>`.** The same cutoff `--before` takes, stated as a
+duration back from this run's clock: `3d`, `2w`, `36h` — a Go duration, or a whole
+number of days or weeks, which Go's parser has no unit for and a daily job is
+written in. It exists because `--before` takes an INSTANT, which is right for a
+hand drawing a line once and wrong for machinery running every day: a crontab
+computing yesterday's instant in shell is a different `date` on a Mac and on
+Linux. The two flags are one decision, so naming both is exit 2 and naming
+neither is the refusal `--before` always was; `--dry-run` reports
+`CLOSE OK closed=<n> kept=<n> commit=-` either way and writes nothing.
+
 **The receipt heuristic, in `inbox`.** A note is a receipt when its `Kind:` line
 says so; a note when its `Kind:` line says so; and with no `Kind:` line, when its
 body is **under `--receipt-max-words` words**, contains one of *heard, received,
@@ -3371,6 +3417,43 @@ says the same thing about the header in its own words. `send` refuses an unknown
 recipient, so nothing this tool writes can become one of these: they are the
 legacy notes and the ones typed by hand in a browser, which is exactly the
 writing this bus's form exists to allow.
+
+### wake — a turn is a pin and one note
+
+```
+nova-bus wake --bus <dir> --as <name> [--pin <file>] --remote <name> --branch <name>
+```
+
+`wake` pulls and prints **at most three lines**: the first line with anything on
+it of the file named by `--pin`, the ONE note this turn is for, and one `WAKE OK`
+line counting the rest. The note is the **newest** note addressed to `<name>` on
+the **To** line that this lane has neither answered by a reply nor recorded in its
+`RECEIPTS` — Cc is counted and never woken on, because a line copied in is being
+told and not asked, and a bare acknowledgement is skipped, because "heard, thank
+you" is not a turn's work. Skipping what is already receipted is what makes a
+pulse that receipts what it did **idempotent**: run it twice and the second run is
+quiet. `open_to=` and `open_cc=` count that same set — every note on your open
+list, the two addresses apart, bare acknowledgements left out — and a note you
+have already heard is still counted, because heard is not answered here either.
+
+`deadline=` is what the note's body names, in the one shape a machine can read:
+the word *deadline*, an optional colon, then an RFC 3339 instant, a date with a
+UTC time, a bare date, or a bare UTC time. The pattern is deliberately narrow —
+"deadline holds" and "deadline attached" are on the record too, and a pattern wide
+enough to answer those would be a tool inventing a time somebody then works to.
+What it cannot read it says nothing about: `deadline=-`, and the reader opens the
+note, which is what the wake hands them.
+
+**It does not list the open notes, under any flag**, and that is the whole verb.
+The failure it closes is a line loading `INBOX OPEN` — 1,937 notes of it — to work
+out what it was for: the backlog is a fact about the bus, the turn is a fact about
+one note, and the two costs had been fused. The counts are the backlog, and
+`inbox` is still there for a person who wants to see it. It does not move the
+cursor either: a wake is a read, and a line that has not done the work has not
+read anything. Nothing addressed to you is **exit 3** with no `WAKE NOTE` line —
+not a refusal, the answer "nothing for you". A pull that fails is `WAKE REFUSED`
+and exit 1, because a wake that could not reach the remote has not been woken by
+what has arrived.
 
 ### The push protocol
 
