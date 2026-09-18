@@ -98,7 +98,7 @@ func TestHarvestWorkingReadsTheGuidLayout(t *testing.T) {
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
-		{Arg: 2, Equals: "create", Stdout: "https://github.com/o/r/pull/1"},
+		{Arg: 2, Equals: "create", Stdout: "https://example.invalid/o/r/pull/1"},
 	}})
 	wkJob(t, working, "g1-a", "a", wkResult("a", "rowan/a", "o/r"))
 	wkJob(t, working, "g2-b", "b", wkResult("b", "rowan/b", "o/r"))
@@ -163,7 +163,7 @@ func TestHarvestWorkingLeaseComesFromLsRemote(t *testing.T) {
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[{"number":9,"headRefName":"rowan/x","headRefOid":"9999","state":"OPEN","title":"t"}]`},
-		{Arg: 2, Equals: "create", Stdout: "https://github.com/o/r/pull/7"},
+		{Arg: 2, Equals: "create", Stdout: "https://example.invalid/o/r/pull/7"},
 	}})
 	wkJob(t, working, "g-x", "x", wkResult("x", "rowan/x", "o/r"))
 	wkJob(t, working, "g-y", "y", wkResult("y", "rowan/y", "o/r"))
@@ -260,7 +260,7 @@ func TestHarvestWorkingMarksHarvested(t *testing.T) {
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
-		{Arg: 2, Equals: "create", Stdout: "https://github.com/o/r/pull/3"},
+		{Arg: 2, Equals: "create", Stdout: "https://example.invalid/o/r/pull/3"},
 	}})
 	job := wkJob(t, working, "g-h", "h", wkResult("h", "rowan/h", "o/r"))
 
@@ -292,7 +292,7 @@ func TestHarvestWorkingClassesAreTheFive(t *testing.T) {
 			{"number":1,"headRefName":"rowan/a","headRefOid":"abcd000000000000000000000000000000000000","state":"OPEN","title":"t"},
 			{"number":2,"headRefName":"rowan/x","headRefOid":"abcd000000000000000000000000000000000000","state":"MERGED","title":"t"}
 		]`},
-		{Arg: 2, Equals: "create", Stdout: "https://github.com/o/r/pull/5"},
+		{Arg: 2, Equals: "create", Stdout: "https://example.invalid/o/r/pull/5"},
 	}})
 	wkJob(t, working, "g-f", "f", wkResult("f", "rowan/f", "o/r"))
 	wkJob(t, working, "g-a", "a", wkResult("a", "rowan/a", "o/r"))
