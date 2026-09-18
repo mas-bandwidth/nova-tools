@@ -310,17 +310,17 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 //
 // The refusal those verbs print carries the way forward. A refusal names what the
 // flag wants (SPEC-BOARD.md:808-814, BUILD item 6 -- an entry in the build list,
-// not a numbered rule), and here what it wants is a directory that exists.
+// not a numbered rule), and here what it wants is a directory that exists. `add`
+// is the exception since nova-tools #625: a board is an append-only log, an empty
+// directory is a valid empty ledger, and the first `add` makes it
+// (TestAddMakesTheDirectoryOnFirstUse).
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
-	for _, verb := range []string{"list", "check", "add"} {
+	for _, verb := range []string{"list", "check"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
 		switch verb {
 		case "check":
 			args = []string{verb, "--dir", missing, "--words", "anything"}
-		case "add":
-			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
-				"--by", "4h", "--default", "the filer files it as a known gap"}
 		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})

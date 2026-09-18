@@ -1923,9 +1923,10 @@ check-then-add pair with this board's own values in it, quoted so it can be past
 `cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
 transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
 
-`quickstart` makes the directory if it is not there — `created=` on its first line says
-whether this run made it — and every other verb refuses one that is missing rather than
-making it, so a wrong path is a refusal and not an empty board:
+`quickstart`, and the first `add`, make the directory if it is not there — `created=` on
+`quickstart`'s first line says whether that run made it — while `list`, `check`, `take` and
+`close` refuse one that is missing rather than making it, so a wrong path is a refusal and
+not an empty board:
 
 ```
 $ nova-board quickstart --dir ./board --stale 10m
@@ -1945,10 +1946,11 @@ QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in 
 ```
 
 **What a first run gets wrong.** `--dir` naming a directory that is not there: `quickstart`
-makes it, because a first run has nowhere to write yet, but every other verb refuses — a
-`list` or a `take` against a directory that is not there is a path typed wrong, and making
-it would answer the typo with an empty board. That refusal names the `mkdir -p` that fixes
-it, quoted so a `--dir` with a space in it pastes. `--stale` missing: it wants how long a card may go without
+and the first `add` make it, because a first run has nowhere to write yet and a board is an
+append-only log, so an empty directory is a valid empty ledger; `list`, `check`, `take` and
+`close` refuse — a read or a take against a directory that is not there is a path typed
+wrong, and making it would answer the typo with an empty board. That refusal names the
+`mkdir -p` that fixes it, quoted so a `--dir` with a space in it pastes. `--stale` missing: it wants how long a card may go without
 an event before it lists as takeable again, and the family's number is 10m — the tool will
 not guess one. No backend, or both: name exactly one, because a board written to two places
 is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
