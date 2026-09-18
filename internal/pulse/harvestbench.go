@@ -147,16 +147,34 @@ func harvestBench(in HarvestInput) int {
 	jobs := parseBenchJobs(raw)
 
 	lines := bound(in.Stdout, in.Max)
-	state := map[string]string{} // label -> done|running, for the drain
-	var done, pushed, prs, noCommit, skipped, failed int
+	state := map[string]jobState{} // label -> what the drain does with its card
+	var done, red, pushed, prs, noCommit, skipped, failed int
 
 	for _, j := range jobs {
 		label := filepath.Base(j.Dir)
 		if len(j.Result) == 0 {
-			state[label] = "running"
+			state[label] = jobState{st: "running"}
 			continue
 		}
-		state[label] = "done"
+		// Rule (1) of 2026-09-18: a RESULT.md is not a verdict. The verdict is read
+		// BEFORE anything else, and a red one never becomes a done card -- it is not
+		// pushed, gets no PR, and its card drains to --failed with the verdict on the
+		// marker. `harvest --bench` counted "has a RESULT.md" as done= and drained an
+		// ABSTAIN to done/, which released the lane as if the work had landed.
+		verdict, isRed := ResultVerdict(j.Result)
+		if isRed {
+			state[label] = jobState{st: "red", why: "red-" + strings.ToLower(verdict)}
+			red++
+			if j.Harvested {
+				skipped++
+				continue
+			}
+			markHarvested(shell, in.Bench, j.Dir)
+			lines.Line(fmt.Sprintf("HARVEST RED bench=%s label=%s verdict=%s branch=%s (a red result is never done; nothing pushed, the card goes to failed)",
+				field(in.Bench), field(label), field(verdict), field(ResultField(j.Result, FieldBranch))))
+			continue
+		}
+		state[label] = jobState{st: "done", why: "result"}
 		done++
 		if j.Harvested {
 			skipped++
@@ -168,19 +186,19 @@ func harvestBench(in HarvestInput) int {
 				field(in.Bench), field(label), reason, detail))
 		}
 		line1 := firstNonEmpty(j.Result)
-		branch := resultField(j.Result, "BRANCH")
-		repo := strings.TrimPrefix(resultField(j.Result, "REPO"), "github.com/")
-		base := resultField(j.Result, "BASE")
+		branch := ResultField(j.Result, FieldBranch)
+		repo := ResultField(j.Result, FieldRepo)
+		base := ResultField(j.Result, FieldBase)
 		if base == "" {
 			base = fallbackBase
 		}
 		if want := strings.TrimSpace(in.Session); want != "" {
-			if got := resultField(j.Result, "SESSION"); got != want {
+			if got := ResultField(j.Result, FieldSession); got != want {
 				skip("session", fmt.Sprintf("session=%s want=%s", field(got), field(want)))
 				continue
 			}
 		}
-		if branch == "" || !strings.HasPrefix(branch, prefix) {
+		if branch != "" && !strings.HasPrefix(branch, prefix) {
 			skip("branch-prefix", fmt.Sprintf("branch=%s want=%s*", field(branch), field(prefix)))
 			continue
 		}
@@ -188,13 +206,14 @@ func harvestBench(in HarvestInput) int {
 			skip("age", fmt.Sprintf("branch=%s older=%s", field(branch), in.Since))
 			continue
 		}
-		if repo == "" {
-			skip("no-repo", fmt.Sprintf("branch=%s (the RESULT.md names no REPO line)", field(branch)))
-			continue
-		}
+		// Rule (3): ONE line naming every field that is missing. A RESULT.md with
+		// neither BRANCH nor REPO, harvested with no --clone, refused three times over
+		// three runs -- each guard returned before the next one looked, so a person
+		// fixed one thing, ran again, and learnt the next. They are all read here.
 		clone := cloneFor(in.Clones, repo)
-		if clone == "" {
-			skip("no-clone", fmt.Sprintf("repo=%s (pass --clone %s=<dir>)", field(repo), field(repo)))
+		if missing := missingHarvestFields(j.Result, repo, clone); len(missing) > 0 {
+			skip("fields", fmt.Sprintf("missing=%s remedy=%q",
+				strings.Join(missing, ","), harvestFieldsRemedy))
 			continue
 		}
 
@@ -212,7 +231,12 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		if count == 0 {
+			// A job that committed nothing did not do the work either, whatever its
+			// verdict said. It is not a done card: the lane is released to --failed,
+			// so the next fill can cut the card again rather than believing it landed.
 			noCommit++
+			done--
+			state[label] = jobState{st: "red", why: "no-commit"}
 			markHarvested(shell, in.Bench, j.Dir)
 			lines.Line(fmt.Sprintf("HARVEST NO-COMMIT bench=%s label=%s branch=%s base=%s (nothing was committed; not pushed)",
 				field(in.Bench), field(label), field(branch), field(base)))
@@ -251,8 +275,8 @@ func harvestBench(in HarvestInput) int {
 	drained := drainLaunched(in, state, lines)
 	lines.More()
 
-	fmt.Fprintf(in.Stdout, "HARVEST BENCH %s bench=%s jobs=%d done=%d pushed=%d prs=%d no-commit=%d skipped=%d drained=%d took=%s\n",
-		okOrRed(failed), field(in.Bench), len(jobs), done, pushed, prs, noCommit, skipped, drained,
+	fmt.Fprintf(in.Stdout, "HARVEST BENCH %s bench=%s jobs=%d done=%d red=%d pushed=%d prs=%d no-commit=%d skipped=%d drained=%d took=%s\n",
+		okOrRed(failed), field(in.Bench), len(jobs), done, red, pushed, prs, noCommit, skipped, drained,
 		in.Now().Sub(started).Round(time.Millisecond))
 	if failed > 0 {
 		return 1
@@ -316,26 +340,29 @@ func parseBenchJobs(out string) []benchJob {
 	return jobs
 }
 
-// resultField reads a RESULT.md field line: `NAME <value>` or `NAME: <value>`, the first
-// one that names it. The workers write `BRANCH rowan/x` and `REPO owner/name`; `BASE` and
-// `SESSION` are read the same way.
-func resultField(lines []string, name string) string {
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if !strings.HasPrefix(t, name) {
-			continue
-		}
-		rest := strings.TrimPrefix(t, name)
-		rest = strings.TrimPrefix(rest, ":")
-		if rest == "" || (rest[0] != ' ' && rest[0] != '\t') {
-			continue
-		}
-		if v := strings.TrimSpace(rest); v != "" {
-			return v
-		}
+// harvestFieldsRemedy is the one remedy the folded refusal carries: what a card must
+// declare, who writes it and who reads it. It names both ends because the fix is at
+// whichever of them is missing -- the template that did not tell the worker, or the
+// harvest that was not given a clone to push from.
+const harvestFieldsRemedy = "the card declares BRANCH and REPO and the worker copies them into RESULT.md " +
+	"(nova-pulse cut writes them; see internal/pulse/card.go), and harvest wants --clone [<owner>/<name>=]<dir> to push from"
+
+// missingHarvestFields is every field this job's RESULT.md does not give the harvest, in
+// one list: the RESULT.md's own BRANCH and REPO lines, and the coordinator-side --clone
+// that a repo needs before a branch can be pushed from here. Four refusals became one
+// line naming all of them (rule 3, 2026-09-18).
+func missingHarvestFields(result []string, repo, clone string) []string {
+	missing := MissingFields(result, FieldBranch, FieldRepo)
+	if repo != "" && clone == "" {
+		missing = append(missing, "--clone")
 	}
-	return ""
+	return missing
 }
+
+// jobState is what one bench job means for the card that launched it: the directory its
+// card drains into and the word the marker carries. `red` is its own state precisely so
+// it cannot be spelt `done`.
+type jobState struct{ st, why string }
 
 // prTitle is one harvested job's PR title: the RESULT line without its `RESULT` keyword,
 // cut at a WORD boundary, with ` (<label>, <bench>)` kept whole. The script cut at 110
@@ -382,9 +409,9 @@ func benchPRBody(bench string, j benchJob, max int) string {
 // path after the host is absolute too; a relative one is read from the bench's home.
 func benchRepoURL(bench, dir string) string {
 	if strings.HasPrefix(dir, "/") {
-		return "ssh://" + bench + dir + "/repo"
+		return "ssh://" + bench + dir + "/" + JobRepoDir
 	}
-	return "ssh://" + bench + "/~/" + dir + "/repo"
+	return "ssh://" + bench + "/~/" + dir + "/" + JobRepoDir
 }
 
 // cloneFor is the local clone a repo's branch is pushed from: `--clone <owner>/<name>=<dir>`
@@ -455,9 +482,12 @@ func shellQuote(s string) string {
 // `manager` drained --launched before this, and a lane taken by a card that finished hours
 // ago stayed occupied forever (dogfood, 2026-09-18).
 //
-// The state map is label -> done|running. A launched card no job dir carries any more is
-// failed: the job is gone, nothing came back, and the lane is still not the card's to hold.
-func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList) int {
+// The state map is label -> done|red|running. A launched card no job dir carries any more
+// is failed: the job is gone, nothing came back, and the lane is still not the card's to
+// hold. A RED job is failed too, and that is rule (1): a card whose worker abstained, was
+// blocked or committed nothing drained to `done/` and its lane was released as a success,
+// so the work was never cut again and nobody was told.
+func drainLaunched(in HarvestInput, state map[string]jobState, lines *boundedList) int {
 	if strings.TrimSpace(in.Launched) == "" {
 		return 0
 	}
@@ -485,11 +515,13 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 			label = strings.TrimSuffix(base, ".md")
 		}
 		st, why := "failed", "job-dir-gone"
-		switch state[label] {
+		switch got := state[label]; got.st {
 		case "running":
 			continue
 		case "done":
-			st, why = "done", "result"
+			st, why = "done", got.why
+		case "red":
+			st, why = "failed", got.why
 		}
 		dir := doneDir
 		if st == "failed" {
@@ -514,9 +546,12 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 }
 
 // localJobStates is the drain's state map when there is no --bench: every
-// `<root>/<slot>/jobs/<label>` under the root, done when it carries a RESULT.md.
-func localJobStates(root string) map[string]string {
-	out := map[string]string{}
+// `<root>/<slot>/jobs/<label>` under the root, read the same way the bench listing is:
+// running with no RESULT.md, RED when the verdict in it is not DONE, done only then. The
+// local drain read "there is a RESULT.md" as done too, so a local ABSTAIN released its
+// lane as a success exactly as the bench one did.
+func localJobStates(root string) map[string]jobState {
+	out := map[string]jobState{}
 	slots, err := os.ReadDir(root)
 	if err != nil {
 		return out
@@ -533,9 +568,15 @@ func localJobStates(root string) map[string]string {
 			if !j.IsDir() {
 				continue
 			}
-			st := "running"
-			if _, err := os.Stat(filepath.Join(root, s.Name(), "jobs", j.Name(), "RESULT.md")); err == nil {
-				st = "done"
+			st := jobState{st: "running"}
+			raw, err := os.ReadFile(filepath.Join(root, s.Name(), "jobs", j.Name(), "RESULT.md"))
+			if err == nil {
+				verdict, red := ResultVerdict(strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n"))
+				if red {
+					st = jobState{st: "red", why: "red-" + strings.ToLower(verdict)}
+				} else {
+					st = jobState{st: "done", why: "result"}
+				}
 			}
 			out[j.Name()] = st
 		}

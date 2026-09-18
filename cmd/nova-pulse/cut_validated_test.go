@@ -551,7 +551,9 @@ func TestShippedValidatedTemplatesCut(t *testing.T) {
 		}
 	}
 	specs := fakePATH(t)
-	gitAnswers(t, specs, "")
+	// The shipped rows.md declares <repo> now: a card says which repository its branch
+	// belongs to, and the answer is the clone's own origin remote.
+	gitAnswers(t, specs, "", fakeRule{Arg: 3, Equals: "remote", Stdout: "git@example.com:mas-bandwidth/nova-tools.git"})
 	fakeTool(t, specs, "gh", fakeSpec{
 		Rules: []fakeRule{
 			{Arg: 1, Equals: "issue", Stdout: issueJSON(t, "Fix the widget", "the body of the issue")},

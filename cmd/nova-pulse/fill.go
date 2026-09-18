@@ -54,6 +54,8 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	once := f.fs.Bool("once", false, "")
 	capacity := f.fs.Int("capacity", -1, "")
 	launcher := f.fs.String("launcher", "", "")
+	launcherLocal := f.fs.String("launcher-local", "", "")
+	host := f.fs.String("host", "", "")
 	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
 	grace := f.fs.String("launch-grace", defaultLaunchGrace.String(), "")
 	var benches benchFlag
@@ -83,7 +85,16 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(benches) == 0 {
 		benches = fillBenches
 	}
-	var reader pulse.Capacity = sshCapacity{}
+	// WHICH benches are this machine is decided once, from the registry, before the first
+	// tick: a bench whose ssh target resolves to this host is reached without ssh, because
+	// no machine in the fleet holds its own key and asking hulk to ssh to hulk answered
+	// `Permission denied` and lost the whole tick (dogfood, 2026-09-18).
+	here := *host
+	if strings.TrimSpace(here) == "" {
+		here = pulse.ThisHost()
+	}
+	local := pulse.LocalBenches(*machines, here)
+	var reader pulse.Capacity = sshCapacity{local: local}
 	if *capacity >= 0 {
 		reader = fixedCapacity(*capacity)
 	}
@@ -100,7 +111,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Stderr:   stderr,
 		Now:      func() time.Time { return now },
 		Capacity: reader,
-		Launcher: flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Launcher: flashLauncher{bin: *launcher, localBin: *launcherLocal, local: local, deadline: *deadline, grace: wait},
 	})
 }
 
@@ -115,15 +126,30 @@ type fixedCapacity int
 
 func (c fixedCapacity) Capacity(string) (int, error) { return int(c), nil }
 
-// sshCapacity reads one bench's capacity over the same ssh the hand loop used.
-type sshCapacity struct{ ssh string }
+// sshCapacity reads one bench's capacity over the same ssh the hand loop used -- unless
+// the bench IS this machine, which is read by running the same formula here. The registry
+// decides which, once, in cmdFill: `local` is the set of names that resolve to this host.
+type sshCapacity struct {
+	ssh   string
+	shell string // the local shell the formula is run through; "" is sh
+	local map[string]bool
+}
 
 func (c sshCapacity) Capacity(bench string) (int, error) {
-	ssh := c.ssh
-	if ssh == "" {
-		ssh = "ssh"
+	var cmd *exec.Cmd
+	if c.local[bench] {
+		sh := c.shell
+		if sh == "" {
+			sh = "sh"
+		}
+		cmd = exec.Command(sh, "-c", capacityScript)
+	} else {
+		ssh := c.ssh
+		if ssh == "" {
+			ssh = "ssh"
+		}
+		cmd = exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript)
 	}
-	cmd := exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript)
 	var out bytes.Buffer
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = &out, said
@@ -137,6 +163,11 @@ func (c sshCapacity) Capacity(bench string) (int, error) {
 	}
 	return n, nil
 }
+
+// defaultLocalLauncher is the launcher for a card that stays on this machine: the local
+// sibling of flash-native-bench.sh, which takes no bench because there is none to reach.
+// It is a flag (--launcher-local) exactly as the remote one is.
+const defaultLocalLauncher = "flash-native-local.sh"
 
 // defaultCardDeadline is the whole seconds a launched card gets, fill-loop.sh's hardcoded
 // 2400. It is --deadline now: one number in the script was the deadline of every card on
@@ -173,23 +204,38 @@ func parseGrace(s string) (time.Duration, error) {
 // It starts the child and waits only the grace: a launcher that is still running when the
 // grace is up has launched the card, and the bench owns it from there. The child is waited
 // on in a goroutine, so it is reaped rather than left a zombie, and it is never killed.
+//
+// A card whose bench IS this machine goes to --launcher-local instead, with no bench
+// argument at all: the remote launcher's first act is `ssh -n <bench> true`, and on the
+// bench itself that is `Permission denied` and a refused launch, every card, every tick.
 type flashLauncher struct {
 	bin      string
+	localBin string
+	local    map[string]bool
 	deadline int
 	grace    time.Duration
 }
 
 func (l flashLauncher) Launch(bench, card string) error {
-	bin := l.bin
-	if bin == "" {
-		bin = "flash-native-bench.sh"
-	}
 	deadline := l.deadline
 	if deadline <= 0 {
 		deadline = defaultCardDeadline
 	}
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
-	cmd := exec.Command(bin, bench, "swarm-"+bench, card, label, strconv.Itoa(deadline))
+	var cmd *exec.Cmd
+	if l.local[bench] {
+		bin := l.localBin
+		if bin == "" {
+			bin = defaultLocalLauncher
+		}
+		cmd = exec.Command(bin, "swarm-"+bench, card, label, strconv.Itoa(deadline))
+	} else {
+		bin := l.bin
+		if bin == "" {
+			bin = "flash-native-bench.sh"
+		}
+		cmd = exec.Command(bin, bench, "swarm-"+bench, card, label, strconv.Itoa(deadline))
+	}
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = io.Discard, said
 	if err := cmd.Start(); err != nil {
