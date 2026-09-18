@@ -6608,6 +6608,27 @@ and recovery gates still pass at the release revision**, and changing the code a
 invalidates that receipt. **Before the lock gate each suite is mapped to its named scenarios,
 assertions, owner, command and CI lane**; before a release the exact-revision results are attached.
 
+**Recover automatically when a remote service returns** *(Glenn's refinement, 2026-09-13: a
+temporary GitHub or connectivity outage must not require a human to say resume after the
+service returns.)* A loss is classified before it is retried: **transient** failures —
+connectivity loss, timeouts, throttling and retryable server errors — are retried, while
+authentication, authorization, validation and branch-policy refusals are not, and a retry is
+capped by the `Retry-After` or rate-limit reset the service itself names. Retry uses **capped
+exponential backoff with jitter** inside a named retry/probe budget and deadline; after a
+bounded burst the dependent action is parked and cheap scheduled **health probes** run inside
+the authorized execution interval while independent work continues, and no model turn or
+context reload is spent on an unchanged failed probe. The pending action, its goal/task
+identity, exact reviewed revision, last result, attempt count, next retry time and stop state
+are persisted, so recovery survives coordinator loss and two friends never retry at once. An
+ambiguous write is reconciled through a **stable operation identity** (a repository plus head
+branch for a pull request) and an idempotency key where the service supports one, so exactly
+one remote artifact results and a successful-but-unanswered write is never replayed. When the
+service returns, ownership, source/review scope and preconditions are revalidated and the saved
+authorized work resumes automatically **without a human** steering it; a deliberate stop,
+expired authority, a rest choice or a changed goal still wins, and meaningful recovery or an
+actionable refusal is reported rather than every unchanged probe. **This is future implementation scope — no recovery watcher is deployed today** — and it extends the liveness
+and failover sections (#178/#180) while adding no resumed mutation after a stop.
+
 ## What draft 26 changed in the older text *(Rowan)*
 
 **Where a companion and this document disagreed, the older sentence is deleted and not kept beside
