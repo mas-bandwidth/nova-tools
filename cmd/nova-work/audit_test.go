@@ -41,6 +41,14 @@ var workAudit = audit.Config{
 		// request line, and writes nothing to stdout or stderr, so every byte a caller
 		// reads is still printed by an escaped site in this package.
 		`"github.com/mas-bandwidth/nova-tools/internal/workclient"`,
+		// swarm (main.go heartbeat, SPEC-JOBS section 3) owns the bench slot lease
+		// store; RenewSlotLease only rewrites a lease file and writes no stream, and
+		// every value it returns is put through oneline.Field before this package
+		// prints it.
+		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// time (main.go heartbeat) only parses --for and stamps the new until=; it
+		// holds no writer of its own.
+		`"time"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

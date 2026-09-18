@@ -23,10 +23,12 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -58,6 +60,7 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work heartbeat --store <dir> --owner <o> --label <card> --for <duration>
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -76,6 +79,9 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work heartbeat renews the slot lease a pull worker holds while its card runs
+    (docs/SPEC-JOBS.md section 3): --owner and --label name the lease, --for is the new
+    term from now.
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -182,6 +188,8 @@ func run(args []string, stdout, stderr io.Writer, stamp ...string) int {
 		}
 	case "query":
 		return queryVerb(rest, stdout, stderr)
+	case "heartbeat":
+		return cmdHeartbeat(rest, stdout, stderr, time.Now().UTC())
 	default:
 		return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
 	}
@@ -573,4 +581,51 @@ func printReply(line string, stdout, stderr io.Writer) int {
 	default:
 		return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
 	}
+}
+
+// cmdHeartbeat is `nova-work heartbeat`: it renews the slot lease a pull worker
+// holds while its card runs (docs/SPEC-JOBS.md section 3). The lease is named by
+// owner and label -- the label is the card `nova-swarm pull` took -- and --for is
+// the new term measured from now. A heartbeat that matches no lease refuses: the
+// next take will reap the lease whose worker stopped renewing it.
+func cmdHeartbeat(args []string, stdout, stderr io.Writer, now time.Time) int {
+	fs := flag.NewFlagSet("heartbeat", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	store := fs.String("store", "", "the bench store holding shares.tsv and slots/")
+	owner := fs.String("owner", "", "whose lease is renewed")
+	label := fs.String("label", "", "the card the lease carries")
+	forDur := fs.String("for", "", "the new term from now")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, " heartbeat", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if fs.NArg() > 0 {
+		return refuse(stderr, " heartbeat", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	}
+	if strings.TrimSpace(*store) == "" {
+		return refuse(stderr, " heartbeat", "--store is required; refusing to guess")
+	}
+	if strings.TrimSpace(*owner) == "" {
+		return refuse(stderr, " heartbeat", "--owner is required; refusing to guess")
+	}
+	if strings.TrimSpace(*label) == "" {
+		return refuse(stderr, " heartbeat", "--label is required; it is the card the lease carries")
+	}
+	dur, err := time.ParseDuration(*forDur)
+	if err != nil || dur <= 0 {
+		return refuse(stderr, " heartbeat", fmt.Sprintf("--for wants a positive duration such as 30m, got %q", *forDur))
+	}
+	renewed, until, err := swarm.RenewSlotLease(*store, *owner, *label, dur, now)
+	if err != nil {
+		return refuse(stderr, " heartbeat", oneline.Err(err))
+	}
+	if renewed == 0 {
+		return refuse(stderr, " heartbeat", fmt.Sprintf(
+			"no lease owner=%s label=%s; the next take reaps a lease no heartbeat renews",
+			oneline.Field(*owner), oneline.Field(*label)))
+	}
+	fmt.Fprintf(stdout, "HEARTBEAT OK owner=%s label=%s renewed=%d until=%s\n",
+		oneline.Field(*owner), oneline.Field(*label), renewed,
+		oneline.Field(until.UTC().Format(time.RFC3339)))
+	return 0
 }
