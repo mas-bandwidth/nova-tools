@@ -48,7 +48,6 @@ internal/wake/serve.go SPEC-WAKE's plan: the serve verb's own file
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
-cmd/nova-foo the invented tool docs/SPEC-*.md use to show the shape of a command's path; there is no such tool and there must not be
 .github/dependabot.yml SPEC.md's example of a name that exact-name matching would and would not reach
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
 .github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead

@@ -14,9 +14,10 @@ import (
 )
 
 // namedPathsAllowlistPath is the shrink-only list of the names that LOOK like a path in
-// this repository and are not one: the invented paths a specification uses as examples
-// (`cmd/nova-foo`), and the retired paths a comment names on purpose to say what a thing
-// replaced. Every entry carries its reason; every entry is checked in BOTH directions -- a
+// this repository and are not one, in three groups: the files a specification has PLANNED
+// and nobody has written yet, the invented names a document uses to show the SHAPE of a
+// path, and the paths that live in another tree -- another repository, another branch, or a
+// retired file. Every entry carries its reason; every entry is checked in BOTH directions -- a
 // name not listed is a red run, and a listed name that no file names any more is a stale
 // entry and also a red run -- so the list can only ever get shorter. It lives in testdata
 // so a reader sees the whole exception set without reading the test.
