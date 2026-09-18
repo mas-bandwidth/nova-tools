@@ -2,16 +2,21 @@ package tokens
 
 import "fmt"
 
-// ReceiptRow is one session folded by the `receipt` verb, joined to one node and one of
-// the six stages under a drawn 32-hex id. It is the unit `cost --node` folds: every stage
-// of one node summed, so the cost of an attempt is the cost of all of its stages, review
-// and repair counted, never merely the builder's tokens.
+// CostReceiptRow is one session folded by the `receipt` verb, joined to one node and one
+// of the six stages under a drawn 32-hex id. It is the unit `cost --node` folds: every
+// stage of one node summed, so the cost of an attempt is the cost of all of its stages,
+// review and repair counted, never merely the builder's tokens.
+//
+// It is the priced projection of a receipt, not the receipt file's row: ReceiptRow in
+// receipt.go is the seventeen columns as written, this is the node, the stage and what a
+// rate table made of them. The two were both called ReceiptRow when they were cut in the
+// same batch; this one carries the name of what it folds.
 //
 // PricedTokens are the tokens a caller's dated rate table covered; UnpricedTokens are the
 // tokens no rate covered. A missing rate is unpriced, never zero (NEXT-TOOLS): the two are
 // kept apart so an unpriced slice stays visible rather than becoming free spend. Usd is
 // micro-dollars over the priced tokens only, and 0 where none were priced.
-type ReceiptRow struct {
+type CostReceiptRow struct {
 	NodeID         string
 	Stage          string
 	PricedTokens   int64
@@ -34,7 +39,7 @@ type NodeCostSummary struct {
 // another node is skipped; an empty slice, or a node no receipt named, returns the zero
 // summary without error, because a node with no receipts is a node whose cost is nothing,
 // not a failure.
-func AggregateNodeCost(receipts []ReceiptRow, nodeID string) NodeCostSummary {
+func AggregateNodeCost(receipts []CostReceiptRow, nodeID string) NodeCostSummary {
 	s := NodeCostSummary{NodeID: nodeID}
 	for _, r := range receipts {
 		if r.NodeID != nodeID {
