@@ -2,9 +2,18 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// defaultsRel is the defaults file as a REFUSAL SPELLS IT, which is not how this file's
+// prose spells it. The refusals below name defaultsPath(bus), an absolute path built with
+// filepath.Join, so on windows the reader sees `...\.nova-bus\defaults` and a test looking
+// for the forward-slash form fails on that leg alone -- which is exactly what
+// `test-windows-pr` reported. The assertion stays a real one; only the separator comes
+// from the operating system rather than from this source file.
+var defaultsRel = filepath.Join(".nova-bus", "defaults")
 
 // `<bus>/.nova-bus/defaults` used to be a file with ONE key in it. `receipt-max-words` was
 // read from it and nothing else was, so a bus whose reader is habitually five thousand
@@ -62,7 +71,7 @@ func TestAnyDocumentedFlagMayHaveItsDefaultInTheDefaultsFile(t *testing.T) {
 	// that passed over it would read the bus with a number the owner did not choose.
 	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=40\nmax-commits=lots\n")
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada").mustCode(t, 2)
-	for _, want := range []string{".nova-bus/defaults", "line 2", "max-commits"} {
+	for _, want := range []string{defaultsRel, "line 2", "max-commits"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Fatalf("the refusal does not name %q:\n%s", want, r.stderr)
 		}
@@ -73,7 +82,7 @@ func TestAnyDocumentedFlagMayHaveItsDefaultInTheDefaultsFile(t *testing.T) {
 	writeFile(t, checkout, ".nova-bus/defaults", "max-commits 500\n")
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 2).
-		mustContain(t, "stderr", ".nova-bus/defaults")
+		mustContain(t, "stderr", defaultsRel)
 
 	// A KEY THIS VERB DOES NOT TAKE IS PASSED OVER, and this is deliberate: ONE file
 	// serves every verb on the bus, so `inbox`'s keys sit beside `send`'s and neither may
