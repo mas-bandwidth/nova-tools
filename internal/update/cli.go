@@ -3,6 +3,7 @@ package update
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -64,6 +66,7 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
+` + release.Verbs + `
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -171,6 +174,16 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if impliedSend {
 		verb = "report"
 	}
+	// `release` is the last mile -- cut, build, install, adopt -- and it is a
+	// verb of nova-update rather than a tool of its own because it is the same
+	// question this binary already answers (what is installed here, and is it
+	// what it should be) asked from the other end. internal/release holds it.
+	if verb == "release" {
+		if name != "nova-update" {
+			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+		}
+		return release.Main(name, args, out, errs)
+	}
 	if verb == "adoption" {
 		if name != "nova-update" {
 			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
@@ -209,6 +222,15 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		}
 	}
 	if err := f.Parse(interspersed(f, args)); err != nil {
+		// `<tool> <verb> --help` is a reasonable question, and the flag
+		// package answers it with the sentinel flag.ErrHelp. Printing that
+		// gave the person `flag: help requested` -- the package's internals,
+		// leaked to somebody who asked for help (darwin dogfood, 2026-09-18).
+		// They get the usage, and exit 0, because asking is not an error.
+		if errors.Is(err, flag.ErrHelp) {
+			help(name, out)
+			return 0
+		}
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
 	}
 	missing := []string{}

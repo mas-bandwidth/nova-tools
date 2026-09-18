@@ -53,21 +53,22 @@ usage:
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--max <n>]
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
-  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
-  nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
-  nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
-  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
-  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
-  nova-swarm slots list --store <dir>
-  nova-swarm worker    check <description.json> [--env] [--max <n>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+   nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
+   nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
+   nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
+   nova-swarm slots list --store <dir>
+   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -192,6 +193,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdRoute(rest, stdout, stderr)
 	case "bench":
 		return cmdBench(rest, stdout, stderr)
+	case "reap":
+		return cmdReap(rest, stdout, stderr, now)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
 	case "publish":
@@ -1481,6 +1484,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
 		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
+	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
+	// and the line names the path and the commits so the harvester pushes the work.
+	if res.wallReport != "" {
+		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
+	}
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
@@ -1491,6 +1499,42 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 }
 
 // ------------------------------------------------------------------------------- helpers
+
+// cmdReap frees the finished slots under a swarm root (issue #1048): for every slot whose job
+// published a RESULT.md or whose newest harness log is older than --older, the slot's data/,
+// tmp/ and jobs/*/scratch are removed, while RESULT.md, usage.tsv and the logs are kept. It
+// is the verb an operator runs over hulk and vision when the runners have filled a bench.
+func cmdReap(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("reap")
+	root := f.fs.String("root", "", "")
+	olderRaw := f.fs.String("older", swarm.DefaultReapOlder.String(), "")
+	dryRun := f.fs.Bool("dry-run", false, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*root, "root", "the swarm root whose finished slots are reaped; a slot is <root>/<n>")
+	older := swarm.DefaultReapOlder
+	if *olderRaw != "" {
+		d, err := time.ParseDuration(*olderRaw)
+		if err != nil || d < 0 {
+			f.add(fmt.Sprintf("--older wants a duration such as 1h or 30m, got %q", *olderRaw))
+		} else {
+			older = d
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	slots, freed, err := swarm.ReapSlots(swarm.ReapInput{
+		Root: *root, Older: older, DryRun: *dryRun, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "REAP REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintf(stdout, "REAP OK slots=%d freed=%d\n", slots, freed)
+	return 0
+}
 
 func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 	if useStdin {

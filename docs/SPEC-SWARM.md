@@ -348,7 +348,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     and `triage` read `RESULT.md` only, never `RESULT.md.tmp`, and there is no
     mtime anywhere in the tool: a revision's identity is the SHA-256 of its
     bytes, and `<pool>/triage.json` records, per job id, the hash of the
-    revision last folded into a page. A `RESULT.md` whose hash is not the
+    revision last folded into a page. (The ONE exception is rule 19's `reap`,
+    which reads a harness log's age to decide whether a slot is finished; it
+    never reads or decides a report's identity, and it never touches a
+    `RESULT.md`.) A `RESULT.md` whose hash is not the
     recorded one is new and is folded; a file whose hash **changes between
     the read and the end of the parse** — a writer that ignored the protocol
     and appended in place — is not folded this run, prints `TRIAGE SKIPPED
@@ -550,6 +553,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
     at its budget, at the runner's group kill, or by `stop`.
+19. **The caches are shared per bench, and a finished slot's working bytes are
+    reaped.** A native job's toolchain and modules are the same for every card
+    under one root, so `native` and the supervisor point the harness child at
+    **one shared cache root**, `<root>/cache`, by `GOMODCACHE`, `GOCACHE` and
+    `NPM_CONFIG_CACHE`, and name it as a permitted write root beside the job
+    directory (SPEC-SANDBOX rule 17). The root is never a job's data home: 120
+    cards that each download the Go toolchain and every module into their own
+    data home filled hulk and vision to 100% (issue #1048). `nova-swarm reap
+    --root <dir> [--older <duration, default 1h>] [--dry-run]` removes, for
+    every slot whose job published a `RESULT.md` or whose newest harness log is
+    older than `--older`, the slot's `data/`, `tmp/` and `jobs/*/scratch`,
+    keeping `RESULT.md`, `usage.tsv` and the logs, and prints `REAP OK
+    slots=<n> freed=<bytes>`. A slot no result and no old log has is live and is
+    untouched, and `run` calls the same function at task end unless the worker
+    description sets `keep_data: true` (a task property, like a budget, never a
+    default), which leaves every slot's `data/` where it is for a person who
+    needs to read it. The shared `cache/` is never a reap target: it is the
+    thing the next job reuses.
 
 ## The card is a pipeline, not a loop (issue #856)
 
@@ -634,6 +655,7 @@ nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd>
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--worker <file>]
+nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
@@ -642,7 +664,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -1123,15 +1145,21 @@ rules below still decide. The fold itself is:
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
-that differs is a different card, and folding it would fold a stranger's
-words into the batch. The refusal names the card and its line, and the card
-is `refused` on the packet, not folded — rule 15's quarantine, applied to
-the batch.
+that differs before the end of that line is a different card, and folding it
+would fold a stranger's words into the batch. The refusal names the card and
+its line, and the card is `refused` on the packet, not folded — rule 15's
+quarantine, applied to the batch.
 
 **A `RESULT.md` carrying its contract line is `done` whatever the harness exit
 code was**, unless the card abstained in its own words — a line 1 or a line 2
 beginning `ABSTAIN`. The contract decides, never the child's rc and never its
-timing.
+timing. The card generator can truncate the issue title, so the card's
+contract line may be a **prefix** of the `RESULT.md` line 1 rather than the
+whole of it: a line 1 that **begins with** the contract line — after trailing
+spaces are trimmed — is still this card and is `done`, and its longer tail is
+named on the card line as `tail=<n>` (the number of chars past the contract
+line). A line 1 that differs before the end of the contract line is a
+different card and stays `line1-mismatch`.
 
 **Every abstain names ONE reason token**, so the packet is the whole read and a
 coordinator never opens a `RESULT.md` to learn why (issue #461):
@@ -1182,9 +1210,12 @@ The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
 field after it where the remedy needs a path: `watched=<path>`, the log the
 idle monitor watched, or `job=<dir>`, the job directory that holds no result.
-**A stall is `log=0`**: a card that ended with no output after the wall opened
-is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
-its line.
+A `done` card whose line 1 ran longer than its contract line carries one more
+bounded field, `tail=<n>` — the number of chars past the contract line — so a
+coordinator reads how the worker's title extended the generator's truncation;
+an identical line prints no `tail` field. **A stall is `log=0`**: a card that
+ended with no output after the wall opened is counted on the `BATCH` line's
+`stalled=<n>` and reads its own emptiness on its line.
 
 The copied-up result above is the same rule the bench pull holds under
 **Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
@@ -1212,7 +1243,7 @@ are the thing the packet replaced.
 ```
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
@@ -1536,7 +1567,7 @@ BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
@@ -2223,6 +2254,119 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 ```
 
+## The `capacity` offer-and-routing form (issue #176)
+
+Printed by `nova-swarm template --name capacity` and refused by `add --template`,
+as `result` and `setup` are: it is a form a friend and a coordinator fill
+together, not a task's conditions. It is the near-term endpoint of the
+discover-offered-capacity-and-match-ready-work coordination issue #176 asks
+for — manual census and routing log, with the four rows acceptance evidence
+demands before any automatic scheduler is built, and the five capacity kinds
+(coordinator, direct worker, one-shot, swarm and local) kept apart because
+model slots are not interchangeable throughput units. It publishes the offer
+half and the routing-log half with placeholder values only; every named
+field is a thing only the friend or the coordinator knows, and a friend's
+own choices fill their own copy. The offer has an expiry; past the expiry
+it is excluded, not favoured and not penalised. missing contact is unknown;
+stale capacity is not proof of failure and not proof of consent; an offer
+nobody answered since the silent-ping window is reported as `reason=unconfirmed`,
+and an expired offer is reported as `reason=expired`. Two offers sharing a
+named shared-limit pool are counted once per pool in the routing log, and
+utilisation is reported only against the explicit pool-specific denominator
+the routing log names — coordinator, direct worker, one-shot, swarm and local
+each carry their own, never summed. no key, no token, and no private host
+detail is ever published, names/models/harnesses/benches stay placeholders,
+and an agreed offer supplies no account access. A friend may propose an
+alternative, decline, or stay silent, and missing feedback is pending, never
+consent; an automatic scheduler is separate staged work with its own
+authorization.
+
+```
+capacity — one friend's offered capacity and the manual routing log (#176)
+
+One offer per friend, bounded and expiring, published before any automatic
+scheduler is built, because an idle pool receiving ready work, an incompatible
+offer being skipped, shared capacity counted once, and a stale offer excluded
+are four separate things a coordinator has to do by hand first, in a form a
+friend fills and a coordinator reads. Print the offer half, fill it with the
+friend whose capacity is being advertised, and paste the FILLED offer where the
+review happened; the private configuration it stands for stays on the friend's
+own bench. Print the routing log half, fill it with the ready work and the
+offers considered, and record the matching decision in writing so the next
+review can compare the count against the offers' own quotas. Names, instances,
+benches, models, harnesses and pool layouts are not constants of this form:
+every value below is a placeholder, and a friend's own choices fill their own
+copy. A friend may propose an alternative, decline, or stay silent, and missing
+feedback is pending, never consent. A filled form supplies no account access,
+and an automatic scheduler is separate staged work with its own authorization.
+A form carries one capacity kind at a time from the five the SPEC-WORK friend
+section distinguishes — coordinator, direct worker, one-shot, swarm and local —
+because model slots are not interchangeable throughput units and a swarm
+worker, a one-shot, and a local model run on different evidence and different
+shared-limit pools.
+
+## The offer (the friend's own half)
+
+offered by: <who wrote this offer, and where the review is recorded>
+reviewed with: <the friend and a coordinator, or pending>
+expires: <the stamp this offer stops being an offer, never blank>
+
+friend: <name>
+instance: <the worker home or container this friend runs under>
+bench: <the machine or hosted runner this friend works on>
+model identity: <the provider's id and the resolved model id>
+basis: <the per-token cost class — zero|flat|metered — and its pricing reference, or local>
+harness: <the harness this friend chose, and its version>
+supported task types: <read, text, code, replay; one or more, a comma list>
+demonstrated strengths: <what the friend has been shown to do well, never an inferred claim>
+demonstrated limits: <what the friend has been shown unable to do, never an inferred claim>
+permitted scope: <the repositories and paths this offer may read and write>
+current availability: <awake | resting | credit-limited | rate-limited | unknown — never idle because a recent message did not arrive>
+concurrency: <the maximum parallel slots this offer reserves>
+expected queue/latency: <the queue depth and the latency a scheduler can expect, bounded>
+shared-limit pools: <the named pools whose quota this offer shares, or `[]` for none>
+
+## The routing log (the coordinator's half)
+
+ready work: <the dependency-ready task list being matched this cycle>
+compatible offers: <the offers whose supported task types and permitted scope admit the ready work>
+incompatible offers: <the offers skipped this cycle, with one reason each — wrong task type, scope mismatch, basis mismatch, capacity kind, anything but a name>
+shared pool share: <the share of the named shared-limit pools, counted ONCE per pool across all offers naming it>
+stale offers excluded: <the offers whose expires stamp has passed or whose contact stamp is past the silent-ping window, named and never counted>
+utilization denominator: <the explicit pool-specific denominator this cycle's utilization would be reported against — a coordinator, direct worker, one-shot, swarm and local each have their own>
+
+## The four rows acceptance evidence demands (one row each, when they occurred this cycle)
+
+| observed | row to write |
+| --- | --- |
+| an idle compatible pool receiving ready work | offer=<name> task=<id> routed=true admit-gate=<gates that passed> |
+| an incompatible offer being skipped | offer=<name> task=<id> reason=<what rules it out> |
+| shared capacity counted once | pooled-as=<pool> reservations=<n> offers-with-that-pool=<n> shared-share=<n> |
+| a stale offer excluded | offer=<name> expires=<stamp> contact=<stamp or NONE> reason=<expired or unconfirmed> |
+
+missing contact is unknown; **stale capacity is not proof of failure and not proof of consent**, so an offer nobody answered since the silent-ping
+window is excluded, not favoured and not penalised, and reported as
+`reason=unconfirmed` alongside any expired offer reported as
+`reason=expired`. Each capacity kind from the SPEC-WORK friend section
+gets its own row when the offer names it — **coordinator capacity** is its
+own row, **direct worker capacity** is its own row, **one-shot capacity** is
+its own row, **swarm capacity** is its own row, and **local capacity** is its
+own row — because model slots are not interchangeable throughput units, and
+sharing a quota across those kinds is the double-count the form exists to
+prevent.
+
+## What is never in this form
+
+no key, no token, and no private host detail is ever written here, a task
+card, a bus note, an issue or a token ledger: a name or a path is not a
+secret, but a value is, and this form carries values for nobody. A shared
+account limit is named by its pool, never by the credential that holds it.
+An offered capacity is not a purchase, a permission, or a promise to run;
+it is the standing under which a coordinator may propose ready work, and a
+friend chooses offers, reserves, and rest, not a scheduler that maximises
+occupation beyond that offer.
+```
+
 ## `triage` — one page
 
 `triage` walks the job directories, takes every `RESULT.md` **whose revision
@@ -2358,6 +2502,14 @@ than the grace — is a real run that failed and is **not** retried, and `run --
 files the first fast failure without launching a descendant. A native run applies the same
 rule to its launch and appends one usage row per launch, so a retried card's `usage.tsv`
 carries its attempts for the one job.
+
+**The structured signal is a field, not a sentence (issue #163).** A harness adapter records
+the provider's refusal as one line in the harness log —
+`INPUT LIMIT class=<token|bytes|files> value=<n> limit=<n>` — and the supervisor, `finish` and
+rule 17's recovery pass all read that field and name the class from it: no mark, bare-word
+bound, list marker or event-prefix rule is asked to decide it. The prose heuristic above is
+the fallback for a harness with no adapter, and the class is decided from the field before a
+word of it is read.
 
 ## `requeue` — the same task, changed
 
@@ -2988,11 +3140,13 @@ verb, and tests that pin all three by executing them.
    killed; the report says so; the watcher never matches a process by its command
    line.
 6. **`internal/swarm/templates.go`** — the three task templates, the
-   `RESULT.md` template and the `setup` agreement form (#184), as embedded
-   text, each with its conditions and the number that produced it. Tests:
-   `template --name` prints each; `add --template` wraps a task and the
-   result contains every condition; `add --template setup` is refused and
-   the setup form carries no private name, path or value.
+   `RESULT.md` template, the `setup` agreement form (#184) and the `capacity`
+   offer-and-routing form (#176), as embedded text, each with its conditions
+   and the number that produced it. Tests: `template --name` prints each;
+   `add --template` wraps a task and the result contains every condition;
+   `add --template setup` and `add --template capacity` are refused, the
+   setup form carries no private name, path or value, and the capacity form
+   carries no key, token, or private host detail.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
    with their `dup:` marks and their verbatim quotes, the owed-list match, the

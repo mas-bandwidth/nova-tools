@@ -96,6 +96,21 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     — one real DIFFERENT. **DIFFERENT for a model is a new weight under the same tag**:
     a differing digest is different weights, not a newer number — a digest has no order,
     so a model is never STALE. Listed, never pulled (rules 9, 11).
+4b. **A `tool` row that names only its executable is asked the verb a tool answers.**
+    An `installed` column of ONE token is a name, not a sentence: nothing in it says how
+    the binary is to be asked. Such a row — what `nova-version snapshot` writes and what
+    every hand-written manifest holds, `nova-swarm  tool  ~/.local/bin/nova-swarm` — is run
+    `<exe> version`, then `<exe> --version`, then BARE, and the first invocation whose
+    output carries an identity under rule 4 is the reading. Bare stays last, for a foreign
+    tool that prints its version with no argument at all. The whole ladder shares ONE
+    `--timeout`, so three rungs never cost three deadlines, and a rung answering
+    `not_found`, a spent budget, a timeout or a held pipe ends it, because those answers do
+    not change with the argument. A row whose `installed` column is a whole argv —
+    `go version`, `sops --version` — is the caller's sentence, run exactly as written,
+    once: rule 3's argv is never appended to. The mistake this removes, in one sentence:
+    every nova tool answers a bare invocation with a usage refusal (the banner is behind
+    `help`, not in front of every mistake), so the adoption pass read UNKNOWN for every one
+    of OUR OWN tools while each of them could say exactly which build it was (#1264).
 5. **Five kinds, and the kind decides what may happen.** `harness` (OpenCode), `engine`
    (ollama), `model` (a weight in the ollama library — checked, never pulled, rule 4a),
    `tool` (gh), `pin` (one of our tools' pinned version of another). One specimen each,
@@ -380,11 +395,17 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
+nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--dry-run] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
+nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 nova-update help
 ```
 
-Those five usage lines are the string `nova-update help` prints, byte for byte: one string
-in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
+Those ten usage lines are the string `nova-update help` prints, byte for byte: one string
+in the binary, so the spec and the help cannot drift apart; the five `release` lines are
+`release.Verbs`, spliced into that one string rather than copied beside it. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
@@ -393,6 +414,195 @@ the adopted manifest, not every executable on PATH (the opening paragraph);
 its `help` prints those three lines the same way.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
+
+## The release verb
+
+`check`, `report` and `adoption` all ask the same question from one end: what is installed
+here, and is it what it should be. `release` is that question from the other end — it is
+what MAKES the thing they read. It replaces two shell scripts the coordinator ran by hand,
+`fleet-install-tools.sh` and the install half of `adopt.sh`, and it replaces them for the
+reason the pit stop of 2026-09-17 gave: those scripts built, copied, installed and verified
+inside one nested `ssh` quoting, so when four benches ran six-hour-old tools while the
+coordinator believed they were current, nothing in the loop could say which step had not
+happened.
+
+Five verbs, and each one can refuse. Three of the refusals are gates rather than steps, and
+[SPEC-RELEASE.md](SPEC-RELEASE.md) is where they are written out for a person who is not
+reading the Go: the sensitive-path list `cut` classifies against, what the annotated tag
+carries, and what `pull` deletes.
+
+- **`cut`** resolves `--from` on the forge, reads every check run on that commit, and
+  REFUSES unless all of them completed and none failed — a commit no run has judged is not
+  green either. It then reads the highest existing version tag, compares it to the head,
+  **classifies the range against the sensitive path list** (SPEC-RELEASE §1: a range that
+  touches one of those prefixes, or that is too big for the forge to list, refuses until
+  `--security-read` names Johnny's read, and then says so on a
+  `RELEASE CUT SENSITIVE paths=… read=…` line), writes a new `--changelog` section from the
+  pull requests merged since (their numbers, their titles, and for an integration batch the
+  members named in its own body, so a batch does not hide ten pieces of work behind one
+  number), creates the tag — **annotated**, its message carrying `sums=<digest of
+  SHA256SUMS>` when `--sums` names one (SPEC-RELEASE §2) — and prints
+  `RELEASE CUT version=… sha=… prs=…`. `--dry-run` decides everything, including both
+  refusals, and writes nothing.
+  A version that could not survive `-X main.version=`, a printf format or the field law —
+  whitespace, `%`, `=` — is refused here, the same refusal
+  `.github/scripts/release-ldflags.sh` makes for the same reasons.
+- **`build`** compiles every `cmd/nova-*` in `--source` for one platform (this host unless
+  `--platform` says otherwise) with `-trimpath` and the one composed stamp, into
+  `<out>/<version>/<goos>-<goarch>/`, and writes `SHA256SUMS` over the whole set LAST, in
+  the step that finished it. A tool that does not compile means no checksum file at all: a
+  `SHA256SUMS` over a half-built directory agrees with itself and with nothing.
+- **`install`** verifies every artifact against `SHA256SUMS` BEFORE the first rename, then
+  installs each one temp-and-rename into `--bin` — a running process keeps its own inode —
+  and skips a tool whose installed binary already answers the version, asked of the BINARY
+  rather than of a marker file. `RELEASE INSTALLED version=… tools=… skipped=…`.
+- **`adopt`** does that install on every machine in `--machines`, over the `--ssh` binary:
+  the artifact directory goes over as a tar stream written here, and the command that runs
+  on the far side is the `nova-update` JUST SENT, so a bench with no nova-tools at all
+  adopts with the same command as one a version behind. One `RELEASE ADOPTED machine=…`
+  receipt per machine, read from what the remote SAID and not from its exit code, or one
+  `RELEASE REFUSED machine=… : <cause> (<remedy>)`, and a final count. Exit 1 if any
+  machine refused: the other machines are still reported.
+- **`pull`** withdraws a release that should never have shipped (SPEC-RELEASE §3): the
+  release's own files, by name, deleted from `--out` here and from `--dest` on every machine
+  in `--machines`, one `RELEASE PULLED machine=…` receipt each. **The tag stays** — a tag
+  that vanishes is a history that cannot be read — and the `--changelog` section is marked
+  pulled with the date and `--reason` instead. Nothing recursive, nothing that was not in
+  that release's `SHA256SUMS`, and no installed binary touched.
+
+### Where adopt runs, and why it is not the build host
+
+**`adopt` runs FROM the host that has ssh to every machine, and fans out from there.** It
+never needs the machines to reach one another. This is not a preference, it is the shape of
+the fleet: the first dogfood pass (receipt `20260918T144929Z`, rowan-child) ran `adopt` on
+hulk, the build host, and 3 of 3 machines refused — short names did not resolve, and
+Tailscale addresses gave `Permission denied (publickey)`, because **no bench in this fleet
+has ssh trust to any other bench**. Only the Studio does. The fleet was brought current by
+running `release install` on each bench by hand, which is the thing this verb exists to
+stop anybody having to do.
+
+A jump host (`ssh -J`) does not fix it and was not chosen: `-J` forwards the *connection*
+but still authenticates to the target with the **calling** host's key, so fanning out from
+hulk would still need hulk's key on every bench. That is new trust between benches, and the
+trust that would make it unnecessary belongs to the Studio, which is Glenn's. So the verb
+goes to the trust rather than the trust going to the verb, and the only thing that had to
+be added is a way to *read* the release from wherever it was built:
+
+- **`--from <dir>`** is an artifact root on this host, and **`--from <host>:<dir>`** is one
+  on another machine. In the second form the release is fetched ONCE into `--stage <dir>`,
+  verified here, and pushed to every machine from there — so a truncated fetch is one
+  refusal on the adopting host rather than four machines left in four different states. A
+  `host:` prefix is only read as a host when it is a machine name of two characters or
+  more, so a windows path (`C:\releases`) stays a path.
+
+### The machines file
+
+One machine per line: `<name>[TAB<bin>[TAB<dest>]]`. Blank lines and `#` comments are
+skipped, `user@host` is allowed, and every name is checked against the machine-name shape
+before ssh is reached. The optional columns override `--bin` and `--dest` **for that
+machine**, because the fleet has three different home directories and a second run with
+different flags is a second chance to get the version wrong. An override column left empty
+is a refusal, not a fallback: the fallback is exactly what it was overriding.
+
+**`--bin` and `--dest` are paths on each machine.** The remote shell expands a leading `~`,
+which is how one `--bin '~/.local/bin'` names three different home directories at once —
+and the quotes are load-bearing, because an unquoted `~` is expanded by the *local* shell
+into the adopting host's home, a path the machine has probably never heard of.
+
+### Retiring the other directory
+
+`--retire <dir>` removes this release's own tools from a SECOND directory nobody should
+still be running from. The shell script this verb replaces kept `~/go/bin` in step with
+`~/.local/bin`; the verb did not, and after the first real adoption every bench held 18
+stale `~/go/bin/nova-*` from a `go install` months ago — both directories on `PATH`, and
+which one wins a fact about `PATH` order nobody has read.
+
+What it will remove is narrow, and every clause is load-bearing: only a name this run
+installed into `--bin`, only a name beginning `nova-`, only a regular file (a directory or
+a symlink is left for a person), and only through `safepath.RemoveUnder`. `--retire` naming
+`--bin` is refused outright, and so is the release's own artifact tree in either direction
+— those are the two arguments that would delete the release just installed or the
+last-good copy a rollback reads. The receipt carries `retired=<n>`, and `adopt` passes the
+flag to each machine and reports each machine's count.
+
+### What the verbs work out for themselves
+
+The darwin dogfood (2026-09-18) found the places where the verb made somebody type
+something it could have known, or hid what it was about to do:
+
+- **`adopt` infers `--version`** when the `--from` root holds exactly one release for the
+  platform. Retyping what the directory already says is repeating yourself, and a mistyped
+  version is how a fleet ends up half adopted. Two releases is the case where a guess would
+  be wrong, so it refuses and names both. Only a LOCAL `--from` is read this way: scanning
+  a `host:dir` root would be one more remote command run before anything has been verified.
+- **`build --platform` is repeatable and comma-separated.** The fleet is three platforms
+  wide, and four invocations differing only in `--platform` are four chances for one to
+  carry a different `--version` — a release whose linux half and darwin half are not the
+  same release. Every platform is resolved before the first compile, so a typo in the
+  fourth is not found out after three have been built.
+- **`build` verifies the `SHA256SUMS` it just wrote** and reports `verified=<n>`.
+  `release.yml` has done this from the beginning, for the reason it gives in place: a
+  checksum file nobody has ever checked is a file whose first reader is the person it was
+  supposed to reassure.
+- **`adopt --dry-run` asks the machines.** Per machine: can it be reached, is `--dest`
+  there, what is installed now — one `RELEASE WOULD ADOPT machine=… installed=… dest=…
+  action=…` line each, nothing streamed and nothing installed. A plan composed without
+  asking is a plan about a fleet somebody remembers rather than the one that exists.
+- **`adopt` streams only what a machine does not already have.** It reads that machine's
+  own `SHA256SUMS` first; if it matches, nothing is sent. The receipt carries `sent=yes|no`
+  **separately from** `skipped=`, because they are two different facts: `sent=` is the
+  stream, `skipped=` is the tools. A machine can be `sent=no tools=0 skipped=21` — it had
+  everything already — or `sent=yes tools=21`. The install runs either way: the bits being
+  there is not the same fact as the tools being installed from them.
+
+`<verb> --help` prints that verb's usage and exits 0. It used to print `flag: help
+requested`, the flag package's own sentinel, to somebody who had asked a reasonable
+question; `nova-update`'s own verbs did the same and now print their usage too.
+
+### What adopt will never do
+
+Johnny's security read, 2026-09-18. `adopt` runs on the one host that holds ssh keys to the
+whole fleet and pushes executables to every machine on it, so the interesting question is
+not what it does but what it must never be talked into. Each rule below is a line of code
+and a test, not a note.
+
+- **Never grant the build host an identity the benches trust.** The adopting host is the one
+  that already has the trust; the release travels to it, not the keys to the release. That is
+  why `--from host:dir` exists (above).
+- **Never verify a fetched release with the checksum file that came with it.** Anybody who
+  could change the bits could change the `SHA256SUMS` beside them. A remote `--from` requires
+  `--expect-sums <sha256>`, the digest of `SHA256SUMS` that `cut --sums` recorded in the
+  CHANGELOG entry — it reaches the adopting host through **git**, not through the machine
+  being read. It is checked before the checksum file is so much as parsed, and a mismatch
+  refuses naming **both** digests, because which one is wrong is the whole question.
+- **Never run a far-side binary found on `$PATH`.** The remote command names the
+  `nova-update` this verb just sent and verified, by absolute (or `~/`-rooted) path.
+- **Never interpolate an unvalidated host or path into a remote command.** `--bin`, `--dest`,
+  `--retire` and the machines file's columns are checked against `ValidRemotePath` — absolute
+  or `~/`-rooted, no `..`, and none of the characters a shell reads as syntax — **before any
+  remote command is composed**, and the whole machines file is validated before the first
+  machine is touched, so a bad line does not leave half a fleet adopted.
+- **Never forward the agent, and never put a key on argv.** `SSHOptions` says
+  `ForwardAgent=no` out loud rather than trusting a default or the host's `~/.ssh/config`:
+  forwarding this host's agent to a bench would put the fleet's trust inside a machine the
+  release is being pushed *to*. There is no `-i`: a key named on argv is a key in every `ps`.
+- **Never eval what the far side said.** The receipt is matched by a regexp; a machine that
+  answers with shell syntax is refused, not executed.
+- **Never copy whatever happens to be in the directory.** `Send` ships only the names
+  `SHA256SUMS` lists, so a key or a token dropped beside the binaries is not couriered to
+  every machine by a verb nobody thinks of as a file transfer.
+- **Never install before the checksum**, and **never retire the live stamp**: `--retire`
+  refuses `--bin`, refuses the release's own artifact tree in either direction, and removes
+  only `nova-*` regular files this run installed, through `safepath.RemoveUnder`.
+
+Containers are not part of this verb, so `--network=host` and mounting `~/.config/nova-secrets`
+have nothing here to apply to; if `adopt` ever grows a container step, they belong in this list.
+
+Rule 1 governs throughout — every path is a flag, no default path, no cwd, no `$HOME` —
+and rule 3's no-shell rule governs the child processes. No secret is read, logged or
+passed: `gh` and `ssh` each carry their own credential. The three edges to the world
+outside the process — the forge, ssh, the Go toolchain — are interfaces, so no unit test
+here touches the network or a real machine (Glenn's hard rule, 2026-09-17).
 
 ## Exit codes and the output grammar
 

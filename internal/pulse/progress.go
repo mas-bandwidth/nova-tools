@@ -103,17 +103,26 @@ func Progress(in ProgressInput) int {
 	fmt.Fprintf(in.Stdout, "PROGRESS cards=%d rc0=%d wall_p50_s=%d wall_p90_s=%d usd_per_card=%.4f span_h=%.1f effective_parallelism=%.1f cards_per_hour=%.1f\n",
 		cards, rc0, p50, progressRound(p90), usdPerCard, spanH, parallelism, cardsPerHour)
 
-	remaining := countCards(in.Queue, "pending") + countCards(in.Queue, "launched")
+	pending := countCards(in.Queue, "pending")
+	launched := countCards(in.Queue, "launched")
+	prs, issues := 0, 0
 	repo, scope := progressScope(in.Queue)
 	if repo != "" {
-		remaining += progressUnreadPRs(repo, in.Queue)
-		remaining += 2 * progressInScopeIssues(repo, scope)
+		prs = progressUnreadPRs(repo, in.Queue)
+		issues = progressInScopeIssues(repo, scope)
 	}
+	// Each open PR needs a read card and a merge; each in-scope issue a fix card plus a
+	// read, so it counts twice. Pending and launched count once.
+	remaining := pending + launched + prs + 2*issues
 	hours := 0.0
 	if parallelism > 0 {
 		hours = float64(remaining) * (p90 / 3600) / parallelism * 1.5
 	}
-	fmt.Fprintf(in.Stdout, "ESTIMATE remaining_cards=%d hours=%.1f\n", remaining, hours)
+	// The terms print beside the answer. An estimate a reader cannot check is one nobody
+	// acts on, and the x1.5 for reads and retries is part of the arithmetic, so it is said.
+	fmt.Fprintf(in.Stdout,
+		"ESTIMATE remaining_cards=%d hours=%.1f pending=%d launched=%d prs=%d issues=%d wall_p90_s=%d parallelism=%.1f rate=%.1f/h factor=1.5\n",
+		remaining, hours, pending, launched, prs, issues, progressRound(p90), parallelism, cardsPerHour)
 	return 0
 }
 

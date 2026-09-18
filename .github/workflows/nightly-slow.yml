@@ -1,17 +1,37 @@
-# Nightly slow suite: the tests behind the `slow` build tag.
+# Nightly tagged suites: the tests behind an opt-in build tag.
 #
 # Issue #516 splits tests by BUILD TAG rather than by schedule-of-record. The PR
-# test jobs in ci.yml run `go test` without the tag, so a test moved behind
-# `slow` simply stops costing per-change time; it still has to run SOMEWHERE, and
-# this file is that somewhere. It runs `go test -tags slow ./...` on the same
+# test jobs in ci.yml run `go test` without any tag, so a test moved behind one
+# simply stops costing per-change time; it still has to run SOMEWHERE, and this
+# file is that somewhere. One leg per tag, `./...` inside the leg, on the same
 # operating-system matrix as certification.yml's `test` job — nightly, and on
-# demand — so the slow-tagged tests are compiled and run against the whole tree,
-# nothing listed by hand and nothing able to fall out silently.
+# demand — so a tagged test is compiled and run against the whole tree, nothing
+# listed by hand inside a leg and nothing able to fall out silently.
+#
+# THE MATRIX IS THE CONTRACT. internal/ci/nightlytags_class_test.go reads the
+# `tag:` entries below, reads every tag any _test.go opts into, and refuses the
+# difference: a tag with no leg here (and no `-tags` line in another scheduled
+# workflow) fails the fast suite on the change that introduces it. An opt-in tag
+# nobody runs is not a slower tier, it is a deleted test that still looks like a
+# test in the tree.
+#
+# The legs, and why each one is where it is:
+#
+#   slow      ubuntu + macos  #516's tier: correct tests too slow for the CL budget.
+#   soak      ubuntu          CheckNet exempts these two, so a test carrying one may
+#   nightly   ubuntu          touch the real network (Glenn's rule: unit tests never
+#                             do). They have a leg before they have a file, so the
+#                             first such test that lands runs the same night rather
+#                             than never.
+#   novadisk  macos           cmd/nova-sandbox's one real end-to-end run: a real APFS
+#                             volume made and destroyed. It is tagged off because
+#                             EIGHT CI runners share the Mac this tree is built on —
+#                             a hosted runner is a throwaway VM, which is exactly the
+#                             machine that test wants.
 #
 # A RED run here does not block anything: it opens (or updates) a single issue
-# titled "nightly slow suite red <date>" for the morning. No aggregate gate, no
-# release blocker — the slow tier is evidence to read, not a check to merge
-# against.
+# titled "nightly tagged suite red <date>" for the morning. No aggregate gate, no
+# release blocker — this tier is evidence to read, not a check to merge against.
 
 name: nightly-slow
 
@@ -29,14 +49,24 @@ concurrency:
 
 jobs:
   test:
-    # THE SAME MATRIX AS certification.yml's `test` job: two operating systems,
-    # whole-tree. The `slow` tag, not a package list and not a `-run`, decides
-    # what is extra — `./...` decides where it may live, so a slow-tagged test
-    # added tomorrow lands in this run the moment it has a test file.
+    # ONE LEG PER TAG. The tag, not a package list and not a `-run`, decides what
+    # is extra — `./...` decides where it may live, so a tagged test added
+    # tomorrow lands in its leg the moment it has a test file.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            tag: slow
+          - os: macos-latest
+            tag: slow
+          - os: ubuntu-latest
+            tag: soak
+          - os: ubuntu-latest
+            tag: nightly
+          - os: macos-latest
+            tag: novadisk
+    name: ${{ matrix.tag }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -45,8 +75,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: slow suite
-        run: go test -tags slow -count=1 ./...
+      - name: tagged suite
+        run: go test -tags ${{ matrix.tag }} -count=1 ./...
 
   report:
     # ONE ISSUE PER DAY, not one per leg. The `test` matrix job above is
@@ -60,21 +90,21 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: open or update one "nightly slow suite red" issue
+      - name: open or update one "nightly tagged suite red" issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          title="nightly slow suite red $(date -u +%Y-%m-%d)"
+          title="nightly tagged suite red $(date -u +%Y-%m-%d)"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           numbers=$(gh issue list --state open --limit 200 --json number,title \
             | jq -r --arg t "$title" '.[] | select(.title == $t) | .number')
           if [ -n "$numbers" ]; then
             n=$(printf '%s\n' "$numbers" | head -n 1)
             echo "issue #$n already open for today; adding a comment"
-            gh issue comment "$n" --body "Slow suite still red: $run_url"
+            gh issue comment "$n" --body "A nightly tagged suite is still red: $run_url"
           else
             gh issue create --title "$title" \
-              --body "The nightly \`go test -tags slow ./...\` suite failed.\n\nRun: $run_url"
+              --body "A leg of the nightly tagged suites failed.\n\nRun: $run_url"
           fi

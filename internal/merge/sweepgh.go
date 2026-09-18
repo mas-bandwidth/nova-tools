@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -12,12 +13,12 @@ import (
 // --timeout. It reaches the merge queue through gh's GraphQL edge, which is the only
 // edge that answers for a merge queue at all, and it reaches the runs through `gh run`.
 //
-// ENQUEUE AND DEQUEUE GO THROUGH THE MERGE QUEUE MUTATIONS, not `gh pr merge`. That is
-// rule 21's shape as much as it is GitHub's: `gh pr merge` takes a head precondition and
-// nothing about the base, and this host's own guard refuses `--auto`, so a merge-queue
-// admission is a queue mutation and never a merge call. The card that added this verb
-// named `gh pr merge` as the loop's spelling; this is its equivalent, and the interface
-// the tests drive is the same either way.
+// ENQUEUE GOES THROUGH THE ONE DOOR (Enqueuer.Enqueue, enqueue.go) and DEQUEUE THROUGH THE
+// QUEUE MUTATION, never `gh pr merge`. That is rule 21's shape as much as it is GitHub's:
+// `gh pr merge` takes a head precondition and nothing about the base, and this host's own
+// guard refuses `--auto`, so a merge-queue admission is a queue mutation and never a merge
+// call. The card that added this verb named `gh pr merge` as the loop's spelling; this is
+// its equivalent, and the interface the tests drive is the same either way.
 type GHSweep struct {
 	Repo    string
 	Branch  string
@@ -125,16 +126,13 @@ func (h *GHSweep) HeadRun(branch string) (SweepRun, error) {
 	return SweepRun{ID: raw[0].DatabaseID, Status: raw[0].Status, Conclusion: raw[0].Conclusion}, nil
 }
 
-// Enqueue adds a pull request to the merge queue.
-func (h *GHSweep) Enqueue(pr int) error {
-	id, err := h.nodeID(pr)
-	if err != nil {
-		return err
-	}
-	_, err = h.gh("api", "graphql",
-		"--raw-field", "query=mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){clientMutationId}}",
-		"--field", "id="+id)
-	return err
+// Enqueue admits a pull request to the merge queue THROUGH THE ONE DOOR. The mutation is
+// not repeated here: this method is the sweep's seam onto Enqueuer.Enqueue, which is where
+// the batch rule and the GraphQL both live. A sweep that enqueued by itself would be a
+// second entrance to the queue, which is the thing this session took away.
+func (h *GHSweep) Enqueue(pr SweepPR) error {
+	return NewEnqueuer(NewGHEnqueue(h.Repo, h.Timeout, h.Runner)).Enqueue(
+		context.Background(), EnqueuePR{Number: pr.Number, HeadRef: pr.HeadRef}, false)
 }
 
 // Dequeue removes a pull request from the merge queue.

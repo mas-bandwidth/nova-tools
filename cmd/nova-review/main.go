@@ -30,6 +30,8 @@ const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REV
 usage:
   nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>] [--decide] [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY] [--base-url <url>]
   nova-review port --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
+  nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+                         revert every non-test hunk in a throwaway worktree at the head and run the changed tests: they must fail
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -72,6 +74,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return packet(args[1:], out, errOut)
 	case "port":
 		return port(args[1:], out, errOut)
+	case "mutate":
+		return mutate(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
