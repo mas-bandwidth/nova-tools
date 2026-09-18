@@ -398,7 +398,9 @@ func (r *Records) backoff(round int) {
 // which is inside any --timeout this tool accepts.
 const casBackoff = 50 * time.Millisecond
 
-// Sleep is time.Sleep, named here so a test can hold the loop still.
+// Sleep is time.Sleep, named here so a test can hold the loop still. It is also the wait
+// between polls in Lock, so one seam fakes every wait in this package: a test that must
+// exercise a timeout advances a clock instead of holding wall time.
 var Sleep = time.Sleep
 
 // fetchAndReset moves this checkout to the branch's remote tip. reset --hard leaves
