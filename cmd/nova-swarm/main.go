@@ -67,6 +67,7 @@ usage:
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
    nova-swarm slots list --store <dir>
    nova-swarm worker    check <description.json> [--env] [--max <n>]
+   nova-swarm pull      --store <dir> --owner <o> --for <duration>
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -191,10 +192,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdBench(rest, stdout, stderr)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
+	case "pull":
+		return cmdPull(rest, stdout, stderr, now)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
-	case "pull":
-		return cmdPull(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
 	case "worker":

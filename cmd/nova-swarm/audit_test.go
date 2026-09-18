@@ -106,6 +106,11 @@ var swarmAudit = audit.Config{
 		// LINT DRIFT line, so a card cannot write past the escape. It only reads the one
 		// file the caller named and writes nothing at all.
 		`"regexp"`,
+		// errors (pull.go, SPEC-JOBS section 3) only tells an idle pull (ErrNoCard)
+		// from a refused lease (*swarm.LeaseRefusal) from a real failure. It holds no
+		// writer, and every value taken off the error goes through oneline.Field or
+		// oneline.Err before this package prints it.
+		`"errors"`,
 	},
 	MinClassified: 40,
 }
