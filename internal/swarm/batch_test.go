@@ -918,10 +918,12 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	// to its parent. It is a GRANDCHILD of the card, which is the point -- the monitor reads
 	// the whole process tree's CPU time.
 	// The marker appears once the spin card's grandchild has burned for five real
-	// seconds, so the test waits on that event rather than on a clock: between the
-	// first CPU sample and the sample taken after the marker, the tree's CPU time has
-	// grown, which is the only thing that saves the silent spinner. The sleeping card
-	// has no such growth, so the same tick sees it idle and kills it.
+	// seconds, so the test waits on that event rather than on a clock. Before it takes
+	// its first activity sample it waits for that grandchild to appear in the tree with
+	// CPU accrued -- a slow fork on a loaded runner must not be read as idle -- and the
+	// sample taken after the marker then sees the burner gone: the tree's CPU time did
+	// not grow, it fell, and a tree that lost a charged process is working, not still.
+	// The sleeping card has no such movement, so the same tick sees it idle and kills it.
 	runner := runnerDoing(t, dir, "silent",
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		runnerStep{Op: "sleep", Ms: 30000, When: "label==sleeps"},
@@ -935,6 +937,7 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
+		waitForTreeCPU(t)
 		clk.tick()
 		waitForFile(t, filepath.Join(root, "spin-burned"))
 		clk.advance(testIdleBudget)
