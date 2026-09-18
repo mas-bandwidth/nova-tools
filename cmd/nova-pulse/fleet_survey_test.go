@@ -295,3 +295,35 @@ func TestFleetSSHRunnerStartsTheProgramWithTheScriptOnStdin(t *testing.T) {
 		t.Fatalf("the child saw %q, want the target, `bash -s` and the script on stdin", got)
 	}
 }
+
+// TestFleetSurveyRefusesARunnerHostAndSurveysTheRest: a survey is an ssh and a script ON the
+// machine, which is load, so with --machines every name in the benches file is held against
+// the registry first. beta is CI-only: it prints its refusal, is never connected to, and the
+// bench beside it is surveyed all the same -- one wrong line does not hide the fleet.
+func TestFleetSurveyRefusesARunnerHostAndSurveysTheRest(t *testing.T) {
+	benches, runner := fleetSurveyFixture(t, []string{"alpha", "beta"}, map[string]fleetSurveyAnswer{
+		"alpha": {out: fleetStandardOK},
+		"beta":  {out: fleetStandardOK},
+	})
+	machines := filepath.Join(t.TempDir(), "machines.tsv")
+	body := "alpha\tfake-alpha\tlinux/x64\tbench\tswarm-alpha\t64\t-\n" +
+		"beta\tfake-beta\tdarwin/amd64\trunner\t-\t8\tCI-only\n"
+	if err := os.WriteFile(machines, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errb := fleetSurveyRun(t, "--benches", benches, "--machines", machines)
+	if code != 2 {
+		t.Fatalf("fleet survey exit = %d, want 2; stderr=%q out=%q", code, errb, out)
+	}
+	if !strings.Contains(out, "FLEET REFUSED bench=beta reason=runner-host") {
+		t.Fatalf("output does not refuse the runner host:\n%s", out)
+	}
+	if !strings.Contains(out, "FLEET alpha STANDARD OK") {
+		t.Fatalf("the bench beside it was not surveyed:\n%s", out)
+	}
+	for _, call := range runner.seen() {
+		if call.target == "fake-beta" {
+			t.Fatal("the survey opened an ssh to a CI-only runner host")
+		}
+	}
+}

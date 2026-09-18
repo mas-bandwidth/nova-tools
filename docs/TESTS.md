@@ -373,6 +373,30 @@ $ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
 DECIDE gate=go conf=0.94 floor=0.90 below=-
 ```
 
+### The ladder of minds
+
+`route`, `help` and `log` need no key and no network with `--no-jev`: the rules
+alone answer, the same way every time. These lines were produced by running the
+binary built on this branch.
+
+```
+$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+
+$ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
+ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.90 wait=- reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
+
+$ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.90 wait=awaiting_termination reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
+
+$ nova-decide help --hours 6 --asked-all-friends
+HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
+
+$ nova-decide log --log ./decide.jsonl --summary
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
+LOG OK rows=1 kinds=1 escalations=0
+```
+
 ## nova-pulse
 
 Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.

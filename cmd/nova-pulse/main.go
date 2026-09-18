@@ -24,19 +24,22 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
-nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]
+nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
+        [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
+        [--day-start <HH:MMZ>] [--gh-config <dir>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
 nova-pulse hygiene reap <slot> --home <dir>
@@ -44,11 +47,15 @@ nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot> --home <dir>
 nova-pulse hygiene drop-cache --home <dir>
 nova-pulse hygiene log [n] --home <dir>
-nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
-nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
-nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
-nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet survey --benches <file> [--machines <file>] [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   secrets --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   standard --benches <file> --bench <name> [--machines <file>] [--want <stamp>] [--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   mirror --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
@@ -138,6 +145,36 @@ status --html renders a bench that does not answer as DOWN and counts it on the
 STATUS HTML line. A row of zeros reads as a bench with nothing to do, which is how
 a fleet nobody could see looked healthy on 2026-09-17. The page also draws the
 metrics.tsv series it writes beside itself.
+
+status --html carries the whole page bin/status-page.sh carried, after an
+adoption attempt refused it over twelve gaps. Its rows: the branch tip and its CI
+run, the merge queue by state, the pending and ready cards, what the fill loop
+launched and what capacity refused, the hygiene actions of the last hour summed
+over the benches, one row per bench, and the time series.
+  --publish <host:dir>  ships index.html and metrics.tsv there over ssh, the same
+        door the benches are read through. A failed publish is loud and exits 3:
+        a page that quietly stopped shipping goes stale while everybody reads it.
+        Without it the verb writes locally and says published=-.
+  --self <name>         the host running the verb is a bench too, with its own
+        columns: CI runners, cores, load, free disk, orphans. The Studio drowned
+        at load 147 on 2026-09-17 and the page showed four Linux benches idling.
+  --loop <label>=<pat>  repeatable; counts long-running loops on the --self host
+        by the pattern YOU name. No loop name is baked into this tool: a verb
+        carrying harvest-loop.sh in its source would freeze the scripts it exists
+        to retire.
+  --branch <name>       whose merge queue and tip the page shows; dev by default.
+  --day-start <HH:MMZ>  when the merged counter resets; 02:00Z by default,
+        because INSTALL-fleet.md's rate_counter resets there and a page that
+        disagrees with every other instrument for two hours a day is not read.
+  --gh-config <dir>     GH_CONFIG_DIR for the gh children. gh answers as whoever
+        that says, so a page run from a service manager with a bare environment
+        must be given it here or in the environment it inherits; without the flag
+        the caller's own GH_CONFIG_DIR goes through untouched.
+  --timeout             takes a whole number of seconds or a duration (90s, 2m).
+A count nobody took is a DASH, never a zero: with no <queue>/REPO there is nobody
+to ask, so merged, opened and the merge queue read as a dash on the page, in the
+metrics row and on the STATUS HTML line. gh list calls ask for 500, because gh's own
+default is thirty and a capped count flatlines the series rather than failing.
 cut --kind is the typed cutter and the only numberer: the card number comes from
 the queue state file's next_card under the queue's lock, so two cutters never
 share one and there is no --number flag to pass. cut without --kind is unchanged.
@@ -526,15 +563,26 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	html := f.fs.String("html", "", "")
 	benches := f.fs.String("benches", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
-	timeout := f.fs.Int("timeout", 120, "")
+	publish := f.fs.String("publish", "", "")
+	ghConfig := f.fs.String("gh-config", "", "")
+	dayStart := f.fs.String("day-start", "", "")
+	branch := f.fs.String("branch", "", "")
+	self := f.fs.String("self", "", "")
+	var loops repeatable
+	f.fs.Var(&loops, "loop", "")
+	// --timeout takes a bare number of seconds or a duration. It was seconds only while the
+	// verb's own progress line printed a duration, so a reader who copied what the tool said
+	// got a flag parse error: a flag that will not accept what the tool prints is a trap.
+	timeoutRaw := f.fs.String("timeout", "120", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	expandingHours := f.fs.Int("expanding-hours", 2, "")
 
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	if *timeout < 1 {
-		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
+	timeout, terr := pulse.ParseTimeout(*timeoutRaw)
+	if terr != nil {
+		f.add(fmt.Sprintf("--timeout %s", terr))
 	}
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
@@ -551,15 +599,23 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		return pulse.StatusHTML(pulse.StatusHTMLInput{
-			HTML:    *html,
-			Benches: *benches,
-			Queue:   *queue,
-			SSH:     *ssh,
-			Timeout: time.Duration(*timeout) * time.Second,
-			Reader:  statusHTMLReader,
-			Now:     func() time.Time { return now },
-			Stdout:  stdout,
-			Stderr:  stderr,
+			HTML:     *html,
+			Benches:  *benches,
+			Queue:    *queue,
+			SSH:      *ssh,
+			Publish:  *publish,
+			GhConfig: *ghConfig,
+			DayStart: *dayStart,
+			Branch:   *branch,
+			Self:     *self,
+			Loops:    loops,
+			Timeout:  timeout,
+			Reader:   statusHTMLReader,
+			SelfRead: statusHTMLSelfReader,
+			Ship:     statusHTMLPublisher,
+			Now:      func() time.Time { return now },
+			Stdout:   stdout,
+			Stderr:   stderr,
 		})
 	}
 	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
@@ -576,7 +632,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Roots:          *roots,
 			Day:            *day,
 			Max:            *max,
-			Timeout:        time.Duration(*timeout) * time.Second,
+			Timeout:        timeout,
 			ExpandingHours: *expandingHours,
 			Stdout:         stdout,
 			Stderr:         stderr,
@@ -589,7 +645,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Batches:        *batches,
 		Day:            *day,
 		Max:            *max,
-		Timeout:        time.Duration(*timeout) * time.Second,
+		Timeout:        timeout,
 		ExpandingHours: *expandingHours,
 		Stdout:         stdout,
 		Stderr:         stderr,

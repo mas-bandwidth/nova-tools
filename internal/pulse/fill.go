@@ -10,12 +10,22 @@ package pulse
 // in order with a FILL HELD line and stays ready. A LANE the lanes file does not name is
 // refused with the remedy. A card with no LANE is launched exactly as before.
 //
+// WHERE a card may go is not the caller's opinion: --machines names the machines registry
+// (internal/fleet), and a bench whose roles lack `bench` is refused BY NAME before any ssh
+// is opened -- exit 2, nothing launched. That is Glenn's lock of 2026-09-18: runner hosts
+// are CI-only, and a card on a machine serving the merge group's shards makes the shard
+// slow, the gate red and the queue stop. The guard is in three places on purpose: the whole
+// bench list is checked before the first tick, and then EVERY capacity read and EVERY launch
+// goes through a wrapper that asks the registry again -- so a bench name that arrives by
+// some other road later still cannot reach a runner host.
+//
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
 // tick against a fake ready directory, a fake clock and a fake launcher. No test opens an
 // ssh connection or spawns a process.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -48,12 +59,57 @@ type Capacity interface {
 	Capacity(bench string) (int, error)
 }
 
+// refuseNonBenches holds every named bench against the registry BEFORE the first tick, so
+// a fill naming a runner host launches nothing at all rather than launching what it can and
+// refusing the rest. Every refused name gets its own line: a person who typed two wrong
+// names learns both at once.
+func refuseNonBenches(stderr io.Writer, reg *fleet.Registry, benches []string) int {
+	code := 0
+	for _, bench := range benches {
+		var r *fleet.Refusal
+		if err := reg.RequireBench(bench); errors.As(err, &r) {
+			fmt.Fprintln(stderr, r.Line("FILL"))
+			code = 2
+		}
+	}
+	return code
+}
+
+// guardedCapacity is the capacity seam with the registry in front of it: a capacity probe
+// is an ssh to the machine, which is load, which is exactly what a runner host may not take.
+type guardedCapacity struct {
+	reg  *fleet.Registry
+	next Capacity
+}
+
+func (g guardedCapacity) Capacity(bench string) (int, error) {
+	if err := g.reg.RequireBench(bench); err != nil {
+		return 0, err
+	}
+	return g.next.Capacity(bench)
+}
+
+// guardedLauncher is the launch seam with the registry in front of it: the last gate a card
+// passes before it lands on a machine.
+type guardedLauncher struct {
+	reg  *fleet.Registry
+	next CardLauncher
+}
+
+func (g guardedLauncher) Launch(bench, card string) error {
+	if err := g.reg.RequireBench(bench); err != nil {
+		return err
+	}
+	return g.next.Launch(bench, card)
+}
+
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
 // directories and stub seams.
 type FillInput struct {
 	Ready    string        // the queue/ready directory the card-*.md are popped from
 	Launched string        // the queue/launched directory they are moved into; its cards are live
 	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
+	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
 	Benches  []string      // the benches to fill, in order
 	Once     bool          // true runs exactly one tick and returns
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
@@ -98,6 +154,23 @@ func Fill(in FillInput) int {
 	if in.Capacity == nil {
 		return refusal(in.Stderr, "FILL", fmt.Errorf("missing a capacity reader; refusing to guess (inject a pulse.Capacity)"))
 	}
+	// The registry is not optional. Without it the verb cannot tell a bench from a CI
+	// runner host, and the one thing it must never do is guess that.
+	if strings.TrimSpace(in.Machines) == "" {
+		return refusal(in.Stderr, "FILL", fmt.Errorf(
+			"missing --machines; refusing to guess (the machines registry says which hosts are benches and which serve the merge group's shards: queue/control/machines.tsv)"))
+	}
+	reg, err := fleet.ReadRegistry(in.Machines)
+	if err != nil {
+		return refusal(in.Stderr, "FILL", err)
+	}
+	if code := refuseNonBenches(in.Stderr, reg, in.Benches); code != 0 {
+		return code
+	}
+	// Belt and braces: even a bench that passed the list check is asked again at the
+	// moment the card, or the capacity probe, would reach the machine.
+	in.Capacity = guardedCapacity{reg: reg, next: in.Capacity}
+	in.Launcher = guardedLauncher{reg: reg, next: in.Launcher}
 	for _, dir := range []string{in.Ready, in.Launched} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))

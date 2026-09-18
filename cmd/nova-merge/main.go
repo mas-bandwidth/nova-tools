@@ -62,8 +62,10 @@ usage:
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>]
+  nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
+  nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
   nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
 
 queue classify RECORDS a verdict somebody already reached, as one immutable record the
@@ -91,6 +93,23 @@ plain "go test ./..." and three CI legs then failed. The one thing not mirrored 
 fair share of the machine, which is the machine's own fact and not a number this tool may
 write down: pass --gomaxprocs <n> on a bench that is also running CI, and the gate takes
 that many cores instead of all of them.
+
+land IS THE ONE ENTRANCE TO THE MERGE QUEUE (Glenn, 2026-09-18: nothing reaches the dev
+merge queue but a batch). It reads the pull request back from the forge and enqueues it AT
+THE FRONT -- through the enqueuePullRequest mutation, never a pr merge call and never
+auto-merge -- after three refusals: a pull request that is not open, a pull request whose
+own checks are not green, and a head that is not a batch's. A head is a batch's when its
+branch is rowan/integration-*, the shape batch builds, or when --receipt carries that
+head's own BATCH OK line; --receipt-file reads it from a file, taking the LAST line, so a
+caller may hand it the gate's whole output. Everything else -- a card's branch, a green
+swarm result, a revert -- is a member of a batch somebody has yet to build, and this verb
+says so and stops.
+
+queue audit is the other half of that lock: it lists every open pull request carrying
+GitHub's auto-merge and TAKES IT OFF, because auto-merge is not an enqueue -- it is a
+standing instruction the forge executes later with nobody in the room. Twenty-seven of them
+were standing on 2026-09-18 and four had already landed themselves. --dry-run lists and
+writes nothing.
 
 simulate is the exception to the exit codes below: it exits 2 when it FINDS a poison
 entry -- the one that is green alone and red on top of the entries ahead of it -- and 1
@@ -201,6 +220,14 @@ type Deps struct {
 	// separate verb with a separate host interface, and the test that sweeps a fake
 	// queue must not have to stand up a lane's host to do it.
 	NewSweepHost func(repo, branch string, timeout time.Duration) merge.SweepHost
+	// NewEnqueueHost is THE ONE EDGE ONTO A MERGE QUEUE'S WRITE SIDE, and `land` is its
+	// one caller. It is a seam of its own rather than a method on the lane's host for the
+	// reason the lock exists at all: the smaller the surface that can enqueue, the fewer
+	// the ways something reaches the queue that nobody meant to put there.
+	NewEnqueueHost func(repo string, timeout time.Duration) merge.EnqueueHost
+	// NewAuditHost is `queue audit`'s edge: the open pull requests carrying an auto-merge,
+	// and the one call that takes it off.
+	NewAuditHost func(repo string, timeout time.Duration) merge.AuditHost
 	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
 	// field so the tests hand it a fake queue and reach no network.
 	NewQueue func(repo string, timeout time.Duration) QueueReader
@@ -228,6 +255,12 @@ func production() Deps {
 		},
 		NewSweepHost: func(repo, branch string, timeout time.Duration) merge.SweepHost {
 			return merge.NewGHSweep(repo, branch, timeout, nil)
+		},
+		NewEnqueueHost: func(repo string, timeout time.Duration) merge.EnqueueHost {
+			return merge.NewGHEnqueue(repo, timeout, nil)
+		},
+		NewAuditHost: func(repo string, timeout time.Duration) merge.AuditHost {
+			return merge.NewGHEnqueue(repo, timeout, nil)
 		},
 		NewQueue: func(repo string, timeout time.Duration) QueueReader {
 			return newGHQueue(repo, timeout, nil)
@@ -327,6 +360,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdReact(rest, stdout, stderr, deps)
 	case "batch":
 		return cmdBatch(rest, stdout, stderr, deps)
+	case "land":
+		return cmdLand(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -349,7 +384,7 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	// the open list from a repository and cuts cards into a directory -- so all five name
 	// the repository outright rather than reading it from the lane's state, like `init`
 	// does; every other verb reads the lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch"
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue

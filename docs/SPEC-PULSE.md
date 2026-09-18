@@ -303,6 +303,28 @@ is a tab-separated file, one bench per line: `name`, `ssh target`, `home`,
 `mac` (the wake address; `-` when the bench never sleeps). A missing
 `--benches` is `refusing to guess`, exit 2.
 
+**The machines registry.** `--machines <file>` is the second file, and it says
+what each machine IS: `name`, `ssh`, `os/arch`, `roles`, `seat`, `cores`,
+`notes`, tab separated, where `roles` is a set from `{bench, runner,
+coordination, services}`. THE LOCK (Glenn, 2026-09-18): **runner hosts are
+CI-only** — no card, no probe and no load may be placed on a machine that
+serves the merge group's shards. Every verb that puts work on a machine
+resolves its `--bench` through the registry and refuses a machine whose roles
+lack `bench`, by name and before any ssh:
+
+```
+FILL REFUSED bench=batman reason=runner-host remedy="..."
+```
+
+The reason is one of `runner-host`, `coordination-host`, `services-host`,
+`not-a-bench`, `unknown-machine`. `nova-pulse fill`, the path a CARD takes,
+**requires** `--machines`: without it the verb cannot tell a bench from a CI
+runner host, and that is the one thing it may not guess. The fleet admin verbs
+take it optionally and keep their older guard without it. A machine that is
+both `runner` and `bench` must carry a dated exception in its notes,
+`allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
+worker runs cards in containers. `nova-pulse fleet registry` lists the file.
+
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
 0/2/3 (0 ok, 2 drift-or-refused, 3 unreachable), takes ssh from `--ssh` so
@@ -410,6 +432,75 @@ seat the key names. It never prints a value. The benches run in parallel under
 `--timeout` (default 120); the verb exits 0 when every seat checked, 2 when any refused
 or found no seat, and 3 when any bench was unreachable. ssh comes from `--ssh` (default
 `ssh`), so a test fakes it and no test reaches a machine.
+
+### The four bench scripts, retired
+
+`fleet standard`, `fleet mirror`, `fleet join` and `fleet sleep` are the last
+four hand-run bench scripts as verbs (#1142, "everything sketched becomes a
+tool"). Each keeps the fleet rule: one bench per `--bench`, every path from a
+flag with no default, ssh from `--ssh`, `studio` and an unknown name refused by
+name before any ssh, exit 0/2/3, and one remedy line per refusal.
+
+`nova-pulse fleet standard --benches <file> --bench <name> [--want <stamp>]
+[--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>]
+[--timeout <s>] [--max <n>]` holds one bench against the provisioning standard.
+It prints one `STANDARD <bench> <check> OK got=<v>` or
+`STANDARD <bench> <check> DRIFT want=<match>:<want> got=<v>` line per check and
+then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
+`FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
+operating system, so the standard is read rather than traced through a shell
+script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+`sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
+opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
+the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
+the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
+`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+first — with the stamp, seat and space checks shared. `--os` names the list;
+left out, the bench is asked with `uname -s`. The remote side prints
+`CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This
+retires `bench-standard.sh`, which refused to run anywhere but ON a Linux bench
+and could say nothing at all about a Mac one.
+
+`nova-pulse fleet mirror --benches <file> --bench <name> --repo <url>
+--path <remote path> [--ssh <path>] [--timeout <s>]` creates the bare mirror a
+card clones from (`git clone --reference`) or fetches the one already there, and
+prints `FLEET <bench> MIRROR <path> created|refreshed head=<sha> size=<n>K`. It
+deletes nothing. `--repo` must be an https remote and `--path` an absolute clean
+path, both free of shell metacharacters, or the verb refuses before any ssh:
+both are pasted into a remote command line. This retires `bench-mirror.sh`,
+whose mirror root and repository list were hard-coded.
+
+`nova-pulse fleet join --benches <file> --bench <name> --tailscale <path>
+--authkey-env <NAME> [--ssh <path>] [--timeout <s>]` joins one bench to the
+tailnet and prints `FLEET <bench> JOINED ip=<addr>`. The auth key is never a
+flag value: it reaches the process ONLY through the environment variable
+`--authkey-env` names, which `nova-secrets exec` fills for the length of the
+call, and it reaches the bench on the remote shell's stdin, piped into
+`tailscale up --auth-key=file:/dev/stdin --hostname=<bench>`, so it is in no
+argv on either machine, and anything the bench says back is scrubbed of it
+before a line is printed. An empty variable, a `--tailscale` that is not
+absolute, and a bench the file does not carry are refusals before any ssh. This
+retires `ts-join-one.sh`.
+
+`nova-pulse fleet sleep --benches <file> --bench <name> [--ssh <path>]
+[--if-idle] [--force] [--timeout <s>] [--max <n>]` puts ONE bench to sleep. It
+is `fleet suspend` over one name, not a second implementation: one place decides
+busy, so a lease or a job directory with a live pid under either swarm root, or
+a `Runner.Worker`, is `FLEET <bench> BUSY <what>` and is never suspended. It
+retires the Linux half of `fleet-sleep.sh` (the Mac half — `pmset` idle sleep —
+is `nova-pulse sleep`, under "Mac bench power"): that script asked GitHub whether
+the bench's RUNNERS were busy and knew nothing about the cards in flight on it,
+so a bench working through nova-swarm looked idle and slept under its own work.
+
+Red tests, one per verb: `fleet-standard-lists-the-checks` (the two lists as
+data, and what both benches must carry in both); `fleet-standard-names-the-check-that-drifted`;
+`fleet-mirror-creates-then-refreshes` (clone once, fetch after);
+`fleet-join-keeps-the-auth-key-out-of-every-argv` (the key is on the remote
+stdin and in no argv log, on neither stream); `fleet-sleep-refuses-a-bench-with-a-live-job`
+(and the idle one is suspended through systemctl). Every one of them drives a
+fake ssh on the test's own PATH that runs the remote script through `bash -s`
+with fake sudo, git, tailscale and systemctl beside it, so no test reaches a
+machine or opens a socket.
 
 ## Mac bench power
 
@@ -723,27 +814,88 @@ coordinator must act on, like `PULSE UNDER-WIDTH`.
 
 ### The fleet page
 
-`nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]`
-is the fleet page as a verb (`bin/status-page.sh`). It reads every bench in `--benches` over
-`ssh <target> bash -s`, in parallel and bounded by `--timeout`, counting live cards from
-running card processes — a process whose command line names a job directory, or whose cwd is
-under the slot, the authoritative shape `bench-hygiene.sh`'s `live_slot` uses — and never from
-log age, which called a silently dead card alive and a long card dead. It writes the page to
-`--html`, appends one seven-column row to `metrics.tsv` beside it — `<RFC3339> live queue
-merged opened launched free-disk-per-bench` — and prints one line:
+`nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>]
+[--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
+[--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]` is the fleet page as a verb
+(`bin/status-page.sh`). It reads every bench in `--benches` over `ssh <target> bash -s`, in
+parallel and bounded by `--timeout`, counting live cards from running card processes — a
+process whose command line names a job directory, or whose cwd is under the slot, the
+authoritative shape `bench-hygiene.sh`'s `live_slot` uses — and never from log age, which
+called a silently dead card alive and a long card dead. It writes the page to `--html`,
+appends one seven-column row to `metrics.tsv` beside it — `<RFC3339> live queue merged
+opened launched free-disk-per-bench` — ships both where `--publish` says, and prints one
+line:
 
 ```
-STATUS HTML wrote=<path> live=<n> queue=<n> down=<n>
+STATUS HTML wrote=<path> live=<n> queue=<n> down=<n> merged=<n|-> published=<host:dir|->
 ```
 
-**A bench that does not answer says DOWN.** Its row is `DOWN (no answer over ssh)`, its disk
-is a dash in the metrics row, it adds nothing to `live`, and it is counted in `down=`. A row
-of zeros reads as a bench with nothing to do, which is how a fleet nobody could see looked
-healthy on 2026-09-17; an answer that cannot be parsed is no answer and says DOWN too. The
-page draws the `metrics.tsv` series it writes beside itself, so a reader sees the fleet
-widening or stalling rather than only this instant. **Counts only ever reach the page**: no
-card id, branch name or label, because the page is served to whoever can reach the host. The
-verb writes locally and ships nothing; the caller copies the file where it is served.
+**A count nobody took is a dash, never a zero.** This is the page's one rule and it has
+been learned twice. A bench that does not answer is `DOWN (no answer over ssh)`, its disk is
+a dash in the metrics row, it adds nothing to `live`, and it is counted in `down=`: a row of
+zeros reads as a bench with nothing to do, which is how a fleet nobody could see looked
+healthy on 2026-09-17. An answer that cannot be parsed is no answer and says DOWN too. With
+no `<queue>/REPO` there is nobody to ask the forge, so `merged`, `opened` and the merge
+queue read as a dash on the page, in the series and on the STATUS HTML line, and the chart
+plots a gap rather than a flat line at zero — a flat line is a claim.
+
+The rule was learned a third time by probing the real fleet: a `--benches` home that is not
+a directory on the bench — a typo, a user renamed, a machine reinstalled — let `df` answer
+nothing, and every row read `0 GB free, allowed 0` from benches that had answered perfectly.
+So the home is checked first, before any of the work it would make pointless, and the row
+says DOWN **with its reason** rather than a number. The reasons are prose and render as
+prose: a run verdict of `completed cancelled` printed once as `completed\x20cancelled`,
+because two words had gone through the one-token escaper.
+
+**The rows, all of them.** The page a fleet reads is the whole page or it is not adopted:
+an adoption attempt on 2026-09-17 matched four bench rows byte for byte and was still
+correctly refused over twelve gaps.
+
+- the branch tip and its CI run (`--branch`, `dev` by default) — a red tip is the one fact
+  that makes every other number beside the point;
+- the merge queue by state: running, waiting, unmergeable, from the forge's `mergeQueue`;
+- pending and ready cards, what the fill loop launched and what capacity refused;
+- hygiene actions in the last hour, summed over the benches from each `~/hygiene.log`,
+  counted in the SAME round trip as the liveness numbers — a second ssh per bench per
+  minute for one integer is the dumb waste the fleet audits for;
+- one row per bench, and one for `--self`: the host running the verb is a bench too, with
+  its own columns (CI runners, cores, load, free disk, orphans). The Studio drowned at load
+  147 on 2026-09-17 while the page showed four Linux benches idling;
+- the loops on the `--self` host, counted by the pattern the CALLER names. No loop name is
+  baked into this tool: a verb carrying `harvest-loop.sh` in its source would freeze the
+  scripts it exists to retire, and `--loop` without `--self` is refused because there is no
+  host to count them on;
+- the `metrics.tsv` time series it writes beside itself.
+
+**`--limit` is not optional on a gh list.** gh's own default is thirty, so a fleet that
+merges more than that reads as a fleet that merged thirty, every tick, for the rest of the
+day. The page said 30 where the script said 273. Every list call here asks for 500.
+
+**The day starts at 02:00Z** (`--day-start`), because `INSTALL-fleet.md`'s `rate_counter`
+resets there and the script counted from there; before the boundary the window is still
+yesterday's. A malformed boundary is refused rather than silently reset, and the page names
+the boundary it counted from.
+
+**`--publish <host:dir>`** ships `index.html` and `metrics.tsv` through the same ssh door
+the benches are read through, as one child writing both files. A failed publish is loud and
+exits 3: a page that quietly stopped shipping goes stale while everybody keeps reading it.
+The local page is written first, so a publish that fails never costs the file.
+
+**`--gh-config <dir>`** is `GH_CONFIG_DIR` for the gh children, and it overrides rather than
+invents: without it the caller's own environment goes through untouched. gh answers as
+whoever that directory says, so a page run from a service manager with a bare environment
+must be given it.
+
+**The verb is bounded and it is fast.** `--timeout` takes a whole number of seconds or a
+duration (`90s`, `2m`), because the verb's own progress line prints a duration and a flag
+that will not accept what the tool prints is a trap. The `/proc` walk happens once, before
+the slot loop, and is capped: reading every pid's cwd once per slot is forty slots times a
+few thousand processes, which is why a live bench read DOWN at `--timeout 10` and the page
+took 24.6 s against the script's 13.8. This path fetches pull requests only — the page
+shows no issue count, and the issue round trip was half its gh time.
+
+**Counts only ever reach the page**: no card id, branch name or label, because it is served
+to whoever can reach the host.
 
 ## Progress
 

@@ -71,6 +71,13 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if len(args) > 0 && args[0] == "classify" {
 		return cmdQueueClassify(args[1:], stdout, stderr, deps)
 	}
+	// `audit` is the second subverb with a flag set of its own (--repo, --dry-run,
+	// --timeout) and, unlike every other one, it is NOT A LANE VERB: a repository's
+	// standing auto-merges are a property of the forge, so it is taken off the line before
+	// the lane is opened.
+	if len(args) > 0 && args[0] == "audit" {
+		return cmdQueueAudit(auditArgsFor(args[1:]), stdout, stderr, deps)
+	}
 	known := map[string]bool{"lane": true, "timeout": true, "max": true, "who": true, "window": true}
 	opts, pos, err := scanQueueArgs(args, known)
 	if err != nil {
@@ -93,7 +100,7 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 		timeout = time.Duration(n) * time.Second
 	}
 	if len(pos) == 0 {
-		return queueRefuse(stderr, "queue wants one of hold, release, skip, unskip, front, sweep, classify: "+
+		return queueRefuse(stderr, "queue wants one of hold, release, skip, unskip, front, sweep, classify, audit: "+
 			`nova-merge queue --lane <dir> hold "<reason>" | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration> | classify --run <id> --verdict <verdict>`)
 	}
 	sub, rest := pos[0], pos[1:]
@@ -227,7 +234,7 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	case "sweep":
 		return cmdQueueSweep(lane, opts, st, timeout, stdout, stderr, deps)
 	}
-	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep, classify", sub))
+	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep, classify, audit", sub))
 }
 
 func parsePRs(args []string) ([]int, error) {

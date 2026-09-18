@@ -123,7 +123,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 
 // hasToken is the same whole-token match .github/scripts/assert-version-stamp.sh
 // makes, and for the same reason: v0.1 must not pass for v0.11, and `=` is a
-// separator because a tool printing `version=<tag>` is printing the tag.
+// separator so that no tag is matched out of the value half of a version line's
+// `key=value` extra -- the stamp is field two, alone, in every binary (#1297).
 func hasToken(line, version string) bool {
 	for _, f := range strings.Fields(strings.ReplaceAll(line, "=", " ")) {
 		if f == version {

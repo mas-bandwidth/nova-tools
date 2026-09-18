@@ -96,10 +96,12 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
    `--from` and `--to` are two such TSVs `diff` reads. A missing one is *refusing to
    guess*, exit 2, naming the flag and `run: nova-version help`.
 2. **`snapshot` reads each binary's own `version`, never the file's name.** It lists every
-   `nova-*` regular file in `--bin`, runs each one's `version`, and parses the four-token
-   Conventions line; `name` is the executable's name, and its `stamp`, `revision` and
-   `platform` are read off that line, so a renamed stub cannot forge a row and a non-`nova-`
-   file is never one.
+   `nova-*` regular file in `--bin`, runs each one's `version`, and parses the Conventions
+   line with `internal/buildinfo`'s `Parse` — the package that also WRITES that line — so
+   the four mandatory tokens are read and a tool's named `key=value` extras (`nova-merge`'s
+   `build=`, `nova-sandbox`'s `backend=`) are metadata rather than a broken binary (#1297);
+   `name` is the executable's name, and its `stamp`, `revision` and `platform` are read off
+   that line, so a renamed stub cannot forge a row and a non-`nova-` file is never one.
 3. **`snapshot` writes one row per binary and prints one line.** The `--out` file is the
    header `name<TAB>stamp<TAB>revision<TAB>platform` and then one row per binary, sorted by
    name; `stamp` is the build identity, `revision` the twelve-hex commit when the identity
