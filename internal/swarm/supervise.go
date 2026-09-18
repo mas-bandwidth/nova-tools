@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE SUPERVISOR: the child the runner forks, and the process that owns a job.
@@ -167,6 +169,18 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 	timer := time.NewTimer(deadline)
 	defer timer.Stop()
 
+	// THE STALL DETECTOR (issue #917). A harness that stops writing its log is over,
+	// whatever its process is doing: 60 cards froze mid-tool-call for 13 minutes with the
+	// log already silent and the pool still counted them running. The log's size is the
+	// observable -- not its mtime, which a filesystem rounds -- and when it has not grown
+	// for stall_after the supervisor ends the job's own group and records `end=stall`.
+	logPath := filepath.Join(jobDir, "harness.log")
+	stallAfter := in.Worker.StallAfterDuration()
+	stall := time.NewTicker(stallPoll(stallAfter))
+	defer stall.Stop()
+	lastSize := harnessLogSize(logPath)
+	lastChange := in.Now()
+
 	dataHome := in.Worker.DataHome(in.Slot, in.Task)
 	failures := 0
 	var seen ProviderUsage
@@ -231,6 +245,23 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			survived := Reap(jobPgid, jobStarted, TerminateGrace)
 			<-done
 			return ExitRecord{RC: -1, End: EndKilled, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial}
+		case <-stall.C:
+			size := harnessLogSize(logPath)
+			if size != lastSize {
+				lastSize = size
+				lastChange = in.Now()
+				continue
+			}
+			silent := in.Now().Sub(lastChange)
+			if silent < stallAfter {
+				continue
+			}
+			last := lastLogLine(logPath)
+			fmt.Fprintf(in.Stderr, "STALL task=%s silent=%s last=%s\n", in.Task, trimDuration(silent), last)
+			survived := Reap(jobPgid, jobStarted, TerminateGrace)
+			<-done
+			return ExitRecord{RC: -1, End: EndStall, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial,
+				Silent: trimDuration(silent), Last: last, Reason: "the harness log did not grow for " + trimDuration(stallAfter)}
 		case <-sample.C:
 			usage, err := ReadProviderUsage(in.Worker.Usage, dataHome)
 			if err != nil {
@@ -530,4 +561,40 @@ func boolCount(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// stallPoll is how often the stall detector looks at the log's size: often enough to end a
+// stalled job close to its bound, never a busy loop.
+func stallPoll(d time.Duration) time.Duration {
+	p := d / 4
+	if p < 20*time.Millisecond {
+		p = 20 * time.Millisecond
+	}
+	if p > 5*time.Second {
+		p = 5 * time.Second
+	}
+	return p
+}
+
+// logSize is the harness log's size in bytes, or -1 when it cannot be read. Size is the
+// observable: a file whose size has not changed has not been written to, whatever mtime
+// rounds to.
+func harnessLogSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return fi.Size()
+}
+
+// lastLogLine is the last non-empty line the harness wrote, capped for a report line.
+func lastLogLine(path string) string {
+	tail, _ := tailBytes(path, 8*1024)
+	lines := strings.Split(tail, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return oneline.Cap(line, 120)
+		}
+	}
+	return ""
 }

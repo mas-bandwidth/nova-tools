@@ -134,10 +134,12 @@ func TestPullWaitsForResult(t *testing.T) {
 		t.Fatalf("three files come back, one explicit scp each; scp saw %d:\n%v", len(copies), copies)
 	}
 	for _, l := range copies {
-		// The filter check reads ARGUMENTS, not substrings of the whole line: a copy
-		// command names paths, and a temp path can hold "-r" or a glob character, so a
-		// substring match on the line would refuse a copy of one file because of where
-		// the work directory happens to live.
+		// A FLAG IS A TOKEN, NOT A SUBSTRING: the filter check reads ARGUMENTS, not
+		// substrings of the whole line. A copy command names paths, and an absolute path
+		// may contain "-r" anywhere (a workspace under a directory named "swarm-root"
+		// does), so a substring search over the whole line refuses a copy of one file for
+		// the name of its directory. The guard is about an argument scp reads as a filter
+		// or a pattern.
 		for _, arg := range strings.Fields(l) {
 			// The argv of the copy is what names a filter or a pattern; a substring of the
 			// whole line is not, because "-r" is inside plenty of paths (a temp root under

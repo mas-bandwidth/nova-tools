@@ -114,7 +114,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    silent past its deadline is reaped and its job is re-queued once by default,
    with `requeued=1` in the new task's sidecar; `run --no-auto-retry` instead
    finalizes that attempt without an automatic descendant. A job reaped a second
-   time goes to `failed/` with `reaped=2` and is not re-queued again.
+    time goes to `failed/` with `reaped=2` and is not re-queued again.
+
+    **A per-route in-flight cap and a stall detector guard the provider (issue
+    #917).** A worker description may name a `route` (default
+    `provider/model`) and a `max_inflight` count, and a route at its cap starts
+    nothing. `run` counts the live tasks on a route across the pools it can see
+    — its own pool first, and, when a bench names `--slots-store`, the leases
+    under that store whose label carries the route — and never launches a task
+    while the count is at or above `max_inflight`; `status` prints one line per
+    route, `STATUS ROUTE <route> inflight=<n> cap=<c>`. And a harness that stops
+    writing its log is over, whatever its process is doing: when
+    `<job>/harness.log` has not grown for the description's `stall_after` (a
+    duration, default 4m) the supervisor reaps the job's group, records
+    `end=stall` with the silence and the last log line, and prints `STALL
+    task=<id> silent=<s> last=<line>`; a stalled task is re-queued once, exactly
+    as a reap is, and only when its route is below its cap. (2026-09-17: 60
+    cards froze mid-tool-call for 13 minutes while the pool still counted them
+    running, and one key queued forever above 30-40 concurrent requests.)
 8. **Results are counted per batch, on one line, and completion is evidence
    separate from the finding count.** `triage` classifies every report as
    `ok`, `clean`, `plan-only` or `no-result`, and prints one `TRIAGE BATCH`
@@ -172,7 +189,8 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `usd`. `attempt` is `1` for a fresh job and `2` for the one automatic
     re-queue (rule 7), `from` is the earlier job id or `-`, `started` and
     `ended` are UTC stamps the tool wrote, `end` is one of `done`, `killed`,
-    `budget`, `budget-unverifiable` (rule 13), `violation`, `failed`, `unknown`
+    `budget`, `budget-unverifiable` (rule 13), `stall` (the harness log stopped
+    growing, rule 7), `violation`, `failed`, `unknown`
     (no completion evidence, rule
     17), `launch-failed` (rule 18), and `rc` is the worker's exit code, `-`
     for `unknown` and `launch-failed`. A
@@ -1541,6 +1559,7 @@ BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
+RUN WAIT cap route=<p>/<m> key=<fp> inflight=<n> cap=<c>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
@@ -1560,12 +1579,13 @@ RUN NOTE <the one remedy line>
 RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
 SUPERVISE FAILED slot=<n> id=<id>: <reason>
 RUN REFUSED: <reason>
-RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
+RUN REFUSED reason=<sandbox_probe|no_sandbox|no_cap>: <reason> [route=<p>/<m>] [key=<fp>]
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [fence=rejected path=<p>] [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
+STATUS CAP route=<p>/<m> key=<fp> inflight=<n> cap=<c|->
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
 TRIAGE QUARANTINED id=<id> rev=<sha12> line=<n>: not folded; nova-swarm result --pool <dir> --id <id>
@@ -1719,6 +1739,61 @@ races**.
 **The refresh is one way, and it is a copy rather than a mount or a link.** A
 worker that could write back into the home copy could change the next worker's
 self, and the next worker would load it without anybody reading the change.
+
+## Caps
+
+(Issue #917.) A provider and a model have a ceiling on how many of a key's tasks may be
+in flight at once: above roughly thirty or forty concurrent requests a key queues forever,
+and the queue is invisible in the pool's own counts. The ceiling is **mechanical**: it is
+written down once in a registry a person keeps, `<root>/caps.tsv`, one row per line —
+
+```
+provider<TAB>model|*<TAB>max_inflight<TAB>key_fingerprint
+```
+
+— where a row naming the exact model overrides the provider's `*` row, and the
+`key_fingerprint` is the sha256 prefix (8 lowercase hex) of the key value the worker
+description's `secret` names. The registry is the **only** place a ceiling is written: a
+route with no row is refused by name, never given a number this tool invented. A
+description's `max_inflight` is the older shape and is ignored when a registry is named.
+The cap is measured before it is written — `bench size` (the width verb, `BENCH WIDTH`)
+measures a bench's width, and that measurement is what a row records.
+
+`run` and `native` read the registry once, before the first launch, and enforce it at the
+launch gate. Before a task is claimed the in-flight count for **(provider, model,
+fingerprint)** is taken: the running tasks in the pool, plus, when a bench names
+`--slots-store`, the leases under that store whose `route=` and `key=<fp>` fields match. A
+model row overrides the provider's `*` row; two fingerprints never share a cap. When the
+count is at or above the cap, `run` starts nothing and prints
+
+```
+RUN WAIT cap route=<provider>/<model> key=<fp> inflight=<n> cap=<c>
+```
+
+and waits for a running task to end. A route with no row is refused before any launch, by
+name:
+
+```
+RUN REFUSED reason=no_cap route=<provider>/<model>
+```
+
+`status` prints one line per (route, fingerprint) it sees, with the registry's cap or `-`
+when the route has no row:
+
+```
+STATUS CAP route=<provider>/<model> key=<fp> inflight=<n> cap=<c|->
+```
+
+**The key never reaches a file.** The fingerprint is computed from the key value at load;
+only its 8-hex prefix is written to a registry row or printed on a line, and the key value
+appears in no usage row, report, sidecar or log.
+
+**Red tests** (each seen red before it is trusted):
+
+- a model row overrides the provider's `*` row;
+- the count is per fingerprint — two workers with different fingerprints do not share a cap;
+- a route without a row is refused by name;
+- the fingerprint never appears in `usage.tsv`, a report or a log except as the 8-hex prefix.
 
 ## Bench slot leases
 

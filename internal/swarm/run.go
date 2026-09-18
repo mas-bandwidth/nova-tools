@@ -47,6 +47,15 @@ type RunInput struct {
 	// once per job. The two are exclusive and the verb refuses both at once.
 	Sandbox   string
 	NoSandbox bool
+	// SlotsStore is a bench's slot-store directory (issue #917). When it is named, the
+	// in-flight count for a route also counts the leases under it whose label carries the
+	// route, so two dispatchers on one bench share one ceiling. Empty means this pool alone.
+	SlotsStore string
+	// Caps is the caps registry (issue #917). When it is non-nil, a route with no row is
+	// refused by name before any launch, and a route at its cap waits rather than launching.
+	// A nil registry preserves the older worker-description ceiling, so a run that names no
+	// registry is unchanged.
+	Caps *Caps
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -204,8 +213,17 @@ func Run(in RunInput) int {
 			dest := destinationFor(end, fin.Class, rec.RC)
 			_ = p.WriteSidecar(Running, sc)
 			requeued := false
-			if end == EndKilled && !in.NoAutoRetry {
-				requeued = in.requeue(sc, now())
+			if !in.NoAutoRetry {
+				switch end {
+				case EndKilled:
+					requeued = in.requeue(sc, now())
+				case EndStall:
+					// A stalled job a dead dispatcher left behind gets the same one retry
+					// as the live path, and only when the route is below its cap (#917).
+					if in.routeBelowCap(sc) {
+						requeued = in.requeueStall(sc, now())
+					}
+				}
 			}
 			_ = p.Claim(sc.ID, Running, dest)
 			// A DATA HOME THAT MAY STILL HAVE A WRITER IN IT IS NOT FREE: rule 11's
@@ -334,12 +352,45 @@ func Run(in RunInput) int {
 		}
 	}
 
+	// THE CAPS REGISTRY IS MECHANICAL (#917): a route the registry has no row for is
+	// refused BY NAME before the first launch. A ceiling this tool invented would be a
+	// number nobody measured, and the registry is the only place a ceiling is written.
+	keyFP := ""
+	if in.Caps != nil {
+		if in.Key != "" {
+			keyFP = KeyFingerprint(in.Key)
+		}
+		if _, found := in.Caps.Lookup(in.Worker.Provider, in.Worker.Model, keyFP); !found {
+			fmt.Fprintf(errOut, "RUN REFUSED reason=%s route=%s/%s\n",
+				oneline.Field("no_cap"), oneline.Field(in.Worker.Provider), oneline.Field(in.Worker.Model))
+			return 2
+		}
+	}
+
 	deadline := now().Add(time.Duration(in.Hours * float64(time.Hour)))
 	tasks := bounded.Capped(out, in.Max, "RUN", "task", "nova-swarm status --pool "+p.Dir+" --max 0")
 
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
 		for !haltAdmissions && !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
+			// THE REGISTRY'S CEILING (#917), before a task is even claimed: when the
+			// in-flight count for this route and fingerprint is at the cap, the dispatcher
+			// says so and WAITS for a running task to end rather than launching another.
+			if in.Caps != nil {
+				inflight := CapsInflight(p, in.SlotsStore, in.Worker.Provider, in.Worker.Model, keyFP)
+				capN, _ := in.Caps.Lookup(in.Worker.Provider, in.Worker.Model, keyFP)
+				if inflight >= capN {
+					fmt.Fprintf(out, "RUN WAIT cap route=%s/%s key=%s inflight=%d cap=%d\n",
+						oneline.Field(in.Worker.Provider), oneline.Field(in.Worker.Model), oneline.Field(keyFP), inflight, capN)
+					break
+				}
+			}
+			// THE PER-ROUTE CEILING (#917), before a task is even claimed: a route at its
+			// cap starts nothing, so its live tasks stay under the number the provider can
+			// answer.
+			if !in.routeBelowCap(Sidecar{}) {
+				break
+			}
 			slot, ok := freeSlot(p, in.Workers, quarantined, retired, watching)
 			if !ok {
 				break
@@ -576,6 +627,18 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 			oneline.Escape(oneline.Cap(reason, oneline.TailBytes))), launchRefused
 	}
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
+	// THE ROUTE AND ITS CAP RIDE THE SIDECAR (issue #917): `status` counts live tasks per
+	// route from what the pool already holds, without a worker description it was not given.
+	sc.Route, sc.MaxInflight = in.Worker.RouteName(), in.Worker.MaxInflight
+	// THE REGISTRY'S IDENTITY IS (provider, model, fingerprint) and rides the sidecar too,
+	// so the next count is per fingerprint and two keys never share a cap. The fingerprint
+	// is the key's sha256 prefix, never the key.
+	if in.Caps != nil {
+		sc.Provider, sc.Model = in.Worker.Provider, in.Worker.Model
+		if in.Key != "" {
+			sc.KeyFP = KeyFingerprint(in.Key)
+		}
+	}
 	_ = p.WriteSidecar(Running, sc)
 
 	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:

@@ -44,6 +44,9 @@ const (
 	// EndWall is a job the harness's own fence stopped at a path outside it, with no
 	// RESULT.md: the death names the path and the commits ./repo kept (issue #918).
 	EndWall = "wall"
+	// EndStall is issue #917's: the supervisor ended a job whose harness log stopped
+	// growing. It is a reap, like the deadline and the budget, and not a rule-11 violation.
+	EndStall = "stall"
 )
 
 // Dash is the absence this file writes, and never a zero.

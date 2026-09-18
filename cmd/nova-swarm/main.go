@@ -43,9 +43,9 @@ usage:
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox] [--slots-store <dir>] [--caps <file>]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
-  nova-swarm status    --pool <dir> [--max <n>]
+  nova-swarm status    --pool <dir> [--max <n>] [--caps <file>] [--slots-store <dir>]
   nova-swarm stop      --pool <dir>
   nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
@@ -60,7 +60,7 @@ usage:
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>] [--caps <file>] [--slots-store <dir>]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
@@ -579,6 +579,14 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// ONE loud workaround, which a person types and no environment variable can produce.
 	sandboxPath := f.fs.String("sandbox", "", "")
 	noSandbox := f.fs.Bool("no-sandbox", false, "")
+	// THE BENCH SLOT STORE (issue #917): when several dispatchers share one bench, each
+	// names the store whose leases carry a route, so the per-route ceiling is counted across
+	// them and not once per pool.
+	slotsStore := f.fs.String("slots-store", "", "")
+	// THE CAPS REGISTRY (#917): --caps names a caps.tsv whose rows carry the per-provider
+	// and per-model ceiling and the key fingerprint. Without it, a run keeps the older
+	// worker-description ceiling and refuses no route.
+	capsPath := f.fs.String("caps", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -628,6 +636,16 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm run: %s\n", oneline.Err(err))
 		return 2
+	}
+	// THE REGISTRY IS READ ONCE, BEFORE THE LOCK AND THE FIRST WORKER. A caps.tsv that
+	// cannot be read or parsed is a refusal, never a run with no ceiling.
+	var caps *swarm.Caps
+	if *capsPath != "" {
+		caps, err = swarm.LoadCaps(*capsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm run: %s\n", oneline.Err(err))
+			return 2
+		}
 	}
 	if w.KeyFile != "" {
 		if mode, loose := swarm.KeyFileMode(w.KeyFile); loose {
@@ -688,6 +706,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
+		SlotsStore: *slotsStore, Caps: caps,
 	})
 }
 
@@ -763,6 +782,8 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("status")
 	pool := f.fs.String("pool", "", "")
+	capsPath := f.fs.String("caps", "", "")
+	slotsStore := f.fs.String("slots-store", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -771,6 +792,15 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	if f.refused(stderr) {
 		return 2
+	}
+	var caps *swarm.Caps
+	if *capsPath != "" {
+		loaded, err := swarm.LoadCaps(*capsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm status: %s\n", oneline.Err(err))
+			return 2
+		}
+		caps = loaded
 	}
 	p, ok := openPool("status", *pool, stderr)
 	if !ok {
@@ -792,6 +822,23 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	list.More()
+	// THE ROUTE'S OWN LINE (issue #917): STATUS ROUTE <route> inflight=<n> cap=<c>.
+	for _, r := range swarm.RouteStatus(p) {
+		fmt.Fprintf(stdout, "STATUS ROUTE %s inflight=%d cap=%d\n", oneline.Field(r.Route), r.Inflight, r.Cap)
+	}
+	// THE REGISTRY'S LINE (#917), per route and fingerprint seen, when a registry was
+	// named: STATUS CAP route=<p>/<m> key=<fp> inflight=<n> cap=<c>.
+	if caps != nil {
+		for _, cs := range swarm.CapStatus(p, caps, *slotsStore) {
+			if cs.Found {
+				fmt.Fprintf(stdout, "STATUS CAP route=%s key=%s inflight=%d cap=%d\n",
+					oneline.Field(cs.Route), oneline.Field(cs.KeyFP), cs.Inflight, cs.Cap)
+			} else {
+				fmt.Fprintf(stdout, "STATUS CAP route=%s key=%s inflight=%d cap=%s\n",
+					oneline.Field(cs.Route), oneline.Field(cs.KeyFP), cs.Inflight, "-")
+			}
+		}
+	}
 	numbers, bad, _ := p.SlotNumbers()
 	quarantined := 0
 	for _, n := range numbers {
@@ -1371,6 +1418,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
+	capsPath := f.fs.String("caps", "", "")
+	slotsStore := f.fs.String("slots-store", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1451,6 +1500,24 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			effectiveModel = w.Provider + "/" + w.Model
 		}
 	}
+	// THE CAPS REGISTRY (#917): --caps names the registry, and the fingerprint is computed
+	// from the key value the description's secret delivered -- never from a file, never
+	// printed, and only its 8-hex prefix is kept.
+	var caps *swarm.Caps
+	if *capsPath != "" {
+		loaded, err := swarm.LoadCaps(*capsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.Err(err))
+			return 2
+		}
+		caps = loaded
+	}
+	keyFP := ""
+	if workerGiven && w.Secret != "" {
+		if v, err := swarm.SecretFromEnv(w.Secret); err == nil {
+			keyFP = swarm.KeyFingerprint(v)
+		}
+	}
 	cfg := nativeRunConfig{
 		binary:         *harness,
 		model:          effectiveModel,
@@ -1466,6 +1533,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		sandbox:        *sandbox,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
+		caps:           caps,
+		keyFP:          keyFP,
+		slotsStore:     *slotsStore,
 	}
 	if workerGiven {
 		cfg.worker = &w

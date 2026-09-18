@@ -90,6 +90,11 @@ type ExitRecord struct {
 	Observed  bool   `json:"observed,omitempty"`
 	Partial   bool   `json:"partial,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+	// THE STALL RECORD (issue #917): how long the harness log had been silent, and the last
+	// line it carried. Both reach the report line, so a person reads WHY the job ended
+	// without opening a log the next `reclaim` deletes.
+	Silent string `json:"silent,omitempty"`
+	Last   string `json:"last,omitempty"`
 }
 
 // AbortedRecord is <job>/aborted.json: the durable acknowledgement a supervisor that lost
