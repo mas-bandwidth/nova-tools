@@ -480,23 +480,25 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b.extraEnv = nil
 
 		// THE FIRST RUN RETURNING IS NOT THE BOUNDARY, and assuming it was is what made this
-		// subtest flaky under load (it failed once on space with the package's parallel
-		// tests squeezed onto one core, and passed alone every time). This kill point kills
-		// its PARENT -- the dispatcher b.run() is waiting on -- and only then itself
-		// (killpoint_unix.go), so b.run() can return while the supervisor is still runnable
-		// and while the job's process group is still draining. The group's own drain lives
-		// in endWith, which this kill point exists to prevent from ever running, so nothing
-		// in the product drains it here: on an idle box wall time did, and on a squeezed one
-		// it did not.
+		// subtest flaky under load: it failed once on space with the package's parallel tests
+		// squeezed onto one core, and passed alone every time. This kill point kills its
+		// PARENT first -- the dispatcher that b.run() is waiting on -- and only then itself
+		// (killpoint_unix.go), so b.run() returns while the supervisor is still runnable and
+		// nothing but the scheduler decides when it dies. Measured on hulk with the package
+		// squeezed onto one core: in 9 runs of 12 the supervisor was STILL ALIVE at the
+		// moment the first run returned. On an idle box it died during the second
+		// dispatcher's own start-up, which is the only reason this ever passed.
 		//
-		// Both of those are states Pool.Decide answers DIFFERENTLY: a live supervisor pid is
-		// an adopt, and a live member of the job's group is a quarantine. Either way there is
-		// no `RUN RECLAIM ... end=unknown` line, which is exactly the red that was seen.
+		// A supervisor that outlives that moment is a DIFFERENT answer from Pool.Decide: a
+		// live pid with a matching start stamp is an adopt, and a live member of the job's
+		// group is a quarantine. Neither prints `RUN RECLAIM ... end=unknown`, which is
+		// exactly the red that was seen.
 		//
-		// So the second dispatcher runs on OBSERVABLES, not on hope: the supervisor pid is
-		// gone, and the group it led is gone. That is the whole transaction boundary this
-		// subtest is about -- the supervisor died between the harness's exit and the rename
-		// that would have published exit.json -- and it is established, not waited out.
+		// So the second dispatcher runs on OBSERVABLES: the supervisor pid is gone, the group
+		// it led is gone, and exit.json was never published. Those three ARE the transaction
+		// boundary this subtest is about -- the supervisor died between the harness's exit and
+		// the rename that would have published its evidence -- so the state is established
+		// rather than waited out, and the assertion below is on the decision, not the clock.
 		supPID := readSupervisorPID(t, jobDir)
 		noteSupervisor(t, supPID)
 		sf, err := mustOpenPool(t, b.pool).ReadSlot(1)
