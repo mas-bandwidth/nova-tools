@@ -1302,6 +1302,55 @@ Each verb narrates on stderr while it waits on a machine (`STANDARD WALK bench=�
 `STANDARD DONE … elapsed=…`), so a step over a tenth of a second says what it is doing; the
 bench lines themselves stay on stdout.
 
+### hygiene
+
+```
+nova-pulse hygiene run                      --home <dir> [--dry-run] [--hostname <name>]
+                                            [--diag-days <n>] [--diag-max-bytes <n>]
+nova-pulse hygiene reap <slot>              --home <dir>
+nova-pulse hygiene delete-job <slot> <job>  --home <dir>
+nova-pulse hygiene delete-slot <slot>       --home <dir>
+nova-pulse hygiene drop-cache               --home <dir>
+nova-pulse hygiene log [n]                  --home <dir>
+```
+
+`run` is the timer's verb — the ten-minute `nova-hygiene.timer` on every bench — and prints
+one line, every field named:
+
+```
+HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> diag-deleted=<n> diag-freed=<bytes> cache=<kept|dropped>(<n>G) free <a> -> <b>
+```
+
+Every deletion, whatever the verb, is one line in `<home>/hygiene.log`
+(`<utc> <verb> <path>`) and goes through `internal/safepath`: the path is the join of a
+literal root and a name matching `[A-Za-z0-9._-]+`, resolved, refused if it is a symlink, and
+refused unless it sits strictly below its root. `--dry-run` prints one `WOULD <verb> <path>`
+per deletion it would make, deletes nothing and writes no log line.
+
+**The runner `_diag` prune** (`diag-deleted`, `diag-freed`) bounds each
+`<home>/runner-*/_diag` by **two** rules, because one is not enough:
+
+| flag | default | what it does |
+| --- | --- | --- |
+| `--diag-days <n>` | `2` | delete the files whose mtime is older than `n` days |
+| `--diag-max-bytes <n>` | `2147483648` (2 GiB) | then, while the directory is over `n` bytes, delete the oldest file |
+
+The cap is **per runner directory**, not per bench, because a runner is what writes into its
+own `_diag`. The **newest file of a runner is never deleted** by either rule: the runner
+process holds it open. Only regular files directly inside `_diag` are considered — a symlink
+is skipped by the `Lstat`, never followed, never counted and never removed — and each deletion
+is `delete-diag <path>` in the action log.
+
+The mistake it removes, measured on hulk on 2026-09-18: 24 runner directories held **3.5 GB**
+of `_diag` between them, 18,296 files, and the **oldest file on the whole bench was two days
+old**. A runner rolls its own diagnostics, so an age window alone can never bound the
+directory: the seven-day window the bench ran with bounded nothing at all, and neither would
+three. The cap is the rule that holds; the window is what keeps a quiet bench tidy. 2 GiB over
+hulk's 24 runners is a 48 GiB ceiling against the unbounded ~1.8 GB a day it writes.
+
+Both flags refuse a value that is not a whole number of at least 1 — exit 2, naming the flag.
+A prune never runs on a guess.
+
 ### status
 
 ```

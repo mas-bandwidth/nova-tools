@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,10 @@ type HygieneInput struct {
 	CachePath string   // default <home>/.cache/go-build
 	Hostname  string   // default the short local host name
 
+	// The runner `_diag` prune's two rules. Zero means the default.
+	DiagDays     int   // age window in days, default HygieneDiagDaysDefault
+	DiagMaxBytes int64 // per-runner-directory cap, default HygieneDiagMaxBytesDefault
+
 	Now    func() time.Time
 	Procs  HygieneProcs
 	Disk   HygieneDisk
@@ -67,14 +72,31 @@ type HygieneInput struct {
 	Stderr io.Writer
 }
 
+// The runner `_diag` prune's defaults.
+//
+// Measured on hulk, 2026-09-18: 24 runner directories, 3.5 GB of `_diag`,
+// 18,296 files, and the OLDEST file on the bench two days old. A runner rolls
+// its own diagnostics, so an age window alone can never bound the directory —
+// seven days bounded nothing at all, and neither would three. The cap is the
+// rule that holds; the window is what keeps a quiet bench tidy.
+//
+// 2 GiB per runner over hulk's 24 runners is a 48 GiB ceiling on a 1.8 TB disk,
+// against the unbounded ~1.8 GB a day it writes today.
+const (
+	HygieneDiagDaysDefault     = 2
+	HygieneDiagMaxBytesDefault = int64(2 * 1024 * 1024 * 1024)
+)
+
 type hygiene struct {
-	in    HygieneInput
-	now   time.Time
-	roots []string
-	log   string
-	cache string
-	host  string
-	disk  HygieneDisk
+	in       HygieneInput
+	now      time.Time
+	roots    []string
+	log      string
+	cache    string
+	host     string
+	disk     HygieneDisk
+	diagDays int
+	diagMax  int64
 }
 
 // Hygiene runs one hygiene subcommand and returns its exit code: 0 when it ran,
@@ -137,7 +159,15 @@ func newHygiene(in HygieneInput) (*hygiene, int) {
 	if disk == nil {
 		disk = OSDisk{Home: in.Home}
 	}
-	return &hygiene{in: in, now: now().UTC(), roots: roots, log: logPath, cache: cache, host: host, disk: disk}, 0
+	diagDays := in.DiagDays
+	if diagDays <= 0 {
+		diagDays = HygieneDiagDaysDefault
+	}
+	diagMax := in.DiagMaxBytes
+	if diagMax <= 0 {
+		diagMax = HygieneDiagMaxBytesDefault
+	}
+	return &hygiene{in: in, now: now().UTC(), roots: roots, log: logPath, cache: cache, host: host, disk: disk, diagDays: diagDays, diagMax: diagMax}, 0
 }
 
 func shortHost() string {
@@ -332,6 +362,7 @@ func (h *hygiene) run() int {
 			}
 		}
 	}
+	diagN, diagBytes := h.pruneDiag()
 	size := h.disk.SizeGB(h.cache)
 	cache := "kept"
 	if h.disk.FreeGB() < 25 || size > 20 {
@@ -339,13 +370,120 @@ func (h *hygiene) run() int {
 			cache = "dropped"
 		}
 	}
-	line := fmt.Sprintf("HYGIENE %s slots=%d reaped=%d jobs-deleted=%d slots-deleted=%d cache=%s(%dG) free %s -> %s",
-		h.host, slots, reaped, jobs, dropped, cache, size, before, h.disk.Free())
+	line := fmt.Sprintf("HYGIENE %s slots=%d reaped=%d jobs-deleted=%d slots-deleted=%d diag-deleted=%d diag-freed=%d cache=%s(%dG) free %s -> %s",
+		h.host, slots, reaped, jobs, dropped, diagN, diagBytes, cache, size, before, h.disk.Free())
 	if !h.in.DryRun {
 		h.appendLog(line)
 	}
 	fmt.Fprintln(h.in.Stdout, line)
 	return 0
+}
+
+// diagEntry is one regular file directly inside a runner's `_diag`.
+type diagEntry struct {
+	path  string
+	size  int64
+	mtime int64
+}
+
+// pruneDiag bounds every GitHub Actions runner's `_diag` directory under
+// <home>/runner-*/ and answers how many files it took and how many bytes it
+// freed.
+//
+// Two rules, because one is not enough. A runner rolls its own diagnostics, so
+// on a busy bench nothing in `_diag` is ever old: hulk on 2026-09-18 held 3.5 GB
+// across 24 runners with the OLDEST file two days old, which no age window can
+// bound. So the window (--diag-days, two by default) takes what a quiet bench
+// leaves behind, and the cap (--diag-max-bytes, 2 GiB per runner directory by
+// default) takes the oldest files until the directory is at or below it. The cap
+// is per runner directory and not per bench, because a runner is what writes
+// into its own `_diag`.
+//
+// The newest file of a runner is never taken, by either rule: the runner process
+// holds it open, and a directory the prune emptied would be a directory the
+// runner cannot write.
+//
+// Only regular files directly inside `_diag` are considered: a symlink is
+// skipped by the Lstat, never followed, never counted and never removed, and
+// every deletion goes through safepath below that runner's own `_diag`.
+func (h *hygiene) pruneDiag() (int, int64) {
+	dirs, err := filepath.Glob(filepath.Join(h.in.Home, "runner-*", "_diag"))
+	if err != nil {
+		return 0, 0
+	}
+	sort.Strings(dirs)
+	n, freed := 0, int64(0)
+	for _, dir := range dirs {
+		dn, df := h.pruneDiagDir(dir)
+		n += dn
+		freed += df
+	}
+	return n, freed
+}
+
+func (h *hygiene) pruneDiagDir(dir string) (int, int64) {
+	runner := filepath.Base(filepath.Dir(dir))
+	if !safepath.NameOK(runner) {
+		return 0, 0
+	}
+	if _, err := safepath.ResolvedUnder(dir, h.in.Home); err != nil {
+		return 0, 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, 0
+	}
+	var files []diagEntry
+	var total int64
+	for _, e := range entries {
+		if !safepath.NameOK(e.Name()) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		info, err := os.Lstat(p)
+		if err != nil || !info.Mode().IsRegular() {
+			continue // a directory, a symlink, a socket: never this prune's business
+		}
+		files = append(files, diagEntry{path: p, size: info.Size(), mtime: info.ModTime().Unix()})
+		total += info.Size()
+	}
+	// Oldest first, and the name breaks a tie so two files written in the same
+	// second are taken in one order and not another run's.
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].mtime != files[j].mtime {
+			return files[i].mtime < files[j].mtime
+		}
+		return files[i].path < files[j].path
+	})
+
+	n, freed := 0, int64(0)
+	left := len(files)
+	deadline := h.now.Add(-time.Duration(h.diagDays) * 24 * time.Hour).Unix()
+	take := func(f diagEntry) {
+		if !h.removeUnder("delete-diag", f.path, dir) {
+			return
+		}
+		n++
+		freed += f.size
+		total -= f.size
+		left--
+	}
+	for _, f := range files {
+		if left <= 1 || f.mtime >= deadline {
+			continue
+		}
+		take(f)
+	}
+	for _, f := range files {
+		if left <= 1 || total <= h.diagMax {
+			break
+		}
+		if f.mtime < deadline {
+			continue // already taken by the window
+		}
+		take(f)
+	}
+	return n, freed
 }
 
 // reapSlot is the reap verb's body: <slot>/data, <slot>/tmp and each job's

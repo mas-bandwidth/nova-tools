@@ -580,12 +580,13 @@ both idempotent: a second `--install` rewrites nothing that already matches.
 One line per run, every field named:
 
 ```
-HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> cache=<kept|dropped>(<size>G) free <a> -> <b>
+HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> diag-deleted=<n> diag-freed=<bytes> cache=<kept|dropped>(<size>G) free <a> -> <b>
 ```
 
 `host` is `hostname -s`; `slots` the slot directories the run saw; `reaped` the slot `data`
 homes, `tmp` dirs and scratch it deleted; `jobs-deleted` the jobs it deleted whole;
-`slots-deleted` the empty slots it removed; `cache` is `kept` or `dropped` with the build
+`slots-deleted` the empty slots it removed; `diag-deleted` and `diag-freed` the runner `_diag`
+files it took and the bytes they held; `cache` is `kept` or `dropped` with the build
 cache's size in GB; `free <a> -> <b>` is disk free space before and after. `--dry-run` walks
 the same trees and prints one `WOULD rm -rf <path>` line per deletion it would make, deleting
 nothing, so a bench's first run is read before it is felt.
@@ -597,6 +598,23 @@ harvested job (a `.harvested` marker) is deleted whole; a finished job nobody re
 six hours; an empty slot goes; runner `_work/_temp` entries older than a day go; and the Go
 build cache is dropped when disk free is below 25 GB or the cache itself is above 20 GB. A
 live job is never reaped, however old its neighbours are.
+
+**The runner `_diag` prune is two rules, and one of them is a size cap.** Each
+`$HOME/runner-*/_diag` is bounded by an age window, `--diag-days` (**two** days by default),
+and then by a per-runner-directory cap, `--diag-max-bytes` (**2 GiB** by default), which
+deletes the oldest file until the directory is at or below it. Only regular files directly
+inside `_diag` count: a symlink is skipped by the `Lstat`, never followed, never counted and
+never removed, and the newest file of a runner is never deleted by either rule, because the
+runner process holds it open. Each deletion is `delete-diag <path>` in the action log and goes
+through `internal/safepath` below that runner's own `_diag`.
+
+The mistake that rule removes, measured on hulk on 2026-09-18: **24 runner directories held
+3.5 GB of `_diag`, 18,296 files, and the oldest file on the whole bench was two days old.** A
+runner rolls its own diagnostics, so an **age window alone can never bound the directory** —
+the seven-day window the bench ran with bounded nothing at all, and neither would three. The
+cap is the rule that holds; the window is what keeps a quiet bench tidy. The general lesson,
+and the one to carry to the next cleaner written: *a window over a tree that rotates itself is
+not a bound. Bound the size, and let the window take the leftovers.*
 
 Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
 (run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
@@ -628,6 +646,13 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 10. `hygiene-status-prints-the-last-line-and-free-space-per-bench`: a fake `ssh` answering a stored `HYGIENE` line and a `df` output yields one `FLEET <name>` line per bench with the last counts and free space now.
 11. `hygiene-refuses-studio`: any hygiene act with `studio` in `--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fake ssh log is empty.
 12. `hygiene-status-without-benches-refuses`: `--status` with no `--benches` is `refusing to guess`, exit 2, and no bench is contacted.
+13. `hygiene-prunes-diag-older-than-two-days`: with a fake clock, a `_diag` log three days old goes, one a day old stays, and a runner whose whole directory is stale still keeps its newest file. The counts land in `diag-deleted` and `diag-freed`.
+14. `hygiene-diag-size-cap-deletes-oldest-first`: four logs written today, every one inside the window, against `--diag-max-bytes 250`: the two oldest go, the run stops at or below the cap, and it takes no more than it has to.
+15. `hygiene-diag-cap-is-per-runner-directory`: two runner directories each under the cap and together over it lose nothing, because the cap bounds a runner and not a bench.
+16. `hygiene-diag-dry-run-prints-would-and-deletes-nothing`: `--dry-run` names the file it would take as `WOULD delete-diag <path>`, every byte survives and no action log is written.
+17. `hygiene-diag-never-follows-a-symlink-out`: a symlink inside `_diag` pointing at a file outside the runner directory survives with its target, while a cap of one byte proves the prune did delete something.
+18. `hygiene-diag-flags-refuse-nonsense`: `--diag-days` and `--diag-max-bytes` each refuse a non-number and a negative, exit 2, naming the flag; a prune never runs on a guess.
+19. `hygiene-diag-default-cap-is-two-gibibytes`: the shipped defaults are pinned at two days and 2 GiB, so a change to either is a change to this test.
 
 `fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
 2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
