@@ -555,7 +555,11 @@ func Batch(in BatchInput) int {
 	fmt.Fprintln(in.Stdout)
 	for _, r := range rows {
 		if r.state == "done" {
-			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+			if r.tail != "" {
+				line += " " + r.tail
+			}
+			fmt.Fprintln(in.Stdout, line)
 			continue
 		}
 		line := fmt.Sprintf("%s slot=%d: ABSTAIN reason=%s log=%d", oneline.Field(r.label), r.slot, r.reason, r.logLines)
@@ -782,7 +786,14 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	if strings.HasPrefix(one, "ABSTAIN") {
 		return "abstain", "card-abstain", "", ""
 	}
-	if !strings.EqualFold(one, strings.TrimSpace(c.contract)) {
+	// A card whose line 1 is a prefix of the RESULT line 1 is still this card: the card
+	// generator truncates the issue title, so the worker's fuller first line begins with the
+	// card's own contract line. That is done, with the extra chars named as tail=<n> on the
+	// card line so a coordinator reads how much longer the worker's line ran. A first line
+	// that differs before the end of the contract line is a different card and stays
+	// line1-mismatch.
+	cardLine := strings.TrimSpace(c.contract)
+	if len(one) < len(cardLine) || !strings.EqualFold(one[:len(cardLine)], cardLine) {
 		return "abstain", "line1-mismatch", "", ""
 	}
 	if strings.HasPrefix(strings.TrimSpace(two), "ABSTAIN") {
@@ -794,6 +805,9 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	// the coordinator reads the token rather than opening the RESULT to learn it was late.
 	if deadKilled {
 		return "abstain", "result-after-deadline", "", ""
+	}
+	if extra := len(one) - len(cardLine); extra > 0 {
+		return "done", "", "tail=" + strconv.Itoa(extra), two
 	}
 	return "done", "", "", two
 }

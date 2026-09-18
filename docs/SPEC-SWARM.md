@@ -1108,15 +1108,21 @@ rules below still decide. The fold itself is:
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
-that differs is a different card, and folding it would fold a stranger's
-words into the batch. The refusal names the card and its line, and the card
-is `refused` on the packet, not folded — rule 15's quarantine, applied to
-the batch.
+that differs before the end of that line is a different card, and folding it
+would fold a stranger's words into the batch. The refusal names the card and
+its line, and the card is `refused` on the packet, not folded — rule 15's
+quarantine, applied to the batch.
 
 **A `RESULT.md` carrying its contract line is `done` whatever the harness exit
 code was**, unless the card abstained in its own words — a line 1 or a line 2
 beginning `ABSTAIN`. The contract decides, never the child's rc and never its
-timing.
+timing. The card generator can truncate the issue title, so the card's
+contract line may be a **prefix** of the `RESULT.md` line 1 rather than the
+whole of it: a line 1 that **begins with** the contract line — after trailing
+spaces are trimmed — is still this card and is `done`, and its longer tail is
+named on the card line as `tail=<n>` (the number of chars past the contract
+line). A line 1 that differs before the end of the contract line is a
+different card and stays `line1-mismatch`.
 
 **Every abstain names ONE reason token**, so the packet is the whole read and a
 coordinator never opens a `RESULT.md` to learn why (issue #461):
@@ -1167,9 +1173,12 @@ The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
 field after it where the remedy needs a path: `watched=<path>`, the log the
 idle monitor watched, or `job=<dir>`, the job directory that holds no result.
-**A stall is `log=0`**: a card that ended with no output after the wall opened
-is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
-its line.
+A `done` card whose line 1 ran longer than its contract line carries one more
+bounded field, `tail=<n>` — the number of chars past the contract line — so a
+coordinator reads how the worker's title extended the generator's truncation;
+an identical line prints no `tail` field. **A stall is `log=0`**: a card that
+ended with no output after the wall opened is counted on the `BATCH` line's
+`stalled=<n>` and reads its own emptiness on its line.
 
 The copied-up result above is the same rule the bench pull holds under
 **Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
@@ -1197,7 +1206,7 @@ are the thing the packet replaced.
 ```
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
@@ -1521,7 +1530,7 @@ BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
