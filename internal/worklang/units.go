@@ -1,15 +1,29 @@
 package worklang
 
-// The work-set form and the amendment's keys (docs/SPEC-WORKLANG.md,
-// "Amendment 1 (2026-09-18)"). A coordinator writes a set as
+// Amendment 1's keys (docs/SPEC-WORKLANG.md, "Amendment 1 (2026-09-18)"):
+// :resources, :writes, :tools, :collects, :warm, :attempts, :state, :was and the
+// typed spelling of :acceptance. A coordinator writes a set as
 //
 //	(work-set "<id>" :title "..." :under (:open-root) :units ((unit "<id>" ...) ...))
 //
-// and this file is the reader for it. It is PARSE ONLY: every key below is read
-// and its shape checked, and nothing here admits, orders, serialises or leases.
-// Scheduling semantics -- one unit per lane, writes that intersect serialising,
-// a resource vector admitted atomically, an uncertain unit keeping its
-// reservation -- belong to the kernel and are not implemented here.
+// THERE IS ONE READER OF THAT FORM, and it is workset.go's ParseWorkSet. This
+// file is the amendment's half of it and owns no type and no entry point: the
+// shape checks below are called by readUnit as it walks a unit's keys, and the
+// accessors below read the Fields map that same walk fills. Two readers of one
+// form was the defect this file was landed with -- a second Unit and a second
+// ParseWorkSet, each with its own idea of what a unit is -- and the fix was to
+// keep the reader the tree already had and fold these keys into it.
+//
+// It is PARSE ONLY: every key below is read and its shape checked, and nothing
+// here admits, orders, serialises or leases. Scheduling semantics -- one unit per
+// lane, writes that intersect serialising, a resource vector admitted atomically,
+// an uncertain unit keeping its reservation -- belong to the kernel.
+//
+// Which side of workset.go's split a key falls on: an UNREADABLE value is a
+// refusal (a :resources that is not a vector, an attempt outcome with no
+// termination proof, a :state outside the closed set -- text this reader cannot
+// turn into the thing the key names), and wrong CONTENT is a Check finding (a
+// duplicate id, an absent need, an owner no registry knows).
 
 import (
 	"fmt"
@@ -63,27 +77,6 @@ var numericResources = map[string]bool{
 	"cpu": true, "memory-gb": true, "disk-gb": true, "network": true, "gpu": true,
 }
 
-// WorkSet is the reader's view of one (work-set ...) file.
-type WorkSet struct {
-	File    string
-	ID      string
-	Fields  map[string]Form
-	Unknown map[string]Form
-	Units   []Unit
-
-	index map[string]int
-}
-
-// Unit is one (unit "<id>" ...) form: its stable id, its known Fields and the
-// unknown keys beside them, preserved so a later slice reads what this one
-// ignores.
-type Unit struct {
-	ID      string
-	Offset  int
-	Fields  map[string]Form
-	Unknown map[string]Form
-}
-
 // Attempt is one record of one try at a unit: which rung ran it, who owned it,
 // when it started, how it ended, and whether it proved termination.
 type Attempt struct {
@@ -128,125 +121,6 @@ type Criterion struct {
 	Kind      string
 	Subject   string
 	Predicate string
-}
-
-// ParseWorkSet reads a work set and validates the shapes this reader owns: the
-// top form, every unit's id, and the shape of each amendment key. A refused set
-// is refused whole at exit 2, never half-read.
-func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
-	root, err := Read(file, data, limits)
-	if err != nil {
-		return nil, err
-	}
-	if root.Kind != List || len(root.List) == 0 ||
-		!(root.List[0].Kind == Symbol && root.List[0].Value == "work-set") {
-		return nil, refuse(file, `not a work set: the top form must be (work-set "<id>" ...)`)
-	}
-	if len(root.List) < 2 || root.List[1].Kind != String || root.List[1].Value == "" {
-		return nil, refuse(file, "a work set needs a non-empty id as its first element; refusing to guess")
-	}
-	ws := &WorkSet{
-		File:    file,
-		ID:      root.List[1].Value,
-		Fields:  map[string]Form{},
-		Unknown: map[string]Form{},
-		index:   map[string]int{},
-	}
-	body := root.List[2:]
-	for i := 0; i < len(body); i += 2 {
-		key := body[i]
-		if key.Kind != Keyword {
-			return nil, refuse(file, fmt.Sprintf(
-				"expected a keyword at byte=%d in a work set", key.Offset))
-		}
-		if i+1 >= len(body) {
-			return nil, refuse(file, fmt.Sprintf(":%s has no value; refusing to guess", key.Value))
-		}
-		val := body[i+1]
-		if key.Value == "units" {
-			if val.Kind != List {
-				return nil, refuse(file, ":units must be a list of (unit \"<id>\" ...) forms")
-			}
-			for _, form := range val.List {
-				u, err := parseUnit(file, form)
-				if err != nil {
-					return nil, err
-				}
-				if _, dup := ws.index[u.ID]; dup {
-					return nil, refuse(file, fmt.Sprintf(
-						"duplicate unit id %q at byte=%d; an id is minted once and never reused",
-						u.ID, u.Offset))
-				}
-				ws.index[u.ID] = len(ws.Units)
-				ws.Units = append(ws.Units, u)
-			}
-		}
-		if unitKeys[key.Value] {
-			ws.Fields[key.Value] = val
-		} else {
-			ws.Unknown[key.Value] = val
-		}
-	}
-	return ws, nil
-}
-
-// Unit returns the unit with this id.
-func (w *WorkSet) Unit(id string) (Unit, bool) {
-	i, ok := w.index[id]
-	if !ok {
-		return Unit{}, false
-	}
-	return w.Units[i], true
-}
-
-// WithoutAcceptance returns the ids of the units that name no evidence. It is
-// the report rule A14 owes: a unit with no acceptance names no finish line, and
-// the real set of 2026-09-17 has not one.
-func (w *WorkSet) WithoutAcceptance() []string {
-	var out []string
-	for _, u := range w.Units {
-		if len(u.Acceptance()) == 0 {
-			out = append(out, u.ID)
-		}
-	}
-	return out
-}
-
-func parseUnit(file string, form Form) (Unit, error) {
-	u := Unit{Offset: form.Offset, Fields: map[string]Form{}, Unknown: map[string]Form{}}
-	if form.Kind != List || len(form.List) == 0 ||
-		!(form.List[0].Kind == Symbol && form.List[0].Value == "unit") {
-		return u, refuse(file, fmt.Sprintf(
-			`expected a (unit "<id>" ...) form at byte=%d`, form.Offset))
-	}
-	if len(form.List) < 2 || form.List[1].Kind != String || form.List[1].Value == "" {
-		return u, refuse(file, fmt.Sprintf(
-			"a unit needs a non-empty id as its first element, at byte=%d; an id is stable and never display text",
-			form.Offset))
-	}
-	u.ID = form.List[1].Value
-	body := form.List[2:]
-	for i := 0; i < len(body); i += 2 {
-		key := body[i]
-		if key.Kind != Keyword {
-			return u, refuse(file, fmt.Sprintf(
-				"expected a keyword at byte=%d in unit %q", key.Offset, u.ID))
-		}
-		if i+1 >= len(body) {
-			return u, refuse(file, fmt.Sprintf(
-				":%s has no value in unit %q; refusing to guess", key.Value, u.ID))
-		}
-		val := body[i+1]
-		if err := checkUnitField(file, u.ID, key, val); err != nil {
-			return u, err
-		}
-		if unitKeys[key.Value] {
-			u.Fields[key.Value] = val
-		} else {
-			u.Unknown[key.Value] = val
-		}
-	}
-	return u, checkLaneAgrees(file, u)
 }
 
 // checkUnitField validates the shape of one key. Only the keys this reader owns
@@ -462,9 +336,20 @@ func checkAcceptance(file, id string, val Form) error {
 			id))
 	}
 	for _, entry := range val.List {
+		// TWO spellings, ONE key, one reader. A coordinator writes acceptance either
+		// as prose lines -- `:acceptance ("a line in notes.md" "a test")`, which the
+		// ask side has always read into Unit.Acceptance -- or as the amendment's
+		// typed criteria, which Criteria() reads from this same value. A string
+		// member is the first spelling and owes this checker nothing. A LIST member
+		// claims to be a criterion, and a criterion missing :id, :subject, :kind or
+		// :predicate is not one.
+		if entry.Kind == String {
+			continue
+		}
 		if entry.Kind != List {
 			return refuse(file, fmt.Sprintf(
-				":acceptance in unit %q holds a non-list criterion at byte=%d", id, entry.Offset))
+				":acceptance in unit %q holds a criterion at byte=%d that is neither a line of prose nor a (:id ... :kind ... :subject ... :predicate ...) form",
+				id, entry.Offset))
 		}
 		if _, ok := plistString(entry.List, "id"); !ok {
 			return refuse(file, fmt.Sprintf("a criterion of unit %q carries no :id", id))
@@ -505,19 +390,6 @@ func checkLaneAgrees(file string, u Unit) error {
 	return nil
 }
 
-// Lane returns the unit's lane -- the resource of capacity 1 over the area of
-// the tree queue/control/lanes.tsv names -- from :resources first and the plain
-// :lane key second, so the set as written today keeps working.
-func (u Unit) Lane() string {
-	if lane, ok := laneOfResources(u); ok {
-		return lane
-	}
-	if f, ok := u.Fields["lane"]; ok && f.Kind == String {
-		return f.Value
-	}
-	return ""
-}
-
 func laneOfResources(u Unit) (string, bool) {
 	res, ok := u.Fields["resources"]
 	if !ok || res.Kind != List {
@@ -540,7 +412,7 @@ func (u Unit) Resources() map[string]int64 {
 	out := map[string]int64{}
 	res, ok := u.Fields["resources"]
 	if !ok || res.Kind != List {
-		if u.Lane() != "" {
+		if u.Lane != "" {
 			out["lane"] = 1
 		}
 		return out
@@ -567,19 +439,6 @@ func (u Unit) Resources() map[string]int64 {
 
 // Writes returns the repo-relative paths the unit edits, in source order.
 func (u Unit) Writes() []string { return u.strings("writes") }
-
-// Needs returns the ids this unit waits on, in source order.
-func (u Unit) Needs() []string { return u.strings("needs") }
-
-// Owner returns the mind that owns the unit: a friend, a child rung, a swarm,
-// or "all". One spelling, so `nova-work ask` and the pull worker read the same
-// form.
-func (u Unit) Owner() string {
-	if f, ok := u.Fields["owner"]; ok && f.Kind == String {
-		return f.Value
-	}
-	return ""
-}
 
 // State returns the unit's state, "open" when it carries none. `uncertain` is a
 // state of its own.
@@ -673,9 +532,9 @@ func (u Unit) Warm() WarmState {
 	return w
 }
 
-// Acceptance returns the unit's acceptance criteria: the evidence that closes
+// Criteria returns the unit's acceptance CRITERIA: the typed evidence that closes
 // it. A unit with none names no finish line.
-func (u Unit) Acceptance() []Criterion {
+func (u Unit) Criteria() []Criterion {
 	f, ok := u.Fields["acceptance"]
 	if !ok || f.Kind != List {
 		return nil

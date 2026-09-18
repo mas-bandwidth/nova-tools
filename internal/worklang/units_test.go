@@ -56,9 +56,17 @@ func TestWorklangWorkSet(t *testing.T) {
 		if got := ws.Units[0].ID; got != "verb:hygiene" {
 			t.Errorf("first unit id = %q, want verb:hygiene", got)
 		}
-		refusesWith(t, `(work-set "w" :units ((unit :needs ())))`, "id")
-		refusesWith(t, `(work-set "w" :units ((unit "" :needs ())))`, "id")
-		refusesWith(t, `(work-set "w" :units ((unit "a") (unit "a")))`, "a")
+		// A unit with no id, an empty id, or an id another unit already carries is
+		// a FINDING, not a refusal. This file's split (workset.go's header) puts a
+		// file the reader could not READ on the refusal side and a file it read
+		// whose CONTENT is wrong on the finding side, and a set with two "dup"
+		// units is a set that was read: `set check` prints every such defect in one
+		// pass rather than stopping at the first, which is the whole reason Check
+		// collects. The rule is unchanged -- an id is minted once and never reused
+		// -- and it is reported for every offender rather than for the first.
+		findsRule(t, `(work-set "w" :units ((unit :needs ())))`, "NO-ID", "")
+		findsRule(t, `(work-set "w" :units ((unit "" :needs ())))`, "NO-ID", "")
+		findsRule(t, `(work-set "w" :units ((unit "a") (unit "a")))`, "DUPLICATE", "a")
 	})
 
 	// A3 worklang-attempt-without-a-termination-proof-is-uncertain: an attempt
@@ -142,7 +150,7 @@ func TestWorklangWorkSet(t *testing.T) {
 	t.Run("worklang-lane-is-a-resource-of-capacity-one", func(t *testing.T) {
 		ws := mustReadWorkSet(t, "testdata/pitstop-amended.lisp")
 		u := mustUnit(t, ws, "verb:hygiene")
-		if got := u.Lane(); got != "pulse" {
+		if got := u.Lane; got != "pulse" {
 			t.Errorf("lane = %q, want pulse", got)
 		}
 		if got := u.Resources()["lane"]; got != 1 {
@@ -151,7 +159,7 @@ func TestWorklangWorkSet(t *testing.T) {
 		// The set as written today carries the plain :lane key, and it must keep
 		// meaning the same resource.
 		before := mustReadWorkSet(t, "testdata/pitstop-shape.lisp")
-		if got := mustUnit(t, before, "lanes:spec").Lane(); got != "docs" {
+		if got := mustUnit(t, before, "lanes:spec").Lane; got != "docs" {
 			t.Errorf("the plain :lane key stopped naming the lane: %q", got)
 		}
 		// Two lanes in one vector is a refusal: a unit sits in exactly one area
@@ -232,7 +240,7 @@ func TestWorklangWorkSet(t *testing.T) {
 			"lanes:spec":    "child:opus",
 			"read:worklang": "all",
 		} {
-			if got := mustUnit(t, ws, id).Owner(); got != want {
+			if got := mustUnit(t, ws, id).Owner; got != want {
 				t.Errorf("%s owner = %q, want %q", id, got, want)
 			}
 		}
@@ -246,7 +254,7 @@ func TestWorklangWorkSet(t *testing.T) {
 	t.Run("worklang-acceptance-is-read-and-the-real-set-has-none", func(t *testing.T) {
 		before := mustReadWorkSet(t, "testdata/pitstop-shape.lisp")
 		for _, u := range before.Units {
-			if len(u.Acceptance()) != 0 {
+			if len(u.Acceptance) != 0 || len(u.Criteria()) != 0 {
 				t.Errorf("%s: the pre-amendment set is not supposed to name acceptance", u.ID)
 			}
 		}
@@ -255,7 +263,7 @@ func TestWorklangWorkSet(t *testing.T) {
 		}
 
 		after := mustReadWorkSet(t, "testdata/pitstop-amended.lisp")
-		acc := mustUnit(t, after, "verb:hygiene").Acceptance()
+		acc := mustUnit(t, after, "verb:hygiene").Criteria()
 		if len(acc) != 1 || acc[0].ID != "a1" || acc[0].Kind != "test" || acc[0].Predicate != "passes" {
 			t.Fatalf("acceptance = %+v, want one (:id a1 :kind test :predicate passes)", acc)
 		}
@@ -349,4 +357,22 @@ func refusesWith(t *testing.T, src, want string) {
 	if !strings.Contains(ref.Error(), want) {
 		t.Errorf("refusal does not name %q: %s", want, ref.Error())
 	}
+}
+
+// findsRule reads src -- which this reader CAN read -- and checks that Check
+// reports the rule, naming the unit when one is named. It is the finding half of
+// the split refusesWith holds the other end of.
+func findsRule(t *testing.T, src, rule, unit string) {
+	t.Helper()
+	ws, err := worklang.ParseWorkSet("w.work", []byte(src), worklang.DefaultLimits())
+	if err != nil {
+		t.Fatalf("refused instead of read: %s: %v", src, err)
+	}
+	findings, _ := ws.Check(worklang.Options{})
+	for _, f := range findings {
+		if f.Rule == rule && (unit == "" || f.Unit == unit) {
+			return
+		}
+	}
+	t.Errorf("no %s finding for %s: %+v", rule, src, findings)
 }

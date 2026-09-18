@@ -59,11 +59,22 @@ type Unit struct {
 	// Done is the :done key, read as true when it is written true, t, yes or a
 	// non-empty string that folds to one of those.
 	Done bool
+	// Was is the :was key: the id this unit carried before it was renamed, so a
+	// reference written against the old id can still be resolved.
+	Was string
 	// Offset is the unit form's first byte, so a finding can name where it lives.
 	Offset int
 	// Keys is every key the form carried, known or not, in the order written. It is
 	// what lets a later slice read what this one ignores without a second reader.
 	Keys []string
+	// Fields and Unknown are every key's value form, split by whether this reader
+	// knows the key. They are what the amendment's accessors read -- Writes,
+	// Resources, Tools, Attempts, Collections, Warm, Criteria (units.go) -- so the
+	// typed fields above and the amendment's keys come out of ONE pass over the
+	// form, and a key nobody has taught this reader yet is carried rather than
+	// dropped.
+	Fields  map[string]Form
+	Unknown map[string]Form
 }
 
 // WorkSet is one work-set form: its id, its title, and its units in written order.
@@ -72,6 +83,40 @@ type WorkSet struct {
 	ID    string
 	Title string
 	Units []Unit
+	// Fields and Unknown are the work-set form's OWN keys, the same split the units
+	// carry: :inputs and :done-when belong to the set, not to a unit, and dropping
+	// them would be the reader deciding what a person's document may say.
+	Fields  map[string]Form
+	Unknown map[string]Form
+
+	// index is id -> position in Units. The FIRST unit written wins a duplicated
+	// id; the duplicate is a Check finding (DUPLICATE), never a refusal, because a
+	// set with two "dup" units is a set this reader could read.
+	index map[string]int
+}
+
+// Unit returns the unit carrying this id, and whether the set has one.
+func (w *WorkSet) Unit(id string) (Unit, bool) {
+	i, ok := w.index[id]
+	if !ok {
+		return Unit{}, false
+	}
+	return w.Units[i], true
+}
+
+// WithoutAcceptance returns the ids of the units that name no evidence, in written
+// order. It is the report Amendment 1's rule A14 owes: a unit with no acceptance
+// names no finish line, and the real set of 2026-09-17 has not one. EITHER spelling
+// counts -- the prose lines of `:acceptance ("a line in notes.md" ...)` and the
+// criteria forms the amendment writes -- because both say what closes the unit.
+func (w *WorkSet) WithoutAcceptance() []string {
+	var out []string
+	for _, u := range w.Units {
+		if len(u.Acceptance) == 0 && len(u.Criteria()) == 0 {
+			out = append(out, u.ID)
+		}
+	}
+	return out
 }
 
 // ParseWorkSet reads one `(work-set ...)` form under the reader's three bounds.
@@ -86,7 +131,12 @@ func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
 	if root.Kind != List || len(root.List) == 0 || !isSymbolNamed(root.List[0], "work-set") {
 		return nil, refuse(file, `not a work set: the top form must be (work-set "id" ... :units (...))`)
 	}
-	ws := &WorkSet{File: file}
+	ws := &WorkSet{
+		File:    file,
+		Fields:  map[string]Form{},
+		Unknown: map[string]Form{},
+		index:   map[string]int{},
+	}
 	body := root.List[1:]
 	if len(body) > 0 && body[0].Kind == String {
 		ws.ID = body[0].Value
@@ -96,6 +146,13 @@ func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
 	for i := 0; i < len(body); i++ {
 		if body[i].Kind != Keyword {
 			continue
+		}
+		if i+1 < len(body) {
+			if unitKeys[body[i].Value] {
+				ws.Fields[body[i].Value] = body[i+1]
+			} else {
+				ws.Unknown[body[i].Value] = body[i+1]
+			}
 		}
 		switch body[i].Value {
 		case "units":
@@ -114,7 +171,17 @@ func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
 		return nil, refuse(file, "the work set carries no :units; refusing to guess which forms are its units")
 	}
 	for _, form := range units.List {
-		ws.Units = append(ws.Units, readUnit(form))
+		u, err := readUnit(file, form)
+		if err != nil {
+			return nil, err
+		}
+		// The FIRST unit written wins its id. A second unit spelling the same id is
+		// kept in Units and reported by Check as DUPLICATE: the set was READ, and
+		// which half of the split this belongs on is the whole design of this file.
+		if _, dup := ws.index[u.ID]; !dup {
+			ws.index[u.ID] = len(ws.Units)
+		}
+		ws.Units = append(ws.Units, u)
 	}
 	return ws, nil
 }
@@ -122,10 +189,18 @@ func ParseWorkSet(file string, data []byte, limits Limits) (*WorkSet, error) {
 // readUnit reads one member of `:units`. A member that is not a `(unit "id" ...)`
 // form yields a unit with an empty id at that member's byte, which Check reports as
 // a finding: the member is IN the set and saying nothing about it would hide it.
-func readUnit(form Form) Unit {
-	u := Unit{Offset: form.Offset}
+// The same is true of a unit with no id at all -- the file was READ.
+//
+// What it DOES refuse (exit 2, through checkUnitField) is a value of an Amendment 1
+// key whose shape this reader cannot represent at all: a `:resources` that is not a
+// vector, an `:attempts` record with an outcome and no termination proof, a `:state`
+// outside the closed set. Those are not content that is wrong, they are text this
+// reader could not turn into the thing the key names -- the other half of the split
+// this file's header describes.
+func readUnit(file string, form Form) (Unit, error) {
+	u := Unit{Offset: form.Offset, Fields: map[string]Form{}, Unknown: map[string]Form{}}
 	if form.Kind != List || len(form.List) == 0 || !isSymbolNamed(form.List[0], "unit") {
-		return u
+		return u, nil
 	}
 	if len(form.List) > 1 && form.List[1].Kind == String {
 		u.ID = form.List[1].Value
@@ -142,6 +217,14 @@ func readUnit(form Form) Unit {
 		}
 		val := rest[i+1]
 		i++
+		if err := checkUnitField(file, u.ID, key, val); err != nil {
+			return u, err
+		}
+		if unitKeys[key.Value] {
+			u.Fields[key.Value] = val
+		} else {
+			u.Unknown[key.Value] = val
+		}
 		switch key.Value {
 		case "title":
 			u.Title = val.Text()
@@ -151,11 +234,15 @@ func readUnit(form Form) Unit {
 			u.Lane = atomText(val)
 		case "status":
 			u.Status = atomText(val)
+		case "was":
+			u.Was = atomText(val)
 		case "needs":
 			u.Needs = idList(val)
 		case "branch":
 			u.Branch = atomText(val)
 		case "acceptance":
+			// The prose spelling only. A criteria form contributes no prose line
+			// and is read, typed, by Criteria() from the same Fields entry.
 			u.Acceptance = textList(val)
 		case "deadline":
 			u.Deadline = val.Text()
@@ -163,7 +250,19 @@ func readUnit(form Form) Unit {
 			u.Done = truthy(val)
 		}
 	}
-	return u
+	// A lane is a resource of capacity 1 (Amendment 1, rule A6), so a unit may name
+	// it either as the plain :lane key the set uses today or as an entry of the
+	// vector. One area of the tree, named once: the two must agree, and when only
+	// the vector names it the field carries it all the same.
+	if err := checkLaneAgrees(file, u); err != nil {
+		return u, err
+	}
+	if u.Lane == "" {
+		if lane, ok := laneOfResources(u); ok {
+			u.Lane = lane
+		}
+	}
+	return u, nil
 }
 
 // isSymbolNamed reports whether f is the bare symbol (or keyword) named name. A
