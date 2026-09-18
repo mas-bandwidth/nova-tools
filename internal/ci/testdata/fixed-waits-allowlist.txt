@@ -31,15 +31,6 @@ cmd/nova-swarm/native_test.go:862 bound 2026-09-17 a short bound used with a fak
 cmd/nova-swarm/native_test.go:886 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-tokens/slow_test.go:38 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-wake/laneread_test.go:74 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/lock_collision_test.go:41 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/lock_collision_test.go:75 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/lock_collision_test.go:119 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/lock_collision_test.go:154 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/lock_test.go:45 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/lock_test.go:157 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/bus/prepared_test.go:602 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
-internal/bus/prepared_test.go:651 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
-internal/bus/timeout_test.go:51 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/pulse/status_index_test.go:357 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/pulse/status_index_test.go:372 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/launch_bound_test.go:43 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker

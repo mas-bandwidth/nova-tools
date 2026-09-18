@@ -52,16 +52,21 @@ usage:
   nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
   nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
   nova-merge dry-run    --lane <dir> [--max <n>]
-  nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
+  nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>] [--decide [--floor <0-1>] [--card <file>] [--key-env <var>] [--base-url <url>]]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
   nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
+  nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
+
+simulate is the exception to the exit codes below: it exits 2 when it FINDS a poison
+entry -- the one that is green alone and red on top of the entries ahead of it -- and 1
+when it could not run at all, because a tool that could not run is not a red queue.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a merge that
 could not be landed, a merge that RACED, a publication the remote refused, an entry
@@ -168,6 +173,9 @@ type Deps struct {
 	// separate verb with a separate host interface, and the test that sweeps a fake
 	// queue must not have to stand up a lane's host to do it.
 	NewSweepHost func(repo, branch string, timeout time.Duration) merge.SweepHost
+	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
+	// field so the tests hand it a fake queue and reach no network.
+	NewQueue func(repo string, timeout time.Duration) QueueReader
 	// NewRebaseList is the gh seam the rebase verb reads the open list through; the
 	// production one is the same GH the merge pass uses, which implements both edges.
 	NewRebaseList func(repo string, timeout time.Duration) merge.RebaseList
@@ -192,6 +200,9 @@ func production() Deps {
 		},
 		NewSweepHost: func(repo, branch string, timeout time.Duration) merge.SweepHost {
 			return merge.NewGHSweep(repo, branch, timeout, nil)
+		},
+		NewQueue: func(repo string, timeout time.Duration) QueueReader {
+			return newGHQueue(repo, timeout, nil)
 		},
 		NewRebaseList: func(repo string, timeout time.Duration) merge.RebaseList {
 			return merge.NewGH(repo, timeout, nil)
@@ -278,6 +289,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdWait(rest, stdout, stderr, deps)
 	case "sweep":
 		return cmdSweep(rest, stdout, stderr, deps)
+	case "simulate":
+		return cmdSimulate(rest, stdout, stderr, deps)
 	case "rebase":
 		return cmdRebase(rest, stdout, stderr, deps)
 	case "react":
@@ -298,26 +311,33 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		return false
 	}
 	creation := verb == "init" || verb == "quickstart"
-	// `wait` watches one pull request by polling the host, and `sweep` reads a
-	// repository's merge queue, so both name the repository outright like `init`
-	// does; every other verb reads the lane's.
-	watch := verb == "wait" || verb == "sweep"
-	// `rebase` is not a lane verb at all: it reads the open list from a repository and
-	// cuts cards into a directory, so it names its own --repo and its own --base.
-	rebase := verb == "rebase"
+	// `wait` watches one pull request by polling the host, `sweep` reads a repository's
+	// merge queue, `simulate` names the repository it makes a scratch worktree from, and
+	// `rebase` is not a lane verb at all -- it reads the open list from a repository and
+	// cuts cards into a directory -- so all four name the repository outright rather than
+	// reading it from the lane's state, like `init` does; every other verb reads the
+	// lane's.
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
-		if name == "repo" && (watch || rebase) {
+		if name == "repo" && namesRepo {
 			continue
 		}
 		if !creation && has(name) {
 			return refuse(stderr, " "+verb, fmt.Sprintf("--%s belongs to `init`, which writes it into the lane once; every other verb reads it from the lane's state", name)), true
 		}
 	}
-	if !creation && has("base") && !rebase {
-		if verb == "gate" {
+	if !creation && has("base") {
+		switch verb {
+		case "gate":
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
+		case "simulate":
+			// simulate predicts a queue onto a base branch; it does not own a lane's.
+		case "rebase":
+			// rebase cuts a card per open pull request against a base branch it names
+			// outright; it is not a lane verb, so it does not own a lane's --base either.
+		default:
+			return refuse(stderr, " "+verb, "--base belongs to `init`, which writes it into the lane once; a --base here would let two invocations disagree about where the lane lands"), true
 		}
-		return refuse(stderr, " "+verb, "--base belongs to `init`, which writes it into the lane once; a --base here would let two invocations disagree about where the lane lands"), true
 	}
 	if verb != "gate" && has("base-sha") {
 		return refuse(stderr, " "+verb, "--base-sha names the base a GATE was taken against and belongs to `gate`"), true

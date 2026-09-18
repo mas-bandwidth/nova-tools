@@ -100,6 +100,9 @@ type lab struct {
 	work   string // a clone the test uses to make commits
 	lane   string
 	host   *merge.FakeHost
+	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
+	// gh of these tests, and it reaches nothing.
+	queue QueueReader
 	// launcher is the fake the rebase verb's cards are handed to, so a test proves the
 	// launch without a bench.
 	launcher *fakeLauncher
@@ -323,7 +326,13 @@ func (l *lab) deps() Deps {
 			}
 			return l.remote
 		},
-		NewHost:       func(string, time.Duration) merge.Host { return l.host },
+		NewHost: func(string, time.Duration) merge.Host { return l.host },
+		NewQueue: func(string, time.Duration) QueueReader {
+			if l.queue != nil {
+				return l.queue
+			}
+			return nil
+		},
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
 		Launcher:      l.launcher,
 		BuildID:       func() string { return l.build },

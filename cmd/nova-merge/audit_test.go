@@ -43,6 +43,8 @@ var mergeAudit = audit.Config{
 		"verbs.go|cmdAdd|yn":                                            "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
 		"pass.go|discoverDefault|verb":                                  "the verb's own name, the literals \"RUN\" and \"STATUS\" at its three call sites in pass.go",
+		"classify.go|classifyPacketEntry|line":                          "the decision renderer decide.Line has already rendered every name and value through oneline.Field; escaping it again would turn its \\x3d escapes into literal backslashes",
+		"classify.go|classifyPacketEntry|mergePacketEvidence(e)":        "pr#<n> is digits, and branch#<name> renders the name through oneline.Field inside mergePacketEvidence",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -62,6 +64,11 @@ var mergeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`,
 		`"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
+		// context, os/exec and syscall are simulate's: it runs each check as a child
+		// under a deadline, in its own process group, and none of them writes to a
+		// stream this package prints -- the child's output is captured and rendered
+		// through oneline.Escape before it reaches a line.
+		`"context"`, `"os/exec"`, `"syscall"`,
 		// net/url holds no writer of its own: Parse and String are pure string transforms,
 		// and the one use here strips a URL's userinfo so a token is never printed; the
 		// result is rendered through oneline.Field at its print site.
@@ -72,7 +79,18 @@ var mergeAudit = audit.Config{
 		// may be removed and returns an os error, which every caller renders through
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
 		// escape.
+		// safepath removes the scratch worktree this verb computed; it holds no writer.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// context carries no writer: it is the deadline the typed-decision call runs under
+		// (context.Background in classify.go, and decide.Client applies its own 10 s
+		// timeout), the deadline simulate runs each check under, and react.go's CancelFunc
+		// plumbing. It prints nothing. It is already named with simulate's imports above.
+		//
+		// internal/decide is the typed-decision route, used by both classifications here:
+		// it builds one JSON request and parses the answers, and it never prints. Its one
+		// line comes back through decide.Line, whose every field is escaped, and
+		// classify_run.go's own line through classifyLine, an escaper above.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// bytes is a Buffer and not a stream: CutKind's one line is captured into it and
 		// parsed for the card's name, never handed to stdout as it stands.
 		`"bytes"`,
@@ -80,14 +98,6 @@ var mergeAudit = audit.Config{
 		// above; its stderr is this binary's own stderr, so no line of its reaches the
 		// one line this verb prints.
 		`"github.com/mas-bandwidth/nova-tools/internal/pulse"`,
-		// classify.go calls the typed-decision client with a context deadline, and
-		// react.go's edges use context for CancelFunc plumbing. context holds no writer:
-		// it carries only the deadline that bounds the provider call.
-		`"context"`,
-		// classify.go asks the one typed decision through internal/decide; the package
-		// holds no writer this binary does not hand it, and its answer is rendered through
-		// classifyLine, whose every outside value is oneline.Field-escaped.
-		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// react.go's redis client edge writes nothing itself; it is read through its own
 		// API and this package prints only the escaped lines below, so it cannot write
 		// past oneline.
