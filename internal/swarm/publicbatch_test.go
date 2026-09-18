@@ -28,8 +28,8 @@ func TestBatchPublicGateListedRunsUnlistedRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "public-repos.txt"), []byte("acme/public\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	okCard := writeCard(t, dir, "ok.card", "RESULT: ok\nRESULT line two\ngit clone https://github.com/acme/public.git repo\n")
-	badCard := writeCard(t, dir, "bad.card", "RESULT: bad\nRESULT line two\ngit clone https://github.com/acme/secret.git repo\n")
+	okCard := writeCard(t, dir, "ok.card", "RESULT: ok\nRESULT line two\n"+forgeClone("acme/public")+" repo\n")
+	badCard := writeCard(t, dir, "bad.card", "RESULT: bad\nRESULT line two\n"+forgeClone("acme/secret")+" repo\n")
 	tsv := filepath.Join(dir, "cards.tsv")
 	tsvBody := "ok\t1\tmodel\t" + okCard + "\nbad\t2\tmodel\t" + badCard + "\n"
 	if err := os.WriteFile(tsv, []byte(tsvBody), 0o644); err != nil {
