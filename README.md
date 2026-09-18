@@ -83,6 +83,7 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Model routes](docs/MODELS.md): the registry of every model route a bench can run, so the routes are never forgotten again.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
 - [Terminology](docs/TERMINOLOGY.md): the words the specs define, each linked to its rule.
+- [Windows bench standard](docs/BENCH-STANDARD-WINDOWS.md): everything a Windows machine needs before the loop may put work on it — and why never WSL.
 - [Onboarding standard](docs/ONBOARDING.md) and
   [tested transcripts](docs/TESTS.md), which the tests execute line by line.
 - [Contributing](docs/CONTRIBUTING.md) and [security](docs/SECURITY.md).
