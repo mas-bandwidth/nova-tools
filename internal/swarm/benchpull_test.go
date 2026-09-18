@@ -165,6 +165,16 @@ func TestPullWaitsForResult(t *testing.T) {
 				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 			}
 		}
+		// Match the FLAG, never a path that merely contains its letters: a
+		// workspace root named `...-root` carries "-r" in the destination.
+		for _, filter := range []string{"--include", "--exclude", "-r"} {
+			if strings.Contains(l, " "+filter) || strings.HasPrefix(l, filter) {
+				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
+			}
+		}
+		if strings.Contains(l, "*") {
+			t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
+		}
 	}
 	for _, want := range []string{"RESULT.md", "usage.tsv", "native.log"} {
 		found := false
