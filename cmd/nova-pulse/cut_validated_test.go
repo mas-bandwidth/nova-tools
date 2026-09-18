@@ -19,7 +19,7 @@ import (
 const validatedIssueTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://example.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. TITLE[<title>]
 STEP 3. BODY[<body>]
@@ -29,7 +29,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 const validatedRowsTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://example.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Read <row> and <replay>; write notes.txt.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
@@ -38,7 +38,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 const validatedBranchFromTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://example.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Open the PR on <branch>; write notes.txt.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
@@ -265,7 +265,7 @@ func TestCutStepOneIsOneShellLine(t *testing.T) {
 You are a worker.
 Do not run go build, go test or any toolchain; read and write only.
 STEP 1. mkdir -p scratch &&
-   git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
+   git clone -q https://example.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP last. Write RESULT.md.`
 	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "issue", split)
@@ -329,7 +329,7 @@ func TestCutResultIsOneLine(t *testing.T) {
 	const titleOnLine1 = `RESULT <title> sha=<sha12>
 You are a worker.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://example.com/mas-bandwidth/nova-tools.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP last. Write RESULT.md.`
 	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "issue", titleOnLine1)
