@@ -148,6 +148,162 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
   cannot then be written, the receipt says `PULL FAIL … the artifacts are deleted; mark the section by
   hand` rather than leaving somebody to wonder which half happened.
 
+## The fourth dogfood's lessons
+
+Decisions 1 to 3 above are Johnny's, made before the first release went round the fleet. What follows
+is what the **fourth** release dogfood found by running the verbs against the real fleet on
+2026-09-18 (receipts `20260918T1736*`, `rowan-child-release-4`). Each is numbered so it can be
+referred to, each has a test named beside it, and each is a thing the tools now refuse rather than a
+thing a person has to remember.
+
+## 4. A truncated compare is named first, and a read does not get past it
+
+The forge names at most 300 files for one compare. That cut's range really touched **58** paths on
+the sensitive list; the forge answered with exactly 300 files and `cut` refused naming **24** of
+them. It looked like the gate working. It was the gate being lucky — the hits it named were the ones
+that happened to fall inside the prefix it could see, and a range whose only sensitive file sat past
+file 300 would have been cut clean.
+
+So the truncation is decided **before** the classification and said **before** anything is said about
+what was found inside the list:
+
+```
+RELEASE CUT REFUSED reason=compare-truncated files=300 range=<base>...<head> remedy="classify from a local `git diff --name-only <base>...<head>` with --paths-from <file>, produced by `release cut --local-diff <checkout>`"
+```
+
+It is a field line rather than the usual `CUT REFUSED: <prose>` because this is the one refusal a
+person or a script has to be able to tell apart from every other reason a cut can refuse.
+
+**`--security-read` does not get past it.** Johnny's read is a read *of a list*, and the list is the
+thing that may be short: a read of a prefix of the truth vouches for a prefix of the truth. The only
+way past a truncated compare is a complete list.
+
+*Tests: `TestCutNamesTheTruncationBeforeTheHitsItFoundInIt`,
+`TestCutRefusesATruncatedRangeEvenWithASecurityRead`.*
+
+## 5. The complete list is produced by the verb, never written by hand
+
+`git` in a checkout has no ceiling, so the complete list exists — it just does not come from the
+forge. Two flags, and the important one is that **the tool produces the list**:
+
+- **`--local-diff <checkout>`** runs `git -C <checkout> diff --name-only <previous tag>...<head>` and
+  classifies that. Three dots, the same range the forge's compare answers.
+- **`--paths-from <file>`** is that list as a file. With `--local-diff` it is **written**; without it,
+  it is **read back**, which is how the host that has the checkout and the host that does the cut can
+  be two different machines.
+
+A path list this verb wrote opens with
+
+```
+# nova-update release cut --local-diff <base>...<head>
+```
+
+and a file without that line, or with a different range on it, is **refused**. A classification gate
+whose input is hand-written is a gate whose answer is whatever somebody remembered. Either way the
+cut prints where its list came from, above its own receipt:
+
+```
+RELEASE CUT PATHS source=local-diff|paths-from files=<n> range=<base>...<head> ...
+```
+
+*Tests: `TestCutLocalDiffClassifiesTheCompleteListItProduced`,
+`TestCutLocalDiffWritesThePathsFileItClassified`, `TestCutRefusesAPathsFileNobodyProduced`.*
+
+## 6. `--platform` is repeatable, comma-separable, and refuses before it builds
+
+Three forms were tried on the fleet's binary and all three were wrong:
+`--platform darwin-arm64,darwin-amd64` was handed to the compiler whole and failed at tool 1 of 21
+with `unsupported GOOS/GOARCH pair`, leaving an **empty directory of that name** in the release tree;
+`--platform darwin-arm64 --platform darwin-amd64` silently kept the **last** flag, built one
+platform and printed one cheerful receipt.
+
+`--platform` is now repeatable **and** comma-separated; every value is resolved and every pair is
+held against `go tool dist list` **before the first compile**, so an unsupported pair is a refusal
+and not a directory somebody finds later. Every platform gets its own receipt line, and one line
+names them all:
+
+```
+RELEASE BUILT version=<v> platform=<goos-goarch> tools=<n> verified=<n> out=<dir> sums=<sha256> digest=<path>
+RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha256> out=<dir>
+```
+
+`platforms=` and `sums=` are the same list in the same order, one token each.
+
+*Tests: `TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything`,
+`TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt`.*
+
+## 7. No tag, still a digest: `SUMS.digest`
+
+Decision 2 gives `adopt` a digest that did not travel with the bits — off the annotated tag, or out
+of the CHANGELOG. Both belong to a **tagged** release. A dev build has no tag, so the fourth dogfood
+had to compute `--expect-sums` **on the machine being adopted from**, which is that machine vouching
+for its own bytes and is not evidence at all.
+
+`release build` now writes the digest of the `SHA256SUMS` it has just verified, beside it, on the
+machine that did the build:
+
+```
+<release-dir>/SUMS.digest
+```
+
+and `adopt --expect-sums-from <that file>` reads it there. The file is **local by rule**: a
+`--expect-sums-from host:path` is refused by name, and no verb in this package ever asks a machine to
+hash anything — not `sha256sum`, not `shasum`, not `openssl dgst`. `SUMS.digest` is not listed in the
+`SHA256SUMS` it is the digest of, or its own value would depend on the last time the directory was
+built — and `pull` names it alongside the listed artifacts, because the `rmdir` that ends a pull
+refuses a directory that is not empty and one file this tool wrote itself must not be what stops it.
+
+Precedence when more than one is given: `--expect-sums` (a digest a person typed deliberately is a
+decision), then `--expect-sums-from`, then `--repo`.
+
+*Tests: `TestBuildWritesTheSumsDigestBesideTheArtifacts`,
+`TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile`, `TestAdoptRefusesADigestFileOnTheFarSide`.*
+
+## 8. Install on the coordinator first, then adopt
+
+`adopt` is not a courier. It is **this host's** `nova-update` reading a release, verifying it, and
+running **that release's** install on every machine. So a Studio that is not yet on the release
+cannot adopt the fleet onto it — and the flag it needs to try (`--from`) ships inside the release it
+has not installed. The order is:
+
+1. `release build` on the machine with the cores;
+2. `release install` **here**, on the coordinator;
+3. `release adopt` from here, with the new binary.
+
+A coordinator whose own version is behind the release it has been asked to fan out **refuses**,
+naming both versions and the `release install` that fixes it, before it touches a single machine. A
+binary with no readable stamp does not refuse: a gate that fires on a value it cannot read is a gate
+that stops the work it exists to protect.
+
+*Test: `TestAdoptRefusesWhenTheLocalToolPredatesTheRelease`.*
+
+## 9. A lookup says where it looked
+
+`nova-pulse fleet survey` refused with `tools/bench-standard.sh not found above the working
+directory`, which reads as *the script is missing* and means *this verb wants a nova-tools checkout
+as its working directory*. It now names the first directory it tried, the last, and what it wanted to
+find there. `fleet survey` also takes `--machines <file>` — the machines registry, which is a
+different file from its `--benches` fleet file — and an unnamed registry surveys every bench, exactly
+as before the registry existed.
+
+`nova-version snapshot` requires both `--bin` and `--out` and does not default either: SPEC-UPDATE
+rule 1 is that no path is guessed from the cwd or `$HOME`. The pair is written out in
+[CLI.md](CLI.md#nova-version).
+
+*Tests: `TestTheStandardScriptLookupSaysWhereItLooked`,
+`TestTheStandardScriptLookupWalksUpToTheCheckout`.*
+
+## 10. The release verbs are in the command reference
+
+The five verbs that put binaries on every bench in the fleet were declared in this spec, in
+SPEC-UPDATE, in the help string — and in nobody's command reference. `docs/CLI.md` is what the
+dogfood ledger reads, so a verb missing from it is a verb nothing asks to have been run by a
+non-author. `### The release verb` under `## nova-update` is that section, and a test holds it
+against `internal/release.Verbs` so a sixth release verb fails on the day it is added.
+
+*Tests: `TestTheCommandReferenceDeclaresEveryReleaseVerb`,
+`TestTheFourthDogfoodsLessonsAreInTheReleaseSpec`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and Johnny's read of

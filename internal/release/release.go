@@ -144,6 +144,30 @@ const RemotePathsNote = "--bin and --dest are paths on each machine; the remote 
 // strings the compiler is given rather than a summary of them.
 type Toolchain interface {
 	Build(ctx context.Context, source, pkg, out, goos, goarch string, args []string) (string, error)
+	// Platforms is every `goos/goarch` this toolchain can compile for, as
+	// `go tool dist list` prints it. It is ASKED rather than written out in
+	// this file because a list here is a list that is right on the day it is
+	// written -- and the fourth release dogfood found out what the other kind
+	// costs: `--platform darwin-arm64,darwin-amd64` reached the compiler
+	// whole, failed at tool 1 of 21 with the compiler's own `unsupported
+	// GOOS/GOARCH pair`, and left an empty directory of that name in the
+	// release tree for somebody to find later.
+	Platforms(ctx context.Context) ([]string, error)
+}
+
+// Git is the edge to a LOCAL CHECKOUT, and it exists for exactly one question:
+// which paths a range touched, when the forge cannot say.
+//
+// The forge answers a compare with at most CompareFileCap files, and the
+// sensitive-path gate cannot be run on a prefix of the truth. git in a checkout
+// has no such ceiling. The answer is produced BY THIS VERB rather than pasted
+// in by a person, because a classification gate whose input is hand-written is
+// a gate whose input is whatever somebody remembered.
+type Git interface {
+	// DiffNames is `git -C dir diff --name-only base...head`: the paths the
+	// range touched, THREE dots, so it is what head carries since the merge
+	// base rather than every difference between two branches.
+	DiffNames(ctx context.Context, dir, base, head string) ([]string, error)
 }
 
 // field is SPEC.md's field law: one token, never empty, never able to end a line.

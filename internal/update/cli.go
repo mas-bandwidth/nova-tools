@@ -182,7 +182,10 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		if name != "nova-update" {
 			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
 		}
-		return release.Main(name, args, out, errs)
+		// The stamp goes down with it: `release adopt` compares what THIS
+		// binary is against the release it is fanning out, because the
+		// install every machine runs is the one this host is holding.
+		return release.Main(name, args, stamp, out, errs)
 	}
 	if verb == "adoption" {
 		if name != "nova-update" {

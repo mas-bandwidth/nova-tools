@@ -82,7 +82,13 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 		missing = append(missing, "--out")
 	}
 	if len(missing) > 0 {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
+		// NEITHER PATH IS GUESSED, and the refusal now says so with a line
+		// somebody can paste. `--bin <dir>` reads as a complete command and is
+		// not one; the fourth release dogfood met that as `missing --out` with
+		// no example of what --out should be. SPEC-UPDATE rule 1 -- no search
+		// of the cwd, no $HOME -- is why there is no default to fall back on.
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing %s; refusing to guess (both paths are the caller's to name, for example: %s snapshot --bin ./bin --out ./before.tsv; run: %s help)",
+			strings.Join(missing, ", "), name, name))
 	}
 	if len(fs.Args()) != 0 {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))

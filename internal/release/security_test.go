@@ -144,6 +144,13 @@ func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
 // most CompareFileCap files for one compare, so a range at that number cannot
 // be classified at all -- and a gate that reads a truncated list is a gate that
 // passes the one file it did not see.
+//
+// THE REMEDY CHANGED after the fourth release dogfood (2026-09-18). It used to
+// be Johnny's read -- but his read is a read OF A LIST, and the list is the
+// thing that may be short, so a read got past the truncation while vouching for
+// a prefix of the truth. It is now a complete list from a checkout, which is
+// what --local-diff and --paths-from produce. See the lessons in
+// docs/SPEC-RELEASE.md and TestCutNamesTheTruncationBeforeTheHitsItFoundInIt.
 func TestCutRefusesARangeTooBigToClassify(t *testing.T) {
 	f := cutForge()
 	var many []string
@@ -158,8 +165,11 @@ func TestCutRefusesARangeTooBigToClassify(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("a range too big to classify was cut anyway: code=%d", code)
 	}
-	if !strings.Contains(errs.String(), "--security-read") || !strings.Contains(errs.String(), fmt.Sprint(CompareFileCap)) {
+	if !strings.Contains(errs.String(), "reason=compare-truncated") || !strings.Contains(errs.String(), "files="+fmt.Sprint(CompareFileCap)) {
 		t.Fatalf("the refusal does not say why it cannot classify: %s", errs.String())
+	}
+	if !strings.Contains(errs.String(), "--paths-from") {
+		t.Fatalf("the refusal does not carry the remedy: %s", errs.String())
 	}
 	if len(f.tagged) != 0 {
 		t.Fatalf("a refused cut tagged %v", f.tagged)
