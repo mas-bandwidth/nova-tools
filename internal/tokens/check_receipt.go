@@ -10,28 +10,12 @@ import (
 // charges a run collected. A receipt is a child of a (day, model, repo) row, and the join
 // checks three ways that parentage can be wrong.
 
-// ReceiptRow is one collected charge for a run. Its (Day, Model, Repo) must name a day
-// file row, its token counts must be a subset of that row's, and its Receipt id must be
-// unique among the receipts presented together.
-type ReceiptRow struct {
-	Day              string
-	Model            string
-	Repo             string
-	Receipt          string
-	Node             string
-	Stage            string
-	Session          string
-	Turns            int
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
-	TotalTokens      int64
-	CostUSD          string
-	CreatedAt        string
-	Source           string
-}
+// The row this join reads is ReceiptRow, declared once in receipt.go (slice L01) where
+// the receipt file's seventeen columns are parsed and formatted. It is one collected
+// charge for a run: its (Day, Model, Repo) must name a day file row, its token counts
+// must be a subset of that row's, and its Receipt id must be unique among the receipts
+// presented together. This join reads only those fields, so it is the same check over
+// the parsed row that it was over the sketch it was written against.
 
 // JoinFindingType is the way one receipt join can fail.
 type JoinFindingType int
