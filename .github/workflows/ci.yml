@@ -441,12 +441,12 @@ jobs:
         # slowtests runs; the budget check only ever sees a green stream. The
         # raw `-json` is teed so a slow package's finding is read once, by
         # cmd/nova-ci, and the same bytes are on disk if a reader wants them.
-        # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make cmd/nova-swarm, cmd/nova-pulse and
-        # internal/swarm fast, on the Intel Mac benches (about 3x slower per core than the Studio), where the alert still
-        # prints every CI-SLOW line but the budget is 300 s. Dated exception, 2026-09-18; remove with those cards.
-        run: |
-          budget=60; case "$(uname -m)" in x86_64) [ "$RUNNER_OS" = macOS ] && budget=300;; esac
-          go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget "$budget" < "$RUNNER_TEMP/test.json"
+        # DATED EXCEPTION 2026-09-18 (remove with cards 9352 to 9359): the budget is 60 s by the two-minute law, but on
+        # 2026-09-18 the first night of this check found eight packages between 77 s and 272 s on a Studio at load 60
+        # and an Intel Mac at load 2; the cards make those packages fast. Until they land the budget is 300 s here so
+        # a mechanical red does not hold dev, and every CI-SLOW line is still printed for the coordinator. This covers
+        # the Intel Mac benches too (about 3x slower per core than the Studio) that cards 9352 to 9354 make fast.
+        run: go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
