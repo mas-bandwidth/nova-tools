@@ -539,3 +539,24 @@ func TestFleetVerbsRefuseAnUnknownBench(t *testing.T) {
 		t.Fatalf("an unknown bench was still reached over ssh: %q", got)
 	}
 }
+
+// TestNoStandardProbeUsesCase is a class rule, and it cost a red darwin shard to learn.
+//
+// Every probe is spliced into `v=$( { <probe>; } 2>/dev/null | ... )`. Bash 3.2 -- the
+// /bin/bash every Mac in this fleet has, because macOS never shipped bash 4 -- mis-parses
+// the `)` that closes a case PATTERN as the `)` that closes the `$( )`. The result is not a
+// refusal: `bash -s` reads its script from the pipe in chunks, so every check BEFORE the bad
+// line runs and prints, and every check after it silently never happens. A darwin shard read
+// six checks, four empty values and a clean exit, and the only sign was four `got=-`.
+//
+// So no probe may use `case`. `grep -q` says the same thing and parses everywhere.
+func TestNoStandardProbeUsesCase(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, c := range FleetStandardChecks(goos, "go1.26.5", "abc123", 25) {
+			if strings.Contains(c.Probe, "case ") || strings.Contains(c.Probe, "esac") {
+				t.Errorf("the %s probe of %s uses `case`, which bash 3.2 mis-parses inside $( ) and which silently truncates every check after it; use `grep -q` instead:\n%s",
+					goos, c.Name, c.Probe)
+			}
+		}
+	}
+}
