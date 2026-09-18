@@ -58,6 +58,20 @@ func TestRemoveUnderRootsRemovesBelowRoot(t *testing.T) {
 	}
 }
 
+// remove-under-is-the-only-rm: a directory strictly below a root goes. This is
+// the install verb's own case, named apart from dev's RemoveUnder test.
+func TestInstallRemoveUnderRemovesBelowRoot(t *testing.T) {
+	root := t.TempDir()
+	victim := filepath.Join(root, "slot", "jobs", "card-1")
+	mustWrite(t, filepath.Join(victim, "scratch", "s"), "x")
+	if err := RemoveUnder(root, victim); err != nil {
+		t.Fatalf("RemoveUnder(%q, %q) = %v, want nil", root, victim, err)
+	}
+	if exists(victim) {
+		t.Fatalf("RemoveUnder left %s behind", victim)
+	}
+}
+
 // a path outside every root is refused, and left where it is.
 func TestRemoveUnderRefusesOutsideTheRoots(t *testing.T) {
 	root := t.TempDir()
@@ -66,6 +80,10 @@ func TestRemoveUnderRefusesOutsideTheRoots(t *testing.T) {
 	mustMkdir(t, victim)
 	if err := RemoveUnderRoots(victim, root); err == nil {
 		t.Fatalf("RemoveUnderRoots(%q, %q) = nil, want a refusal", victim, root)
+	}
+	if err := RemoveUnder(root, victim); err == nil {
+		t.Fatalf("RemoveUnder(%q, %q) = nil, want a refusal", root, victim)
+	}
 	}
 	if !exists(victim) {
 		t.Fatalf("RemoveUnder removed %s, a path outside the root", victim)
@@ -80,6 +98,10 @@ func TestRemoveUnderRefusesDotDot(t *testing.T) {
 	escape := root + string(os.PathSeparator) + "slot" + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "slot"
 	if err := RemoveUnderRoots(escape, root); err == nil {
 		t.Fatalf("RemoveUnderRoots(%q, %q) = nil, want a refusal for \"..\"", escape, root)
+	}
+	if err := RemoveUnder(root, escape); err == nil {
+		t.Fatalf("RemoveUnder(%q, %q) = nil, want a refusal for \"..\"", root, escape)
+	}
 	}
 	if !exists(target) {
 		t.Fatalf("RemoveUnder removed %s through a \"..\" element", target)
@@ -97,6 +119,10 @@ func TestRemoveUnderRefusesSymlinkPath(t *testing.T) {
 	}
 	if err := RemoveUnderRoots(link, root); err == nil {
 		t.Fatalf("RemoveUnderRoots(%q, %q) = nil, want a refusal for a symlink", link, root)
+	}
+	if err := RemoveUnder(root, link); err == nil {
+		t.Fatalf("RemoveUnder(%q, %q) = nil, want a refusal for a symlink", root, link)
+	}
 	}
 	if !exists(filepath.Join(outside, "keep")) {
 		t.Fatalf("RemoveUnder followed the symlink and removed its target")

@@ -44,6 +44,7 @@ nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot> --home <dir>
 nova-pulse hygiene drop-cache --home <dir>
 nova-pulse hygiene log [n] --home <dir>
+nova-pulse install --sha <7-40 hex> --build-bench <name> --benches <a,b,c> [--ssh <path>] [--timeout <duration>]
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -163,6 +164,20 @@ line. Each deletion is one <utc> <verb> <path> line in <home>/hygiene.log.
 example:
   nova-pulse hygiene run --home "$HOME"
 
+install builds nova-tools ONCE on --build-bench, caches the binaries under
+~/nova-bench/build/<full sha>, installs the same cache on every bench in
+--benches by copying each binary to a dotfile then renaming it into place, and
+verifies each bench's nova-swarm reports that commit. It prints one INSTALL
+BUILD line, then one line per bench -- INSTALL OK, INSTALL SKIP bench already at
+the sha, or INSTALL FAIL naming the copy, install or verify step -- and one
+INSTALL DONE summary; it exits 1 when any bench failed. Every bench name and the
+sha are validated before the first ssh, every remote command is one script on
+the ssh child's stdin, and cached builds beyond the newest five are
+removed only through internal/safepath under ~/nova-bench/build.
+
+example:
+  nova-pulse install --sha 5f544272a1b0 --build-bench hulk --benches hulk,vision,space,mini
+
 fleet survey runs tools/bench-standard.sh on every bench named in --benches
 (name, ssh target and home per tab-separated line) over the ssh command
 "ssh <target> bash -s", in parallel under --timeout, and prints one line per
@@ -243,6 +258,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdReap(rest, stdout, stderr)
 	case "hygiene":
 		return cmdHygiene(rest, stdout, stderr, now)
+	case "install":
+		return cmdInstall(rest, stdout, stderr)
 	case "fleet":
 		return cmdFleet(rest, stdout, stderr)
 	case "wake":

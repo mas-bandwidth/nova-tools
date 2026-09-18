@@ -565,6 +565,7 @@ nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
+nova-pulse install --sha <7-40 hex> --build-bench <name> --benches <a,b,c> [--ssh <path>] [--timeout <duration>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
