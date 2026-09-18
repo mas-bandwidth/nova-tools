@@ -19,15 +19,16 @@ import (
 
 // FleetSleepInput is everything `fleet sleep` needs apart from flag parsing.
 type FleetSleepInput struct {
-	Benches string // the fleet file
-	Name    string // the one bench to put to sleep
-	SSH     string // the ssh program; empty is "ssh"
-	Force   bool   // sleep even a busy bench
-	IfIdle  bool   // skip a busy bench instead of refusing it
-	Timeout time.Duration
-	Max     int
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Benches  string // the fleet file
+	Machines string // the machines registry; a machine whose roles lack `bench` is refused
+	Name     string // the one bench to put to sleep
+	SSH      string // the ssh program; empty is "ssh"
+	Force    bool   // sleep even a busy bench
+	IfIdle   bool   // skip a busy bench instead of refusing it
+	Timeout  time.Duration
+	Max      int
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // FleetSleep suspends one idle bench over ssh and prints one line:
@@ -36,15 +37,16 @@ type FleetSleepInput struct {
 // `FLEET <bench> UNREACHABLE <reason>` (exit 3).
 func FleetSleep(in FleetSleepInput) int {
 	return FleetSuspend(FleetSuspendInput{
-		Benches: in.Benches,
-		Names:   fleetSleepNames(in.Name),
-		SSH:     in.SSH,
-		Force:   in.Force,
-		IfIdle:  in.IfIdle,
-		Timeout: in.Timeout,
-		Max:     in.Max,
-		Stdout:  in.Stdout,
-		Stderr:  in.Stderr,
+		Benches:  in.Benches,
+		Machines: in.Machines,
+		Names:    fleetSleepNames(in.Name),
+		SSH:      in.SSH,
+		Force:    in.Force,
+		IfIdle:   in.IfIdle,
+		Timeout:  in.Timeout,
+		Max:      in.Max,
+		Stdout:   in.Stdout,
+		Stderr:   in.Stderr,
 	})
 }
 

@@ -22,15 +22,16 @@ import (
 
 // FleetMirrorInput is everything `fleet mirror` needs apart from flag parsing.
 type FleetMirrorInput struct {
-	Benches string // the fleet file
-	Name    string // the one bench
-	SSH     string // the ssh program; empty is "ssh"
-	Repo    string // the https remote to mirror
-	Path    string // the absolute path of the bare mirror on the bench
-	Timeout time.Duration
-	Runner  FleetRunner
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Benches  string // the fleet file
+	Machines string // the machines registry; a machine whose roles lack `bench` is refused
+	Name     string // the one bench
+	SSH      string // the ssh program; empty is "ssh"
+	Repo     string // the https remote to mirror
+	Path     string // the absolute path of the bare mirror on the bench
+	Timeout  time.Duration
+	Runner   FleetRunner
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // FleetMirror creates or refreshes one bare mirror on one bench and prints one line:
@@ -38,7 +39,7 @@ type FleetMirrorInput struct {
 // mirror is there, 2 when the invocation was refused, 3 when the bench could not be
 // reached or git failed on it.
 func FleetMirror(in FleetMirrorInput) int {
-	bench, code := fleetOneBench(in.Benches, in.Name, in.Stdout, in.Stderr, "mirror")
+	bench, code := fleetOneBench(in.Benches, in.Machines, in.Name, in.Stdout, in.Stderr, "mirror")
 	if code != 0 {
 		return code
 	}

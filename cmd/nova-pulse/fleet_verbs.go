@@ -26,6 +26,7 @@ import (
 func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet standard")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	want := f.fs.String("want", "", "")
@@ -57,7 +58,7 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetStandard(pulse.FleetStandardInput{
-		Benches: *benches, Name: *bench, SSH: *ssh, OS: *osName,
+		Benches: *benches, Machines: *machines, Name: *bench, SSH: *ssh, OS: *osName,
 		Go: *goWant, Want: *want, MinFreeGB: *minFree,
 		Timeout: time.Duration(*timeout) * time.Second, Max: *max,
 		Stdout: stdout, Stderr: stderr,
@@ -67,6 +68,7 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 func cmdFleetMirror(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet mirror")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	repo := f.fs.String("repo", "", "")
@@ -86,7 +88,7 @@ func cmdFleetMirror(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetMirror(pulse.FleetMirrorInput{
-		Benches: *benches, Name: *bench, SSH: *ssh, Repo: *repo, Path: *path,
+		Benches: *benches, Machines: *machines, Name: *bench, SSH: *ssh, Repo: *repo, Path: *path,
 		Timeout: time.Duration(*timeout) * time.Second,
 		Stdout:  stdout, Stderr: stderr,
 	})
@@ -95,6 +97,7 @@ func cmdFleetMirror(args []string, stdout, stderr io.Writer) int {
 func cmdFleetJoin(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet join")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	tailscale := f.fs.String("tailscale", "", "")
@@ -114,7 +117,7 @@ func cmdFleetJoin(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetJoin(pulse.FleetJoinInput{
-		Benches: *benches, Name: *bench, SSH: *ssh,
+		Benches: *benches, Machines: *machines, Name: *bench, SSH: *ssh,
 		Tailscale: *tailscale, AuthKeyEnv: *authkeyEnv,
 		Timeout: time.Duration(*timeout) * time.Second,
 		Stdout:  stdout, Stderr: stderr,
@@ -124,6 +127,7 @@ func cmdFleetJoin(args []string, stdout, stderr io.Writer) int {
 func cmdFleetSleep(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet sleep")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	ifIdle := f.fs.Bool("if-idle", false, "")
@@ -145,9 +149,32 @@ func cmdFleetSleep(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetSleep(pulse.FleetSleepInput{
-		Benches: *benches, Name: *bench, SSH: *ssh,
+		Benches: *benches, Machines: *machines, Name: *bench, SSH: *ssh,
 		Force: *force, IfIdle: *ifIdle,
 		Timeout: time.Duration(*timeout) * time.Second, Max: *max,
+		Stdout: stdout, Stderr: stderr,
+	})
+}
+
+// cmdFleetRegistry lists the machines registry: the reading verb that answers "what is this
+// machine, and may work go on it?" without touching a machine.
+func cmdFleetRegistry(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("fleet registry")
+	machines := f.fs.String("machines", "", "")
+	role := f.fs.String("role", "", "")
+	max := f.fs.Int("max", 0, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, tab separated")
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.FleetRegistry(pulse.FleetRegistryInput{
+		Machines: *machines, Role: *role, Max: *max,
 		Stdout: stdout, Stderr: stderr,
 	})
 }

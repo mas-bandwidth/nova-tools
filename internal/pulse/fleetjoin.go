@@ -25,6 +25,7 @@ import (
 // FleetJoinInput is everything `fleet join` needs apart from flag parsing.
 type FleetJoinInput struct {
 	Benches    string // the fleet file
+	Machines   string // the machines registry; a machine whose roles lack `bench` is refused
 	Name       string // the one bench, which is also its tailnet hostname
 	SSH        string // the ssh program; empty is "ssh"
 	Tailscale  string // the absolute path of tailscale ON THE BENCH
@@ -42,7 +43,7 @@ type FleetJoinInput struct {
 // file does not carry, `studio`), 3 when the bench could not be reached or tailscale
 // refused.
 func FleetJoin(in FleetJoinInput) int {
-	bench, code := fleetOneBench(in.Benches, in.Name, in.Stdout, in.Stderr, "join")
+	bench, code := fleetOneBench(in.Benches, in.Machines, in.Name, in.Stdout, in.Stderr, "join")
 	if code != 0 {
 		return code
 	}

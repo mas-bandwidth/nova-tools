@@ -153,6 +153,7 @@ func (c StandardCheck) wants() string {
 // FleetStandardInput is everything `fleet standard` needs apart from flag parsing.
 type FleetStandardInput struct {
 	Benches   string // the fleet file: name<TAB>ssh target<TAB>home<TAB>mac
+	Machines  string // the machines registry; a machine whose roles lack `bench` is refused
 	Name      string // the one bench to check
 	SSH       string // the ssh program; empty is "ssh"
 	OS        string // "linux" or "darwin"; empty asks the bench with uname -s
@@ -171,7 +172,7 @@ type FleetStandardInput struct {
 // every check is met, 2 when any drifted or the bench was refused, 3 when the bench could
 // not be reached.
 func FleetStandard(in FleetStandardInput) int {
-	bench, code := fleetOneBench(in.Benches, in.Name, in.Stdout, in.Stderr, "standard")
+	bench, code := fleetOneBench(in.Benches, in.Machines, in.Name, in.Stdout, in.Stderr, "standard")
 	if code != 0 {
 		return code
 	}

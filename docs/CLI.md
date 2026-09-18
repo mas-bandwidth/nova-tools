@@ -1030,7 +1030,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1070,6 +1070,54 @@ that serializes nothing. A card with no `LANE:` line is launched exactly as befo
 One bench takes at most 30 cards in a tick, whatever its capacity says, because the
 rest of the machine is not the fill's to spend.
 
+### fleet registry
+
+```
+nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
+```
+
+The machines registry says what each machine in the fleet **is**, and therefore what may
+be placed on it. It is one tab-separated file kept in git beside the lanes file:
+
+```
+name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+```
+
+`roles` is a **set** from `{bench, runner, coordination, services}`: `bench` means cards,
+probes and load may be placed there; `runner` means the machine serves the merge group's CI
+shards; `coordination` means a friend's own window lives there; `services` means the stack
+does (Loki, Grafana, Redis). `seat` is the machine's nova-secrets seat, or `-`.
+
+**The lock (Glenn, 2026-09-18): runner hosts are CI-only.** No card, no probe and no load
+goes on a machine that serves the merge group's shards — a card and a shard on one host make
+the shard slow, the gate red and the queue stop. So `nova-pulse fill`, and every fleet verb
+that acts on a machine, resolve `--bench` through this file and refuse a machine whose roles
+lack `bench`, **by name and before any ssh**:
+
+```
+FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, space"
+```
+
+The reason is one of `runner-host`, `coordination-host`, `services-host`, `not-a-bench` or
+`unknown-machine`. A machine that is **both** `runner` and `bench` is the exception and must
+say so in its notes, with the day it was made: `allow-shared=<YYYY-MM-DD> <why>`. hulk and
+vision carry one today because the pull worker still runs a card in the bench's own home;
+when it runs cards in containers the runner role comes off both lines and the exception goes
+with it. A shared line without the dated note is a refusal, and so is an unknown role, a
+name twice, a missing column or cores that are not a number — the registry is read whole or
+not at all, because the half that reads is the half that lets a card through.
+
+`fleet registry` prints one line per machine, in file order:
+
+```
+MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 notes="allow-shared=2026-09-18 ..."
+```
+
+`--role <r>` lists only the machines carrying that role; a role no machine carries is a
+refusal, because it is far more likely a typo than a fleet fact. The example registry is
+`internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
+`queue/control/machines.tsv`.
+
 ### fleet add
 
 ```
@@ -1101,10 +1149,10 @@ bench on none (nova-tools #875).
 ### fleet standard / mirror / join / sleep
 
 ```
-nova-pulse fleet standard --benches <file> --bench <name> [--want <stamp>] [--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>] [--timeout <s>] [--max <n>]
-nova-pulse fleet mirror   --benches <file> --bench <name> --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
-nova-pulse fleet join     --benches <file> --bench <name> --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
-nova-pulse fleet sleep    --benches <file> --bench <name> [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse fleet standard --benches <file> --bench <name> [--machines <file>] [--want <stamp>] [--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet mirror   --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet join     --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet sleep    --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 ```
 
 The four verbs that retire the last four hand-run bench scripts (#1142):
@@ -1112,7 +1160,9 @@ The four verbs that retire the last four hand-run bench scripts (#1142):
 `fleet-sleep.sh`. Each acts on ONE bench of `--benches`, takes every path from a flag,
 runs one bounded remote script through `ssh <target> bash -s` (`--ssh`, so a test fakes
 it), refuses `studio` and a name the file does not carry **before any ssh**, and exits
-0 ok / 2 refused-or-drift / 3 unreachable with one remedy line per refusal.
+0 ok / 2 refused-or-drift / 3 unreachable with one remedy line per refusal. With
+`--machines` they also refuse a machine the registry does not call a bench, with the lock's
+reason and remedy on the line; without it they keep their older guard and nothing more.
 
 `fleet standard` holds a bench against the provisioning standard and prints one line per
 check and a verdict:

@@ -303,6 +303,28 @@ is a tab-separated file, one bench per line: `name`, `ssh target`, `home`,
 `mac` (the wake address; `-` when the bench never sleeps). A missing
 `--benches` is `refusing to guess`, exit 2.
 
+**The machines registry.** `--machines <file>` is the second file, and it says
+what each machine IS: `name`, `ssh`, `os/arch`, `roles`, `seat`, `cores`,
+`notes`, tab separated, where `roles` is a set from `{bench, runner,
+coordination, services}`. THE LOCK (Glenn, 2026-09-18): **runner hosts are
+CI-only** — no card, no probe and no load may be placed on a machine that
+serves the merge group's shards. Every verb that puts work on a machine
+resolves its `--bench` through the registry and refuses a machine whose roles
+lack `bench`, by name and before any ssh:
+
+```
+FILL REFUSED bench=batman reason=runner-host remedy="..."
+```
+
+The reason is one of `runner-host`, `coordination-host`, `services-host`,
+`not-a-bench`, `unknown-machine`. `nova-pulse fill`, the path a CARD takes,
+**requires** `--machines`: without it the verb cannot tell a bench from a CI
+runner host, and that is the one thing it may not guess. The fleet admin verbs
+take it optionally and keep their older guard without it. A machine that is
+both `runner` and `bench` must carry a dated exception in its notes,
+`allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
+worker runs cards in containers. `nova-pulse fleet registry` lists the file.
+
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
 0/2/3 (0 ok, 2 drift-or-refused, 3 unreachable), takes ssh from `--ssh` so
