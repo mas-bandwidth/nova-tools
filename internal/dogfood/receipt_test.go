@@ -38,8 +38,16 @@ func TestRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 	if len(failures) != 0 {
 		t.Fatalf("failures: %+v", failures)
 	}
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("read back %+v, want %+v", got, want)
+	if len(got) != 1 {
+		t.Fatalf("read back %+v, want one receipt", got)
+	}
+	if got[0].File == "" {
+		t.Fatal("the receipt read back does not know its own file; a strand could not be named")
+	}
+	read := got[0]
+	read.File = "" // not part of the record: it is where the record was found
+	if read != want {
+		t.Fatalf("read back %+v, want %+v", read, want)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
