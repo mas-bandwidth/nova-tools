@@ -2472,6 +2472,34 @@ ledger for each pool: the aggregate key does not contain a pool ID.
 This ledger is distinct from the `sum --swarm-root` daily ledger above. See
 `nova-tokens help` for `profiles`, `session` and ledger-reporting options.
 
+## nova-play
+
+Shared reading annotations at the **margin layer**. Participants anchor notes to exact passages in a source text, reply to each other's notes, and resume across sessions. A changed source produces an explicit anchor conflict rather than silently moving notes. The contract is [docs/SPEC-PLAY.md](SPEC-PLAY.md).
+
+### First run
+
+Three lines: annotate a passage, read the notes back, reply to a friend. Every path is a flag — there is no default source, no default author, and no default annotation file.
+
+```
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+
+$ nova-play read --source story.txt
+READ OK source=story.txt notes=1
+NOTE id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+  PASSAGE The lantern room held a brass fitting.
+  BODY I wonder what alloy this is.
+
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
+```
+
+**What the flags want.** `--source` is the text being annotated; `--author` is who is speaking; `--passage` is the exact passage text to anchor to (must appear verbatim in the source); `--note` is the annotation text; `--id` is the note to reply to; `--body` is the reply text.
+
+**When the source changes.** Edit the source file between sessions and the next `read` says `ANCHOR STALE`, naming both the stored hash and the current hash. A new annotation is refused until the operator decides whether to migrate notes, discard them, or revert the source.
+
+**What this deliberately is not.** Not a reader or viewer — the source stays where it is, opened in whatever reader the participants choose. Not a publishing platform — notes are local to the machine that creates them. Not a notification system — participants check for new notes by running `read`.
+
 ## nova-update
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
