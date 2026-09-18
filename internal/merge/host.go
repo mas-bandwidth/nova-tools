@@ -200,6 +200,9 @@ type Host interface {
 	// Checks reads a commit's check buckets. The base's evidence is read the same way
 	// an entry's is.
 	Checks(oid string) (Checks, error)
+	// MergeGroupRun reads one merge-group run's event, pull request, failed jobs and
+	// their '--- FAIL' test names, the evidence the classify decision judges.
+	MergeGroupRun(id int) (MergeRun, error)
 	// Ready takes a draft out of draft. It is a mutation, it is logged as one, and it
 	// only ever reaches an entry that is in the lane.
 	Ready(n int) error
@@ -306,6 +309,40 @@ func (h *GH) BranchOID(branch string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// OpenPRs reads the repository's open pull requests, one row each, for the rebase cutter.
+// The merge state is the host's own word and no field here is an instruction.
+func (h *GH) OpenPRs() ([]RebasePR, error) {
+	out, err := h.gh("pr", "list", "--repo", h.Repo, "--state", "open", "--limit", "300", "--json",
+		"number,mergeStateStatus,headRefName,title,createdAt")
+	if err != nil {
+		return nil, err
+	}
+	return decodeOpenPRs(out)
+}
+
+// decodeOpenPRs is the arrival point of the open list: the host's JSON becomes the rows the
+// filter reads. A head branch becomes a git argument on a later verb, so it is checked
+// where it arrives, exactly as a single pull request's is.
+func decodeOpenPRs(out string) ([]RebasePR, error) {
+	var raw []struct {
+		Number           int    `json:"number"`
+		MergeStateStatus string `json:"mergeStateStatus"`
+		HeadRefName      string `json:"headRefName"`
+		Title            string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("gh pr list did not answer JSON this tool can read: %w", err)
+	}
+	prs := make([]RebasePR, 0, len(raw))
+	for _, r := range raw {
+		if err := ValidRefName(r.HeadRefName); err != nil {
+			return nil, fmt.Errorf("pull request %d's head branch is not a name this tool hands to git: %w", r.Number, err)
+		}
+		prs = append(prs, RebasePR{Number: r.Number, HeadRef: r.HeadRefName, Title: r.Title, MergeState: r.MergeStateStatus})
+	}
+	return prs, nil
 }
 
 // Checks reads a commit's check runs and buckets them.

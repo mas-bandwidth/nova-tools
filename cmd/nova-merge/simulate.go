@@ -228,7 +228,7 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		}
 		poisonCheck := ""
 		for _, check := range checks {
-			out, err := runCheck(scratch, check, timeout)
+			out, err := runCheck(scratch, check, timeout, nil)
 			if err != nil {
 				poisonCheck = check
 				fmt.Fprintf(stdout, "SIMULATE POISON #%d check=%q %s\n",
@@ -362,10 +362,15 @@ func firstLine(out string, err error) string {
 // runCheck runs one check in the scratch worktree under its own deadline. The child is
 // its own process group so that a check which spawns children is killed whole when
 // --timeout expires; a deadline that kills only the shell leaves the tree running.
-func runCheck(dir, check string, timeout time.Duration) (string, error) {
+//
+// A nil env is this process's own, which is what `simulate` hands it; `batch` hands it an
+// environment whose temp directory is the batch's own, so that two gates running on one
+// bench cannot write over each other's scratch.
+func runCheck(dir, check string, timeout time.Duration, env []string) (string, error) {
 	name, args := shellCommand(check)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	cmd.Env = env
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

@@ -59,7 +59,7 @@ func TestQueueHoldRefusesTheSweepAndItsFirstLineIsTheReason(t *testing.T) {
 	if first != "the base is frozen" {
 		t.Fatalf("the hold file's first line is the reason, got %q", first)
 	}
-	l.host.Open = []merge.PR{{Number: 11, Author: "pat", Base: "main", HeadRef: "f11",
+	l.host.OpenQueue = []merge.PR{{Number: 11, Author: "pat", Base: "main", HeadRef: "f11",
 		HeadOID: strings.Repeat("a", 40), Mergeable: "MERGEABLE"}}
 	l.host.SetChecks(strings.Repeat("a", 40), 3, 0)
 	exit, stdout, stderr = l.run("queue", "--lane", l.lane, "sweep", "--window", "1h")
@@ -99,7 +99,7 @@ func TestQueueSkipThenUnskip(t *testing.T) {
 		t.Fatalf("after unskip 13, queued=%v skipped=%v", q.Queued, q.Skipped)
 	}
 	// A sweep with 12 green does not enqueue it: it is skipped.
-	l.host.Open = []merge.PR{{Number: 12, Author: "pat", Base: "main", HeadRef: "f12",
+	l.host.OpenQueue = []merge.PR{{Number: 12, Author: "pat", Base: "main", HeadRef: "f12",
 		HeadOID: strings.Repeat("b", 40), Mergeable: "MERGEABLE"}}
 	l.host.SetChecks(strings.Repeat("b", 40), 3, 0)
 	if exit, stdout, stderr := l.run("queue", "--lane", l.lane, "sweep", "--window", "1h"); exit != 0 {
@@ -185,7 +185,7 @@ func TestQueueSweepCountsEachBucketAndEnqueuesOnlyGreen(t *testing.T) {
 	staleOld := strings.Repeat("9", 40)
 	currentRed := strings.Repeat("3", 40)
 	dirty := strings.Repeat("4", 40)
-	l.host.Open = []merge.PR{
+	l.host.OpenQueue = []merge.PR{
 		{Number: 1, Base: "main", HeadRef: "f1", HeadOID: green, Mergeable: "MERGEABLE"},
 		{Number: 2, Base: "main", HeadRef: "f2", HeadOID: staleHead, Mergeable: "MERGEABLE"},
 		{Number: 3, Base: "main", HeadRef: "f3", HeadOID: currentRed, Mergeable: "MERGEABLE"},
@@ -247,7 +247,7 @@ func TestQueueSweepStaleRedBound(t *testing.T) {
 			}
 			head := strings.Repeat("d", 40)
 			old := strings.Repeat("e", 40)
-			l.host.Open = []merge.PR{{Number: 99, Base: "main", HeadRef: "f99", HeadOID: head, Mergeable: "MERGEABLE"}}
+			l.host.OpenQueue = []merge.PR{{Number: 99, Base: "main", HeadRef: "f99", HeadOID: head, Mergeable: "MERGEABLE"}}
 			l.host.SetCheckRuns(head, merge.CheckDetail{Name: "old-ci", Conclusion: "failure", SHA: old})
 			if exit, stdout, stderr := l.run("queue", "--lane", l.lane, "sweep", "--window", "1h"); exit != 0 {
 				t.Fatalf("sweep: exit %d\n%s\n%s", exit, stdout, stderr)
@@ -266,7 +266,7 @@ func TestQueuePoisonDetectorParksOnOwnChangeOnly(t *testing.T) {
 	l := newLab(t)
 	l.init("main")
 	head := strings.Repeat("f", 40)
-	l.host.Open = []merge.PR{{Number: 21, Base: "main", HeadRef: "f21", HeadOID: head, Mergeable: "MERGEABLE"}}
+	l.host.OpenQueue = []merge.PR{{Number: 21, Base: "main", HeadRef: "f21", HeadOID: head, Mergeable: "MERGEABLE"}}
 	l.host.SetCheckRuns(head, merge.CheckDetail{Name: "TestFlaky", Conclusion: "failure", SHA: head})
 	l.host.Failures = map[int][]merge.Failure{
 		21: {{Test: "TestFlaky", Package: "pkg/x", Count: 2}},
@@ -277,7 +277,7 @@ func TestQueuePoisonDetectorParksOnOwnChangeOnly(t *testing.T) {
 		t.Fatalf("add: %s", errb)
 	}
 	// flaky-under-load does not arm the detector.
-	if exit, stdout, stderr := l.run("classify", "--lane", l.lane, "--run", "run-1", "--head", head,
+	if exit, stdout, stderr := l.run("queue", "classify", "--lane", l.lane, "--run", "run-1", "--head", head,
 		"--verdict", "flaky-under-load"); exit != 0 {
 		t.Fatalf("classify: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -288,7 +288,7 @@ func TestQueuePoisonDetectorParksOnOwnChangeOnly(t *testing.T) {
 	}
 	// own-change arms it: the sweep parks, names the test and the issue.
 	l.now = l.now.Add(2 * 1e9) // +2s
-	if exit, stdout, stderr := l.run("classify", "--lane", l.lane, "--run", "run-1", "--head", head,
+	if exit, stdout, stderr := l.run("queue", "classify", "--lane", l.lane, "--run", "run-1", "--head", head,
 		"--verdict", "own-change"); exit != 0 {
 		t.Fatalf("classify: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -312,7 +312,7 @@ func TestQueuePoisonDetectorParksOnOwnChangeOnly(t *testing.T) {
 	}
 }
 
-// 7. classify --run against a fake remote: one immutable record, CLASSIFY OK pushed=true,
+// 7. queue classify --run against a fake remote: one immutable record, CLASSIFY OK pushed=true,
 // a second classification for the same run is a second file with the newest at winning,
 // and an unknown --verdict is exit 2 naming the three classes.
 func TestQueueClassifyRecordsAndRefusesUnknownVerdict(t *testing.T) {
@@ -320,7 +320,7 @@ func TestQueueClassifyRecordsAndRefusesUnknownVerdict(t *testing.T) {
 	l := newLab(t)
 	l.init("main")
 	head := strings.Repeat("c", 40)
-	if exit, stdout, stderr := l.run("classify", "--lane", l.lane, "--run", "run-9", "--head", head,
+	if exit, stdout, stderr := l.run("queue", "classify", "--lane", l.lane, "--run", "run-9", "--head", head,
 		"--verdict", "environment"); exit != 0 {
 		t.Fatalf("classify: exit %d\n%s\n%s", exit, stdout, stderr)
 	} else {
@@ -333,7 +333,7 @@ func TestQueueClassifyRecordsAndRefusesUnknownVerdict(t *testing.T) {
 		t.Fatalf("one immutable record, got %v (%v)", first, err)
 	}
 	l.now = l.now.Add(3 * 1e9)
-	if exit, _, errb := l.run("classify", "--lane", l.lane, "--run", "run-9", "--head", head,
+	if exit, _, errb := l.run("queue", "classify", "--lane", l.lane, "--run", "run-9", "--head", head,
 		"--verdict", "own-change"); exit != 0 {
 		t.Fatalf("classify: %s", errb)
 	}
@@ -348,7 +348,7 @@ func TestQueueClassifyRecordsAndRefusesUnknownVerdict(t *testing.T) {
 	if got := recs["run-9"].Verdict; got != "own-change" {
 		t.Errorf("the newest at for a run wins, got %q", got)
 	}
-	exit, _, stderr := l.run("classify", "--lane", l.lane, "--run", "run-9", "--head", head,
+	exit, _, stderr := l.run("queue", "classify", "--lane", l.lane, "--run", "run-9", "--head", head,
 		"--verdict", "banana")
 	if exit != 2 {
 		t.Fatalf("an unknown verdict is exit 2, got %d", exit)
@@ -376,7 +376,7 @@ func TestQueueRefusalsCarryOneRemedyLine(t *testing.T) {
 		{"skip no pr", []string{"queue", "--lane", l.lane, "skip"}, "nova-merge queue skip <pr>..."},
 		{"front missing", []string{"queue", "--lane", l.lane, "front", "404"}, "nova-merge add --lane " + l.lane + " --pr 404"},
 		{"sweep no window", []string{"queue", "--lane", l.lane, "sweep"}, "--window <duration>"},
-		{"classify no run", []string{"classify", "--lane", l.lane, "--verdict", "own-change"}, "--run"},
+		{"classify no run", []string{"queue", "classify", "--lane", l.lane, "--verdict", "own-change"}, "--run"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -397,11 +397,14 @@ func TestQueueRefusalsCarryOneRemedyLine(t *testing.T) {
 // 9. Two concurrent hold/skip writers: every write lands and queue.json parses at every
 // read. The sweep window is measured by the fake clock, never the wall clock.
 //
-// NOT parallel: the injected lock clock is process-wide, so a parallel test that waits out
-// a deadline would move the clock under this test's writers and turn a wait of a few
-// injected microseconds into a refusal after the whole --timeout. Running alone, the only
-// clock advances are this test's own writers, and every write can land.
+// NOT parallel, and on the MACHINE's clock: the injected lock clock is process-wide and
+// every waiter's poll advances it, so this test's own three waiting writers move the
+// deadline past themselves and are refused before the holder has finished its write. That
+// was green on CI and red on the Studio the runners share, which is a test asserting the
+// machine. realLockClock puts the real clock back for this test alone, and running alone
+// is what makes that safe.
 func TestQueueWritesAreWholeUnderConcurrentWriters(t *testing.T) {
+	realLockClock(t)
 	l := newLab(t)
 	l.init("main")
 	for n := 1; n <= 8; n++ {

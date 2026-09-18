@@ -13,8 +13,8 @@ import (
 )
 
 // The merge queue (docs/SPEC-MERGE.md, "The merge queue (#1142), 2026-09-17"): one queue,
-// one hold file, one order. `queue` is the mechanical hand that keeps the lane's order;
-// `classify` records one typed decision behind the merge group's floor.
+// one hold file, one order. `queue` is the mechanical hand that keeps the lane's order,
+// and `queue classify` records one typed decision behind the merge group's floor.
 
 // scanQueueArgs reads key=value and key value flags anywhere on the line, so a subverb's
 // positional argument may sit between them. Everything that is not a known flag is
@@ -64,6 +64,13 @@ func hasInt(list []int, n int) bool {
 }
 
 func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
+	// `classify` is the one subverb with a flag set of its own (--run, --verdict, --head,
+	// --note, --pr, --branch, --test), so it is taken off the line before the queue's own
+	// flags are scanned -- scanQueueArgs refuses a flag it does not know, and those are
+	// the subverb's, not the queue's.
+	if len(args) > 0 && args[0] == "classify" {
+		return cmdQueueClassify(args[1:], stdout, stderr, deps)
+	}
 	known := map[string]bool{"lane": true, "timeout": true, "max": true, "who": true, "window": true}
 	opts, pos, err := scanQueueArgs(args, known)
 	if err != nil {
@@ -86,8 +93,8 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 		timeout = time.Duration(n) * time.Second
 	}
 	if len(pos) == 0 {
-		return queueRefuse(stderr, "queue wants one of hold, release, skip, unskip, front, sweep: "+
-			`nova-merge queue --lane <dir> hold "<reason>" | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration>`)
+		return queueRefuse(stderr, "queue wants one of hold, release, skip, unskip, front, sweep, classify: "+
+			`nova-merge queue --lane <dir> hold "<reason>" | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration> | classify --run <id> --verdict <verdict>`)
 	}
 	sub, rest := pos[0], pos[1:]
 	switch sub {
@@ -220,7 +227,7 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	case "sweep":
 		return cmdQueueSweep(lane, opts, st, timeout, stdout, stderr, deps)
 	}
-	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep", sub))
+	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep, classify", sub))
 }
 
 func parsePRs(args []string) ([]int, error) {
@@ -235,9 +242,12 @@ func parsePRs(args []string) ([]int, error) {
 	return out, nil
 }
 
-// queueHost is the sweep's seam to the forge's listing.
+// queueHost is the sweep's seam to the forge's listing. The method is QueuePRs and not
+// OpenPRs because a host also answers the rebase cutter's list, whose rows are the four
+// fields of a merge.RebasePR; the sweep reads a whole merge.PR -- head oid, mergeable
+// state, when the host last saw it move -- and one method cannot answer both shapes.
 type queueHost interface {
-	OpenPRs() ([]merge.PR, error)
+	QueuePRs() ([]merge.PR, error)
 }
 
 // poisonHost is the poison detector's seam: the failing tests, the changed packages and
@@ -267,7 +277,7 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 	if !ok {
 		return queueRefuse(stderr, "this host cannot list open pull requests, and a sweep walks them: no host, no sweep")
 	}
-	prs, err := lister.OpenPRs()
+	prs, err := lister.QueuePRs()
 	if err != nil {
 		return queueRefuse(stderr, oneline.Err(err))
 	}
@@ -398,8 +408,11 @@ func poison(ph poisonHost, recs map[string]merge.ClassRecord, pr merge.PR) (merg
 	return merge.Park{}, "", false
 }
 
-// cmdClassify records one typed decision behind the merge group's floor.
-func cmdClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
+// cmdQueueClassify records one typed decision somebody already reached about a run, as
+// one immutable record the queue sweep reads. It is `nova-merge queue classify` and not
+// the top-level `classify` (classify_run.go), which ASKS a provider for a decision about
+// a failed merge-group run and records nothing: two different asks, so two verbs.
+func cmdQueueClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
 	known := map[string]bool{"lane": true, "timeout": true, "run": true, "head": true,
 		"verdict": true, "note": true, "pr": true, "branch": true, "test": true, "who": true}
 	opts, _, err := scanQueueArgs(args, known)
