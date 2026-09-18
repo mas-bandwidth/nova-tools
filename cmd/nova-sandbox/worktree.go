@@ -87,12 +87,19 @@ var (
 	worktreeInUse = inUseByAProcess
 )
 
-// The two sentinel failures the forge seam can report, which the verb turns
-// into reason=no_pr and reason=no_forge.
+// The three sentinel failures the forge seam can report, which the verb turns
+// into reason=no_pr, reason=no_forge and reason=bad_origin. errBadOrigin is bad
+// input rather than an outage: nothing was asked of the forge at all.
 var (
-	errNoPR    = errors.New("the forge does not know this pull request")
-	errNoForge = errors.New("the forge could not be reached")
+	errNoPR      = errors.New("the forge does not know this pull request")
+	errNoForge   = errors.New("the forge could not be reached")
+	errBadOrigin = errors.New("--repo wants an origin remote whose path names <owner>/<name>")
 )
+
+// badOrigin names the origin remote no owner and name could be read out of.
+func badOrigin(url string) error {
+	return fmt.Errorf("%w, and origin reads %q", errBadOrigin, url)
+}
 
 // worktreeFlags is the worktree verb's own argv.
 type worktreeFlags struct {
@@ -164,7 +171,7 @@ func worktreeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		return refuse("bad_pr", "--pr wants one pull-request number and one mode")
 	}
 	if !isGitWorkTree(f.repo) {
-		return refuse("bad_repo", "--repo wants an existing repository")
+		return refuse("bad_repo", "--repo wants an existing repository named by an absolute path")
 	}
 	if !isDir(f.scratch) {
 		return refuse("bad_scratch", "--scratch wants an existing directory and is not created")
@@ -247,12 +254,17 @@ func forgeHead(forge worktreeForge, id int) (head, base string, err error) {
 	return strings.TrimSpace(pr.Head), strings.TrimSpace(pr.Base), nil
 }
 
+// worktreeForgeRefuse tells the forge's own failures from the input the forge was
+// never asked about: only a forge that did not answer is told to retry.
 func worktreeForgeRefuse(stderr io.Writer, err error) int {
-	reason, detail := "no_forge", "the forge could not be reached"
-	if errors.Is(err, errNoPR) {
+	reason, detail, remedy := "no_forge", "the forge could not be reached", worktreeRetryRemedy
+	switch {
+	case errors.Is(err, errNoPR):
 		reason, detail = "no_pr", "the forge does not know this pull request"
+	case errors.Is(err, errBadOrigin):
+		reason, detail, remedy = "bad_origin", err.Error(), worktreeRemedy
 	}
-	fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(detail), worktreeRetryRemedy)
+	fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(detail), remedy)
 	return sandbox.ExitCannotRun
 }
 
@@ -476,11 +488,11 @@ type ghForge struct {
 func (g ghForge) PR(id int) (worktreePR, error) {
 	url, err := worktreeGit(g.repo, "remote", "get-url", "origin")
 	if err != nil {
-		return worktreePR{}, errNoForge
+		return worktreePR{}, badOrigin("")
 	}
 	ownerRepo := parseOwnerRepo(strings.TrimSpace(url))
 	if ownerRepo == "" {
-		return worktreePR{}, errNoForge
+		return worktreePR{}, badOrigin(strings.TrimSpace(url))
 	}
 	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(id), "--repo", ownerRepo,
 		"--json", "headRefOid,baseRefName,state")
@@ -500,20 +512,23 @@ func (g ghForge) PR(id int) (worktreePR, error) {
 	return worktreePR{Head: v.HeadRefOid, Base: v.BaseRefName, State: strings.ToLower(v.State)}, nil
 }
 
-// parseOwnerRepo reads owner/repo out of the two shapes git stores a GitHub
-// remote in.
+// parseOwnerRepo reads owner/name out of the path of every shape git stores a
+// remote in: a scheme's URL, the scp-like git@host:owner/name, and owner/name
+// alone. The host is read by nobody here, because an ssh Host alias from
+// ~/.ssh/config stands where the forge's own name would and `gh` is the one that
+// resolves the forge. Empty is the answer for a remote whose path names no owner
+// and name, which the caller reports as bad input.
 func parseOwnerRepo(url string) string {
-	url = strings.TrimSuffix(strings.TrimSpace(url), ".git")
-	for _, sep := range []string{"github.com/", "github.com:"} {
-		if i := strings.Index(url, sep); i >= 0 {
-			parts := strings.Split(url[i+len(sep):], "/")
-			if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-				return parts[0] + "/" + parts[1]
-			}
-		}
+	path := strings.TrimSuffix(strings.TrimSpace(url), ".git")
+	if scheme, rest, ok := strings.Cut(path, "://"); ok && scheme != "" {
+		// Everything to the first slash is [user@]host[:port].
+		_, path, _ = strings.Cut(rest, "/")
+	} else if _, rest, ok := strings.Cut(path, ":"); ok {
+		path = rest
 	}
-	if strings.Count(url, "/") == 1 {
-		return url
+	parts := strings.Split(path, "/")
+	if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0] + "/" + parts[1]
 	}
 	return ""
 }

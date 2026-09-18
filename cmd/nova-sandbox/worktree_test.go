@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,7 +125,13 @@ func useFakeGit(t *testing.T, g *fakeGit) {
 	t.Cleanup(func() { worktreeGit = old })
 }
 
-func useFakeForge(t *testing.T, f *fakeForge) {
+// errForge is the forge seam for the failure tests: every call answers one
+// error.
+type errForge struct{ err error }
+
+func (f errForge) PR(int) (worktreePR, error) { return worktreePR{}, f.err }
+
+func useForge(t *testing.T, f worktreeForge) {
 	t.Helper()
 	old := worktreeForgeFactory
 	worktreeForgeFactory = func(repo string, env []string) worktreeForge { return f }
@@ -203,7 +210,7 @@ func TestWorktreeMaterialisesThePRHead(t *testing.T) {
 	g := newFakeGit(j.repo)
 	useFakeGit(t, g)
 	sha := strings.Repeat("a", 40)
-	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
+	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
 	if code != 0 {
@@ -225,7 +232,7 @@ func TestWorktreeSecondCallReusesTheTree(t *testing.T) {
 	g := newFakeGit(j.repo)
 	useFakeGit(t, g)
 	sha := strings.Repeat("b", 40)
-	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
+	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
 
 	code, first, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
 	if code != 0 {
@@ -251,7 +258,7 @@ func TestWorktreeDeletedTreeIsRebuilt(t *testing.T) {
 	g := newFakeGit(j.repo)
 	useFakeGit(t, g)
 	sha := strings.Repeat("c", 40)
-	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
+	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
 
 	path := createTree(t, j, sha, "7")
 	if err := os.RemoveAll(path); err != nil {
@@ -285,7 +292,7 @@ func TestWorktreePruneRemovesMergedAndClosedAndKeepsOpen(t *testing.T) {
 	for _, id := range []int{1, 2, 3} {
 		ff.byID[id] = worktreePR{Head: sha, Base: "main", State: "open"}
 	}
-	useFakeForge(t, ff)
+	useForge(t, ff)
 
 	paths := map[int]string{}
 	for _, id := range []int{1, 2, 3} {
@@ -329,7 +336,7 @@ func TestWorktreePruneStaleUsesTheClockAndTheProbe(t *testing.T) {
 	for _, id := range []int{1, 2, 3} {
 		ff.byID[id] = worktreePR{Head: sha, Base: "main", State: "open"}
 	}
-	useFakeForge(t, ff)
+	useForge(t, ff)
 
 	paths := map[int]string{}
 	for _, id := range []int{1, 2, 3} {
@@ -390,7 +397,7 @@ func TestWorktreePruneLeavesTheHandMadeWorktree(t *testing.T) {
 	}
 	g.trees[hand] = strings.Repeat("f", 40)
 	useFakeGit(t, g)
-	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{}})
+	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
 	if code != 1 {
@@ -412,7 +419,7 @@ func TestWorktreeRefusals(t *testing.T) {
 	j := newWJob(t)
 	g := newFakeGit(j.repo)
 	useFakeGit(t, g)
-	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{}})
+	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
 	absent := filepath.Join(j.base, "absent")
 	remedy := "run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id>"
 
@@ -420,14 +427,16 @@ func TestWorktreeRefusals(t *testing.T) {
 		name   string
 		args   []string
 		reason string
+		says   string
 	}{
-		{"no repo", []string{"--scratch", j.scratch, "--pr", "1"}, "bad_repo"},
-		{"no scratch", []string{"--repo", j.repo, "--pr", "1"}, "bad_scratch"},
-		{"not a repo", []string{"--repo", filepath.Join(j.base, "not-a-repo"), "--scratch", j.scratch, "--pr", "1"}, "bad_repo"},
-		{"absent scratch", []string{"--repo", j.repo, "--scratch", absent, "--pr", "1"}, "bad_scratch"},
-		{"pr zero", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "0"}, "bad_pr"},
-		{"pr abc", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "abc"}, "bad_pr"},
-		{"pr with prune", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "1", "--prune"}, "bad_pr"},
+		{"no repo", []string{"--scratch", j.scratch, "--pr", "1"}, "bad_repo", ""},
+		{"no scratch", []string{"--repo", j.repo, "--pr", "1"}, "bad_scratch", ""},
+		{"not a repo", []string{"--repo", filepath.Join(j.base, "not-a-repo"), "--scratch", j.scratch, "--pr", "1"}, "bad_repo", ""},
+		{"relative repo", []string{"--repo", ".", "--scratch", j.scratch, "--pr", "1"}, "bad_repo", "--repo wants an existing repository named by an absolute path"},
+		{"absent scratch", []string{"--repo", j.repo, "--scratch", absent, "--pr", "1"}, "bad_scratch", ""},
+		{"pr zero", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "0"}, "bad_pr", ""},
+		{"pr abc", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "abc"}, "bad_pr", ""},
+		{"pr with prune", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "1", "--prune"}, "bad_pr", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -440,6 +449,9 @@ func TestWorktreeRefusals(t *testing.T) {
 			}
 			if !strings.Contains(errb, "WORKTREE REFUSED reason="+c.reason+":") {
 				t.Fatalf("stderr %q does not refuse reason=%s", errb, c.reason)
+			}
+			if c.says != "" && !strings.Contains(errb, c.says) {
+				t.Fatalf("stderr %q does not say %q", errb, c.says)
 			}
 			if !strings.Contains(errb, remedy) {
 				t.Fatalf("stderr %q carries no remedy line %q", errb, remedy)
@@ -458,7 +470,7 @@ func TestWorktreeNeverPrintsTheToken(t *testing.T) {
 	g := newFakeGit(j.repo)
 	useFakeGit(t, g)
 	sha := strings.Repeat("0", 40)
-	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{5: {Head: sha, Base: "main", State: "open"}}})
+	useForge(t, &fakeForge{byID: map[int]worktreePR{5: {Head: sha, Base: "main", State: "open"}}})
 	const token = "sekret-forge-token-do-not-print"
 
 	code, out, errb := j.tool(t, []string{"GH_TOKEN=" + token}, "--repo", j.repo, "--scratch", j.scratch, "--pr", "5")
@@ -467,5 +479,119 @@ func TestWorktreeNeverPrintsTheToken(t *testing.T) {
 	}
 	if strings.Contains(out+errb, token) {
 		t.Fatalf("the token leaked into the verb's output: %q", out+errb)
+	}
+}
+
+// 9. The owner and name the forge client names come out of the origin remote's
+// path in every shape git stores a remote in, an ssh Host alias standing where
+// the forge's own name would included, and a remote whose path names no
+// owner/name yields nothing at all.
+func TestWorktreeParseOwnerRepo(t *testing.T) {
+	cases := []struct{ name, url, want string }{
+		{"https with .git", "https://example.com/o/n.git", "o/n"},
+		{"https without .git", "https://example.com/o/n", "o/n"},
+		{"scp-like", "git@example.com:o/n.git", "o/n"},
+		{"ssh url", "ssh://git@example.com/o/n.git", "o/n"},
+		{"ssh url with a port", "ssh://git@example.com:22/o/n.git", "o/n"},
+		{"ssh host alias", "git@forge-alias:o/n.git", "o/n"},
+		{"owner and name alone", "o/n", "o/n"},
+		{"alias with no path", "git@forge-alias:", ""},
+		{"host with no path", "https://example.com/", ""},
+		{"one path word", "https://example.com/n.git", ""},
+		{"nothing", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseOwnerRepo(c.url); got != c.want {
+				t.Fatalf("parseOwnerRepo(%q) = %q, want %q", c.url, got, c.want)
+			}
+		})
+	}
+}
+
+// 10. An origin remote the forge client can read no owner/name out of, and a
+// repository with no origin remote at all, are errBadOrigin and not a forge that
+// could not be reached, and the error names the origin it read.
+func TestGhForgeBadOriginIsNotAnOutage(t *testing.T) {
+	cases := []struct {
+		name string
+		git  gitRunner
+		says string
+	}{
+		{"origin names no owner/name", func(string, ...string) (string, error) {
+			return "git@forge-alias:\n", nil
+		}, "git@forge-alias:"},
+		{"no origin remote", func(string, ...string) (string, error) {
+			return "", fmt.Errorf("fatal: no such remote 'origin'")
+		}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			old := worktreeGit
+			worktreeGit = c.git
+			t.Cleanup(func() { worktreeGit = old })
+
+			_, err := ghForge{repo: t.TempDir()}.PR(7)
+			if !errors.Is(err, errBadOrigin) {
+				t.Fatalf("PR error %v, want errBadOrigin", err)
+			}
+			if errors.Is(err, errNoForge) {
+				t.Fatalf("PR error %v reads as a forge that could not be reached", err)
+			}
+			if c.says != "" && !strings.Contains(err.Error(), c.says) {
+				t.Fatalf("PR error %v does not name the origin it read (%q)", err, c.says)
+			}
+		})
+	}
+}
+
+// 11. The forge seam's three failures each refuse in their own words: an origin
+// with no owner/name says what it wants and what it read and carries the plain
+// remedy, while the two that are the forge's own carry the retry line.
+func TestWorktreeForgeRefusalsSayWhichFailureItWas(t *testing.T) {
+	j := newWJob(t)
+	remedy := "run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id>"
+	retry := "retry once the forge answers"
+
+	cases := []struct {
+		name   string
+		err    error
+		reason string
+		says   []string
+		wants  string
+	}{
+		{"unknown pr", errNoPR, "no_pr", []string{"the forge does not know this pull request"}, retry},
+		{"forge unreachable", errNoForge, "no_forge", []string{"the forge could not be reached"}, retry},
+		{"origin with no owner/name", badOrigin("git@forge-alias:"), "bad_origin",
+			[]string{"--repo wants an origin remote", "git@forge-alias:"}, remedy},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := newFakeGit(j.repo)
+			useFakeGit(t, g)
+			useForge(t, errForge{err: c.err})
+
+			code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "9")
+			if code != 2 {
+				t.Fatalf("exit %d, want 2; stderr %q", code, errb)
+			}
+			if out != "" {
+				t.Fatalf("a refusal wrote to stdout: %q", out)
+			}
+			if !strings.Contains(errb, "WORKTREE REFUSED reason="+c.reason+":") {
+				t.Fatalf("stderr %q does not refuse reason=%s", errb, c.reason)
+			}
+			for _, says := range c.says {
+				if !strings.Contains(errb, says) {
+					t.Fatalf("stderr %q does not say %q", errb, says)
+				}
+			}
+			if !strings.Contains(errb, c.wants) {
+				t.Fatalf("stderr %q carries no %q", errb, c.wants)
+			}
+			if c.wants == remedy && strings.Contains(errb, retry) {
+				t.Fatalf("stderr %q tells the reader to retry a bad origin", errb)
+			}
+		})
 	}
 }
