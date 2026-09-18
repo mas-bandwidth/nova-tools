@@ -41,6 +41,17 @@ var workAudit = audit.Config{
 		// request line, and writes nothing to stdout or stderr, so every byte a caller
 		// reads is still printed by an escaped site in this package.
 		`"github.com/mas-bandwidth/nova-tools/internal/workclient"`,
+		// friends is the ask: it renders one note from a work set's unit, carries it
+		// through nova-bus's own send path behind the Sender seam, and records the ask
+		// back on the unit. It writes nothing to stdout or stderr, so every byte a
+		// caller reads is still printed by an escaped site in this package.
+		`"github.com/mas-bandwidth/nova-tools/internal/friends"`,
+		// errors names ONE sentinel, errSendRefused, so a test can hand it to a fake
+		// sender and watch nothing be recorded; it prints nothing.
+		`"errors"`,
+		// time parses --deadline and --now and formats the stamps ask and asks print;
+		// every one of those goes out through an oneline field.
+		`"time"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
