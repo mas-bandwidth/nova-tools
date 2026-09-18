@@ -2650,6 +2650,8 @@ INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddr
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
+INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
+INBOX WALK bounded commits=<n> remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
 WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->
 WAIT NOTE <why this wait is not waiting>
 WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
@@ -2673,6 +2675,35 @@ NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
+
+**The two streams, and why the split is a contract.** `stdout` is the PROTOCOL
+stream: every line a listing verb writes on it begins with one of the documented
+prefixes above, and consumers parse it line by line. `stderr` carries refusals,
+failures and **progress** — what the program is doing while it is doing it —
+and nothing on it is protocol.
+
+Glenn's rule has two halves, and until 2026-09-18 only the first was written
+down: *a program that takes longer than 0.1 s says what it is doing, on stderr,
+AND a progress line never enters a protocol stream a consumer parses.* The
+since-walk's `INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` obeyed the
+first half and was still read as protocol: `nova-wake` reads this program's two
+streams together, so that an `INBOX REFUSED` is never lost, and its classifier's
+default case *prints*. The progress line was relayed to a window as
+`WAKE BUS LINE INBOX WALK …`, counted as a change in the world, and ended a poll
+before the mail the watcher was waiting for came down. The same line had broken
+this program's own continuation tests hours earlier.
+
+So **`INBOX WALK` is a progress prefix, it appears on `stderr` only, and it
+appears on `stdout` never** — on any verb. The prefixes are a registry,
+`internal/bus.ProgressPrefixes`, that both the program and every consumer read:
+the program's own test refuses a progress prefix on stdout and holds every other
+stdout line to the grammar above, and a consumer drops a progress line before it
+classifies anything. A new progress line is then one entry in one registry and is
+safe in every consumer at once. The framed payloads are the documented exception
+to "every stdout line is a prefixed line": the bytes between
+`SEND DRAFT id=<id>` and `SEND DRAFT END`, and between
+`INBOX BODY id=<id> bytes=<n>` and `INBOX BODY END`, are a person's prose. The
+frame is protocol; what it carries is not.
 
 `draft` prints a **skeleton and nothing else** on stdout -- no `OK` line under it --
 because its stdout is a FILE: `nova-bus draft ... > draft.md` has to produce a
