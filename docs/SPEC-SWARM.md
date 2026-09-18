@@ -642,7 +642,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -2217,6 +2217,119 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 ```
 
+## The `capacity` offer-and-routing form (issue #176)
+
+Printed by `nova-swarm template --name capacity` and refused by `add --template`,
+as `result` and `setup` are: it is a form a friend and a coordinator fill
+together, not a task's conditions. It is the near-term endpoint of the
+discover-offered-capacity-and-match-ready-work coordination issue #176 asks
+for — manual census and routing log, with the four rows acceptance evidence
+demands before any automatic scheduler is built, and the five capacity kinds
+(coordinator, direct worker, one-shot, swarm and local) kept apart because
+model slots are not interchangeable throughput units. It publishes the offer
+half and the routing-log half with placeholder values only; every named
+field is a thing only the friend or the coordinator knows, and a friend's
+own choices fill their own copy. The offer has an expiry; past the expiry
+it is excluded, not favoured and not penalised. missing contact is unknown;
+stale capacity is not proof of failure and not proof of consent; an offer
+nobody answered since the silent-ping window is reported as `reason=unconfirmed`,
+and an expired offer is reported as `reason=expired`. Two offers sharing a
+named shared-limit pool are counted once per pool in the routing log, and
+utilisation is reported only against the explicit pool-specific denominator
+the routing log names — coordinator, direct worker, one-shot, swarm and local
+each carry their own, never summed. no key, no token, and no private host
+detail is ever published, names/models/harnesses/benches stay placeholders,
+and an agreed offer supplies no account access. A friend may propose an
+alternative, decline, or stay silent, and missing feedback is pending, never
+consent; an automatic scheduler is separate staged work with its own
+authorization.
+
+```
+capacity — one friend's offered capacity and the manual routing log (#176)
+
+One offer per friend, bounded and expiring, published before any automatic
+scheduler is built, because an idle pool receiving ready work, an incompatible
+offer being skipped, shared capacity counted once, and a stale offer excluded
+are four separate things a coordinator has to do by hand first, in a form a
+friend fills and a coordinator reads. Print the offer half, fill it with the
+friend whose capacity is being advertised, and paste the FILLED offer where the
+review happened; the private configuration it stands for stays on the friend's
+own bench. Print the routing log half, fill it with the ready work and the
+offers considered, and record the matching decision in writing so the next
+review can compare the count against the offers' own quotas. Names, instances,
+benches, models, harnesses and pool layouts are not constants of this form:
+every value below is a placeholder, and a friend's own choices fill their own
+copy. A friend may propose an alternative, decline, or stay silent, and missing
+feedback is pending, never consent. A filled form supplies no account access,
+and an automatic scheduler is separate staged work with its own authorization.
+A form carries one capacity kind at a time from the five the SPEC-WORK friend
+section distinguishes — coordinator, direct worker, one-shot, swarm and local —
+because model slots are not interchangeable throughput units and a swarm
+worker, a one-shot, and a local model run on different evidence and different
+shared-limit pools.
+
+## The offer (the friend's own half)
+
+offered by: <who wrote this offer, and where the review is recorded>
+reviewed with: <the friend and a coordinator, or pending>
+expires: <the stamp this offer stops being an offer, never blank>
+
+friend: <name>
+instance: <the worker home or container this friend runs under>
+bench: <the machine or hosted runner this friend works on>
+model identity: <the provider's id and the resolved model id>
+basis: <the per-token cost class — zero|flat|metered — and its pricing reference, or local>
+harness: <the harness this friend chose, and its version>
+supported task types: <read, text, code, replay; one or more, a comma list>
+demonstrated strengths: <what the friend has been shown to do well, never an inferred claim>
+demonstrated limits: <what the friend has been shown unable to do, never an inferred claim>
+permitted scope: <the repositories and paths this offer may read and write>
+current availability: <awake | resting | credit-limited | rate-limited | unknown — never idle because a recent message did not arrive>
+concurrency: <the maximum parallel slots this offer reserves>
+expected queue/latency: <the queue depth and the latency a scheduler can expect, bounded>
+shared-limit pools: <the named pools whose quota this offer shares, or `[]` for none>
+
+## The routing log (the coordinator's half)
+
+ready work: <the dependency-ready task list being matched this cycle>
+compatible offers: <the offers whose supported task types and permitted scope admit the ready work>
+incompatible offers: <the offers skipped this cycle, with one reason each — wrong task type, scope mismatch, basis mismatch, capacity kind, anything but a name>
+shared pool share: <the share of the named shared-limit pools, counted ONCE per pool across all offers naming it>
+stale offers excluded: <the offers whose expires stamp has passed or whose contact stamp is past the silent-ping window, named and never counted>
+utilization denominator: <the explicit pool-specific denominator this cycle's utilization would be reported against — a coordinator, direct worker, one-shot, swarm and local each have their own>
+
+## The four rows acceptance evidence demands (one row each, when they occurred this cycle)
+
+| observed | row to write |
+| --- | --- |
+| an idle compatible pool receiving ready work | offer=<name> task=<id> routed=true admit-gate=<gates that passed> |
+| an incompatible offer being skipped | offer=<name> task=<id> reason=<what rules it out> |
+| shared capacity counted once | pooled-as=<pool> reservations=<n> offers-with-that-pool=<n> shared-share=<n> |
+| a stale offer excluded | offer=<name> expires=<stamp> contact=<stamp or NONE> reason=<expired or unconfirmed> |
+
+missing contact is unknown; **stale capacity is not proof of failure and not proof of consent**, so an offer nobody answered since the silent-ping
+window is excluded, not favoured and not penalised, and reported as
+`reason=unconfirmed` alongside any expired offer reported as
+`reason=expired`. Each capacity kind from the SPEC-WORK friend section
+gets its own row when the offer names it — **coordinator capacity** is its
+own row, **direct worker capacity** is its own row, **one-shot capacity** is
+its own row, **swarm capacity** is its own row, and **local capacity** is its
+own row — because model slots are not interchangeable throughput units, and
+sharing a quota across those kinds is the double-count the form exists to
+prevent.
+
+## What is never in this form
+
+no key, no token, and no private host detail is ever written here, a task
+card, a bus note, an issue or a token ledger: a name or a path is not a
+secret, but a value is, and this form carries values for nobody. A shared
+account limit is named by its pool, never by the credential that holds it.
+An offered capacity is not a purchase, a permission, or a promise to run;
+it is the standing under which a coordinator may propose ready work, and a
+friend chooses offers, reserves, and rest, not a scheduler that maximises
+occupation beyond that offer.
+```
+
 ## `triage` — one page
 
 `triage` walks the job directories, takes every `RESULT.md` **whose revision
@@ -2982,11 +3095,13 @@ verb, and tests that pin all three by executing them.
    killed; the report says so; the watcher never matches a process by its command
    line.
 6. **`internal/swarm/templates.go`** — the three task templates, the
-   `RESULT.md` template and the `setup` agreement form (#184), as embedded
-   text, each with its conditions and the number that produced it. Tests:
-   `template --name` prints each; `add --template` wraps a task and the
-   result contains every condition; `add --template setup` is refused and
-   the setup form carries no private name, path or value.
+   `RESULT.md` template, the `setup` agreement form (#184) and the `capacity`
+   offer-and-routing form (#176), as embedded text, each with its conditions
+   and the number that produced it. Tests: `template --name` prints each;
+   `add --template` wraps a task and the result contains every condition;
+   `add --template setup` and `add --template capacity` are refused, the
+   setup form carries no private name, path or value, and the capacity form
+   carries no key, token, or private host detail.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
    with their `dup:` marks and their verbatim quotes, the owed-list match, the
