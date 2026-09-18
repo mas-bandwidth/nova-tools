@@ -136,6 +136,14 @@ func TestNativeEmitsStartAndDoneWithUsage(t *testing.T) {
 	if strings.Contains(done.Msg, "tokens_in=0") {
 		t.Fatalf("a column nobody reported is a dash and never a zero: %q", done.Msg)
 	}
+	// AND THE NUMBERS SURVIVE THE REDACTION. `tokens_in` holds the word "token", so the
+	// emitter's keyed-value rule read the column name as a credential's and replaced every
+	// usage number with the mark the first time one of these lines reached Loki from hulk
+	// (2026-09-18). A ledger of [redacted] is not a ledger; internal/log's counted-key rule
+	// is the fix and this is its edge at the verb that writes the numbers.
+	if strings.Contains(done.Msg, "[redacted]") {
+		t.Fatalf("the usage columns were redacted as if they were credentials: %q", done.Msg)
+	}
 	if done.DurMS < 0 {
 		t.Fatalf("the done line carries the wall as dur_ms: %+v", done)
 	}

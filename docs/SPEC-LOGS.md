@@ -277,6 +277,16 @@ repointing a flag a loop already passes is worse than a second name.
 <name>` on the `nova-pulse` verbs, where `--bench` means the bench being ACTED ON and not the
 machine acting. Both fall back to `$NOVA_BENCH` and then the short hostname.
 
+**A count of tokens is not a token** (a fix to the emitter's redaction, found by running
+these five verbs on `hulk`). The keyed-value rule of Part 5's redaction reads any key holding
+the word `token` as naming a credential, so the first `native` done line that reached Loki
+read `tokens_in=[redacted] tokens_out=[redacted]` — in a fleet where token spend reporting is
+an obligation. The rule now keeps a **counted key** (`tokens`, `tokens_in`, `tokens_out`,
+`max_tokens`, `token_count`, …) whose value is a NUMBER, and keeps any keyed value that is
+the dash this tree writes for an absence, because an absence is a secret in no reading at
+all. Everything else redacts exactly as before: a counted key whose value is not a number is
+still replaced, and `token=`, `api_key=` and `password=` are untouched by the exception.
+
 **What a note event may hold.** The bus's line carries the note's id, its lane and its resolved
 recipients, and never the body, the SUBJECT or the PATH: the subject is one line of somebody's
 private prose and is very often the whole content of the note, and the path carries the slug,

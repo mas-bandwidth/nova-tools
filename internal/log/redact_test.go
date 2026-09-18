@@ -139,3 +139,41 @@ func TestWriteKeepsTheFixedVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// A COUNT OF TOKENS IS NOT A TOKEN. The keyed-value rule reads any key holding the word
+// "token" as naming a credential, which ate the usage columns of `nova-swarm native`'s done
+// line the first time one reached Loki -- `tokens_in=[redacted] tokens_out=[redacted]`, in a
+// fleet where token spend reporting is an obligation. The rule now keeps a counted key
+// carrying a number, and an absence whatever the key, and redacts everything else exactly as
+// it did.
+func TestACountOfTokensIsNotACredential(t *testing.T) {
+	t.Parallel()
+	kept := []string{
+		"native: card r2 rc=0 tokens_in=41234 tokens_out=980 cache_write=- cache_read=- reasoning=- usd=0.42",
+		"tokens=120000",
+		"max_tokens=8192",
+		"token_count=3",
+		"tokens_in=-",
+		// An absence is a secret in no reading at all, whatever the key names.
+		"api_key=-",
+		"password=-",
+	}
+	for _, line := range kept {
+		if got := Redact(line); got != line {
+			t.Errorf("a measurement was redacted:\n got: %s\nwant: %s", got, line)
+		}
+	}
+	// And the rule still bites where it should: a counted key whose value is NOT a number
+	// is redacted, and a real credential key is redacted whatever it holds.
+	redacted := []string{
+		"tokens_in=sk-abcdefghijklmnop0123456789",
+		"token=ghp_abcdefghijklmnopqrstuvwxyz0123",
+		"api_key=0123456789abcdef",
+		"password=12345",
+	}
+	for _, line := range redacted {
+		if got := Redact(line); !strings.Contains(got, Redacted) {
+			t.Errorf("a credential survived: %s", got)
+		}
+	}
+}
