@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -15,6 +16,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 )
 
 // sessionOKLine is the spec's own SESSION OK grammar line (docs/SPEC-WORK.md,
@@ -415,6 +421,40 @@ func TestHelpNamesTheDependenciesAndReadyVerbs(t *testing.T) {
 	}
 }
 
+// main_test.go drives the events verb at the edge a stranger's shell reaches: run() with
+// arguments, miniredis as the bus and a fake forge in Deps, so no test opens a network
+// connection.
+
+type fakeForge struct{ snap ci.Snapshot }
+
+func (f *fakeForge) Snapshot() (ci.Snapshot, error) { return f.snap, nil }
+
+func testWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+func recvBy(t *testing.T, ch <-chan *redis.Message, channel string) string {
+	t.Helper()
+	wait := testWait()
+	deadline := time.After(wait)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("no %s message within %s", channel, wait)
+			return ""
+		case msg := <-ch:
+			if msg.Channel == channel {
+				return msg.Payload
+			}
+		}
+	}
+}
+
 // dependencies refuses a :deps cycle before it publishes anything: exit 2, one
 // remedy line naming validator rule 3.
 func TestDependenciesRefusesANeedsCycle(t *testing.T) {
@@ -649,5 +689,49 @@ func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 0 {
 		t.Fatalf("a refused cycle wrote %d cards", len(entries))
+	}
+}
+
+// TestEventsRefusesMissingRedis: --redis is required and its absence is exit 2.
+func TestEventsRefusesMissingRedis(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"events"}, &out, &errb, production())
+	if code != 2 {
+		t.Fatalf("events without --redis exit = %d, want 2; stderr=%s", code, errb.String())
+	}
+	if !bytes.Contains(errb.Bytes(), []byte("--redis")) {
+		t.Errorf("the refusal does not name --redis: %s", errb.String())
+	}
+}
+
+// TestEventsOncePublishesChecksDone: one pass polls the fake forge and publishes the
+// completed check suite on pr-checks-done.
+func TestEventsOncePublishesChecksDone(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	sub := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ps := sub.Subscribe(ctx, ci.ChannelPRChecksDone)
+	if _, err := ps.Receive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Close()
+
+	deps := Deps{
+		Now:  func() time.Time { return time.Now().UTC() },
+		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(_, _ string, _ time.Duration) ci.Forge {
+			return &fakeForge{snap: ci.Snapshot{PRs: []ci.PRState{
+				{Number: 42, Branch: "rowan/x", Head: "a1b2", Conclusion: ci.ConclusionSuccess},
+			}}}
+		},
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"events", "--redis", mr.Addr(), "--repo", "mas-bandwidth/nova-tools", "--once"}, &out, &errb, deps)
+	if code != 0 {
+		t.Fatalf("events --once exit = %d, stderr=%s", code, errb.String())
+	}
+	payload := recvBy(t, ps.Channel(), ci.ChannelPRChecksDone)
+	if payload == "" {
+		t.Fatal("no pr-checks-done payload")
 	}
 }

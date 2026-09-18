@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,12 +23,16 @@ func TestASecondHolderWaitsTheBoundedTimeAndNamesTheFirst(t *testing.T) {
 	if pid := HolderPID(path); pid != os.Getpid() {
 		t.Errorf("the holder writes its pid into the lock file, got %d want %d", pid, os.Getpid())
 	}
-	start := time.Now()
-	_, err = Lock(path, 150*time.Millisecond)
+	// The bounded wait runs on an injected clock: Now stands still until Sleep moves it, so
+	// the second holder reaches its deadline in as many polls as it would in real time and
+	// not one wall-clock millisecond. The assertion is against that clock, never time.Since.
+	start := time.Date(2026, 9, 18, 2, 45, 0, 0, time.UTC)
+	nowFn, sleepFn, at := waitClock(start)
+	_, err = lockWait(path, 150*time.Millisecond, nowFn, sleepFn)
 	if err == nil {
 		t.Fatal("a second holder against a live one must be refused")
 	}
-	if waited := time.Since(start); waited < 100*time.Millisecond {
+	if waited := at.Sub(start); waited < 100*time.Millisecond {
 		t.Errorf("the second holder waited %s; it waits the bounded time before refusing", waited)
 	}
 	if !strings.Contains(err.Error(), "pid="+strconv.Itoa(os.Getpid())) {
@@ -47,6 +52,12 @@ func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The child blocks on this pipe until the kill below; the wait is that pipe, never a
+	// wall-clock sleep in the helper process.
+	held, err := helper.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := helper.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -54,12 +65,14 @@ func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
 	if _, err := ready.Read(buf); err != nil {
 		t.Fatalf("the helper never said it had the lock: %v", err)
 	}
-	if _, err := Lock(path, 150*time.Millisecond); err == nil {
+	nowFn, sleepFn, _ := waitClock(time.Date(2026, 9, 18, 2, 45, 0, 0, time.UTC))
+	if _, err := lockWait(path, 150*time.Millisecond, nowFn, sleepFn); err == nil {
 		t.Fatal("the helper holds the lock; this take must be refused")
 	}
 	if err := helper.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
+	held.Close()
 	_, _ = helper.Process.Wait()
 	release, err := Lock(path, 2*time.Second)
 	if err != nil {
@@ -80,7 +93,9 @@ func TestHelperHoldsTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Stdout.WriteString("held\n")
-	time.Sleep(30 * time.Second)
+	// Hold until the parent kills us: the parent keeps this pipe's write end open, so the
+	// read blocks with no wall-clock sleep and no bound of its own.
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func TestAKillMidWriteLeavesTheOldStateEntireAndTheTempNameIsSteppedOver(t *testing.T) {

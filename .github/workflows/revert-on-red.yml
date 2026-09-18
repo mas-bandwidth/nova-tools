@@ -7,7 +7,9 @@
 # otherwise -- push the revert to main, and post ONE comment on the merged
 # pull request naming the revert. If the repository ruleset refuses the direct
 # push by the github-actions app, it opens a `revert/<sha>` pull request with
-# auto-merge enabled instead; the comment is posted either way.
+# opened and LEFT OPEN instead, with a notice naming it; the comment is posted
+# either way. This workflow enables no auto-merge and lands nothing itself
+# (Glenn, 2026-09-18: nothing reaches the dev merge queue but a batch).
 #
 # The guards that keep it from ever fighting itself, all a skip with a notice
 # and exit 0 rather than a failure:
@@ -18,7 +20,7 @@
 #
 # Everything else is the plain "stop the red" path. The repository ruleset is
 # the one manual step this may need: it must let the github-actions app push
-# to main or auto-merge a revert/<sha> pull request (see docs/CONTRIBUTING.md).
+# to main or open a revert/<sha> pull request (see docs/CONTRIBUTING.md).
 #
 # Actions are pinned by sha, and the script is one file so the workflow stays
 # a list of steps rather than a program.

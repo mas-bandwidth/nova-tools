@@ -48,6 +48,11 @@ type Records struct {
 	Remote string
 	Git    *Git
 	Wait   time.Duration
+	// Now and Sleep are the checkout lock's clock seam: Now says when the bounded wait has
+	// run out and Sleep is the poll between takes. Both default to the real clock, so a
+	// test that must run a contended lock to its end advances them with no wall time.
+	Now   func() time.Time
+	Sleep func(time.Duration)
 }
 
 // NewRecords returns the record layer for a lane.
@@ -59,7 +64,14 @@ func NewRecords(lane, branch, remote string, g *Git, wait time.Duration) *Record
 // held for the whole of a loop, a pull or a fetch. It is a different lock from the state
 // lock of rule 1, which protects state.json and nothing else.
 func (r *Records) LockCheckout() (func(), error) {
-	return Lock(filepath.Join(r.Lane, CheckoutLock), r.Wait)
+	now, sleep := r.Now, r.Sleep
+	if now == nil {
+		now = Now
+	}
+	if sleep == nil {
+		sleep = Sleep
+	}
+	return lockWait(filepath.Join(r.Lane, CheckoutLock), r.Wait, now, sleep)
 }
 
 // Submission is the id drawn once per verb and never reused: the instant, and six random
@@ -293,7 +305,28 @@ func destinationOf(body []byte) (string, error) {
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return "", err
 	}
-	if probe.File == "" || strings.Contains(probe.File, "..") || path.IsAbs(probe.File) {
+	// THE ONE PLACE A RECORD'S `file` BECOMES A GIT PATH, so it is the one place that
+	// makes it one. Everything downstream -- the restore, the `add` pathspec, the
+	// `show <rev>:<path>` of the confirming fetch -- is git, and git spells a path with
+	// forward slashes on every platform. A builder that reached for filepath.Join
+	// instead of path.Join wrote `classify\<name>.json` on Windows; the push landed and
+	// the confirm then asked for a file whose NAME contains a backslash, so the verb
+	// exited 1 there and nowhere else (integration-6, #1335). Every builder is pinned to
+	// path.Join by TestRecordPathsAreGitPathsNotMachinePaths; this turns the whole class
+	// into a no-op rather than a second outage, and it repairs an item an older build
+	// already left in the outbox.
+	//
+	// The separator is replaced OUTRIGHT and not through filepath.ToSlash, which is the
+	// machine's answer and does nothing at all on unix: the bug is a Windows path read on
+	// any host, and a guard that only works where the bug cannot happen is not a guard.
+	// No record path this tool builds holds a backslash to begin with -- every component
+	// comes through safeName, which keeps letters, digits, dash and underscore -- so
+	// there is nothing here to lose.
+	probe.File = strings.ReplaceAll(probe.File, `\`, "/")
+	// A colon is a drive letter (`C:/Windows/win.ini` is absolute on the machine that
+	// wrote it and a relative path to anything reading it here) and no record path this
+	// tool builds carries one; a stamp is 20260911T130000Z for exactly this reason.
+	if probe.File == "" || strings.Contains(probe.File, "..") || strings.Contains(probe.File, ":") || path.IsAbs(probe.File) {
 		return "", fmt.Errorf("a record's file is a path under the lane, got %q", probe.File)
 	}
 	return probe.File, nil
@@ -398,7 +431,9 @@ func (r *Records) backoff(round int) {
 // which is inside any --timeout this tool accepts.
 const casBackoff = 50 * time.Millisecond
 
-// Sleep is time.Sleep, named here so a test can hold the loop still.
+// Sleep is time.Sleep, named here so a test can hold the loop still. It is also the wait
+// between polls in Lock, so one seam fakes every wait in this package: a test that must
+// exercise a timeout advances a clock instead of holding wall time.
 var Sleep = time.Sleep
 
 // fetchAndReset moves this checkout to the branch's remote tip. reset --hard leaves
@@ -987,6 +1022,10 @@ func (s *State) Apply(f *Folded) {
 const GitIgnore = `# nova-merge: the tracked files are the records and nothing else (rule 22).
 /state.json
 /state.json.tmp
+/queue.json
+/queue.json.tmp
+/hold
+/hold.tmp
 /log
 /repo/
 /outbox/

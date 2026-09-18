@@ -553,3 +553,25 @@ func valuesOf(m map[string]string) []string {
 	}
 	return out
 }
+
+// `nova-update check --help` answered `flag: help requested` -- the flag
+// package's own sentinel, shown to somebody who asked for help (darwin dogfood,
+// 2026-09-18). Asking is not an error: the usage is printed and the exit is 0.
+func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
+	for _, verb := range []string{"check", "apply", "report"} {
+		for _, spelling := range []string{"--help", "-h"} {
+			var out, errs bytes.Buffer
+			code := Main("nova-update", []string{verb, spelling}, "test", &out, &errs)
+			if code != 0 {
+				t.Errorf("%s %s: code=%d errs=%s", verb, spelling, code, errs.String())
+				continue
+			}
+			if strings.Contains(out.String()+errs.String(), "help requested") {
+				t.Errorf("%s %s leaked the flag sentinel: %s%s", verb, spelling, out.String(), errs.String())
+			}
+			if !strings.Contains(out.String(), "nova-update "+verb+" ") {
+				t.Errorf("%s %s did not print the usage:\n%s", verb, spelling, out.String())
+			}
+		}
+	}
+}

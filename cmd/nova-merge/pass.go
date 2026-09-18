@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -110,6 +112,9 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		Admin: admin, Build: build, Now: deps.Now(), Stdout: stdout, Stderr: stderr,
 		Problems: problems, Pulled: pulled,
 	}
+	if q, err := merge.LoadQueue(lane, st); err == nil {
+		p.Order = q.WalkOrder(st)
+	}
 	if code := discoverDefault("RUN", p, stderr); code != 0 {
 		return code
 	}
@@ -129,6 +134,18 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		// pass printing MERGE OK and the lane's own file still holding the state before
 		// it -- the next pass would re-decide from a state that never saw this one.
 		return stateWriteRefused("RUN", stderr, err)
+	}
+	// A landed entry leaves the queue with the lane: the queue is the order `run` walks,
+	// and an entry that is gone from the lane is gone from the order.
+	if len(res.DroppedIDs) > 0 {
+		if _, err := merge.UpdateQueue(lane, st, f.dur(), func(q *merge.Queue) error {
+			for _, pr := range res.DroppedIDs {
+				q.Queued = merge.QueueRemove(q.Queued, pr)
+			}
+			return nil
+		}); err != nil {
+			merge.Appendf(lane, deps.Now(), "QUEUE NOTE the landed entries could not be retired from queue.json: %v", err)
+		}
 	}
 	return res.Exit()
 }
@@ -228,10 +245,21 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 	branch := f.fs.String("branch", "", "")
 	who := f.fs.String("who", "", "")
 	all := f.fs.Bool("all", false, "")
+	// --decide annotates each handed-over entry with one typed risk/scope classification.
+	// It changes no verdict and reaches no merge: it is the flag behind which the typed
+	// decision is asked (SPEC-DECIDE rule 7).
+	decideOn := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", 0.9, "")
+	keyEnv := f.fs.String("key-env", "", "")
+	baseURL := f.fs.String("base-url", "", "")
+	cardFile := f.fs.String("card", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.check()
+	if *decideOn && (*floor < 0 || *floor > 1) {
+		f.problem(fmt.Sprintf("--floor is the confidence below which a decision is only a suggestion, from 0 to 1, got %g", *floor))
+	}
 	f.require("who", *who, "the reader this packet is for, as this lane knows them")
 	id := entrySelector(f, pr, branch, *all)
 	if !*all && id == "" && len(f.problems) == 0 {
@@ -260,6 +288,23 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 		Clone:   merge.NewGit(filepath.Join(*f.lane, merge.RepoDir), f.dur(), deps.Runner),
 		Records: recs, Remote: "origin", Max: *f.max, Now: deps.Now(),
 		Stdout: stdout, Stderr: stderr, Problems: folded.Problems,
+	}
+	if *decideOn {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			fmt.Fprintf(stderr, "PACKET REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		card := ""
+		if *cardFile != "" {
+			b, err := os.ReadFile(*cardFile)
+			if err != nil {
+				fmt.Fprintf(stderr, "PACKET REFUSED: --card: %s\n", oneline.Err(err))
+				return 2
+			}
+			card = string(b)
+		}
+		p.PacketAnnotate = classifyPacketEntry(context.Background(), client, *floor, card)
 	}
 	return p.Packet(*who, id, *all)
 }

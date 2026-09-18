@@ -2,7 +2,6 @@ package swarm
 
 import (
 	"bytes"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -99,40 +98,33 @@ func runBatchClock(in BatchInput, clk *manualClock, drive func()) (int, string, 
 	return code, out.String(), errb.String()
 }
 
-// waitForTreeCPU waits, against a five-second real bound and never an assertion, until the
-// spin card's process tree has accrued CPU -- the silent grandchild burning a core. The spin
-// card's runner is the only child of this test that forks a child of its own, so it is named
-// without a command line, and the sleeping card's runner never reaches the floor. A loaded
-// runner can take a moment to fork the burner, and a first activity sample taken before it
-// exists has no CPU to compare against, which is how a busy-and-silent card was read as idle;
-// the test takes its first sample only after this returns.
-func waitForTreeCPU(t *testing.T) {
-	t.Helper()
-	const floor = 50 * time.Millisecond
-	me := os.Getpid()
-	base := map[int]uint64{}
-	deadline := time.Now().Add(5 * time.Second) // wall-ok: a readiness poll on a real child, never an assertion
-	for time.Now().Before(deadline) {
-		snap := newProcSnapshot()
-		for _, pid := range snap.children[me] {
-			if len(snap.children[pid]) == 0 {
-				continue // the sleeping card's runner forks nothing
-			}
-			cpu, ok := snap.TreeCPU(pid)
-			if !ok {
-				continue
-			}
-			if b, seen := base[pid]; seen {
-				if cpu >= b+uint64(floor) {
-					return
-				}
-			} else {
-				base[pid] = cpu
-			}
+// fakeTreeSampler provides deterministic per-card CPU activity snapshots.
+// As cards are polled, each process pid is assigned an index (0, 1, ...),
+// matching the order cards are defined in the batch.
+type fakeTreeSampler struct {
+	mu         sync.Mutex
+	pids       []int
+	cpuForCard func(cardIndex int, pid int) (uint64, bool)
+}
+
+func (s *fakeTreeSampler) TreeCPU(pid int) (uint64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := -1
+	for i, p := range s.pids {
+		if p == pid {
+			idx = i
+			break
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("waiting for the spin card's process tree to accrue CPU: timed out")
+	if idx == -1 {
+		idx = len(s.pids)
+		s.pids = append(s.pids, pid)
+	}
+	if s.cpuForCard != nil {
+		return s.cpuForCard(idx, pid)
+	}
+	return 0, false
 }
 
 // waitForFile waits, against a thirty-second real bound and never an assertion,

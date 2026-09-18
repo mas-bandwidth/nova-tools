@@ -164,6 +164,39 @@ a cadence.
 
 **Red tests.** `watch-returns-once-per-change`; `quiet-time-makes-no-model-call`.
 
+### Events, not ticks
+
+The four events above cross the process boundary on local Redis pub/sub, so no merge-path
+verb waits for a tick. The bridge is two verbs and one internal edge:
+
+- `nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>]
+  [--gh-poll 60s] (--once | --deadline <duration>)` is the producer. It reads the
+  `cards:done` stream with the consumer group `events` and republishes each entry as
+  `card-done`. Because GitHub webhooks are not wired here yet, it also polls `gh` every
+  `--gh-poll` for check-suite completions on open `rowan/*` pull requests and for the base
+  branch's head, publishing `pr-checks-done {number, head, conclusion}` and
+  `dev-moved {sha}` **only on change**. The poll is the fallback heartbeat the principle
+  allows; a webhook later replaces it without moving the line between producer and
+  reactor. A quiet poll publishes nothing.
+- `nova-merge react --redis <addr> [--lane <dir>] (--once | --deadline <seconds>)` is the
+  subscriber. On `pr-checks-done` success and not in the skip set (`enqueue:skip`, a Redis
+  set) and not under `enqueue:hold` (a TTL'd key), it enqueues the PR once. On `dev-moved`
+  it lists the `rowan/*` pull requests the move made DIRTY and publishes
+  `rebase-wanted {number, head}`, which the rebase verb consumes. On `card-done` it
+  publishes nothing, because the recorder and the harvester read the stream directly. The
+  reactor holds no timer: it blocks on the subscription and returns once at its deadline,
+  so an idle reactor makes no model call and no subprocess poll.
+
+The gh edge is an interface with a fake; the bus is a real Redis addressed by `--redis`
+and, under test, miniredis. Every loop has a `--deadline`. One action prints one line, in
+the same grammar the sweep verb already prints.
+
+**Red tests.** `producer-publishes-card-done-from-the-stream`;
+`producer-publishes-pr-checks-done-only-on-change`;
+`producer-publishes-dev-moved-only-on-change`; `reactor-enqueues-a-green-pr`;
+`reactor-skips-the-skip-set`; `reactor-holds-on-the-hold-key`;
+`reactor-publishes-rebase-wanted-for-dirty-prs`; `reactor-card-done-publishes-nothing`.
+
 ## Migration: push launcher to pull worker, in three steps
 
 Each step shadows the last, so the old launcher can be restored until the numbers move, and each

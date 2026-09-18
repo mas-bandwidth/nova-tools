@@ -1,7 +1,0 @@
-[gc]
-	auto = 0
-	autoDetach = false
-[maintenance]
-	auto = false
-[receive]
-	autoGc = false

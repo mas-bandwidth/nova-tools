@@ -190,8 +190,12 @@ func TestWiredRunRereadsTheConfigAndSaysWhatChanged(t *testing.T) {
 			Queue: queue, Roots: root, Repo: "o/n", Branch: "dev",
 			Now: func() time.Time { return now }, Config: func() Config { return cfg },
 			TempGlob: filepath.Join(t.TempDir(), "*swarmtest*"),
+			Runs:     &fakeRuns{runs: []CIRun{{ID: 77, Status: "completed", Conclusion: "success", HeadSHA: "0123456789abcdef", Workflow: "ci", Event: "push"}}},
 			PRs:      &fakeSource{calls: map[int]int{}}, Enqueuer: &fakeEnqueuer{},
-			Procs: &fakeProcs{live: map[int]bool{}}, Work: &fakeWork{},
+			Procs:     &fakeProcs{live: map[int]bool{}},
+			Runners:   &fakeRunnerTable{running: 0, runners: []Runner{}},
+			Restarter: &fakeRestarter{},
+			Work:      &fakeWork{},
 		}))
 		if exit := Run(in); exit != 0 {
 			t.Fatalf("exit %d:\n%s%s", exit, out.String(), errs.String())
