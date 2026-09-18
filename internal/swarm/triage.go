@@ -95,7 +95,7 @@ func Triage(in TriageInput) int {
 
 	jobs, err := p.Jobs()
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the pool could not be walked: %s\n", oneline.Escape(redactedReason(err)))
+		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the pool could not be walked: %s; name a pool this user may read\n", oneline.Escape(redactedReason(err)))
 		return 2
 	}
 	if in.Batch != "" {
@@ -304,7 +304,7 @@ func Triage(in TriageInput) int {
 		itemsN += len(k.report.Items)
 	}
 	if pageErr != nil {
-		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the page could not be written: %s\n", oneline.Escape(redactedReason(pageErr)))
+		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the page could not be written: %s; name a writable --out\n", oneline.Escape(redactedReason(pageErr)))
 		return 2
 	}
 	// ONE TOKEN, ONE MEANING (lesson 119): `reports=` on TRIAGE BATCH counts the jobs that

@@ -1,0 +1,53 @@
+package fixture
+
+// The pre-fix fixture: four refusals that say what is wrong and not what to do,
+// and the four shapes that already say what to do. The scanner must find exactly
+// the first four and say nothing about the rest.
+
+import (
+	"fmt"
+	"io"
+)
+
+func cmdBare(stderr io.Writer, bench string) int {
+	fmt.Fprintf(stderr, "FILL REFUSED bench=%s is not a card bench\n", bench)
+	return 2
+}
+
+func cmdColon(stderr io.Writer, path string) int {
+	fmt.Fprintf(stderr, "REFUSED: the lanes file %s has no lane of that name\n", path)
+	return 2
+}
+
+func cmdReason(stderr io.Writer, why string) int {
+	fmt.Fprintf(stderr, "PROBE REFUSED reason=%s the volume was already open\n", why)
+	return 2
+}
+
+// A bracket that opens with a NOUN is the trouble said twice, not an answer.
+func cmdNounBracket(stderr io.Writer, lane string) int {
+	fmt.Fprintf(stderr, "GATE REFUSED lane=%s (the queue is held)\n", lane)
+	return 2
+}
+
+// The four shapes that pass.
+
+func okRemedyField(stderr io.Writer, bench string) int {
+	fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=runner-host remedy=%q\n", bench, "name a bench")
+	return 2
+}
+
+func okParenImperative(stderr io.Writer, slot string) int {
+	fmt.Fprintf(stderr, "DELETE-SLOT REFUSED: %s still holds jobs (delete its jobs first)\n", slot)
+	return 2
+}
+
+func okRunTail(stderr io.Writer, repo string) int {
+	fmt.Fprintf(stderr, "SWEEP REFUSED: %s is behind; run: nova-merge sweep --repo %s --once\n", repo, repo)
+	return 2
+}
+
+func okPassThrough(stderr io.Writer, err error) int {
+	fmt.Fprintf(stderr, "SEND REFUSED: %s\n", err)
+	return 2
+}

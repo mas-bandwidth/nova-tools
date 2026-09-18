@@ -18,13 +18,13 @@ import (
 // at exit 2.
 func RunGate(storeDir, base, head string) (string, int) {
 	if storeDir == "" {
-		return "SECRETS REFUSED: missing --store <dir>", 2
+		return "SECRETS REFUSED: missing --store <dir>; give the sealed store's directory", 2
 	}
 	if base == "" {
-		return "SECRETS REFUSED: missing --base <git ref>", 2
+		return "SECRETS REFUSED: missing --base <git ref>; give the base ref", 2
 	}
 	if head == "" {
-		return "SECRETS REFUSED: missing --head <git ref>", 2
+		return "SECRETS REFUSED: missing --head <git ref>; give the head ref", 2
 	}
 
 	changed, err := gitChangedFiles(storeDir, base, head)

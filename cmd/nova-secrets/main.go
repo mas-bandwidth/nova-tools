@@ -221,7 +221,7 @@ func runNamesCLI(args []string) {
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -257,7 +257,7 @@ func runCheckCLI(args []string) {
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -297,7 +297,7 @@ func runGateCLI(args []string) {
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -321,7 +321,7 @@ func runKeygenCLI(args []string) {
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -361,7 +361,7 @@ func runPlaceCLI(args []string) {
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -397,7 +397,7 @@ func runPlacedCLI(args []string) {
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -435,7 +435,7 @@ func runSealCLI(args []string) {
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets help\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 

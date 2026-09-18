@@ -92,7 +92,7 @@ func Cut(in CutInput) int {
 		}
 		cardName := row.ID + ".md"
 		if err := os.WriteFile(filepath.Join(in.Out, cardName), []byte(card), 0o644); err != nil {
-			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s\n", oneline.Field(cardName), oneline.Err(err))
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s; fix the card, then cut again\n", oneline.Field(cardName), oneline.Err(err))
 			return 2
 		}
 		var model string
@@ -126,7 +126,7 @@ func Cut(in CutInput) int {
 	}
 	if skipped > 0 {
 		if err := os.MkdirAll(in.Root, 0o755); err != nil {
-			fmt.Fprintf(in.Stderr, "CUT REFUSED: --root %s: %s\n", oneline.Field(in.Root), oneline.Err(err))
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --root %s: %s; name a root this verb may read\n", oneline.Field(in.Root), oneline.Err(err))
 			return 2
 		}
 		if err := writeSkippedTSV(filepath.Join(in.Root, "skipped.tsv"), pool, in.Templates); err != nil {

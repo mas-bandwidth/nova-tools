@@ -64,7 +64,7 @@ func cmdQueueAudit(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// done -- and the pull requests it could not clear are named, because those are the ones
 	// still armed.
 	if res.Failed > 0 {
-		fmt.Fprintf(stderr, "QUEUE AUDIT REFUSED: the forge would not clear %s; they still carry an auto-merge\n",
+		fmt.Fprintf(stderr, "QUEUE AUDIT REFUSED: the forge would not clear %s; they still carry an auto-merge; clear the auto-merge in the forge, then audit again\n",
 			oneline.Field(numberList(res.Refused)))
 		return 1
 	}

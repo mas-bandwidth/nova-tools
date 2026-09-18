@@ -70,7 +70,7 @@ func CutKind(in CutKindInput) int {
 	}
 	n, err := NextCardNumber(in.Queue)
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (the number comes only from the state file under %s)\n", oneline.Err(err), oneline.Field(in.Queue))
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (fix the state file under %s; the number comes only from there)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
 	}
 	card := renderKindCard(in, n, body)

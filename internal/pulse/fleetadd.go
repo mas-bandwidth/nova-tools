@@ -117,7 +117,7 @@ func FleetAdd(in FleetAddInput) int {
 	}
 	rec, err := ReadFleetProbeRecord(probe)
 	if err != nil {
-		fmt.Fprintf(errw, "FLEET REFUSED bench=%s: the fleet-probe record is unreadable: %s\n",
+		fmt.Fprintf(errw, "FLEET REFUSED bench=%s: the fleet-probe record is unreadable: %s; run the fleet-probe again, then add the bench\n",
 			oneline.Field(in.Bench), oneline.Field(err.Error()))
 		return 2
 	}
@@ -137,7 +137,7 @@ func FleetAdd(in FleetAddInput) int {
 		if bad == "" {
 			bad = "-"
 		}
-		fmt.Fprintf(out, "FLEET REFUSED bench=%s runner=%s run=%s: the fleet-probe is not all green (green=%d of %d)\n",
+		fmt.Fprintf(out, "FLEET REFUSED bench=%s runner=%s run=%s: the fleet-probe is not all green (green=%d of %d); fix the runner that is not green, run the fleet-probe again, then add the bench\n",
 			oneline.Field(in.Bench), oneline.Field(bad), oneline.Field(rec.Run), green, len(rec.Jobs))
 		return 2
 	}

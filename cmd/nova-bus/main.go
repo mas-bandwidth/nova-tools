@@ -645,7 +645,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		refused := false
 		for _, name := range replyOnlyFlags {
 			if given[name] {
-				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git and writes no file\n", name)
+				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git and writes no file; give --reply-to, or drop the flag\n", name)
 				refused = true
 			}
 		}
@@ -2358,7 +2358,7 @@ func bodyLimit(stderr io.Writer, name string, value, ceiling int64) bool {
 		return false
 	}
 	if value > ceiling {
-		fmt.Fprintf(stderr, "INBOX REFUSED: %s %d is over the ceiling %d\n", oneline.Field(name), value, ceiling)
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s %d is over the ceiling %d; give a smaller number\n", oneline.Field(name), value, ceiling)
 		return false
 	}
 	return true

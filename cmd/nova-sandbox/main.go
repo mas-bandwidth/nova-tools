@@ -470,7 +470,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	if secret != "" {
 		for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
 			if sandbox.Inside(secret, d) {
-				fmt.Fprintf(stderr, "PROBE REFUSED reason=secret_inside_allow: --secret %s is inside %s; the secret is never inside either list\n",
+				fmt.Fprintf(stderr, "PROBE REFUSED reason=secret_inside_allow: --secret %s is inside %s; the secret is never inside either list; move --secret outside --allow and --deny\n",
 					oneline.Escape(secret), oneline.Escape(d))
 				return sandbox.ExitCannotRun
 			}
@@ -482,7 +482,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	outside := filepath.Join(filepath.Dir(p.Writes[0]), fmt.Sprintf(".nova-sandbox-probe-%d", os.Getpid()))
 	for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
 		if sandbox.Inside(outside, d) {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_outside_inside: %s is inside %s; a probe that cannot find an outside cannot answer the question\n",
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_outside_inside: %s is inside %s; a probe that cannot find an outside cannot answer the question; name an outside path\n",
 				oneline.Escape(outside), oneline.Escape(d))
 			return sandbox.ExitCannotRun
 		}
@@ -509,7 +509,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// same binary.
 	rawNonce, err := probeNonce()
 	if err != nil {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this machine has no random source for the probe's one-time value: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this machine has no random source for the probe's one-time value: %s; fix the machine's random source, then probe again\n", oneline.Err(err))
 		return sandbox.ExitCannotRun
 	}
 	nonce := hex.EncodeToString(rawNonce[:])
@@ -539,7 +539,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			// question and the probe is exit 2, not a failed check.
 			if err := os.WriteFile(s.path, []byte("nova"), 0o600); err != nil {
 				fmt.Fprintf(stdout, "PROBE STEP name=%s expect=allow got=deny path=%s\n", oneline.Field(s.name), oneline.Escape(s.path))
-				fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_outside_unwritable: %s is not writable by this user anyway, so a deny there proves nothing\n", oneline.Escape(s.path))
+				fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_outside_unwritable: %s is not writable by this user anyway, so a deny there proves nothing; name a path this user may write\n", oneline.Escape(s.path))
 				return sandbox.ExitCannotRun
 			}
 			_ = os.Remove(s.path)
@@ -554,7 +554,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			continue
 		}
 		failed++
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s expected %s and got %s at %s\n",
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s expected %s and got %s at %s; fix the sandbox policy, then probe again\n",
 			oneline.Field(s.name), s.expect, got, oneline.Escape(s.path))
 	}
 	if failed > 0 {
@@ -785,7 +785,7 @@ func sameImage(self, parent string) bool {
 // and closes it without reading a byte (rule 6).
 func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 	if len(args) != 3 {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s is internal and takes <nonce> <name> <path>; it is the child of a probe this binary started and nothing else runs it\n", probeStepVerbName)
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s is internal and takes <nonce> <name> <path>; it is the child of a probe this binary started and nothing else runs it; run: nova-sandbox probe instead\n", probeStepVerbName)
 		return sandbox.ExitCannotRun
 	}
 	nonce, name, path := args[0], args[1], args[2]
@@ -799,7 +799,7 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 	// parent builds every step path absolute from a resolved directory, so a relative one
 	// is not the parent's and would be resolved against a cwd the parent did not choose.
 	if !filepath.IsAbs(path) {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s wants an absolute path and got %s\n", probeStepVerbName, oneline.Escape(path))
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s wants an absolute path and got %s; give an absolute path\n", probeStepVerbName, oneline.Escape(path))
 		return sandbox.ExitCannotRun
 	}
 	switch name {
@@ -835,7 +835,7 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 		}
 		return 0
 	}
-	fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s is not a probe step\n", oneline.Field(name))
+	fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s is not a probe step; name one of the probe's own steps\n", oneline.Field(name))
 	return sandbox.ExitCannotRun
 }
 
@@ -861,7 +861,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	if len(argv) == 0 {
 		shell, err := exec.LookPath("sh")
 		if err != nil {
-			fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_read: sh is on no PATH entry: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_read: sh is on no PATH entry: %s; put a shell on PATH, then run the same verb again\n", oneline.Err(err))
 			return sandbox.ExitCannotRun
 		}
 		argv = []string{shell, "-c", "true"}

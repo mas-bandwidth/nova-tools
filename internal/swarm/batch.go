@@ -144,7 +144,7 @@ func Batch(in BatchInput) int {
 		return 2
 	}
 	if len(cards) == 0 {
-		fmt.Fprintf(in.Stderr, "BATCH REFUSED: %s holds no card; a batch of no cards is a typo\n", oneline.Field(in.Cards))
+		fmt.Fprintf(in.Stderr, "BATCH REFUSED: %s holds no card; a batch of no cards is a typo; name a cards file with at least one row\n", oneline.Field(in.Cards))
 		return 1
 	}
 	if in.Runner == "" && in.Bench == "" && !anyCardNamesBench(cards) {
@@ -1180,7 +1180,7 @@ func assignSlots(cards []batchCard, root string, lo, hi int, notes io.Writer) er
 			continue
 		}
 		if prev, ok := assigned[c.slot]; ok {
-			return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s)", c.slot, prev, c.label)
+			return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s); give each slot once", c.slot, prev, c.label)
 		}
 		assigned[c.slot] = c.label
 	}
@@ -1382,12 +1382,12 @@ func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[str
 		c := &cards[i]
 		if c.bench != "" {
 			if _, ok := table[c.bench]; !ok || !named[c.bench] {
-				return nil, fmt.Errorf("BATCH REFUSED card %s names bench %s not in --bench", oneline.Field(c.label), oneline.Field(c.bench))
+				return nil, fmt.Errorf("BATCH REFUSED card %s names bench %s not in --bench; name a bench --bench carries", oneline.Field(c.label), oneline.Field(c.bench))
 			}
 			if c.slot != 0 {
 				u := use[c.bench]
 				if u.used[c.slot] {
-					return nil, fmt.Errorf("BATCH REFUSED bench %s slot %d named twice", c.bench, c.slot)
+					return nil, fmt.Errorf("BATCH REFUSED bench %s slot %d named twice; give each slot once", c.bench, c.slot)
 				}
 				u.used[c.slot] = true
 				u.slots++
@@ -1398,7 +1398,7 @@ func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[str
 		}
 		if c.slot != 0 {
 			if localUsed[c.slot] {
-				return nil, fmt.Errorf("BATCH REFUSED slot %d named twice", c.slot)
+				return nil, fmt.Errorf("BATCH REFUSED slot %d named twice; give each slot once", c.slot)
 			}
 			localUsed[c.slot] = true
 		} else {

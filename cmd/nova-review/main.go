@@ -1846,7 +1846,7 @@ func short8(sha string) string {
 
 func writePacket(dest, body string, out io.Writer, entry, id, head, base, baseSHA, rng string, files, hunks, rules, prior, open, bytesN, cut int, reused bool) int {
 	if err := writeExclusive(dest, []byte(body)); err != nil {
-		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
+		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s; name an --out that does not exist yet\n", oneline.Escape(err.Error()))
 		return 2
 	}
 	baseField := merge.Short(base)
@@ -1856,7 +1856,7 @@ func writePacket(dest, body string, out io.Writer, entry, id, head, base, baseSH
 	_, err := fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
 		oneline.Field(entry), id, merge.Short(head), baseField, oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not write receipt: %s\n", oneline.Escape(err.Error()))
+		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not write receipt: %s; name a writable directory\n", oneline.Escape(err.Error()))
 		return 2
 	}
 	return 0

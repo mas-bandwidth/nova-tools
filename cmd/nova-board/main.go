@@ -467,7 +467,7 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 					oneline.Field(existing.By), oneline.Field(kind), oneline.Field(durable(kind)))
 				return 0
 			}
-			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists with different fields; nothing written\n", oneline.Field(id))
+			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists with different fields; nothing written; give a new id, or read the one that is there with nova-board show\n", oneline.Field(id))
 			counts(stdout, b, kind, source)
 			return 1
 		}
@@ -491,7 +491,7 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	// other than work. The backends hold the other half: O_EXCL under --dir, the re-read
 	// immediately before the append under --issue.
 	if b.Card(event.ID) != nil {
-		fmt.Fprintf(stderr, "ADD REFUSED: id %s exists; nothing written\n", oneline.Field(event.ID))
+		fmt.Fprintf(stderr, "ADD REFUSED: id %s exists; nothing written; give a new id\n", oneline.Field(event.ID))
 		counts(stdout, b, kind, source)
 		return 1
 	}
@@ -508,7 +508,7 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 
 	if err := backend.Append(event.Render()); err != nil {
 		if err == board.ErrExists {
-			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists; nothing written\n", oneline.Field(event.ID))
+			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists; nothing written; give a new id\n", oneline.Field(event.ID))
 			counts(stdout, b, kind, source)
 			return 1
 		}
@@ -562,7 +562,7 @@ func cmdTake(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Read
 	// been moved off.
 	previous := dash(target.Owner)
 	if !target.Open() {
-		fmt.Fprintf(stderr, "TAKE REFUSED: %s is CLOSED (by %s at %s); there is no reopen — a card closed in error is a NEW card whose text names this id\n",
+		fmt.Fprintf(stderr, "TAKE REFUSED: %s is CLOSED (by %s at %s); there is no reopen; add a NEW card whose text names this id\n",
 			oneline.Field(card), oneline.Field(closedBy(target)), oneline.Field(closedAt(target)))
 		counts(stdout, b, kind, source)
 		return 1
@@ -632,7 +632,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 	}
 	// A ROW IS CLOSED ONLY BY probed, because a row that was not probed was not done.
 	if target.Row && event.Verb != "probed" {
-		fmt.Fprintf(stderr, "CLOSE REFUSED: %s is a row of the owed ledger (thing=%s leg=%s) and a row is closed only by --probed <evidence>; a row that was not probed was not done\n",
+		fmt.Fprintf(stderr, "CLOSE REFUSED: %s is a row of the owed ledger (thing=%s leg=%s) and a row is closed only by --probed <evidence>; a row that was not probed was not done; give --probed <evidence>\n",
 			oneline.Field(card), oneline.Field(target.Thing), oneline.Field(target.Leg))
 		counts(stdout, b, kind, source)
 		return 1

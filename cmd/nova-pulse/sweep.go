@@ -41,7 +41,7 @@ func cmdSweep(args []string, stdout, stderr io.Writer) int {
 	if *source != "" {
 		rows, err := readPRSourceFile(*source)
 		if err != nil {
-			fmt.Fprintf(stderr, "SWEEP REFUSED: --source %s: %s (one PR per line: pr, state, draft, head, labels, title, checks, automerge)\n", oneline.Field(*source), oneline.Err(err))
+			fmt.Fprintf(stderr, "SWEEP REFUSED: --source %s: %s (give one PR per line: pr, state, draft, head, labels, title, checks, automerge)\n", oneline.Field(*source), oneline.Err(err))
 			return 2
 		}
 		src = rows

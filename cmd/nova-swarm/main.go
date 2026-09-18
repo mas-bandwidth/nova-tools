@@ -497,7 +497,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		all = append(all, queued{e.Name(), raw})
 	}
 	if len(all) == 0 {
-		fmt.Fprintf(stderr, "BATCH REFUSED: %s holds no regular file; a batch of no tasks is a typo\n", oneline.Field(*tasks))
+		fmt.Fprintf(stderr, "BATCH REFUSED: %s holds no regular file; a batch of no tasks is a typo; name a tasks file with at least one row\n", oneline.Field(*tasks))
 		return 1
 	}
 	batchID := swarm.NewID(now, *label)
@@ -895,7 +895,7 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	}
 	old, found := p.Where(*task)
 	if !found {
-		fmt.Fprintf(stderr, "REQUEUE REFUSED: no task %s in %s\n", oneline.Field(*task), oneline.Field(p.Dir))
+		fmt.Fprintf(stderr, "REQUEUE REFUSED: no task %s in %s; run: nova-swarm status --pool to list the tasks\n", oneline.Field(*task), oneline.Field(p.Dir))
 		return 1
 	}
 	// WORK IN FLIGHT IS NEVER REPLACED UNDER ITSELF. --task said it wanted a finished task
@@ -977,7 +977,7 @@ func cmdVerdict(args []string, stdout, stderr io.Writer) int {
 	}
 	state, found := p.Where(*task)
 	if !found {
-		fmt.Fprintf(stderr, "VERDICT REFUSED: no task %s in %s\n", oneline.Field(*task), oneline.Field(p.Dir))
+		fmt.Fprintf(stderr, "VERDICT REFUSED: no task %s in %s; run: nova-swarm status --pool to list the tasks\n", oneline.Field(*task), oneline.Field(p.Dir))
 		return 1
 	}
 	sc, err := p.ReadSidecar(state, *task)
@@ -1224,7 +1224,7 @@ func cmdNote(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	sc, err := p.ReadSidecar(swarm.Running, *task)
 	if err != nil || sc.Job == "" {
-		fmt.Fprintf(stderr, "NOTE REFUSED: %s is not running in %s; a note is for a job that can still read it\n",
+		fmt.Fprintf(stderr, "NOTE REFUSED: %s is not running in %s; a note is for a job that can still read it; name a job that is still running\n",
 			oneline.Field(*task), oneline.Field(p.Dir))
 		return 1
 	}
@@ -1312,7 +1312,7 @@ func cmdReclaim(args []string, stdout, stderr io.Writer) int {
 	for _, id := range ids {
 		sc, found := p.FindAnywhere(id)
 		if !found {
-			fmt.Fprintf(stderr, "RECLAIM REFUSED id=%s: no such task in %s\n", oneline.Field(id), oneline.Field(p.Dir))
+			fmt.Fprintf(stderr, "RECLAIM REFUSED id=%s: no such task in %s; run: nova-swarm status --pool to list the tasks\n", oneline.Field(id), oneline.Field(p.Dir))
 			worst = 1
 			continue
 		}

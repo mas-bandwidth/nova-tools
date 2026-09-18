@@ -76,7 +76,7 @@ func Watch(in WatchInput) int {
 		return watchRefuse(in.Stderr, fmt.Sprintf("WATCH REFUSED until=%s (name one of pr=<n> merged, note-from=<name>, job=<label> done)", oneline.Escape(in.Until)))
 	}
 	if in.Cap < watchPollFloor {
-		return watchRefuse(in.Stderr, fmt.Sprintf("WATCH REFUSED cap=%s (the cap is at least the 30s poll floor)", in.Cap))
+		return watchRefuse(in.Stderr, fmt.Sprintf("WATCH REFUSED cap=%s (raise the cap to at least the 30s poll floor)", in.Cap))
 	}
 	if !isBusCheckout(in.Bus) {
 		return watchRefuse(in.Stderr, fmt.Sprintf("WATCH REFUSED bus=%s (name a nova-bus checkout)", oneline.Field(in.Bus)))

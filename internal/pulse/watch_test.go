@@ -328,7 +328,7 @@ func TestWatchRefusesABadUntilOrCap(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("short --cap exit = %d, want 2", code)
 	}
-	if !strings.Contains(errs, "WATCH REFUSED cap=10s (the cap is at least the 30s poll floor)") {
+	if !strings.Contains(errs, "WATCH REFUSED cap=10s (raise the cap to at least the 30s poll floor)") {
 		t.Fatalf("stderr=%q, want the cap refusal", errs)
 	}
 	if len(clock.slept) != 0 {

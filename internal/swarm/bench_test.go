@@ -96,7 +96,7 @@ func TestBenchNameIsNotAFriend(t *testing.T) {
 	if len(friends) != 2 {
 		t.Fatalf("want 2 friends, got %v", friends)
 	}
-	if got := RefuseFriend("alice", friends); got != "ADMIT REFUSED bench=alice is a friend" {
+	if got := RefuseFriend("alice", friends); got != "ADMIT REFUSED bench=alice is a friend; name a bench, not a friend" {
 		t.Errorf("a friend name refuses: %q", got)
 	}
 	if got := RefuseFriend("b2", friends); got != "" {

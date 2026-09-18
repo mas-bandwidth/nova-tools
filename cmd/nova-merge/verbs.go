@@ -141,7 +141,7 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		return 2
 	}
 	if _, err := os.Stat(merge.StatePath(*f.lane)); err == nil {
-		fmt.Fprintf(stderr, "INIT REFUSED: %s is already a lane; init creates one and never rewrites one, so its repo, base and lane branch are what the first init wrote\n",
+		fmt.Fprintf(stderr, "INIT REFUSED: %s is already a lane; init creates one and never rewrites one, so its repo, base and lane branch are what the first init wrote; use the lane as it is, or name a new lane\n",
 			oneline.Field(*f.lane))
 		return 1
 	}
@@ -184,7 +184,7 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	if _, err := os.Stat(filepath.Join(*f.lane, merge.RepoDir, ".git")); err == nil {
 		merge.Appendf(*f.lane, deps.Now(), "INIT took the clone that was already at %s", filepath.Join(*f.lane, merge.RepoDir))
 	} else if _, err := g.Run("clone", url, merge.RepoDir); err != nil {
-		fmt.Fprintf(stderr, "INIT REFUSED: the lane's own clone could not be made: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		fmt.Fprintf(stderr, "INIT REFUSED: the lane's own clone could not be made: %s; check the remote and the disk, then init again\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
 	merge.Appendf(*f.lane, deps.Now(), "INIT lane=%s repo=%s base=%s lane_branch=%s default_branch=%s hosted_red=%s joined=%t",
@@ -584,7 +584,7 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	body = append(body, '\n')
 	summaryBytes, err := os.ReadFile(*summary)
 	if err != nil {
-		fmt.Fprintf(stderr, "GATE REFUSED: the summary could not be read: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "GATE REFUSED: the summary could not be read: %s; check the path and run the same verb again\n", oneline.Err(err))
 		return 2
 	}
 	nameAnUnheldObject("gate", "merge", *mergeSHA, *f.lane, f.dur(), deps, stderr,
