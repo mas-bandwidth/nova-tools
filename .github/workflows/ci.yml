@@ -108,8 +108,11 @@ jobs:
           set -euo pipefail
           # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
@@ -185,8 +188,11 @@ jobs:
           set -euo pipefail
           # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
@@ -301,7 +307,7 @@ jobs:
             [ -n "${studio_grp[$g]:-}" ] || continue
             packages="${studio_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"macOS\",\"group\":\"macOS\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -382,8 +388,11 @@ jobs:
           set -euo pipefail
           # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
@@ -432,7 +441,12 @@ jobs:
         # slowtests runs; the budget check only ever sees a green stream. The
         # raw `-json` is teed so a slow package's finding is read once, by
         # cmd/nova-ci, and the same bytes are on disk if a reader wants them.
-        run: go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 60 < "$RUNNER_TEMP/test.json"
+        # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make cmd/nova-swarm, cmd/nova-pulse and
+        # internal/swarm fast, on the Intel Mac benches (about 3x slower per core than the Studio), where the alert still
+        # prints every CI-SLOW line but the budget is 300 s. Dated exception, 2026-09-18; remove with those cards.
+        run: |
+          budget=60; case "$(uname -m)" in x86_64) [ "$RUNNER_OS" = macOS ] && budget=300;; esac
+          go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget "$budget" < "$RUNNER_TEMP/test.json"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
@@ -817,8 +831,11 @@ jobs:
           set -euo pipefail
           # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
@@ -878,7 +895,7 @@ jobs:
       matrix:
         entry:
           - {os: linux, arch: x64, group: space}
-          - {os: macos, arch: arm64, group: studio}
+          - {os: macos, arch: arm64, group: studio} # the lisp leg stays on the Studio: the iMacs carry an older SBCL
     name: lisp (${{ matrix.entry.group }})
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
@@ -947,8 +964,11 @@ jobs:
         run: |
           # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
           echo "PROBE runner=$RUNNER_NAME slot=${{ matrix.slot }} go=$(command -v go || echo -) sbcl=$(command -v sbcl || echo -) home=$HOME"
