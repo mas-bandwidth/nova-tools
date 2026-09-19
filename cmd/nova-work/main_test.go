@@ -920,3 +920,118 @@ func TestUnknownVerbIsRefused(t *testing.T) {
 		t.Fatalf("the refusal does not name the verb:\n%s", errOut)
 	}
 }
+
+// silentSession is a socket that accepts the connection and then answers
+// nothing: the wedge the client had no way out of. It is the fake the deadline
+// exists for.
+func silentSession(t *testing.T) string {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	ln, err := net.Listen("unix", "silent.sock")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hold := make(chan struct{})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) { defer c.Close(); <-hold }(c)
+		}
+	}()
+	t.Cleanup(func() { close(hold); ln.Close() })
+	return "silent.sock"
+}
+
+// shortenTheBound makes the wedge cost a test a fraction of a second instead
+// of the standing thirty, and puts the standing bound back afterwards.
+func shortenTheBound(t *testing.T, to time.Duration) {
+	t.Helper()
+	was := askTimeout
+	askTimeout = to
+	t.Cleanup(func() { askTimeout = was })
+}
+
+func TestASessionThatNeverAnswersIsRefusedAtTwoAndNotCalledMissing(t *testing.T) {
+	shortenTheBound(t, 150*time.Millisecond)
+	socket := silentSession(t)
+
+	var stdout, stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- run([]string{"session", "status", "--session", socket}, &stdout, &stderr, "")
+	}()
+	var code int
+	select {
+	case code = <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the client never returned from a session that answers nothing: it waits without a bound")
+	}
+	if code != 2 {
+		t.Fatalf("silent session exit = %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("silent session wrote stdout: %q", stdout.String())
+	}
+	line := strings.TrimSuffix(stderr.String(), "\n")
+	if strings.Count(stderr.String(), "\n") != 1 || !strings.HasSuffix(line, "run: nova-work help") {
+		t.Fatalf("silent session refusal = %q, want one line ending \"run: nova-work help\"", stderr.String())
+	}
+	// A session that is sitting right there is not a missing one, and telling
+	// a person to look for a socket that exists is the wrong errand.
+	if strings.Contains(line, "no such session") {
+		t.Fatalf("a silent session was refused as a missing one: %q", line)
+	}
+	if !strings.Contains(line, "did not answer") {
+		t.Fatalf("silent session refusal = %q, want it naming the silence", line)
+	}
+	// And it says the thing a caller of a mutation has to know.
+	if !strings.Contains(line, "may still have been accepted") {
+		t.Fatalf("silent session refusal = %q, want it saying the work may still stand", line)
+	}
+}
+
+func TestAReplyPastTheWiresBoundIsRefusedAtTwoAndNamedAsSuch(t *testing.T) {
+	shortenTheBound(t, 20*time.Second)
+	t.Chdir(t.TempDir())
+	ln, err := net.Listen("unix", "loud.sock")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hold := make(chan struct{})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.Read(make([]byte, 1024))
+				chunk := bytes.Repeat([]byte("x"), 64<<10)
+				for sent := 0; sent < 4<<20; sent += len(chunk) {
+					if _, err := c.Write(chunk); err != nil {
+						return
+					}
+				}
+				<-hold
+			}(c)
+		}
+	}()
+	t.Cleanup(func() { close(hold); ln.Close() })
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session", "status", "--session", "loud.sock"}, &stdout, &stderr, "")
+	if code != 2 {
+		t.Fatalf("overlong reply exit = %d, want 2", code)
+	}
+	line := strings.TrimSuffix(stderr.String(), "\n")
+	if strings.Contains(line, "no such session") {
+		t.Fatalf("an overlong reply was refused as a missing session: %q", line)
+	}
+	if !strings.Contains(line, "past the wire's bound") {
+		t.Fatalf("overlong reply refusal = %q, want it naming the bound", line)
+	}
+}
