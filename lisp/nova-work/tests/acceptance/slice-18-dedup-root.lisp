@@ -200,3 +200,70 @@
                  (declare (ignore entries))
                  (check-equal named digest "the root's digest changed across replay"))))
         (close-file-journal journal)))))
+
+;;; ------------------------------------------------------------------
+;;; an-old-shape-savepoint-with-no-boundary-still-verifies  SPEC-WORK.md:7155-7164
+;;; ------------------------------------------------------------------
+
+(deftest "an-old-shape-savepoint-with-no-boundary-still-verifies" "docs/SPEC-WORK.md:7155-7164"
+    "expected=a-manifest-that-names-no-dedup-root-verifies-on-its-other-evidence;no-dedup-root-object-on-disk"
+  (let* ((fx (savepoint-fixture :id "sp-legacy"))
+         (root (getf fx :root))
+         (journal (getf fx :journal))
+         (journal-path (getf fx :journal-path))
+         (dir (savepoint-directory root "sp-legacy"))
+         (manifest-path (savepoint-manifest-path root "sp-legacy"))
+         (dedup-root-path (merge-pathnames "dedup-root" dir)))
+    (unwind-protect
+         (progn
+           ;; the pre-#1832 shape: an absent boundary and no dedup-root object
+           (let ((manifest (read-savepoint-manifest root "sp-legacy")))
+             (with-open-file (out manifest-path :direction :output
+                                             :element-type 'character
+                                             :external-format :utf-8
+                                             :if-exists :supersede)
+               (write-string (canonical-string
+                              (list :schema (getf manifest :schema)
+                                    :journal (getf manifest :journal)
+                                    :local-revision (getf manifest :local-revision)
+                                    :replay-cut (getf manifest :replay-cut)
+                                    :boundary +absent+
+                                    :state (getf manifest :state)
+                                    :local-replies (getf manifest :local-replies)))
+                             out)))
+           (delete-file dedup-root-path)
+           (ok (not (probe-file dedup-root-path)) "the dedup root still exists")
+           (multiple-value-bind (okp line code report)
+               (savepoint-verify-published root "sp-legacy" :journal-path journal-path)
+             (ok okp "an old-shape savepoint was refused: ~A" line)
+             (check-equal 0 code "the verify exits 0")
+             (ok (not (search "dedup root" line))
+                 "the verify named a dedup root it does not have: ~A" line)
+             (check-equal nil (savepoint-report-gap report)
+                          "a legacy savepoint named a gap")))
+      (close-file-journal journal))))
+
+;;; ------------------------------------------------------------------
+;;; a-zero-mutation-savepoint-verifies  SPEC-WORK.md:7155-7164
+;;; ------------------------------------------------------------------
+
+(deftest "a-zero-mutation-savepoint-verifies" "docs/SPEC-WORK.md:7155-7164"
+    "expected=a-savepoint-over-no-accepted-records-verifies-clean-with-an-absent-boundary"
+  (let* ((fx (savepoint-fixture :id "sp-zero" :mutations 0))
+         (root (getf fx :root))
+         (journal (getf fx :journal))
+         (journal-path (getf fx :journal-path))
+         (manifest (read-savepoint-manifest root "sp-zero")))
+    (unwind-protect
+         (progn
+           (ok (absentp (getf manifest :boundary))
+               "the zero-mutation boundary is not absent: ~S" (getf manifest :boundary))
+           (multiple-value-bind (okp line code report)
+               (savepoint-verify-published root "sp-zero" :journal-path journal-path)
+             (ok okp "a zero-mutation savepoint was refused: ~A" line)
+             (check-equal 0 code "the verify exits 0")
+             (ok (not (search "dedup root" line))
+                 "the verify named a dedup root: ~A" line)
+             (check-equal nil (savepoint-report-gap report)
+                          "a zero-mutation savepoint named a gap")))
+      (close-file-journal journal))))

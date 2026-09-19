@@ -105,10 +105,11 @@ kind and rolls nothing back (SPEC-WORK.md:7165-7171)."
              (boundary (getf manifest :boundary))
              (named (and (consp boundary) (consp (cdr boundary))
                          (getf boundary :dedup-root))))
-        (unless (and named (probe-file dedup-root-path)
-                     (dedup-root-holds-p dedup-root-path named))
-          (return-from savepoint-verify-published
-            (%gap id rev (format nil "dedup root ~A is missing or altered" dedup-root-path)))))
+        (when named
+          (unless (and (probe-file dedup-root-path)
+                       (dedup-root-holds-p dedup-root-path named))
+            (return-from savepoint-verify-published
+              (%gap id rev (format nil "dedup root ~A is missing or altered" dedup-root-path))))))
       ;; the image is one revision, and it is the manifest's
       (let ((image (handler-case (reconstruct-state (%savepoint-read-object image-path))
                      (error () nil))))
