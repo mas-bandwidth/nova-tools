@@ -108,6 +108,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	cfg.root = absroot
 
+	// THE PUBLIC-CLASS GATE (CARD-8390): a public-class worker never sees a
+	// card that clones an unlisted repo. The card is refused with CARD REFUSED
+	// before any directory is made and before any child starts.
+	if cfg.worker != nil && cfg.worker.IsPublic() {
+		if repo, refused := swarm.CheckPublicCard(*cfg.worker, string(cfg.card), cfg.root); refused {
+			fmt.Fprintln(errOut, swarm.PublicRefusalLine(repo, cfg.worker.Name))
+			return nativeRunResult{}, 1
+		}
+	}
+
 	// (1) THE BINARY. Resolved once, on PATH when the name has no separator, then
 	// checked for existence and the execute bit. A missing binary and an
 	// unexecutable one are the same refusal class, one line each.

@@ -71,6 +71,12 @@ type BatchInput struct {
 	// slot column is optional in either case; a hand slot outside the range is that card's
 	// own admission refusal (issue #618).
 	Slots string
+	// Worker is the worker description whose class gates admission: when its
+	// class is public, a card cloning an unlisted repo is refused with
+	// `CARD REFUSED reason=private-source ...` and never starts. The zero
+	// Worker is paid and gates nothing, so callers without a description keep
+	// today's behaviour byte for byte.
+	Worker Worker
 	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
 	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
@@ -196,8 +202,18 @@ func Batch(in BatchInput) int {
 	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
+	// THE PUBLIC-CLASS GATE (CARD-8390) runs here too, after the shape and repo
+	// checks readCards already applied: a public-class worker's card cloning an
+	// unlisted repo carries a private-source refusal and is said as CARD REFUSED.
+	if in.Worker.IsPublic() {
+		applyPublicGate(cards, in.Worker, in.Root)
+	}
 	for _, c := range cards {
 		if c.admitWhy != "" {
+			if IsPublicRefusal(c.admitWhy) {
+				fmt.Fprintln(in.Stderr, "CARD REFUSED "+c.admitWhy)
+				continue
+			}
 			fmt.Fprintln(in.Stderr, admitRefusalLine(c.label, c.admitWhy))
 		}
 	}
@@ -910,6 +926,25 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		return "done", "", "tail=" + strconv.Itoa(extra), two
 	}
 	return "done", "", "", two
+}
+
+// applyPublicGate refuses every card a public-class worker must never see: a
+// card whose clone URLs are not all listed in <root>/public-repos.txt carries
+// a private-source refusal and never starts. Cards already refused keep their
+// first refusal; the gate never rewrites one.
+func applyPublicGate(cards []batchCard, w Worker, root string) {
+	for i := range cards {
+		if cards[i].admitWhy != "" {
+			continue
+		}
+		raw, err := os.ReadFile(cards[i].cardPath)
+		if err != nil {
+			continue
+		}
+		if repo, refused := CheckPublicCard(w, string(raw), root); refused {
+			cards[i].admitWhy = PublicRefusalWhy(repo, w.Name)
+		}
+	}
 }
 
 // readCards reads the TSV and admits every card or none: one line that does not parse

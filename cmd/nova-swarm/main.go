@@ -417,6 +417,7 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
 	maxInput := f.fs.Int("max-input", 0, "")
+	workerFile := f.fs.String("worker", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -451,6 +452,22 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 			return 2
 		}
 		text = wrapped
+	}
+	// THE PUBLIC-CLASS GATE (CARD-8390): with --worker naming a public-class
+	// worker, a card cloning an unlisted repo is refused with CARD REFUSED and
+	// never queued, so a free/contributor model never sees private source.
+	if *workerFile != "" {
+		w, problems := swarm.LoadWorker(*workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm add: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		if repo, refused := swarm.CheckPublicCard(w, string(text), *pool); refused {
+			fmt.Fprintln(stderr, swarm.PublicRefusalLine(repo, w.Name))
+			return 1
+		}
 	}
 	sc := swarm.Sidecar{
 		ID: swarm.NewID(now, *label), Label: *label, Template: *template, Files: *files,
@@ -506,11 +523,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	routeUsage := f.fs.String("route-usage", "", "")
 	routeKeyEnv := f.fs.String("route-key-env", decide.DefaultKeyEnv, "")
 	routeBaseURL := f.fs.String("route-base-url", decide.DefaultBaseURL, "")
+	workerFile := f.fs.String("worker", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots,
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots, *workerFile,
 			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
 				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
@@ -552,6 +570,38 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(all) == 0 {
 		fmt.Fprintf(stderr, "BATCH REFUSED: %s holds no regular file; a batch of no tasks is a typo\n", oneline.Field(*tasks))
 		return 1
+	}
+	// THE PUBLIC-CLASS GATE (CARD-8390) on the queueing half: with --worker
+	// naming a public-class worker, a card cloning an unlisted repo is refused
+	// with CARD REFUSED and nothing is queued.
+	var gateWorker swarm.Worker
+	gatePublic := false
+	if *workerFile != "" {
+		w, problems := swarm.LoadWorker(*workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		gateWorker, gatePublic = w, w.IsPublic()
+	}
+	if gatePublic {
+		for _, q := range all {
+			text := q.text
+			if *template != "" {
+				wrapped, err := swarm.WrapTemplate(*template, *files, text)
+				if err != nil {
+					fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+					return 2
+				}
+				text = wrapped
+			}
+			if repo, refused := swarm.CheckPublicCard(gateWorker, string(text), *pool); refused {
+				fmt.Fprintln(stderr, swarm.PublicRefusalLine(repo, gateWorker.Name))
+				return 1
+			}
+		}
 	}
 	batchID := swarm.NewID(now, *label)
 	for i, q := range all {
@@ -633,7 +683,7 @@ func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	return in
 }
 
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots string, route routeFlags, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots, workerFile string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
@@ -662,6 +712,17 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 	if f.refused(stderr) {
 		return 2
 	}
+	var w swarm.Worker
+	if strings.TrimSpace(workerFile) != "" {
+		loaded, problems := swarm.LoadWorker(workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		w = loaded
+	}
 	return swarm.Batch(swarm.BatchInput{
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
 		Idle:  time.Duration(idle) * time.Second,
@@ -669,6 +730,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
 		Route:  routed,
+		Worker: w,
 		Stdout: stdout, Stderr: stderr,
 	})
 }
