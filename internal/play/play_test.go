@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeSource(t *testing.T, dir, name, body string) string {
@@ -481,5 +483,116 @@ func TestFullAuthorNamesRoundTrip(t *testing.T) {
 	}
 	if notes[0].Replies[0].Author != author2 {
 		t.Errorf("ReadNotes reply author = %q, want %q", notes[0].Replies[0].Author, author2)
+	}
+}
+
+// An author or a body containing double quotes, backslashes and a trailing
+// space must survive annotate, read and reply byte for byte, and the sidecar
+// bytes must be exactly what the version-2 format says: the author field is
+// a Go-quoted string whenever it contains a space, a quote or a backslash,
+// and the text records are a single escaped physical line.
+func TestQuotedAuthorAndTextRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
+	passage := "The lantern room held a brass fitting."
+
+	noteAuthor := `Ada "The Reader" Lovelace\Byron `
+	noteBody := "She said \"hello\" and left\\away\nsecond line ends in a space "
+
+	n, err := Annotate(src, noteAuthor, passage, noteBody)
+	if err != nil {
+		t.Fatalf("Annotate failed: %v", err)
+	}
+	if n.Author != noteAuthor {
+		t.Errorf("Annotate returned author = %q, want %q", n.Author, noteAuthor)
+	}
+
+	notes, status, err := ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes failed: %v", err)
+	}
+	if status != "ANCHOR OK" {
+		t.Fatalf("status = %q, want ANCHOR OK", status)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d notes, want 1", len(notes))
+	}
+	if notes[0].Author != noteAuthor {
+		t.Errorf("note author after reload:\ngot  %q\nwant %q", notes[0].Author, noteAuthor)
+	}
+	if notes[0].Note != noteBody {
+		t.Errorf("note body after reload:\ngot  %q\nwant %q", notes[0].Note, noteBody)
+	}
+	if notes[0].Passage != passage {
+		t.Errorf("passage after reload:\ngot  %q\nwant %q", notes[0].Passage, passage)
+	}
+
+	replyAuthor := `Stella "Fixer" O'Hara\n`
+	replyBody := "Quote: \"brass\"; path: C:\\ships\\brass\ntrailing space here "
+
+	r, err := ReplyTo(src, n.ID, replyAuthor, replyBody)
+	if err != nil {
+		t.Fatalf("ReplyTo failed: %v", err)
+	}
+	if r.Author != replyAuthor {
+		t.Errorf("ReplyTo returned author = %q, want %q", r.Author, replyAuthor)
+	}
+
+	notes, _, err = ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes after reply failed: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d notes after reply, want 1", len(notes))
+	}
+	if notes[0].Author != noteAuthor {
+		t.Errorf("note author after reply rewrite:\ngot  %q\nwant %q", notes[0].Author, noteAuthor)
+	}
+	if notes[0].Note != noteBody {
+		t.Errorf("note body after reply rewrite:\ngot  %q\nwant %q", notes[0].Note, noteBody)
+	}
+	if len(notes[0].Replies) != 1 {
+		t.Fatalf("got %d replies, want 1", len(notes[0].Replies))
+	}
+	if notes[0].Replies[0].Author != replyAuthor {
+		t.Errorf("reply author after reload:\ngot  %q\nwant %q", notes[0].Replies[0].Author, replyAuthor)
+	}
+	if notes[0].Replies[0].Note != replyBody {
+		t.Errorf("reply body after reload:\ngot  %q\nwant %q", notes[0].Replies[0].Note, replyBody)
+	}
+
+	// The sidecar bytes must be exactly what the format documents.
+	raw, err := os.ReadFile(NoteFile(src))
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if len(lines) != 7 {
+		t.Fatalf("sidecar has %d lines, want 7:\n%s", len(lines), raw)
+	}
+	if !strings.HasPrefix(lines[0], "ANCHOR ") {
+		t.Errorf("line 1 = %q, want an ANCHOR line", lines[0])
+	}
+	if lines[1] != "VERSION 2" {
+		t.Errorf("line 2 = %q, want %q", lines[1], "VERSION 2")
+	}
+	wantNoteLine := "NOTE id=" + n.ID + " author=" + strconv.Quote(noteAuthor) +
+		" created=" + n.CreatedAt.Format(time.RFC3339)
+	if lines[2] != wantNoteLine {
+		t.Errorf("NOTE line:\ngot  %q\nwant %q", lines[2], wantNoteLine)
+	}
+	if want := "PASSAGE " + escapeText(passage); lines[3] != want {
+		t.Errorf("PASSAGE line:\ngot  %q\nwant %q", lines[3], want)
+	}
+	if want := "BODY " + escapeText(noteBody); lines[4] != want {
+		t.Errorf("BODY line:\ngot  %q\nwant %q", lines[4], want)
+	}
+	wantReplyLine := "REPLY id=" + r.ID + " author=" + strconv.Quote(replyAuthor) +
+		" created=" + r.CreatedAt.Format(time.RFC3339)
+	if lines[5] != wantReplyLine {
+		t.Errorf("REPLY line:\ngot  %q\nwant %q", lines[5], wantReplyLine)
+	}
+	if want := "REPLY_BODY " + escapeText(replyBody); lines[6] != want {
+		t.Errorf("REPLY_BODY line:\ngot  %q\nwant %q", lines[6], want)
 	}
 }

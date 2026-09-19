@@ -464,3 +464,75 @@ func TestCLICRLFPreserved(t *testing.T) {
 		t.Errorf("note body mismatch:\ngot  %q\nwant %q", notes[0].Note, noteBody)
 	}
 }
+
+// Through the actual CLI surface: an author and a body carrying double quotes,
+// backslashes and a trailing space must survive annotate, read and reply.
+func TestCLIQuotedAuthorAndTextRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
+	passage := "The lantern room held a brass fitting."
+
+	noteAuthor := `Ada "The Reader" Lovelace\Byron `
+	noteBody := "She said \"hello\" and left\\away\nsecond line ends in a space "
+
+	var stdout, stderr bytes.Buffer
+	got := run([]string{"annotate", "--source", src, "--author", noteAuthor, "--passage", passage, "--note", noteBody}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("annotate: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	notes, _, err := play.ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d notes, want 1", len(notes))
+	}
+	if notes[0].Author != noteAuthor {
+		t.Errorf("note author:\ngot  %q\nwant %q", notes[0].Author, noteAuthor)
+	}
+	if notes[0].Note != noteBody {
+		t.Errorf("note body:\ngot  %q\nwant %q", notes[0].Note, noteBody)
+	}
+	noteID := notes[0].ID
+
+	replyAuthor := `Stella "Fixer" O'Hara\n`
+	replyBody := "Quote: \"brass\"; path: C:\\ships\\brass\ntrailing space here "
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"reply", "--source", src, "--id", noteID, "--author", replyAuthor, "--body", replyBody}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("reply: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	notes, _, err = play.ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes after reply: %v", err)
+	}
+	if len(notes) != 1 || len(notes[0].Replies) != 1 {
+		t.Fatalf("got %d notes / %d replies, want 1 / 1", len(notes), len(notes[0].Replies))
+	}
+	if notes[0].Author != noteAuthor {
+		t.Errorf("note author after reply:\ngot  %q\nwant %q", notes[0].Author, noteAuthor)
+	}
+	if notes[0].Note != noteBody {
+		t.Errorf("note body after reply:\ngot  %q\nwant %q", notes[0].Note, noteBody)
+	}
+	if notes[0].Replies[0].Author != replyAuthor {
+		t.Errorf("reply author:\ngot  %q\nwant %q", notes[0].Replies[0].Author, replyAuthor)
+	}
+	if notes[0].Replies[0].Note != replyBody {
+		t.Errorf("reply body:\ngot  %q\nwant %q", notes[0].Replies[0].Note, replyBody)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"read", "--source", src}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("read: exit %d, stderr=%s", got, stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, noteAuthor) {
+		t.Errorf("read stdout missing the exact note author %q:\n%s", noteAuthor, out)
+	}
+}
