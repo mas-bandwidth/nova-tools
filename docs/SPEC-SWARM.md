@@ -2091,6 +2091,76 @@ declaration cannot outlive a worker description.
 repository runs over every printed argument (`internal/oneline/audit`) covers it:
 the key is not a printed value, and a new print of one is a test failure.
 
+### The card's shell never sees a secret (issue #1814)
+
+Every rule above is about the key reaching a FILE or a LINE. It said nothing
+about the key reaching the MODEL, and until this rule the model had it. The
+harness needs the key — its `opencode.json` declares the provider as
+`{env:DEEPSEEK_API_KEY}` and it reads the value from its own environment to make
+the API call — and the harness hands its bash tool that same environment. A card
+whose STEP ran a shell could therefore print the key into its tool output, its
+`RESULT.md`, the job's `harness-output.log` and, through the harvest's `openPR`,
+into a pull request body on the forge. **Measured** inside the real wall on
+`space`, seat `swarm-space`, 2026-09-19: a card printing only
+`${#DEEPSEEK_API_KEY}` and a count of secret-carrying names got back
+`envlen=35 envnames=1`. No byte of the value was read or printed, then or since.
+
+**The rule.** *The process that calls the provider keeps the key; every shell
+under it does not.* `native` writes a `bash` and an `sh` wrapper into
+`<slot>/shim`, puts that directory **first** on the child's `PATH` and pins
+`SHELL` at the wrapper. Each wrapper unsets every environment name carrying
+`KEY`, `TOKEN` or `SECRET` — the one predicate the argv log already redacts by —
+and then `exec`s the real shell. The wrappers list NAMES through `awk` and read
+no value; a bench with no `awk` makes the wrapper exit 127 rather than start a
+shell that still carries the key.
+
+**`<slot>/shim` is the only lawful place for them.** It is inside the wall's read
+set and outside its write set (`--read <slot>`, `--write <job>/<data>/<tmp>`), so
+the card can execute a wrapper and cannot replace one. A wrapper under the job
+directory or the data home would be the card's to rewrite.
+
+**A run whose shim cannot be written REFUSES.** A card's shell carrying the
+seat's key is the defect this closes, not a mode to fall back to.
+
+**What it does not close.** A card that spells `/usr/bin/bash` absolutely skips
+the wrapper, and so would a harness that spawned a shell some third way. Closing
+those means handing the key to the harness by **file descriptor** instead of by
+environment, which is a design question, not a fix — it is owed to Stella and
+is deliberately not built here. The harvest's key-shape scan below is the
+backstop behind the wrapper. On **windows** no wrapper is written and the
+child's environment is exactly what it was; the gap is named, not papered over.
+
+**The harvest publishes no key.** Before any push and before any PR,
+`nova-pulse harvest` reads the card's `RESULT.md` — which is what `openPR` copies
+into the PR body — and the diff the push would carry, against a list of key
+SHAPES held as one data file (`internal/keyshape/keyshapes.txt`: PEM armour,
+`AGE-SECRET-KEY-1`, the forge's token prefixes, the provider prefixes, a JWT) and
+against the value of every secret-named variable the harvest process itself
+holds. A hit prints
+`HARVEST REFUSED secret-shape file=<path> line=<n> shape=<name> label=<label>`,
+**never the matched text**, and for the environment half a VARIABLE's name and
+the value's LENGTH. The job directory is then **moved** to
+`<root>/quarantine/<label>` — never deleted, because a key in a worker's output
+is evidence a person has to read — one `HUMAN` line is appended to
+`<root>/HUMAN` naming the shape, the quarantine and the one remedy (rotate the
+seat's key), and the card counts `refused`. This is the same shape
+`SPEC-TOOLWORK` §3 rule 6 names for the hygiene gate's `secret` finding; when
+that gate lands, one of the two lists loads the other and neither is copied
+again.
+
+**Tests this rule demands** (`cmd/nova-swarm`, `internal/keyshape`,
+`internal/pulse`): `TestTheCardsShellNeverSeesASecret`,
+`TestTheShimNeverPrintsAValue`,
+`TestTheShimIsInTheWallsReadSetAndNotItsWriteSet`,
+`TestTheChildEnvPutsTheShimFirstAndPinsShell`,
+`TestTheChildEnvIsUnchangedWithoutAShim`, `TestEachShapeCatchesItsOwnForm`,
+`TestTheScanNeverPrintsWhatItMatched`,
+`TestASecretNamedVariablesValueIsCaughtByLengthAndName`,
+`TestPlainProseIsNoFinding`, `TestHarvestRefusesToPushAKeyShape`,
+`TestASecretQuarantinesAndNeverDeletes`, `TestASecretWritesOneHumanLine`,
+`TestTheSeatsOwnKeyIsCaughtWithoutAShape`,
+`TestThePRBodyIsAPrefixOfWhatTheScanRead`.
+
 ## Slots
 
 A running worker holds a **slot**, `1..n`. A slot is:

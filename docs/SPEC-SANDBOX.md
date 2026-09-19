@@ -257,7 +257,23 @@ near the end.
    thing end to end through the binary. `profiles/darwin-check.sh`'s
    `env_no_ssh_auth_sock` builds the child environment by its **own** filter
    before `sandbox-exec` runs, so it can only agree with itself. The credential
-   the caller deliberately passed by environment (rule 6) must arrive. But an inherited `HOME` names a directory that is in no list and
+   the caller deliberately passed by environment (rule 6) must arrive.
+
+   **And it arrives for the CHILD, which is not the same as arriving for
+   everything the child spawns (nova-tools #1814).** "Not a secrets tool" is
+   meant literally, and it was read too generously: because the wall passes the
+   credential through, an agent harness under the wall handed that same
+   environment to the shell it gives its model, and the model could read the
+   seat's provider key. The wall does not change — a wall that decided which of
+   the caller's variables were secret would be guessing, which is rule 4's
+   refusal — and the scrub of the TOOL SUBPROCESS belongs to the caller that
+   knows which name is the credential. `nova-swarm native` does it: a `bash` and
+   an `sh` wrapper in `<slot>/shim`, first on the child's `PATH` and pinned as
+   `SHELL`, unsetting every `KEY`/`TOKEN`/`SECRET` name before exec'ing the real
+   shell. The rule and its tests are in **docs/SPEC-SWARM.md, "The card's shell
+   never sees a secret"**; the wall's own contribution is that `<slot>` is a
+   `--read` and never a `--write`, so the card can run a wrapper and cannot
+   replace one. But an inherited `HOME` names a directory that is in no list and
    is therefore denied, and almost every tool a worker runs derives a path
    from it. Measured on this Mac under the profile below: with the caller's
    `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to
