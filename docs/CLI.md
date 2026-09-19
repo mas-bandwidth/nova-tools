@@ -76,8 +76,8 @@ $ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
 DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
-DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=-
-DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
+DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -89,12 +89,29 @@ DOGFOOD GATE FAIL verbs=106 findings=105 shown=20 unmatched=0
 never elides one: a ledger that capped its rows would hide exactly the verbs
 nobody has run. The summary is the bounded read — `dogfooded=` counts verbs
 with any receipt, `by-nonauthor=` counts the ones a non-author ran and said ok,
-`open-edges=` counts the edges no later run has cleared, `unfiled=` how many
+`open-edges=` counts the findings nobody has answered, `unfiled=` how many
 of those nobody has filed an issue for, and `unmatched=` how many receipts named
-a verb the list does not declare. `gate` is the same read with an exit
-code: 1 on an open edge always, 1 on any **unmatched not-ok receipt**, and with
-`--require-all` on every verb no
-non-author has passed. A receipt the tool cannot parse is exit 1 and a named
+a verb the list does not declare. Each row also carries `open=<n>`, the findings
+open on that verb, printed whether it is zero or not. `gate` is the same read
+with an exit code: 1 on an open edge always, 1 on any **unmatched not-ok
+receipt**, and with `--require-all` on every verb no non-author has passed.
+
+**An edge is answered, not outlived.** It used to be cleared by anybody running
+the verb again later and finding nothing — so where two people dogfood the same
+verb, the second one's pass silently closed the first one's finding, unread and
+unfiled, and the row printed that second person's `ok=yes` over it. A finding is
+closed by a receipt that **names** it — `dogfood record --closes <id>`, which
+anybody may write — or by **the person who found it** running the verb again and
+finding nothing. The id is the eight hex characters the gate prints beside the
+finding and the same eight that end the receipt's filename, so a reader with an
+id can find the file:
+
+```
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
+```
+
+A `--closes` naming an id nothing carries closes nothing and leaves the edge
+open: a typo must never read as a close. A receipt the tool cannot parse is exit 1 and a named
 `DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
 the list does not declare is named one by one — its file, what it claimed and
 the nearest declared verb — by `ledger` AND by `gate`, because a release lane
@@ -524,7 +541,7 @@ nova-decide route ... [--paste]
 
 Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, how it is `ask`ed, and — for a rung that is a model rather than a person — the `model` id a unit dispatched to it runs with) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
 
-The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
+The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt "opus:failed:missed the cause"`, quoted, because the reason may hold spaces and an unquoted one arrives as three arguments — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
 
 Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `row-test`, `dogfood`, `fleet-chore`).
 
@@ -561,7 +578,7 @@ Presence is tracked **per counter**: a 200 with a valid answer and no `usage` ob
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
 ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
-$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
+$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt "opus:failed:missed the cause" --no-jev
 ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- next=- steps=1 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
 ```
 
@@ -1825,7 +1842,8 @@ A prune never runs on a guess.
 ### status
 
 ```
-nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>] [--oneline]
+nova-pulse status --html <file> --benches <file> --queue <dir> [--publish <target>] [--ssh <cmd>] [--branch <b>] [--day-start <hh:mm>] [--gh-config <dir>] [--timeout <s>]
 ```
 
 `status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
@@ -1897,6 +1915,17 @@ and failing that the origin of the clone the queue sits in, named on a
 `STATUS NOTE` line. With neither there is nobody to ask and the page says so;
 with a repo that did not answer it says that instead — they are different
 facts, and the page used to print the first for both.
+
+The one line it prints is the whole result of the run:
+
+```
+STATUS HTML wrote=<file> live=<n> queue=<n> down=<n> merged=<sha> published=<target|->
+```
+
+A publish that fails does not lose the page — the line says where it was
+written and that nothing was shipped. `--day-start <HH:MMZ>` sets the day
+boundary the counts reset on, `--branch` the branch the page reports, and
+`--gh-config` the `gh` configuration directory the merged read uses.
 
 ## nova-review
 
