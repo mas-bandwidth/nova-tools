@@ -48,16 +48,21 @@ func TestIssue1518WaitTakesMaxCommitsAndSaysLoudlyWhenTheWalkIsBlind(t *testing.
 	if blind.code != 0 {
 		t.Fatalf("a bounded wait exits 0 by contract, got %d\nstderr:\n%s", blind.code, blind.stderr)
 	}
+	// EXACTLY ONE, counted. The card asks for "one loud WAIT BLIND line", and a wait
+	// POLLS: a bound hit on every poll would print the same line twice, which is the
+	// noise this line exists to cut through. Comparing a second occurrence against the
+	// first would tolerate an identical duplicate, so the occurrences are counted.
 	var blindLine string
+	blindCount := 0
 	for _, line := range strings.Split(blind.stderr, "\n") {
 		if !strings.HasPrefix(line, "WAIT BLIND ") {
 			continue
 		}
-		if blindLine == "" {
-			blindLine = line
-		} else if line != blindLine {
-			t.Fatalf("WAIT BLIND is not one line, saw %q and %q", blindLine, line)
-		}
+		blindCount++
+		blindLine = line
+	}
+	if blindCount != 1 {
+		t.Fatalf("want exactly 1 WAIT BLIND line, got %d\nstderr:\n%s", blindCount, blind.stderr)
 	}
 	wantBlind := `WAIT BLIND commits=100 remedy="raise --max-commits or close --before <instant>"`
 	if blindLine != wantBlind {

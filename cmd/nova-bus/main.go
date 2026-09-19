@@ -1590,6 +1590,12 @@ type inboxOpts struct {
 	me    bus.Participant
 	beat  time.Duration
 	lease time.Duration
+	// blindSaid gates the WAIT BLIND line to ONCE per wait, not once per poll. A wait
+	// polls every --interval, and a bound hit on every poll would print the same loud
+	// line every time -- which is the routine noise this line exists to cut through.
+	// It is a POINTER because inboxOpts is passed by value and each poll gets a copy;
+	// `inbox` leaves it nil, so its single listing is unaffected.
+	blindSaid *bool
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -1756,8 +1762,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				// inbox reports as routine is a WAIT BLIND line here, naming the count
 				// it could not cross and the remedy. The INBOX WALK bounded line above
 				// stays byte for byte: other tools parse it.
-				if !o.walkProgress {
+				if !o.walkProgress && (o.blindSaid == nil || !*o.blindSaid) {
 					fmt.Fprintf(stderr, "WAIT BLIND commits=%d %s\n", limit, boundedWalkRemedy)
+					if o.blindSaid != nil {
+						*o.blindSaid = true
+					}
 				}
 				return 0, r
 			}
@@ -2964,7 +2973,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
-		maxCommits: *maxCommits,
+		maxCommits: *maxCommits, blindSaid: new(bool),
 		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
