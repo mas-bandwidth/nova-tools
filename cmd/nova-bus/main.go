@@ -81,7 +81,7 @@ usage:
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
-        [--quiet-beats]
+        [--quiet-beats] [--no-beat]
         [--max-commits <n>]
         [--decide [--floor <f>] [--key-env <name>] [--base-url <url>] [--allow-private]]
         [--diagnostics]
@@ -1558,9 +1558,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	if o.bodies {
-		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
+		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, stdout, stderr)
 	}
-	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
+	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, stdout, stderr)
 }
 
 // inboxOpts is one listing's whole invocation, read from the flags and checked.
@@ -1623,6 +1623,11 @@ type inboxOpts struct {
 	me    bus.Participant
 	beat  time.Duration
 	lease time.Duration
+	// noBeat is `wait --no-beat`: no entry beat, no tick beat, no beat commit. It is a
+	// READ-ONLY poll for a process that runs BESIDE a line rather than AS the line, so
+	// the line's own harness keeps its BEAT to itself and the two writers never collide
+	// on from-<name>/BEAT (#1517). `inbox` leaves it false.
+	noBeat bool
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -2232,8 +2237,13 @@ func legacyToken(l bus.LegacyLine) string {
 // The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
-func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
-	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane), bus.BeatPath(me.Lane)}
+func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, noBeat bool, now time.Time, stdout, stderr io.Writer) int {
+	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
+	// --no-beat (#1517): the cursor commit does not name the BEAT, so a read-only wait
+	// that advances its cursor still writes nothing of the line's presence onto the bus.
+	if !noBeat {
+		paths = append(paths, bus.BeatPath(me.Lane))
+	}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
@@ -2274,13 +2284,13 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 
 // advanceCursor preserves the released full-head behaviour for listings without bodies.
 // Bodies mode calls advanceCursorTo with the paginator's whole-commit safe frontier.
-func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, noBeat bool, now time.Time, stdout, stderr io.Writer) int {
 	head, err := bus.HeadCommit(busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
-	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, now, stdout, stderr)
+	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, noBeat, now, stdout, stderr)
 }
 
 // defaultOpenMax is how many carried entries `--open` prints before it says how many it
@@ -2830,6 +2840,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
 	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
 	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a manager cycle between waits still reads awake")
+	noBeat := f.fs.Bool("no-beat", false, "write and push no BEAT at all: a read-only poll for a process that runs beside a line rather than as it, so it does not fight the line's own harness for from-<name>/BEAT; cannot be given with --beat or --beat-lease")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -2863,6 +2874,15 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// what its checkout already held would wait out its whole timeout beside a bus full of
 	// notes, and this tool does not guess a remote.
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
+		return 2
+	}
+	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE (#1517). --no-beat
+	// says this wait writes no BEAT and --beat/--beat-lease say when and how far to write
+	// one; a caller that gave both meant one of them, and guessing which would silently
+	// break either presence or the read-only promise. It is refused by name, and the door
+	// is the same one every invocation refusal names.
+	if *noBeat && (f.set("beat") || f.set("beat-lease")) {
+		fmt.Fprint(stderr, "nova-bus wait: --no-beat writes no BEAT and --beat/--beat-lease say when to write one; give one or the other; run: nova-bus help\n")
 		return 2
 	}
 	flagLegacy, ok := legacyLine("wait", *legacyBefore, stderr)
@@ -3014,7 +3034,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
-		me: me, beat: *beat, lease: *beatLease,
+		me: me, beat: *beat, lease: *beatLease, noBeat: *noBeat,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
 		maxCommits:  *maxCommits,
@@ -3065,9 +3085,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(dash(*until)), *idleExit)
 	}
 	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
-	// already reads awake the moment its call begins, lease and all.
-	if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
-		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+	// already reads awake the moment its call begins, lease and all. --no-beat turns it
+	// off with the rest of the beat: a process running BESIDE a line does not beat for it.
+	if !o.noBeat {
+		if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
+			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+		}
 	}
 	// The command the caller issues again to re-arm this wait: the next one, with the same
 	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
@@ -3177,8 +3200,12 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	if held, err := bus.ReadCursor(o.busDir, o.me.Lane); err == nil {
 		cursor = held.Commit
 	}
-	// The beat write: one line into the working tree, cheap, every tick.
+	// The beat write: one line into the working tree, cheap, every tick. --no-beat makes
+	// it a no-op, so a read-only poll touches no file and no commit.
 	writeBeat := func() {
+		if o.noBeat {
+			return
+		}
 		if err := writeBeatLease(o, cursor); err != nil {
 			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
 		}
@@ -3212,6 +3239,9 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// unpushed commit of the caller's own beat, as their own machinery and carry it out
 	// with the note rather than refusing over it.
 	landBeat := func() {
+		if o.noBeat {
+			return
+		}
 		dirty, err := bus.PathDirty(o.busDir, bus.BeatPath(o.me.Lane))
 		if err != nil {
 			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
@@ -3393,16 +3423,16 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 			return 1, r, "", false
 		}
 		var quiet bytes.Buffer
-		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &quiet, stderr); code != 0 {
+		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &quiet, stderr); code != 0 {
 			return code, r, "", false
 		}
 		skip := fmt.Sprintf("WAIT ADVANCED from=%s to=%s heard=%d\n", oneline.Field(sha8(r.Cursor)), oneline.Field(sha8(head)), r.HeardNew)
 		return 0, r, skip, true
 	}
 	if o.advance && o.bodies && r.AdvanceTo != "" {
-		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
 	} else if o.advance && !o.bodies {
-		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
 	}
 	return code, r, buf.String(), false
 }
