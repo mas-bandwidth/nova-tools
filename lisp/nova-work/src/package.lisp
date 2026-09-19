@@ -1105,6 +1105,19 @@
     #:staged-input-p
     #:receipt-submit
     #:stage-payload-file
+    ;; `savepoint create` over the real state, journal and files
+    ;; (src/savepoint-create.lisp, SPEC-WORK.md:7109-7190)
+    #:journal-scan
+    #:journal-scan-records
+    #:journal-scan-torn-p
+    #:scan-journal-file
+    #:journal-scan-cut
+    #:journal-file-identity
+    #:savepoint-capture-submit
+    #:savepoint-directory
+    #:savepoint-manifest-path
+    #:read-savepoint-manifest
+    #:savepoint-create
     #:admitted-receipts
     #:admitted-receipt
     #:session-written-field
