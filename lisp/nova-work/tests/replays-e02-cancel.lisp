@@ -194,3 +194,102 @@
              (ok (null (search "req-cancel-x" (operation-journal-text path)))
                  "and its request id never reaches the journal")))
       (close-durable-operation-registry registry))))
+
+;;; ------------------------------------------------------------------
+;;; a-cancel-request-reused-with-a-different-payload-refuses  :2740-2743
+;;; ------------------------------------------------------------------
+;;;
+;;; Stella's scheduler ruling (comment 5742253361 on #1676, answering the token
+;;; this file flagged for review) fixes three things. The reason text is the
+;;; kernel's own, byte for byte -- `reused with a different payload`, the
+;;; spelling src/node-verbs.lisp:478, src/fleet.lisp:1210 and
+;;; src/edit-undo.lisp:39 already carry -- inside the operation grammar's line,
+;;; exit 2, with no new record and no state change. The compared fields are
+;;; named rather than implied: the target operation AND the author; a later
+;;; observation timestamp is not a new payload. And a cancel request id that
+;;; collides with another record KIND on the same journal is a conflict too,
+;;; not an invitation to write a cancel under an operation id.
+
+(deftest "a-cancel-request-reused-with-a-different-payload-refuses" "docs/SPEC-WORK.md:2740-2743"
+    "expected=changed-target-refuses;changed-actor-refuses;stamp-only-retry-replays;cross-record-kind-collision-refuses;journal-length-and-state-unchanged"
+  (let* ((path (test-journal-path "operation-cancel-payload"))
+         (registry (cancelled-registry path))
+         (state-of (lambda (id)
+                     (getf (cdr (assoc id (operation-registry-operations registry)
+                                       :test #'equal))
+                           :state))))
+    (unwind-protect
+         (progn
+           (operation-accept registry :id "op-a" :kind "capture" :request "req-a"
+                                      :author "rowan" :stamp "2026-09-19T12:00:00Z")
+           (operation-accept registry :id "op-b" :kind "export" :request "req-b"
+                                      :author "rowan" :stamp "2026-09-19T12:00:01Z")
+           (registry-operation-cancel registry "op-a" :request "req-cancel-1"
+                                                      :author "rowan"
+                                                      :stamp "2026-09-19T12:00:05Z")
+           ;; A changed TARGET under the same cancel request id.
+           (let ((before (operation-journal-length registry))
+                 (before-b (funcall state-of "op-b")))
+             (multiple-value-bind (disposition line code replayed)
+                 (registry-operation-cancel registry "op-b" :request "req-cancel-1"
+                                                            :author "rowan"
+                                                            :stamp "2026-09-19T12:00:06Z")
+               (check-equal nil disposition "a changed target has no disposition")
+               (check-string= "OPERATION FAIL id=op-b op=- state=-: reused with a different payload"
+                              line "the refusal carries the kernel's own reason text")
+               (check-equal 2 code "the refusal exits 2")
+               (check-equal nil replayed "a refusal is not a replay"))
+             (check-equal before (operation-journal-length registry)
+                          "a changed target writes no record")
+             (check-equal before-b (funcall state-of "op-b")
+                          "and does not cancel the operation it named"))
+           ;; A changed ACTOR under the same cancel request id and target.
+           (let ((before (operation-journal-length registry)))
+             (multiple-value-bind (disposition line code replayed)
+                 (registry-operation-cancel registry "op-a" :request "req-cancel-1"
+                                                            :author "stella"
+                                                            :stamp "2026-09-19T12:00:07Z")
+               (check-equal nil disposition "a changed actor has no disposition")
+               (check-string= "OPERATION FAIL id=op-a op=- state=-: reused with a different payload"
+                              line "the refusal carries the kernel's own reason text")
+               (check-equal 2 code "the refusal exits 2")
+               (check-equal nil replayed "a refusal is not a replay"))
+             (check-equal before (operation-journal-length registry)
+                          "a changed actor writes no record"))
+           ;; The same semantic payload with a LATER observation timestamp is a
+           ;; replay, not a new payload.
+           (let ((before (operation-journal-length registry)))
+             (multiple-value-bind (disposition line code replayed)
+                 (registry-operation-cancel registry "op-a" :request "req-cancel-1"
+                                                            :author "rowan"
+                                                            :stamp "2026-09-19T23:59:59Z")
+               (check-equal nil line "a stamp-only retry is acknowledged, not refused")
+               (check-equal 0 code "a stamp-only retry exits 0")
+               (ok replayed "a stamp-only retry says it is a replay")
+               (check-equal :cancelled (getf disposition :state)
+                            "and answers the original durable disposition"))
+             (check-equal before (operation-journal-length registry)
+                          "a stamp-only retry writes no second record"))
+           ;; A cancel request id colliding with another record KIND: `op-a` is
+           ;; the id of an ACCEPT record on this same journal.
+           (let ((before (operation-journal-length registry))
+                 (before-b (funcall state-of "op-b")))
+             (multiple-value-bind (disposition line code replayed)
+                 (registry-operation-cancel registry "op-b" :request "op-a"
+                                                            :author "rowan"
+                                                            :stamp "2026-09-19T12:00:08Z")
+               (check-equal nil disposition "a cross-record-kind collision has no disposition")
+               (check-string= "OPERATION FAIL id=op-b op=- state=-: reused with a different payload"
+                              line "the refusal carries the kernel's own reason text")
+               (check-equal 2 code "the refusal exits 2")
+               (check-equal nil replayed "a refusal is not a replay"))
+             (check-equal before (operation-journal-length registry)
+                          "a cross-record-kind collision writes no record")
+             (check-equal before-b (funcall state-of "op-b")
+                          "and leaves the operation it named untouched")
+             (let ((accept (accept-record-of (operation-registry-journal registry) "op-a")))
+               (check-equal nil (cancel-record-p accept)
+                            "the record under the colliding id is still the accept record")
+               (check-string= "capture" (getf accept :kind)
+                              "with the kind it was accepted under"))))
+      (close-durable-operation-registry registry))))

@@ -404,6 +404,6 @@ func parseFloors(list string) ([]float64, error) {
 // refuse prints the one refusal line: the prefix, REFUSED, a one-word reason
 // and the detail. It goes to stderr; the key is never printed.
 func refuse(stderr io.Writer, prefix, reason, detail string) int {
-	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
+	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s; run: nova-decide help\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
 	return 2
 }

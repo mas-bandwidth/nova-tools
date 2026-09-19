@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -161,8 +162,16 @@ type quietRedis struct{}
 
 func (quietRedis) Printf(context.Context, string, ...interface{}) {}
 
-// silenceRedis installs it, before the first dial of every verb that dials.
-func silenceRedis() { redis.SetLogger(quietRedis{}) }
+// silenceRedis installs it, before the first dial of every verb that dials -- and
+// ONCE FOR THE PROCESS (#1609). `redis.SetLogger` writes a package-level variable
+// inside go-redis, so a second verb in the same process writing it again is a data
+// race with the first: `go test -race ./cmd/nova-merge/` caught two `react` runs on
+// it, one run in six on vision, and ten tests failed behind that one race. The Once
+// also orders the write before every dial: a caller returns from Do only after the
+// first caller's write has completed.
+var silenceRedisOnce sync.Once
+
+func silenceRedis() { silenceRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) }) }
 
 // isDeadline is the reactor's quiet deadline: a watch that never changed returns once at
 // its bound, and returning at the bound is the design and not a failure.

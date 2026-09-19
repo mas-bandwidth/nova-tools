@@ -1,0 +1,46 @@
+# The stray list: what may never be ADDED by a card's diff.
+#
+# This file is DATA, not code, and it is embedded into the binary. It is here rather
+# than as string literals inside a walk because a list a reader can open and diff is
+# auditable and a list spelled out in a function is not, and it is embedded rather than
+# demanded from a flag because "RESULT.md is not part of a change" is not one bench's
+# situation.
+#
+# Format: <pattern>[<TAB><kind>[,<kind>...]]
+#
+# A pattern with no `/` matches a file's BASE NAME anywhere in the tree; a pattern with
+# a `/` matches the whole repo-relative path, where `*` stays inside one segment and
+# `**` spans any number of them.
+#
+# The second column is the allowlisted exception, and it names the CARD KIND it is for
+# -- never a path and never a card. A kind is a shape of work the tool declares and a
+# card cannot widen (SPEC-TOOLWORK §5 rule 6), so an exception written here is an
+# exception the tool grants to a shape of work, not one a worker can claim.
+
+# The worker's own paperwork. The card ends at the commit; the report is the launcher's
+# and belongs in the job directory, never in the repository (SPEC-TOOLWORK §4 rule 1:
+# a job that ships its own OUTCOME is a stray-file, and the same for what it says).
+RESULT.md
+PROMPT.md
+OUTCOME
+
+# Working space. A card that needed scratch had somewhere to put it that was not here.
+scratch/**
+
+# What a tool left behind: a log, a failed patch's leavings, a compiled test binary, a
+# captured stream. `*.out` is excused for transcript-test, whose whole job is a
+# recorded expected output under cmd/<tool>/testdata/firstrun/.
+*.log
+*.orig
+*.rej
+*.test
+*.out	transcript-test
+
+# What an editor and a file manager leave behind.
+.DS_Store
+*.swp
+*.swo
+*.swn
+*~
+.#*
+Thumbs.db
