@@ -169,10 +169,14 @@ func storeScript(store, owner, slotsBin, root string) string {
 		`S="` + shellDoubleQuoted(store) + `"`,
 		`O="` + shellDoubleQuoted(owner) + `"`,
 		`B="` + shellDoubleQuoted(slotsBin) + `"`,
+		// A MEASUREMENT NOBODY TOOK IS NOT A ZERO (Stella, R2). Both of these used to
+		// fall back to `0` when every reader failed, and `load1=0` passes any brake:
+		// a bench whose load nothing could read was dealt cards with the brake on.
+		// Unreadable is its own token now, and it travels to the caller as itself.
 		`c=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)`,
-		`[ -n "$c" ] || c=0`,
+		`case "$c" in ''|*[!0-9]*) c=unreadable;; esac`,
 		`l=$(cut -d" " -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')`,
-		`[ -n "$l" ] || l=0`,
+		`case "$l" in ''|*[!0-9.]*) l=unreadable;; esac`,
 		// No store on this bench at all: the documented fallback, positively detected,
 		// and it says which case it is.
 		`if [ ! -e "$S/shares.tsv" ]; then w=no-shares-file; ` + formula + `; fi`,
@@ -196,10 +200,24 @@ func storeScript(store, owner, slotsBin, root string) string {
 // legacyFormula is capacityBody -- the number `fill` answered before the store -- with the
 // whole-number load it wants, clamped at zero. It is kept for a bench that has no slot
 // store yet, and for nothing else.
+// legacyFormula is capacityBody -- the number `fill` answered before the store -- with
+// every measurement it stands on CHECKED first. It is the one path back to that number, so
+// it may not be reached on a reading nobody took: each unread measurement is its own
+// refusal, named, rather than an empty string that shell arithmetic reads as zero.
+//
+// The one number it still floors is $a itself, which is computed and not measured: a
+// formula that comes out negative is a bench with no room, and that was always its meaning.
 func legacyFormula(root string) string {
-	return `li=$(printf '%.0f' "$l" 2>/dev/null || echo 0); ` +
-		capacityBody(root) +
-		`; [ -n "$a" ] || a=0; [ "$a" -lt 0 ] 2>/dev/null && a=0; true`
+	return `if [ "$c" = unreadable ]; then echo "unreadable reason=cores-unreadable"; exit 0; fi` +
+		`; if [ "$l" = unreadable ]; then echo "unreadable reason=load-unreadable"; exit 0; fi` +
+		`; li=$(printf '%.0f' "$l" 2>/dev/null)` +
+		`; case "$li" in ''|*[!0-9]*) echo "unreadable reason=load-unreadable"; exit 0;; esac` +
+		`; ` + capacityReadings(root) +
+		`; case "$f" in ''|*[!0-9]*) echo "unreadable reason=formula-disk-unreadable"; exit 0;; esac` +
+		`; case "$m" in ''|*[!0-9]*) echo "unreadable reason=formula-memory-unreadable"; exit 0;; esac` +
+		`; ` + capacityArithmetic() +
+		`; case "$a" in ''|*[!0-9-]*) echo "unreadable reason=formula-unreadable"; exit 0;; esac` +
+		`; [ "$a" -lt 0 ] 2>/dev/null && a=0; true`
 }
 
 // localBenchSet reads the repeatable --local-bench into a set, and refuses a name that is

@@ -38,10 +38,17 @@ type CapacityAnswer struct {
 	Share     int     // the owner's row in shares.tsv, when FromStore
 	Held      int     // the live leases that owner holds, when FromStore
 	Formula   int     // the legacy load formula's number, when not FromStore
-	Cores     int     // the bench's cores, for the brake
-	Load1     float64 // the bench's one-minute load, for the brake
+	Cores     int     // the bench's cores, for the brake; 0 when CoresRead is false
+	CoresRead bool    // whether the bench could measure its cores at all
+	Load1     float64 // the bench's one-minute load, for the brake; 0 when LoadRead is false
+	LoadRead  bool    // whether the bench could measure its load at all
 	Why       string  // why the bench answered the formula rather than its store
 }
+
+// UnreadableMeasurement is what a bench says instead of a number when every reader for that
+// measurement failed. It is never 0: a zero load passes every brake, so a load nobody could
+// read used to turn the configured brake off without saying a word (Stella, R2 of #1945).
+const UnreadableMeasurement = "unreadable"
 
 // Free is the capacity: the store's free count under the owner's share, never below zero.
 // An owner holding more leases than its share -- a share LOWERED under live work -- is a
@@ -60,7 +67,7 @@ func (a CapacityAnswer) Free() int {
 // PerCore is the load the brake is read against; a bench answering no cores is not braked,
 // because a brake on a number nobody measured is a guess.
 func (a CapacityAnswer) PerCore() float64 {
-	if a.Cores <= 0 {
+	if a.Cores <= 0 || !a.CoresRead || !a.LoadRead {
 		return 0
 	}
 	return a.Load1 / float64(a.Cores)
@@ -220,13 +227,24 @@ func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
 	// say what its load is cannot be braked, and running it unbraked is the brake turning
 	// itself off. Whether that is fatal is the caller's -- a caller with the brake off
 	// (--max-load-per-core 0) does not need them -- but they must at least be READABLE.
-	if a.Cores, err = count("cores"); err != nil {
+	if seen["cores"] == UnreadableMeasurement {
+		a.Cores, a.CoresRead = 0, false
+	} else if a.Cores, err = count("cores"); err != nil {
 		return CapacityAnswer{}, err
+	} else {
+		a.CoresRead = true
 	}
 	raw, ok := seen["load1"]
 	if !ok {
 		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered %q, with no load1=", oneLineAnswer(out))
 	}
+	if raw == UnreadableMeasurement {
+		// Kept as itself all the way to the brake. Whether it is fatal is the brake's
+		// to say, and it is the ONE thing this must not decide by substituting a number.
+		a.Load1, a.LoadRead = 0, false
+		return a, nil
+	}
+	a.LoadRead = true
 	load, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered load1=%q, which is not a number", raw)
@@ -292,6 +310,14 @@ func countLeases(listing, owner string) (int, error) {
 	return held, nil
 }
 
+// unreadOr prints a measurement, or the word a bench uses when nobody could take it.
+func unreadOr(read bool, s string) string {
+	if !read {
+		return UnreadableMeasurement
+	}
+	return s
+}
+
 // oneLineAnswer bounds what a refusal quotes back, so a bench that printed a megabyte of
 // shell noise still costs one readable line.
 func oneLineAnswer(s string) string {
@@ -354,13 +380,33 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 			field(bench), oneline.Field(why), a.Free(),
 			"this bench has no row of its own in the slot store, so its capacity is the old load formula; give it a share to size it by its store")
 	}
-	// The brake is ON and the bench could not count its cores: it cannot be braked at all,
-	// and a bench that runs unbraked because its own reading failed is exactly the silence
-	// this guard exists to break.
-	if c.MaxLoadPerCore > 0 && a.Cores <= 0 {
-		return 0, fmt.Errorf(
-			"the load brake is on (%.2f per core) and the bench answered cores=%d; refusing to fill a bench nobody can brake (measure its cores, or say --max-load-per-core 0 to run it unbraked on purpose)",
-			c.MaxLoadPerCore, a.Cores)
+	// THE BRAKE IS ON AND A MEASUREMENT IT NEEDS WAS NEVER TAKEN. A bench that runs
+	// unbraked because its own reading failed is the brake turning itself off, which is
+	// the silence this guard exists to break. `--max-load-per-core 0` says there is no
+	// brake, and then there is nothing for an unread measurement to hold the bench with --
+	// but it is still said out loud, because an unread measurement is worth saying either
+	// way.
+	if c.MaxLoadPerCore > 0 {
+		if !a.LoadRead {
+			return 0, fmt.Errorf(
+				"load-unreadable: the brake is on (%.2f per core) and no reader on the bench could measure its load; refusing to fill a bench nobody can brake (fix the load reader, or say --max-load-per-core 0 to run it unbraked on purpose)",
+				c.MaxLoadPerCore)
+		}
+		if !a.CoresRead {
+			return 0, fmt.Errorf(
+				"cores-unreadable: the brake is on (%.2f per core) and no reader on the bench could measure its cores; refusing to fill a bench nobody can brake (fix the core reader, or say --max-load-per-core 0 to run it unbraked on purpose)",
+				c.MaxLoadPerCore)
+		}
+		if a.Cores <= 0 {
+			return 0, fmt.Errorf(
+				"cores-unreadable: the load brake is on (%.2f per core) and the bench answered cores=%d; refusing to fill a bench nobody can brake (measure its cores, or say --max-load-per-core 0 to run it unbraked on purpose)",
+				c.MaxLoadPerCore, a.Cores)
+		}
+	} else if (!a.LoadRead || !a.CoresRead) && c.Stderr != nil {
+		fmt.Fprintf(c.Stderr,
+			"FILL UNMEASURED bench=%s cores=%s load1=%s note=%q\n",
+			field(bench), unreadOr(a.CoresRead, strconv.Itoa(a.Cores)), unreadOr(a.LoadRead, "-"),
+			"the brake is off (--max-load-per-core 0), so a measurement nobody took does not hold this bench")
 	}
 	if a.Braked(c.MaxLoadPerCore) {
 		// A braked bench is NOT a failed bench: it answers zero and the tick carries on.

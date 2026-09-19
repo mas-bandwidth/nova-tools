@@ -187,7 +187,25 @@ func shellDoubleQuoted(s string) string {
 // more: a bench earns load by running the cards it was dealt, so this closed the fleet
 // exactly when the fleet was working (#1914).
 func capacityBody(root string) string {
-	return swarmRootScript(root) + `; f=$(df -BG "$r" | awk 'NR==2{gsub("G","",$4); print $4}'); m=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo); a1=$(( c*3/2 - li - c/8 )); a2=$(( (f-25)/2 )); a3=$(( m/2 )); a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3`
+	return capacityReadings(root) + `; ` + capacityArithmetic()
+}
+
+// capacityReadings takes the formula's two other measurements and leaves them in $f (free
+// GB on the swarm root's volume) and $m (available GB of memory). They are SEPARATE from
+// the arithmetic so the store probe can check that each one was actually read before using
+// it: an unread measurement that arrives as an empty string is a zero to shell arithmetic,
+// and a zero is a number somebody could act on (Stella, R2 of #1945).
+func capacityReadings(root string) string {
+	return swarmRootScript(root) +
+		`; f=$(df -BG "$r" 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')` +
+		`; m=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)`
+}
+
+// capacityArithmetic is the formula itself over $c, $li, $f and $m, leaving the number in
+// $a. It measures nothing; every value it reads was taken by capacityReadings or by the
+// caller.
+func capacityArithmetic() string {
+	return `a1=$(( c*3/2 - li - c/8 )); a2=$(( (f-25)/2 )); a3=$(( m/2 )); a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3`
 }
 
 // capacityScript is capacityBody with the two readings it wants in front of it and the

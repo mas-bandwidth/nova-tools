@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -190,4 +191,84 @@ func TestTheProbeAnswerIsBounded(t *testing.T) {
 	if len(errb) > 8000 {
 		t.Fatalf("the refusal itself is %d bytes; a bounded read must bound its own message", len(errb))
 	}
+}
+
+// breakTheLoadReaders puts a directory at the front of PATH holding a `cut` and a `sysctl`
+// that both fail, which is exactly Stella's R2 witness: `nproc` answers, the share row is
+// readable, `slots list` succeeds and is empty, and NEITHER load reader works. The stubs are
+// this package's own fake under two more names -- a name it has no spec for exits 97 on
+// stderr and prints nothing, so the probe's `l` comes back empty, which is the branch that
+// used to become a measured zero.
+func breakTheLoadReaders(t *testing.T) {
+	t.Helper()
+	bin := fakeBins(t)
+	raw, err := os.ReadFile(filepath.Join(bin, "nova-swarm"+exeSuffix()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(t.TempDir(), "broken-readers")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"cut", "sysctl"} {
+		if err := os.WriteFile(filepath.Join(broken, name+exeSuffix()), raw, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", broken+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestFillRefusesABenchWhoseLoadCannotBeMeasured: a failed measurement is not a zero. The
+// probe substituted `l=0` when both readers failed, so a bench whose load nobody could read
+// compared 0 against the brake, passed it, and was dealt cards -- the configured brake
+// silently not applied. Unreadable is now its own answer, and it holds the bench while the
+// brake is on.
+func TestFillRefusesABenchWhoseLoadCannotBeMeasured(t *testing.T) {
+	t.Run("the default brake holds the bench", func(t *testing.T) {
+		specs := fakePATH(t)
+		fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
+		fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
+		breakTheLoadReaders(t)
+		dir := t.TempDir()
+		fillReady(t, filepath.Join(dir, "ready"), 2)
+		store := fillStore(t, dir, "swarm-bench-a", 2)
+
+		code, out, errb, ready, launched := localFill(t, dir, store,
+			filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
+		if code == 0 {
+			t.Fatalf("a bench whose load nobody could read was filled; exit 0, stdout=%q stderr=%q", out, errb)
+		}
+		if fillCount(t, launched) != 0 || fillCount(t, ready) != 2 {
+			t.Fatalf("launched %d / ready %d, want 0 / 2: %q %q",
+				fillCount(t, launched), fillCount(t, ready), out, errb)
+		}
+		if !strings.Contains(errb, "FILL UNREADABLE bench=bench-a free=0 reason=load-unreadable") {
+			t.Fatalf("the unreadable load was not named: %q", errb)
+		}
+	})
+
+	// The documented opt-out still opts out: a caller who said `0` said there is no brake,
+	// and a measurement nothing reads is then nothing to hold the bench with. It is still
+	// printed, because an unread measurement is worth saying either way.
+	t.Run("an explicit zero brake still fills", func(t *testing.T) {
+		specs := fakePATH(t)
+		fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
+		fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
+		breakTheLoadReaders(t)
+		dir := t.TempDir()
+		fillReady(t, filepath.Join(dir, "ready"), 3)
+		store := fillStore(t, dir, "swarm-bench-a", 2)
+
+		code, out, errb, _, launched := localFill(t, dir, store,
+			filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), "--max-load-per-core", "0")
+		if code != 0 {
+			t.Fatalf("the zero-brake opt-out refused; exit = %d stdout=%q stderr=%q", code, out, errb)
+		}
+		if got := fillCount(t, launched); got != 2 {
+			t.Fatalf("launched %d cards, want 2 (the whole share): %q %q", got, out, errb)
+		}
+		if !strings.Contains(errb, "load1=unreadable") {
+			t.Fatalf("the unread measurement was not printed at all: %q", errb)
+		}
+	})
 }

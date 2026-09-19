@@ -1606,6 +1606,24 @@ Every failing bench gets its own line, not just the first. These are the refusal
 | the owner holds more leases than its share | an owner cannot hold more than its share, so the reading went wrong |
 | the header does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice, or a field this answer has no business carrying | a reading nobody can read one way is not a reading to act on |
 | the bench answered more than 64 KiB | an answer with no end is not an answer |
+| no reader on the bench could measure its **load**, or its **cores**, while the brake is on | a measurement nobody took is not a zero, and `load1=0` passes every brake |
+| a bench with no store row whose disk, memory, load or formula result could not be read | the formula stands on those measurements, and an empty reading is a zero to shell arithmetic |
+
+**A measurement nobody took is not a zero.** The probe reports `cores=unreadable` and
+`load1=unreadable` rather than substituting `0`, and that word travels all the way to
+the brake. With the brake on, an unreadable load or an unreadable core count holds the
+bench at `free=0` — a bench whose load nothing can read is a bench nobody can brake.
+With `--max-load-per-core 0` the caller has said there is no brake, so it does not hold
+the bench, and the unread measurement is still printed:
+
+```
+FILL UNMEASURED bench=<name> cores=<n|unreadable> load1=<unreadable> note="..."
+```
+
+The only number the probe still floors is the load formula's own result, which is
+computed rather than measured: a formula that comes out negative is a bench with no
+room, and that was always its meaning. The swarm root still falls back to `$HOME`, which
+is a documented path and not a measurement.
 
 **The lease read's exit status is the READ's, and the counting is Go's.** It was
 `slots list ... | grep -c`, whose status belongs to grep: a missing `nova-swarm`
