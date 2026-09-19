@@ -34,7 +34,7 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor 
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
-nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared, and exit 1 over receipts that count for nothing: the line a release calls
 ```
 
 ### First run
@@ -92,7 +92,8 @@ with any receipt, `by-nonauthor=` counts the ones a non-author ran and said ok,
 `open-edges=` counts the edges no later run has cleared, `unfiled=` how many
 of those nobody has filed an issue for, and `unmatched=` how many receipts named
 a verb the list does not declare. `gate` is the same read with an exit
-code: 1 on an open edge always, 1 on any **unmatched not-ok receipt**, and with
+code: 1 on an open edge always, 1 on any **unmatched not-ok receipt**, 1 when
+nothing in the receipts counts for anything, and with
 `--require-all` on every verb no
 non-author has passed. A receipt the tool cannot parse is exit 1 and a named
 `DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
@@ -115,6 +116,16 @@ naming the receipt's file and the verb it claimed. An unmatched receipt that say
 that has gone stale, is not a reason to stop a release nobody found anything
 wrong with. The unmatched findings are printed first, before anything derived
 from the receipts that did match.
+
+**A gate cannot go green on no evidence.** `gate` is the line a release lane
+calls, so the one thing it must never print is an OK over receipts it read
+nothing in. It says NO, exit 1, on one line, whenever `by-nonauthor=0`: an empty
+directory, receipts every one of which is stranded against a verb the list does
+not declare, and receipts that hold no non-author's pass are the three kinds of
+nothing, and the line names which one it read, what to record, and the flag that
+accepts a gate with none. `--allow-empty` is that flag — for a lane that means
+to gate before anybody has dogfooded anything — and the green line then carries
+`allow-empty=yes`, so a pass that was granted rather than earned says so.
 
 **Where the verbs come from.** `--tools <dir>` is a directory of built `nova-*`
 binaries: each is asked for its own `help`, and what it answers is the

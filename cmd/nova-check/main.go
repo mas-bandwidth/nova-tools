@@ -62,10 +62,15 @@ usage:
                             --notes <text> [--issue <n>] --receipts <dir>
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all]
+  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
-                                                     the line the release lane calls
+                                                     the line the release lane calls. Also
+                                                     exit 1 when no receipt counts for a
+                                                     non-author's pass, an empty directory
+                                                     included: a gate cannot go green on no
+                                                     evidence. --allow-empty is how a lane
+                                                     says it means to gate without any
 
   --fail-max <n>   on quickstart, attest, links, nocode and corpus: how many
                    FAIL lines to print before one MORE line stands for the
