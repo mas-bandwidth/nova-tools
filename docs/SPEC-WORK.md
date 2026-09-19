@@ -2113,7 +2113,47 @@ transition log is not a counting row. Every other ask prints the counting row. A
 | `fleet` / `fleet --for <workload-kind>` | the fleet of *The fleet* below: every live member with owner, roles, limits and dated declared facts; under `--for`, the members whose declared roles and permits admit the kind and whose exclusions do not — **a recommendation from declared facts, never a lease** (johnny-5b879930aae8) |
 | `routes` / `routes --class <card-class>` | the route registry of *Model routes* below: every live `:kind :route` member of the `routes` section of CONFIG with its provider, endpoint, key location as a path or env name, plan, cost per Mtok, capabilities, owner and its dated probe record with `benched-until=`; under `--class`, the projection's ordered route list for that card class, cheapest first, each admitted route carrying its passing probe — **a projection from declared facts and dated probe evidence, never a lease and never a second store** |
 
-**Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted, that is, settled in C after having merged and gone green, and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent is cut but held in the tree and never launched before ready, and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading and the revert flag only: it has no separate PR or evidence-record reference kind, no roadmap critical-path or width (ready-now versus blocked) view, no cost/estimate rollup along needs, and no held-in-tree launch gate — those remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
+**Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted, that is, settled in C after having merged and gone green, and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent is cut but held in the tree and never launched before ready, and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading and the revert flag only: it has no separate PR or evidence-record reference kind, no roadmap critical-path or width (ready-now versus blocked) view, no cost/estimate rollup along needs, and no held-in-tree launch gate. The launch gate is specified in *The launch gate* directly below, ahead of its code; the other three remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
+
+**The launch gate (`:deps`, nova-tools #785, the next slice).** The `ready` reading above answers a
+question; it does not stop anything. Glenn's sentence is the stop: *"When work is parallel, we do it
+in parallel by default. When work is serial and has dependencies, we are careful, and do not launch
+work until the dependencies are tested, ready and green."* So **launch is a verb over the tree and
+every launch is admitted by the same predicate `ready` reads**, rather than each launcher deciding
+for itself. A node whose needs are not all terminal accepted is **held**: it is cut, it is in the
+tree, it has an id, and it is on no slot. Six rules, each one a hurt already paid:
+
+1. **Held is a state, not an omission.** A dependent is cut when its parent is cut and carries
+   `held-by=<need-id>` for each need that is not terminal accepted. `query ready --node X` prints the
+   held rows too, each with its blocker and its resolver, because a row nobody can see is a row
+   somebody launches by hand.
+2. **One admission predicate.** `launch` admits a node only when `ready` would return it. The two are
+   the same read of the same state, so *"ready said yes and the launcher said no"* is not a thing that
+   can be said. A launcher that wants to bypass the gate cannot: there is no flag for it.
+3. **Under STOP there is no hand launch.** A hand launch of a held node is refused, exit 2, naming
+   the need. It retires the hand launches under STOP of pit stop 3 (#828 C, and #854 item 2): the
+   verb existed, the gate did not, so the gate was a person remembering.
+4. **Green is measured, never assumed.** A need is terminal accepted when it is settled in C AND its
+   evidence records a merge AND a green run on the integration branch. A need whose PR merged with
+   no green run recorded is **not** terminal accepted; the gate says `held-by=<id> reason=no-green`
+   rather than admitting on the merge alone.
+5. **A release unholds, and it is the kernel that does it.** When a need becomes terminal accepted the
+   kernel re-evaluates its dependents in the same command, in the single writer's total order, and
+   each newly ready dependent is admitted on the next launch read. Nothing polls and nothing sweeps:
+   the release is an effect of the settle, so the width available at any moment is a read of the tree
+   rather than a sweep over it.
+6. **A revert re-holds.** A `:revive` of a need marks each dependent `needs-broken` as above AND,
+   when the dependent is already on a slot, records `needs-broken-while-working` on it. The kernel
+   does not kill a running worker — that is the fleet's act, not the tree's — but a dependent still
+   working on a reverted need is a finding the same tick, not a discovery at merge time.
+
+The replays are `a-held-dependent-is-cut-and-never-on-a-slot`,
+`launch-admits-exactly-what-ready-returns`, `a-hand-launch-of-a-held-node-is-refused-naming-the-need`,
+`a-merged-need-with-no-green-run-does-not-admit`, `settling-a-need-releases-its-dependents-in-one-command`
+and `reverting-a-need-under-a-working-dependent-is-a-finding-the-same-tick`. This slice covers the
+launch gate only: the roadmap critical-path and width (ready-now versus blocked) view, the
+cost/estimate rollup along needs (#774) and the separate PR or evidence-record reference kind remain
+the rest of #785.
 
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
