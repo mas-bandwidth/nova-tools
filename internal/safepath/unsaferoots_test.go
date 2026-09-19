@@ -71,3 +71,49 @@ func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
 		}
 	})
 }
+
+func TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
+	if err != nil {
+		t.Fatalf("could not resolve the fixture's fake home: %v", err)
+	}
+	victim := filepath.Join(fakeHomeReal, "victim")
+	mustWrite(t, filepath.Join(victim, "keep"), "x")
+
+	elsewhere := t.TempDir()
+	rootLink := filepath.Join(elsewhere, "home-link")
+	if err := os.Symlink(fakeHomeReal, rootLink); err != nil {
+		t.Fatal(err)
+	}
+
+	err = RemoveUnderRoots(victim, rootLink)
+	if err == nil || !errors.Is(err, ErrUnsafe) {
+		t.Errorf("RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", victim, rootLink, err)
+	}
+	if !exists(victim) {
+		t.Errorf("RemoveUnderRoots deleted %s through a root that is a symlink to the fixture's home", victim)
+	}
+}
+
+func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
+	if err != nil {
+		t.Fatalf("could not resolve the fixture's fake home: %v", err)
+	}
+	marker := filepath.Join(fakeHomeReal, "marker")
+	mustWrite(t, marker, "x")
+
+	parent := filepath.Dir(fakeHomeReal)
+
+	err = RemoveUnderRoots(fakeHomeReal, parent)
+	if err == nil || !errors.Is(err, ErrUnsafe) {
+		t.Errorf("RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", fakeHomeReal, parent, err)
+	}
+	if !exists(marker) {
+		t.Errorf("RemoveUnderRoots deleted %s, the fixture's stand-in home, under a wider root", fakeHomeReal)
+	}
+}

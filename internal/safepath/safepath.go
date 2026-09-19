@@ -66,9 +66,9 @@ func RemoveUnder(root, path string) error {
 	if info, err := os.Lstat(pathAbs); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%w: %q is a symlink", ErrUnsafe, path)
 	}
-	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	rootReal, err := resolveRoot(rootAbs, root)
 	if err != nil {
-		return fmt.Errorf("%w: the root %q cannot be resolved: %v", ErrUnsafe, root, err)
+		return err
 	}
 	pathReal, err := filepath.EvalSymlinks(pathAbs)
 	if err != nil {
@@ -97,6 +97,17 @@ func strictlyUnder(root, path string) bool {
 	return strings.HasPrefix(path, root+string(os.PathSeparator))
 }
 
+// resolveRoot resolves the root's absolute form through symlinks, so a root that is a
+// symlink to an unsafe directory is refused as that directory. It is the one resolution
+// shared by both removal doors.
+func resolveRoot(rootAbs, root string) (string, error) {
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("%w: the root %q cannot be resolved: %v", ErrUnsafe, root, err)
+	}
+	return rootReal, nil
+}
+
 // refuseUnsafeRoot refuses a root that is the whole disk or the user's home: those are
 // not a boundary, they are the absence of one, and a mistake under either is the disk.
 func refuseUnsafeRoot(root string) error {
@@ -104,8 +115,8 @@ func refuseUnsafeRoot(root string) error {
 		return fmt.Errorf("%w: the root is %q, the whole disk", ErrUnsafe, root)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		homeAbs, err := filepath.Abs(home)
-		if err == nil && filepath.Clean(homeAbs) == filepath.Clean(root) {
+		homeReal, err := filepath.EvalSymlinks(home)
+		if err == nil && filepath.Clean(homeReal) == filepath.Clean(root) {
 			return fmt.Errorf("%w: the root is the user's home %q", ErrUnsafe, root)
 		}
 	}
@@ -207,12 +218,21 @@ func RemoveUnderRoots(path string, roots ...string) error {
 			last = fmt.Errorf("%w: the root %q does not resolve: %v", ErrUnsafe, root, err)
 			continue
 		}
-		if err := refuseUnsafeRoot(rootAbs); err != nil {
+		rootReal, err := resolveRoot(rootAbs, root)
+		if err != nil {
+			last = err
+			continue
+		}
+		if err := refuseUnsafeRoot(rootReal); err != nil {
 			last = err
 			continue
 		}
 		resolved, err := ResolvedUnder(path, root)
 		if err != nil {
+			last = err
+			continue
+		}
+		if err := refuseUnsafePath(resolved); err != nil {
 			last = err
 			continue
 		}
