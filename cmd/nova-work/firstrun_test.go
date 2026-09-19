@@ -368,11 +368,30 @@ func TestTESTSRefusalsAreWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The first-run block now carries an `events` line, which dials redis and
+	// falls back to the forge. This setup replay goes through the same injected
+	// seams the shape test uses -- a miniredis and a fake forge -- so it reaches
+	// no network and no `gh` binary; a bench without one is not a red here.
+	mr := miniredis.RunT(t)
+	deps := Deps{
+		Now:   func() time.Time { return time.Now().UTC() },
+		Dial:  func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(_, _ string, _ time.Duration) ci.Forge { return &fakeForge{} },
+	}
 	for _, line := range firstRun {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-work "); ok {
-			if code, _, stderr := runCLI(t, localize(t, dir, cmd)...); code != 0 {
-				t.Fatalf("setting up from the first run: %q exits %d: %s", line, code, stderr)
+		cmd, ok := strings.CutPrefix(line, "$ nova-work ")
+		if !ok {
+			continue
+		}
+		fields := localize(t, dir, cmd)
+		for i, a := range fields {
+			if a == "127.0.0.1:6379" {
+				fields[i] = mr.Addr()
 			}
+		}
+		var out, errs bytes.Buffer
+		if code := run(fields, &out, &errs, deps); code == 2 {
+			t.Fatalf("setting up from the first run: %q exits 2: %s", line, errs.String())
 		}
 	}
 
