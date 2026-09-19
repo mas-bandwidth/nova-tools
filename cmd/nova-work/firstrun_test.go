@@ -178,6 +178,51 @@ func TestTESTSFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	}
 }
 
+// TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine is the comparator half of
+// the check above. TestTESTSFirstRunMatchesWhatTheToolPrints asks whether each
+// documented line RESEMBLES a line the tool printed; this runs every `$` line in
+// order and compares the whole output block with what docs/TESTS.md writes --
+// same number of lines, same lines, same order.
+//
+// The first run is all local: `dependencies` writes the graph it is given,
+// `ready` reads it back, and `plan check` reads the `work.work` this test wrote,
+// so every value reproduces and NO normalisation is declared. The commands run
+// from the temp dir firstRunDir made, which is where the document's `./deps.json`
+// and `./work.work` point for whoever typed them.
+func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-work", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-work command; this test would pass by running nothing")
+	}
+	t.Chdir(firstRunDir(t))
+	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments. The first-run verbs are local -- no redis, no forge, no store --
+// so production's outside edges are never reached.
+func runDocumented(t *testing.T) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		var out, errb bytes.Buffer
+		code := run(s.Args, &out, &errb, production())
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+}
+
 // firstRunDeps is the seam the first-run transcript runs through: a fresh fake store and a
 // consumer holding exactly one card result, so the transcript touches no Postgres and no
 // Redis. The same deps answers every `$` line, so the `results` call lists the row the
