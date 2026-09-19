@@ -1229,6 +1229,50 @@ person looking for the one place to change.
 own `TestTESTSRefusalsAreWhatTheToolPrints` is what holds a second subsection to
 what the tool prints.
 
+### `transcripts` — every documented transcript is EXECUTED, line for line
+
+**The rule.** For every `## <tool>` section of `docs/TESTS.md`, a test in
+`cmd/<tool>` runs every `$` line of the section's `### First run` block, in
+order, in one sitting, and compares each command's whole output with the block
+written under it through `onboarding.CompareTranscript` — same number of lines,
+same lines, same order, every value compared as written. The only values matched
+by shape are the run-owned ones named from the one shared table,
+`onboarding.Volatile` (`at`, `took`, `created`, `tmpdir`, `sha`); a name the
+table does not hold is refused, so no call site can turn a red green by widening
+one pattern. A `firstrun_test.go` may compare no other way. Specified in
+`docs/SPEC-TOOLWORK.md` §7 rules 2-4.
+**The hurt.** The class test this replaces asserted that a tool's section
+EXISTS; nothing asserted that anything ran it. At the 2026-09-19 triage 8 of 22
+sections were executed by no test — including `nova-ci`, whose two CI-SLOW lines
+a stranger copies were a promise no build checked — and nine more collected what
+was printed into a `printed map[string]bool` and asked whether each documented
+line was somewhere in it, so an abridged or a reordered block passed. Four
+abridged transcripts (#1638, #1639, #1641, and nova-post's `--channel fake`,
+#1631) were found that week, every one of them by a person.
+**The test.** `TestEveryTranscriptIsExecutedLineForLine`
+(`internal/ci/transcripts_class_test.go`). It walks `cmd/` for the directories
+`docs/TESTS.md` has a section for, and reads each package's test sources for the
+one comparator called with that tool's own name, and for the comparisons rule 2
+replaces: `onboarding.Execute`, `onboarding.Compare`, `onboarding.Shape` and a
+`printed` set.
+**Its allowlist.** `internal/ci/testdata/transcripts_allowlist.txt`, one `<tool>`
+per line with the issue that owes it, checked in both directions so it only
+shrinks: an unlisted unexecuted section is red, and a listed section a test now
+executes with the one comparator is a stale entry and red too. Today: the
+twenty-one sections not yet converted (#1653, #1654, #1657, #1722).
+**Its remedy line.** ``docs/TESTS.md has a `## <tool>` section and no test in
+cmd/<tool> compares it with onboarding.CompareTranscript(; the section is a
+promise no build checks. Convert it — run every `$` line of the `### First run`
+block in order and hand the steps and the results to the one comparator — or
+list <tool> in testdata/transcripts_allowlist.txt with the issue that owes it``.
+**Its narrowings.** Only `docs/TESTS.md`, only `## <tool>` sections that have a
+directory under `cmd/`, and only that package's own top-level test files. It
+reads the spellings a test uses, not what the comparison does at run time: a
+fourth way of comparing, written from scratch, is not seen until it is named
+here. Whether a transcript is TRUE is not this test's business — a document that
+disagrees with its tool is a finding and a `fix-red` card
+(`docs/SPEC-TOOLWORK.md` §7 rule 6), never an edit that makes a test pass.
+
 ### `version` — every tool prints the one version line
 
 **The rule.** Every `cmd/nova-*` binary answers `version` with exactly one line
