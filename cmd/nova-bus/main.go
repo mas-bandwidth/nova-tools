@@ -366,13 +366,21 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 		fmt.Fprintf(stderr, "nova-bus %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
 		return false
 	}
+	var missing []string
 	for name, value := range required {
 		if strings.TrimSpace(*value) == "" {
-			fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
-			return false
+			missing = append(missing, name)
 		}
 	}
-	return true
+	for i := 1; i < len(missing); i++ {
+		for j := i; j > 0 && strings.Compare(missing[j], missing[j-1]) < 0; j-- {
+			missing[j], missing[j-1] = missing[j-1], missing[j]
+		}
+	}
+	for _, name := range missing {
+		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
+	}
+	return len(missing) == 0
 }
 
 // gitArgs checks the two flags that become git's own argv. A --remote or --branch
