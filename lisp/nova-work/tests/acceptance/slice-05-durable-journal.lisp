@@ -51,7 +51,12 @@
     (let ((r (funcall by-id "acme/f/t1")))
       (ok r "t1 has a row")
       (ok (not (ready-row-ready r)) "t1 is not ready")
-      (check-equal "blocked by acme/f/t2" (ready-row-reason r) "reason names the blocker")
+      ;; SPEC-WORK.md:4859 -- "the kernel slice's built text `blocked by <id>`
+      ;; gives way to the token with `need=` beside it". The reason is one of
+      ;; the five tokens; the id it used to carry is `need=`.
+      (check-equal "need-open" (ready-row-reason r) "reason is rule 2's token")
+      (check-equal "acme/f/t2" (ready-row-need r) "and need= names the blocker")
+      (check-equal 1 (ready-row-unmet r) "with the count beside it")
       (check-equal "freddy" (ready-row-resolver r) "resolver is the blocker's holder"))
     (let ((r (funcall by-id "acme/f/t2")))
       (check-equal t (ready-row-ready r) "a held but unblocked item is ready")

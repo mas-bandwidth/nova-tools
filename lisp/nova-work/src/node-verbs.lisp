@@ -783,38 +783,71 @@ carried the fix, or - while every task that names it is still open."
              (:constructor make-ready-item (id &key (branch :o) state deps holder responsible)))
   id branch state deps holder responsible)
 
-(defstruct (ready-row
-             (:constructor make-ready-row (id &key ready reason resolver)))
-  id ready reason resolver)
+;;; The `ready-row` struct and the one reading that fills it from the tree are
+;;; in src/needs.lisp with rules 2 and 5 (SPEC-WORK.md:4859, :4965).
 
 (defun ready-resolver (item)
   (or (ready-item-holder item) (ready-item-responsible item) "-"))
 
 (defun ready-rows (items)
-  "One row per item in O. A row with an open dependency is not ready, names that
-dependency, and names the dependency's resolver."
+  "One row per item in O over a hand-built item list: the pure model beside
+`state-ready-rows`, which reads the tree.
+
+A row with an unmet need is not ready, names the first in `:deps` order, counts
+them all and prints one of the five reason tokens. The built text `blocked by
+<id>` is gone: SPEC-WORK.md:4859 -- \"the `ready` row of *Output grammar* gains
+`need=<id|->`, `unmet=<n>` and `needs-broken=<true|false>`, its `reason=` is one
+of the five tokens whenever `unmet=` is above zero, and the kernel slice's built
+text `blocked by <id>` gives way to the token with `need=` beside it\".
+
+An item list carries no closed-index row and no verification cache, so the two
+tokens it can tell apart are `need-open`, for a need in this list and in O, and
+`need-unavailable`, for a name this list does not hold -- which is rule 2's own
+reading of a page that cannot be read. `state-ready-rows` answers all five."
   (let ((rows '()))
     (dolist (item items)
       (when (eq :o (ready-item-branch item))
-        (let ((blockers '()))
+        (let ((unmet '()))
           (dolist (dep (ready-item-deps item))
             (let ((d (find dep items :key #'ready-item-id :test #'equal)))
               (when (or (null d) (eq :o (ready-item-branch d)))
-                (push dep blockers))))
-          (setf blockers (nreverse blockers))
-          (if (null blockers)
+                (push (cons dep (if d :need-open :need-unavailable)) unmet))))
+          (setf unmet (nreverse unmet))
+          (if (null unmet)
               (push (make-ready-row (ready-item-id item)
                                     :ready t :reason "-"
+                                    :need "-" :unmet 0 :needs-broken nil
+                                    :state (ready-item-state item)
+                                    :holder (ready-item-holder item)
+                                    :responsible (ready-item-responsible item)
                                     :resolver (or (ready-item-holder item)
                                                   (ready-item-responsible item)
                                                   "-"))
                     rows)
-              (let* ((blocker-id (first blockers))
-                     (blocker (find blocker-id items :key #'ready-item-id :test #'equal)))
+              (let* ((first-need (car (first unmet)))
+                     (reason (cdr (first unmet)))
+                     (blocker (find first-need items :key #'ready-item-id :test #'equal)))
                 (push (make-ready-row (ready-item-id item)
                                       :ready nil
-                                      :reason (format nil "blocked by ~A" blocker-id)
-                                      :resolver (if blocker (ready-resolver blocker) "-"))
+                                      :reason (needs-reason-token reason)
+                                      :need first-need
+                                      :unmet (length unmet)
+                                      ;; rule 5: an item list records no revert,
+                                      ;; so only the engaged and in-C clauses can
+                                      ;; fire, and `ready-rows` only sees O.
+                                      :needs-broken
+                                      (and (or (ready-item-holder item)
+                                               (member (ready-item-state item)
+                                                       '(:doing :review)))
+                                           t)
+                                      :state (ready-item-state item)
+                                      :holder (ready-item-holder item)
+                                      :responsible (ready-item-responsible item)
+                                      :resolver (if (eq reason :need-unavailable)
+                                                    "-"
+                                                    (if blocker
+                                                        (ready-resolver blocker)
+                                                        "-")))
                       rows))))))
     (nreverse rows)))
 

@@ -1959,6 +1959,21 @@
     #:*kernel-admitting-effects*
     #:%take-node-submit
     #:kernel-needs-view
+    ;; rule 5's reading and the `ready` row (SPEC-WORK.md:4859, :4965, :5941)
+    #:needs-view-engaged
+    #:node-engaged-p
+    #:state-needs-broken-count
+    #:node-ready-row
+    #:state-ready-rows
+    #:ready-row-line
+    #:ready-row-need
+    #:ready-row-unmet
+    #:ready-row-needs-broken
+    #:ready-row-kind
+    #:ready-row-state
+    #:ready-row-holder
+    #:ready-row-responsible
+    #:make-ready-row
     ;; the COW root partition, the whole walk that reads nothing of :deps
     #:cow-load-findings
     #:cow-partition-holds-p

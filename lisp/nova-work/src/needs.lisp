@@ -56,7 +56,7 @@ of these whenever `unmet=` is above zero, and nothing else ever.")
 
 (defstruct (needs-view
             (:constructor make-needs-view
-                (&key session evidence generations responsible)))
+                (&key session evidence generations responsible engaged)))
   "The read-time facts rule 1 needs and the tree does not hold.
 
 SESSION is a VERIFICATION-SESSION: its cache holds the raw resolutions `verify`
@@ -67,8 +67,12 @@ EVIDENCE is ((node-id record ...) ...): the VERIFY-EVIDENCE records the node's
 standing `:to :done` names. GENERATIONS is ((node-id . generation) ...): a
 `correct` bumps a node's generation, and evidence of an older generation
 qualifies nothing (:4835). RESPONSIBLE is ((node-id . name) ...), read for the
-resolver column of rule 2's table."
-  session evidence generations responsible)
+resolver column of rule 2's table. ENGAGED is the list of ids a session knows
+to be engaged by something the tree does not hold -- a pending or accepted
+offer, a live allocation, an `:attempt` of the current generation, a report of
+a launch with no stop after it - read by rule 5 beside the lease and the state
+the tree does hold (SPEC-WORK.md:4765)."
+  session evidence generations responsible engaged)
 
 (defun needs-view-node-evidence (view id)
   "The evidence records VIEW names for ID, or NIL where it names none."
@@ -414,6 +418,91 @@ the verb's own `FAIL` line on a refusal, so every existing caller reads the same
     by))
 
 ;;; ------------------------------------------------------------------
+;;; `needs-broken`, the reading                  SPEC-WORK.md:4965-4988
+;;; ------------------------------------------------------------------
+;;;
+;;; Rule 5: a node reads `needs-broken=true` when it has an unmet need AND at
+;;; least one of three things is true -- it is engaged, it is in C, or the
+;;; reason of one of its unmet needs is `need-reverted` -- and false otherwise.
+;;; It is a reading on work that went ahead of its gate, never a finding, and
+;;; it stops no worker: what it does is refuse the next admission verb on that
+;;; node by rule 3, while `heartbeat`, `attempt` and `evidence` are recorded as
+;;; before. It goes one edge and no further: a dependent of a `needs-broken`
+;;; node that is itself still settled and met is not flagged.
+;;;
+;;; It is DERIVED (:4972), so there is no slot: the flag `%recheck-needs-broken`
+;;; used to maintain on the write path is gone, with the sentence "written
+;;; nowhere as authority" for its reason. It clears by itself at the first read
+;;; after the node is needs-met again, which a stored flag cannot promise.
+
+(defun node-engaged-p (state id &key view)
+  "Rule 5's *engaged* (SPEC-WORK.md:4765): a node holding a live lease, or whose
+state is `:doing` or `:review`.
+
+The spec's full list also names a pending or accepted offer, a live allocation,
+an `:attempt` of the node's current generation, and a report of a launch with no
+report of a stop after it. None of those lives on the node in this kernel --
+offers and attempts are `src/control.lisp`'s, allocations `src/fleet.lisp`'s,
+and `:report` is not built at all -- so VIEW carries them when a session has
+them: its ENGAGED entry, when present, is consulted beside the two facts the
+tree itself holds. A view naming none adds none."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (or (and (wnode-holder n) t)
+             (member (wnode-state n) '(:doing :review))
+             (and view
+                  (member id (needs-view-engaged view) :test #'equal)
+                  t))
+         t)))
+
+(defun node-needs-broken (state id &key view)
+  "Rule 5's reading, derived at read time and stored nowhere."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (multiple-value-bind (unmet need reason) (node-needs-status state id :view view)
+      (declare (ignore need))
+      (and (plusp unmet)
+           (or (node-engaged-p state id :view view)
+               (eq :c (wnode-branch n))
+               (eq :need-reverted reason)
+               ;; the reason a row names is the FIRST unmet need's; rule 5 asks
+               ;; whether ANY unmet need reads need-reverted.
+               (some (lambda (dep)
+                       (multiple-value-bind (met r)
+                           (need-met-p state dep :view view :dependent id)
+                         (and (not met) (eq :need-reverted r))))
+                     (wnode-deps n)))
+           t))))
+
+(defun state-needs-broken-count (state &key view)
+  "`check`'s `needs-broken=<n>` count (SPEC-WORK.md:5933). A count and never a
+`WORK FAIL <id>` line: a red set refuses every mutation, and one reopened need
+must not stop a team, so `check` exits 0 over any number of them."
+  (count-if (lambda (id) (node-needs-broken state id :view view))
+            (wstate-order state)))
+
+;;; ------------------------------------------------------------------
+;;; the `ready` row                              SPEC-WORK.md:4859, :5941
+;;; ------------------------------------------------------------------
+
+(defstruct (ready-row
+             (:constructor make-ready-row (id &key ready reason resolver
+                                                (need "-") (unmet 0) needs-broken
+                                                kind state holder responsible)))
+  "One row of `query --ask ready`. SPEC-WORK.md:5941:
+
+  QUERY ROW <id> kind=<k> state=<s> ready=<true|false> reason=<text|->
+  need=<id|-> unmet=<n> needs-broken=<true|false> resolver=<name|->
+  ... responsible=<name|-> holder=<name|unowned>
+
+`need=`, `unmet=` and `needs-broken=` are rule 2's and rule 5's additions, and
+where `unmet=` is above zero `reason=` is one of the five tokens -- the kernel
+slice's built text `blocked by <id>` gives way to the token with `need=` beside
+it (SPEC-WORK.md:4859)."
+  id ready reason resolver need unmet needs-broken kind state holder responsible)
+
+
+;;; ------------------------------------------------------------------
 ;;; `ready` reads the one predicate                SPEC-WORK.md:4930
 ;;; ------------------------------------------------------------------
 ;;;
@@ -433,8 +522,7 @@ the verb's own `FAIL` line on a refusal, so every existing caller reads the same
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (and (eq :o (wnode-branch n))
-         (member (wnode-type n) '(:task :bug))
-         (not (wnode-needs-broken n))
+         (member (wnode-type n) (quote (:task :bug)))
          (zerop (node-needs-status state id :view view))
          t)))
 
@@ -443,3 +531,52 @@ the verb's own `FAIL` line on a refusal, so every existing caller reads the same
 nodes and mutates none."
   (loop for id in (wstate-order state)
         when (ready-p state id :view view) collect id))
+
+(defun node-ready-row (state id &key view)
+  "One `ready` row for ID, read from the tree. Nothing is written."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (multiple-value-bind (unmet need reason resolver)
+        (node-needs-status state id :view view)
+      (make-ready-row id
+                      :ready (ready-p state id :view view)
+                      :reason (needs-reason-token reason)
+                      :resolver (if (plusp unmet)
+                                    resolver
+                                    (or (wnode-holder n)
+                                        (needs-view-node-responsible view id)
+                                        "-"))
+                      :need need
+                      :unmet unmet
+                      :needs-broken (node-needs-broken state id :view view)
+                      :kind (wnode-type n)
+                      :state (wnode-state n)
+                      :holder (wnode-holder n)
+                      :responsible (needs-view-node-responsible view id)))))
+
+(defun state-ready-rows (state &key view)
+  "Every open node's `ready` row, in seed order. The one reading: `ready-rows`
+in src/node-verbs.lisp is the pure model over hand-built items and answers the
+same five tokens, never `blocked by <id>`."
+  (loop for id in (wstate-order state)
+        for n = (%node-quiet state id)
+        when (and n (eq :o (wnode-branch n)))
+          collect (node-ready-row state id :view view)))
+
+(defun %row-flag (value) (if value "true" "false"))
+
+(defun ready-row-line (row)
+  "The `QUERY ROW` line of SPEC-WORK.md:5941, without the three priority fields,
+which are *Priority*'s and are not this slice's."
+  (format nil "QUERY ROW ~A kind=~(~A~) state=~(~A~) ready=~A reason=~A need=~A unmet=~D needs-broken=~A resolver=~A responsible=~A holder=~A"
+          (ready-row-id row)
+          (or (ready-row-kind row) :-)
+          (or (ready-row-state row) :-)
+          (%row-flag (ready-row-ready row))
+          (or (ready-row-reason row) "-")
+          (or (ready-row-need row) "-")
+          (or (ready-row-unmet row) 0)
+          (%row-flag (ready-row-needs-broken row))
+          (or (ready-row-resolver row) "-")
+          (or (ready-row-responsible row) "-")
+          (or (ready-row-holder row) "unowned")))

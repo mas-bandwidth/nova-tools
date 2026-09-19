@@ -475,14 +475,21 @@ over history it could not read (docs/SPEC-WORK.md:5019-5033). REFERENCE's own
       (t (values :dangling
                  (format nil "WORK FAIL ~A: rule 2: dangling" id))))))
 
-(defun validate-report (verdicts)
+(defun validate-report (verdicts &key (needs-broken 0))
   "One validation over the verdicts: exit 1 with a `WORK FAIL` count line on any
 finding, exit 0 with `WORK OK` only when every rule was green
-(docs/SPEC-WORK.md:5001-5008, :5633)."
+(docs/SPEC-WORK.md:5001-5008, :5633).
+
+NEEDS-BROKEN is rule 5's count (SPEC-WORK.md:4974, grammar :5933 and :5935): it
+joins both count lines beside `expired=` and `stale=`, which this slice does not
+build. It is a count and NEVER a `WORK FAIL <id>` line and it never moves the
+exit code -- a red set refuses every mutation, and one reopened need must not
+stop a team, so `check` exits 0 over any number of them."
   (let ((findings (count-if (lambda (v) (not (eq v :green))) verdicts)))
     (if (plusp findings)
-        (values 1 (format nil "WORK FAIL findings=~D" findings))
-        (values 0 "WORK OK"))))
+        (values 1 (format nil "WORK FAIL findings=~D needs-broken=~D"
+                          findings needs-broken))
+        (values 0 (format nil "WORK OK needs-broken=~D" needs-broken)))))
 
 ;;; The savepoint's create and list verbs live in savepoint.lisp; the journal's
 ;;; record identities and its cut-reachability helper stay here; journal
