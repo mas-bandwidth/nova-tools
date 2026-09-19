@@ -219,6 +219,25 @@ func harvestBench(in HarvestInput) int {
 				field(in.Bench), field(label), field(branch), field(base)))
 			continue
 		}
+		// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). Every Space card is harvested
+		// through this verb, and this verb pushes the branch and builds the PR body out of
+		// the bench's RESULT.md, so it is the path that most needs the guard. The diff is
+		// read from the fetched ref in the local clone, which is exactly what the push
+		// would carry. A hit refuses, quarantines the job ON THE BENCH over the same shell
+		// seam, writes the HUMAN line, and never marks the job harvested.
+		findings, scanErr := secretFindings(j.Dir, clone, "origin/"+base+".."+ref, j.Result)
+		if scanErr != nil {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST REFUSED bench=%s label=%s branch=%s: the key-shape scan could not run, so nothing is pushed: %s",
+				field(in.Bench), field(label), field(branch), oneline.Err(scanErr)))
+			continue
+		}
+		if len(findings) > 0 {
+			failed++
+			secretRefusal{Site: "harvest-bench", Label: label, JobDir: j.Dir,
+				Out: in.Stderr, Move: benchMover(func(script string) (string, error) { return shell.Run(in.Bench, script) })}.refuse(findings)
+			continue
+		}
 		sha, _ := gitIn(clone, "rev-parse", "--short", ref)
 		if out, err := gitIn(clone, "push", "origin", ref+":refs/heads/"+branch); err != nil {
 			failed++

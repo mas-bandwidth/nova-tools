@@ -196,7 +196,8 @@ func Harvest(in HarvestInput) int {
 			if len(findings) > 0 {
 				refused++
 				writeSeen(in.Root, c, "refused")
-				refuseSecret(in, in.Root, c.Label, jobDir, findings)
+				secretRefusal{Site: "harvest", Label: c.Label, JobDir: jobDir,
+					QuarantineRoot: in.Root, HumanDir: in.Root, Out: in.Stderr}.refuse(findings)
 				continue
 			}
 			done++

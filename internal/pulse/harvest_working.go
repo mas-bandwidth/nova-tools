@@ -249,6 +249,21 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	if found && remote != "" && pr.HeadOID != "" && remote != pr.HeadOID {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, strconv.Itoa(pr.Number), commit)}
 	}
+	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814): this path pushes the branch and
+	// builds its PR body out of the same RESULT.md lines, so it passes the one guard every
+	// publishing path passes. A hit refuses, quarantines the job beside its own jobs/
+	// directory, writes the HUMAN line, and pushes nothing.
+	findings, scanErr := secretFindings(j.dir, clone, r.base12+"..HEAD", lines)
+	if scanErr != nil {
+		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: the key-shape scan could not run, so nothing is pushed: %s\n",
+			field(j.label), oneline.Err(scanErr))
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
+	if len(findings) > 0 {
+		secretRefusal{Site: "harvest-working", Label: j.label, JobDir: j.dir,
+			HumanDir: filepath.Dir(filepath.Dir(j.dir)), Out: r.in.Stderr}.refuse(findings)
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
 	if _, err := runChild(clone, nil, "git", "push", url, "refs/heads/"+branch,
 		"--force-with-lease=refs/heads/"+branch+":"+remote); err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, dash(strconv.Itoa(pr.Number)), commit)}

@@ -273,7 +273,25 @@ near the end.
    shell. The rule and its tests are in **docs/SPEC-SWARM.md, "The card's shell
    never sees a secret"**; the wall's own contribution is that `<slot>` is a
    `--read` and never a `--write`, so the card can run a wrapper and cannot
-   replace one. But an inherited `HOME` names a directory that is in no list and
+   replace one.
+
+   **And the wall cannot finish the job, for a reason this rule's own
+   `/proc` note already measured.** On linux the child can read its PARENT's
+   environment through `/proc/<pid>/environ` — same uid, and Yama's
+   `ptrace_scope` does not apply to `PTRACE_MODE_READ` — so the harness's key
+   is reachable whatever the child's own environment holds (measured inside
+   the wall on `space`, 2026-09-19: the read succeeds and carries one
+   secret-named entry; the probe reported a yes/no and a count, never a value).
+   The read roots below name `/proc` and not `/proc/self` **because a
+   `/proc/self` opened `O_PATH` resolves to the pid that opened it**, which is
+   the same fact from the other side: Landlock's rules are inode-based and
+   resolved when the ruleset is built, before the descendants' pids exist, and
+   it has no "the directory whose name is my own pid". The wall may therefore
+   allow all of `/proc` or none of it, and none of it kills every toolchain a
+   card runs. **Landlock cannot path-restrict procfs by pid**, so this is not
+   a wall defect and no wall change closes it; the closures are `hidepid=2` on
+   the bench or a harness that takes its credential by something other than
+   the environment, both named in docs/SPEC-SWARM.md. But an inherited `HOME` names a directory that is in no list and
    is therefore denied, and almost every tool a worker runs derives a path
    from it. Measured on this Mac under the profile below: with the caller's
    `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to

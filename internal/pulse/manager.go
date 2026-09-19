@@ -410,6 +410,25 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: a fix without its reproducing test is not admitted (add the red: line or a test file to the diff)", oneline.Field(card), oneline.Field(branch))
 		return
 	}
+	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). The manager tier pushes the branch
+	// and copies the same RESULT.md lines into the PR body, so it passes the one guard
+	// every publishing path passes. A hit refuses, quarantines the job beside its own
+	// jobs/ directory, writes the HUMAN line into the queue, and fails the card.
+	findings, scanErr := secretFindings(job, dir, "", lines)
+	if scanErr != nil {
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s: the key-shape scan could not run, so nothing is pushed: %s", oneline.Field(card), oneline.Err(scanErr))
+		return
+	}
+	if len(findings) > 0 {
+		var note strings.Builder
+		secretRefusal{Site: "manager", Label: card, JobDir: job,
+			HumanDir: m.in.Queue, Out: &note}.refuse(findings)
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch),
+			oneline.Cap(strings.TrimSpace(note.String()), 300))
+		return
+	}
 	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return

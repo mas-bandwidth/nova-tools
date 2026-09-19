@@ -2148,6 +2148,76 @@ seat's key), and the card counts `refused`. This is the same shape
 that gate lands, one of the two lists loads the other and neither is copied
 again.
 
+**EVERY path that publishes passes the same guard, and a class test says so.**
+There are four, and the first cut of this rule guarded one — Johnny's read of
+PR #1838 named the other three: `harvest --bench`, which is how every Space card
+is harvested; `HarvestWorking`; and `manager.openPR`. All four call
+`secretFindings` before their push, and
+`TestEveryPublishSiteIsBehindTheSecretScan` walks `internal/pulse`'s own syntax
+tree, finds every `git push`, `gh pr create`, `gh pr edit` and `Forge.CreatePR`
+call there is, and fails unless the function holding it calls the guard. Two
+package-level leaves (`push`, `openPR`) and one seam leaf (`ghForge.CreatePR`)
+run the command and nothing else; for those the test asserts the guard in each
+of their callers, and that the caller set is exactly the one named. **A fifth
+publish site cannot appear without the guard.** A bench job is quarantined ON
+the bench over the same shell seam the harvest already reaches it through —
+`mkdir -p`, `test ! -e`, `mv`, and never a delete — and its `.harvested` marker
+is never written, so a refused card is not silently skipped next time either.
+
+### `/proc/<pid>/environ`: the shim does not close it, and the wall cannot
+
+**Measured on `space`, inside the real wall, from the card's own tool shell**
+(2026-09-19; the probe reported whether a read SUCCEEDS and a count of
+secret-carrying NAMES, never a value):
+
+```
+out: ppidenv_read=yes     <- /proc/<the harness's pid>/environ opens
+out: ppidenv_names=1      <- and carries one secret-named entry: the seat's key
+out: selfenv_read=yes
+out: selfenv_names=0      <- the shell's OWN environment is clean; the shim works
+out: ppidcomm=opencode
+out: yama=1               <- ptrace_scope=1 does not apply to PTRACE_MODE_READ
+out: hidepid=0
+out: procmount=proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+```
+
+The harness keeps the key — it is the process that calls the provider — and on
+Linux its child shares its uid, so the shell can read the parent's environment
+through procfs whatever the shell's own environment says. **The shim closes
+`getenv` and does not close this.**
+
+**The wall cannot close it, and this spec has already measured why.**
+`docs/SPEC-SANDBOX.md`'s linux read roots name `/proc`, not `/proc/self`,
+deliberately: "a `/proc/self` opened `O_PATH` resolves at open time to the pid
+that opened it", so a rule written on `/proc/self` grants the WALL its own entry
+and every child it spawns nothing. Landlock's rules are inode-based and are
+resolved when the ruleset is built — before the pids of the harness's
+descendants exist — and it has no "the directory whose name is my own pid". So
+the wall may allow all of `/proc` or none of it, and none of it kills every
+toolchain a card runs. **Landlock cannot path-restrict procfs by pid.**
+
+The closures that do exist, neither of them this tool's to make:
+
+1. **`hidepid=2` on the bench's `/proc`** (measured `hidepid=0` today). It is a
+   mount option, per pid-namespace, set as root, affecting the whole bench: a
+   fleet-standard line, not a code change.
+2. **The key not in the harness's environment at all** — layer 2, the key handed
+   in by file descriptor or a one-read file and scrubbed after the provider
+   client is constructed. **This needs the harness to support it.** Measured at
+   the pinned `opencode v1.18.20`: the provider key is resolved from
+   `process.env` through the config's `{env:NAME}` reference, no `{file:...}`
+   form for a provider `apiKey` was found in the binary, and the bash tool is
+   spawned with `extendEnv: true` over a `shell.env` hook. So at this version
+   layer 2 is **not available to this tool alone**; the shapes are an upstream
+   credential-from-file feature, or a harness plugin on that `shell.env` hook.
+
+**Said plainly: until (1) or (2), a card that wants the seat's key can still
+read it through `/proc`, and the harvest's key-shape scan is what stands between
+that and the forge.** `prctl(PR_SET_DUMPABLE, 0)` is not a third option: `execve`
+resets `dumpable`, so no caller can set it *for* the harness — only the harness
+can set it for itself. A dedicated uid is not one either: the shell is the
+harness's own child and shares whatever uid it runs as.
+
 **Tests this rule demands** (`cmd/nova-swarm`, `internal/keyshape`,
 `internal/pulse`): `TestTheCardsShellNeverSeesASecret`,
 `TestTheShimNeverPrintsAValue`,
@@ -2159,6 +2229,10 @@ again.
 `TestPlainProseIsNoFinding`, `TestHarvestRefusesToPushAKeyShape`,
 `TestASecretQuarantinesAndNeverDeletes`, `TestASecretWritesOneHumanLine`,
 `TestTheSeatsOwnKeyIsCaughtWithoutAShape`,
+`TestHarvestBenchRefusesToPushAKeyShape`,
+`TestHarvestWorkingRefusesToPushAKeyShape`,
+`TestManagerOpenPRRefusesToPushAKeyShape`,
+`TestEveryPublishSiteIsBehindTheSecretScan`, `TestTheWrapperIsTheGuard`,
 `TestThePRBodyIsAPrefixOfWhatTheScanRead`.
 
 ## Slots
