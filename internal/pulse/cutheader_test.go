@@ -158,3 +158,49 @@ func TestCutWritesNoKindLineWhenNoneIsAsked(t *testing.T) {
 		t.Errorf("the contract line's label did not read back even for an ungated card")
 	}
 }
+
+// Rowan, 2026-09-19: 35 of the 91 cards measured under tmp/session-0919b carry a KIND:
+// the table does not hold -- fix-with-red-test 20, dogfood 11, new-verb 2, row-test 1,
+// docs-fix 1. `cut` has to meet the cards as they are actually cut: it still refuses
+// them, because there is no default kind and inventing a gate for a name the spec does
+// not declare is the one thing this lane must not do, but the refusal names what the
+// table DOES hold so the card writer can act on it.
+func TestCutRefusalNamesTheTablesNearestKind(t *testing.T) {
+	for _, tc := range []struct{ cut, nearest string }{
+		{"fix-with-red-test", "fix-red"},
+		{"dogfood", "fix-red"},
+		{"new-verb", "fix-red"},
+		{"row-test", "fix-red"},
+		{"docs-fix", "text"},
+	} {
+		t.Run(tc.cut, func(t *testing.T) {
+			in := baseCutKindInput(t)
+			in.CardKind = tc.cut
+			in.Paths, in.Test = "internal/pulse/**", "internal/pulse TestX"
+			_, errs, code := cutOneKindCard(t, in)
+			if code == 0 {
+				t.Fatalf("cut wrote a card of kind %s, which the table does not hold", tc.cut)
+			}
+			for _, want := range []string{tc.cut, tc.nearest, "SPEC-TOOLWORK"} {
+				if !strings.Contains(errs, want) {
+					t.Errorf("the refusal does not name %q: %q", want, errs)
+				}
+			}
+		})
+	}
+}
+
+// A name §5 declares but this binary does not build yet gets no nearest name: its remedy
+// is the task that builds it, not a different kind.
+func TestCutRefusesADeclaredKindThisBinaryDoesNotBuildWithoutRenamingIt(t *testing.T) {
+	in := baseCutKindInput(t)
+	in.CardKind = "sweep"
+	in.Paths, in.Test = "internal/pulse/**", "internal/pulse TestX"
+	_, errs, code := cutOneKindCard(t, in)
+	if code == 0 {
+		t.Fatal("cut wrote a sweep card; this binary builds no sweep control (T13)")
+	}
+	if strings.Contains(errs, "nearest") || strings.Contains(errs, "fix-red") {
+		t.Errorf("a kind the spec declares was offered a different kind instead: %q", errs)
+	}
+}

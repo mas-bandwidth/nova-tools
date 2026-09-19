@@ -341,7 +341,11 @@ func cutKindHeaderProblem(in CutKindInput) string {
 	}
 	k, ok := KindNamed(name)
 	if !ok {
-		return fmt.Sprintf("kind=%s: the kinds table does not hold it, and there is no default kind (run `nova-pulse accept --kinds` for the table)", oneline.Field(name))
+		// 35 of the 91 cards measured on 2026-09-19 carry a name the table does not hold,
+		// so the refusal has to be actable and not just correct: UnknownKindRemedy names
+		// the table's nearest name and the spec road, in the one place `cut`, `lint --card`
+		// and `accept` all read it from.
+		return "kind=" + oneline.Field(name) + ": " + UnknownKindRemedy(name)
 	}
 	if !k.Gated() {
 		return ""
