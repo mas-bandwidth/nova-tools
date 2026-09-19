@@ -59,7 +59,8 @@ INBOX OPEN carrying=0 heard=0 large=false remedy=inbox --advance
 INBOX OK as=Bo carrying=0 open=0 notes=0 receipts=0 heard=0 unaddressed=0 unreadable=0
 INBOX CURSOR commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 carrying=0 pushed=true attempts=1
 
-$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
+$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md   # Stderr: whole
+! DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>
 
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
 SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1 wakes=1
@@ -165,7 +166,8 @@ SECRETS NAME key=GH_TOKEN clear=false
 SECRETS NAMES OK as=other keys=1 shown=1 sealed=1 clear=0
 
 $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
-SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/Users/me/secrets/other.yaml head=9750ba9 cmd=gh
+! SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/Users/me/secrets/other.yaml head=9750ba9 cmd=gh
+fake-gh
 ```
 
 ## nova-check
