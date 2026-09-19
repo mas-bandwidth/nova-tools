@@ -80,9 +80,24 @@ func jobFile(slot, name string) string {
 	return filepath.Join(slot, "jobs", "shared-label", name)
 }
 
-// waitForFile is recovery_test.go's, reused deliberately: it waits on an OBSERVABLE the
-// run creates rather than on a clock, which is the same rule this file follows throughout.
-// A timeout in it here means the bench is slow, not that the lease contract is wrong.
+// waitForRunFile waits for a file the RUN creates, never for a clock. recovery_test.go has
+// a waitForFile of the same shape and this is NOT it: that file is `//go:build !windows`, so
+// borrowing its helper would have made every case here Unix-only, including the four that
+// have nothing to do with signals. A timeout here means the bench is slow, not that the
+// lease contract is wrong, and the message says so rather than reading as a defect.
+func waitForRunFile(t *testing.T, path, what string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: %s never appeared in 60s; this is the bench being slow, not the lease contract", what, path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // waitForSeats waits for the store to hold n leases. Same rule: a timeout is the bench.
 func waitForSeats(t *testing.T, store string, n int) {
@@ -227,7 +242,7 @@ func TestUnrelatedLeasesSurviveATermFromOutside(t *testing.T) {
 		t.Fatalf("starting native: %v", err)
 	}
 	// The harness has STARTED and is blocked in the barrier: both are files it wrote.
-	waitForFile(t, jobFile(slot, "argv"), "the harness never started (a wait here is the bench, not the lease contract)")
+	waitForRunFile(t, jobFile(slot, "argv"), "the harness never started (a wait here is the bench, not the lease contract)")
 	waitForSeats(t, store, 3) // two bystanders and this run's own seat
 
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
@@ -294,7 +309,7 @@ func TestTwoNativeRunsSharingAnOwnerAndLabelKeepTheirOwnSeats(t *testing.T) {
 	t.Run("the_failing_second_leaves_the_first_running", func(t *testing.T) {
 		store := slotShares(t, "capacity\t4\nreserve\t0\nfake-1\t4\n")
 		first, firstSlot := start(t, store, barrierCard)
-		waitForFile(t, jobFile(firstSlot, "argv"), "the first run's harness never started (a wait here is the bench, not the lease contract)")
+		waitForRunFile(t, jobFile(firstSlot, "argv"), "the first run's harness never started (a wait here is the bench, not the lease contract)")
 		waitForSeats(t, store, 1)
 
 		// The second shares the owner and the label and FAILS after acquiring its seat.
@@ -320,10 +335,10 @@ func TestTwoNativeRunsSharingAnOwnerAndLabelKeepTheirOwnSeats(t *testing.T) {
 	t.Run("the_first_to_finish_leaves_the_second_running", func(t *testing.T) {
 		store := slotShares(t, "capacity\t4\nreserve\t0\nfake-1\t4\n")
 		long, longSlot := start(t, store, barrierCard)
-		waitForFile(t, jobFile(longSlot, "argv"), "the long run's harness never started (a wait here is the bench, not the lease contract)")
+		waitForRunFile(t, jobFile(longSlot, "argv"), "the long run's harness never started (a wait here is the bench, not the lease contract)")
 		waitForSeats(t, store, 1)
 		short, shortSlot := start(t, store, barrierCard)
-		waitForFile(t, jobFile(shortSlot, "argv"), "the short run's harness never started (a wait here is the bench, not the lease contract)")
+		waitForRunFile(t, jobFile(shortSlot, "argv"), "the short run's harness never started (a wait here is the bench, not the lease contract)")
 		waitForSeats(t, store, 2)
 
 		// Both are blocked and both hold a seat. Let ONE of them finish.
