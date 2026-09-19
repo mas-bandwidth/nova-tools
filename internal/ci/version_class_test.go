@@ -30,6 +30,8 @@ import (
 // the grammar on the day it appears. No network: every binary is built from
 // this checkout and run with one argument.
 func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	tools := novaCommands(t, root)
 	if len(tools) == 0 {

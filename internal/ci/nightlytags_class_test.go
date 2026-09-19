@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,35 +79,22 @@ var implicitTags = map[string]bool{
 // by the compiler and never passed with `-tags`.
 var goVersionTag = regexp.MustCompile(`^go1\.\d+$`)
 
-// buildTagsInTestFiles walks the tree and returns every opt-in build tag a
-// _test.go carries, mapped to the files that carry it.
-func buildTagsInTestFiles(t *testing.T, root string) map[string][]string {
+// buildTagsInTestFiles reads the shared tree and returns every opt-in build tag
+// a _test.go carries, mapped to the files that carry it. The four directory
+// names the walk used to skip are skipped here by path: .git is not in the
+// shared tree at all, and testdata, vendor and node_modules hold files that are
+// not this repository's own tests.
+func buildTagsInTestFiles(t *testing.T) map[string][]string {
 	t.Helper()
 	tags := map[string][]string{}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, f := range repoTree(t).Files {
+		if !f.Test {
+			continue
 		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "testdata", "vendor", "node_modules":
-				return fs.SkipDir
-			}
-			return nil
+		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
+			continue
 		}
-		if !strings.HasSuffix(d.Name(), "_test.go") {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		for _, line := range strings.Split(string(raw), "\n") {
+		for _, line := range strings.Split(string(f.Src), "\n") {
 			line = strings.TrimSpace(line)
 			// A build constraint may only appear before the package clause.
 			if strings.HasPrefix(line, "package ") {
@@ -118,13 +104,9 @@ func buildTagsInTestFiles(t *testing.T, root string) map[string][]string {
 				continue
 			}
 			for _, tag := range optInTags(strings.TrimPrefix(line, "//go:build")) {
-				tags[tag] = append(tags[tag], rel)
+				tags[tag] = append(tags[tag], f.Rel)
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	return tags
 }
@@ -218,8 +200,10 @@ func appendOnce(in []string, s string) []string {
 // THE CLASS TEST. Every opt-in build tag in a test file is named by a scheduled
 // job, so no tagged test can fall out of CI without the tree saying so.
 func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
-	used := buildTagsInTestFiles(t, root)
+	used := buildTagsInTestFiles(t)
 	named := tagsNamedBySchedules(t, root)
 
 	if len(used) == 0 {
