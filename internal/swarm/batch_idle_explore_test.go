@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,4 +151,120 @@ func fileSize(path string) int64 {
 		return -1
 	}
 	return fi.Size()
+}
+
+// A WAL COMMIT AT A CONSTANT SIZE IS STILL A COMMIT (Fable's cold read of #1736, HIGH).
+//
+// The first version of this monitor stamped the three store files' SIZES and nothing else,
+// and that is blind exactly where it matters. With stock SQLite settings
+// (`journal_size_limit = -1`) the write-ahead log is RESET IN PLACE after the first
+// autocheckpoint: it keeps its high-water mark and the next transactions are written back
+// over the front of it. The cold read probed it -- 200 rows, then six commits, and none of
+// `<db>`, `<db>-wal` or `<db>-shm` changed size -- while the wal-index header in `-shm`
+// advanced on every one of them. Apple's `sqlite3` CLI sets a 32768-byte limit and hides
+// this; the SQLite inside OpenCode is unverified, so the safe reading is the stock one.
+//
+// A harness at a steady state of commits would therefore read as STILL, which is the exact
+// fault class this PR exists to close, reintroduced one layer down.
+//
+// THE WAL-INDEX HEADER IS THE SIGNAL. Its first 48 bytes hold two copies of the header
+// SQLite rewrites at each commit -- a change counter at bytes 4-7 and `mxFrame` at 16-19 --
+// and they move at a CONSTANT FILE SIZE, which is the case sizes cannot see. This test pins
+// all three sizes and moves only those bytes.
+func TestIdleWatchCountsWALCommitAtConstantSize(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"committing", "RESULT: committing\ncommitted at a constant size"},
+		{"stuck", "RESULT: stuck\nMISSING"},
+	})
+	// Two wal-index headers of EQUAL LENGTH whose change counter and mxFrame differ, which is
+	// what one commit does to that file and all it does.
+	before := fixtureWALIndexHeader(1, 7)
+	after := fixtureWALIndexHeader(2, 19)
+	if len(before) != len(after) {
+		t.Fatalf("the fixture must move no byte of length: %d vs %d", len(before), len(after))
+	}
+	db := "{root}/{slot}/data/opencode/opencode.db"
+	runner := runnerDoing(t, dir, "wal",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "mkdir", Path: "{root}/{slot}/data/opencode", When: "label==committing"},
+		// The store at rest: a database, a WAL at its high-water mark, and the index.
+		runnerStep{Op: "write", Path: db, Body: "a database that will not change size", When: "label==committing"},
+		runnerStep{Op: "write", Path: db + "-wal", Body: "a wal at its high-water mark", When: "label==committing"},
+		runnerStep{Op: "write", Path: db + "-shm", Body: before, When: "label==committing"},
+		runnerStep{Op: "write", Path: "{root}/at-rest", When: "label==committing"},
+		runnerStep{Op: "sleep", Ms: 30000, When: "label==stuck"},
+		runnerStep{Op: "exit", N: 0, When: "label==stuck"},
+		// THE TEST decides when the commit happens, so the clock it injected is the only
+		// clock in this test and nothing races a sleep.
+		runnerStep{Op: "waitfile", Path: "{root}/commit-now", When: "label==committing"},
+		runnerStep{Op: "write", Path: db + "-shm", Body: after, When: "label==committing"},
+		runnerStep{Op: "write", Path: "{root}/committed", When: "label==committing"},
+		// The test says when it has finished looking; then the card publishes. Without this
+		// the card would race the second tick with its own RESULT.md, and a published result
+		// makes the monitor skip the kill for a different reason (issue #916) -- which would
+		// let this test pass with the defect still in place.
+		runnerStep{Op: "waitfile", Path: "{root}/finish-now", When: "label==committing"},
+		publishCard("{job}"),
+	)
+	// Neither card's tree moves, so CPU saves neither and the store is the only thing that can.
+	sampler := &fakeTreeSampler{}
+	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) { return 50_000_000, true }
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		snapshot: func() activitySnapshot { return sampler },
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "at-rest"))
+		atRest := storeSizes(root)
+		clk.waitTick()
+		clk.tick() // the first reading: the store at rest
+		if err := os.WriteFile(filepath.Join(root, "commit-now"), []byte("go"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		waitForFile(t, filepath.Join(root, "committed"))
+		// THE PROOF THE TEST IS ABOUT WHAT IT SAYS: not one of the three files changed
+		// length across the commit, so anything the monitor notices below it noticed in the
+		// wal-index header and nowhere else. Without this the test could pass on a size
+		// change and prove nothing.
+		if committed := storeSizes(root); committed != atRest {
+			t.Fatalf("the fixture moved a size across the commit (%v then %v), so a size could have carried the signal", atRest, committed)
+		}
+		clk.advance(testIdleBudget)
+		clk.tick() // one commit later, at exactly the same three sizes
+		if err := os.WriteFile(filepath.Join(root, "finish-now"), []byte("go"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if code != 1 {
+		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "committing slot=1: committed at a constant size") {
+		t.Fatalf("a harness that committed is working, and a WAL reset in place moves no size:\n%s", out)
+	}
+	if !strings.Contains(out, "stuck slot=2: "+idleReason) {
+		t.Fatalf("the negative control: a card with no store and no CPU is still idle-killed:\n%s", out)
+	}
+}
+
+// fixtureWALIndexHeader is a wal-index header of the shape SQLite keeps in `<db>-shm`: 48 bytes
+// holding two copies of the same record, with a change counter at bytes 4-7 and `mxFrame` at
+// 16-19 of each. Only those fields differ between two of these, which is what one commit
+// does to that file at a constant length.
+func fixtureWALIndexHeader(change, mxFrame uint32) string {
+	var b [48]byte
+	for _, base := range []int{0, 24} {
+		binary.LittleEndian.PutUint32(b[base:], 3007000) // the version field, constant
+		binary.LittleEndian.PutUint32(b[base+4:], change)
+		binary.LittleEndian.PutUint32(b[base+16:], mxFrame)
+	}
+	return string(b[:])
+}
+
+// storeSizes is the three store files' lengths for slot 1, comparable as one value.
+func storeSizes(root string) [3]int64 {
+	db := filepath.Join(root, "1", "data", "opencode", "opencode.db")
+	return [3]int64{fileSize(db), fileSize(db + "-wal"), fileSize(db + "-shm")}
 }

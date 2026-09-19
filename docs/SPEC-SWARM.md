@@ -1436,16 +1436,23 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   **And the harness's own store is the third signal, because a card waiting on
   the provider moves neither of the first two.** The harness records each turn
   into its database under the card's data home — the same store `native`
-  samples its usage from — so the batch also reads that file's size and
-  modification time, the sqlite `-wal` and `-shm` sidecars included, because a
-  database in WAL mode takes a turn without the `.db` changing size at all. A
-  store that **grew** since the last poll is an answer that came back. On
+  samples its usage from — so the batch also reads **the three files' sizes
+  and the wal-index header**: the `.db`, the sqlite `-wal` and `-shm`
+  sidecars, and the first 48 bytes of the `-shm`. Sizes alone are not enough,
+  and that is measured rather than argued: with stock settings
+  (`journal_size_limit = -1`) SQLite **resets the WAL in place** at its
+  high-water mark after the first autocheckpoint, so two hundred rows and then
+  six commits moved none of the three by a byte of length, while the wal-index
+  header advanced on every one of them. **No modification time is read
+  anywhere here**, in this signal or any other. A store that **moved** since
+  the last poll is an answer that came back. On
   **2026-09-19 14:58Z** a healthy `MODE: explore` card that had cloned,
   branched and was walking a source file was killed `ABSTAIN reason=idle=300
   log=1730` with no `RESULT.md`: an explore card reads for longer than the
   window between writes by design, and it spends that window blocked on an
   HTTP response, which is no byte of log and no percent of a core. The store is
-  read for its **growth**, exactly as the log is — a database written once at
+  read for its **movement**, exactly as the log is read for its growth — a
+  database written once at
   startup certifies nothing and its card is on the clock like any other — and a
   card with no store at either location keeps the log-and-CPU behaviour it has
   today.
