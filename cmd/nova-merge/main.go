@@ -63,6 +63,7 @@ usage:
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
   nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+  nova-merge integrate  --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--sensitive <file> --designated <who>] [--ci-timeout <duration>] [--ci-interval <duration>] [--no-draft]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
@@ -240,6 +241,14 @@ type Deps struct {
 	// NewAuditHost is `queue audit`'s edge: the open pull requests carrying an auto-merge,
 	// and the one call that takes it off.
 	NewAuditHost func(repo string, timeout time.Duration) merge.AuditHost
+	// NewIntegrateForge is the ONE WRITE SIDE of a forge this binary has: open a pull
+	// request, comment on one, close one. It is `integrate`'s and nothing else's, for the
+	// reason NewEnqueueHost is its own seam -- the smaller the surface that can write to a
+	// forge, the fewer the ways something reaches it that nobody meant to.
+	NewIntegrateForge func(repo string, timeout time.Duration) merge.IntegrateForge
+	// NewFailForge is how `integrate` NAMES the test behind a red: the same engine
+	// `nova-ci failed` prints, so a red on a batch reads the same way whoever asks.
+	NewFailForge func(repo string, timeout time.Duration) ci.FailForge
 	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
 	// field so the tests hand it a fake queue and reach no network.
 	NewQueue func(repo string, timeout time.Duration) QueueReader
@@ -279,6 +288,12 @@ func production() Deps {
 		},
 		NewAuditHost: func(repo string, timeout time.Duration) merge.AuditHost {
 			return merge.NewGHEnqueue(repo, timeout, nil)
+		},
+		NewIntegrateForge: func(repo string, timeout time.Duration) merge.IntegrateForge {
+			return merge.NewGHIntegrate(repo, timeout, nil)
+		},
+		NewFailForge: func(repo string, timeout time.Duration) ci.FailForge {
+			return ci.NewGHFailForge(repo, "gh", timeout)
 		},
 		NewQueue: func(repo string, timeout time.Duration) QueueReader {
 			return newGHQueue(repo, timeout, nil)
@@ -380,6 +395,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdBatch(rest, stdout, stderr, deps)
 	case "land":
 		return cmdLand(rest, stdout, stderr, deps)
+	case "integrate":
+		return cmdIntegrate(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -402,7 +419,7 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	// the open list from a repository and cuts cards into a directory -- so all five name
 	// the repository outright rather than reading it from the lane's state, like `init`
 	// does; every other verb reads the lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue"
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue" || verb == "integrate"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
@@ -415,9 +432,10 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		switch verb {
 		case "gate":
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
-		case "simulate", "batch":
-			// simulate predicts a queue onto a base branch and batch builds an
-			// integration branch on top of one; neither owns a lane's.
+		case "simulate", "batch", "integrate":
+			// simulate predicts a queue onto a base branch, batch builds an
+			// integration branch on top of one, and integrate is the two of them
+			// with the landing either side; none of the three owns a lane's.
 		case "rebase":
 			// rebase cuts a card per open pull request against a base branch it names
 			// outright; it is not a lane verb, so it does not own a lane's --base either.
