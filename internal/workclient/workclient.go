@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 )
@@ -37,9 +38,17 @@ func Exchange(socket, request string) (string, error) {
 }
 
 func readReply(conn net.Conn) (string, error) {
-	r := bufio.NewReader(conn)
-	line, err := r.ReadString('\n')
+	// Bound the whole read, not just the value checked afterwards: the cap plus
+	// the one delimiter byte is enough to see the newline after a full-length
+	// reply or to learn the line ran past the cap. A bare ReadString grows with
+	// a stream that never sends one, so the length check must not be the only
+	// wall between the wire and memory.
+	limited := &io.LimitedReader{R: conn, N: replyCap + 1}
+	line, err := bufio.NewReader(limited).ReadString('\n')
 	if err != nil {
+		if limited.N <= 0 {
+			return "", fmt.Errorf("reply line past %d bytes", replyCap)
+		}
 		return "", errors.New("the session closed before one line")
 	}
 	line = strings.TrimSuffix(line, "\n")
