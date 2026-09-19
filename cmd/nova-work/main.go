@@ -178,7 +178,10 @@ wire:
   for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
   to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
   stderr, exit 2, ending "run: nova-work help". Values travel as given: the
-  session validates every one and refuses with its own naming.
+  session validates every one and refuses with its own naming. An exchange is
+  bounded by a 30-second default; a declared wait keeps a bounded 30-second
+  transport allowance, an explicit --deadline caps the bound, and a deadline
+  already past refuses before anything is dialled.
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
@@ -826,6 +829,31 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	if socket == "" {
 		return refused(stderr, "--session is required; refusing to guess (the socket has no default path)")
 	}
+	deadline, timeout, gitTimeout := "", "", ""
+	if p, ok := strs["deadline"]; ok {
+		deadline = *p
+	}
+	if p, ok := strs["timeout"]; ok {
+		timeout = *p
+	}
+	if p, ok := strs["git-timeout"]; ok {
+		gitTimeout = *p
+	}
+	// Guard (a): a deadline already past is refused before anything is dialled.
+	// The measuring instant is the real clock, never --now, which is the
+	// engine's instant for fencing and receipts. An unparseable deadline is
+	// forwarded for the session to validate; only an expired one refuses.
+	if at, ok := deadlineStamp(deadline); ok && !at.After(time.Now()) {
+		return refused(stderr, fmt.Sprintf("the deadline %s is not after %s; an ask that is late before it is sent is not an ask",
+			oneline.Field(at.UTC().Format(time.RFC3339)), oneline.Field(time.Now().UTC().Format(time.RFC3339))))
+	}
+	// Guard (b): the belt. The derivation can go non-positive on a pathological
+	// declared wait, and workclient's budget() reads a non-positive bound as NO
+	// DEADLINE AT ALL, so it never reaches the wire.
+	within := derivedBound(deadline, timeout, gitTimeout)
+	if within <= 0 {
+		within = askTimeout
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", oneline.Escape(verb))
 	for _, s := range specs {
@@ -844,7 +872,7 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	return ask(socket, b.String(), stdout, stderr)
+	return ask(socket, b.String(), within, stdout, stderr)
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable
@@ -864,8 +892,8 @@ var askTimeout = workclient.DefaultTimeout
 // client that stopped waiting is no more a rollback than a disconnect is
 // (docs/SPEC-WORK.md, "The engine and its client"). A reply past the wire's cap
 // is a session speaking a shape this wire does not carry.
-func ask(socket, request string, stdout, stderr io.Writer) int {
-	line, err := workclient.ExchangeWithin(socket, request, askTimeout)
+func ask(socket, request string, within time.Duration, stdout, stderr io.Writer) int {
+	line, err := workclient.ExchangeWithin(socket, request, within)
 	switch {
 	case err == nil:
 		return printReply(line, stdout, stderr)
