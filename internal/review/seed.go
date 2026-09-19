@@ -240,7 +240,12 @@ func listPackage(ctx context.Context, execFn seedExec, wt, pkg string) error {
 	pkg = cleanPkg(pkg)
 	cmd := seedCommand(ctx, execFn, wt, "go", "list", pkgArg(pkg))
 	cmd.Dir = wt
-	cmd.Env = goenv.Clean(os.Environ())
+	if cmd.Env == nil {
+		// The seam's Env is the seam's (the accept gate's HOME and GOCACHE inside its
+		// wall); only a bare command gets the cleaned environment. Cold read 2 of
+		// #1721: replacing it ran the card's tests with the operator's HOME.
+		cmd.Env = goenv.Clean(os.Environ())
+	}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return deadlineErr(pkg)
@@ -274,7 +279,12 @@ func runPackage(ctx context.Context, execFn seedExec, wt, pkg string) (red, gree
 	// The verdict is a property of the seed, never of the environment the verb was
 	// started in: CI's `make test` exports GOFLAGS=-json, and under it no
 	// `--- PASS:` line is printed at all.
-	cmd.Env = goenv.Clean(os.Environ())
+	if cmd.Env == nil {
+		// The seam's Env is the seam's (the accept gate's HOME and GOCACHE inside its
+		// wall); only a bare command gets the cleaned environment. Cold read 2 of
+		// #1721: replacing it ran the card's tests with the operator's HOME.
+		cmd.Env = goenv.Clean(os.Environ())
+	}
 	out, runErr := cmd.CombinedOutput()
 	// The deadline is the caller's, never the seed's: the run was killed mid-flight
 	// and nothing at all was proved about the mutant.

@@ -342,9 +342,10 @@ func (g *acceptGate) makeRun() error {
 	if err := os.MkdirAll(g.home, 0o755); err != nil {
 		return err
 	}
-	// One build cache for every gate run under this slot, and for nothing else: not the
-	// workers' shared <root>/cache, which every job may write.
-	g.gocache = filepath.Join(acceptDir, "gocache")
+	// The build cache is this run's alone and goes with it: the card's tests may write
+	// it (it is in their wall), so one shared across runs would let a card poison the
+	// next card's build (cold read 2 of #1721). A cold cache per run is the price.
+	g.gocache = filepath.Join(run, "gocache")
 	if err := os.MkdirAll(g.gocache, 0o755); err != nil {
 		return err
 	}
@@ -696,6 +697,15 @@ func (g *acceptGate) mutate() *acceptStop {
 	case err != nil:
 		return g.toolchain(fmt.Errorf("mutate could not run: %v", err))
 	}
+	// A suite the wall refused, or that said nothing, proved nothing about the card:
+	// the control did not run, and that is the bench's (cold read 2 of #1721, the
+	// CRITICAL: such a run was being scored as every unit red).
+	for _, s := range res.Skips {
+		if strings.Contains(s.Reason, "could not be run") {
+			g.note("mutate: " + s.File + ": " + s.Reason)
+			return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
+		}
+	}
 	g.red = res.Red
 	for _, green := range res.Greens {
 		if g.written[path.Dir(green.File)+":"+green.Name] {
@@ -919,6 +929,16 @@ func acceptToolchainRed(out string, err error) bool {
 	prefix := out
 	if i := strings.Index(out, "=== RUN"); i >= 0 {
 		prefix = out[:i]
+	}
+	// Compiler text is the card's, whatever words it holds: `undefined: WALL` is a
+	// build error naming WALL, not the wall (cold read 2 of #1721, item 4). A package
+	// header or a build-failed marker in the prefix means the toolchain ran and spoke
+	// about the code; only the exit codes above then speak for the bench.
+	for _, line := range strings.Split(prefix, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "# ") || strings.Contains(t, "[build failed]") || strings.Contains(t, "[setup failed]") {
+			return false
+		}
 	}
 	return acceptWallMark.MatchString(acceptFirstLine(prefix))
 }
