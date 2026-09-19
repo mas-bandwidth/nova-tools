@@ -788,10 +788,10 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	}
 	if *advance {
 		if *as == "" {
-			return refused(stderr, "--advance-cursor without --as: the --as name IS the claim, and a watcher may not advance a cursor that is not the window's own")
+			return refused(stderr, "--advance-cursor without --as: the --as name IS the claim, and a watcher may not advance a cursor that is not the window's own; run: nova-wake help")
 		}
 		if *remote == "" || *branch == "" {
-			return refused(stderr, "--advance-cursor without --remote and --branch: the advance is the one write-side call this tool makes, and it pushes")
+			return refused(stderr, "--advance-cursor without --remote and --branch: the advance is the one write-side call this tool makes, and it pushes; run: nova-wake help")
 		}
 		// One advancing watcher per (bus, as), for the WHOLE call: two calls
 		// over one pair interleave, each consuming the notes the other should
