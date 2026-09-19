@@ -284,3 +284,75 @@ no message."
                  :replies (read-restricted
                            (%savepoint-read-object (savepoint-report-replies-path report)))
                  :ownership-taken-p nil :dispatched-p nil :messages-replayed 0))))))
+
+;;; ------------------------------------------------------------------
+;;; `savepoint compare` --- the isolated old restore against current state
+;;; (SPEC-WORK.md:2279, :7085, :7117-7119)
+;;; ------------------------------------------------------------------
+
+(defun %state-node-rows (state)
+  "Every node of STATE as (id branch state holder), in seed order. This is what
+a comparison is over: the work the two sides actually hold."
+  (loop for id in (state-node-ids state)
+        collect (list :node id
+                      :branch (node-branch state id)
+                      :state (node-state state id))))
+
+(defun savepoint-compare-published (root id &key journal-path against
+                                                 against-kind (max 64)
+                                                 shared-checkpoint)
+  "`savepoint compare --savepoint <path> --against (--session <path> |
+--snapshot <path> ...)` (SPEC-WORK.md:2279). AGAINST is the WSTATE of the live
+session or of a loaded snapshot. The comparison restores the savepoint in
+isolation -- so it takes no ownership and dispatches nothing -- then puts the
+two revisions SIDE BY SIDE, names the work the against side holds beyond the
+savepoint, and keeps the shared checkpoint a different field from the local
+savepoint (:5983, :7109). Answers (values COUNT-LINE ROW-LINES ROWS)."
+  (multiple-value-bind (okp line code restored)
+      (savepoint-restore-published root id :journal-path journal-path)
+    (declare (ignore code))
+    (unless okp
+      (return-from savepoint-compare-published (values line '() nil)))
+    (let* ((mine (restored-savepoint-state restored))
+           (theirs against)
+           (my-rows (%state-node-rows mine))
+           (their-rows (and theirs (%state-node-rows theirs)))
+           (differences '()))
+      (dolist (row my-rows)
+        (let ((theirs-row (find (getf row :node) their-rows
+                                :key (lambda (r) (getf r :node)) :test #'equal)))
+          (cond
+            ((null theirs-row)
+             (push (list :node (getf row :node) :difference :only-in-savepoint
+                         :savepoint (getf row :state) :against nil)
+                   differences))
+            ((not (and (eq (getf row :branch) (getf theirs-row :branch))
+                       (eq (getf row :state) (getf theirs-row :state))))
+             (push (list :node (getf row :node) :difference :moved
+                         :savepoint (getf row :state)
+                         :against (getf theirs-row :state))
+                   differences)))))
+      (dolist (row their-rows)
+        (unless (find (getf row :node) my-rows
+                      :key (lambda (r) (getf r :node)) :test #'equal)
+          (push (list :node (getf row :node) :difference :only-in-against
+                      :savepoint nil :against (getf row :state))
+                differences)))
+      (setf differences (nreverse differences))
+      (let* ((mine-rev (restored-savepoint-revision restored))
+             (theirs-rev (and theirs (state-revision theirs)))
+             (shown (min max (length differences)))
+             (lines (loop for d in (subseq differences 0 shown)
+                          collect (format nil "SAVEPOINT ROW node=~A difference=~A savepoint=~A against=~A"
+                                          (getf d :node)
+                                          (string-downcase (symbol-name (getf d :difference)))
+                                          (or (getf d :savepoint) "-")
+                                          (or (getf d :against) "-")))))
+        (values (format nil "SAVEPOINT OK id=~A rev=~D checkpoint=~A against=~A against-kind=~A differences=~D shown=~D"
+                        id mine-rev
+                        (or shared-checkpoint "-")
+                        (or theirs-rev "-")
+                        (if against-kind
+                            (string-downcase (princ-to-string against-kind)) "-")
+                        (length differences) shown)
+                lines differences)))))
