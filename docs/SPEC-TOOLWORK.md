@@ -401,7 +401,12 @@ mechanical, and the harvest half never trusts that the staging half ran.
    base, head, paths, identity) []Finding`, called by `accept`, by `nova-merge batch`
    on each member (§6 rule 6) and by a `nova-check hygiene` verb a person can run on a
    branch before asking for a read. One implementation, three callers, so the lane and
-   the harvest cannot disagree about what clean means.
+   the harvest cannot disagree about what clean means. `identity` is a set and
+   `paths` may be absent: at harvest the set is the pool's one row and `paths` is the
+   card's; at `batch` the set is the lane's `identities.tsv` — every friend who commits
+   to this repository — and a member that is not a swarm's has no `PATHS:`, so
+   `out-of-path` is skipped for it and says so (`paths=-`), while `identity`,
+   `stray-file`, `secret` and the conflict-marker check run on every member.
 
 **Red tests:** `launch-refuses-a-pool-with-no-identity`;
 `staged-clone-ignores-the-bench-gitconfig`; `stage-refuses-a-symlink-out-of-the-job`;
