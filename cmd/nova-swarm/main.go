@@ -1859,10 +1859,18 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// grammar puts it (docs/SPEC-SWARM.md, "Output grammar", the NATIVE OK line), so the
 	// fixed part of the line stays one fixed part. It is the JOB's figure -- the sum over
 	// every launch at the final read -- and never a launch's row.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s\n",
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s\n",
 		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+	// THE PROMPT-DEFECT LINE, ON NATIVE'S OWN STDOUT AFTER `NATIVE OK`, AND IN NO FILE
+	// (rule 13d, decision 16). The pool appends it to the job's RESULT.md, creating the
+	// file where the worker published none; on this route that would score the card
+	// `line1-mismatch`, and 13d promises the published report is kept byte for byte -- so
+	// here it is printed and nothing is written.
+	if res.defect != "" {
+		fmt.Fprintln(stdout, oneline.Escape(res.defect))
+	}
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
@@ -1968,6 +1976,22 @@ func fenceSuffix(path string) string {
 // coordinator reading the NATIVE OK line knows the run was stopped from outside and never
 // reads a silent exit as a spent failure (issue #779). The token is a literal put through
 // oneline.Field like every other tail, so it cannot carry anything past the escape.
+// stoppedSuffix renders rule 13d's one new key: ` stopped=<tokens|max_turns|max_cache_read|
+// unverifiable>` for a card the machinery stopped under that rule, and the empty string for
+// every other card.
+//
+// IT IS A KEY OF ITS OWN and NOT a second `reason=` (PR #1566 decision 17): one key with one
+// meaning, which also says WHICH budget fired. `reason=terminated` stays what a TERM from
+// outside prints and the `reason=` inside the `usage=none` group stays the usage read's --
+// that those two can still meet on one line is issue #1611, deliberately not this rule's to
+// repair.
+func stoppedSuffix(stopped string) string {
+	if stopped == "" {
+		return ""
+	}
+	return " stopped=" + oneline.Field(stopped)
+}
+
 func termSuffix(terminated bool) string {
 	if terminated {
 		return " reason=" + oneline.Field("terminated")

@@ -2158,6 +2158,77 @@ same flag `run` takes. On `native` an interval **under one second**, or one **no
 than `--deadline`**, is exit 2: under the first, three quick failed reads would end an
 honest card `budget-unverifiable`; under the second no sample would ever run.
 
+**`native` samples in its own process.** No supervisor is spawned. While a launch runs,
+`native` reads the harness's own database under the job's data home — at both spellings,
+`$XDG_DATA_HOME/opencode/opencode.db` and the `$HOME/.local/share/opencode/opencode.db` a
+Linux harness derives from `HOME` — read-only, every `--usage-interval`. It **never** reads
+`usage.tsv`: that row is written after a launch's process group is dead, so it is the
+record of a stop and cannot be the cause of one.
+
+A sample gets **5 seconds whatever the interval**, **waits for no checkpoint** (rule 13's
+five-second wait for a write-ahead log belongs to the *final* read, made when the harness is
+gone), never overlaps another, and is never in the deadline's way: a read still unanswered
+at its limit is abandoned and counted as a failed read, and the deadline and a TERM from
+outside end the card at their own instants whatever a read is doing.
+
+**The observed sum is `tokens_in + tokens_out + reasoning`.** `cache_write` and `cache_read`
+stand in the usage row and are never in the sum, because a card re-reads about thirty times
+what it sends and a budget that counted them would measure the harness's re-reading.
+
+**The figure on the line is the job's, at the final read.** It is the sum over every launch
+of this one invocation of `native`, taken from each launch's own final read once its group
+is dead — never the sum at a sample. Where no final read could be made at all, the last sum
+a sample saw stands in **with the plus**, because a sample's figure is never allowed to pass
+for a final one.
+
+**The budget is the job's, across every launch, and a stop is the end.** A native job is one
+invocation of `native`: up to three launches when a provider 5xx inside the launch grace
+retries it, one data home, one usage row per launch. The sum is over the whole job, every
+launch counted from the first launch's start, and the stop is `spent >= n` — tested at every
+sample and **once more before any relaunch**, so a first launch that reached the budget
+alone is never launched again.
+
+When it fires, `native` ends the card the way it ends one on a TERM from outside: a
+terminate to the whole process group, a wait, then a kill, after which no process of that
+group is alive — grandchildren and a harness that ignores the terminate included. What the
+card published stays where it is, byte for byte, and on this route the tool writes nothing
+into a report. Nothing is launched again, by `native` or by a batch. `native` exits **1**: it
+ran, and the answer is no.
+
+**The line says what stopped the card**, in a key of its own:
+
+```
+NATIVE OK label=card-a … rc=-1 … harness=ok budget=110/100 stopped=tokens
+```
+
+`stopped=<tokens|max_turns|max_cache_read|unverifiable>`. `reason=terminated` stays what a
+TERM from outside prints, and the `reason=` inside the `usage=none` group stays the usage
+read's.
+
+**Two numbers, kept apart: the row is the launch's and the line is the job's.** Each usage
+row carries what THAT LAUNCH was finally reported to have used, from its own start to its
+own end, and never the job's running sum — a job's rows are disjoint, so adding them counts
+each launch once. Two launches finally reported at 40 and 70 under `--tokens 100` print
+`budget=110/100` on the line, and their rows hold **40 and 70**, never 40 and 110. The
+stopping launch's row carries `end=budget`, and its `rc` is a dash there while the line
+prints `rc=-1`.
+
+**When the source cannot be read**, the three cases stay apart. *Nothing observed*: the
+budget cannot fire, the deadline ends the card, the line prints `budget=-/<n>`. *A partial
+observation* counts the columns it has; it can reach the budget and stop the card, and it
+can never show that the card stayed under it, which is what the plus says. *A read that
+fails* — the database unreadable, the query erroring, the read abandoned at its limit — on
+**three consecutive** samples ends the card with `end=budget-unverifiable`,
+`stopped=unverifiable` and exit 1; two failures and then an answer end nothing.
+
+**The card's own budget comes along.** `--worker` naming a description with `max_cache_read`
+or `max_turns` has them enforced by the same samples, over the whole job, with
+`<job>/harness-output.log` as the turn log (`native` never writes `harness.log`). The stop
+is the one above, with `end=budget` in the row and `stopped=max_turns` or
+`stopped=max_cache_read` on the line. The `PROMPT-DEFECT` line is printed on `native`'s own
+**stdout, after `NATIVE OK`**, and is written into **no file**: the card's `RESULT.md` is the
+card's.
+
 **Every caller passes the word along.** `batch --cards` takes `--tokens <n>|unmetered`,
 required, and refuses the whole batch before any card starts:
 

@@ -62,6 +62,13 @@ var swarmAudit = audit.Config{
 		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
 		// escaped literal can come back.
 		"termSuffix",
+		// stoppedSuffix (main.go, SPEC-SWARM rule 13d, issue #1545) renders the one token a
+		// budget stop carries, ` stopped=<tokens|max_turns|max_cache_read|unverifiable>`,
+		// and puts the word through oneline.Field inside itself, so it is another
+		// one-safe-token tail like termSuffix. The word is one of four compile-time
+		// constants in nativesample.go and never a caller-supplied value at all, so only
+		// the empty string and an escaped literal can come back.
+		"stoppedSuffix",
 		// swarm.PublicRefusalLine (CARD-8390) renders the whole CARD REFUSED line and
 		// puts the repo and the worker name through oneline.Field inside
 		// internal/swarm before returning, so the line it returns is already one
@@ -87,6 +94,14 @@ var swarmAudit = audit.Config{
 		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
 		// the whole tree -- and holds no writer of its own.
 		`"os/signal"`, `"syscall"`,
+		// nativesample.go (SPEC-SWARM rule 13d, issue #1545) needs sync, and it holds no
+		// writer of any kind. sync.Mutex and sync.Once are the only two things taken from
+		// it: the mutex guards the figures the sampling goroutine and the launch's own
+		// goroutine share, and the Once closes the stop channel and sends the one stop word
+		// exactly once. Neither can write to a stream, and the sampler itself prints
+		// nothing at all -- what it learns leaves it as values this package renders through
+		// oneline.Field on the NATIVE OK line.
+		`"sync"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts

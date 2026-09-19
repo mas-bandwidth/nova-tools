@@ -173,6 +173,18 @@ func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
 	t.Fatalf("the NATIVE OK line carries no harness= field:\n%s", line)
 }
 
+// fieldOf is one `k=v` field of a line, or "" when the line does not carry it. It lives in
+// this file, which no build tag guards, because every budget test reads a field of the
+// NATIVE OK line and one of them is unix-only.
+func fieldOf(line, key string) string {
+	for _, f := range strings.Fields(line) {
+		if v, ok := strings.CutPrefix(f, key+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // nativeOKLine is the one NATIVE OK line in a capture, failed for if there is none.
 func nativeOKLine(t *testing.T, out string) string {
 	t.Helper()
