@@ -246,17 +246,21 @@ A `--- FAIL: TestX` that printed nothing of its own, beside a reported
 `TestX/case`, is the go command repeating itself and is dropped.
 
 **Its output.** One block per failing test — a `FAILED` line, then that test's
-own message lines indented as it printed them — then one line per cancellation
-and per timeout, then the closing count:
+own message lines indented as it printed them — then one block per job that went
+red with no test in it, one line per cancellation and per timeout, then the
+closing count:
 
 ```
 FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
     <the test's own message lines>
     ...+<n> more lines
+NOTEST job="<name>" step="<name>" tests=none
+    ...+<n> earlier lines
+    <the lines the runner marked as errors>
 CANCELLED job="<name>" step="<name>" after=<d>
 TIMEOUT job="<name>" pkg=<pkg> running=<TestA,TestB,TestC,+<n>>
 NOLOG job="<name>" reason="<the forge's own words>"
-FAILED OK jobs=<n> tests=<n> [unread=<n>]
+FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n> [unread=<n>]
 ```
 
 A job name and a step name are QUOTED rather than escaped as fields: `test (3/4
@@ -266,9 +270,29 @@ package, a test name and a `file:line` hold no space and stay bare, so one grep
 reads a column. `at=` is omitted, never guessed, when the test printed no
 position. A test's own words are bounded by `--max-lines` (default 8) and the
 rest are COUNTED, the same cap-and-count rule `slowtests` uses; the `running=`
-list is capped at three the same way. The closing `FAILED OK` line always
-prints, and its counts are the truth about the run whether or not every line
-printed. `running=none` is said out loud rather than left blank.
+list is capped at three the same way. The closing count always prints, and its
+counts are the truth about the run whether or not every line printed; its verdict
+word is `OK` only when the run said nothing red, so it agrees with the exit code
+instead of heading a report of reds, and the jobs are split into the `failed=<n>`
+that went red of their own and the `cancelled=<n>` cut down with them, each field
+omitted when it is zero. `running=none` and `tests=none` are said out loud rather
+than left blank.
+
+**Every red job gets a line.** A job whose conclusion is not `success` or
+`skipped` and whose log holds no test event at all — a C compiler error under
+`-Werror` inside a `make test` step, so `go test` never ran — is
+`NOTEST job="<name>" step="<name>" tests=none`, with the step read off the job
+(omitted, never guessed, when the forge named none) and, under it, the lines the
+RUNNER itself marked as errors: the compiler's own diagnosis, already picked out
+of the log by the forge that recorded it. That block is bounded by `--max-lines`
+from the END, because the errors that ended the step are the last ones annotated
+and the earlier ones in a long log may belong to a negative control that was
+supposed to be red; the dropped lines are counted above the ones shown. The
+specimen is run 35329874611 of `mas-bandwidth/schema`, where one
+`inline-gate (ubuntu-latest, go)` went red inside `make test` and seven siblings
+were cancelled: the run was reported as seven `CANCELLED` lines and
+`jobs=8 tests=0` under the word `OK`, and the one job worth chasing was counted
+and never named.
 
 **A log the forge will not give is a LINE.** A job whose log cannot be read is
 `NOLOG job="<name>" reason="<the forge's own words>"`, and `unread=<n>` joins the
@@ -279,8 +303,9 @@ refusing the whole run over that hides every other job's red, which is the one
 thing this verb exists to surface. It was found by running the verb on its own
 pull request the hour it was written.
 
-**Its exit codes.** 0 when the run said nothing red, 1 when it said something,
-2 on a refusal. `failed` is a READER, so a red run is exit 1 — the caller asked
+**Its exit codes.** 0 when the run said nothing red, 1 when it said something —
+which every job that did not succeed does, since each one gets a line, a
+cancelled-only run included — 2 on a refusal. `failed` is a READER, so a red run is exit 1 — the caller asked
 what broke and got an answer — while exit 2 stays what it is everywhere else in
 this family: the invocation could not run.
 
@@ -309,14 +334,16 @@ hand, to turn four megabytes of log into five lines — and the sixth time still
 missed the cancelled siblings of a failed leg, because a cancellation leaves
 nothing in the text. It is read here off the job's own steps instead.
 
-**Red tests.** `internal/ci/failed_test.go` parses four real job logs, cut from
+**Red tests.** `internal/ci/failed_test.go` parses five real job logs, cut from
 the runs of 2026-09-18 and committed under `internal/ci/testdata/failed/` with
 their timestamps, ANSI and CRLF intact — `windows-sandbox.log` (job
 105673713280, plain output, five failing tests), `studio-review.log` (job
 105673768922, `-json` frames), `pulse-flake.log` (job 105696546293, `-json`
-frames) and `merge-darwin-timeout.log` (job 105698657603 of run 35375346271, the
-`1m40s` timeout). `cmd/nova-ci/failed_test.go` runs the verb over them through a
-fake forge:
+frames), `merge-darwin-timeout.log` (job 105698657603 of run 35375346271, the
+`1m40s` timeout) and `inline-gate-werror.log` (job 105551505883 of run
+35329874611 of `mas-bandwidth/schema`, a `-Werror` compiler error inside
+`make test` and no test event at all). `cmd/nova-ci/failed_test.go` runs the verb
+over them through a fake forge:
 
 1. The plain log yields five failing tests, each with its package from the `FAIL`
    trailer and its `file:line` from the test's own first message.
@@ -336,6 +363,12 @@ fake forge:
    `unread=` count, and the run's other failing jobs still report in full.
 9. Every refusal above exits 2, writes nothing on stdout and ends at the door,
    and `failed --help` opens the verb's own door without asking a forge anything.
+10. A job whose conclusion is failure and whose log holds no test event is a
+    `NOTEST` line naming the job and the step that went red, carrying the last of
+    the lines the runner marked as errors, and the run exits 1. Over the shape of
+    run 35329874611 — that one job and seven cancelled siblings — the summary is
+    `FAILED RED jobs=8 failed=1 cancelled=7 tests=0`, and a cancelled-only run is
+    the exit 1 it has always been.
 
 ## The CI class test against a real network host on the CI path
 
@@ -659,10 +692,13 @@ cancelled sibling as silence.
 `TestARunReadsOnlyTheJobsThatDidNotSucceed`,
 `TestTheJobFilterReadsOnlyThatJobsLog`,
 `TestAJobFilterThatMatchesNothingSaysWhichJobsFailed`,
-`TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport` and
-`TestTheSelectorReachesTheForgeUntouched` (`internal/ci/failed_test.go`), over
-four real job logs in `internal/ci/testdata/failed/`, with the verb run end to
-end in `cmd/nova-ci/failed_test.go`.
+`TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport`,
+`TestTheSelectorReachesTheForgeUntouched`,
+`TestAFailingJobWithNoTestEventIsNamedAnyway`,
+`TestTheSummarySplitsARealRedFromItsCancelledSiblings` and
+`TestACancelledOnlyRunStaysExitOne` (`internal/ci/failed_test.go`), over five
+real job logs in `internal/ci/testdata/failed/`, with the verb run end to end in
+`cmd/nova-ci/failed_test.go`.
 **Its allowlist.** None: it reports what a run said, and there is nothing to
 excuse.
 **Its remedy lines.** None; its refusals are the verb's own, each naming what the
@@ -670,10 +706,11 @@ input wants — `--repo` as `<owner>/<name>`, exactly one of `--run`, `--pr` and
 `--branch`, `--merge-group` with `--pr`, a positive `--max-lines` and `--timeout`.
 **Its narrowings.** It reads only the jobs whose conclusion is not `success` or
 `skipped`, and only the two shapes `go test` prints; a failure that is neither a
-`--- FAIL`, a `-json` fail frame nor a timeout panic — a compile error, a
-runner that died — is left to the log, which `--job` then narrows to one. A log
-it cannot read at all is a `NOLOG` line and an `unread=` count, never a refusal. Full
-section: *The failing tests of a run*.
+`--- FAIL`, a `-json` fail frame nor a timeout panic — a compile error, a runner
+that died — is a `NOTEST` line naming the job and its failed step, with the lines
+the runner marked as errors under it, and the rest of that log is left to `--job`
+and the forge. A log it cannot read at all is a `NOLOG` line and an `unread=`
+count, never a refusal. Full section: *The failing tests of a run*.
 
 ### `removeall` — no `os.RemoveAll` of a computed path
 
