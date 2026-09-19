@@ -472,6 +472,26 @@ for, two were an infra prefix a card lane may not touch, and one was a sweep rat
 **Twenty-two of the thirty are answered by those three yes/no facts**, and none of the twenty-two
 is a judgement the provider got wrong — it is a fact it was never shown.
 
+### the escalate question — `help --state` and then to whom
+
+`nova-decide help --state <json>` answers the second decision from the line's own counters, with
+no provider, no key and no network: `continue`, `ask-all-friends` or `ask-glenn`, and Glenn only
+after the friends. It was hooked up and **unused on 2026-09-19** — zero calls, while twelve
+manager lanes each escalated by hand into an `ESCALATE.tsv` with a free-text
+`what-Rowan-must-decide` column.
+
+The ESCALATE step is the two halves together: `help --state` first, and where its answer is not
+`continue`, one typed `choice` over the ladder — `docs/decide/questions-escalate.json`, criteria
+`docs/decide/criteria-escalate.md`, under the same version gate. `help_answer` and `help_reason`
+go into the state verbatim, so the typed answer is anchored to counters the line measured rather
+than to how stuck it feels, and `glenn` is refused unless `help_answer` is `ask-glenn`.
+
+Worked example from the day: `work-swarm` escalated AUDIT row E05.6 at 17:22Z as not cuttable
+because `docs/SPEC-WORK.md:7176-7182` did not settle whether the journal's identity seam could
+move. `spec_is_silent_or_contradictory=yes`, `security_shaped_package=no`: the answer is `stella`.
+She ruled on both defaults and the row landed on the bottom rung ninety minutes later as #1856.
+The lane reached that answer by hand; the fields say it.
+
 ### nova-bus inbox triage (opt-in, public buses only)
 
 Triage an inbox into carry / receipt / noise on public material. Opt-in per

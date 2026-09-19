@@ -297,7 +297,18 @@ func ParseQuestions(data []byte) (map[string]Question, error) {
 		return nil, fmt.Errorf("decide: bad questions: not a JSON object: %w", err)
 	}
 	raw := top
-	if inner, ok := top["questions"]; ok && len(top) == 1 {
+	if inner, ok := top["questions"]; ok {
+		// The envelope may carry the criteria the question is answered
+		// against -- their version, their file, and the state fields the
+		// asker computes first -- so that a question and its criteria are
+		// ONE versioned pair. Anything else beside it is a refusal that
+		// names the key: a misspelled metadata key that fell through to
+		// the bare form used to be read as a question.
+		for key := range top {
+			if key != "questions" && !questionEnvelopeKeys[key] {
+				return nil, fmt.Errorf("decide: bad questions: %q stands beside \"questions\" and is not one of comment, criteria_version, criteria_file, state_fields", key)
+			}
+		}
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(inner, &m); err != nil {
 			return nil, fmt.Errorf("decide: bad questions: \"questions\" is not an object")
@@ -407,4 +418,15 @@ func Line(prefix string, answers map[string]Answer, floor float64) string {
 		b.WriteString(strings.Join(below, ","))
 	}
 	return b.String()
+}
+
+// questionEnvelopeKeys are the keys a question file may carry BESIDE its
+// questions: the criteria those questions are answered against, so the pair is
+// versioned together (Glenn, 2026-09-19 -- the criteria go in as input tokens),
+// and a comment. Anything else is a refusal that names it.
+var questionEnvelopeKeys = map[string]bool{
+	"comment":          true,
+	"criteria_version": true,
+	"criteria_file":    true,
+	"state_fields":     true,
 }
