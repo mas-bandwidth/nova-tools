@@ -239,9 +239,10 @@ type tickResult struct {
 // answered 0.
 func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed == r.benches }
 
-// fillTick is one turn: list ready once in filename order, then for each bench take up to
-// min(capacity, FillCap) cards and launch them. A LANE card is launched only when its lane
-// has no live card; otherwise it is held, and the live card it is held behind is named. A
+// fillTick is one turn: list ready once in filename order, read each bench's capacity once,
+// then deal one card per bench in turn until every bench is at its cap or the pool is
+// empty. A LANE card is launched only when its lane has no live card; otherwise it is held,
+// and the live card it is held behind is named. A
 // LANE the lanes file does not name is refused, once per card per lanes-file mtime. The
 // move out of ready is the claim, so a card another hand already took is skipped and never
 // launched twice; a launcher that fails moves its card back and releases its lane. It
@@ -260,27 +261,41 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			"fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut")
 	}
 
-	parts := make([]string, 0, len(in.Benches))
-	for _, bench := range in.Benches {
-		want := 0
-		capacityFailed := false
+	// ONE capacity read per bench per tick, before any card is dealt: the probe is an ssh
+	// to the machine, so a read inside the round-robin would multiply the calls by the
+	// pool. want[i] is bench i's remaining cards, clamped by FillCap and at zero.
+	want := make([]int, len(in.Benches))
+	capacityFailed := make([]bool, len(in.Benches))
+	for i, bench := range in.Benches {
 		if n, err := in.Capacity.Capacity(bench); err != nil {
-			capacityFailed = true
+			capacityFailed[i] = true
 			if res.err == nil {
 				res.err = fmt.Errorf("capacity on %s: %w", field(bench), err)
 			}
 		} else {
-			want = n
+			want[i] = n
 		}
-		if want > FillCap {
-			want = FillCap
+		if want[i] > FillCap {
+			want[i] = FillCap
 		}
-		if want < 0 {
-			want = 0
+		if want[i] < 0 {
+			want[i] = 0
 		}
+	}
 
-		launched, failed := 0, 0
-		for want > 0 && idx < len(cards) {
+	// Round-robin: one card per bench in turn, passes repeat until every bench is at its
+	// capacity or the pool is empty. A card skipped as unknown or held consumes the card
+	// but not the bench's want, so the bench is offered the next pass rather than dropped
+	// -- a run of held cards does not end the tick for a bench.
+	launched := make([]int, len(in.Benches))
+	failed := make([]int, len(in.Benches))
+	for {
+		progressed := false
+		for i, bench := range in.Benches {
+			if want[i] == 0 || idx >= len(cards) {
+				continue
+			}
+			progressed = true
 			card := cards[idx]
 			idx++
 			lane := cardLane(card)
@@ -306,21 +321,29 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			if lane != "" {
 				live[lane] = base
 			}
-			want--
+			want[i]--
 			if err := in.Launcher.Launch(bench, moved); err != nil {
-				failed++
+				failed[i]++
 				failLaunch(in, moved, base, lane, live, err)
 				if res.err == nil {
 					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(bench), err)
 				}
 				continue
 			}
-			launched++
+			launched[i]++
 		}
-		if capacityFailed || (launched == 0 && failed > 0) {
+		if !progressed {
+			break
+		}
+	}
+
+	parts := make([]string, 0, len(in.Benches))
+	for i, bench := range in.Benches {
+		if capacityFailed[i] || (launched[i] == 0 && failed[i] > 0) {
 			res.failed++
 		}
-		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d", oneline.Field(bench), launched, failed))
+		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d",
+			oneline.Field(bench), launched[i], failed[i]))
 	}
 
 	var b strings.Builder
