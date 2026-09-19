@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // CompareTranscript is the ONE comparison a firstrun_test.go may make
@@ -83,9 +84,23 @@ type VolatileField struct {
 // site's decision -- which is what the refusal below is for.
 //
 // The five entries are the ones docs/SPEC-TOOLWORK.md §7 rule 2 names: `at=`,
-// `took=`, `created=`, a temporary directory and a fresh sha. Each pattern
-// matches the value WITH its field name, so an entry declared for one field
-// cannot quietly swallow another's value.
+// `took=`, `created=`, a temporary directory and a fresh sha.
+//
+// FOUR OF THE FIVE ARE TOKEN-ANCHORED, and the fifth says why it is not. A norm
+// that names a field replaces only a whitespace-delimited token spelled
+// `<field>=<value>` in full (Norm.apply, transcript.go): a pattern that ran over
+// the whole line would let an entry declared for one field swallow a
+// neighbour's value, which is exactly #1629's ROW 1 defect, repaired at
+// 4f2d552b and reintroduced here in the first cut of this table --
+// `Field{Name:"sha"}` also normalised `base_sha=`, `took` also normalised
+// `last_took=`, and no test said so. TestAVolatileEntryNeverSwallows-
+// ANeighbouringFieldsValue now holds every entry to it, by the shape of the
+// mistake rather than by the entry, so a sixth entry that forgets is one row of
+// a table away from being caught.
+//
+// `tmpdir` is the exception and is sound without a field: its pattern is a
+// literal absolute path THIS RUN made, which names no field because a path on a
+// line carries none, and which nothing else on the line can be.
 var Volatile = []VolatileField{
 	{
 		Name: "at",
@@ -95,11 +110,18 @@ var Volatile = []VolatileField{
 	{
 		Name: "took",
 		What: "took= (how long this run took)",
+		// field and valid are this package's own, and are set here rather than
+		// through a constructor because transcript.go has none for a duration.
+		// valid PARSES the value, the property 4f2d552b gave Instant: a
+		// normalisation that erases an impossible value erases the finding with
+		// it, so a `took=` that is not a duration stays on the line.
 		norm: func(Field) Norm {
 			return Norm{
-				Name: "took= (how long this run took)",
-				Re:   regexp.MustCompile(`took=[0-9]+(\.[0-9]+)?(ns|µs|us|ms|s|m|h)`),
-				As:   "took=<how long this run took>",
+				Name:  "took= (how long this run took)",
+				Re:    regexp.MustCompile(`^took=[0-9]+(\.[0-9]+)?(ns|µs|us|ms|s|m|h)([0-9]+(\.[0-9]+)?(ms|s|m|h))*$`),
+				As:    "took=<how long this run took>",
+				field: "took",
+				valid: isDuration,
 			}
 		},
 	},
@@ -119,11 +141,16 @@ var Volatile = []VolatileField{
 	{
 		Name: "sha",
 		What: "sha= (a sha this run made)",
+		// Anchored at both ends AND named, so `base_sha=` is another token and
+		// is compared as written. A sha of some other length, or with a
+		// non-hex digit in it, is the tool disagreeing with the document and
+		// stays on the line -- the same rule HexID keeps.
 		norm: func(Field) Norm {
 			return Norm{
-				Name: "sha= (a sha this run made)",
-				Re:   regexp.MustCompile(`sha=[0-9a-f]{7,40}`),
-				As:   "sha=<a sha this run made>",
+				Name:  "sha= (a sha this run made)",
+				Re:    regexp.MustCompile(`^sha=[0-9a-f]{7,40}$`),
+				As:    "sha=<a sha this run made>",
+				field: "sha",
 			}
 		},
 	},
@@ -188,4 +215,11 @@ func volatileNorms(fields []Field) ([]Norm, []Problem) {
 		}
 	}
 	return norms, refusals
+}
+
+// isDuration answers whether v is a duration Go can parse and not only the
+// shape of one, the property Instant's isInstant keeps for an instant.
+func isDuration(v string) bool {
+	_, err := time.ParseDuration(v)
+	return err == nil
 }

@@ -1,6 +1,7 @@
 package onboarding
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -238,4 +239,84 @@ func joinProblems(problems []Problem) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// THE DEFECT THIS GUARDS IS ONE THIS TABLE ALREADY SHIPPED ONCE. #1629's own
+// ROW 1, repaired at 4f2d552b, was a norm whose pattern ran over the WHOLE line
+// instead of the token it names, so a norm declared for one field quietly ate a
+// neighbour's value. Two of the five entries here were built as plain patterns
+// and reintroduced it in the table every transcript test is judged by: naming
+// `sha` also normalised `base_sha=`, and naming `took` also normalised
+// `last_took=`.
+//
+// So every entry is checked the same way, by the shape of the mistake rather
+// than by the entry: a line carrying the field AND a neighbour whose name ENDS
+// in that field's name, with only the neighbour moving between the document and
+// the run. That has to be red. A future sixth entry that forgets to anchor is
+// caught here by adding one row.
+func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
+	for _, tc := range []struct{ name, field, docValue, runValue, mine string }{
+		{name: "at", field: "at", docValue: "2026-09-19T11:02:03Z", runValue: "2026-09-19T14:55:01Z", mine: "2026-09-19T11:02:03Z"},
+		{name: "took", field: "took", docValue: "5ms", runValue: "9h", mine: "8ms"},
+		{name: "created", field: "created", docValue: "2026-09-16T08:22:37Z", runValue: "2026-09-16T09:00:00Z", mine: "2026-09-16T08:22:37Z"},
+		{name: "sha", field: "sha", docValue: "abc1234", runValue: "0000000", mine: "def5678"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// `last_` and `base_` are how a neighbour's name ends in this
+			// field's: the token is `last_took=5ms`, not `took=5ms`.
+			neighbour := "base_" + tc.field
+			doc := []string{
+				"$ nova-bus read",
+				fmt.Sprintf("BUS READ %s=%s %s=%s", neighbour, tc.docValue, tc.field, tc.mine),
+			}
+			run := []Result{{Stdout: fmt.Sprintf("BUS READ %s=%s %s=%s\n", neighbour, tc.runValue, tc.field, tc.mine)}}
+
+			problems := CompareTranscript(parse(t, doc), run, []Field{{Name: tc.name}})
+			if len(problems) != 1 {
+				t.Fatalf("declaring %q normalised %s= as well: %d problem(s), want 1.\nThe entry's pattern is running over the whole line instead of the token it names -- this is #1629's ROW 1 defect (4f2d552b) in the Volatile table.\n%s",
+					tc.name, neighbour, len(problems), joinProblems(problems))
+			}
+			// And the entry still does its own job on its own token.
+			runOwn := []Result{{Stdout: fmt.Sprintf("BUS READ %s=%s %s=%s\n", neighbour, tc.docValue, tc.field, tc.runValue)}}
+			if problems := CompareTranscript(parse(t, doc), runOwn, []Field{{Name: tc.name}}); len(problems) != 0 {
+				t.Fatalf("declaring %q did not normalise its own %s=: %d problem(s), want 0:\n%s", tc.name, tc.field, len(problems), joinProblems(problems))
+			}
+		})
+	}
+}
+
+// `tmpdir` is the one entry that is NOT token-anchored, and this says why rather
+// than leaving a reader to wonder. Its pattern is the run's own directory, a
+// literal absolute path this run made: it names no field because a path on a
+// line carries none, and it cannot swallow a neighbour's value because nothing
+// else on the line is that string. The test is the property that makes it safe:
+// another path, and a field whose value merely CONTAINS the run's directory as a
+// prefix of a longer one, are both left alone.
+func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
+	doc := []string{
+		"$ nova-bus read --root /tmp/nova-bus-1",
+		"BUS READ root=/tmp/nova-bus-1 home=/tmp/other n=0",
+	}
+	run := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/other n=0\n"}}
+	field := Field{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/run/T/nova-bus-9f3"}
+
+	if problems := CompareTranscript(parse(t, doc), run, []Field{field}); len(problems) != 0 {
+		t.Fatalf("the run's directory was not normalised: %d problem(s):\n%s", len(problems), joinProblems(problems))
+	}
+	moved := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/elsewhere n=0\n"}}
+	if problems := CompareTranscript(parse(t, doc), moved, []Field{field}); len(problems) != 1 {
+		t.Fatalf("another path on the line was swallowed: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
+	}
+}
+
+// A value that is not what the entry says it is stays on the line and is
+// compared, the property 4f2d552b gave Instant: a normalisation that erases an
+// impossible value erases the finding with it. `took=` is a duration, so a
+// `took=` that is not one is the tool disagreeing with the document.
+func TestAVolatileEntryLeavesAnInvalidValueOnTheLine(t *testing.T) {
+	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
+	run := []Result{{Stdout: "BUS READ took=soon\n"}}
+	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "took"}}); len(problems) != 1 {
+		t.Fatalf("`took=soon` was normalised as a duration: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
+	}
 }

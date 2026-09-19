@@ -41,6 +41,10 @@ const transcriptAllowlistPath = "testdata/transcripts_allowlist.txt"
 // theComparator is the one call a firstrun_test.go may make.
 const theComparator = "onboarding.CompareTranscript("
 
+// theDocument is the file this rule is about; a test that executes a section
+// opens it, and one that never names it is comparing something else.
+const theDocument = "TESTS.md"
+
 // otherWays are the comparisons rule 2 replaces, by the spelling that appears in
 // a test's source. Each says what it lets through, because that sentence is the
 // reason the conversion is worth anybody's afternoon.
@@ -68,7 +72,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 
 	var violations []string
 	sections := 0
-	executed := map[string]bool{}
+	executed, isSection := map[string]bool{}, map[string]bool{}
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -79,6 +83,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 			continue
 		}
 		sections++
+		isSection[tool] = true
 
 		calls, others := readsTheSection(tree, tool)
 		if calls && len(others) == 0 {
@@ -102,10 +107,18 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	if sections == 0 {
 		t.Fatal("no `## <tool>` sections found in docs/TESTS.md; this walk was looking in the wrong place and would have passed by checking nothing")
 	}
-	// The list only shrinks: a section a test now executes line for line, with
-	// the one comparator and no other, may not stay listed as owed.
+	// The list only shrinks, and it shrinks two ways. A section a test now
+	// executes line for line, with the one comparator and no other, may not stay
+	// listed as owed -- and an entry naming NO section is an orphan that nothing
+	// above can ever make stale, so it would sit in the list for good, reading
+	// like an exception somebody still owes.
 	for tool := range allow {
-		if executed[tool] {
+		switch {
+		case !isSection[tool]:
+			violations = append(violations, fmt.Sprintf(
+				"%s lists %s, and docs/TESTS.md has no `## %s` section with a directory under cmd/; an entry naming no section is an orphan no conversion can ever remove, so nothing would shrink it. Delete it, or fix its spelling",
+				transcriptAllowlistPath, tool, tool))
+		case executed[tool]:
 			violations = append(violations, fmt.Sprintf(
 				"%s lists %s as not yet converted, and cmd/%s now calls %s and compares no other way; delete the stale entry (the list only shrinks)",
 				transcriptAllowlistPath, tool, tool, theComparator))
@@ -119,10 +132,23 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 
 // readsTheSection reports whether any test file in cmd/<tool> calls the one
 // comparator on this tool's own section, and every other comparison those test
-// files make. The tool's own name must appear as a literal in the same file,
-// because that is how a test names the section it opens -- onboarding.FirstRun(md,
-// "nova-ci") -- and a package that called the comparator on somebody else's
-// section would otherwise count.
+// files make.
+//
+// THREE SPELLINGS HAVE TO BE IN THE SAME FILE, and the third is the one that
+// makes the proxy worth anything: the comparator's call, the tool's own name as
+// a literal -- how a test names the section it opens, `onboarding.FirstRun(md,
+// "nova-ci")` -- AND the document. Without the document a package that called
+// the comparator on a hand-written fixture holding its own name counted as
+// executing its section, which was reproduced green in the cold read of #1723.
+// Asking for `TESTS.md` means the file at least opens the document this rule is
+// about.
+//
+// It is still a proxy and this test says so rather than pretending otherwise:
+// the narrowing is written out in docs/SPEC-CI.md. What it cannot see is a file
+// that opens the document and compares something else it built; what closes THAT
+// is the `transcript-test` kind's own control (SPEC-TOOLWORK §7 rule 4), which
+// seeds the tool's real section three ways and demands red -- a control that
+// runs per card, where this class test runs per tree.
 func readsTheSection(tree *repoTreeIndex, tool string) (bool, []struct{ spelling, lets string }) {
 	dir := "cmd/" + tool + "/"
 	calls := false
@@ -133,7 +159,7 @@ func readsTheSection(tree *repoTreeIndex, tool string) (bool, []struct{ spelling
 			continue
 		}
 		src := string(f.Src)
-		if strings.Contains(src, theComparator) && strings.Contains(src, `"`+tool+`"`) {
+		if strings.Contains(src, theComparator) && strings.Contains(src, `"`+tool+`"`) && strings.Contains(src, theDocument) {
 			calls = true
 		}
 		for _, other := range otherWays {

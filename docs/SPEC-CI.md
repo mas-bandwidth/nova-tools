@@ -1256,7 +1256,7 @@ one comparator called with that tool's own name, and for the comparisons rule 2
 replaces: `onboarding.Execute`, `onboarding.Compare`, `onboarding.Shape` and a
 `printed` set.
 **Its allowlist.** `internal/ci/testdata/transcripts_allowlist.txt`, one `<tool>`
-per line with the issue that owes it, checked in both directions so it only
+per line with the issue that owes it, checked in both directions -- a stale entry and an ORPHAN naming no section are both red -- so it only
 shrinks: an unlisted unexecuted section is red, and a listed section a test now
 executes with the one comparator is a stale entry and red too. Today: the
 twenty-one sections not yet converted (#1653, #1654, #1657, #1722).
@@ -1266,9 +1266,18 @@ promise no build checks. Convert it — run every `$` line of the `### First run
 block in order and hand the steps and the results to the one comparator — or
 list <tool> in testdata/transcripts_allowlist.txt with the issue that owes it``.
 **Its narrowings.** Only `docs/TESTS.md`, only `## <tool>` sections that have a
-directory under `cmd/`, and only that package's own top-level test files. It
-reads the spellings a test uses, not what the comparison does at run time: a
-fourth way of comparing, written from scratch, is not seen until it is named
+directory under `cmd/`, and only that package's own top-level test files. **It
+is a spelling proxy and this is its boundary.** A section counts as executed
+when one test file in the package carries three spellings together: the
+comparator's call, the tool's own name as a literal, and `TESTS.md`. The third
+is load-bearing — without it a package comparing a hand-written fixture that
+held its own name counted as executing its section (reproduced green in the
+cold read of #1723 at `215b7740`). What the proxy still cannot see is a file
+that opens the document and compares something it built from it; what closes
+that is the `transcript-test` kind's own control (`docs/SPEC-TOOLWORK.md` §7
+rule 4), which seeds the tool's real section three ways and demands red — a
+control that runs per card, where this class test runs per tree. A fourth way
+of comparing, written from scratch, is likewise not seen until it is named
 here. Whether a transcript is TRUE is not this test's business — a document that
 disagrees with its tool is a finding and a `fix-red` card
 (`docs/SPEC-TOOLWORK.md` §7 rule 6), never an edit that makes a test pass.
