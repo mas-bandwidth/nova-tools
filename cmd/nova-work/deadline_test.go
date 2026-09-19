@@ -126,3 +126,51 @@ func TestTheDerivedBoundIsTheMinimumAndNeverZero(t *testing.T) {
 		}
 	}
 }
+
+func TestAMalformedDeadlineRefusesBeforeAnythingIsDialled(t *testing.T) {
+	socket, requests := fakeSession(t, sessionOKLine)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"operation", "cancel", "--session", socket, "--deadline", "not-an-instant"}, &stdout, &stderr, "")
+	if code != 2 {
+		t.Fatalf("malformed deadline exit = %d, want 2 (stderr = %s)", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("malformed deadline wrote stdout: %q", stdout.String())
+	}
+	line := strings.TrimSuffix(stderr.String(), "\n")
+	if strings.Count(stderr.String(), "\n") != 1 || !strings.HasSuffix(line, "run: nova-work help") {
+		t.Fatalf("malformed deadline refusal = %q, want one line ending \"run: nova-work help\"", stderr.String())
+	}
+	if !strings.Contains(line, "not-an-instant") || !strings.Contains(line, "is not an instant") {
+		t.Fatalf("malformed deadline refusal = %q, want it naming \"not-an-instant\" and \"is not an instant\"", line)
+	}
+	// A short timed receive, not awaitRequest: nothing may reach the session at
+	// all. Copy of the expired case's grace shape.
+	const grace = 250 * time.Millisecond
+	select {
+	case got := <-requests:
+		t.Fatalf("the client dialled the session before refusing a malformed deadline: %q", got)
+	case <-time.After(grace):
+	}
+}
+
+func TestAnAbsentDeadlineStillSendsAndKeepsTheOrdinaryDefault(t *testing.T) {
+	socket, requests := fakeSession(t, sessionOKLine)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"operation", "cancel", "--session", socket}, &stdout, &stderr, "")
+	if code != 0 {
+		t.Fatalf("absent deadline exit = %d, want 0 (stderr = %s)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "SESSION OK") {
+		t.Fatalf("absent deadline stdout = %q, want the reply line", stdout.String())
+	}
+	request := awaitRequest(t, requests)
+	if strings.Contains(request, "--deadline") {
+		t.Fatalf("an absent deadline spelled one on the wire: %q", request)
+	}
+	if got := derivedBound("", "", ""); got != askTimeout {
+		t.Fatalf("the ordinary bound = %s, want askTimeout %s", got, askTimeout)
+	}
+}

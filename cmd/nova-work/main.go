@@ -839,10 +839,17 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	if p, ok := strs["git-timeout"]; ok {
 		gitTimeout = *p
 	}
+	// The client sizes its own socket bound from --deadline, so this is the one
+	// flag it PARSES AND USES rather than merely forwards; it must not act on a
+	// value it could not read, and an unreadable value is not an absent one.
+	if _, st := deadlineParse(deadline); st == deadlineMalformed {
+		return refused(stderr, fmt.Sprintf("the deadline %s is not an instant; the client sizes its own bound from --deadline and will not send a request it cannot bound",
+			oneline.Field(deadline)))
+	}
 	// Guard (a): a deadline already past is refused before anything is dialled.
 	// The measuring instant is the real clock, never --now, which is the
-	// engine's instant for fencing and receipts. An unparseable deadline is
-	// forwarded for the session to validate; only an expired one refuses.
+	// engine's instant for fencing and receipts. A malformed explicit deadline
+	// was already refused above; here only a well-formed past one refuses.
 	if at, ok := deadlineStamp(deadline); ok && !at.After(time.Now()) {
 		return refused(stderr, fmt.Sprintf("the deadline %s is not after %s; an ask that is late before it is sent is not an ask",
 			oneline.Field(at.UTC().Format(time.RFC3339)), oneline.Field(time.Now().UTC().Format(time.RFC3339))))

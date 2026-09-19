@@ -11,20 +11,42 @@ import (
 // wait plus a bounded 30-second transport allowance".
 const transportAllowance = 30 * time.Second
 
-// deadlineStamp parses a --deadline stamp. ok is false when the flag is absent
-// or the value is not an RFC3339 instant. An unparseable stamp is forwarded to
-// the session verbatim and leaves the local bound at its ordinary default,
-// because the client is thin and the session validates; only an EXPIRED
-// deadline refuses before send.
-func deadlineStamp(flag string) (time.Time, bool) {
+// deadlineState is the three-valued answer a --deadline flag has: absent,
+// well-formed, or malformed. A bool cannot carry it, because its single false
+// is returned from two places for two inputs that need opposite answers:
+// silence takes the ordinary 30-second default, while a broken value refuses
+// before send, and no caller can recover which of the two it got.
+type deadlineState int
+
+const (
+	deadlineAbsent deadlineState = iota
+	deadlineWellFormed
+	deadlineMalformed
+)
+
+// deadlineParse reads a --deadline stamp. A non-empty flag that does not parse
+// as RFC3339 is MALFORMED, not absent: the caller typed something. That
+// distinction is what lets the client refuse a value it cannot read rather than
+// silently substitute the ordinary default for an explicit cap.
+func deadlineParse(flag string) (time.Time, deadlineState) {
 	if flag == "" {
-		return time.Time{}, false
+		return time.Time{}, deadlineAbsent
 	}
 	at, err := time.Parse(time.RFC3339, flag)
 	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, deadlineMalformed
 	}
-	return at, true
+	return at, deadlineWellFormed
+}
+
+// deadlineStamp is the two-valued view for the callers that only ask whether
+// there is a well-formed deadline to cap the local bound with: a false from an
+// absent flag and a false from a malformed one both mean "no bound to derive
+// here". The refusal for a malformed explicit deadline lives in sessionVerb,
+// before either of those callers is reached.
+func deadlineStamp(flag string) (time.Time, bool) {
+	at, st := deadlineParse(flag)
+	return at, st == deadlineWellFormed
 }
 
 // declaredWait parses a declared wait: --timeout is a Go duration, --git-timeout
