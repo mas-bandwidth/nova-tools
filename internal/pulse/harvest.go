@@ -305,7 +305,7 @@ func Harvest(in HarvestInput) int {
 	}
 	// A local harvest drains --launched too when it is named: the lane of a card whose
 	// job under this root has finished is released here, not only by `manager`.
-	drained := drainLaunched(in, localJobStates(in.Root), grouped)
+	drained, leftLaunched := drainLaunched(in, localJobStates(in.Root), grouped)
 	grouped.More()
 
 	code := 0
@@ -315,7 +315,7 @@ func Harvest(in HarvestInput) int {
 	}
 	tail := ""
 	if strings.TrimSpace(in.Launched) != "" {
-		tail = fmt.Sprintf(" drained=%d", drained)
+		tail = fmt.Sprintf(" drained=%d left=%d", drained, leftLaunched)
 	}
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,

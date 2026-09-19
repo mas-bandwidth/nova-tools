@@ -152,22 +152,35 @@ func harvestBench(in HarvestInput) int {
 	if err != nil {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("listing jobs on %s: %s", field(in.Bench), oneline.Err(err)))
 	}
-	jobs := parseBenchJobs(raw)
+	jobs, missing := parseBenchJobs(raw)
+	// A --root that does not resolve ON THE BENCH is a refusal before any state changes,
+	// never a silent `jobs=0` (#1950): a quoted '~/rowan-working/tmp' reached the verb with
+	// the tilde unexpanded, the listing found nothing, and the drain read that nothing as
+	// "every job is gone". The listing itself reports each root it could not open.
+	if len(missing) > 0 {
+		return refusal(in.Stderr, "HARVEST", fmt.Errorf("--root %s does not exist on %s (name the swarm root ON the bench; this verb does not expand a leading ~ -- pass an absolute path)",
+			field(strings.Join(missing, ",")), field(in.Bench)))
+	}
 
 	lines := bound(in.Stdout, in.Max)
-	state := map[string]string{} // label -> done|running, for the drain
+	state := map[string]string{} // label -> the drain's verdict on that job
 	var done, pushed, prs, noCommit, skipped, failed int
 
 	for _, j := range jobs {
 		label := filepath.Base(j.Dir)
 		if len(j.Result) == 0 {
-			state[label] = "running"
+			state[label] = jobRunning
 			continue
 		}
-		state[label] = "done"
+		// Not jobDone until this fold reaches a durable end for this job. A launch
+		// record is released only after its result has been harvested (#1950), so a
+		// job that was filtered out, or whose fetch, push or PR failed, leaves its
+		// card exactly where it is.
+		state[label] = jobHeld
 		done++
 		if j.Harvested {
 			skipped++
+			state[label] = jobDone
 			continue
 		}
 		skip := func(reason, detail string) {
@@ -222,6 +235,7 @@ func harvestBench(in HarvestInput) int {
 		if count == 0 {
 			noCommit++
 			markHarvested(shell, in.Bench, j.Dir)
+			state[label] = jobDone
 			lines.Line(fmt.Sprintf("HARVEST NO-COMMIT bench=%s label=%s branch=%s base=%s (nothing was committed; not pushed)",
 				field(in.Bench), field(label), field(branch), field(base)))
 			continue
@@ -305,15 +319,16 @@ func harvestBench(in HarvestInput) int {
 		}
 		prs++
 		markHarvested(shell, in.Bench, j.Dir)
+		state[label] = jobDone
 		lines.Line(fmt.Sprintf("HARVEST JOB bench=%s label=%s branch=%s sha=%s base=%s pr=%s#%d",
 			field(in.Bench), field(label), field(branch), field(sha), field(base), field(dest.repo), pr))
 	}
 
-	drained := drainLaunched(in, state, lines)
+	drained, left := drainLaunched(in, state, lines)
 	lines.More()
 
-	fmt.Fprintf(in.Stdout, "HARVEST BENCH %s bench=%s jobs=%d done=%d pushed=%d prs=%d no-commit=%d skipped=%d drained=%d took=%s\n",
-		okOrRed(failed), field(in.Bench), len(jobs), done, pushed, prs, noCommit, skipped, drained,
+	fmt.Fprintf(in.Stdout, "HARVEST BENCH %s bench=%s jobs=%d done=%d pushed=%d prs=%d no-commit=%d skipped=%d drained=%d left=%d took=%s\n",
+		okOrRed(failed), field(in.Bench), len(jobs), done, pushed, prs, noCommit, skipped, drained, left,
 		in.Now().Sub(started).Round(time.Millisecond))
 	if failed > 0 {
 		return 1
@@ -333,12 +348,20 @@ func okOrRed(failed int) string {
 // session, the branch prefix, the base, the age -- is taken here in Go, never in the
 // script: half the defects of the hand loop were the shell itself (memory: "No shell for
 // coordination").
+// It also answers for each root whether that root is a directory ON THE BENCH -- `ROOT
+// <path> <ok|missing>` -- so a root that does not resolve there is a refusal before any
+// state changes rather than an empty listing the drain then reads as "everything is gone"
+// (#1950).
 func benchListScript(roots []string) string {
 	globs := make([]string, 0, len(roots))
+	var checks strings.Builder
 	for _, r := range roots {
 		globs = append(globs, shellQuote(r)+"/*/jobs/*/")
+		fmt.Fprintf(&checks, "if [ -d %s ]; then printf 'ROOT\\t%%s\\tok\\n' %s; else printf 'ROOT\\t%%s\\tmissing\\n' %s; fi; ",
+			shellQuote(r), shellQuote(r), shellQuote(r))
 	}
-	return "for j in " + strings.Join(globs, " ") + "; do j=${j%/}; [ -d \"$j\" ] || continue; " +
+	return checks.String() +
+		"for j in " + strings.Join(globs, " ") + "; do j=${j%/}; [ -d \"$j\" ] || continue; " +
 		"printf 'JOB\\t%s\\n' \"$j\"; r=\"$j/RESULT.md\"; " +
 		"if [ -f \"$r\" ]; then printf 'MTIME\\t%s\\n' \"$(stat -c %Y \"$r\" 2>/dev/null || echo 0)\"; " +
 		"if [ -f \"$j/.harvested\" ]; then printf 'HARVESTED\\n'; fi; sed 's/^/R\\t/' \"$r\"; fi; " +
@@ -348,11 +371,20 @@ func benchListScript(roots []string) string {
 // parseBenchJobs reads what benchListScript printed: JOB, then MTIME and the R lines when
 // the job has a RESULT.md, then END. A line the parser does not know is skipped rather
 // than guessed at -- a bench that prints a warning on login does not lose the harvest.
-func parseBenchJobs(out string) []benchJob {
+// It returns the roots the bench answered `missing` for beside the jobs; a listing that
+// names no root at all (an older bench script, a test's fake shell) reports none, so the
+// refusal is on evidence and never on silence.
+func parseBenchJobs(out string) ([]benchJob, []string) {
 	var jobs []benchJob
+	var missing []string
 	var cur *benchJob
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		switch {
+		case strings.HasPrefix(line, "ROOT\t"):
+			path, state, ok := strings.Cut(strings.TrimPrefix(line, "ROOT\t"), "\t")
+			if ok && strings.TrimSpace(state) == "missing" {
+				missing = append(missing, strings.TrimSpace(path))
+			}
 		case strings.HasPrefix(line, "JOB\t"):
 			if cur != nil {
 				jobs = append(jobs, *cur)
@@ -374,7 +406,7 @@ func parseBenchJobs(out string) []benchJob {
 	if cur != nil {
 		jobs = append(jobs, *cur)
 	}
-	return jobs
+	return jobs, missing
 }
 
 // resultField reads a RESULT.md field line: `NAME <value>` or `NAME: <value>`, the first
@@ -510,17 +542,41 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// drainLaunched releases the lane of every launched card whose job has finished: the card
-// leaves --launched for --done or --failed and its launched marker goes with it, so the
-// lane is free on the next fill tick. A job still running is left alone. Nothing but
-// `manager` drained --launched before this, and a lane taken by a card that finished hours
-// ago stayed occupied forever (dogfood, 2026-09-18).
+// The drain's verdict on one job, as the fold reached it. Only jobDone releases the card
+// that launched it: a job this run filtered out, or whose fetch, push or forge call failed,
+// is jobHeld and its card stays exactly where it is, because a launch record is removed
+// only after its result has been durably harvested (#1950).
+const (
+	jobRunning = "running"
+	jobDone    = "done"
+	jobHeld    = "held"
+)
+
+// drainLaunched releases the lane of every launched card THIS harvest folded, and touches
+// nothing else. The card leaves --launched for --done or --failed and its launched marker
+// MOVES with it, so the lane is free on the next fill tick and the routing metadata
+// survives. Nothing but `manager` drained --launched before this, and a lane taken by a
+// card that finished hours ago stayed occupied forever (dogfood, 2026-09-18).
 //
-// The state map is label -> done|running. A launched card no job dir carries any more is
-// failed: the job is gone, nothing came back, and the lane is still not the card's to hold.
-func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList) int {
+// #1950 is why the rest of this function is a wall of guards. The launched directory of a
+// pull queue is SHARED -- seven manager lanes drop cards into one ready/ and the resident
+// fill loops move them into one launched/ -- and this drain read ONE bench's job listing
+// and then took `not in that listing` as `the job is gone` for EVERY card in the directory.
+// One `harvest --bench vision --max 1` emptied a live 151-card queue in 733 ms, marked
+// every card failed and deleted every marker, including five cards of other lanes whose
+// jobs were running on other benches. The rule now, one guard per clause:
+//
+//	(a) the record must be the caller's   -- --session against the marker's session=
+//	(b) it must match --bench when given  -- --bench against the marker's bench=
+//	(c) the job must be finished, or provably dead -- a RESULT.md this fold harvested,
+//	    or a label absent from a listing that actually covered THIS card's own bench
+//	(d) --max bounds what is CONSUMED, not just what is printed
+//
+// Everything else is left byte-identical and counted in `left`, so `drained=<n> left=<m>`
+// is the whole receipt: what this harvest took, and what it deliberately did not.
+func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList) (drained, left int) {
 	if strings.TrimSpace(in.Launched) == "" {
-		return 0
+		return 0, 0
 	}
 	doneDir, failedDir := in.Done, in.Failed
 	if doneDir == "" {
@@ -535,7 +591,6 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 	}
 	stamp := now().UTC().Format("20060102T150405Z")
 
-	drained := 0
 	cards := readyCards(in.Launched)
 	sort.Strings(cards)
 	for _, card := range cards {
@@ -545,33 +600,76 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 		if label == "" {
 			label = strings.TrimSuffix(base, ".md")
 		}
-		st, why := "failed", "job-dir-gone"
-		switch state[label] {
-		case "running":
+		st, why := drainVerdict(in, m, state, label)
+		if st == "" {
+			left++
 			continue
-		case "done":
-			st, why = "done", "result"
+		}
+		// (d) --max bounds the mutation. `--max 1` printed one line and drained 151.
+		if in.Max > 0 && drained >= in.Max {
+			left++
+			continue
 		}
 		dir := doneDir
 		if st == "failed" {
 			dir = failedDir
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
+			left++
 			fmt.Fprintf(in.Stderr, "HARVEST NOTE drain %s: %s\n", field(base), oneline.Err(err))
 			continue
 		}
 		if err := os.Rename(card, filepath.Join(dir, base)); err != nil {
+			left++
 			fmt.Fprintf(in.Stderr, "HARVEST NOTE drain %s: %s\n", field(base), oneline.Err(err))
 			continue
 		}
-		_ = os.Remove(launchedMarker(in.Launched, base))
+		// The launched marker MOVES with its card; it is never deleted. It is the only
+		// record of which bench the job is on, and a card whose marker was deleted
+		// cannot be harvested by anyone afterwards -- 149 of them had to be
+		// reconstructed by hand by scanning every bench (#1950).
+		if err := os.Rename(launchedMarker(in.Launched, base), launchedMarker(dir, base)); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(in.Stderr, "HARVEST NOTE drain %s: %s\n", field(base), oneline.Err(err))
+		}
 		note := fmt.Sprintf("%s\tlane=%s\tbench=%s\tlabel=%s\twhy=%s\n", stamp, m["lane"], m["bench"], label, why)
 		_ = os.WriteFile(marker(dir, base, st, stamp), []byte(note), 0o644)
 		drained++
 		lines.Line(fmt.Sprintf("HARVEST DRAIN card=%s lane=%s state=%s bench=%s why=%s",
 			field(base), field(m["lane"]), st, field(m["bench"]), why))
 	}
-	return drained
+	return drained, left
+}
+
+// drainVerdict answers what this harvest may do with ONE launched card, from that card's
+// own launch record and from what the fold learned about its job. An empty state is the
+// answer for everything this run cannot prove is its own and finished: leave it exactly as
+// found. This is #1950's rule and the only place it is decided.
+func drainVerdict(in HarvestInput, m map[string]string, state map[string]string, label string) (st, why string) {
+	// (a) The record must be the caller's. The marker carries the session `fill` stamped
+	// into it; a card of another lane's session is not this harvest's to move, and a
+	// marker that names no session at all cannot be proved to be ours either.
+	if want := strings.TrimSpace(in.Session); want != "" && m["session"] != want {
+		return "", ""
+	}
+	// (b) It must be on the bench this harvest looked at. The drain printed
+	// `bench=captainamerica` under `--bench vision` and moved the card anyway.
+	if m["bench"] != strings.TrimSpace(in.Bench) {
+		return "", ""
+	}
+	// (c) Finished, or provably dead. jobHeld and an unknown job are both "not proven".
+	switch state[label] {
+	case jobDone:
+		return "done", "result"
+	case jobRunning, jobHeld:
+		return "", ""
+	}
+	// A label the listing did not name is `job-dir-gone` ONLY when the listing covered
+	// this card's own bench AND actually answered -- an empty listing proves nothing, and
+	// `jobs=0 ... drained=151` was the whole of #1950.
+	if len(state) == 0 {
+		return "", ""
+	}
+	return "failed", "job-dir-gone"
 }
 
 // localJobStates is the drain's state map when there is no --bench: every

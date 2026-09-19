@@ -964,7 +964,8 @@ func (m *manager) remoteJobFor(card string) (lines []string, root string, ok boo
 		if err != nil {
 			continue
 		}
-		for _, j := range parseBenchJobs(out) {
+		jobs, _ := parseBenchJobs(out)
+		for _, j := range jobs {
 			if filepath.Base(j.Dir) == label && len(j.Result) > 0 {
 				return j.Result, r, true
 			}
