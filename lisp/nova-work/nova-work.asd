@@ -50,7 +50,8 @@
                (:file "src/request-line")
                (:file "src/replays-verdict-state")
                (:file "src/replays-notes")
-               (:file "src/execution-reconcile")))
+               (:file "src/execution-reconcile")
+               (:file "src/operation-records")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -85,4 +86,5 @@
                 (:file "tests/replays-785-gate")
                 (:file "tests/request-line")
                 (:file "tests/replays-concurrency-witness")
-                (:file "tests/replays-execution-reconcile")))
+                (:file "tests/replays-execution-reconcile")
+                (:file "tests/replays-operation-records")))
