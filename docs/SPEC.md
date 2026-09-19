@@ -1545,6 +1545,42 @@ are (the receipts live in a repository, and git's authorship is the record that
 answers that); nor that a verb's tests pass, which is a different wall in a
 different lane.
 
+### convergence — are we converging
+
+```
+nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
+      [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
+      [--state <file>] [--by <name>] [--json] [--timeout <n>]
+```
+
+**Why it exists.** Glenn, 2026-09-15: *convergence is the health metric* — the
+contraction ratio per stream, every tick. Rowan answered *are we converging?* by
+hand on 2026-09-18: six windows read out of six different places, an hour of it,
+and an answer that was a paragraph nobody could diff against the next one. It is
+the same shape as `corpus` and `dogfood` one level up — the records existed, and
+the reading of them lived in one person's head, so the reading becomes a line.
+
+**Seven streams, each from a real source through a seam.** `LANDING` is gate
+rounds per integration batch, `CLASSES` the class-test index entries, `SCRIPTS`
+what is left in `bin`, `PRS` the open queue, `EDGES` the dogfood edges nobody has
+filed, `FLEET` the machines off the one build and `LEDGER` the pit-stop rows not
+yet PASS. Each prints `now`, `before`, the ratio `now/before` and a trend in that
+stream's own direction of travel; the verdict line counts them, and the exit code
+is 1 only when one stream has widened on two consecutive ticks — which is why the
+streak lives in `--state` and nowhere else.
+
+**A stream whose source was not named is ABSENT, never zero.** That is the whole
+discipline of this verb: a number nobody measured, printed as a number, is worse
+than the hour of reading it replaced.
+
+The full rules, the refusals and the red tests are in
+[SPEC-CHECK.md](SPEC-CHECK.md), which this section does not restate.
+
+**Deliberately does not check:** *whether a trend is anybody's fault.* It reads
+records and prints ratios; why a stream widened is a person's to say. Nor does it
+write: not to the forge, not to `--repo-dir`, not to `--bin`. The only file it
+writes is `--state`, and that holds one number per stream.
+
 ---
 
 ## nova-self-talk — the self-talk register, classified

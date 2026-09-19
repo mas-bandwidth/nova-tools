@@ -27,7 +27,11 @@ var checkAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"hintFor", "buildinfo.Line"},
+	// convergenceHint is the same shape as hintFor, for the one verb whose
+	// --ledger is a different document from the corpus verb's: a switch over a
+	// flag name returning one of this package's own constants, and the
+	// classifier walks its body like any other listed escaper.
+	Escapers: []string{"hintFor", "convergenceHint", "buildinfo.Line"},
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
@@ -35,6 +39,16 @@ var checkAudit = audit.Config{
 		"main.go|requireFlags|fs.Name()": "the verb's own name, chosen by this file at every flag.NewFlagSet",
 		"main.go|requireFlags|name":      "a required flag's name, a key of the map this file's callers build from literals",
 		"main.go|cmdAttest|att.SHA256":   "sixty-four hex digits from encoding/hex over a SHA-256 sum",
+		// The convergence verb builds its lines in internal/converge, where every
+		// field of every line goes through oneline.Field before it is joined --
+		// a stream name, a trend word, a pull request's rounds, a build stamp, a
+		// --by name. The claim is behavioral rather than structural, so it has a
+		// test of its own: TestEveryFieldSurvivesAHostileValue in this package
+		// runs a title, a ledger cell, a stamp and a --by name each holding a
+		// newline, an `=` and a bidi override through the whole verb and asserts
+		// one line per stream.
+		"convergence.go|printLines|line": "one line from internal/converge, every field of it rendered through internal/oneline; pinned by TestEveryFieldSurvivesAHostileValue",
+		"convergence.go|printJSON|raw":   "the object encoding/json built, whose encoder escapes every control character as \\u, so the whole object is one line whatever a title or a stamp holds",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -61,6 +75,13 @@ var checkAudit = audit.Config{
 		`"context"`,
 		`"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/dogfood"`,
+		// convergence.go's two. internal/converge holds no writer at all: it
+		// reads a forge, a checkout, a directory and three documents through
+		// seams, and returns VALUES -- a report whose every line it renders
+		// through internal/oneline. encoding/json is the --json shape, and its
+		// encoder escapes rather than prints: it returns bytes this file writes.
+		`"encoding/json"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/converge"`,
 	},
 	MinClassified: 30,
 }

@@ -66,6 +66,20 @@ usage:
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
                                                      the line the release lane calls
+  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
+                         --retired <file> --since <RFC3339|24h>
+        [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
+        [--certs <tsv>] [--state <file>] [--by <name>] [--json]
+                                                     are we converging: one line per stream,
+                                                     now against --since, with the ratio and
+                                                     the trend. Seven streams -- LANDING,
+                                                     CLASSES, SCRIPTS, PRS, EDGES, FLEET,
+                                                     LEDGER -- each from a real source, and
+                                                     a stream whose source was not named is
+                                                     ABSENT rather than zero. Exit 1 only
+                                                     when a stream has widened on two
+                                                     consecutive ticks, which is why the
+                                                     streak lives in --state.
 
   --fail-max <n>   on quickstart, attest, links, nocode and corpus: how many
                    FAIL lines to print before one MORE line stands for the
@@ -183,6 +197,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdCorpus(args[1:], stdout, stderr)
 	case "dogfood":
 		return cmdDogfood(args[1:], stdout, stderr)
+	case "convergence":
+		return cmdConvergence(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
