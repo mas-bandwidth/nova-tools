@@ -748,6 +748,24 @@
    #:reconcile-operation-registry
    #:open-durable-operation-registry
    #:close-durable-operation-registry
+   ;; the clip transport over a real git remote (SPEC-WORK.md:2744-2750)
+   #:*clip-git-identity*
+   #:*clip-git-payload-path*
+   #:git-clip-remote
+   #:git-clip-remote-p
+   #:git-clip-remote-directory
+   #:git-clip-remote-ref
+   #:git-run
+   #:open-git-clip-remote
+   #:git-clip-write-payload
+   #:split-lines
+   #:git-clip-remote-history
+   #:git-clip-commit-message
+   #:clip-ok-line
+   #:clip-raced-line
+   #:clip-fail-line
+   #:run-clip-transport
+   #:session-stop-wait-for-clip
    ;; the cancellation as a request of its own on the same journal
    ;; (SPEC-WORK.md:2717-2720, :2740-2744)
    #:cancel-record-p
