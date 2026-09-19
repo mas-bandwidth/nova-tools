@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
 )
 
 // docs/ONBOARDING.md, asserted for EVERY directory under cmd/ — by walking it, not
@@ -121,6 +122,76 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	}
 	if found == 0 {
 		t.Fatal("no command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
+	}
+}
+
+// notYetInTheFleetBuild names the tools whose design work is still open and
+// that ship in no fleet build, with the issues named. A docs/TESTS.md section
+// for one of these may still carry a `### First run` transcript, but the
+// transcript must sit behind a note saying the tool ships in no fleet build: a
+// reader must not be invited to run a binary no bench has (#1510). An entry
+// added here names issues that are genuinely open, and it comes off the list
+// the day the tool ships.
+var notYetInTheFleetBuild = map[string]string{
+	"nova-play": "#221/#222/#223",
+}
+
+// shipsInNoFleetBuild is the note a not-yet-shipped tool's docs/TESTS.md
+// section must carry beside its transcript.
+const shipsInNoFleetBuild = "ships in no fleet build"
+
+// toolSections returns the body of every `## nova-<tool>` section of the
+// document, keyed by tool name.
+func toolSections(md string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split("\n"+md, "\n") {
+		rest, ok := strings.CutPrefix(line, "## ")
+		if !ok {
+			continue
+		}
+		name := strings.Fields(rest)[0]
+		if !strings.HasPrefix(name, "nova-") {
+			continue
+		}
+		if body, found := onboarding.Section(md, name); found {
+			out[name] = body
+		}
+	}
+	return out
+}
+
+// TestTESTSmdFirstRunSectionsNameToolsTheFleetBuildInstalls walks every
+// `## nova-<tool>` section of docs/TESTS.md and holds a section with a runnable
+// `### First run` transcript to the fleet build: the tool it names must be one
+// the build installs. A tool whose design work is open and that ships in no
+// fleet build is the exception, and its transcript must sit behind the note
+// that says so (#1510).
+func TestTESTSmdFirstRunSectionsNameToolsTheFleetBuildInstalls(t *testing.T) {
+	root := repoRoot(t)
+	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
+
+	installed := map[string]bool{}
+	tools, err := release.Tools(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		installed[tool] = true
+	}
+
+	for tool, body := range toolSections(transcripts) {
+		if !strings.Contains(body, onboarding.FirstRunHeading+"\n") {
+			continue
+		}
+		if issues, open := notYetInTheFleetBuild[tool]; open {
+			if !strings.Contains(body, shipsInNoFleetBuild) {
+				t.Errorf("docs/TESTS.md gives %s a runnable %s transcript, but %s is open design work (%s) and ships in no fleet build; hold the transcript behind a note naming that, or remove the section until it ships", tool, onboarding.FirstRunHeading, tool, issues)
+			}
+			continue
+		}
+		if !installed[tool] {
+			t.Errorf("docs/TESTS.md gives %s a runnable %s transcript, but the fleet build installs no %s; remove the section until the tool ships", tool, onboarding.FirstRunHeading, tool)
+		}
 	}
 }
 
