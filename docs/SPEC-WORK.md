@@ -4676,10 +4676,12 @@ node's scope, read as `goal show` reads it; every pinned input is named by path 
 the packet pins, never by a path alone and never resolved at the moving tip; the owner is the
 node's responsible friend; STOP and HOLD are the goal's `stop=` state and the control id of any
 live hold; and the budget's three fields — tokens, dollars and hours — are separate, with a field
-the set does not carry printed `absent` and never `0`. **The delta is everything since the worker's
-last receipt**: the events and state changes after the `:packet` or receipt the named worker last
-held, printed `delta-events=<n>`, and a worker with no prior receipt sees the whole set with
-`delta=none`.
+the set does not carry printed `absent` and never `0`. **The delta starts at the worker's last
+receipt**: it identifies the events and state changes after the `:packet` or receipt the named
+worker last held, printed `delta-events=<n>`. All current required facts remain in the essential
+core below, even when unchanged; optional history is bounded pointers with explicit omitted
+counts. A worker with no prior receipt receives the current essential core with `delta=none`,
+not an unbounded transcript.
 
 **The prompt profile named by `--model` selects the packet's wording, never its facts.** It is the
 CONFIG `prompt profile` of *Friends, CONFIG and ACTIVE*: its pointer is hashed and compared with
@@ -4693,19 +4695,44 @@ or mismatched against its pinned digest refuses by name.
 exact one-line `RESULT` form it must print, the branch it must push, and the files it is expected
 to add or change. The `PACKET OK` line names them as `result=<sha12>`, the content digest of the
 RESULT-line template, `branch=<name>` and `files=<n>`, and the packet body prints the template and
-the file list in full, capped by the bound.
+the file list in full.
+
+**The essential core is indivisible.** It includes the accepted goal and revision, objective,
+scope and acceptance criteria, responsible owner and lease identity, STOP/HOLD state, each
+separate budget (including absent versus zero), required pinned inputs with their revisions,
+required instructions from the applicable notes and prompt profile, and the complete output
+contract above. These facts cannot be shortened, omitted or replaced by a link to meet a bound.
+The caller or profile cannot relabel a required constraint as optional. Optional explanation,
+history and evidence links may be omitted in a deterministic order, with omitted counts per
+section in the packet; that summary is itself included when sizing the final packet.
+
+Render and validate the complete core before publishing anything. If the core plus required
+framing and omission counts exceeds `--max-bytes`, refuse at exit 2 with
+`PACKET FAIL node=<id>: essential-core-too-large required=<bytes> max=<bytes>; run: nova-work help`.
+Do not emit `PACKET OK`, truncate UTF-8 or a field, or write a file, journal event or dedup entry.
+An invalid or missing required fact also refuses; fitting the byte limit cannot make it valid.
 
 **The packet is journaled as one typed event, so a replay reproduces it.** The event carries the
 node, the worker, the profile and its digest, the goal revision, the receipt the delta started
-from, and the packet's own digest; it is written through the one writer and the one journal the
-execution model names. `session replay` reconstructs the packet byte for byte from that event
-alone — its wording, its `bytes=`, its `emitted=` — with no clock read, no repository read and no
-id minted, so two benches replay one event to one packet.
+from, the canonical packet bytes in a lossless encoding, their full digest and byte count, and
+the original one-line receipt with its `emitted=` count. The digest covers the decoded packet
+bytes; a digest or mutable path alone is insufficient. The writer validates both the packet
+bound and the enclosing event/envelope bounds, including encoding overhead, before any file,
+journal or dedup publication; exceeding either bound refuses without truncation.
+It uses the one writer and journal the execution model names. `session replay` verifies and
+returns those retained bytes and receipt, without rerendering from current profiles, reading a
+clock or repository, minting an id, or writing the historical `--into` destination. Missing or
+corrupt retained bytes refuse replay; they never trigger a best-effort reconstruction.
 
 **Evidence is links, never a body.** The packet carries each evidence pointer with its criterion
 and against-revision as a link the worker can open, and it never inlines an evidence body, a log or
-a diff; a pointer the session cannot resolve is named unresolved in the packet, capped like every
-other field, and never dropped and never counted as verified.
+a diff. A required input pointer stays whole in the core. An included evidence pointer that the
+session cannot resolve is named unresolved and never counted as verified; omitted optional
+pointers are counted explicitly, never silently dropped or represented as verified evidence.
+
+The packet records a snapshot, not a continuing execution grant. Dispatch must still validate
+the live lease, STOP/HOLD, scope and budgets through the existing admission gates; a replayed or
+previously valid packet cannot bypass a later stop or expired lease.
 
 **A packet is refused, exit 2, with one remedy line, when it cannot start a worker honestly.** A
 node with no accepted goal refuses `PACKET FAIL node=<id>: no accepted goal; run: nova-work goal
@@ -4726,12 +4753,14 @@ bench or a clock:
 3. `packet-refuses-no-lease` — a worker holding no lease on the node refuses at exit 2 with the one remedy line naming `take`, and writes nothing.
 4. `packet-refuses-missing-flag` — omitting `--node`, `--for`, `--model` or `--into` each refuses at exit 2 with the one `refusing to guess` line and a `run: nova-work help` remedy.
 5. `packet-pins-inputs-by-path-and-revision` — against a fake repository reader whose tip moves, every pinned input carries its path and the pinned revision, and none silently reads the later tip.
-6. `packet-delta-is-since-the-last-receipt` — against a fake receipt store, a worker with a prior receipt sees only later events, a worker with none sees the whole set, and `delta=` names the receipt it started from.
-7. `packet-replay-reproduces-it` — with a fake clock, replaying the `:packet` event alone reproduces the packet byte for byte, `bytes=` included, and mints no new id.
+6. `packet-delta-is-since-the-last-receipt` — against a fake receipt store, history starts after the prior receipt and `delta=` names it; without one, `delta=none`. Both cases retain the whole current essential core, with optional history bounded and omissions counted.
+7. `packet-replay-reproduces-it` — after changing/deleting the external profile and input files, replay of the retained event returns the original packet and receipt byte for byte, including `bytes=` and `emitted=`. Recording adapters prove no clock/repository/profile read, new id or historical destination write. Missing/corrupt retained bytes refuse.
 8. `packet-profile-selects-wording` — two fake prompt profiles over one state produce different wording from the same facts, and a profile whose pinned digest does not match refuses.
 9. `packet-budget-absent-is-not-zero` — against a fake goal record with no hourly budget the packet prints `hours=absent`, while a real zero budget prints `hours=0`.
 10. `packet-stop-and-hold-are-named` — against a fake control record with a STOP request and a live HOLD, the `PACKET OK` line names both and hides neither.
-11. `packet-is-bounded` — against a fake state far past the bound the packet is capped at `--max-bytes` with its true `bytes=` still printed, and a `--max-bytes` of zero is refused.
+11. `packet-is-bounded` — oversized optional history is omitted deterministically with true omitted counts, while the entire essential core and output contract survive and `bytes=` stays within the bound. Zero refuses. At one byte below the minimum complete core plus framing/counts, exit 2 leaves file, journal and dedup stores unchanged; an exactly fitting core succeeds. Include a multibyte field and an oversized RESULT template/file list.
+12. `packet-event-bound-refuses` — a packet fits its file limit but its losslessly encoded event exceeds the envelope limit; exit 2 publishes no file, event or dedup entry.
+13. `packet-is-not-admission` — after a valid packet is recorded, expire its lease or add STOP/HOLD; dispatch refuses through the existing admission gate without changing the retained packet.
 
 ## The dependency gate and the hand report *(Rowan; nova-tools #785 and #854 item 7; a draft for review, with no code yet)*
 
@@ -7873,47 +7902,85 @@ hypothesis**, each reportable and none of them a percentage invented to fill the
 
 Stella's rows on nova-tools#1142, 2026-09-17: the adoption and probe spreadsheets stop being kept
 by hand. `capability inventory` records, per tool and verb at one exact revision on one exact
-machine, one of five states, and a documentation-only change never marks a Go tool as needing a
-rebuild because the stamp tells. The inventory is the one source the `TOOLS MOVED` note and the
-adoption receipts read. The lines, as `nova-work help` will print them:
+machine, one of five states. A documentation-only change avoids a rebuild only when a complete
+build-input identity proves equivalence; an incomplete identity remains unknown. The inventory
+is the one source the `TOOLS MOVED` note and adoption receipts read. The lines, as `nova-work
+help` will print them:
 
 ```
-nova-work capability inventory --session <path> <write flags> --revision <sha> --machine <name> [--tool <name>] [--verb <name>]
+nova-work capability inventory --session <path> <write flags> --revision <sha> --machine <name> [--receipts <path>] [--tool <name>] [--verb <name>]
 nova-work capability inventory show (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --revision <sha> --machine <name> [--tool <name>] [--max <n>]
 nova-work capability inventory diff (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --revision <before> --revision <after> [--machine <name>] [--max <n>]
 ```
 
 1. **Every path and value comes from a flag.** `--revision <sha>` names the repository revision
-   the probe runs at, `--machine <name>` a live *fleet* member, and `--session` or `--snapshot`
+   being inventoried, `--machine <name>` a live *fleet* member, and `--session` or `--snapshot`
    the reader's view; no branch, hostname, cwd or default machine is assumed.
-2. **What it reads and what it writes.** It reads the tool set the revision ships — each binary's
-   declared verbs from its own `--help` — and the row held for each `(tool, verb, revision,
-   machine)`; it writes one `:capability` event per row into O, and for an exercised row the
-   retained evidence file it names, all in one accepted envelope; `show` and `diff` write nothing.
+2. **First slice: retained receipts and bounded help discovery only.** It reads the existing
+   attempt receipts in the session or the bounded manifest explicitly named by `--receipts`,
+   and rows keyed by `(tool, verb, revision, machine)`. Receipt imports validate exact attempt,
+   revision, machine, binary identity and evidence digests; missing or mismatched evidence
+   cannot create an exercised row. Evidence is retained under the session evidence root before
+   acceptance, using the existing envelope publication rules, not by repeating the attempt.
+   Help discovery uses a verified tool identity and an explicit bounded, side-effect-free help
+   invocation from the tool manifest; the current nova suite uses the `help` verb, not a
+   presumed universal `--help`. A missing declaration, timeout or incomplete help result leaves
+   support unknown. Discovery does not load credentials, call providers, contact a fleet bench
+   or invoke a discovered verb. For a remote machine it reads retained help evidence instead.
+   It writes one `:capability` event per row into O in one accepted envelope; `show` and `diff`
+   write nothing. There is no probe-execution mode in this slice. A future mode requires a
+   separately reviewed explicit manifest of exact argv, fixture/live mode, authorized effects,
+   destinations, timeout and budgets plus existing admission; a revision, machine or available
+   secret never supplies that authorization.
 3. **One `CAPABILITY ROW` line per tool and verb, every field named.** `state` is exactly one of
    the five; `stamp` is the tool's build stamp (rule 4); `evidence` is the retained path, `-`
    when none; `detail` is the one escaped line the state rests on. The grammar:
 
 ```
-CAPABILITY ROW tool=<name> verb=<name> revision=<sha12> machine=<name> state=<unsupported|refused|exercised-synthetic|exercised-live|unknown> stamp=<sha12> evidence=<path|-> detail=<text|->
+CAPABILITY ROW tool=<name> verb=<name> revision=<sha12> machine=<name> state=<unsupported|refused|exercised-synthetic|exercised-live|unknown> stamp=<sha12|unknown> binary-revision=<sha12|unknown> binary-hash=<sha12|unknown> evidence=<path|-> detail=<text|->
 CAPABILITY OK tools=<n> verbs=<n> rows=<n> unsupported=<n> refused=<n> synthetic=<n> live=<n> unknown=<n> revision=<sha12> machine=<name>
-CAPABILITY DIFF tool=<name> verb=<name> before=<state> after=<state> stamp=<same|moved> rebuild=<yes|no>
-CAPABILITY OK rows=<n> changed=<n> rebuilds=<n> from=<sha12> to=<sha12>
+CAPABILITY DIFF tool=<name> verb=<name> before=<state> after=<state> stamp=<same|moved|unknown> rebuild=<yes|no|unknown>
+CAPABILITY OK rows=<n> changed=<n> rebuilds=<n> rebuild-unknown=<n> from=<sha12> to=<sha12>
 ```
 
-4. **The stamp is the tool's build inputs, never the repository revision.** It is the digest of the
-   Go package the tool builds from and its transitive imports; two revisions differing only under
-   `docs/`, or in a test, a comment or another tool's tree, carry the same stamp, so `diff` prints
-   `rebuild=no` for a same-stamp pair and `rebuild=yes` only where the stamp moved.
-5. **The five states, and what each rests on.** `unsupported`: the revision's tool lists no such
-   verb. `refused`: the verb exists and answered a refusal, its exact line kept in `detail`, a
-   capability answer and not a gap. `exercised-synthetic`: the verb ran against a fake, so no
-   network, bench or clock was touched. `exercised-live`: the verb made a real call, its retained
-   evidence path named. `unknown`: the probe could not classify the pair, printed and never guessed.
-6. **A live row is a real call with a retained file, and a claim without one is refused.** The
-   evidence path is written under the session's evidence root before the row is accepted; a row
-   claiming `exercised-live` with `evidence=-`, or naming a path that is not there, is refused at
-   the candidate gate.
+4. **The stamp hashes a complete, versioned canonical build-input manifest.** It covers the
+   selected package and transitive input contents, module/workspace resolution and replacements,
+   embedded assets and generation outputs, target OS/architecture and architecture options,
+   exact toolchain, build tags/flags and relevant environment, cgo inputs/toolchain when used,
+   linker inputs and embedded metadata (including VCS metadata when enabled). The build adapter
+   must account for all effective inputs; an unsupported or unrecorded input makes the stamp
+   unknown. Paths, the manifest format and its canonical ordering are part of the definition;
+   matching shortened display hashes alone never establishes equality.
+   The Go adapter records the selected `-buildvcs` mode (`auto`, `true` or `false`) and whether
+   stamping actually applies. When it applies, the effective VCS metadata is an input, so a
+   docs-only commit can move the stamp. An unresolved `auto` decision makes identity unknown;
+   the adapter cannot silently disable stamping or omit its inputs to obtain equivalence.
+   Two complete equal manifests mean `stamp=same rebuild=no`; unequal complete manifests mean
+   `stamp=moved rebuild=yes`; either incomplete manifest means `stamp=unknown rebuild=unknown`,
+   never no. A docs, test or comment change is not automatically irrelevant: it may affect an
+   embedded asset, build directive, generated input or VCS/linker metadata.
+   Store the actual binary's full digest and recorded source revision separately, displayed as
+   `binary-hash` and `binary-revision`; absent provenance remains unknown. A reused binary keeps
+   its original provenance rather than being relabeled with the requested repository revision.
+   Build equivalence does not itself create an exercised state or transfer an attempt receipt
+   to another `(revision, machine)` key. Full identities and the manifest are retained in the
+   event/evidence even when the line abbreviates them. Reuse also requires a verified binding
+   between the actual binary digest and its build manifest; matching claimed inputs alone
+   cannot certify an installed artifact or pass adoption. The diff counts uncertain rebuild
+   decisions separately as `rebuild-unknown`, not as zero required rebuilds.
+5. **The five states classify retained evidence, not commands to run.** `unsupported`: complete,
+   successful help evidence for the verified revision and requested verb namespace lists no
+   such verb. `refused`: a retained
+   matching attempt answered a refusal, its exact line kept in `detail`. `exercised-synthetic`:
+   a matching receipt proves the verb ran against a fake without a real provider/bench effect.
+   `exercised-live`: a matching receipt proves the real call and names its retained evidence.
+   `unknown`: no valid exercise claim is supplied and available evidence cannot classify the
+   pair. An explicit exercised claim with invalid evidence refuses under rule 6. Merely
+   listing a verb in help proves neither exercise nor authorization to exercise it.
+6. **An exercised row needs the retained attempt and evidence.** Before accepting a synthetic
+   or live row, validate its receipt and retained bytes/digest under the session evidence root;
+   `evidence=-`, missing bytes or mismatched attempt/revision/machine/binary identity refuses at
+   the candidate gate. No repair probe is run to fill the gap.
 7. **The inventory is the one source the `TOOLS MOVED` note and the adoption receipts read.** They
    name rows by `(tool, verb, revision, machine)` and re-probe nothing; a note or receipt that
    disagrees with the table is stale and refused.
@@ -7931,17 +7998,20 @@ CAPABILITY OK rows=<n> changed=<n> rebuilds=<n> from=<sha12> to=<sha12>
    as well as success.
 
 **The mistake it removes.** The adoption and probe spreadsheets kept by hand, and the rebuild of a
-Go tool that a documentation-only change never touched, are one retained table now.
+Go tool whose complete build inputs did not change, are one retained table now.
 
 Red tests, one per rule, each with a fake where the real thing is the network, a bench or a clock:
 
-1. `capability-records-the-five-states`: a fake tool set whose verbs each take one of the five paths, through a fake probe and a fake clock, prints one `CAPABILITY ROW` per pair and a `CAPABILITY OK` whose counts sum.
-2. `capability-live-keeps-the-evidence-path`: a fake probe records one real call; the row names the retained path, and a row claiming live with `evidence=-` is refused.
-3. `capability-refused-keeps-the-exact-line`: a fake tool that refuses records its `detail` byte for byte with state `refused`.
-4. `capability-stamp-tells-a-rebuild`: two fake revisions differing only under `docs/` carry the same stamp and print `rebuild=no`, and a fake revision editing one tool's package moves that stamp alone and prints `rebuild=yes`.
+1. `capability-records-the-five-states`: retained receipt/help fixtures supply each state; import prints one `CAPABILITY ROW` per pair and counts sum, without invoking any fixture's verb.
+2. `capability-live-keeps-the-evidence-path`: import a fixture receipt representing a prior live attempt; missing bytes, wrong digest, `evidence=-` or mismatched attempt/revision/machine/binary refuses without a provider call. A synthetic row obeys the same evidence checks.
+3. `capability-refused-keeps-the-exact-line`: importing a refusal receipt preserves its decoded `detail` byte for byte with state `refused`; inventory does not rerun it.
+4. `capability-stamp-tells-a-rebuild`: equal complete manifests print `rebuild=no`; changing only an embedded asset, build tag, module replacement, toolchain or enabled VCS/linker metadata changes the stamp and prints `rebuild=yes`. A docs-only fixture with all effective inputs unchanged is equal; no path/comment exemption bypasses the manifest.
 5. `capability-diff-reads-two-revisions`: a fake record holding two revisions prints one `CAPABILITY DIFF` per changed pair and none for an unchanged pair.
 6. `capability-refuses-missing-flags`: no `--revision`, no `--machine` and no `--session`/`--snapshot` are each one `CAPABILITY REFUSED` with a remedy, exit 2, and no row is written to a fake session.
 7. `capability-refuses-a-bad-machine-or-revision`: a fake fleet without the name, and a fake repository that does not hold the sha, are each one `CAPABILITY REFUSED` with a remedy, exit 2, and no probe runs.
-8. `capability-unknown-on-an-unreadable-probe`: a fake probe timing out on a fake clock is `unknown`, with the timeout line in `detail`.
+8. `capability-unknown-on-missing-evidence`: with no supplied exercised claim, absent retained receipts or incomplete/failed help discovery gives `unknown`, with the reason in `detail`; advertised support alone never gives exercised. Complete help with the verb absent gives unsupported; an explicitly supplied invalid exercise claim instead refuses under rule 6.
 9. `capability-output-is-bounded`: 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
 10. `capability-is-the-source-the-note-reads`: a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.
+11. `capability-incomplete-build-identity`: omit a toolchain, embedded-input coverage or an unsupported cgo dependency; stamp and rebuild are unknown and counted in `rebuild-unknown`, never `rebuild=no`, even when known package digests match.
+12. `capability-keeps-binary-provenance`: reuse a binary with equal complete inputs at a later requested revision; its original binary revision/hash remain unchanged, and no exercised receipt is invented or rebound to that revision.
+13. `capability-inventory-does-not-probe`: recording adapters reject any credential load, provider/remote call, or discovered verb invocation (including seal/place/harvest). Inventory may only import evidence and run the declared bounded local help invocation; no declaration means unknown. `show` and `diff` invoke no tool.
