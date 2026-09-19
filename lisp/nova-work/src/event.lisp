@@ -47,7 +47,12 @@
     ;; is journaled and never applied: a decision advises and the machinery
     ;; decides (rules 6 and 7).
     (:decide     :question-hash :question-kind :answer :proposed :confidence
-                 :floor :suggestion :evidence))
+                 :floor :suggestion :evidence)
+    ;; `take` and `release` on a node: the lease, as an EVENT, so the mutation
+    ;; is one journaled command in the single writer's total order and comes
+    ;; back with `replay-journal` (nova-tools #1612 lane; src/take-verb.lisp).
+    ;; :CHANGE is :TAKE or :RELEASE and :HOLDER is the name that claimed it.
+    (:lease      :change :holder))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")

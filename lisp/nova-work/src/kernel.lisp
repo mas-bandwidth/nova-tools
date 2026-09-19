@@ -363,6 +363,14 @@ command loop is a defect)."
       (return-from %submit (fleet-release-submit kernel request)))
     (when (eq verb :probe)
       (return-from %submit (fleet-probe-submit kernel request)))
+    ;; `take` and `release` on a NODE: the lease, journaled on the single
+    ;; writer (nova-tools #1612 lane, src/take-verb.lisp). These are the work
+    ;; tree's own verbs and are not the fleet's `:take`/`:release` above, which
+    ;; are over an allocator; the verb keywords are kept apart for that reason.
+    (when (eq verb :take-node)
+      (return-from %submit (%take-node-submit kernel request)))
+    (when (eq verb :release-node)
+      (return-from %submit (%release-node-submit kernel request)))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"
