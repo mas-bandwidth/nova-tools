@@ -48,6 +48,13 @@
     ;; decides (rules 6 and 7).
     (:decide     :question-hash :question-kind :answer :proposed :confidence
                  :floor :suggestion :evidence)
+    ;; The assignment receipt (SPEC-WORK.md:3857-3868): the request's own half,
+    ;; and the session's own half, derived from the operator-configured
+    ;; verifier's result and never from the request. Neither addresses a node of
+    ;; the containment forest.
+    (:receipt      :change :offer :attempt :reply :stage :provenance
+                   :provenance-sha256 :reason)
+    (:receipt-seal :offer :reply :sender :receipt-digest :effect)
     ;; `take` and `release` on a node: the lease, as an EVENT, so the mutation
     ;; is one journaled command in the single writer's total order and comes
     ;; back with `replay-journal` (nova-tools #1612 lane; src/take-verb.lisp).
