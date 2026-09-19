@@ -361,3 +361,47 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`)
 		t.Fatalf("STEP 1 = %q, want the clone URL %q (the locator, not the source kind)", step1, want)
 	}
 }
+
+// pool-resolves-roadmap-path-from-sources-file (issue #1503): a source-relative
+// roadmap path in sources.tsv resolves against the sources file, not the process
+// working directory. Running `pool --sources <absolute path to the fixture>` from
+// two unrelated working directories must pool the same two candidates, not refuse
+// the second directory with a roadmap file-not-found.
+func TestPoolResolvesRoadmapPathFromSourcesFile(t *testing.T) {
+	sourcesAbs, err := filepath.Abs(filepath.Join("testdata", "sources.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	poolFrom := func(dir string) string {
+		t.Helper()
+		old, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chdir(old)
+
+		root := filepath.Join(dir, "root")
+		var out, errb bytes.Buffer
+		if code := run([]string{"pool", "--sources", sourcesAbs, "--root", root}, &out, &errb, time.Now().UTC()); code != 0 {
+			t.Fatalf("pool exit = %d, want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
+		}
+		if !strings.Contains(out.String(), "candidates=2") || !strings.Contains(out.String(), "roadmap=2") {
+			t.Fatalf("POOL OK line wrong: %q", out.String())
+		}
+		raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	first := poolFrom(t.TempDir())
+	second := poolFrom(t.TempDir())
+	if first != second {
+		t.Fatalf("pool candidates differ by working directory:\n--- first ---\n%s--- second ---\n%s", first, second)
+	}
+}
