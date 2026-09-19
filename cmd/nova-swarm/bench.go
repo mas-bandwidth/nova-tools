@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -118,6 +119,24 @@ func (p *prober) remote(host string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// authMode reports the auth file's permission bits as octal digits, and never one
+// byte of its contents. A remote bench answers through the one `stat -c %a` round
+// trip its ssh log is checked for: benches are Linux, and their stat is GNU's. The
+// local row answers through os.Stat instead of shelling out, because `-c` is GNU's
+// spelling alone -- darwin's stat refuses the option outright -- and a tool of ours
+// may not require GNU coreutils on the operator's own Mac.
+func (p *prober) authMode(b *swarm.Bench) (string, error) {
+	if b.Host == "" || b.Host == "local" {
+		fi, err := os.Stat(b.Auth)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%o", fi.Mode().Perm()), nil
+	}
+	out, err := p.remote(b.Host, "stat", "-c", "%a", b.Auth)
+	return strings.TrimSpace(out), err
+}
+
 // run performs every check in order and returns their results. Every check runs
 // even when an earlier one failed, so one probe reports the whole bench.
 func (p *prober) run() []benchCheck {
@@ -194,9 +213,9 @@ func (p *prober) run() []benchCheck {
 	}
 
 	// auth present with mode 0600, never read: a stat of the mode only.
-	authOut, aerr := p.remote(b.Host, "stat", "-c", "%a", b.Auth)
-	if aerr != nil || strings.TrimSpace(authOut) != "600" {
-		out = append(out, benchCheck{name: "auth", ok: false, reason: "auth not mode 0600 (stat " + strings.TrimSpace(authOut) + ")"})
+	authOut, aerr := p.authMode(b)
+	if aerr != nil || authOut != "600" {
+		out = append(out, benchCheck{name: "auth", ok: false, reason: "auth not mode 0600 (stat " + authOut + ")"})
 	} else {
 		out = append(out, benchCheck{name: "auth", ok: true, val: "0600"})
 	}

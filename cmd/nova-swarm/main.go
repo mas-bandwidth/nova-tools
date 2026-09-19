@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -53,7 +54,7 @@ usage:
    nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--usage <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--max <n>]
+  nova-swarm lint      --card <file> [--max <n>] | --rules
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity
   nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
@@ -473,11 +474,25 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	harness := f.fs.String("harness", "", "")
 	auth := f.fs.String("auth", "", "")
 	slots := f.fs.String("slots", "", "")
+	// THE ROUTE (Glenn 2026-09-19). With --route the model a card is dispatched
+	// with is the ladder's answer rather than the string the fill script wrote
+	// in the TSV, and the TSV's model is the fallback. --route-log and
+	// --route-usage are REQUIRED with it: accounting is not optional, and a
+	// call nobody can account for is not made (SPEC-DECIDE).
+	route := f.fs.Bool("route", false, "")
+	routeRegistry := f.fs.String("route-registry", "", "")
+	routeFloor := f.fs.Float64("route-floor", swarm.DefaultRouteFloor, "")
+	routeLog := f.fs.String("route-log", "", "")
+	routeUsage := f.fs.String("route-usage", "", "")
+	routeKeyEnv := f.fs.String("route-key-env", decide.DefaultKeyEnv, "")
+	routeBaseURL := f.fs.String("route-base-url", decide.DefaultBaseURL, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots, stdout, stderr)
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots,
+			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
+				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -548,7 +563,57 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // TSV. It has no pool and no admission queue: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots string, stdout, stderr io.Writer) int {
+// routeFlags is the --route family, held together so the batch verb's own
+// signature stays readable.
+type routeFlags struct {
+	on       bool
+	registry string
+	floor    float64
+	log      string
+	usage    string
+	keyEnv   string
+	baseURL  string
+}
+
+// routeInput builds the batch's route seam, or refuses with the one line that
+// says what is missing. nil with no refusal means --route was not asked for.
+//
+// The key is read from the environment the caller names and NEVER from argv or
+// a file, and it is never printed: an absent key is not a refusal, it is the
+// fallback -- the rules answer, no call is made, and every card keeps today's
+// model, so the loop runs on a bench with no API at all.
+func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
+	if !r.on {
+		return nil
+	}
+	if err := decide.ValidFloor(r.floor); err != nil {
+		f.add(fmt.Sprintf("--route-floor %s is not a confidence; it wants a number between 0 and 1, such as --route-floor 0.9",
+			oneline.Field(strconv.FormatFloat(r.floor, 'g', -1, 64))))
+		return nil
+	}
+	in := &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
+	if ok, why := in.Accountable(); !ok {
+		f.add(why + "; pass --route-log ./decide.jsonl --route-usage ./usage.tsv, or drop --route")
+		return nil
+	}
+	reg, err := decide.LoadRegistry(r.registry)
+	if err != nil {
+		f.add(fmt.Sprintf("--route-registry: %s", oneline.Err(err)))
+		return nil
+	}
+	in.Registry = reg
+	client, err := decide.New(r.baseURL, r.keyEnv)
+	if err != nil {
+		// No key is no call. It is said once, by the name of the variable and
+		// never by its value, and the batch runs on today's models.
+		fmt.Fprintf(stderr, "BATCH NOTE route: %s; the ladder answers by its rules alone and every card keeps today's model\n", oneline.Err(err))
+		return in
+	}
+	in.Decide = client.Decide
+	return in
+}
+
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
@@ -573,6 +638,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 	if idle < 1 {
 		f.add(fmt.Sprintf("--idle wants a whole number of seconds, got %d; a card whose log has not grown this long is killed", idle))
 	}
+	routed := routeInput(f, route, stderr)
 	if f.refused(stderr) {
 		return 2
 	}
@@ -582,6 +648,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 		Cards: cards, Root: root, Runner: runner,
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
+		Route:  routed,
 		Stdout: stdout, Stderr: stderr,
 	})
 }

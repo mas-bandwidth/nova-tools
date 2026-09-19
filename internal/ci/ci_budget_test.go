@@ -162,7 +162,19 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	if len(certNames) == 0 {
 		t.Fatal("no jobs parsed from certification.yml; the parser is looking in the wrong place")
 	}
+	inventory := toSet(splitMovedJobs)
+	for name, reason := range droppedByRuling {
+		if !inventory[name] {
+			t.Errorf("droppedByRuling names %q, which is not in splitMovedJobs; an exception to a list must be an entry of that list", name)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("the exception for %q carries no reason; an exception must say why it exists", name)
+		}
+	}
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !certNames[name] {
 			t.Errorf("job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
 		}
@@ -170,6 +182,9 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 
 	needs := certificationOKNeeds(cert)
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !needs[name] {
 			t.Errorf("certification-ok does not list %q in its needs; every certification job must be aggregated", name)
 		}
@@ -569,6 +584,27 @@ var splitMovedJobs = []string{
 	"smoke",
 	"release-dry-run",
 	"perf",
+}
+
+// droppedByRuling is the dated, quoted exception to "the split must delete
+// nothing": the jobs that DID leave ci.yml in the 2026-09-12 split but that
+// certification.yml no longer has to carry, because a later ruling retired them
+// outright rather than moving them. The class rule is untouched — every other
+// job in splitMovedJobs must still be present and still be aggregated by
+// certification-ok. Only the names listed here are skipped, and each one carries
+// the ruling that struck it.
+//
+// Glenn, 2026-09-18: "We will not support windows without WSL2. It is not worth
+// it." / "let's drop the native windows CI runners. WSL only from now on."
+// #1449 removed these three from ci.yml on that ruling but left them in
+// certification.yml, so certification-ok was red on every dev sha and
+// `nova-update release cut` refused every tip (CUT REFUSED
+// certification-ok=failure). The Windows guard that remains is the cross-vet,
+// `GOOS=windows go vet`, which needs no Windows machine.
+var droppedByRuling = map[string]string{
+	"build-windows":    `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"windows-packages": `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"test-windows":     `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
 }
 
 // certificationOKNeeds returns the set of job names listed in certification-ok's
