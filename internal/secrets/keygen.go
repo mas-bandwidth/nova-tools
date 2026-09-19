@@ -10,15 +10,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// KeygenNextLine is the one line that tells the reader what is left to do. It is a
-// NEXT STEP and says so: the same text as a state of the world ("the placeholder
-// stands unfilled") read as a failure at the end of a green run (nova-tools#1393,
-// Glenn on the Air, 2026-09-18).
+// KeygenNextLine is the one line that tells the reader what is left to do in the rule
+// block. It is a NEXT STEP and says so: the same text as a state of the world ("the
+// placeholder stands unfilled") read as a failure at the end of a green run
+// (nova-tools#1393, Glenn on the Air, 2026-09-18).
 const KeygenNextLine = "SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)"
 
 // keygenLines assembles the receipt in the order it is printed. The rule block comes
-// first, the next step after it, and the OK line LAST, because the last line of a
-// command's output is the line a reader takes for the verdict.
+// first, the machine-readable OK line after it, and a plain closing line LAST, because
+// the last line of a command's output is the line a reader takes for the verdict.
 func keygenLines(asName, keyPath, pubKey, recoveryKey string, placeholder bool) []string {
 	lines := []string{
 		"SECRETS RULE   creation_rules:",
@@ -26,11 +26,14 @@ func keygenLines(asName, keyPath, pubKey, recoveryKey string, placeholder bool) 
 		fmt.Sprintf("SECRETS RULE       age: %s,%s", pubKey, recoveryKey),
 	}
 	if placeholder {
-		lines = append(lines, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled")
+		lines = append(lines, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`")
 	}
 	lines = append(lines, KeygenNextLine)
-	return append(lines, fmt.Sprintf("SECRETS KEYGEN OK as=%s key=%s mode=0600 pub=%s",
+	lines = append(lines, fmt.Sprintf("SECRETS KEYGEN OK as=%s key=%s mode=0600 pub=%s",
 		oneline.Field(asName), oneline.Field(keyPath), oneline.Field(pubKey)))
+	lines = append(lines, fmt.Sprintf("Done. Your new key is at %s. Nothing failed.", oneline.Escape(keyPath)))
+	lines = append(lines, fmt.Sprintf("Next: send this public key to whoever seals your seat: %s", oneline.Field(pubKey)))
+	return lines
 }
 
 // RunKeygen generates a new age private key and formats the .sops.yaml rule block.

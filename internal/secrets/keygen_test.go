@@ -6,19 +6,19 @@ import (
 )
 
 // Glenn ran `keygen` on the Air on 2026-09-18 and read its receipt as a failure
-// (nova-tools#1393). The verb had succeeded: it printed the OK line FIRST and then
-// three `SECRETS RULE` lines whose last one said the placeholder "stands unfilled".
-// A reader reads the LAST line of a command's output, and the last line said
-// something was unfilled. Nothing was wrong; the tool had simply left its verdict
-// at the top and its homework at the bottom.
+// (nova-tools#1393). The verb had succeeded, but the line a reader's eye lands on -- the
+// last one -- said the placeholder "stands unfilled", and the OK line sat at the top in
+// the same machine-readable shape as the rest. Nothing was wrong; the tool had left its
+// verdict where a person does not look.
 //
-// So the order is the contract now: what is left to do comes first, the verdict
-// comes LAST, and the line that says what is left to do calls itself a next step
-// rather than a state of the world.
+// So the shape is the contract now: the machine-readable lines keep their place for the
+// callers that parse them, and the run closes with a plain line a human cannot misread --
+// it worked, where the key is, and the next step -- and a NOTE that cannot be mistaken
+// for a refusal.
 
-// TestKeygenPrintsTheOKLineLast pins the order. It takes no binary and no store:
-// the assembly is a pure function precisely so this can never be skipped.
-func TestKeygenPrintsTheOKLineLast(t *testing.T) {
+// TestKeygenEndsWithThePlainClosingLine pins the last two lines. It takes no binary and
+// no store: the assembly is a pure function precisely so this can never be skipped.
+func TestKeygenEndsWithThePlainClosingLine(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name        string
@@ -32,17 +32,25 @@ func TestKeygenPrintsTheOKLineLast(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			lines := keygenLines("rowan", "/k/rowan.key", "age1pub", tc.recoveryKey, tc.placeholder)
-			if len(lines) == 0 {
-				t.Fatal("keygen printed nothing")
+			if len(lines) < 2 {
+				t.Fatal("keygen printed fewer than two lines")
 			}
 			last := lines[len(lines)-1]
-			if !strings.HasPrefix(last, "SECRETS KEYGEN OK ") {
-				t.Errorf("the last line is not the verdict; a reader reads the last line:\n%s", strings.Join(lines, "\n"))
+			if last != "Next: send this public key to whoever seals your seat: age1pub" {
+				t.Errorf("the last line is not the plain closing line:\n%s", strings.Join(lines, "\n"))
 			}
-			for i, l := range lines[:len(lines)-1] {
-				if strings.HasPrefix(l, "SECRETS KEYGEN OK") {
-					t.Errorf("line %d is a second OK line: %s", i, l)
+			if !strings.HasPrefix(lines[len(lines)-2], "Done. Your new key is at ") {
+				t.Errorf("the second-to-last line does not say it worked and where the key is:\n%s", strings.Join(lines, "\n"))
+			}
+			// The machine-readable OK line stays for callers that parse it.
+			found := false
+			for _, l := range lines {
+				if strings.HasPrefix(l, "SECRETS KEYGEN OK ") {
+					found = true
 				}
+			}
+			if !found {
+				t.Errorf("the machine-readable OK line is gone:\n%s", strings.Join(lines, "\n"))
 			}
 			if !strings.HasPrefix(lines[0], "SECRETS RULE   creation_rules:") {
 				t.Errorf("the rule block does not come first: %q", lines[0])
@@ -63,35 +71,33 @@ func TestKeygenNextStepSaysItIsANextStep(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("placeholder=%v: the receipt carries no next-step line\nwant: %s\ngot:\n%s", placeholder, want, joined)
 		}
-		// The next step is the last thing before the verdict, so the two lines a
-		// reader's eye lands on are "here is what to do" and "this worked".
-		if n := len(lines); n < 2 || lines[n-2] != want {
-			t.Errorf("placeholder=%v: the next-step line is not immediately above the OK line:\n%s", placeholder, joined)
-		}
 	}
 }
 
-// TestKeygenPlaceholderNoteIsNotTheLastWord keeps the note that a `--store`-less run
-// leaves the recovery key unfilled -- it is true and it matters -- while denying it
-// the last line, which is the one Glenn read as the verdict.
-func TestKeygenPlaceholderNoteIsNotTheLastWord(t *testing.T) {
+// TestKeygenPlaceholderNoteCannotBeReadAsARefusal keeps the note that a --store-less run
+// leaves the recovery key as a placeholder -- it is true and it matters -- while denying
+// it the last line and any wording that reads as a failure.
+func TestKeygenPlaceholderNoteCannotBeReadAsARefusal(t *testing.T) {
 	t.Parallel()
 	lines := keygenLines("rowan", "/k/rowan.key", "age1pub", "<recovery key>", true)
 	found := -1
 	for i, l := range lines {
-		if strings.Contains(l, "stands unfilled") {
+		if strings.Contains(l, "placeholder:") {
 			found = i
 		}
 	}
 	if found < 0 {
-		t.Fatalf("a run without --store no longer says the recovery key is unfilled:\n%s", strings.Join(lines, "\n"))
+		t.Fatalf("a run without --store no longer carries the placeholder note:\n%s", strings.Join(lines, "\n"))
 	}
 	if found >= len(lines)-1 {
 		t.Errorf("the placeholder note is the last line again:\n%s", strings.Join(lines, "\n"))
 	}
+	if strings.Contains(lines[found], "unfilled") {
+		t.Errorf("the placeholder note still reads as a failure: %s", lines[found])
+	}
 	// And a run WITH a store never prints it at all.
 	for _, l := range keygenLines("rowan", "/k/rowan.key", "age1pub", "age1recovery", false) {
-		if strings.Contains(l, "stands unfilled") {
+		if strings.Contains(l, "placeholder:") {
 			t.Errorf("a run with --store still prints the placeholder note: %s", l)
 		}
 	}
