@@ -428,3 +428,73 @@ func nonceOf(t *testing.T, state string) string {
 	t.Fatalf("no BEGIN marker in:\n%s", state)
 	return ""
 }
+
+// A RULES ANSWER IS NOT A PROVIDER CALL. `AskedProvider`, and the `asked`
+// field of the durable row it writes, are the boundary's CALL ATTRIBUTION: they
+// are how the tuning lane (§4 rule 5) separates what a model was paid to answer
+// from what a free table answered. A row that claims a call the chain never
+// made counts a table's certainty against the provider's agreement rate and
+// against its bill, and neither number can be re-derived afterwards, because
+// the receipt is the only place the distinction was ever recorded.
+//
+// The control is provider-free in the sense that matters: a real provider sits
+// in the chain, behind the table, and its own counter is the witness that it
+// was never asked.
+func TestARulesAnswerRecordsNoProviderCall(t *testing.T) {
+	q := harvestQ(t)
+	ev := evidence()
+	// The chain frames what it is handed (questions.Frame), so what goes in is
+	// the boundary's three fields and not HarvestState's already-framed text.
+	state := "accept: " + ev.Accept + " line2: " + ev.Line2 + " reason: " + ev.Reason
+
+	provider := &fake{name: DeciderJev, sees: SeesPublic, answer: ClassClean, conf: 0.99}
+	rules := NewRulesDecider(map[string]string{"toolchain-missing": ClassBlockedToolchain})
+	res := Chain{Deciders: []ChainDecider{rules, provider}}.Classify(
+		context.Background(), q, publicEvidence(state), 0.65)
+	if res.Decider != DeciderRules || res.Answer != ClassBlockedToolchain {
+		t.Fatalf("the table was meant to answer this one, got %+v", res)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("the provider was asked %d times from behind a matching rule row", provider.calls)
+	}
+
+	c := ClassifyHarvest(ev, res, 0.65)
+	if c.Class != ClassBlockedToolchain || c.Decider != DeciderRules {
+		t.Fatalf("the rules answer is the class, got %+v", c)
+	}
+	if c.AskedProvider {
+		t.Errorf("a rules answer recorded a provider call; the provider was asked %d times", provider.calls)
+	}
+
+	// The durable row says the same thing, because the row is what is read
+	// later and the struct is not.
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	if err := AppendOutcomeRow(path, "unit-rules", c); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["asked"] != false {
+		t.Errorf("the durable row claims a provider call the chain never made: %s", strings.TrimSpace(string(raw)))
+	}
+	if row["decider"] != DeciderRules {
+		t.Errorf("the durable row must name the table that answered: %s", strings.TrimSpace(string(raw)))
+	}
+
+	// NEGATIVE CONTROL: with no row to match, the same evidence reaches the
+	// provider and the call IS recorded. Without this the test would pass
+	// against a boundary that never attributed a call to anybody.
+	provider.calls = 0
+	bare := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), provider}}.Classify(
+		context.Background(), q, publicEvidence(state), 0.65)
+	cc := ClassifyHarvest(ev, bare, 0.65)
+	if provider.calls != 1 || !cc.AskedProvider || cc.Decider != DeciderJev {
+		t.Errorf("negative control: a real provider answer must record the call, calls=%d got %+v", provider.calls, cc)
+	}
+}

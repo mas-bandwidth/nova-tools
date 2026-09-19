@@ -275,7 +275,13 @@ func ClassifyHarvest(ev HarvestEvidence, res Result, floor float64) Classificati
 		return c
 	}
 
-	c.AskedProvider = true
+	// Call attribution, and it is not decoration: `AskedProvider` and the
+	// `asked` field of the row it writes are how the tuning lane (§4 rule 5)
+	// tells what a model was paid to answer from what the free table answered.
+	// `rules` is a table in this process; it dials nothing. Counting its
+	// certainty as a provider call inflates the bill and poisons the agreement
+	// rate, and the receipt is the only place that distinction was recorded.
+	c.AskedProvider = res.Decider != DeciderRules
 	c.Decider = res.Decider
 	if res.Confidence < floor {
 		// D2/D3: below the floor the answer is the absence of an answer, and
