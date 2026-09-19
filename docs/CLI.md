@@ -1470,7 +1470,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1485,13 +1485,70 @@ bench is a refusal (exit 2) with the remedy on it rather than a tick that fills
 nothing. `--bench` narrows to the names it carries -- it is resolved through the
 registry's role guard exactly as before, so an uncertified bench can still be named
 by hand while it is being proven. `--once` runs exactly one tick, and without it the
-loop runs until it is killed. One line per tick:
+loop runs until it is killed or `--stop` says so. One line per tick:
 
 ```
 FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
 ```
 
-**The capacity formula measures the volume the cards land on.** The three terms are
+**`--interval <d>` is how long a resident tick waits, `5m` by default.** There was no
+flag at all until #1915, so a freed slot waited up to five minutes for the next tick
+and that was the floor on "a machine replaces a finished card right away". Ten
+seconds is what the fleet runs at: a card dropped into `--ready` is dealt in two to
+six seconds. A value the flag cannot read is a refusal naming it, never a silent five
+minutes.
+
+**`--stop <file>` takes a resident fill off the fleet without killing anything.**
+Touch the file: the tick in flight finishes -- a kill lands between the move out of
+`--ready` and the launcher, leaving a card under `--launched` that nobody started --
+and the next tick claims no card, launches nothing, leaves every live card running
+and returns 0:
+
+```
+FILL STOP tick=<n> file=<path> live=<n> note="no new launches; the live cards are untouched and nothing was killed"
+```
+
+**THE CAPACITY IS THE BENCH'S OWN SLOT STORE, AND THE LOAD IS ONLY A BRAKE (#1914).**
+`fill`'s capacity used to be the load formula below, and a bench earns load precisely
+by running the cards it was dealt: measured on 2026-09-19, a bench at load1 45 on 32
+cores answered **-1** -- clamped to zero, dealt nothing -- with **52 free slots in its
+own store**. The harder the fleet worked the less it was fed. The store is the bench's
+own answer to "how many more cards may I take", and it is the same number
+`nova-swarm native --slots-store --owner` enforces at launch:
+
+```
+free = <store>/shares.tsv's <owner> row  -  that owner's live leases
+```
+
+`--slots-store <path>` is the store on the bench, `$HOME/nova-bench/slots` by default
+and expanded by the bench's own shell; `--slots-owner <name>` is the row, `swarm-<bench>`
+by default, the seat the launcher already hands the bench; `--slots-bin <path>` is the
+`nova-swarm` that lists the leases, `$HOME/.local/bin/nova-swarm` by default, because
+a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
+no `nova-swarm` would read zero leases and call a full bench empty. An owner holding
+more than its share -- a share lowered under live work -- is a bench with nothing
+free, never a negative and never a card asked back.
+
+**`--max-load-per-core <f>` is the brake, `1.5` by default, `0` for none.** A bench
+whose `load1/cores` is above it is dealt nothing this tick and says so by name, with
+the free count it did not fill and the leases it is holding on the line:
+
+```
+FILL BRAKE bench=<name> load1=<f> cores=<n> per-core=<f> max=<f> free=<n> held=<n> remedy="..."
+```
+
+A braked bench is **not** a failed bench -- the tick carries on and the exit is 0 --
+and the brake never shrinks a bench below the leases it already holds: the live cards
+are running, and the one thing a capacity number may never do is ask for them back.
+A machine whose load is made by something other than its own leases wants `0` here.
+
+**`--local-bench <name>` is a bench that is this machine.** Its store is read by this
+machine's own shell and no `ssh` is opened: there is no `ssh` from the Studio to the
+Studio, and there should not be. A `--local-bench` that is not one of the benches this
+run fills is a refusal, because a typo there means a bench read over an `ssh` that
+cannot work.
+
+**The load formula is what a bench with no store still answers.** The three terms are
 core headroom (`cores*1.5 - load1 - cores/8`, a CI reserve), memory headroom
 (`memavail_gb/2`) and disk headroom (`(free_gb-25)/2`), and the disk term reads the
 **swarm root's** volume: `--swarm-root` (default `$HOME/rowan-swarm-root`, expanded
@@ -1499,7 +1556,9 @@ by the bench's own shell) is resolved through its symlinks and that path is what
 `df` is given. A bench whose swarm root is a link onto a second disk -- antman's
 `~/rowan-swarm-root -> /data/swarm` -- used to answer for the volume its home sits
 on, which is not the one the cards fill. A swarm root that is not configured, or is
-configured and not there, falls back to `$HOME`.
+configured and not there, falls back to `$HOME`. A bench whose `--slots-store` holds
+no row for the owner falls back to this number on its own, so adopting the store is
+not a flag day; `--slots-store ""` asks for it and nothing else.
 
 **A launcher that fails is not a card that ran.** The card goes back to `--ready`,
 its lane is released, the tick counts it under `failed=` and never under `launched=`,
@@ -1585,6 +1644,22 @@ dry run over a directory of cards exercises the whole tick, lanes included:
 
 ```
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
+```
+
+`--capacity` is the one thing that beats the slot store: it is a fixed number for
+every bench and reads nothing. It is a dry run's flag, not a fleet's — a single
+number cannot be four benches' free counts.
+
+**The resident form is the whole of it**: one process per launcher, ticking in
+seconds, sized by each bench's own store, braked on load and stopped by a file.
+
+```
+nova-pulse fill --ready ./queue/pull/ready --launched ./queue/pull/launched \
+  --machines ./queue/control/machines.tsv --lanes ./queue/control/lanes.tsv \
+  --launcher ~/bin/flash-native-bench.sh --session <id> \
+  --interval 10s --launch-grace 3s --deadline 1800 \
+  --slots-store '$HOME/nova-bench/slots' --max-load-per-core 1.5 \
+  --stop ./STOP
 ```
 
 **`--session <id>` is stamped into every launched card's marker.** When `fill` moves a
