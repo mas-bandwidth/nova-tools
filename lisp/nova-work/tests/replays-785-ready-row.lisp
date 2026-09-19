@@ -197,3 +197,88 @@ the replay's own fixture and nothing more, so its `needs-broken=2` is exact.")
                   (canonical-string (state-canonical-form (kernel-state k))))))
       (ok (node-needs-broken fresh "acme/work/d")
           "a reconstruction reads the same flag from the events"))))
+
+;;; ------------------------------------------------------------------
+;;; the negative ready ROW: recorded is not verified, ON THE ROW
+;;;    Stella's ask "retain a negative ready-row case for missing proof",
+;;;    unanswered at 190677c7 and answered here.
+;;;                                              SPEC-WORK.md:4785, :4859
+;;; ------------------------------------------------------------------
+;;;
+;;; The behaviour was already right at 190677c7; what was missing was an
+;;; assertion. `need-unverified` appeared nowhere on a `ready` row, and this
+;;; file is the ONLY caller of `state-ready-rows` or any `ready-row-*` accessor
+;;; in the tree -- so a `state-ready-rows` that fell open would have passed
+;;; every case in the slice. These three cases close that hole from the row's
+;;; side, each one red against a deliberately fail-open reading.
+
+(defun row-done-without-view (k node &key (request (format nil "bare-~A" node))
+                                          (evidence (list "ev-1")))
+  "Settle NODE and DO NOT rebuild the session's view: the need is RECORDED
+done and nothing has verified it (SPEC-WORK.md:4785, `Recorded is not
+verified`)."
+  (unless (member (node-state (kernel-state k) node) (list :doing :review))
+    (row-doing k node :request (format nil "pre-~A" request)))
+  (submit k (list :verb :state-to-done :node node :by "rowan" :reason "merged"
+                  :evidence evidence :request request
+                  :stamp "2026-09-16T12:00:00Z" :clock :tool
+                  :generation-owner "gen-1")))
+
+(deftest "a-ready-row-reads-need-unverified-without-complete-proof"
+    "docs/SPEC-WORK.md:4859"
+    "expected=the-row-and-its-line-carry-need-unverified-for-missing-partial-and-mismatched-proof"
+  ;; 1. MISSING PROOF: the need is recorded done; no session view exists.
+  (let ((k (row-kernel)))
+    (multiple-value-bind (okp line) (row-done-without-view k "acme/work/n")
+      (ok okp "the need settles: ~A" line))
+    (ok (null (kernel-needs-view k)) "and the session has built no view")
+    (let ((row (row-for k "acme/work/d")))
+      (ok row "D has a ready row")
+      (ok (not (ready-row-ready row)) "D is NOT ready on recorded-only proof")
+      (check-string= "need-unverified" (ready-row-reason row)
+                     "the ROW reads need-unverified, not just the predicate")
+      (check-string= "acme/work/n" (ready-row-need row) "and names the need")
+      (check-equal 1 (ready-row-unmet row) "and counts it")
+      (let ((printed (ready-row-line row)))
+        (ok (search "ready=false" printed) "the LINE says ready=false: ~A" printed)
+        (ok (search "reason=need-unverified" printed)
+            "and carries the token: ~A" printed)
+        (ok (search "need=acme/work/n" printed) "and the need: ~A" printed)
+        (ok (search "unmet=1" printed) "and the count: ~A" printed))))
+  ;; 2. PARTIAL PROOF: the standing done names two evidence ids and the view
+  ;; resolves one of them.
+  (let* ((k (row-kernel))
+         (session (gate-session))
+         (one (gate-job-evidence "acme/work/n" :event-id "ev-1")))
+    (row-done-without-view k "acme/work/n" :evidence (list "ev-1" "ev-2"))
+    (gate-cache-holds session (verify-evidence-pointer one) "acme/work/n")
+    (setf (kernel-needs-view k)
+          (make-needs-view :session session
+                           :evidence (list (list "acme/work/n" one))))
+    (let ((row (row-for k "acme/work/d")))
+      (ok (not (ready-row-ready row)) "one verified id of two is not proof")
+      (check-string= "need-unverified" (ready-row-reason row)
+                     "and the row says so")
+      (check-equal 1 (ready-row-unmet row) "with the need still counted")))
+  ;; 3. MISMATCHED PROOF: the view holds a verified record whose id the
+  ;; standing done never named.
+  (let* ((k (row-kernel))
+         (session (gate-session))
+         (wrong (gate-job-evidence "acme/work/n" :event-id "never-named")))
+    (row-done-without-view k "acme/work/n")
+    (gate-cache-holds session (verify-evidence-pointer wrong) "acme/work/n")
+    (setf (kernel-needs-view k)
+          (make-needs-view :session session
+                           :evidence (list (list "acme/work/n" wrong))))
+    (let ((row (row-for k "acme/work/d")))
+      (ok (not (ready-row-ready row)) "a record the done never named is not proof")
+      (check-string= "need-unverified" (ready-row-reason row)
+                     "and the row says so")))
+  ;; and the positive, through the repaired session path, so the three negatives
+  ;; are not simply a row that never reads ready=true
+  (let ((k (row-kernel)))
+    (row-done k "acme/work/n")
+    (let ((row (row-for k "acme/work/d")))
+      (ok (ready-row-ready row) "complete proof through the session path IS ready")
+      (check-string= "-" (ready-row-reason row) "with no token")
+      (check-equal 0 (ready-row-unmet row) "and nothing unmet"))))
