@@ -20,10 +20,10 @@
 ;;;; load time, so `undo.lisp` and `edit-undo.lisp` keep no knowledge of a file
 ;;;; loaded after them and the plain `asdf` load stays as quiet as it was.
 ;;;;
-;;;; `roadmap row` and `roadmap projection` share the table row and are not
-;;;; here: they are membership and projection writes with their own preimages,
-;;;; and neither records an applied entry the undo path can read yet. They are
-;;;; named in HANDOFF rather than half-built.
+;;;; `roadmap row` and `roadmap projection` share the table row; their
+;;;; compensations sit beside `roadmap-configure-undo` and their five handlers
+;;;; per verb register themselves from src/undo-roadmap-rows.lisp, so the whole
+;;;; row of the table is honoured and nothing is half-built.
 
 (in-package #:nova-work)
 
