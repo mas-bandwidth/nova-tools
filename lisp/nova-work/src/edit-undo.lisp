@@ -14,6 +14,27 @@
 
 (in-package #:nova-work)
 
+;;; The reversible-verb table of SPEC-WORK.md:2853-2900 names verbs whose
+;;; compensations live in files this one is loaded before -- a roadmap view's,
+;;; for one. A verb registers its reversal here at load time and the four undo
+;;; surfaces (`undo-plan`, `undo`, `redo-plan`, `redo`) find it by verb, so this
+;;; file and src/undo.lisp name no function defined after them and the plain
+;;; `asdf` load stays quiet (#1612). Every verb in neither the cases below nor
+;;; this table is refused by name, which is what the table's last column asks.
+(defparameter *undo-handlers* (make-hash-table :test #'eq)
+  "verb -> (:plan f :undo f :redo-plan f :redo-changed f :redo f).
+  :plan          (kernel entry)            -> (values ROWS REFUSAL)
+  :undo          (kernel entry rid request)-> (values OK-P LINE CODE ENVELOPE)
+  :redo-plan     (kernel entry)            -> (values ROWS REFUSAL)
+  :redo-changed  (state entry)             -> a list of names that moved
+  :redo          (kernel entry rid request)-> (values OK-P LINE CODE ENVELOPE)")
+
+(defun undo-handler (verb key)
+  "The KEY function registered for VERB, or NIL."
+  (let ((handler (gethash verb *undo-handlers*)))
+    (and handler (getf handler key))))
+
+
 (defun %eu-required (request key)
   (let ((value (getf request key)))
     (when (or (null value) (and (stringp value) (string= value "")))
@@ -356,6 +377,9 @@ EXIT-CODE)."
                                        (event-id last) rid of (getf entry :node)
                                        (work-event-rev last))))
                     (%undo-submit kernel rid digest line events))))
+                ((undo-handler verb :undo)
+                 (multiple-value-list
+                  (funcall (undo-handler verb :undo) kernel entry rid request)))
                 (t
                  (list nil (format nil "UNDO FAIL request-of=~A: verb ~A is not reversible here"
                                    of (string-downcase (symbol-name verb)))
