@@ -381,6 +381,18 @@ func TemplateNames() []string {
 	return names
 }
 
+// IsCardTemplate reports whether name is one of the task templates a card is built from
+// (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
+// setup, capacity -- are not cards: result is the report's shape, worker is a JSON worker
+// description, and setup and capacity are forms, all printed verbatim for their own purpose.
+func IsCardTemplate(name string) bool {
+	switch name {
+	case "read-pr", "probe-row", "fix-card":
+		return true
+	}
+	return false
+}
+
 // WrapTemplate puts a task's own text under its template's conditions, with the file budget
 // written into the condition that names it, so the number in the prompt is the number the
 // machinery will hold the worker to.

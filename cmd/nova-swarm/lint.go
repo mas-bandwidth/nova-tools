@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A card is the one artefact whose defects are paid for in tokens before a test runs: a
@@ -254,6 +255,18 @@ func stepIndex(steps []cardStep, n int) int {
 	return 0
 }
 
+// matchingTemplate returns the name of the shipped template whose verbatim text is exactly
+// raw, or "" when raw is not one of the templates this tool prints. It is what lets
+// `nova-swarm template --name <t>` piped into `lint --card` be answered by name.
+func matchingTemplate(raw []byte) string {
+	for _, name := range swarm.TemplateNames() {
+		if body, err := swarm.Template(name); err == nil && string(raw) == body {
+			return name
+		}
+	}
+	return ""
+}
+
 func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "")
@@ -282,6 +295,20 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := filepath.Base(*card)
+	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
+	// <t>` piped into `lint --card` used to report result-first drift on the template's first
+	// line (issue #1471). The card templates pass, and a template that is not a card answers
+	// by name rather than as a drift.
+	if tmpl := matchingTemplate(raw); tmpl != "" {
+		if swarm.IsCardTemplate(tmpl) {
+			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
+			return 0
+		}
+		fmt.Fprintf(stdout, "LINT NOT-A-CARD card=%s template=%s remedy=%s\n",
+			oneline.Field(name), oneline.Field(tmpl),
+			oneline.Escape("not a card; lint --card wants a card, and the card templates are read-pr, probe-row, fix-card"))
+		return 1
+	}
 	findings := lintCard(raw)
 	if len(findings) == 0 {
 		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
