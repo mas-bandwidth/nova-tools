@@ -25,7 +25,7 @@ The fold scripts wrote two intermediate tables and a collator merged them. `nova
 ```
 nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
-nova-check links  --dir <dir> [--file <path>]      # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree
+nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]   # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree; --exclude (repeatable) keeps a path prefix out of the scan and out of the check
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
 nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
 nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (the self/machinery separation)
@@ -230,13 +230,17 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 ## nova-memory
 
 ```
-nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>]  the first run: stats, one search, one check, each with the line that ran it
-nova-memory stats  --root <dir>...                                       measure m: files, chunks, bytes, vocab, build time, classes
-nova-memory search --root <dir>... --channels <list> --k <n> <words>...  one query, k receipted hits (for work retrieval)
-nova-memory check  --root <dir>... --channels <list> --k <n> <file|->    do I already know this? k receipts per candidate paragraph
-nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--fail-max <n>]
+nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
+                                                                        the first run: stats, one search, one check, each with the line that ran it
+nova-memory stats  --root <dir>... [--exclude <glob>]...
+                                                                        measure m: files, chunks, bytes, vocab, build time, classes
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
+                                                                        one query, k receipted hits (for work retrieval)
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+                                                                        do I already know this? k receipts per candidate paragraph
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]...
                                                                         coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--fail-max <n>] <gold.tsv>
+nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
 ```
@@ -3471,8 +3475,7 @@ See [SPEC-CAIRN.md](SPEC-CAIRN.md).
 
 ```sh
 nova-cairn open --store ./checkpoints --session session-1 --publish never
-nova-cairn append --store ./checkpoints --session session-1 --entry note-1 \
-  --file ./checkpoint.md --publish never
+nova-cairn append --store ./checkpoints --session session-1 --entry note-1 --text "the words to keep" --publish never
 nova-cairn index --store ./checkpoints --max 20
 nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1
 ```
@@ -3489,9 +3492,9 @@ directly under the store — `cairns/<session>.md`, the shape a friend appending
 by hand already has — and is read as it stands:
 
 ```sh
-# cairns/b9395d11.md exists, written by hand
-nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 \
-  --publish manual --file -
+# cairns/b9395d11.md exists, written by hand; this lays down the fixture the tests use
+mkdir -p cairns && cp internal/cairn/testdata/bench-b9395d11.md cairns/b9395d11.md
+nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 --publish manual --text "the words to keep"
 ```
 
 `open` on such a record is a no-op (it never writes a second record under
