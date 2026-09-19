@@ -320,7 +320,7 @@ func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 	if err := os.MkdirAll(receipts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--fail-max", "1")
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--fail-max", "1", "--allow-empty")
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
