@@ -22,7 +22,7 @@ this table, is what a bench with a stale clone reads.
 
 | rule token | practice |
 | --- | --- |
-| `result-first` | 1 — line 1 is the `RESULT: ` contract line |
+| `result-first` | 1 — line 1 is the `RESULT <label> sha=<sha12>` contract line (one form; SPEC-TOOLWORK §5 rule 7, #1741) |
 | `result-last` | 1, 25 — the last step writes `RESULT.md`, whose line 1 is that contract line |
 | `no-sandbox` | 2 — a card runs inside the wall and never invokes it |
 | `files-named` | 3 — the work is anchored to a named file or package |

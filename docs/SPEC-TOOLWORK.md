@@ -786,8 +786,25 @@ the worker never sees and cannot edit.
    the gate is chosen by `KIND:` from the tool's table and by nothing the worker wrote.
    A `RESULT.md` that names a different kind, a different test or more paths is not
    read (§1 rule 2), so it changes nothing.
+7. **The contract line has one form, `RESULT <label> sha=<sha12>`, and the lint follows the
+   renderer.** It is the spec-pulse document's form
+   (`docs/spec-pulse/10-the-card-as-cut-writes-it.md:4`), what `cut` writes
+   (`internal/pulse/cut.go:472`) and checks (`:433`), what `cut`'s own test asserts, what
+   `docs/WORKER-CARDS.md:312` says, and what `gather` compares for equality without a
+   prefix of its own. The colon form, `RESULT: <CARD-id> …`, lived in one place, `nova-swarm
+   lint --card`'s `result-first` check and remedy text (`cmd/nova-swarm/lint.go:55,140` at
+   `dev@702b0133`) and the practice table row that quotes it, and it drew a `result-first`
+   drift on every one of the six cards written by hand on 2026-09-19, all six in the
+   renderer's form (nova-tools#1741). The no-colon form wins because it is the shipped
+   majority — renderer, its check, its test, both documents and the comparator — and
+   because changing it changes no card that exists; the lint is the one reader that
+   changes. `result-first` means: line 1 begins `RESULT ` and carries `sha=`. A class test
+   reads the document's example, `cut`'s prefix and the lint's prefix and fails when they
+   are not one string (the stopgap of accepting both, PR #1733, is retired by that test
+   when the lint follows).
 
 **Red tests:** `cut-refuses-a-gated-kind-without-paths`; `header-lines-are-inside-the-contract-hash`;
+`a-card-cut-renders-is-admitted` (rule 1); `the-contract-line-has-one-form` (rule 7);
 `kinds-table-matches-the-spec`; `transcript-test-rejects-an-edit-to-the-document`;
 `rebase-rejects-one-changed-line-outside-a-conflict`; `sweep-control-names-the-reverted-site`;
 `mutation-kill-rejects-a-test-the-mutant-survives`; `launch-refuses-a-wide-batch-with-no-accepted-first-card`;
