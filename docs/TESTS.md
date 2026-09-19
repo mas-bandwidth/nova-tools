@@ -562,8 +562,6 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 Fixture: a source text in a temp directory, annotated and read back. The notes
 live beside the source; every path is a flag.
 
-> open design work (#221/#222/#223): nova-play ships in no fleet build; do not run the transcript below on a bench.
-
 ### First run
 
 ```text
