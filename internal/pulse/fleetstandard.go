@@ -45,6 +45,15 @@ type StandardCheck struct {
 	Probe string // one line of POSIX shell printing the value on stdout
 	Match string // one of the Match* constants
 	Want  string // what Match compares against
+	// Root, when set, is the TOOLCHAIN ROOT this check is the standard's own copy of, in the
+	// slash form internal/swarm/toolchain.go declares it: HOME-relative (`sdk`) or absolute
+	// (`/opt/homebrew/Cellar/go`). The wall grants exactly these paths, so the standard and
+	// the wall are ONE LIST checked in both directions, per OS, by the class test in
+	// internal/ci -- a root the wall grants that no bench provisions is a wall naming a path
+	// that will not be there, and a root a bench has that the wall never names is the hurt of
+	// 2026-09-18 returning. The KIND of each grant is the wall's decision and lives with the
+	// wall, not here: a bench only has to HAVE a root.
+	Root string
 }
 
 // FleetStandardChecks is the standard itself: the checks for one operating system, in the
@@ -57,6 +66,16 @@ type StandardCheck struct {
 // fleet/macos/provision-mac-bench.sh: the Go SDK and sbcl under ~/sdk, real git ahead of
 // the Xcode shim, and each runner's .path carrying it (INSTALL-batman.md, 2026-09-18:
 // /usr/bin/git is the shim and the sandbox cannot read /var/db/xcode_select_link).
+//
+// THE TOOLCHAIN ROOTS (the `toolchain-*` checks, Root set) are this table's half of the one
+// list the sandbox wall grants -- internal/swarm/toolchain.go is the other half, and the
+// class test in internal/ci fails when they drift apart in either direction, per OS. A LINUX
+// root is DEMANDED, because the standard's own installer is what puts it there and a bench
+// missing one kills every Go card on it. A DARWIN root is REPORTED and never drifted on: a
+// Mac's toolchains are installed and on PATH rather than unpacked into a home, so which
+// trees exist is the machine's shape -- a Mac with no .NET is a Mac with no .NET -- while
+// that the bench has a working Go at all is what the `go` check above asserts. The wall
+// skips an absent root either way, so the report is the wall's argv read in advance.
 func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCheck {
 	if strings.TrimSpace(goWant) == "" {
 		goWant = "go1.26.5"
@@ -93,6 +112,67 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		{
 			Name: "runner-path", OS: "darwin", Match: MatchEquals, Want: "ok",
 			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; case "$(head -n 1 "$p")" in /usr/bin:*|/usr/bin) bad="$p";; esac; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
+		},
+		// The toolchain roots the sandbox wall grants a card, one check each.
+		{
+			Name: "toolchain-sdk", OS: "linux", Root: "sdk", Match: MatchEquals, Want: "present",
+			Probe: `[ -d "$HOME/sdk" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-modcache", OS: "linux", Root: "go/pkg/mod", Match: MatchEquals, Want: "present",
+			Probe: `[ -d "$HOME/go/pkg/mod" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-sdk", OS: "darwin", Root: "sdk", Match: MatchNonempty,
+			Probe: `[ -d "$HOME/sdk" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-modcache", OS: "darwin", Root: "go/pkg/mod", Match: MatchNonempty,
+			Probe: `[ -d "$HOME/go/pkg/mod" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-brew-go", OS: "darwin", Root: "/opt/homebrew/Cellar/go", Match: MatchNonempty,
+			Probe: `case "$(readlink -f "$(command -v go 2>/dev/null)" 2>/dev/null)" in /opt/homebrew/Cellar/go/*) echo present;; *) echo absent;; esac`,
+		},
+		{
+			Name: "toolchain-brew-sbcl", OS: "darwin", Root: "/opt/homebrew/Cellar/sbcl", Match: MatchNonempty,
+			Probe: `case "$(readlink -f "$(command -v sbcl 2>/dev/null)" 2>/dev/null)" in /opt/homebrew/Cellar/sbcl/*) echo present;; *) echo absent;; esac`,
+		},
+		{
+			Name: "toolchain-brew-openjdk", OS: "darwin", Root: "/opt/homebrew/opt/openjdk", Match: MatchNonempty,
+			Probe: `[ -d /opt/homebrew/opt/openjdk ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-jvm", OS: "darwin", Root: "/Library/Java/JavaVirtualMachines", Match: MatchNonempty,
+			Probe: `[ -d /Library/Java/JavaVirtualMachines ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-dotnet", OS: "darwin", Root: "/usr/local/share/dotnet", Match: MatchNonempty,
+			Probe: `[ -d /usr/local/share/dotnet ] && echo present || echo absent`,
+		},
+		{
+			Name: "go", OS: "windows", Match: MatchContains, Want: goWant,
+			Probe: `for g in "C:/sdk/go/bin/go.exe" "$HOME/sdk/go*/bin/go.exe" "$(command -v go 2>/dev/null)"; do [ -x "$g" ] || continue; "$g" version; break; done`,
+		},
+		{
+			Name: "git", OS: "windows", Match: MatchContains, Want: "windows",
+			Probe: `git version 2>/dev/null`,
+		},
+		{
+			Name: "no-wsl", OS: "windows", Match: MatchEquals, Want: "ok",
+			Probe: `[ -z "$WSL_DISTRO_NAME" ] && [ -z "$WSL_INTEROP" ] && echo ok`,
+		},
+		{
+			Name: "features", OS: "windows", Match: MatchContains, Want: "Containers",
+			Probe: `powershell.exe -NoProfile -Command '$h = (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -ErrorAction SilentlyContinue).State; $c = (Get-WindowsOptionalFeature -Online -FeatureName Containers -ErrorAction SilentlyContinue).State; if ($h -eq "Enabled" -and $c -eq "Enabled") { Write-Output "Hyper-V+Containers" } else { Write-Output "disabled" }'`,
+		},
+		{
+			Name: "runner-service", OS: "windows", Match: MatchContains, Want: "Running (nova)",
+			Probe: `powershell.exe -NoProfile -Command '$s = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "actions.runner.*" -and $_.State -eq "Running" -and ($_.StartName -match "(?i)(^|\\)nova$") }; if ($s) { Write-Output "Running (nova)" } else { Write-Output "stopped" }'`,
+		},
+		{
+			Name: "wol", OS: "windows", Match: MatchEquals, Want: "enabled",
+			Probe: `powershell.exe -NoProfile -Command '$w = Get-NetAdapterAdvancedProperty -DisplayName "*Wake*" -ErrorAction SilentlyContinue | Where-Object { $_.DisplayValue -match "Enabled" }; if ($w) { Write-Output "enabled" } else { Write-Output "disabled" }'`,
 		},
 		{
 			Name: "nova-stamp", Match: stampMatch, Want: stampWant,
@@ -190,11 +270,13 @@ func FleetStandard(in FleetStandardInput) int {
 		if err != nil {
 			return fleetUnreachable(in.Stdout, bench.Name, fleetReason(out, err))
 		}
-		switch strings.ToLower(strings.TrimSpace(lastLine(out))) {
-		case "linux":
+		switch v := strings.ToLower(strings.TrimSpace(lastLine(out))); {
+		case v == "linux":
 			goos = "linux"
-		case "darwin":
+		case v == "darwin":
 			goos = "darwin"
+		case strings.HasPrefix(v, "mingw") || strings.HasPrefix(v, "msys") || strings.HasPrefix(v, "cygwin") || strings.HasPrefix(v, "windows"):
+			goos = "windows"
 		default:
 			return fleetUnreachable(in.Stdout, bench.Name, "uname said "+oneline.Field(strings.TrimSpace(lastLine(out))))
 		}

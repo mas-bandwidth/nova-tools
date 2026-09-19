@@ -81,7 +81,7 @@ func TestFailedPrintsABlockPerFailingTestAndExitsOne(t *testing.T) {
 	want := []string{
 		"FAILED job=\"test-windows-pr (0)\" pkg=github.com/mas-bandwidth/nova-tools/cmd/nova-sandbox test=TestDenialsInsideTheAllowedSetAreNotReported at=denied_test.go:73",
 		"TIMEOUT job=\"test-hosted-merge (darwin, 1)\" pkg=github.com/mas-bandwidth/nova-tools/cmd/nova-merge running=",
-		"FAILED OK jobs=2 tests=5",
+		"FAILED RED jobs=2 failed=2 tests=5",
 	}
 	for _, w := range want {
 		if !strings.Contains(stdout, w) {
@@ -91,7 +91,7 @@ func TestFailedPrintsABlockPerFailingTestAndExitsOne(t *testing.T) {
 	if strings.Contains(stdout, "goroutine 2790") {
 		t.Errorf("the goroutine dump reached stdout; the point of the verb is that it does not:\n%s", stdout)
 	}
-	if last := lastLine(stdout); !strings.HasPrefix(last, "FAILED OK ") {
+	if last := lastLine(stdout); !strings.HasPrefix(last, "FAILED RED ") {
 		t.Errorf("last line = %q, want the summary", last)
 	}
 }
@@ -125,7 +125,7 @@ func TestFailedBoundsTheMessageLines(t *testing.T) {
 	if !strings.Contains(narrow, " more lines") {
 		t.Errorf("the dropped lines were not counted:\n%s", narrow)
 	}
-	if !strings.Contains(narrow, "FAILED OK jobs=1 tests=5") {
+	if !strings.Contains(narrow, "FAILED RED jobs=1 failed=1 tests=5") {
 		t.Errorf("the count is the truth whether or not the lines printed:\n%s", narrow)
 	}
 }
@@ -145,6 +145,41 @@ func TestFailedPrintsACancelledStep(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `CANCELLED job="test (2/4 studio)" step="test" after=3m15s`) {
 		t.Errorf("stdout = %q", stdout)
+	}
+}
+
+// (d2) The whole verb over run 35329874611 of mas-bandwidth/schema: one job red of its
+// own inside `make test`, with no test event in its log, and seven cancelled out from
+// under it. The red job gets a line naming it and the step, the summary splits the eight,
+// and the exit is 1 -- it used to be counted in jobs= and then never mentioned.
+func TestFailedNamesAJobThatWentRedWithNoTestEvent(t *testing.T) {
+	start := time.Date(2026, 9, 18, 9, 31, 14, 0, time.UTC)
+	jobs := []ci.FailedJob{{
+		ID: 11, Name: "inline-gate (ubuntu-latest, go)", Conclusion: "failure",
+		Steps: []ci.FailedStep{{Name: "make test", Conclusion: "failure", Started: start, Completed: start.Add(51 * time.Minute)}},
+	}}
+	logs := map[int64]string{11: forgeFixture(t, "inline-gate-werror.log")}
+	for i := 0; i < 7; i++ {
+		id := int64(20 + i)
+		jobs = append(jobs, ci.FailedJob{
+			ID: id, Name: fmt.Sprintf("inline-gate (macos-latest, %d)", i), Conclusion: "cancelled",
+			Steps: []ci.FailedStep{{Name: "make test", Conclusion: "cancelled", Started: start, Completed: start.Add(59 * time.Minute)}},
+		})
+		logs[id] = "2026-09-18T10:30:19.3899906Z Cleaning up orphan processes\n"
+	}
+	code, stdout, stderr := runFailed(t, &stubForge{jobs: jobs, logs: logs}, "--repo", "owner/name", "--run", "35329874611")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", code, stderr)
+	}
+	want := []string{
+		`NOTEST job="inline-gate (ubuntu-latest, go)" step="make test" tests=none`,
+		"error: 'back.grade' may be used uninitialized [-Werror=maybe-uninitialized]",
+		"FAILED RED jobs=8 failed=1 cancelled=7 tests=0",
+	}
+	for _, w := range want {
+		if !strings.Contains(stdout, w) {
+			t.Errorf("stdout has no %q:\n%s", w, stdout)
+		}
 	}
 }
 
@@ -205,7 +240,7 @@ func TestFailedPrintsNologForALogTheForgeWillNotGive(t *testing.T) {
 	if !strings.Contains(stdout, `NOLOG job="e2e" reason="`) {
 		t.Errorf("no NOLOG line for the job whose log was gone:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "FAILED OK jobs=2 tests=5 unread=1") {
+	if !strings.Contains(stdout, "FAILED RED jobs=2 failed=1 cancelled=1 tests=5 unread=1") {
 		t.Errorf("the summary does not count the unread log:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "test=TestDenialsInsideTheAllowedSetAreNotReported") {

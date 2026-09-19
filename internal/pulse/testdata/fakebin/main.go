@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type rule struct {
@@ -39,6 +40,7 @@ type rule struct {
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
+	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 
@@ -65,6 +67,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "the fake %s has no spec at %s: %v\n", name, path, err)
 		os.Exit(noSpec)
 	}
+	// A per-clone override, read from <cwd>/.fake/<name>.json, lets two jobs in
+	// one run answer differently through identical argv: the caller's Dir is the
+	// job's own clone, so the cwd is the only thing that differs per job.
+	if cwd, werr := os.Getwd(); werr == nil {
+		if over, rerr := os.ReadFile(filepath.Join(cwd, ".fake", name+".json")); rerr == nil {
+			raw = over
+		}
+	}
 	var s spec
 	if err := json.Unmarshal(raw, &s); err != nil {
 		fmt.Fprintf(os.Stderr, "the fake %s cannot read %s: %v\n", name, path, err)
@@ -82,6 +92,9 @@ func main() {
 			r = cand
 			break
 		}
+	}
+	if r.SleepMS > 0 {
+		time.Sleep(time.Duration(r.SleepMS) * time.Millisecond)
 	}
 	if r.StdoutFile != "" {
 		out, err := os.ReadFile(r.StdoutFile)

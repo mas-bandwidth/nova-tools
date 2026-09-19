@@ -44,6 +44,16 @@ func (j FailedJob) Failed() bool {
 	return true
 }
 
+// Cancelled is true for a job the run cut down rather than one that went red of its own.
+// The forge spells it both ways, and the two are the same job.
+func (j FailedJob) Cancelled() bool {
+	switch strings.ToLower(strings.TrimSpace(j.Conclusion)) {
+	case "cancelled", "canceled":
+		return true
+	}
+	return false
+}
+
 // RunSelector is the one run the caller means, in the words they used: a run id, a pull
 // request, that pull request's merge-queue run, or a branch.
 type RunSelector struct {
@@ -86,6 +96,10 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 			continue
 		}
 		report.Jobs++
+		if j.Cancelled() {
+			report.Cancelled++
+		}
+		said := report.findings()
 		report.Cancels = append(report.Cancels, CancelledSteps(j)...)
 		log, err := f.JobLog(j.ID)
 		if err != nil {
@@ -100,6 +114,18 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 		failures, timeouts := ParseJobLog(j.Name, log)
 		report.Failures = append(report.Failures, failures...)
 		report.Timeouts = append(report.Timeouts, timeouts...)
+		// EVERY red job gets a line. A job whose log holds no test event -- a compiler
+		// error under -Werror inside a make step, so `go test` never ran -- said nothing
+		// through the parser, and counting it in jobs= while naming it nowhere is how a
+		// red run reads as a green one. Say which job, which step, and what the runner
+		// marked as the errors.
+		if report.findings() == said {
+			report.NoTests = append(report.NoTests, NoTest{
+				Job:   j.Name,
+				Step:  FailedStepName(j),
+				Lines: LogErrorLines(log),
+			})
+		}
 	}
 	// A filter that matched nothing is NOT a green run, and must never read as one: the
 	// caller asked about a job this run does not have, so say which jobs it does have.

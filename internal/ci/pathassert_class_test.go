@@ -6,7 +6,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,35 +59,20 @@ const pathAssertAllowlistPath = "testdata/pathassert_allowlist.txt"
 // the cost of some false negatives, and the Windows leg on the PR is what
 // catches the rest.
 func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	allow := readPathAssertAllowlist(t)
 	seen := map[string]bool{}
 	var violations []string
 
 	for _, dir := range []string{"cmd", "internal"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
+		for _, src := range tree.GoFilesUnder(true, dir) {
+			if src.ParseErr != nil {
+				t.Fatal(src.ParseErr)
 			}
-			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, path, raw, 0)
-			if err != nil {
-				return err
-			}
-			for _, decl := range file.Decls {
+			rel := src.Rel
+			for _, decl := range src.AST.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok || fn.Body == nil {
 					continue
@@ -101,13 +85,9 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 					}
 					violations = append(violations, fmt.Sprintf(
 						"%s:%d: a path is compared against the literal %q; on Windows that path comes back with backslashes. Compare filepath.ToSlash(got) against the literal, or build the want side with filepath.Join. (%s holds the exceptions, and only shrinks.)",
-						rel, fset.Position(f.pos).Line, f.literal, pathAssertAllowlistPath))
+						rel, tree.FSet.Position(f.pos).Line, f.literal, pathAssertAllowlistPath))
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 

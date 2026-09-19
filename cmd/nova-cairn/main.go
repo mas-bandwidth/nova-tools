@@ -52,7 +52,13 @@ flags:
                     environment variable and no discovery from the working
                     directory. The store is plain files; a note is fsync-durable
                     before success is reported, independently of Redis and of
-                    any remote.
+                    any remote. Two shapes are read: this tool's own
+                    (sessions/<id>.md, entries/, log.jsonl) and a bench store of
+                    one markdown file per session directly under the store
+                    (<id>.md), appended by hand. On the second, open is a no-op
+                    and append lands a dated "## <stamp> - <entry>" section at
+                    the end of the file; no index and no directory appear
+                    beside it.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:
@@ -134,7 +140,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 	ok = true
 	for _, name := range sorted {
 		if !given[name] {
-			fmt.Fprintf(stderr, "nova-cairn %s: --%s is required; refusing to guess\n", fs.Name(), name)
+			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
 			ok = false
 		}
 	}
@@ -151,7 +157,7 @@ func clock(given map[string]bool, now string, verb string, stderr io.Writer) (ti
 	}
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(now))
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-cairn %s: --now must parse as RFC 3339 UTC (got %q); refusing to guess\n", verb, now)
+		refuse(stderr, " "+verb, fmt.Sprintf("--now must parse as RFC 3339 UTC (got %q); refusing to guess", now))
 		return time.Time{}, false
 	}
 	return t.UTC(), true
@@ -159,8 +165,7 @@ func clock(given map[string]bool, now string, verb string, stderr io.Writer) (ti
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-cairn version: takes no flags and no arguments, got %d\n", len(args))
-		return 2
+		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)))
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-cairn", version))
 	return 0
@@ -190,8 +195,7 @@ func cmdOpen(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := cairn.Open(*store, *session, *source, stamp, *publish); err != nil {
-		fmt.Fprintf(stderr, "nova-cairn open: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " open", oneline.Err(err))
 	}
 	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s publish=%s stamp=%s\n",
 		oneline.Field(*session), oneline.Escape(*store), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
@@ -222,20 +226,20 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	words := ""
 	switch {
 	case given["text"] && given["file"]:
-		fmt.Fprintln(stderr, "nova-cairn append: --text and --file both name the words; give exactly one")
+		refuse(stderr, " append", "--text and --file both name the words; give exactly one")
 		bad = true
 	case given["text"]:
 		words = *text
 	case given["file"]:
 		raw, err := readWords(*file, stdin)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-cairn append: %s\n", oneline.Err(err))
+			refuse(stderr, " append", oneline.Err(err))
 			bad = true
 		} else {
 			words = string(raw)
 		}
 	default:
-		fmt.Fprintln(stderr, "nova-cairn append: the words come from --text or --file; refusing to guess")
+		refuse(stderr, " append", "the words come from --text or --file; refusing to guess")
 		bad = true
 	}
 	stamp, ok := clock(given, *now, "append", stderr)
@@ -253,8 +257,7 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				oneline.Field(*session), oneline.Field(*entry), oneline.Escape(err.Error()))
 			return 1
 		}
-		fmt.Fprintf(stderr, "nova-cairn append: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " append", oneline.Err(err))
 	}
 	dup := "false"
 	if res.Duplicate {
@@ -299,7 +302,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 		bad = true
 	}
 	if given["max"] && *max < 0 {
-		fmt.Fprintf(stderr, "nova-cairn index: --max must be zero or more (got %d); 0 means print them all\n", *max)
+		refuse(stderr, " index", fmt.Sprintf("--max must be zero or more (got %d); 0 means print them all", *max))
 		bad = true
 	}
 	if bad {
@@ -307,8 +310,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	}
 	all, total, err := cairn.Index(*store, *session, *max)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-cairn index: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " index", oneline.Err(err))
 	}
 	led := cairn.Coverage(*store)
 	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
@@ -341,8 +343,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer) int {
 	}
 	rc, err := cairn.Receipt(*store, *session, *entry)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-cairn receipt: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " receipt", oneline.Err(err))
 	}
 	fmt.Fprintf(stdout, "RECEIPT OK session=%s entry=%s stamp=%s bytes=%d source=%s persisted=true published=false publish=%s\n",
 		oneline.Field(rc.Session), oneline.Field(rc.ID),

@@ -34,7 +34,11 @@
   ;; The execution-control state: attempts, offers, durable holds and their
   ;; captures. It moves no work revision and writes no transition; see
   ;; control.lisp and SPEC-WORK.md:3921-3980.
-  controls)
+  controls
+  ;; The operator-configured verifiers, one per recipient identity. CONFIG the
+  ;; session holds beside the fleet and the routes; a receipt is admitted only
+  ;; after one of them vouches (SPEC-WORK.md:3859, src/receipt-admission.lisp).
+  verifiers)
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -72,6 +76,9 @@ below the state's revision is refused rather than silently reissued."
                            ;; never CONFIG; see src/fleet.lisp.
                            :allocations (make-fleet-registry)
                            :controls (make-ctl)
+                           ;; The operator-configured verifiers a receipt needs
+                           ;; (SPEC-WORK.md:3859); see receipt-admission.lisp.
+                           :verifiers (make-verifier-registry)
                            :queue '()
                            :q-lock (sb-thread:make-mutex)
                            :q-cvar (sb-thread:make-waitqueue)
@@ -102,7 +109,19 @@ below the state's revision is refused rather than silently reissued."
     (:external-effect :verb :node :by :effect :handle :owner :state
                       :request :stamp :clock :generation-owner)
     (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
-    (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)))
+    (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)
+    ;; The two receipt verbs (SPEC-WORK.md:2295-2296). :staged carries the
+    ;; immutable stage the readers produced outside the mutation loop; :lease-by
+    ;; and :lease-default are the CLI's --by and --default, renamed here because
+    ;; :by is this kernel's author field on every request.
+    (:acknowledge :verb :node :by :offer :attempt :generation :reply :stage
+                  :provenance :provenance-sha256 :staged :expect
+                  :staged-payload :payload-sha256 :lease-by :lease-default
+                  :observed-model :bench :execution :reason
+                  :request :stamp :clock :generation-owner)
+    (:decline :verb :node :by :offer :attempt :generation :reply :provenance
+              :provenance-sha256 :staged :expect :reason
+              :request :stamp :clock :generation-owner)))
 
 (defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
   "Fields that belong to some event kind of SPEC-WORK.md:823-892. One of these
@@ -363,6 +382,16 @@ command loop is a defect)."
       (return-from %submit (fleet-release-submit kernel request)))
     (when (eq verb :probe)
       (return-from %submit (fleet-probe-submit kernel request)))
+    ;; The savepoint capture (SPEC-WORK.md:7161): a READ on the command thread.
+    ;; It writes no event, appends nothing and moves no revision; it exists so
+    ;; the image and the cut are taken at one revision under the single writer.
+    (when (eq verb :savepoint-capture)
+      (return-from %submit (savepoint-capture-submit kernel request)))
+    ;; The two receipt verbs (SPEC-WORK.md:3857-3868). Their readers already ran
+    ;; outside this loop and handed in an immutable stage; the one writer
+    ;; revalidates it and admits one envelope. See receipt-admission.lisp.
+    (when (member verb '(:acknowledge :decline))
+      (return-from %submit (receipt-submit kernel request)))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"

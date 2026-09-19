@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,8 +36,18 @@ import (
 //
 // Platform and toolchain constraints are NOT opt-in tags and are not in scope:
 // `//go:build darwin` does not hide a test, it says where it runs, and the
-// three-OS matrices already cover that. Nor is a negation (`!windows`), which
+// hosted matrices already cover that. Nor is a negation (`!windows`), which
 // is on by default everywhere else.
+//
+// ONE PLATFORM IS THE EXCEPTION, named here so nobody has to find it twice.
+// Since 2026-09-18 the CL tier runs no native Windows leg at all (Glenn: "drop
+// the native windows CI runners. WSL only from now on."), so a `//go:build
+// windows` test file is COMPILED on every change — the lint job's `make
+// vet-windows` type-checks the whole tree, test files included, for GOOS=windows
+// — and RUN only by the certification tier's `test-windows`. That is a stated
+// trade, not a tag falling quietly out of CI, and it is why `windows` stays in
+// implicitTags below: it is a GOOS, it hides nothing from `go test` on a Windows
+// machine, and a `-tags windows` leg was never what ran those tests.
 
 // implicitTags are the constraints the toolchain sets by itself: the operating
 // systems and architectures `go test` already fans out over, plus the ones set
@@ -70,35 +79,22 @@ var implicitTags = map[string]bool{
 // by the compiler and never passed with `-tags`.
 var goVersionTag = regexp.MustCompile(`^go1\.\d+$`)
 
-// buildTagsInTestFiles walks the tree and returns every opt-in build tag a
-// _test.go carries, mapped to the files that carry it.
-func buildTagsInTestFiles(t *testing.T, root string) map[string][]string {
+// buildTagsInTestFiles reads the shared tree and returns every opt-in build tag
+// a _test.go carries, mapped to the files that carry it. The four directory
+// names the walk used to skip are skipped here by path: .git is not in the
+// shared tree at all, and testdata, vendor and node_modules hold files that are
+// not this repository's own tests.
+func buildTagsInTestFiles(t *testing.T) map[string][]string {
 	t.Helper()
 	tags := map[string][]string{}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, f := range repoTree(t).Files {
+		if !f.Test {
+			continue
 		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "testdata", "vendor", "node_modules":
-				return fs.SkipDir
-			}
-			return nil
+		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
+			continue
 		}
-		if !strings.HasSuffix(d.Name(), "_test.go") {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		for _, line := range strings.Split(string(raw), "\n") {
+		for _, line := range strings.Split(string(f.Src), "\n") {
 			line = strings.TrimSpace(line)
 			// A build constraint may only appear before the package clause.
 			if strings.HasPrefix(line, "package ") {
@@ -108,13 +104,9 @@ func buildTagsInTestFiles(t *testing.T, root string) map[string][]string {
 				continue
 			}
 			for _, tag := range optInTags(strings.TrimPrefix(line, "//go:build")) {
-				tags[tag] = append(tags[tag], rel)
+				tags[tag] = append(tags[tag], f.Rel)
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	return tags
 }
@@ -208,8 +200,10 @@ func appendOnce(in []string, s string) []string {
 // THE CLASS TEST. Every opt-in build tag in a test file is named by a scheduled
 // job, so no tagged test can fall out of CI without the tree saying so.
 func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
-	used := buildTagsInTestFiles(t, root)
+	used := buildTagsInTestFiles(t)
 	named := tagsNamedBySchedules(t, root)
 
 	if len(used) == 0 {

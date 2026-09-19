@@ -32,10 +32,16 @@
 // turns the cards:done stream and the gh fallback poll into the pub/sub messages the
 // merge layer reacts to (docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call
 // and writes no record: every message is a signal, and git stays the record.
+//
+// nova-work is also the durable card-result record of docs/SPEC-STATE.md. record consumes
+// the cards:done Redis stream and writes one row per result into Postgres, idempotent on
+// the stream id; results lists and filters those rows. The two record verbs are thin over
+// internal/record so the tests can put a fake store and a miniredis behind them.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -49,6 +55,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -88,7 +95,7 @@ usage:
                  [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
-  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] (--once | --deadline <duration>)
+  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -172,6 +179,15 @@ poll publishes nothing. Without --repo only the stream is bridged.
 --once reads the stream and polls the forge once, then exits. The loop form requires
 --deadline and returns when it is reached.
 
+Every event events publishes is also written as one structured JSON line (SPEC-LOGS.md
+Part 2): the same five labels on every line -- source=nova-work, verb=events, bench, the
+event kind (start, card-done, pr-checks-done, dev-moved, done) and level -- plus the
+fixed fields ts, guid, card, pr, msg, dur_ms and err. The line goes to stderr, which
+under systemd is the unit's journal and so a source Alloy already reads, or to the file
+--log names, which Alloy tails on every bench. A secret value never reaches the line:
+the emitter redacts anything credential-shaped before it leaves the process. The stdout
+EVENTS OK line is unchanged; the JSON line is written beside it, never instead of it.
+
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
                   Required on both graph verbs; there is no default and no discovery.
@@ -224,6 +240,11 @@ flags:
   --now <stamp>   ask and asks: the instant deadlines and ages are measured against;
                   the default is this run's clock and an unparsable one is a refusal
                   rather than a silent fall back to it.
+  --bench <name>  events: the fleet name of this machine, the bench label on every
+                  structured line. Without it, $NOVA_BENCH, else the short hostname.
+  --log <path>    events: append the structured JSON lines to this file instead of
+                  stderr. The file is the one Alloy tails; a path that cannot be opened
+                  is refused naming --log, never a silent run with no log.
 
 exit codes: 0 ran and passed; 1 set check read the file whole and found something wrong
 with its content, one SET line per finding; 2 could not run (bad invocation, an
@@ -236,14 +257,27 @@ example:
   nova-work plan check --file ./work.work --max-bytes 65536
   nova-work set check --file ./work-set.lisp --ready
   nova-work events --redis 127.0.0.1:6379 --once
+
+nova-work is also the durable card-result record: Redis carries the result, Postgres keeps it.
+
+usage:
+  nova-work record  --postgres <dsn> --redis <addr> [--once] [--deadline 1h] [--migrate]
+  nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed] [--max 20]
+
+verbs:
+  record  consume cards:done and write one row per result into card_results, idempotent on
+          the stream id; --migrate applies the schema and exits; --once reads one pass
+  results one line per recorded result, newest first
+  help
+  version
+
+example:
+  nova-work record --migrate --postgres postgres://space/nova
+  nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+  nova-work results --postgres postgres://space/nova --bench space --failed --max 5
 `
 
-// refuse is what an unusable invocation or an unreadable plan costs: one line naming
-// what was wrong and the door to the usage, never the banner itself.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-work%s: %s; run: nova-work help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
-}
+// deps is the seam the tests replace: the store and consumer factories and the clock.
 
 // refused is what could not run at all costs: ONE line on stderr naming what was wrong
 // and the door to the usage, exit 2 -- the client spec's own remedy spelling.
@@ -266,11 +300,16 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a
-// miniredis and a fake forge and reach no network.
+// miniredis, a fake forge and a fake result store, and reach no network. The event
+// bridge's three fields and the record verbs' two are ONE seam rather than two: a second
+// seam beside it was what the two slices each grew on their own branch, and a reader of
+// this package should not have to learn which verb reads which of them.
 type Deps struct {
-	Now   func() time.Time
-	Dial  func(addr string) *redis.Client
-	Forge func(repo, base string, timeout time.Duration) ci.Forge
+	Now          func() time.Time
+	Dial         func(addr string) *redis.Client
+	Forge        func(repo, base string, timeout time.Duration) ci.Forge
+	OpenStore    func(dsn string) (record.Store, error)
+	OpenConsumer func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error)
 }
 
 func production() Deps {
@@ -280,14 +319,18 @@ func production() Deps {
 		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
 			return ci.NewGHForge(repo, base, timeout)
 		},
+		OpenStore: func(dsn string) (record.Store, error) { return record.OpenPostgres(dsn) },
+		OpenConsumer: func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error) {
+			return record.NewRedisConsumer(ctx, addr, stream, group, name)
+		},
 	}
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
 // run takes the version stamp (a string, for the version verb's tests) and the injected
-// Deps (for the events verb's tests) as trailing options, so the socket client's stamp
-// and the event bridge's dependencies both reach the one entry point.
+// Deps (for the events and record verbs' tests) as trailing options, so the socket
+// client's stamp and every outside edge reach the one entry point.
 func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	stamp := version
 	deps := production()
@@ -310,6 +353,15 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
 	verb, rest := args[0], args[1:]
+	// The record verbs read the deps seam, so they dispatch outside the socket-verb
+	// switch: the switch a reader (and the audit test) walks holds exactly the verbs
+	// the resident session answers.
+	if verb == "record" {
+		return cmdRecord(rest, stdout, stderr, deps)
+	}
+	if verb == "results" {
+		return cmdResults(rest, stdout, stderr, deps)
+	}
 	switch verb {
 	case "help", "--help", "-h":
 		if len(rest) != 0 {
@@ -339,6 +391,13 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	default:
 		return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
 	}
+}
+
+// refuse is what an unusable invocation costs: one line naming what was wrong and the door
+// to the usage, never the banner.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-work%s: %s; run: nova-work help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
 }
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
@@ -694,15 +753,35 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	return ask(socket, b.String(), stdout, stderr)
 }
 
+// askTimeout is the wall-clock bound one exchange may spend. It is a variable
+// only so the tests can shorten it: a wedged session is a thirty-second wait
+// by design and a test suite cannot afford one per case.
+var askTimeout = workclient.DefaultTimeout
+
 // ask is the whole wire: one line in, one line out, newline-terminated both
 // ways. The dial and the read live in internal/workclient so that this package
 // keeps a single print path; here only the reply is classified.
+//
+// Three ways there is no reply line, and they are three different refusals,
+// because they send a person to three different places. A socket nothing is
+// listening on is no such session. A session that accepts and then says
+// nothing inside the bound is a session to go and look at — and, if the
+// request was a mutation, one whose work may still have been accepted, since a
+// client that stopped waiting is no more a rollback than a disconnect is
+// (docs/SPEC-WORK.md, "The engine and its client"). A reply past the wire's cap
+// is a session speaking a shape this wire does not carry.
 func ask(socket, request string, stdout, stderr io.Writer) int {
-	line, err := workclient.Exchange(socket, request)
-	if err != nil {
+	line, err := workclient.ExchangeWithin(socket, request, askTimeout)
+	switch {
+	case err == nil:
+		return printReply(line, stdout, stderr)
+	case errors.Is(err, workclient.ErrSilent):
+		return refused(stderr, "the session at "+socket+" accepted the request and did not answer: "+err.Error()+"; a mutation may still have been accepted -- ask the session rather than retrying blind")
+	case errors.Is(err, workclient.ErrTooLong):
+		return refused(stderr, "the session at "+socket+" answered past the wire's bound: "+err.Error())
+	default:
 		return refused(stderr, "no such session: cannot reach "+socket+": "+err.Error())
 	}
-	return printReply(line, stdout, stderr)
 }
 
 // printReply splits the session's line by the second token and by nothing
@@ -741,6 +820,8 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 	ghPoll := fs.String("gh-poll", "60s", "")
 	deadline := fs.String("deadline", "", "")
 	consumer := fs.String("consumer", "", "")
+	bench := fs.String("bench", "", "")
+	logPath := fs.String("log", "", "")
 	once := fs.Bool("once", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
@@ -771,6 +852,23 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 
+	// The structured sink of SPEC-LOGS.md Part 2. Its default is stderr, which under
+	// systemd is the unit's journal and so a source Alloy already reads without a new
+	// agent; --log names the file Alloy tails instead, for a bench whose supervisor is
+	// not systemd. A path that cannot be opened is a refusal here and not a silent run
+	// with no log: a bench whose lines never reach Loki must say why, at the start.
+	events := stderr
+	if *logPath != "" {
+		f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-work events: --log %s cannot be opened for append: %s; run: nova-work help\n",
+				oneline.Field(*logPath), oneline.Err(err))
+			return 2
+		}
+		defer f.Close()
+		events = f
+	}
+
 	rdb := deps.Dial(*addr)
 	defer rdb.Close()
 
@@ -779,6 +877,15 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 		forge = deps.Forge(*repo, *base, poll)
 	}
 	p := ci.NewProducer(rdb, forge, *consumer, stderr)
+	p.Events = events
+	p.Bench = benchName(*bench)
+	if deps.Now != nil {
+		p.Clock = deps.Now
+	}
+
+	started := time.Now()
+	p.Announce(ci.EventStart, fmt.Sprintf("events: bridging %s with gh-poll %s",
+		oneline.Field(ci.StreamCardsDone), oneline.Field(poll.String())), 0, nil)
 
 	ctx := context.Background()
 	if bound > 0 {
@@ -791,6 +898,7 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 		cards, err := p.PublishCardsDone(ctx)
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+			p.Announce(ci.EventRefuse, "events: the stream could not be read", time.Since(started), err)
 			return 1
 		}
 		polls := 0
@@ -798,16 +906,90 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 			polls, err = p.PollOnce(ctx)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+				p.Announce(ci.EventRefuse, "events: the forge could not be polled", time.Since(started), err)
 				return 1
 			}
 		}
 		fmt.Fprintf(stdout, "EVENTS OK once=true card-done=%d published=%d\n", cards, polls)
+		p.Announce(ci.EventDone, fmt.Sprintf("events: one pass, card-done %d, published %d", cards, polls), time.Since(started), nil)
 		return 0
 	}
 	if err := p.Run(ctx, poll); err != nil && err != context.DeadlineExceeded {
 		fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+		p.Announce(ci.EventRefuse, "events: the bridge stopped before its deadline", time.Since(started), err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "EVENTS OK once=false deadline=%s\n", oneline.Field(bound.String()))
+	p.Announce(ci.EventDone, fmt.Sprintf("events: the bridge reached its deadline %s",
+		oneline.Field(bound.String())), time.Since(started), nil)
 	return 0
+}
+
+// benchName is the bench label on every structured line: the flag when given, else
+// $NOVA_BENCH, else the short hostname. It is the fleet's name for this machine, which is
+// what a LogQL query selects on, and it is read here rather than in internal/ci so a test
+// of the producer injects it and never reads the environment.
+func benchName(flagValue string) string {
+	if s := strings.TrimSpace(flagValue); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(os.Getenv("NOVA_BENCH")); s != "" {
+		return s
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	if i := strings.Index(h, "."); i > 0 {
+		h = h[:i]
+	}
+	return strings.TrimSpace(h)
+}
+
+// ------------------------------------------------------------------------------- flags
+
+// flags is one verb's flag set with package flag's two mouths closed: its error text quotes
+// the argument it could not parse and its usage dump is discarded, so an argument beginning
+// with a dash cannot author a line of stderr before any code here runs.
+type flags struct {
+	verb     string
+	fs       *flag.FlagSet
+	problems []string
+}
+
+func newFlags(verb string) *flags {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	return &flags{verb: verb, fs: fs}
+}
+
+func (f *flags) parse(args []string, stderr io.Writer) bool {
+	if err := f.fs.Parse(args); err != nil {
+		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
+		return false
+	}
+	if n := f.fs.NArg(); n > 0 {
+		fmt.Fprintf(stderr, "nova-work %s: takes no positional arguments, got %d (flags come before arguments)\n", oneline.Escape(f.verb), n)
+		return false
+	}
+	return true
+}
+
+// want records a missing required flag with what it WANTS, never only what was wrong.
+func (f *flags) want(value, name, wants string) {
+	if value == "" {
+		f.problems = append(f.problems, fmt.Sprintf("--%s is required; it wants %s; refusing to guess", oneline.Escape(name), oneline.Escape(wants)))
+	}
+}
+
+func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
+
+// refused prints every problem this run found, one line each, and reports whether there
+// were any.
+func (f *flags) refused(stderr io.Writer) bool {
+	for _, p := range f.problems {
+		fmt.Fprintf(stderr, "nova-work %s: %s\n", oneline.Escape(f.verb), oneline.Escape(p))
+	}
+	return len(f.problems) > 0
 }

@@ -224,22 +224,24 @@ func ReadCursor(root, lane string) (Cursor, error) {
 		if len(fields) > 1 {
 			got.Stamp = fields[1]
 		}
-		for _, tok := range fields[2:] {
-			switch {
-			case strings.HasPrefix(tok, cursorOpenPrefix):
-				n, perr := strconv.Atoi(strings.TrimPrefix(tok, cursorOpenPrefix))
-				if perr != nil || n < 0 {
-					return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<n>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix)
+		if len(fields) > 2 {
+			for _, tok := range fields[2:] {
+				switch {
+				case strings.HasPrefix(tok, cursorOpenPrefix):
+					n, perr := strconv.Atoi(strings.TrimPrefix(tok, cursorOpenPrefix))
+					if perr != nil || n < 0 {
+						return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<n>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix)
+					}
+					got.Open, got.Counted = n, true
+				case strings.HasPrefix(tok, cursorLegacyPrefix):
+					line := strings.TrimPrefix(tok, cursorLegacyPrefix)
+					if _, perr := ParseLegacyBefore(line); perr != nil {
+						return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<date-or-instant>: %w", CursorPath(lane), r.line, truncate(tok, 40), cursorLegacyPrefix, perr)
+					}
+					got.Legacy = line
+				default:
+					return Cursor{}, fmt.Errorf("%s: line %d: %q is neither %s<n> nor %s<date-or-instant>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix, cursorLegacyPrefix)
 				}
-				got.Open, got.Counted = n, true
-			case strings.HasPrefix(tok, cursorLegacyPrefix):
-				line := strings.TrimPrefix(tok, cursorLegacyPrefix)
-				if _, perr := ParseLegacyBefore(line); perr != nil {
-					return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<date-or-instant>: %w", CursorPath(lane), r.line, truncate(tok, 40), cursorLegacyPrefix, perr)
-				}
-				got.Legacy = line
-			default:
-				return Cursor{}, fmt.Errorf("%s: line %d: %q is neither %s<n> nor %s<date-or-instant>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix, cursorLegacyPrefix)
 			}
 		}
 	}
@@ -801,7 +803,7 @@ func IndexEntryFor(c *Config, n Note) IndexEntry {
 // ReadLaneIndex reads one lane's INDEX. A lane with no INDEX has none, which is a bus
 // that predates this file and is exactly what `check --full --rebuild-index` is for.
 func ReadLaneIndex(root, lane string) ([]IndexEntry, error) {
-	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(IndexPath(lane))))
+	raw, err := readLaneFile(root, filepath.Join(root, filepath.FromSlash(IndexPath(lane))))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

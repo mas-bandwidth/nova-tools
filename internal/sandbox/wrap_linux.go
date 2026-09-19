@@ -278,6 +278,12 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 			return refuse("sandbox_failed", "--read %s could not be added to the landlock ruleset: %v", dir, err)
 		}
 	}
+	// The no-exec read set: the same rule 5 treatment, minus EXECUTE.
+	for _, dir := range p.ReadsNoExec {
+		if err := addPathRule(rulesetFd, dir, uint64(fsReadNoExecSubset)); err != nil {
+			return refuse("sandbox_failed", "--read-noexec %s could not be added to the landlock ruleset: %v", dir, err)
+		}
+	}
 	for _, dir := range writePaths(p) {
 		if err := addPathRule(rulesetFd, dir, write); err != nil {
 			return refuse("sandbox_failed", "--write %s could not be added to the landlock ruleset: %v", dir, err)

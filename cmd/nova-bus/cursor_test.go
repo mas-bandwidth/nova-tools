@@ -62,13 +62,13 @@ func read(t *testing.T, checkout, path string) string {
 // choice and neither choice may cost a parse. And then once more from the other side: a
 // reply that CLOSES an open entry is also one parse, so closing is driven by the new notes
 // and not by a walk of what is being carried.
-// NOT PARALLEL, and neither is TestHeardSurvivesTheCursor: both assert a DELTA of
-// bus.NoteParses, which is one counter for the whole process. A second test parsing a note
-// beside them would be counted here, and the assertion is an exact number. Every other test
-// in this package owns its own TempDir and its own bus and runs parallel; these two are the
-// price of instrumentation that is process-wide, and they are named here rather than left
-// as an unexplained omission.
+// PARALLEL, and so is TestHeardSurvivesTheCursor, since the count they assert a DELTA of is
+// bus.NoteParsesIn(checkout): the parses over THIS test's own bus, and no other. They used
+// to read bus.NoteParses, one counter for the whole process, which a sibling parsing a note
+// beside them would have moved -- and so they ran alone, one after the other, and were the
+// package's critical path. The assertions are the same exact numbers over the same bus.
 func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("slow: builds a ten-thousand-note fixture; runs on the self-hosted legs and nightly")
 	}
@@ -85,11 +85,11 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// The first run has no cursor, so it is a full one and it says so. This is the only
 	// full read a reader ever pays for, and it is what writes the open list every later run
 	// prints from.
-	before := bus.NoteParses()
+	before := bus.NoteParsesIn(checkout)
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full cursor=-").
 		mustContain(t, "stdout", "INBOX CURSOR commit=")
-	if full := bus.NoteParses() - before; full < history {
+	if full := bus.NoteParsesIn(checkout) - before; full < history {
 		t.Fatalf("the full run parsed %d notes over a bus of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
 	}
 
@@ -115,14 +115,14 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// THE DEFAULT READ. It writes nothing (no --advance), so the two reads below see the
 	// same change set, and it prints one line for the 500 rather than 500 lines.
 	quiet := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
-	before = bus.NoteParses()
+	before = bus.NoteParsesIn(checkout)
 	r = invoke(t, "", quiet...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried+1)).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Ada carrying=%d open=%d", carried+1, carried+1))
 	// ONE. Not one plus the open list, not one plus the history: one file opened and parsed,
 	// over a bus of ten thousand and one with five hundred of them open.
-	if got := bus.NoteParses() - before; got != 1 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
 		t.Fatalf("inbox parsed %d notes for one new note over a bus of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
 	}
 	// The NEW note, in full, and NOTHING else from the list of 500. That is the whole of
@@ -135,12 +135,12 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// THE SAME READ WITH --open. It prints the carried entries, every field of them out of
 	// the open list, and it still parses ONE -- capped at --open-max, with one line saying
 	// how many it did not print.
-	before = bus.NoteParses()
+	before = bus.NoteParsesIn(checkout)
 	r = invoke(t, "", append(append([]string{}, quiet...), "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z").
 		mustContain(t, "stdout", "One more").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN listed=20 and %d more (--open-max to widen)", carried+1-20))
-	if got := bus.NoteParses() - before; got != 1 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
 		t.Fatalf("inbox --open parsed %d notes, want 1: printing the open list must not open a note\n%s", got, r.stdout)
 	}
 	if n := strings.Count(r.stdout, "INBOX NOTE "); n != 20 {
@@ -165,11 +165,11 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 			"Re: bo-222222222222\nSubject: Yes, the gate\n\nYes, on the merge queue too.\n")
 	commitAs(t, checkout, "Ada", "ada: yes, the gate")
 
-	before = bus.NoteParses()
+	before = bus.NoteParsesIn(checkout)
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried)).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d pushed=true", carried))
-	if got := bus.NoteParses() - before; got != 1 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
 		t.Fatalf("closing an open entry parsed %d notes, want the 1 reply that closed it\n%s", got, r.stdout)
 	}
 	if strings.Contains(read(t, checkout, "from-ada/OPEN"), "bo-222222222222") {
@@ -312,6 +312,7 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 // receipt reaches ONE run -- as my own RECEIPTS file in that run's change set -- and what it
 // writes is the flag in OPEN, which every later run reads for nothing.
 func TestHeardSurvivesTheCursor(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
@@ -326,11 +327,11 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 	}
 	// And again, with the receipt now far behind the cursor -- and with no note opened at
 	// all, which is the count this asserts.
-	before := bus.NoteParses()
+	before := bus.NoteParsesIn(checkout)
 	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345").
 		mustContain(t, "stdout", "heard=1")
-	if got := bus.NoteParses() - before; got != 0 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 0 {
 		t.Fatalf("a run over an unchanged bus parsed %d notes, want 0: heard is read from the open list", got)
 	}
 	// The default read says the same thing in one line, and RECEIPTS is still the durable

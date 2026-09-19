@@ -96,9 +96,16 @@ func mutateFixture(t *testing.T, dir string) (*MutateResult, error) {
 // look inside it afterwards.
 func mutateFixtureIn(t *testing.T, dir, tempRoot string) (*MutateResult, error) {
 	t.Helper()
+	return mutateFixtureRefs(t, dir, "main", "HEAD", tempRoot)
+}
+
+// mutateFixtureRefs names the base and the head, for the tests whose fixture leaves the
+// working copy on some other commit than the head.
+func mutateFixtureRefs(t *testing.T, dir, base, head, tempRoot string) (*MutateResult, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	return Mutate(ctx, MutateOptions{Repo: dir, Base: "main", Head: "HEAD", TempRoot: tempRoot})
+	return Mutate(ctx, MutateOptions{Repo: dir, Base: base, Head: head, TempRoot: tempRoot})
 }
 
 // The case the verb exists for: the head fixes Sign at zero and brings a test that is red
@@ -211,6 +218,51 @@ func TestSignNegative(t *testing.T) {
 	}
 	if res.Greens[0].File != "sign/sign_test.go" {
 		t.Fatalf("green file = %q, want the changed test file", res.Greens[0].File)
+	}
+}
+
+// --head is a ref, and the tree it names is the throwaway worktree's, never the caller's
+// checkout. A PR that ADDS a test file is the common shape, and a caller sitting on the
+// base does not have that file: reading it from the caller's working copy skips the one
+// file the range is about, and the verdict then rests on nothing.
+func TestMutateReadsATestFileTheHeadAddsWhileTheCallerSitsOnTheBase(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "git", "checkout", "-q", "-b", "fix")
+	write(t, dir, "sign/sign.go", `package sign
+
+// Sign answers zero at zero.
+func Sign(n int) int {
+	if n > 0 {
+		return 1
+	}
+	if n == 0 {
+		return 0
+	}
+	return -1
+}
+`)
+	write(t, dir, "sign/zero_test.go", `package sign
+
+import "testing"
+
+func TestSignZero(t *testing.T) {
+	if Sign(0) != 0 {
+		t.Fatal("zero")
+	}
+}
+`)
+	commit(t, dir, "fix Sign at zero, in a test file of its own")
+	run(t, dir, "git", "checkout", "-q", "main")
+
+	res, err := mutateFixtureRefs(t, dir, "main", "fix", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skips) != 0 {
+		t.Fatalf("skips = %+v; the head's test file is in the worktree the verb made at the head", res.Skips)
+	}
+	if !res.Pass || res.Red != 1 || res.Green != 0 {
+		t.Fatalf("pass=%v red=%d green=%d greens=%v; the added test must be run and red", res.Pass, res.Red, res.Green, res.Greens)
 	}
 }
 

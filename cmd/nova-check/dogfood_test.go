@@ -320,7 +320,7 @@ func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 	if err := os.MkdirAll(receipts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--fail-max", "1")
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--fail-max", "1", "--allow-empty")
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
@@ -394,6 +394,28 @@ func TestDogfoodIsInTheUsageBanner(t *testing.T) {
 	for _, want := range []string{"dogfood ledger", "dogfood record", "dogfood gate"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("the banner does not carry %q", want)
+		}
+	}
+}
+
+func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
+	code, stdout, _ := dogfoodRun(t, "help")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	line := ""
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.Contains(l, "dogfood record") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("the banner has no dogfood record line")
+	}
+	for _, want := range []string{"--cli", "--tools"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the dogfood record usage line does not name %s, so a reader pastes a line the verb refuses:\n%s", want, line)
 		}
 	}
 }

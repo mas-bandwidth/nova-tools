@@ -375,14 +375,38 @@ func (plan ReceiptPlan) Message(me Participant) string {
 	return me.Slug() + ": receipt for " + strings.Join(plan.Record, ", ")
 }
 
-// ClosePlan is what a `close --before` run will record: one receipt note per open note
-// dated before the stamp, each carrying a Re line that closes the original and a body that
+// ClosePlan is what a `close --before` run will record: ONE receipt note per sender lane,
+// carrying a Re line for every open note of theirs dated before the stamp, and a body that
 // says why. `close` is the whole backlog at once -- the explicit opt-in bulk cutoff that
 // the INBOX OPEN line's large-list remedy names beside the normal reply-or-receipt path,
 // but as a real hand rather than the cursor advance that leaves the notes carried.
+//
+// IT WAS ONE FILE PER CLOSED NOTE UNTIL #1540, and that is what broke it. Every receipt in
+// a run carries the same subject -- the stamp -- so every one got the same slug and the
+// same minute, leaving the id as the only thing telling two filenames apart; and the id is
+// a hash over (from, date, to, cc, re, subject, kind, body), so two open notes sharing a
+// TARGET ID produced the same id, the same path, and `file exists` at the second Save. A
+// hand-made id reused by a sender is enough, and one was: on the coordinator's lane
+//
+//	$ nova-bus close --before 2026-09-18T12:00:00Z --dry-run
+//	CLOSE OK closed=2964 kept=184 commit=-
+//	$ nova-bus close --before 2026-09-18T12:00:00Z --remote origin --branch main
+//	CLOSE FAIL from-rowan/...-42cb99b820c2.md: open ...: file exists
+//
+// -- no commit, the cursor untouched, thousands of receipts unwritten, and the remedy the
+// tool's own INBOX WALK line prescribes unusable on the lane that needed it most.
+//
+// One receipt per lane removes the collision by construction rather than by retrying
+// against it: two receipts in a run differ in To AND in Re AND in body, so they cannot hash
+// alike; and a target named twice is closed once. internal/bus already reads every id a Re
+// line names (`answered[re] = true` in since.go), so one receipt naming forty ids closes
+// forty notes exactly as forty receipts did.
 type ClosePlan struct {
-	// Prepared is the receipt notes to write, one per open note older than Before.
+	// Prepared is the receipt notes to write, one per SENDER LANE.
 	Prepared []Prepared
+	// Closed is how many open notes those receipts close, which is what `closed=` counts
+	// and is not len(Prepared) any more.
+	Closed int
 	// Kept is the open notes dated at or after the stamp, left open on purpose.
 	Kept int
 	// Stamp is the Before moment rendered, used in every note's subject and body.
@@ -390,7 +414,7 @@ type ClosePlan struct {
 }
 
 // PlanClose selects the reader's open notes dated before the stamp and builds one receipt
-// note per one. It writes nothing: the caller writes the notes and commits once.
+// note per sender lane. It writes nothing: the caller writes the notes and commits once.
 func PlanClose(t *Bus, me Participant, before time.Time, now time.Time) (ClosePlan, error) {
 	var plan ClosePlan
 	if me.Lane == "" {
@@ -400,38 +424,73 @@ func PlanClose(t *Bus, me Participant, before time.Time, now time.Time) (ClosePl
 		return plan, errors.New("no stamp given")
 	}
 	plan.Stamp = before.UTC().Format(ReceiptStampLayout)
-	body := "closed: unanswered before " + plan.Stamp
+	// The senders in the order their first closable note appeared, so a plan is the same
+	// plan twice and a diff of two runs is readable. A map alone would not be.
+	var senders []string
+	targets := map[string][]string{}
+	seen := map[string]bool{}
 	for _, item := range t.Inbox(me, maxReceiptGuessWords) {
 		when := item.Note.When()
 		if when.IsZero() || !when.Before(before) {
 			plan.Kept++
 			continue
 		}
+		plan.Closed++
 		target := item.Note.Header.ID
 		if target == "" {
 			target = item.Note.Path
 		}
-		prepared, err := closeReceipt(t, me, item, target, body, now)
-		if err != nil {
-			return plan, err
+		if _, ok := targets[item.From]; !ok {
+			senders = append(senders, item.From)
 		}
+		// A target named twice -- two notes sharing a hand-made id -- is closed once. It
+		// used to be receipted twice, into one filename.
+		if key := item.From + "\x00" + target; !seen[key] {
+			seen[key] = true
+			targets[item.From] = append(targets[item.From], target)
+		}
+	}
+	paths := map[string]bool{}
+	for _, from := range senders {
+		prepared, err := closeReceipt(t, me, from, targets[from], plan.Stamp, now)
+		if err != nil {
+			return ClosePlan{}, err
+		}
+		// UNIQUE BY CONSTRUCTION, AND CHECKED ANYWAY, BEFORE ANYTHING IS WRITTEN. Two
+		// receipts in one run differ in To, in Re and in body, so this cannot fire without
+		// a sha256 collision -- and if it ever does it is a refusal with nothing written,
+		// never a half-finished close discovered at the tenth Save.
+		if paths[prepared.Path] {
+			return ClosePlan{}, fmt.Errorf("two receipts in this close would be written to %s; nothing was written", prepared.Path)
+		}
+		paths[prepared.Path] = true
 		plan.Prepared = append(plan.Prepared, prepared)
 	}
 	return plan, nil
 }
 
-// closeReceipt builds one receipt note that closes one open note: a Re line to the target,
-// the Kind that marks it a receipt, and a subject and body that name the stamp.
-func closeReceipt(t *Bus, me Participant, item InboxItem, target, body string, now time.Time) (Prepared, error) {
+// closeReceipt builds ONE receipt note closing every open note one sender left before the
+// stamp: a Re line per target, the Kind that marks it a receipt, and a subject and body
+// that name the stamp. The body lists the ids so the note says on its face what it closed,
+// rather than leaving that only in its headers.
+func closeReceipt(t *Bus, me Participant, from string, targets []string, stamp string, now time.Time) (Prepared, error) {
+	subject := "closed: unanswered before " + stamp
+	var b strings.Builder
+	b.WriteString(subject)
+	b.WriteString("\n")
+	for _, target := range targets {
+		b.WriteString("\n")
+		b.WriteString(target)
+	}
 	h := Header{
 		From:    me.Name,
-		To:      item.From,
-		Re:      []string{target},
+		To:      from,
+		Re:      targets,
 		Kind:    KindReceipt,
-		Subject: body,
+		Subject: subject,
 		Date:    now.UTC().Format(DateLayout),
 	}
-	n := Note{Header: h, Body: body, Lane: me.Lane}
+	n := Note{Header: h, Body: b.String(), Lane: me.Lane}
 	id, err := AssignID(t.Config, me, n.Header, n.Body, n.Header.Date)
 	if err != nil {
 		return Prepared{}, err
@@ -453,9 +512,10 @@ func closeReceipt(t *Bus, me Participant, item InboxItem, target, body string, n
 	}, nil
 }
 
-// Message is the commit message for a close run.
+// Message is the commit message for a close run. It counts NOTES CLOSED, which is what the
+// person asked for, and not the receipts it took to close them.
 func (plan ClosePlan) Message(me Participant) string {
-	return fmt.Sprintf("%s: close %d before %s", me.Slug(), len(plan.Prepared), plan.Stamp)
+	return fmt.Sprintf("%s: close %d before %s", me.Slug(), plan.Closed, plan.Stamp)
 }
 
 // maxReceiptGuessWords is the word ceiling PlanClose reads the inbox under. Close does not

@@ -31,10 +31,8 @@ var checkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|checkFailMax|fs.Name()": "the verb's own name, chosen by this file at every flag.NewFlagSet",
-		"main.go|requireFlags|fs.Name()": "the verb's own name, chosen by this file at every flag.NewFlagSet",
-		"main.go|requireFlags|name":      "a required flag's name, a key of the map this file's callers build from literals",
-		"main.go|cmdAttest|att.SHA256":   "sixty-four hex digits from encoding/hex over a SHA-256 sum",
+		"main.go|requireFlags|name":    "a required flag's name, a key of the map this file's callers build from literals",
+		"main.go|cmdAttest|att.SHA256": "sixty-four hex digits from encoding/hex over a SHA-256 sum",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -61,6 +59,14 @@ var checkAudit = audit.Config{
 		`"context"`,
 		`"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/dogfood"`,
+		// hygiene.go, and why internal/hygiene cannot write past the escape: it holds no
+		// writer of its own. It runs git as a subprocess, parses what came back and returns
+		// Findings -- three STRING fields this package renders through oneline.Field and
+		// oneline.Escape at the one print site that carries them. Its errors are returned,
+		// never printed, and reach the stream only through refuse, which escapes them.
+		// The matched text of a secret finding is not in any field it returns (its own
+		// TestHygieneRejectsAKeyShapeAndNeverPrintsIt searches every field for it).
+		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
 	},
 	MinClassified: 30,
 }
