@@ -113,6 +113,35 @@ func TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand(t *testing.T) {
 	absent(t, lstdout, "LAND OK")
 }
 
+// 1b. TestLandWithoutAReceiptRefusesRatherThanSkipTheMemberFold: the same 02:34Z hold as
+// test 1, but the landing carries no receipt. A head under rowan/integration-* names the
+// branch, not the members it carries, so land cannot name the member whose hold it must
+// fold; it must refuse rather than enqueue and print members=- as the fact.
+func TestLandWithoutAReceiptRefusesRatherThanSkipTheMemberFold(t *testing.T) {
+	t.Parallel()
+	revFile := testReviewerFile(t, t.TempDir(), defaultReviewersTSV)
+	head := strings.Repeat("a", 40)
+	const memberHead = "6adbbd1d89869455e920a43ccf7378daf4375add"
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	h.PRs[1551] = merge.PR{Number: 1551, HeadOID: memberHead, Mergeable: "MERGEABLE"}
+
+	// The hold lands on the MEMBER after BATCH OK, and this land has no receipt to name it by.
+	h.SetVerdicts(1551, merge.Verdict{
+		ID: "comment:202", Who: "alice", Word: "hold", Head: memberHead,
+		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
+	})
+
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560", "--reviewers", revFile)
+	if exit != 1 {
+		t.Fatalf("land without a receipt cannot re-read the members it lands and must refuse, got exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("the queue was touched by a batch whose member fold never ran: %v", q.enqueued)
+	}
+	contains(t, stderr, "no-receipt: cannot re-read members")
+	absent(t, stdout, "LAND OK")
+}
+
 // 2. TestAHoldInAnySourceStops: lane record, review CHANGES_REQUESTED, comment.
 func TestAHoldInAnySourceStops(t *testing.T) {
 	t.Parallel()
