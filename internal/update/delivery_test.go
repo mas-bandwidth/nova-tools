@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // This fake checks the caller's persisted state machine only. Actual bare-Git
@@ -82,11 +84,11 @@ func fakeBusPath(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	raw, e := os.ReadFile(os.Args[0])
+	raw, e := os.Executable()
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = os.WriteFile(filepath.Join(dir, name), raw, 0700); e != nil {
+	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
 		t.Fatal(e)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -768,16 +769,14 @@ func copyOfThisBinary(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
 	name := "nova-sandbox-copy"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
 	copied := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(copied, b, 0o700); err != nil {
+	// A COPY, never a link: this helper exists to hand the probe a parent that is
+	// not this binary, and a hard link is this binary (internal/testbin.PlaceCopy).
+	if err := testbin.PlaceCopy(self, copied); err != nil {
 		t.Fatal(err)
 	}
 	return copied
@@ -915,14 +914,11 @@ func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
 	if err := os.WriteFile(tool, []byte("not really a tool\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(tool)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// A COPY: the same bytes, a different file. This is the foreign parent, and it is the
-	// case that must be false under every load and from every direction.
+	// case that must be false under every load and from every direction. PlaceCopy, never
+	// Place: a hard link would BE this binary and the case would stop being false.
 	copied := filepath.Join(dir, "tool-copy")
-	if err := os.WriteFile(copied, body, 0o700); err != nil {
+	if err := testbin.PlaceCopy(tool, copied); err != nil {
 		t.Fatal(err)
 	}
 	// A SYMLINK and a HARD LINK are the same file under another name, and a hard link is the
