@@ -74,7 +74,7 @@ usage:
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
         [--diagnostics]
-        [--decide [--floor <f>] [--key-env <name>] [--base-url <url>] [--allow-private]]
+        [--decide [--floor <f>] [--key-env <name>] [--base-url <url>]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--until <instant>] [--idle-exit <n>]
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
@@ -1302,8 +1302,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	askDecide := f.fs.Bool("decide", false, "ask the provider for a typed kind, needs_reply and blocked on every INBOX NOTE line")
 	decideFloor := f.fs.Float64("floor", 0.9, "with --decide, the confidence floor below which a decision is only a suggestion")
 	decideKeyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "with --decide, the environment variable holding the provider key")
-	decideBaseURL := f.fs.String("base-url", decide.DefaultBaseURL, "with --decide, the provider endpoint")
-	allowPrivate := f.fs.Bool("allow-private", false, "with --decide, send note text from a bus whose clone has no .public marker")
+	decideBaseURL := f.fs.String("base-url", decide.DefaultBaseURL, "with --decide, the provider endpoint; read on a public bus only")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
@@ -1385,18 +1384,19 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess; run: nova-bus help\n", *decideFloor)
 		return 2
 	}
-	// A bus with no .public marker is a private one, and --decide would hand its note
-	// text to a provider that may train on what it receives. The marker is the clone's
-	// own statement that the bus is public; without it the run refuses by name, and
-	// --allow-private is the one explicit way to mean it anyway.
-	if *askDecide && !*allowPrivate {
-		marker := filepath.Join(*busDir, publicMarker)
-		if _, err := os.Stat(marker); err != nil {
-			fmt.Fprintf(stderr, "INBOX REFUSED: --decide sends note text to a provider that may train on it, and %s has no %s marker; pass --allow-private to mean it anyway, or leave that clone private\n",
-				oneline.Quote(*busDir), publicMarker)
-			return 2
-		}
-	}
+	// A BUS WITH NO .public MARKER IS A PRIVATE ONE, AND IT IS NO LONGER BLANKET-REFUSED.
+	//
+	// #1644's contract, settled by Stella's ruling of 2026-09-19T23:13Z: an explicit
+	// `inbox --decide` on a private bus answers from the mechanical rule table, with no
+	// client, no provider key and no call; a note the table has no row for is refused by
+	// name before all three, and the run never falls back to the public route. What that
+	// costs is written into the TYPE the private route uses (cmd/nova-bus/private.go), not
+	// into a flag: `--allow-private` is GONE, and nothing replaces it. The earlier blanket
+	// refusal stood here and sent every reader of a private bus to that flag.
+	//
+	// The marker is read once, before the listing, so the route is fixed before a single
+	// note is opened. Its ABSENCE is the default: a bus nobody has said anything about is
+	// private.
 	o := inboxOpts{
 		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
@@ -1406,6 +1406,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		maxCommits: *maxCommits, walkProgress: true,
 		diagnostics: *diagnostics,
 		decide:      *askDecide, floor: *decideFloor, keyEnv: *decideKeyEnv, baseURL: *decideBaseURL,
+		private: busIsPrivate(*busDir),
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -1482,6 +1483,12 @@ type inboxOpts struct {
 	floor   float64
 	keyEnv  string
 	baseURL string
+	// private is read from the bus clone -- it is true when the clone carries no .public
+	// marker -- and it is NOT a flag: no caller sets it, and there is nothing to pass that
+	// changes it. It chooses which decider the listing builds, and the private one is a
+	// type with no client, no key-env and no base URL in it. `wait` leaves decide false,
+	// so it builds neither.
+	private bool
 	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
 	// that is only beats and cursors never wakes a wait, so the flag is accepted and
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
@@ -1557,10 +1564,12 @@ type inboxReading struct {
 func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, inboxReading) {
 	var r inboxReading
 	// When --decide is on, this judges the notes it prints. It is lazy, so a listing
-	// with no notes builds no client and calls no provider.
-	var d *noteDecider
+	// with no notes builds no client and calls no provider. WHICH decider it is comes
+	// from the bus clone and not from any flag: a clone with no .public marker gets the
+	// private one, whose type has nothing in it to call a provider with.
+	var d noteJudge
 	if o.decide {
-		d = newNoteDecider(o)
+		d = newNoteJudge(o)
 	}
 	c, err := bus.LoadConfig(o.busDir)
 	if err != nil {
@@ -2022,9 +2031,22 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// AND, LAST, WHAT --decide FOUND. n is the notes it judged, needs_reply how many of
 	// them at or above 0.5, and below_floor how many kinds the provider was less sure of
 	// than the floor -- those are suggestions, and the caller keeps today's behaviour.
+	// TWO LITERAL LINES, not one line with a computed tail. The public one is byte for
+	// byte the line it has always been; the private one adds the actual privacy and the
+	// actual decider to that SAME receipt rather than printing a new one (Stella: "Report
+	// the actual privacy/source/refusal through existing typed receipts"). They are spelled
+	// out rather than assembled so that a reader greps the line they will see, and so that
+	// every printed argument stays literal, quoted or escaped
+	// (internal/ci TestEveryPrintedArgumentIsLiteralQuotedOrEscaped).
 	if d != nil {
-		fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d wake=%d\n",
-			d.counts.n, d.counts.needsReply, d.counts.belowFloor, d.counts.wake)
+		c := d.decided()
+		if d.privateRoute() {
+			fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d wake=%d privacy=private decider=rules\n",
+				c.n, c.needsReply, c.belowFloor, c.wake)
+		} else {
+			fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d wake=%d\n",
+				c.n, c.needsReply, c.belowFloor, c.wake)
+		}
 	}
 	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
 	r.Changed, r.NoteChanges = scope.Changed, res.NoteChanges
@@ -2358,6 +2380,35 @@ type inboxDecider interface {
 	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
 }
 
+// noteJudge is everything a listing asks of --decide, and the seam the two ROUTES meet at.
+// There are exactly two implementations and they are chosen by the bus clone, never by a
+// caller: noteDecider on a bus carrying .public, privateDecider on one that does not.
+//
+// The seam is a type and not a flag on one type on purpose. A bool inside a single decider
+// would leave the client, the key-env and the base URL sitting in the value the private
+// path holds, one mistaken branch away from being used; the private route instead holds a
+// value that HAS none of them. That is what "mechanically admitted" means here.
+type noteJudge interface {
+	// judge returns one note's typed decision, or the typed refusal that stops the run.
+	judge(e bus.OpenEntry) (noteJudgment, error)
+	// decided is the tally behind the INBOX DECIDED line.
+	decided() decideCounts
+	// privateRoute says which of the two INBOX DECIDED lines this run prints. It is a
+	// bool and not a string because the line is a literal either way: the public one is
+	// the line dev has always printed, and the private one names the privacy and the
+	// decider on that same receipt.
+	privateRoute() bool
+}
+
+// newNoteJudge picks the route from the bus clone. This is the ONE place the choice is
+// made, and it is made before any note is opened.
+func newNoteJudge(o inboxOpts) noteJudge {
+	if o.private {
+		return newPrivateDecider(o.busDir, o.floor)
+	}
+	return newNoteDecider(o)
+}
+
 // noteDecider makes one typed decision per printed INBOX NOTE line. It is LAZY: the
 // client is built and the provider is called on the first note that actually prints, so a
 // listing with no notes makes zero provider calls whatever the flags say. STOP:/HOLD:
@@ -2439,10 +2490,11 @@ func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
 			owner = n.Header.To
 		}
 	}
-	var j noteJudgment
-	if structuredSubject(subject) {
-		j = noteJudgment{kind: "edge", needsReply: 1, wake: wakeNeedsAction, conf: 1}
-	} else {
+	// The rule table is consulted first and it is ONE table, shared with the private
+	// route (ruleRow, cmd/nova-bus/private.go), so the two routes cannot drift into
+	// disagreeing about a note either of them can judge without a provider.
+	j, byRule := ruleRow(subject)
+	if !byRule {
 		if d.client == nil {
 			c, err := decide.New(d.o.baseURL, d.o.keyEnv)
 			if err != nil {
@@ -2527,12 +2579,12 @@ func noteRefs(parts ...string) string {
 	return strings.Join(refs, ",")
 }
 
-// structuredSubject reports the subjects a model must never be asked to filter: the
-// STOP: and HOLD: prefixes are structured signals, and Stella's rule is that they bypass
-// semantic judgement.
-func structuredSubject(subject string) bool {
-	return strings.HasPrefix(subject, "STOP:") || strings.HasPrefix(subject, "HOLD:")
-}
+// decided and privateRoute put the public route behind noteJudge. privateRoute is false
+// here by construction -- this type is built only for a bus that carries .public -- so a
+// public bus's INBOX DECIDED line is the line it has always been.
+func (d *noteDecider) decided() decideCounts { return d.counts }
+
+func (d *noteDecider) privateRoute() bool { return false }
 
 // decideState is what a note sends to the provider: its subject and the first 600
 // characters of its body, with any sk- key redacted.
@@ -2581,7 +2633,7 @@ func redactSK(s string) string {
 // The cap counts PRINTED entries and not entries considered, so a capped listing is the
 // first max of the same order a full one would have printed: the notes first, and the bare
 // acknowledgements last, which is the right end to lose.
-func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d *noteDecider) (int, error) {
+func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d noteJudge) (int, error) {
 	shown := 0
 	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
 		for _, e := range entries {
@@ -2664,7 +2716,7 @@ const (
 	maxBodiesBytesCeiling int64 = 1048576
 )
 
-func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64, d *noteDecider) error {
+func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64, d noteJudge) error {
 	// Selection, continuation identities, and safe-frontier accounting stay in canonical
 	// snapshot order. Display follows the inbox's established NOTE, HEARD, RECEIPT groups;
 	// an earlier receipt must not push a later note below the summary groups on this page.
@@ -2722,7 +2774,7 @@ func hostField(host string) string {
 	return "host=" + oneline.Field(host) + " "
 }
 
-func printBodyItem(stdout io.Writer, item bus.BodyItem, d *noteDecider) error {
+func printBodyItem(stdout io.Writer, item bus.BodyItem, d noteJudge) error {
 	e := item.Entry
 	kind := bodyDisplayGroup(item)
 	if kind != "NOTE" {
