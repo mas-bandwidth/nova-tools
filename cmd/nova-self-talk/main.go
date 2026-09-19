@@ -65,6 +65,8 @@ writer's, and this tool never makes it.
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
 run (bad invocation, unreadable file).
 
+cp -R cmd/nova-self-talk/testdata/example-pages ./pages
+
 example:
   nova-self-talk ./pages/journal.md
   nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md

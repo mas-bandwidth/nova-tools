@@ -161,7 +161,11 @@ nova-self-talk help
 
 ### First run
 
-Name a file. There is no verb and no directory walk. `./pages` is a directory of yours; `cmd/nova-self-talk/testdata/example-pages` is one the size of a first run, and the tests run both lines against it.
+Name a file. There is no verb and no directory walk. `./pages` is a directory of yours; `cmd/nova-self-talk/testdata/example-pages` is one the size of a first run, and the tests run both lines against it. Make it first:
+
+```
+cp -R cmd/nova-self-talk/testdata/example-pages ./pages
+```
 
 ```
 $ nova-self-talk ./pages/journal.md
