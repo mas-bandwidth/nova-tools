@@ -46,6 +46,10 @@ type fakeDiskutil struct {
 	inAdd, maxAdd int
 	// nextDisk numbers the volumes this fake hands out.
 	nextDisk int
+	// mountDenied makes `info` report no mount point at all, which is what a caller
+	// that is itself inside an OS sandbox sees: addVolume succeeds and the volume comes
+	// up unmounted.
+	mountDenied bool
 }
 
 func (f *fakeDiskutil) record(args []string) {
@@ -83,6 +87,11 @@ func (f *fakeDiskutil) run(args ...string) (string, error) {
 		f.mu.Unlock()
 		return "Disk from APFS operation: " + disk + "\n", nil
 	case len(args) == 2 && args[0] == "info":
+		if f.mountDenied {
+			// diskutil names the field and leaves it empty, which is the output the
+			// mount-denied refusal is read off.
+			return "   Mount Point:              \n", nil
+		}
 		return "   Mount Point:              /Volumes/nova-x\n", nil
 	case len(args) >= 2 && args[0] == "apfs" && args[1] == "deleteVolume":
 		return "", nil
@@ -268,6 +277,38 @@ func TestCreateRefusesAVolumeThatNeverBecomesWritable(t *testing.T) {
 	}
 	if n := strings.Count(strings.Join(f.argv(), " "), "apfs deleteVolume"); n != volumeCreateAttempts {
 		t.Errorf("%d of %d unusable volumes were deleted; every one that was made and refused goes", n, volumeCreateAttempts)
+	}
+}
+
+// A volume that comes up with no mount point was CREATED, and what failed is the mount.
+// Every caller inside an OS sandbox meets this, so the refusal has to say which of the two
+// happened, name the cause it almost always is, and name the form that needs no volume —
+// and it must not say the volume could not be created, which sends a reader to diskutil
+// and to the container for a fault in neither.
+func TestCreateSaysTheVolumeWasMadeAndTheMountDenied(t *testing.T) {
+	f := benchDiskutil(t, alwaysUsable)
+	f.mountDenied = true
+
+	_, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	if err == nil {
+		t.Fatal("Create returned a volume with no mount point; there is nowhere to work and the run would fail at mkdir with no cause")
+	}
+	got := err.Error()
+	for _, want := range []string{"disk3s1", "was created", "no mount point", volumesRoot, "OS sandbox", "--write"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not carry %q, so it does not say what happened or what to do:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "could not be created") {
+		t.Errorf("the refusal says the volume could not be created; it WAS created, and the mount is what was denied:\n%s", got)
+	}
+	if !errors.Is(err, errVolumeNotMounted) {
+		t.Errorf("the mount-denied error is not the sentinel the run verb reads, so the verb cannot tell it from a create that failed:\n%s", got)
+	}
+	// And the volume that was made goes, whatever the mount did: the leak is the one
+	// thing this path may not leave behind.
+	if !strings.Contains(strings.Join(f.argv(), " "), "apfs deleteVolume disk3s1") {
+		t.Errorf("the unmounted volume was not deleted again:\n%s", strings.Join(f.argv(), " | "))
 	}
 }
 

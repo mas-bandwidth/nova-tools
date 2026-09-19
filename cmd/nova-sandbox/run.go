@@ -25,6 +25,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,6 +70,12 @@ type diskVolume struct {
 	Disk  string // disk3s7, the device the delete names
 	Mount string // /Volumes/nova-<n>, where the work happens
 }
+
+// errVolumeNotMounted is the one create failure that is not a failure to create: the
+// volume was made and nothing mounted it. It is a sentinel because the refusal a caller
+// needs here shares no word with the others — what exists, what was denied and what to do
+// about it are all different — and an error's text is not something to branch on.
+var errVolumeNotMounted = errors.New("the volume was created and the mount was denied or never happened")
 
 // volumeManager is the whole of this verb's contact with the disk. The production body is
 // diskutil (volumes_darwin.go); run_test.go puts a fake here and asserts the ORDER of the
@@ -656,6 +663,12 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 
 	vol, err := step(stderr, "create", func() (diskVolume, error) { return runVolumes.Create(container, name, f.size) })
 	if err != nil {
+		// A volume that was made and not mounted is not a volume that could not be made,
+		// and this verb's own prefix would say the wrong one of the two. The manager is the
+		// half that knows which happened, so on that one its sentence stands alone.
+		if errors.Is(err, errVolumeNotMounted) {
+			return refuse("volume_failed", "%s", oneline.Err(err))
+		}
 		return refuse("volume_failed", "the disposable volume could not be created in %s: %s", oneline.Escape(container), oneline.Err(err))
 	}
 
