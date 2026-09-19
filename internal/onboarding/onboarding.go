@@ -52,6 +52,47 @@ func ExampleLines(usage, tool string) ([]string, error) {
 	return out, nil
 }
 
+// Fields splits a documented command line the way a POSIX shell would for the
+// quotes these transcripts use: double quotes group, and a backslash inside them
+// escapes the next character. The examples never nest quotes or use single ones,
+// so anything fancier is a document bug rather than a feature, and an unbalanced
+// quote is an error instead of a silently joined argument. It exists because
+// strings.Fields cuts `--notes "two words"` into two arguments and the tool then
+// refuses a line a reader would have typed correctly.
+func Fields(cmd string) ([]string, error) {
+	var fields []string
+	var cur strings.Builder
+	inQuote, escaped, has := false, false, false
+	for _, r := range cmd {
+		switch {
+		case escaped:
+			cur.WriteRune(r)
+			escaped = false
+		case r == '\\' && inQuote:
+			escaped = true
+		case r == '"':
+			inQuote = !inQuote
+			has = true
+		case (r == ' ' || r == '\t') && !inQuote:
+			if has {
+				fields = append(fields, cur.String())
+				cur.Reset()
+				has = false
+			}
+		default:
+			cur.WriteRune(r)
+			has = true
+		}
+	}
+	if inQuote || escaped {
+		return nil, fmt.Errorf("unterminated quote in %q", cmd)
+	}
+	if has {
+		fields = append(fields, cur.String())
+	}
+	return fields, nil
+}
+
 // Section returns the body of a top-level `## <name>` section of a markdown
 // document, up to the next top-level heading.
 func Section(md, name string) (string, bool) {

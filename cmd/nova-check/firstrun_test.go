@@ -32,28 +32,70 @@ func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 // friends left against it.
 const exampleDogfood = "testdata/example-dogfood"
 
-// localize points an example or transcript command at the fixture, so what is
-// under test is the command's SHAPE and not the reader's directory layout. The
-// banner shows a reader the paths they would type from the repository root
-// (./self, ./docs/CLI.md); here those become the fixtures that ship with the
-// tool, so the example is run rather than read.
-func localize(args []string) []string {
-	out := append([]string(nil), args...)
-	for i, a := range out {
-		switch {
-		case a == "./self":
-			out[i] = exampleSelf
-		case a == "./docs/CLI.md":
-			out[i] = filepath.Join(exampleDogfood, "CLI.md")
-		case a == "./dogfood-receipts":
-			out[i] = filepath.Join(exampleDogfood, "receipts")
-		default:
-			if rest, ok := strings.CutPrefix(a, "./self/"); ok {
-				out[i] = filepath.Join(exampleSelf, rest)
-			}
+// dogfoodReceipts is a COPY of the fixture's receipts in t.TempDir(). `dogfood
+// record` WRITES one, and a transcript that added a file to testdata on every
+// `go test` would be the defect docs/SPEC-CI.md already names once. One copy
+// serves a whole test, so record, ledger and gate read the one directory in the
+// order the transcript types them.
+func dogfoodReceipts(t *testing.T) string {
+	t.Helper()
+	src := filepath.Join(exampleDogfood, "receipts")
+	dst := filepath.Join(t.TempDir(), "receipts")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), raw, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	return out
+	return dst
+}
+
+// localizer returns the rewriter for ONE test: it points an example or
+// transcript command at the fixture, so what is under test is the command's
+// SHAPE and not the reader's directory layout. The banner shows a reader the
+// paths they would type from the repository root (./self, ./docs/CLI.md); here
+// those become the fixtures that ship with the tool, so the example is run
+// rather than read. ./dogfood-receipts is the writable copy above, made once
+// per test because the dogfood lines are a sitting and not three runs.
+func localizer(t *testing.T) func([]string) []string {
+	t.Helper()
+	receipts := ""
+	return func(args []string) []string {
+		out := append([]string(nil), args...)
+		for i, a := range out {
+			switch {
+			case a == "./self":
+				out[i] = exampleSelf
+			case a == "./docs/CLI.md":
+				out[i] = filepath.Join(exampleDogfood, "CLI.md")
+			case a == "./docs/authors.txt":
+				out[i] = filepath.Join(exampleDogfood, "authors.txt")
+			case a == "./dogfood-receipts":
+				if receipts == "" {
+					receipts = dogfoodReceipts(t)
+				}
+				out[i] = receipts
+			default:
+				if rest, ok := strings.CutPrefix(a, "./self/"); ok {
+					out[i] = filepath.Join(exampleSelf, rest)
+				}
+			}
+		}
+		return out
+	}
 }
 
 func examples(t *testing.T) []string {
@@ -77,6 +119,7 @@ func examples(t *testing.T) []string {
 // drifted out of the flag set teaches the wrong invocation to exactly the
 // reader who cannot tell.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	localize := localizer(t)
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runCheck(t, localize(strings.Fields(ex)[1:])...)
 		if exit == 2 {
@@ -241,16 +284,27 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	localize := localizer(t)
 	var printed map[string]bool
 	seen := map[string]int{}
 	for _, line := range lines {
 		if cmd, ok := strings.CutPrefix(line, "$ nova-check "); ok {
-			exit, stdout, stderr := runCheck(t, localize(strings.Fields(cmd))...)
+			// Shell-aware, because `--notes "..."` is one argument to the reader
+			// who types it and must be one argument here.
+			fields, err := onboarding.Fields(cmd)
+			if err != nil {
+				t.Fatalf("cannot split the README command %q: %v", line, err)
+			}
+			exit, stdout, stderr := runCheck(t, localize(fields)...)
 			if exit == 2 {
 				t.Fatalf("the README command %q does not run: exit 2, stderr: %s", line, stderr)
 			}
+			// Both streams: a check that says NO writes its findings to stderr
+			// (LINKS FAIL, DOGFOOD GATE FAIL) and only its summary to stdout, and
+			// a transcript shows a reader the terminal rather than one file
+			// descriptor of it.
 			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout, "\n") {
+			for _, out := range strings.Split(stdout+"\n"+stderr, "\n") {
 				if s := onboarding.Shape(out); s != "" {
 					printed[s] = true
 				}
@@ -269,8 +323,13 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		}
 		seen[strings.Join(strings.Fields(s)[:2], " ")]++
 	}
+	// One entry per verb the transcript is expected to carry. A verb that loses
+	// its transcript fails here rather than quietly going undocumented, which is
+	// the whole reason the counts are written down instead of inferred.
 	for prefix, want := range map[string]int{
-		"QUICKSTART OK": 2, "LINKS OK": 1, "NOCODE OK": 1, "KERNEL OK": 1,
+		"QUICKSTART OK": 2, "LINKS OK": 2, "NOCODE OK": 2, "KERNEL OK": 1,
+		"ATTEST OK": 1, "CORPUS OK": 1,
+		"DOGFOOD RECORD": 1, "DOGFOOD OK": 1, "DOGFOOD GATE": 2,
 	} {
 		if seen[prefix] != want {
 			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
