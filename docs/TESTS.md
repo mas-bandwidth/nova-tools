@@ -429,9 +429,7 @@ Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
 with `benches.tsv`, `read.md` and `fix.md`.
 
-Run the cut/pool examples below from the nova-tools checkout root. Unlike the
-launch fixture above, this setup uses `cmd/nova-pulse/testdata/sources.tsv`,
-whose roadmap path is relative to the checkout root.
+Run the cut/pool examples below from the checkout root ([#1503](https://github.com/mas-bandwidth/nova-tools/issues/1503)).
 
 `pool` runs against the same directory from the other end: a `sources.tsv`
 declaring one `roadmap` source, and that roadmap — two cells naming a card and
@@ -534,16 +532,10 @@ STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
 
-Create the output directory before the transcript; `fold` puts its lock inside
-that directory and does not create the directory itself:
-
-```sh
-mkdir -p ./out
-```
-
 ### First run
 
 ```
+$ mkdir -p ./out
 $ nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
 TOKENS FOLD at=2026-09-11T23:55:02Z build=devel out=./out sources=3 days=2026-09-11 repos=./repos.tsv
 TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2
