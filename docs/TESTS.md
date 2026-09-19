@@ -303,7 +303,7 @@ identifies the binary:
 
 ```
 $ nova-review version
-nova-review devel
+nova-review v0.15.3-0.20260919010109-9da57d075ddf linux/amd64 go1.26.6
 ```
 
 A packet needs the lane, one selector, a reader and a new relative output
@@ -384,13 +384,13 @@ binary built on this branch.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
 $ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
-ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.90 wait=- reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
+ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.90 wait=- next=- steps=1 reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
 
 $ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
-ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.90 wait=awaiting_termination reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.90 wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
 
 $ nova-decide help --hours 6 --asked-all-friends
 HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
@@ -437,7 +437,7 @@ CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
 CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
 
 $ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
-POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 prs=0 work=0 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```
 
 ## nova-board
@@ -750,7 +750,7 @@ reaches no network.
 
 ```text
 $ nova-work
-nova-work: no verb given; run: nova-work help
+WORK REFUSED: a verb is required; run: nova-work help
 
 $ nova-work events --redis 127.0.0.1:6379 --repo mas-bandwidth/nova-tools --once
 EVENTS OK once=true card-done=0 published=1
