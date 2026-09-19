@@ -235,6 +235,14 @@ type KindSummary struct {
 type Summary struct {
 	Entries int
 	Kinds   []KindSummary
+
+	// Decisions and Outcomes are the two halves of rule 8's row, counted as
+	// ROWS across every kind, which is the arithmetic the hurt was measured
+	// with: 141 outcomes for 412 decisions on 2026-09-19. Their ratio is
+	// printed as coverage, because a floor tuned on a third of the rows is
+	// tuned on the rows somebody remembered (SPEC-DECIDE, housekeeping H2).
+	Decisions int
+	Outcomes  int
 }
 
 // Summarize counts the escalations per kind and regenerates the starting rung
@@ -288,6 +296,13 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 		}
 	}
 	sum := Summary{Entries: len(entries)}
+	for _, e := range entries {
+		if e.Source == SourceOutcome {
+			sum.Outcomes++
+			continue
+		}
+		sum.Decisions++
+	}
 	kinds := make([]string, 0, len(byKind))
 	for kind := range byKind {
 		kinds = append(kinds, kind)
@@ -333,6 +348,7 @@ func (s Summary) Render() string {
 			oneline.Field(k.Kind), k.Decisions, k.Escalations, k.Successes, k.Failures,
 			oneline.Field(k.StartRung), k.StartHeight, oneline.Field(k.DefaultRung), k.Regenerated)
 	}
-	fmt.Fprintf(&b, "LOG OK rows=%d kinds=%d escalations=%d\n", s.Entries, len(s.Kinds), escalations)
+	fmt.Fprintf(&b, "LOG OK rows=%d kinds=%d escalations=%d coverage=%d/%d\n",
+		s.Entries, len(s.Kinds), escalations, s.Outcomes, s.Decisions)
 	return b.String()
 }

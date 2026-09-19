@@ -87,6 +87,9 @@ is compared against; it is never the path `query --ask size` takes."
     "slice-12-session-ownership.lisp"
     "slice-13-verifier.lisp"
     "slice-14-receipt-admission.lisp"
+    "slice-15-staged-admission.lisp"
+    "slice-16-savepoint-create.lisp"
+    "slice-17-savepoint-restore.lisp"
     "slice-18-verify-resolver.lisp"))
 
 (dolist (f *acceptance-slices*)

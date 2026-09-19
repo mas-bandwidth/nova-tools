@@ -340,7 +340,7 @@ const DefaultAwakeMax = 50
 // awakeRefused is the AWAKE REFUSED shape: the things that are wrong about the
 // world rather than the invocation, exactly as refused is for watch.
 func awakeRefused(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "AWAKE REFUSED %s\n", oneline.Escape(what))
+	fmt.Fprintf(stderr, "AWAKE REFUSED %s; run: nova-wake help\n", oneline.Escape(what))
 	return 2
 }
 
