@@ -3,10 +3,11 @@ package merge
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // integrate.go is the WRITE SIDE the landing verb needs and the read side does not have.
@@ -273,24 +274,71 @@ func (p MemberPointer) Render() string {
 	return out.String()
 }
 
-// ReadPrefixes reads a file of path prefixes: one per line, blanks and lines beginning
-// with # ignored. It is the sensitive-prefix rule's input (SPEC-TOOLWORK eligibility
-// rule 13), and an empty one is a refusal rather than a rule that passes everything.
-func ReadPrefixes(path string) ([]string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+// SensitiveRule is one row of the tracked sensitive-prefix policy: a repository-relative
+// path prefix and the one reviewer whose non-author APPROVE at the member's current head
+// is the only thing that admits a member whose diff touches that prefix.
+type SensitiveRule struct {
+	Prefix string
+	Who    string
+}
+
+// LoadSensitivePolicy reads the sensitive-prefix policy from the EXACT trusted base
+// commit (`.nova/merge-sensitive.tsv`), never from a caller path or a member's own diff:
+// a member that could edit the file that judges it would judge itself.
+//
+// Columns are `prefix<TAB>who`, one rule per line; blanks and lines beginning with `#`
+// are ignored. A base commit that carries NO such file means the repository declares no
+// sensitive prefixes, and the caller treats that as `unchecked` (the landing verb's
+// typed line says so). A file that is present but declares no rule is a refusal, not a
+// pass: "an empty rule would pass everything". Malformed rows, a prefix that escapes the
+// repository (a `..` climb or an absolute path), and two rows whose prefixes overlap
+// ambiguously are each refused by name.
+func LoadSensitivePolicy(repoRoot, base string, timeout time.Duration) ([]SensitiveRule, error) {
+	g := NewGit(repoRoot, timeout, nil)
+	if _, err := g.Run("fetch", "--quiet", "origin", base); err != nil {
+		return nil, fmt.Errorf("the base %q could not be fetched to read its sensitive policy: %w", base, err)
 	}
-	var out []string
-	for _, line := range strings.Split(string(raw), "\n") {
+	raw, err := g.Run("show", "origin/"+base+":.nova/merge-sensitive.tsv")
+	if err != nil {
+		if strings.Contains(strings.ToLower(raw), "does not exist") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("the tracked sensitive policy at %s:.nova/merge-sensitive.tsv could not be read: %w", base, err)
+	}
+	var rules []SensitiveRule
+	seenPrefix := map[string]string{}
+	for i, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		out = append(out, line)
+		prefix, who, ok := strings.Cut(line, "\t")
+		prefix = strings.TrimSpace(prefix)
+		who = strings.TrimSpace(who)
+		if !ok || prefix == "" || who == "" {
+			return nil, fmt.Errorf("line %d of .nova/merge-sensitive.tsv is not `prefix<TAB>who`, got %q", i+1, line)
+		}
+		if safepath.HasDotDot(prefix) || strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, `\`) {
+			return nil, fmt.Errorf("line %d of .nova/merge-sensitive.tsv names prefix %q, which escapes the repository", i+1, prefix)
+		}
+		if prior, seen := seenPrefix[prefix]; seen && prior != who {
+			return nil, fmt.Errorf("prefix %q is declared twice with different reviewers (%q and %q)", prefix, prior, who)
+		}
+		seenPrefix[prefix] = who
+		rules = append(rules, SensitiveRule{Prefix: prefix, Who: who})
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("%s names no prefix; an empty rule would pass everything", path)
+	if len(rules) == 0 {
+		return nil, fmt.Errorf(".nova/merge-sensitive.tsv declares no rule; an empty rule would pass everything")
 	}
-	return out, nil
+	for _, a := range rules {
+		for _, b := range rules {
+			if a.Prefix == b.Prefix {
+				continue
+			}
+			if strings.HasPrefix(a.Prefix, b.Prefix) || strings.HasPrefix(b.Prefix, a.Prefix) {
+				return nil, fmt.Errorf("the prefixes %q and %q overlap ambiguously; a diff under one must belong to exactly one row", a.Prefix, b.Prefix)
+			}
+		}
+	}
+	return rules, nil
 }

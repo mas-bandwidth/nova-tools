@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -71,7 +72,7 @@ type member struct {
 	Head string
 }
 
-func (m member) String() string { return "#" + strconv.Itoa(m.PR) + "@" + merge.Short(m.Head) }
+func (m member) String() string { return "#" + strconv.Itoa(m.PR) + "@" + m.Head }
 
 // cmdIntegrate is the verb's front door: it checks the invocation and hands a checked
 // run to runIntegrate.
@@ -137,7 +138,11 @@ func cmdIntegrate(args []string, stdout, stderr io.Writer, deps Deps) int {
 			f.problem(fmt.Sprintf("--base: %s", oneline.Escape(err.Error())))
 		}
 	}
-	members, merr := parseMembers(*membersRaw)
+	timeout, terr := time.ParseDuration(*timeoutRaw)
+	if terr != nil || timeout <= 0 {
+		f.problem(fmt.Sprintf("--timeout is a duration per step like 30m, got %q", *timeoutRaw))
+	}
+	members, merr := parseMembers(*membersRaw, strings.TrimSpace(*local), timeout, deps)
 	if merr != nil {
 		f.problem(oneline.Escape(merr.Error()))
 	}
@@ -147,12 +152,8 @@ func cmdIntegrate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *untypedComments != "" && *untypedComments != "ignore" {
 		f.problem(fmt.Sprintf("--untyped-comments must be ignore, got %q", *untypedComments))
 	}
-	if strings.TrimSpace(*sensitive) != "" && strings.TrimSpace(*designated) == "" {
-		f.problem("--sensitive names the prefixes whose read is the designated mind's, so it requires --designated <who> (SPEC-TOOLWORK eligibility rule 13)")
-	}
-	timeout, terr := time.ParseDuration(*timeoutRaw)
-	if terr != nil || timeout <= 0 {
-		f.problem(fmt.Sprintf("--timeout is a duration per step like 30m, got %q", *timeoutRaw))
+	if strings.TrimSpace(*sensitive) != "" || strings.TrimSpace(*designated) != "" {
+		f.problem("--sensitive and --designated are no longer caller flags: the sensitive policy is the tracked .nova/merge-sensitive.tsv at the base (docs/SPEC-MERGE.md \"The sensitive-prefix policy\"), not a path and a name the caller invents")
 	}
 	ciTimeout, cerr := time.ParseDuration(*ciTimeoutRaw)
 	if cerr != nil || ciTimeout <= 0 {
@@ -228,7 +229,7 @@ type integrateRun struct {
 // at a head that had since moved (land6: "reads at old heads … rest on the coordinator's
 // ruling"), and a member named with no head asks this verb to read whatever the forge
 // happens to say at the moment it looks.
-func parseMembers(raw string) ([]member, error) {
+func parseMembers(raw, local string, timeout time.Duration, deps Deps) ([]member, error) {
 	fields := strings.Split(raw, ",")
 	out := make([]member, 0, len(fields))
 	seen := map[int]bool{}
@@ -253,12 +254,36 @@ func parseMembers(raw string) ([]member, error) {
 			return nil, fmt.Errorf("--members names #%d twice; a member lands once", n)
 		}
 		seen[n] = true
+		// RESOLVE the abbreviation to a full OID once, early, against the --local clone.
+		// Every downstream comparison and every printed/receipted sha is this resolved
+		// 40-char value, never the caller's prefix; a prefix that names no commit, or
+		// more than one, is refused here before anything is gated.
+		if resolved, rerr := resolveOID(local, head, timeout, deps); rerr != nil {
+			return nil, fmt.Errorf("--members head %q for #%d does not resolve to exactly one commit in --local %s: %s", headRaw, n, local, rerr)
+		} else {
+			head = resolved
+		}
 		out = append(out, member{PR: n, Head: head})
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("--members names no member")
 	}
 	return out, nil
+}
+
+// resolveOID resolves a 7-40 char abbreviation to its one full OID against the --local
+// clone, refusing an ambiguity or an absence. git's own rev-parse refuses both.
+func resolveOID(local, head string, timeout time.Duration, deps Deps) (string, error) {
+	g := merge.NewGit(local, timeout, deps.Runner)
+	out, err := g.Out("rev-parse", "--verify", head+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse refused it: %s", oneline.Err(err))
+	}
+	resolved := strings.ToLower(strings.TrimSpace(out))
+	if !merge.IsSHA(resolved) {
+		return "", fmt.Errorf("resolved to %q, which is not a full 40-character commit", resolved)
+	}
+	return resolved, nil
 }
 
 // isHexSHA is the shape of a commit: 7 to 40 hex characters, which is what git's own
@@ -313,12 +338,12 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 		if err != nil {
 			return integrateCouldNotRun(stderr, "heads", fmt.Sprintf("pull request %d could not be read: %s", m.PR, oneline.Err(err)))
 		}
-		if !sameHead(pr.HeadOID, m.Head) {
+		if pr.HeadOID != m.Head {
 			fmt.Fprintf(stdout, "INTEGRATE HEADS member=#%d asked=%s forge=%s verdict=moved\n",
-				m.PR, oneline.Field(merge.Short(m.Head)), oneline.Field(merge.Short(pr.HeadOID)))
+				m.PR, oneline.Field(m.Head), oneline.Field(pr.HeadOID))
 			return integrateRefused(stderr, "heads", fmt.Sprintf(
 				"head moved: the caller named %s and the forge says %s; every read this landing folds was recorded at the head the caller named, so this member waits for a fresh read at %s",
-				oneline.Field(merge.Short(m.Head)), oneline.Field(merge.Short(pr.HeadOID)), oneline.Field(merge.Short(pr.HeadOID))), m.PR)
+				oneline.Field(m.Head), oneline.Field(pr.HeadOID), oneline.Field(pr.HeadOID)), m.PR)
 		}
 		if pr.Merged || pr.Closed {
 			return integrateRefused(stderr, "heads", fmt.Sprintf("pull request %d is not open; a member of a batch is an open pull request", m.PR), m.PR)
@@ -383,16 +408,23 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 		return integrateRefused(stderr, "batch", fmt.Sprintf(
 			"the gate dropped %s; a landing lands the group the caller named or none of it, so re-run with the members that remain", oneline.Field(rec.Dropped)), 0)
 	}
-	fmt.Fprintf(stdout, "INTEGRATE BATCH on=%s head=%s members=%s dropped=none receipt=ok t=%.1fs\n",
-		oneline.Field(in.on), oneline.Field(rec.Head), oneline.Field(rec.Members), since(start))
-
-	// STEP 5: THE PUSH, UNDER A LEASE THAT REFUSES AN EXISTING BRANCH.
-	branch := "rowan/" + in.name
-	if code := integratePush(in, branch, rec.Head, stdout, stderr, deps, start); code != 0 {
-		return code
+	hostname, hostErr := "", error(nil)
+	if deps.Hostname != nil {
+		hostname, hostErr = deps.Hostname()
 	}
+	verified := "false"
+	if hostErr == nil && hostname != "" && strings.EqualFold(hostname, in.on) {
+		verified = "true"
+	}
+	if hostErr != nil {
+		hostname = "unread"
+	}
+	fmt.Fprintf(stdout, "INTEGRATE BATCH on=%s head=%s members=%s dropped=none receipt=ok local=%s verified=%s t=%.1fs\n",
+		oneline.Field(in.on), oneline.Field(rec.Head), oneline.Field(rec.Members), oneline.Field(hostname), oneline.Field(verified), since(start))
 
-	// STEP 6: THE PULL REQUEST, WITH THE RECEIPT AND THE BASIS.
+	// STEP 4b: THE BASIS, read and validated BEFORE any remote mutation. STEP 5 below is
+	// the first write to origin, so an empty basis refuses here, before a branch is
+	// pushed, and never after an orphaned one is left on the remote.
 	basis, err := os.ReadFile(in.basis)
 	if err != nil {
 		return integrateCouldNotRun(stderr, "pr", fmt.Sprintf("--basis %s could not be read: %s", oneline.Field(in.basis), oneline.Err(err)))
@@ -401,6 +433,15 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 		return integrateRefused(stderr, "pr", fmt.Sprintf(
 			"--basis %s is empty; a batch whose members have no stated basis is a batch nobody can check", oneline.Field(in.basis)), 0)
 	}
+
+	// STEP 5: THE PUSH, UNDER A LEASE THAT REFUSES AN EXISTING BRANCH.
+	branch := "rowan/" + in.name
+	resumePR, code := integratePush(in, branch, rec.Head, stdout, stderr, deps, start)
+	if code != 0 {
+		return code
+	}
+
+	// STEP 6: THE PULL REQUEST, WITH THE RECEIPT AND THE BASIS.
 	body := merge.IntegrationBody{
 		Bench: in.on, Receipt: receipt, Basis: string(basis), Branch: branch, Head: rec.Head,
 		Lane: in.lane, Reviewers: filepath.Base(in.reviewersFile),
@@ -410,12 +451,26 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 		title = in.name + ": " + rec.Members + " — gated on " + in.on
 	}
 	forge := deps.NewIntegrateForge(in.repo, in.timeout)
-	ref, err := forge.CreatePR(merge.NewPR{Base: in.base, Head: branch, Title: title, Body: body, Draft: in.draft})
-	if err != nil {
-		return integrateCouldNotRun(stderr, "pr", fmt.Sprintf("the pull request for %s could not be opened: %s", oneline.Field(branch), oneline.Err(err)))
+	var ref merge.PRRef
+	if resumePR > 0 {
+		ref = merge.PRRef{Number: resumePR}
+		fmt.Fprintf(stdout, "INTEGRATE PR number=%d resumed=true receipt=in-body basis=%s t=%.1fs\n",
+			ref.Number, oneline.Field(filepath.Base(in.basis)), since(start))
+	} else {
+		ref, err = forge.CreatePR(merge.NewPR{Base: in.base, Head: branch, Title: title, Body: body, Draft: in.draft})
+		if err != nil {
+			if n, ok := reconcileCreatedPR(in, branch, deps); ok {
+				ref = merge.PRRef{Number: n}
+				fmt.Fprintf(stdout, "INTEGRATE PR number=%d resumed=true receipt=in-body basis=%s t=%.1fs\n",
+					ref.Number, oneline.Field(filepath.Base(in.basis)), since(start))
+			} else {
+				return integrateCouldNotRun(stderr, "pr", fmt.Sprintf("the pull request for %s could not be opened: %s", oneline.Field(branch), oneline.Err(err)))
+			}
+		} else {
+			fmt.Fprintf(stdout, "INTEGRATE PR number=%d url=%s draft=%t receipt=in-body basis=%s t=%.1fs\n",
+				ref.Number, oneline.Field(ref.URL), in.draft, oneline.Field(filepath.Base(in.basis)), since(start))
+		}
 	}
-	fmt.Fprintf(stdout, "INTEGRATE PR number=%d url=%s draft=%t receipt=in-body basis=%s t=%.1fs\n",
-		ref.Number, oneline.Field(ref.URL), in.draft, oneline.Field(filepath.Base(in.basis)), since(start))
 
 	// STEP 7: ci-ok, POLLED WITH A DEADLINE.
 	if code := integrateCI(in, host, ref.Number, rec.Head, stdout, stderr, deps, start); code != 0 {
@@ -458,7 +513,7 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 		}
 		closed++
 		fmt.Fprintf(stdout, "INTEGRATE CLOSE member=#%d head=%s pointer=batch-%d verdict=closed\n",
-			m.PR, oneline.Field(merge.Short(m.Head)), ref.Number)
+			m.PR, oneline.Field(m.Head), ref.Number)
 	}
 
 	// STEP 11: EVERY REMAINING OPEN PULL REQUEST, AGAINST THE NEW BASE.
@@ -485,11 +540,11 @@ func integrateHoldPass(in integrateRun, host merge.Host, rs *merge.ReviewerSet, 
 		}
 		// Pass 2 re-checks the head as well: the door is not the admission, and a head
 		// that moved while CI ran is a head nobody's read is at.
-		if !sameHead(pr.HeadOID, m.Head) {
+		if pr.HeadOID != m.Head {
 			fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d member=#%d verdict=moved forge=%s\n",
-				pass, m.PR, oneline.Field(merge.Short(pr.HeadOID)))
+				pass, m.PR, oneline.Field(pr.HeadOID))
 			return integrateRefused(stderr, "hold", fmt.Sprintf(
-				"head moved between the gate and the door: the caller named %s and the forge now says %s", oneline.Field(merge.Short(m.Head)), oneline.Field(merge.Short(pr.HeadOID))), m.PR)
+				"head moved between the gate and the door: the caller named %s and the forge now says %s", oneline.Field(m.Head), oneline.Field(pr.HeadOID)), m.PR)
 		}
 		var vs []merge.Verdict
 		laneVs, err := merge.LoadLaneVerdicts(in.lane, m.PR)
@@ -521,34 +576,46 @@ func integrateHoldPass(in integrateRun, host merge.Host, rs *merge.ReviewerSet, 
 			return integrateRefused(stderr, "hold", fmt.Sprintf(
 				"head %s carries an unreleased HOLD by %s (%s, %s); no flag here lifts one", oneline.Field(merge.Short(pr.HeadOID)), oneline.Field(h.Who), oneline.Field(h.Source), oneline.Field(h.At)), m.PR)
 		}
-		// THE SENSITIVE-PREFIX RULE (SPEC-TOOLWORK eligibility rule 13): a member whose
-		// diff touches one of the named prefixes has ONE reader -- the designated mind --
-		// and that mind's APPROVE at THIS head is the only thing that satisfies it. With
-		// no --sensitive file the rule is UNCHECKED and says so, exactly as hygiene's
-		// out-of-path check prints `paths=-` rather than passing a diff it never bounded.
+		// THE POSITIVE READ CONDITION (SPEC-MERGE:808-837): the absence of a HOLD is not a
+		// read. needs_read=yes requires an approve recorded by a line that is NOT this
+		// member's author, for THIS member's CURRENT head. UnliftedHolds supplies only the
+		// negative half; PositiveReads supplies the missing positive half.
+		if readers := merge.PositiveReads(vs, pr.HeadOID, pr.Author); len(readers) == 0 {
+			fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d member=#%d head=%s verdict=no-read verdicts=%d\n",
+				pass, m.PR, oneline.Field(pr.HeadOID), len(vs))
+			return integrateRefused(stderr, "hold", fmt.Sprintf(
+				"head %s has no non-author APPROVE; the read condition (SPEC-MERGE:808-837) requires an approve from a line that is not the author at this head", oneline.Field(merge.Short(pr.HeadOID))), m.PR)
+		}
+		// THE SENSITIVE-PREFIX RULE (SPEC-MERGE "The sensitive-prefix policy"): a member
+		// whose diff touches one of the tracked prefixes has ONE reader -- the configured
+		// reviewer for that row -- and that mind's APPROVE at THIS head is the only thing
+		// that satisfies it.
 		word, why, code := integrateSensitive(in, m, vs, pr)
 		if code != 0 {
 			fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d member=#%d verdict=sensitive prefixes=%s\n", pass, m.PR, oneline.Field(why))
 			return integrateRefused(stderr, "hold", why, m.PR)
 		}
 		fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d member=#%d head=%s verdict=clear verdicts=%d sensitive=%s\n",
-			pass, m.PR, oneline.Field(merge.Short(pr.HeadOID)), len(vs), oneline.Field(word))
+			pass, m.PR, oneline.Field(pr.HeadOID), len(vs), oneline.Field(word))
 	}
 	fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d members=%d held=none t=%.1fs\n", pass, len(in.members), since(start))
 	return 0
 }
 
 // integrateSensitive answers what the sensitive-prefix rule says about one member. The
-// word is what the typed line prints: `unchecked` when no prefix file was given, `none`
-// when the member touches none of them, and `<who>` when the designated mind's approve
-// at this head is what admitted it.
+// word is what the typed line prints: `unchecked` when the base carries no tracked
+// `.nova/merge-sensitive.tsv` (no sensitive prefixes are declared), `none` when the
+// member touches none of them, and `<who>,...` when the configured reviewers' approve at
+// this head is what admitted it. The policy is read from the exact trusted base commit,
+// never from a caller path: a member that could edit the file judging it would judge
+// itself.
 func integrateSensitive(in integrateRun, m member, vs []merge.Verdict, pr merge.PR) (word, why string, code int) {
-	if in.sensitive == "" {
-		return "unchecked", "", 0
-	}
-	prefixes, err := merge.ReadPrefixes(in.sensitive)
+	rules, err := merge.LoadSensitivePolicy(in.local, in.base, in.timeout)
 	if err != nil {
-		return "", fmt.Sprintf("--sensitive %s could not be read: %s", oneline.Field(in.sensitive), oneline.Err(err)), 1
+		return "", fmt.Sprintf("the tracked sensitive policy could not be read: %s", oneline.Err(err)), 1
+	}
+	if len(rules) == 0 {
+		return "unchecked", "", 0
 	}
 	paths, err := memberPaths(in, m)
 	if err != nil {
@@ -556,9 +623,9 @@ func integrateSensitive(in integrateRun, m member, vs []merge.Verdict, pr merge.
 	}
 	var touched []string
 	for _, p := range paths {
-		for _, pre := range prefixes {
-			if strings.HasPrefix(p, pre) {
-				touched = append(touched, pre)
+		for _, rule := range rules {
+			if strings.HasPrefix(p, rule.Prefix) {
+				touched = append(touched, rule.Prefix)
 				break
 			}
 		}
@@ -568,39 +635,56 @@ func integrateSensitive(in integrateRun, m member, vs []merge.Verdict, pr merge.
 	}
 	sort.Strings(touched)
 	touched = dedupe(touched)
-	for _, v := range vs {
-		if !strings.EqualFold(v.Who, in.designated) || v.Word != "approve" {
-			continue
+	var admitted []string
+	for _, pre := range touched {
+		who := sensitiveWho(rules, pre)
+		if !hasApprove(vs, who, pr.HeadOID) {
+			return "", fmt.Sprintf(
+				"the diff touches %s, whose read is %s's and nobody else's, and %s has recorded no APPROVE at head %s; where that mind is asleep the work waits",
+				oneline.Field(pre), oneline.Field(who), oneline.Field(who), oneline.Field(merge.Short(pr.HeadOID))), 1
 		}
-		if sameHead(v.Head, pr.HeadOID) {
-			return in.designated, "", 0
+		admitted = append(admitted, who)
+	}
+	sort.Strings(admitted)
+	admitted = dedupe(admitted)
+	return strings.Join(admitted, ","), "", 0
+}
+
+// sensitiveWho is the reviewer configured for a prefix. Every prefix in the policy maps
+// to exactly one reviewer, so the first match is the answer.
+func sensitiveWho(rules []merge.SensitiveRule, prefix string) string {
+	for _, r := range rules {
+		if r.Prefix == prefix {
+			return r.Who
 		}
 	}
-	return "", fmt.Sprintf(
-		"the diff touches %s, whose read is %s's and nobody else's, and %s has recorded no APPROVE at head %s; where that mind is asleep the work waits",
-		oneline.Field(strings.Join(touched, ",")), oneline.Field(in.designated), oneline.Field(in.designated), oneline.Field(merge.Short(pr.HeadOID))), 1
+	return ""
+}
+
+// hasApprove reports whether vs carries a non-author approve by who at exactly head.
+func hasApprove(vs []merge.Verdict, who, head string) bool {
+	for _, v := range vs {
+		if v.Word != "approve" || !strings.EqualFold(v.Who, who) {
+			continue
+		}
+		if v.Head == head {
+			return true
+		}
+	}
+	return false
 }
 
 // integratePush is step 5: the branch is pushed ONLY if no branch of that name exists.
 //
-// The hand loop wrote the lease as `--force-with-lease=refs/heads/<branch>:`, and this
-// package's git guard refuses exactly that spelling (gitops.go: "a ref and no sha", so
-// the remote is asked to compare with whatever it last told this clone). It is refused
-// for a good reason, and the requirement it was standing in for -- REFUSE IF THE BRANCH
-// EXISTS, NEVER FORCE -- is better served by what this does: read the remote's refs, and
-// push plainly, which creates a branch and cannot overwrite one.
-func integratePush(in integrateRun, branch, head string, stdout, stderr io.Writer, deps Deps, start time.Time) int {
+// The push is git's own must-not-exist lease (`--force-with-lease=<ref>:` with an empty
+// value after the colon), built by merge.PushCreateOnly. It is atomic: an intervening
+// branch creation between the existence check and the push is caught by git in the same
+// command as the push, so nothing is ever overwritten. When the lease finds the branch
+// already there, the verb re-reads the forge to ask whether THIS verb's own prior partial
+// run produced it; only a matching open pull request at this run's head is a resume, and
+// anything else is a refusal that names the state as unreconciled.
+func integratePush(in integrateRun, branch, head string, stdout, stderr io.Writer, deps Deps, start time.Time) (resumePR int, code int) {
 	g := merge.NewGit(in.local, in.timeout, deps.Runner)
-	out, err := g.Out("ls-remote", "--heads", "origin", "refs/heads/"+branch)
-	if err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("origin could not be asked whether %s exists: %s", oneline.Field(branch), oneline.Err(err)))
-	}
-	if existing := countRefs(out); existing != 0 {
-		fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s lease=must-not-exist existed=%d verdict=refused\n",
-			oneline.Field(branch), existing)
-		return integrateRefused(stderr, "push", fmt.Sprintf(
-			"origin already holds %s; this verb's lease is must-not-exist and it never forces, so give --name a name of its own", oneline.Field(branch)), 0)
-	}
 	// THE GATED OBJECT LIVES IN THE GATE'S OWN CLONE and nowhere else: `batch` clones
 	// under --root, builds rowan/<name> there and PUSHES NOTHING. So the object is
 	// fetched from that clone into the caller's, which is the clone whose origin the
@@ -608,35 +692,96 @@ func integratePush(in integrateRun, branch, head string, stdout, stderr io.Write
 	// sha, because a server need not serve an arbitrary object to a want.
 	gate, err := gateClonePath(in)
 	if err != nil {
-		return integrateCouldNotRun(stderr, "push", oneline.Err(err))
+		return 0, integrateCouldNotRun(stderr, "push", oneline.Err(err))
 	}
 	if _, err := g.Run("fetch", "--quiet", gate, branch); err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("the gate's tree at %s could not be fetched: %s", oneline.Field(gate), oneline.Err(err)))
+		return 0, integrateCouldNotRun(stderr, "push", fmt.Sprintf("the gate's tree at %s could not be fetched: %s", oneline.Field(gate), oneline.Err(err)))
 	}
 	fetched, err := g.Out("rev-parse", "FETCH_HEAD")
 	if err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("the gate's head could not be resolved after the fetch: %s", oneline.Err(err)))
+		return 0, integrateCouldNotRun(stderr, "push", fmt.Sprintf("the gate's head could not be resolved after the fetch: %s", oneline.Err(err)))
 	}
-	if !sameHead(fetched, head) {
-		return integrateRefused(stderr, "push", fmt.Sprintf(
+	if fetched != head {
+		return 0, integrateRefused(stderr, "push", fmt.Sprintf(
 			"the gate's receipt names %s and its clone's %s is at %s; the tree about to be pushed is not the tree that was gated",
-			oneline.Field(merge.Short(head)), oneline.Field(branch), oneline.Field(merge.Short(fetched))), 0)
+			oneline.Field(head), oneline.Field(branch), oneline.Field(fetched)), 0)
 	}
-	if _, err := g.Run("push", "origin", head+":refs/heads/"+branch); err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be pushed to origin: %s", oneline.Field(branch), oneline.Err(err)))
+	_, err = g.PushCreateOnly("origin", "refs/heads/"+branch, head)
+	if err != nil {
+		var be *merge.BranchExistsError
+		if errors.As(err, &be) {
+			return reconcileExistingBranch(in, branch, head, stdout, stderr, deps)
+		}
+		return 0, integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be pushed to origin: %s", oneline.Field(branch), oneline.Err(err)))
 	}
 	back, err := g.Out("ls-remote", "--heads", "origin", "refs/heads/"+branch)
 	if err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be read back off origin: %s", oneline.Field(branch), oneline.Err(err)))
+		return 0, integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be read back off origin: %s", oneline.Field(branch), oneline.Err(err)))
 	}
 	readback := firstRefSHA(back)
-	if !sameHead(readback, head) {
-		return integrateRefused(stderr, "push", fmt.Sprintf(
-			"origin read back %s for %s and the gate's head is %s; somebody else is writing this branch", oneline.Field(merge.Short(readback)), oneline.Field(branch), oneline.Field(merge.Short(head))), 0)
+	if readback != head {
+		return 0, integrateRefused(stderr, "push", fmt.Sprintf(
+			"origin read back %s for %s and the gate's head is %s; somebody else is writing this branch", oneline.Field(readback), oneline.Field(branch), oneline.Field(head)), 0)
 	}
 	fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s head=%s lease=must-not-exist existed=0 readback=%s forced=no t=%.1fs\n",
 		oneline.Field(branch), oneline.Field(head), oneline.Field(readback), since(start))
-	return 0
+	return 0, 0
+}
+
+// reconcileExistingBranch is what the lease refusal on an existing branch means. It never
+// overwrites and never re-pushes: it re-reads the forge to ask whether the branch is THIS
+// verb's own prior partial run (same head, and an open pull request naming the branch). A
+// matching open pull request is a resume; a branch at a different head, or one with no
+// open pull request, is a refusal naming the state as unreconciled.
+func reconcileExistingBranch(in integrateRun, branch, head string, stdout, stderr io.Writer, deps Deps) (int, int) {
+	g := merge.NewGit(in.local, in.timeout, deps.Runner)
+	existing, err := g.Out("ls-remote", "--heads", "origin", "refs/heads/"+branch)
+	if err != nil {
+		return 0, integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be read back off origin: %s", oneline.Field(branch), oneline.Err(err)))
+	}
+	existingSHA := firstRefSHA(existing)
+	if existingSHA != head {
+		fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s lease=must-not-exist existed=1 verdict=refused\n", oneline.Field(branch))
+		return 0, integrateRefused(stderr, "push", fmt.Sprintf(
+			"origin already holds %s; this verb's lease is must-not-exist and it never forces, so give --name a name of its own", oneline.Field(branch)), 0)
+	}
+	if deps.NewRebaseList == nil {
+		fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s lease=must-not-exist existed=1 verdict=unreconciled\n", oneline.Field(branch))
+		return 0, integrateRefused(stderr, "push", fmt.Sprintf(
+			"origin holds %s at this run's head, and this build has no open-list edge to reconcile it with", oneline.Field(branch)), 0)
+	}
+	open, err := deps.NewRebaseList(in.repo, in.timeout).OpenPRs()
+	if err != nil {
+		return 0, integrateCouldNotRun(stderr, "push", fmt.Sprintf("the open list could not be read to reconcile %s: %s", oneline.Field(branch), oneline.Err(err)))
+	}
+	for _, p := range open {
+		if p.HeadRef == branch {
+			fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s lease=must-not-exist existed=1 verdict=resumed pr=%d\n", oneline.Field(branch), p.Number)
+			return p.Number, 0
+		}
+	}
+	fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s lease=must-not-exist existed=1 verdict=unreconciled\n", oneline.Field(branch))
+	return 0, integrateRefused(stderr, "push", fmt.Sprintf(
+		"origin holds %s at this run's head %s but no open pull request names it; the state is unreconciled and needs a person", oneline.Field(branch), oneline.Field(merge.Short(head))), 0)
+}
+
+// reconcileCreatedPR is the same re-read-before-giving-up on the pull request's open
+// error: an uncertain outcome -- the forge may have opened it and failed to answer -- is
+// resolved by reading the open list, not by assuming the worst and re-opening blindly.
+func reconcileCreatedPR(in integrateRun, branch string, deps Deps) (int, bool) {
+	if deps.NewRebaseList == nil {
+		return 0, false
+	}
+	open, err := deps.NewRebaseList(in.repo, in.timeout).OpenPRs()
+	if err != nil {
+		return 0, false
+	}
+	for _, p := range open {
+		if p.HeadRef == branch {
+			return p.Number, true
+		}
+	}
+	return 0, false
 }
 
 // integrateCI is step 7: poll ci-ok on the batch's own head until it is green, red, or
@@ -658,7 +803,7 @@ func integrateCI(in integrateRun, host merge.Host, pr int, head string, stdout, 
 		state := checkState(checks.ForSHA(head), batchRequiredCheck)
 		if state != last {
 			fmt.Fprintf(stdout, "INTEGRATE CI pr=%d head=%s check=%s state=%s t=%.1fs\n",
-				pr, oneline.Field(merge.Short(head)), batchRequiredCheck, oneline.Field(state), since(start))
+				pr, oneline.Field(head), batchRequiredCheck, oneline.Field(state), since(start))
 			last = state
 		}
 		switch state {
@@ -669,7 +814,7 @@ func integrateCI(in integrateRun, host merge.Host, pr int, head string, stdout, 
 		}
 		if !deps.Now().Before(deadline) {
 			fmt.Fprintf(stdout, "INTEGRATE CI pr=%d head=%s check=%s state=timeout waited=%s\n",
-				pr, oneline.Field(merge.Short(head)), batchRequiredCheck, oneline.Field(in.ciTimeout.String()))
+				pr, oneline.Field(head), batchRequiredCheck, oneline.Field(in.ciTimeout.String()))
 			return integrateRefused(stderr, "ci", fmt.Sprintf(
 				"%s was still %s after %s; the pull request stands and nothing was queued", batchRequiredCheck, oneline.Field(state), oneline.Field(in.ciTimeout.String())), 0)
 		}
@@ -747,19 +892,9 @@ func integrateReverify(in integrateRun, stdout, stderr io.Writer, deps Deps, sta
 		counted, dirty, oneline.Field(in.base), since(start))
 }
 
-// sameHead compares two heads, either of which may be an abbreviation.
-func sameHead(a, b string) bool {
-	a, b = strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b))
-	if a == "" || b == "" {
-		return false
-	}
-	if len(a) > len(b) {
-		a, b = b, a
-	}
-	return strings.HasPrefix(b, a)
-}
-
-// memberList is the members as the typed lines print them: #n@sha, comma separated.
+// memberList is the members as the typed lines print them: #n@sha, comma separated. The
+// sha is the FULL 40-character OID the caller's abbreviation was resolved to, never the
+// abbreviation itself.
 func memberList(ms []member) string {
 	parts := make([]string, 0, len(ms))
 	for _, m := range ms {
@@ -804,17 +939,6 @@ func lastLineOf(raw string) string {
 		}
 	}
 	return ""
-}
-
-// countRefs counts the refs `git ls-remote` printed.
-func countRefs(out string) int {
-	n := 0
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
-		}
-	}
-	return n
 }
 
 // firstRefSHA is the sha of the first ref `git ls-remote` printed.

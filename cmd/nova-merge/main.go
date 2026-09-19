@@ -255,6 +255,10 @@ type Deps struct {
 	// NewRebaseList is the gh seam the rebase verb reads the open list through; the
 	// production one is the same GH the merge pass uses, which implements both edges.
 	NewRebaseList func(repo string, timeout time.Duration) merge.RebaseList
+	// Hostname is the local host the process runs on. `integrate --on` is the caller's
+	// own label for the bench, and this seam lets the verb print whether that label
+	// matches the machine it is actually on; it never dispatches anywhere on the label.
+	Hostname func() (string, error)
 	// Launcher starts one rebase card on a bench. The tests inject a fake.
 	Launcher merge.Launcher
 	Runner   merge.Runner
@@ -301,6 +305,7 @@ func production() Deps {
 		NewRebaseList: func(repo string, timeout time.Duration) merge.RebaseList {
 			return merge.NewGH(repo, timeout, nil)
 		},
+		Hostname: os.Hostname,
 		Launcher: merge.BenchLauncher{},
 		BuildID:  buildID,
 		Dial:     func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },

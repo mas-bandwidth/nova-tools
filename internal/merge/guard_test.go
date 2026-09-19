@@ -82,9 +82,38 @@ func TestTheOneAllowedLeaseIsBuiltByPublishAndNowhereElse(t *testing.T) {
 	}
 }
 
-// A SOURCE TEST, because "one call site" is a property of the code and not of any output:
-// the lease spelling is built in exactly one place, and it is Publish.
-func TestTheLeaseSpellingHasOneCallSite(t *testing.T) {
+// The create-only lease is built by PushCreateOnly and nowhere else, and it passes the
+// guard only from that one builder -- the empty value after the colon is git's
+// must-not-exist spelling, refused from anywhere else exactly like a lease with no sha.
+func TestTheCreateOnlyLeaseIsBuiltByPushCreateOnly(t *testing.T) {
+	w := &watcher{}
+	g := NewGit(t.TempDir(), 0, w)
+	head := strings.Repeat("c", 40)
+	if _, err := g.PushCreateOnly("origin", "refs/heads/rowan/x", head); err != nil {
+		t.Fatalf("the create-only push's own lease must pass the guard: %v", err)
+	}
+	if len(w.seen) != 1 {
+		t.Fatalf("one create-only push is one command, got %v", w.seen)
+	}
+	want := "--force-with-lease=refs/heads/rowan/x:"
+	if !contains(w.seen[0], want) {
+		t.Errorf("the push must carry %q, got %v", want, w.seen[0])
+	}
+	if !contains(w.seen[0], head+":refs/heads/rowan/x") {
+		t.Errorf("the object pushed is the gated object by sha, got %v", w.seen[0])
+	}
+	// And the empty-value spelling is refused from anywhere else.
+	if _, err := g.Run("push", "origin", want); err == nil {
+		t.Error("the create-only lease is open for one push and closed after it")
+	}
+}
+
+// A SOURCE TEST, because "one call site per spelling" is a property of the code and not
+// of any output: the compare-and-swap lease is built in exactly one place (Publish), and
+// the create-only lease is built in exactly one place (PushCreateOnly). Each named
+// builder owns exactly one spelling, and no other code may build a --force-with-lease
+// value.
+func TestTheLeaseSpellingsHaveOneCallSiteEach(t *testing.T) {
 	sites := 0
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -106,8 +135,8 @@ func TestTheLeaseSpellingHasOneCallSite(t *testing.T) {
 			t.Logf("%s:%d: %s", e.Name(), i+1, strings.TrimSpace(line))
 		}
 	}
-	if sites != 1 {
-		t.Errorf("the lease is built at %d call sites, want exactly 1 (rule 21's publication step)", sites)
+	if sites != 2 {
+		t.Errorf("the two lease spellings are built at %d call sites, want exactly 2 (Publish's compare-and-swap lease and PushCreateOnly's create-only lease)", sites)
 	}
 }
 

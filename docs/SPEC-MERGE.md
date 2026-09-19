@@ -880,9 +880,11 @@ nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,..
    conflicts with the entries ahead and naming it;
 4. `batch --on <bench>`, whose own admission folds the holds again — **so a member is read
    three times in one landing**, not two;
-5. the push of `rowan/<name>` under a **must-not-exist lease**: the remote is asked for the
-   ref first, a branch that exists is a refusal, the push is a plain one and never a force,
-   and the ref is read back;
+5. the push of `rowan/<name>` under a **must-not-exist lease** — git's own create-only
+   lease (`--force-with-lease=<ref>:` with an empty value), so an intervening branch
+   creation is refused in the same command as the push and never overwritten; a branch
+   that already exists is a refusal unless this verb's own prior partial run produced it
+   at this same head, in which case the verb reconciles and resumes;
 6. the pull request, carrying the `BATCH OK` receipt and the caller's basis sentence per
    member;
 7. `ci-ok`, polled to a deadline, one typed line per state; **a red is terminal** and its
@@ -895,6 +897,26 @@ nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,..
 `--dry-run` runs 1-3 and lands nothing. No flag in the verb lifts a hold, `--lane` is
 required, and every refusal names the member and the reason. The grammar and the flags are
 in [CLI.md](CLI.md).
+
+**`--on <bench>` is the caller's own label, not a dispatch.** `batch` always runs
+locally, under `--root`, on whatever host the process is on; the label authorizes no
+remote execution. The `INTEGRATE BATCH` line carries `local=<hostname>` and
+`verified=<true|false>`, so a reader can see whether the label matches the host it ran on
+without the verb ever obeying the label.
+
+### The sensitive-prefix policy
+
+A member whose diff touches a path the repository has declared **sensitive** has exactly
+one reader: the reviewer configured for that prefix, and only that mind's non-author
+APPROVE **at the member's current head** admits it. The policy is the tracked, versioned
+`.nova/merge-sensitive.tsv` at the **exact trusted base commit** — one rule per line,
+`prefix<TAB>who` — read by `nova-merge integrate` and never from a caller path: a member
+that could edit the file judging it would judge itself. The caller may not invent the
+reviewer; the old `--sensitive <file> --designated <who>` flags are refused as no longer
+meaningful. A base with no such file declares no sensitive prefixes, and the line says
+`sensitive=unchecked`; a file that is present but declares no rule is refused ("an empty
+rule would pass everything"), and so are malformed rows, a prefix that escapes the
+repository, and two rows whose prefixes overlap ambiguously.
 
 ## The local gate
 

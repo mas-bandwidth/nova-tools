@@ -301,6 +301,37 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 	return UnreleasedHolds(holds, reads, currentHead, author, rs)
 }
 
+// PositiveReads is the positive half of the read condition (SPEC-MERGE:808-837): the
+// names whose non-author APPROVE at the CURRENT head satisfies the read. It is the
+// []Verdict twin of read.go's EvaluateReads approver fold — same approve collection,
+// same sameLine self-approve skip — but over the verdict slice integrateHoldPass already
+// holds, rather than over an Entry that verb never loads.
+func PositiveReads(vs []Verdict, currentHead, author string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range vs {
+		if v.Word != "approve" {
+			continue
+		}
+		if v.Head != currentHead {
+			continue
+		}
+		if sameLine(v.Who, author) {
+			continue
+		}
+		if v.Who == "" {
+			continue
+		}
+		key := strings.ToLower(v.Who)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, v.Who)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // UnreleasedHolds folds active holds against lane read records.
 // It returns only the holds (or pending comments) that remain unreleased.
 func UnreleasedHolds(holds []Verdict, reads []Read, currentHead, author string, rs *ReviewerSet) []Verdict {

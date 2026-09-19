@@ -288,6 +288,47 @@ func (g *Git) Publish(remote, baseBranch, expectedBase, mergeSHA string) (string
 	return out, nil
 }
 
+// PushCreateOnly is the must-not-exist half of rule 4's one write, and the second (and
+// only other) call site that builds a --force-with-lease spelling. It pushes head to ref
+// under git's own create-only lease: `--force-with-lease=<ref>:` with an EMPTY value
+// after the colon, which the remote refuses if the ref already exists. An intervening
+// branch creation between the read and the push is therefore caught by git in the same
+// command as the push -- nothing is ever overwritten, and nothing is fast-forwarded that
+// was not this verb's own head.
+//
+// A rejected lease is BranchExistsError -- the ref already held something -- and every
+// other refusal is the remote's own.
+func (g *Git) PushCreateOnly(remote, ref, head string) (string, error) {
+	if err := ValidRefName(ref); err != nil {
+		return "", fmt.Errorf("the ref is not a name this tool hands to git: %w", err)
+	}
+	if !IsSHA(head) {
+		return "", fmt.Errorf("a create-only push wants the full 40-character sha of the head, got %q", head)
+	}
+	lease := "--force-with-lease=" + ref + ":"
+	g.lease = lease
+	defer func() { g.lease = "" }()
+	out, err := g.Run("push", remote, head+":"+ref, lease)
+	if err != nil {
+		if isLeaseRejection(out) {
+			return out, &BranchExistsError{Ref: ref, Output: oneLineOf(out)}
+		}
+		return out, &PublishRefusedError{Output: oneLineOf(out)}
+	}
+	return out, nil
+}
+
+// BranchExistsError is a create-only lease the remote rejected: the ref already existed,
+// so nothing was pushed and nothing was overwritten.
+type BranchExistsError struct {
+	Ref    string
+	Output string
+}
+
+func (e *BranchExistsError) Error() string {
+	return fmt.Sprintf("origin already holds %s, and the create-only lease never overwrites an existing branch: %s", e.Ref, e.Output)
+}
+
 // RacedError is a lease the remote rejected: the base moved between the gate and the
 // push, nothing was published, and the pass stops.
 type RacedError struct {

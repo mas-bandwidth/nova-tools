@@ -1291,7 +1291,7 @@ leg is for.
 ### integrate
 
 ```
-nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--sensitive <file> --designated <who>] [--checks "<a>,<b>"] [--reference <mirror>] [--ci-timeout <duration>] [--ci-interval <duration>] [--title <text>] [--no-draft] [--gomaxprocs <n>] [--timeout <duration>] [--untyped-comments ignore --reason <text>]
+nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--checks "<a>,<b>"] [--reference <mirror>] [--ci-timeout <duration>] [--ci-interval <duration>] [--title <text>] [--no-draft] [--gomaxprocs <n>] [--timeout <duration>] [--untyped-comments ignore --reason <text>]
 ```
 
 `integrate` is **the landing verb**: the integration batch, which seven landing shifts ran
@@ -1309,7 +1309,7 @@ INTEGRATE START     name=<name> base=<branch> members=<#n@sha,...> lane=<dir> on
 INTEGRATE HEADS     ok=<n> moved=none members=<list>                       1 the heads are the CALLER'S
 INTEGRATE HOLD      pass=1 member=#<n> head=<sha> verdict=clear verdicts=<n> sensitive=<who|none|unchecked>
 INTEGRATE SIMULATE  entries=<n> conflicts=none base=<branch>               3 onto the base AS IT STANDS
-INTEGRATE BATCH     on=<bench> head=<sha> members=<list> dropped=none      4 the gate
+INTEGRATE BATCH     on=<bench> local=<hostname> verified=<bool> head=<sha> members=<list> dropped=none  4 the gate
 INTEGRATE PUSH      branch=<b> head=<sha> lease=must-not-exist existed=0 readback=<sha> forced=no
 INTEGRATE PR        number=<n> url=<url> draft=<bool> receipt=in-body basis=<file>
 INTEGRATE CI        pr=<n> head=<sha> check=ci-ok state=<pending|green|failure|timeout>
@@ -1322,22 +1322,30 @@ INTEGRATE FAIL      pr=<n> run=<id> test=<name> pkg=<pkg> job=<job> at=<file:lin
 INTEGRATE REFUSED   step=<step> member=#<n> reason="<what it was>"
 ```
 
-**`--members` takes the head and will not guess one** — `1749@4f7092ad,1753@9589cc26`. A
+**`--members` takes the head and will not guess one** — a full 40-character sha, like
+`1749@4f7092ad0e7a3c9b1d5f6a8b2c4e7f9a1d3b5c60,1753@9589cc26f1a3b5c7d9e2f4a6b8c0d2e4f6a8b0d`. A
 member whose head the forge now reports differently is refused by name and nothing is
 gated: every read this landing folds was recorded at the head the caller named, and a
 verb that read the head off the forge at the moment of the merge would fold a read of a
-commit nobody looked at.
+commit nobody looked at. A 7-to-40-char abbreviation is accepted as the flag's shape, but
+it is resolved once, early, against the `--local` clone to a full OID; an abbreviation
+that names no commit, or more than one, refuses before anything is gated. Every
+comparison and every printed sha is the resolved full OID, never the caller's prefix.
 
 **The hold is read twice by this verb and once more by the gate**, so a member is read
 three times: at admission, inside `batch`'s own reading-3 fold, and at the door
 immediately before `land`. `--lane` is required — reading 3 makes the lane's own records
 half the evidence — and **no flag here lifts a hold**.
 
-**The push is a must-not-exist lease and never a force.** `origin` is asked for the ref
-first and a branch that already exists is a refusal; the push itself is a plain one,
-which creates a branch and cannot overwrite one, and the ref is read back and compared.
-The gated object lives only in the gate's own clone (`batch` pushes nothing), so it is
-fetched from `<root>/<name>/repo` and checked against the receipt's head before the push.
+**The push is a must-not-exist lease and never a force.** The push is git's own
+create-only lease, `--force-with-lease=<ref>:` with an empty value after the colon: the
+remote refuses the push if the ref already exists, in the same command as the push, so an
+intervening branch creation between the read and the push is caught and never overwritten.
+A branch that already exists is a refusal — unless this verb's own prior partial run
+produced it at this same head, in which case the verb reads the forge, recognizes the
+open pull request naming it, and resumes from `ci-ok` instead of re-pushing. The gated
+object lives only in the gate's own clone (`batch` pushes nothing), so it is fetched from
+`<root>/<name>/repo` and checked against the receipt's head before the push.
 
 **`--dry-run` runs steps 1-3 and nothing else**: it gates nothing, pushes nothing, opens
 nothing and queues nothing, and its `INTEGRATE DONE` says `steps=3/11 landed=none`.
@@ -1349,11 +1357,22 @@ runner-cleanup shape of #1751 is **not** special-cased: it was repaired on dev b
 and a verb carrying a permanent exemption for a fault that has been fixed is a verb that
 will one day swallow a real red wearing the same clothes.
 
-**`--sensitive <file> --designated <who>`** is `docs/SPEC-TOOLWORK.md` eligibility rule 13:
-a member whose diff touches one of the named path prefixes has one reader, and only that
-mind's APPROVE **at this head** admits it. With no `--sensitive` file the rule is
-`sensitive=unchecked` on the line rather than silently passed — the same discipline
-hygiene's `paths=-` keeps.
+**`--on <bench>` is the caller's own label, checked and printed, never obeyed.** `batch`
+always runs locally, under `--root`, on whatever host the process is on — there is no
+remote dispatch, and the label authorizes none. The `INTEGRATE BATCH` line carries
+`local=<hostname>` (the host the process is actually on) and `verified=<true|false>`
+(whether the label matches it); either way the landing proceeds, and a reader can see the
+label lie without the verb having to act on it.
+
+**The sensitive policy is the tracked `.nova/merge-sensitive.tsv` at the base**
+(`docs/SPEC-MERGE.md` "The sensitive-prefix policy"), never a caller path. A member whose
+diff touches one of the tracked prefixes has one reader — the reviewer configured for that
+row — and only that mind's APPROVE **at this head** admits it. A base with no such file
+declares no sensitive prefixes and the line says `sensitive=unchecked`; a file that is
+present but declares no rule is a refusal, and so are malformed rows, a prefix that
+escapes the repository, and two rows whose prefixes overlap ambiguously. The old
+`--sensitive <file> --designated <who>` flags are refused as no longer meaningful: the
+caller may not invent the reviewer.
 
 Exit 0 is a landing; 1 is the verb saying NO; 2 is an unusable invocation or something
 outside the decision that could not run.

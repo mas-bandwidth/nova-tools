@@ -403,6 +403,7 @@ func (l *lab) deps() Deps {
 			return nil
 		},
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
+		Hostname:      func() (string, error) { return "testbench", nil },
 		NewIntegrateForge: func(string, time.Duration) merge.IntegrateForge {
 			return l.forge
 		},

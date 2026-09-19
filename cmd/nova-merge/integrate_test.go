@@ -57,6 +57,16 @@ func newIntegrateLab(t *testing.T) *integrateLab {
 	l.heads[4] = four
 	l.host.PRs[4] = merge.PR{Number: 4, HeadOID: four, Base: "dev"}
 	l.host.SetCheckRuns(four, merge.CheckDetail{Name: "ci-ok", Conclusion: "success", SHA: four})
+	// ONE DEFAULT NON-AUTHOR APPROVE PER MEMBER, matching what basis.md already
+	// narrates ("on alice's APPROVE at its exact head"). The positive-read fold of the
+	// landing verb (SPEC-MERGE:808-837) requires an approve from a line that is not the
+	// member's author at the member's current head, so a fixture with none would refuse
+	// every clean member for the wrong reason. A test that wants a member WITH no read
+	// deletes this default for that one member.
+	for n := 1; n <= 4; n++ {
+		l.host.SetVerdicts(n, merge.Verdict{Who: "alice", Word: "approve", Head: l.heads[n],
+			At: "2026-09-19T12:00:00Z", Source: "review"})
+	}
 	return &integrateLab{
 		lab:       l,
 		lane:      lane,
@@ -423,21 +433,22 @@ func TestAHoldRecordedBetweenTheGateAndTheDoorRefusesTheLanding(t *testing.T) {
 	}
 }
 
-// 9. THE SENSITIVE-PREFIX RULE (SPEC-TOOLWORK eligibility rule 13). A member whose diff
-// touches a named prefix has ONE reader, and without that mind's APPROVE at THIS head it
-// does not land -- and with no --sensitive file the rule says `unchecked` rather than
-// passing a diff it never bounded.
+// 9. THE SENSITIVE-PREFIX RULE (SPEC-MERGE "The sensitive-prefix policy"). A member whose
+// diff touches a tracked prefix has ONE reader -- the row's reviewer -- and without that
+// mind's APPROVE at THIS head it does not land. The policy is the tracked
+// .nova/merge-sensitive.tsv at the base commit, never a caller path.
 func TestASensitivePrefixWantsTheDesignatedMindsApproveAtThisHead(t *testing.T) {
 	t.Parallel()
 	il := newIntegrateLab(t)
-	prefixes := filepath.Join(il.dir, "sensitive.txt")
-	if err := os.WriteFile(prefixes, []byte("# the prefixes whose read is the designated mind's\nbase/\n"), 0o644); err != nil {
-		t.Fatalf("prefixes: %v", err)
-	}
+	// The policy is committed to the base branch, not passed as a caller flag.
+	il.git(il.work, "checkout", "-q", "dev")
+	il.write(".nova/merge-sensitive.tsv", "# prefix\twho\nbase/\tjohnny\n")
+	il.commit("the tracked sensitive policy")
+	il.git(il.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+	il.git(il.work, "checkout", "-q", "main")
 
 	// Without the approve: refused, and the refusal names the prefix and the mind.
-	args := append(il.args("integration-9", 1), "--sensitive", prefixes, "--designated", "johnny")
-	exit, stdout, stderr := il.run(args...)
+	exit, stdout, stderr := il.run(il.args("integration-9", 1)...)
 	if exit != 1 {
 		t.Fatalf("a sensitive prefix with no designated approve is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
@@ -451,14 +462,16 @@ func TestASensitivePrefixWantsTheDesignatedMindsApproveAtThisHead(t *testing.T) 
 		ID: "review:222", Who: "johnny", Word: "approve", Head: il.heads[1],
 		At: "2026-09-19T17:50:00Z", Source: "review",
 	})
-	exit, stdout, stderr = il.run(append(args, "--dry-run")...)
+	exit, stdout, stderr = il.run(append(il.args("integration-9b", 1), "--dry-run")...)
 	if exit != 0 {
 		t.Fatalf("the designated mind's approve at this head admits it, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	contains(t, stdout, "sensitive=johnny")
 
-	// And with no --sensitive file at all the rule is UNCHECKED and says so.
-	exit, stdout, _ = il.run(append(il.args("integration-9b", 1), "--dry-run")...)
+	// And a base with no tracked file at all declares no sensitive prefixes: the rule is
+	// UNCHECKED and says so.
+	il2 := newIntegrateLab(t)
+	exit, stdout, _ = il2.run(append(il2.args("integration-9c", 1), "--dry-run")...)
 	if exit != 0 {
 		t.Fatalf("an unchecked rule is not a refusal, got %d\n%s", exit, stdout)
 	}
@@ -553,6 +566,269 @@ func TestTheLaneIsRequiredAndNoneIsNotALane(t *testing.T) {
 		}
 		contains(t, stderr, "lane")
 	}
+}
+
+// ROW 1. The positive read condition (SPEC-MERGE:808-837): a member with no recorded
+// non-author approve at its current head is refused -- the absence of a HOLD is not a
+// read, and a self-approve (the author's own) is not a read either.
+func TestIntegrateRefusesAMemberWithNoRecordedApprove(t *testing.T) {
+	t.Parallel()
+
+	il := newIntegrateLab(t)
+	// Member #2 with no approve at all: the fixture's default approve is removed for
+	// this one member, so the positive-read fold has nothing to satisfy it with.
+	delete(il.host.Reads, 2)
+
+	exit, stdout, stderr := il.run(il.args("integration-no-read", 2)...)
+	if exit != 1 {
+		t.Fatalf("a member with no non-author approve is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "INTEGRATE HOLD pass=1 member=#2")
+	contains(t, stdout, "verdict=no-read")
+	absent(t, stdout, "verdict=clear")
+	contains(t, stderr, "INTEGRATE REFUSED step=hold member=#2")
+	contains(t, stderr, "non-author APPROVE")
+
+	// Member #1 whose approve is the AUTHOR's own: a self-approve is not a read.
+	il2 := newIntegrateLab(t)
+	pr := il2.host.PRs[1]
+	pr.Author = "alice"
+	il2.host.PRs[1] = pr
+
+	exit, stdout, stderr = il2.run(il2.args("integration-self-read", 1)...)
+	if exit != 1 {
+		t.Fatalf("a self-approve is not a read, exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "INTEGRATE HOLD pass=1 member=#1")
+	contains(t, stdout, "verdict=no-read")
+	contains(t, stderr, "INTEGRATE REFUSED step=hold member=#1")
+}
+
+// ROW 2. The sensitive policy is read from the tracked, versioned
+// .nova/merge-sensitive.tsv at the base commit, never from a caller path, and the
+// caller's --sensitive/--designated flags are refused outright as no longer meaningful.
+func TestIntegrateReadsTheSensitivePolicyFromTheTrackedFileNotACallerPath(t *testing.T) {
+	t.Parallel()
+	il := newIntegrateLab(t)
+
+	// Commit the tracked policy at the base commit: one row, prefix `base/` -> `johnny`.
+	il.git(il.work, "checkout", "-q", "dev")
+	il.write(".nova/merge-sensitive.tsv", "# prefix\twho\nbase/\tjohnny\n")
+	il.commit("the tracked sensitive policy")
+	il.git(il.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+	il.git(il.work, "checkout", "-q", "main")
+
+	// No --sensitive/--designated flags at all: member #1 (which touches base/shared.go)
+	// needs johnny's approve at this head, and the refusal names johnny.
+	exit, stdout, stderr := il.run(il.args("integration-sensitive-1", 1)...)
+	if exit != 1 {
+		t.Fatalf("a member touching a tracked sensitive prefix without its reader is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "INTEGRATE HOLD pass=1 member=#1 verdict=sensitive")
+	contains(t, stderr, "INTEGRATE REFUSED step=hold member=#1")
+	contains(t, stderr, "johnny")
+
+	// A caller-supplied --sensitive/--designated no longer invents a reviewer: the flags
+	// are refused outright as no longer meaningful.
+	prefixes := filepath.Join(il.dir, "caller-sensitive.txt")
+	if err := os.WriteFile(prefixes, []byte("base/\n"), 0o644); err != nil {
+		t.Fatalf("prefixes: %v", err)
+	}
+	exit, _, stderr = il.run(append(il.args("integration-sensitive-2", 1), "--sensitive", prefixes, "--designated", "somebody-else")...)
+	if exit != 2 {
+		t.Fatalf("caller-invented --sensitive/--designated is refused outright (exit 2), got %d\n%s", exit, stderr)
+	}
+	contains(t, stderr, "no longer caller flags")
+}
+
+// ROW 3. An intervening branch creation inside the window between the existence read and
+// the push is never overwritten: the create-only lease catches it in the same command as
+// the push.
+func TestAnIntervalRaceOnBranchCreationIsNotOverwritten(t *testing.T) {
+	t.Parallel()
+	il := newIntegrateLab(t)
+	il.greenOnEveryHead()
+
+	dev := strings.TrimSpace(il.git(il.work, "rev-parse", "origin/dev"))
+	// The hand at another keyboard: the instant this verb is about to push its branch, a
+	// DIFFERENT process creates refs/heads/rowan/<name> first, at an ancestor of the
+	// gate's head -- exactly the window the must-not-exist lease exists to close.
+	fired := false
+	il.runner = &hookRunner{inner: merge.Exec{}, before: func(_ string, args []string) {
+		if fired || len(args) == 0 || args[0] != "push" {
+			return
+		}
+		fired = true
+		il.git(il.work, "push", "-q", "origin", dev+":refs/heads/rowan/integration-race")
+	}}
+
+	exit, stdout, stderr := il.run(il.args("integration-race", 1, 4)...)
+	if exit != 1 {
+		t.Fatalf("an intervening branch creation must be refused, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	// The intervening branch is UNCHANGED: this verb never overwrites it.
+	after := strings.TrimSpace(il.git(il.remote, "rev-parse", "refs/heads/rowan/integration-race"))
+	if after != dev {
+		t.Errorf("the intervening branch moved from %s to %s; the create-only lease must never overwrite it", dev, after)
+	}
+}
+
+// ROW 4. A 7-char abbreviation resolves to its one full OID before anything else runs,
+// and a prefix that names no commit refuses before anything is gated.
+func TestIntegrateResolvesAnAbbreviatedMemberShaOrRefusesAmbiguity(t *testing.T) {
+	t.Parallel()
+	il := newIntegrateLab(t)
+
+	abbrev := il.heads[1][:7]
+	args := il.args("integration-abbrev", 1)
+	for i, a := range args {
+		if a == "--members" {
+			args[i+1] = "1@" + abbrev
+		}
+	}
+	exit, stdout, stderr := il.run(append(args, "--dry-run")...)
+	if exit != 0 {
+		t.Fatalf("a unique abbreviation resolves and is admitted, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	// The full 40-character OID is what is printed, never the abbreviation alone.
+	contains(t, stdout, "#1@"+il.heads[1])
+
+	il2 := newIntegrateLab(t)
+	args2 := il2.args("integration-absent", 1)
+	for i, a := range args2 {
+		if a == "--members" {
+			args2[i+1] = "1@deadbee"
+		}
+	}
+	exit, stdout2, stderr := il2.run(args2...)
+	if exit != 2 {
+		t.Fatalf("a prefix that names no commit is exit 2, got %d\n%s", exit, stderr)
+	}
+	contains(t, stderr, "does not resolve to exactly one commit")
+	absent(t, stdout2, "INTEGRATE START")
+}
+
+// ROW 5. --on is the caller's own label, checked against the host the process runs on and
+// printed, never obeyed; the line carries local=<hostname> verified=<true|false>.
+func TestIntegrateBatchLineNamesTheLocalHostAndWhetherItMatchesOn(t *testing.T) {
+	t.Parallel()
+	il := newIntegrateLab(t)
+	il.greenOnEveryHead()
+	il.batchPRIsOnTheForge(t, 9001, "rowan/integration-host")
+
+	// --on hulk does not match the fixture hostname "testbench": the line says so, and
+	// the landing is unaffected either way (verified is printed, never obeyed).
+	exit, stdout, _ := il.run(il.args("integration-host", 1, 4)...)
+	if exit != 0 {
+		t.Fatalf("a mismatched --on label is non-blocking, got %d\n%s", exit, stdout)
+	}
+	contains(t, stdout, "INTEGRATE BATCH")
+	contains(t, stdout, "local=testbench")
+	contains(t, stdout, "verified=false")
+
+	// --on testbench matches the fixture hostname: verified=true.
+	il.batchPRIsOnTheForge(t, 9002, "rowan/integration-host2")
+	args := il.args("integration-host2", 1, 4)
+	for i, a := range args {
+		if a == "--on" {
+			args[i+1] = "testbench"
+		}
+	}
+	exit, stdout, _ = il.run(args...)
+	if exit != 0 {
+		t.Fatalf("a matching --on label is non-blocking, got %d\n%s", exit, stdout)
+	}
+	contains(t, stdout, "INTEGRATE BATCH")
+	contains(t, stdout, "local=testbench")
+	contains(t, stdout, "verified=true")
+}
+
+// ROW 6a. The basis is read and validated BEFORE the push, so an empty basis never
+// leaves an orphaned branch on the remote.
+func TestIntegrateValidatesTheBasisBeforeThePushNotAfter(t *testing.T) {
+	t.Parallel()
+	il := newIntegrateLab(t)
+	il.greenOnEveryHead()
+	before := remoteRefs(il.lab)
+
+	empty := filepath.Join(il.dir, "empty-basis.md")
+	if err := os.WriteFile(empty, []byte(""), 0o644); err != nil {
+		t.Fatalf("empty basis: %v", err)
+	}
+	args := il.args("integration-basis", 1, 4)
+	for i, a := range args {
+		if a == "--basis" {
+			args[i+1] = empty
+		}
+	}
+	exit, _, stderr := il.run(args...)
+	if exit != 1 {
+		t.Fatalf("an empty basis is exit 1, got %d\n%s", exit, stderr)
+	}
+	if after := remoteRefs(il.lab); after != before {
+		t.Errorf("an empty basis changed the remote's refs:\nbefore: %s\nafter:  %s", before, after)
+	}
+	if strings.Contains(remoteRefs(il.lab), "rowan/integration-basis") {
+		t.Errorf("an empty basis still pushed rowan/integration-basis")
+	}
+}
+
+// ROW 6b. A prior partial run of THIS verb (the branch already there at this run's head,
+// and an open pull request naming it) is reconciled and resumed, not refused.
+func TestIntegrateReconcilesItsOwnPriorRunInsteadOfRefusingTheBranch(t *testing.T) {
+	// Fixed commit dates make the gate's merge head reproducible across the learn run and
+	// the verb's own run.
+	t.Setenv("GIT_AUTHOR_DATE", "2026-09-19T12:00:00Z")
+	t.Setenv("GIT_COMMITTER_DATE", "2026-09-19T12:00:00Z")
+	il := newIntegrateLab(t)
+	il.greenOnEveryHead()
+
+	name := "integration-reconcile"
+	head := integrateGateHead(t, il, name, 1, 4)
+
+	// A prior partial run: the branch already exists at this run's head, and an open
+	// pull request names it.
+	il.git(filepath.Join(il.root, name, "repo"), "push", "-q", "origin", head+":refs/heads/rowan/"+name)
+	il.host.Open = []merge.RebasePR{{Number: 9001, HeadRef: "rowan/" + name, MergeState: "CLEAN"}}
+	il.batchPRIsOnTheForge(t, 9001, "rowan/"+name)
+
+	exit, stdout, stderr := il.run(il.args(name, 1, 4)...)
+	if exit != 0 {
+		t.Fatalf("a prior run at the same head is resumed, not refused, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "INTEGRATE PUSH branch=rowan/"+name)
+	contains(t, stdout, "verdict=resumed")
+	contains(t, stdout, "INTEGRATE PR number=9001 resumed=true")
+	if len(il.forge.Created) != 0 {
+		t.Errorf("a resumed run opened %d new pull requests; it must open none", len(il.forge.Created))
+	}
+}
+
+// integrateGateHead runs the batch gate for a name/member set and returns the head the
+// gate produced, so a test can simulate a prior partial run at exactly that head.
+func integrateGateHead(t *testing.T, il *integrateLab, name string, members ...int) string {
+	t.Helper()
+	parts := make([]string, 0, len(members))
+	for _, n := range members {
+		parts = append(parts, fmt.Sprintf("%d", n))
+	}
+	exit, stdout, stderr := il.run("batch", "--name", name, "--pr", strings.Join(parts, ","),
+		"--repo", "o/n", "--root", il.root, "--base", "dev", "--timeout", "5m")
+	if exit != 0 {
+		t.Fatalf("learning the gate head: batch exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if !strings.HasPrefix(line, "BATCH OK ") {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "head=") {
+				return strings.TrimPrefix(f, "head=")
+			}
+		}
+	}
+	t.Fatalf("no BATCH OK head in:\n%s", stdout)
+	return ""
 }
 
 // fakeFailForge is the run reader with no network in it: one run, its jobs, and one log

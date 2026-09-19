@@ -1,0 +1,8 @@
+# The sensitive-prefix policy, tracked and versioned at the base commit.
+# One rule per line, columns `prefix<TAB>who`: a member whose diff touches `prefix`
+# has exactly one reader, `who`, and only that mind's non-author APPROVE at the
+# member's current head admits it. Read by `nova-merge integrate` from the exact
+# trusted base commit, never from a caller path.
+#
+# Johnny owns the rows; this ruling does not invent the list's contents. An empty
+# table (no rows below) is refused by the verb, not passed.
