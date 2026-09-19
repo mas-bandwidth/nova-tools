@@ -1,5 +1,12 @@
 package pulse
 
+import (
+	"fmt"
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
 // The kinds table: a card kind is a template PLUS the gate that judges it and the control
 // that proves the gate (SPEC-TOOLWORK.md §5 rules 2-3, PR #1637). The template is text
 // for the worker; this is code in the tool the worker never sees and cannot edit, chosen
@@ -93,4 +100,54 @@ func (k Kind) ControlBuilt() bool {
 		return true
 	}
 	return !k.Gated()
+}
+
+// The kinds the CUTTERS actually write, and the nearest name the table holds.
+//
+// Measured 2026-09-19 over the 91 cards under tmp/session-0919b (`grep -h '^KIND:'`):
+// fix-red 43, fix-with-red-test 20, dogfood 11, transcript-test 8, sweep 3, new-verb 2,
+// row-test 1, rebase 1, mutation-kill 1, docs-fix 1. Five of those ten names -- 35 of the
+// 91 cards -- are not in SPEC-TOOLWORK §5's table at any head, including `origin/dev`,
+// although several of the cards say `SPEC: docs/SPEC-TOOLWORK.md §5 kind <name>`. A card
+// writer's claim that a kind is in the spec is not the spec.
+//
+// This is a SPELLING map and nothing else. It never assigns a gate: `accept` abstains on
+// a kind the table does not hold (§5 rule 3, there is no default kind), and that does not
+// change here. What it buys is a refusal a person can act on -- `cut` and `lint` can say
+// which name the table does hold instead of only that this one is wrong.
+//
+// The nearest name is read off the card's own header, not off its title:
+//   - fix-with-red-test, dogfood, new-verb, row-test all carry PATHS: plus a real
+//     `TEST: <pkg> <TestName>`, which is fix-red's shape.
+//   - docs-fix carries `TEST: none`, which is an ungated kind's shape; `text` is the
+//     table's name for it.
+//
+// The other road is that §5 GAINS these names with their own controls. That is a spec
+// change, not a code change, and it is asked on the PRs rather than decided here.
+var KindDrift = map[string]string{
+	"fix-with-red-test": "fix-red",
+	"dogfood":           "fix-red",
+	"new-verb":          "fix-red",
+	"row-test":          "fix-red",
+	"docs-fix":          "text",
+}
+
+// NearestKind is the table's name for a kind the table does not hold, and whether there
+// is one. A name the table DOES hold is not drift and answers false.
+func NearestKind(name string) (string, bool) {
+	if _, ok := KindNamed(name); ok {
+		return "", false
+	}
+	near, ok := KindDrift[strings.TrimSpace(name)]
+	return near, ok
+}
+
+// UnknownKindRemedy is the one sentence every refusal of an unknown kind says, in one
+// place so `cut`, `lint --card` and `accept` cannot say it differently.
+func UnknownKindRemedy(name string) string {
+	if near, ok := NearestKind(name); ok {
+		return fmt.Sprintf("the kinds table does not hold %s; the nearest name it holds is %s -- use that if it is the shape of this card, or ask for %s to be added to SPEC-TOOLWORK §5 with its own control (run `nova-pulse accept --kinds` for the table)",
+			oneline.Field(name), oneline.Field(near), oneline.Field(name))
+	}
+	return fmt.Sprintf("the kinds table does not hold %s, and there is no default kind (run `nova-pulse accept --kinds` for the table)", oneline.Field(name))
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // The Exec seam is the accept gate's wall (SPEC-TOOLWORK §1 rule 3), and what it sets on
@@ -62,7 +64,12 @@ func TestMutateKeepsTheExecSeamsEnv(t *testing.T) {
 		cmd := exec.CommandContext(ctx, "sh", "-c", script, name)
 		cmd.Args = append(cmd.Args, args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "NOVA_SEAM_MARK=held")
+		// The seam hands a CLEAN environment plus its mark, which is what the real seam
+		// does: goenv.Clean drops GOFLAGS and GOTEST*, and a runner that has either set
+		// made the fixture's `go test -json` print its start event and exit non-zero with
+		// nothing else -- red on the CI space leg, green on hulk and the Studio, for a
+		// reason that had nothing to do with the seam this test is about.
+		cmd.Env = append(goenv.Clean(os.Environ()), "NOVA_SEAM_MARK=held")
 		return cmd
 	}
 	res, err := Mutate(context.Background(), MutateOptions{Repo: repo, Base: base, Head: head, TempRoot: t.TempDir(), Exec: exec0})
