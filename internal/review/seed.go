@@ -253,10 +253,12 @@ func listPackage(ctx context.Context, execFn seedExec, wt, pkg string) error {
 	if ctx.Err() != nil {
 		return deadlineErr(pkg)
 	}
-	if err != nil {
-		return fmt.Errorf("--tests names %s, which is not a package at this head: %s", pkg, firstLine(string(out)))
-	}
-	if strings.TrimSpace(string(out)) == "" {
+	// The refusal names the PACKAGE and nothing else. `go list`'s own first line
+	// carries the throwaway worktree's absolute path, and this line is quoted by a
+	// gate, into a PR body and into a harvest log: a temp directory that existed for
+	// two seconds on one bench is noise everywhere it lands, and the caller's typo is
+	// the whole answer.
+	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return fmt.Errorf("--tests names %s, which is not a package at this head", pkg)
 	}
 	return nil
