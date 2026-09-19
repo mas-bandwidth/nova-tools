@@ -54,6 +54,15 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
+  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <<email>>"
+        [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+                                                     the four mechanical checks the accept
+                                                     gate runs, on a branch, before you ask
+                                                     a friend for a read: identity,
+                                                     out-of-path, stray-file, secret.
+                                                     --paths is the card's bound; with none
+                                                     the line says paths=- and out-of-path
+                                                     is skipped, never silently passed.
   nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
                                                      one row per verb the command reference
                                                      declares: who has run it, when, and
@@ -181,6 +190,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
+	case "hygiene":
+		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
 		return cmdDogfood(args[1:], stdout, stderr)
 	case "version", "--version":

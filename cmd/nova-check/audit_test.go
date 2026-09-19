@@ -61,6 +61,14 @@ var checkAudit = audit.Config{
 		`"context"`,
 		`"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/dogfood"`,
+		// hygiene.go, and why internal/hygiene cannot write past the escape: it holds no
+		// writer of its own. It runs git as a subprocess, parses what came back and returns
+		// Findings -- three STRING fields this package renders through oneline.Field and
+		// oneline.Escape at the one print site that carries them. Its errors are returned,
+		// never printed, and reach the stream only through refuse, which escapes them.
+		// The matched text of a secret finding is not in any field it returns (its own
+		// TestHygieneRejectsAKeyShapeAndNeverPrintsIt searches every field for it).
+		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
 	},
 	MinClassified: 30,
 }
