@@ -68,6 +68,24 @@ var workAudit = audit.Config{
 		// names and prints nothing: every name it yields reaches stdout only through an
 		// oneline field on a SET line in this package.
 		`"encoding/json"`,
+		// The push verb's edges. redisq is the ready set both this binary and nova-swarm
+		// reach through; it takes a map of fields and returns an id, and every field it
+		// hands back reaches stdout through an oneline field on the PUSH line here.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
+		// crypto/rand and encoding/hex mint the directory mode's card id, which Redis
+		// mints for itself. They produce hex bytes and print nothing.
+		`"crypto/rand"`,
+		`"encoding/hex"`,
+		// path/filepath takes the card's label off the --card path with Base and Ext. It
+		// writes nothing, and the label it yields is refused unless it matches
+		// [A-Za-z0-9._-]+ before it ever reaches a line.
+		`"path/filepath"`,
+		// regexp holds that one anchored label pattern and nothing else; it matches and
+		// prints nothing.
+		`"regexp"`,
+		// strconv renders --priority and the id fallback as digits. A number has nothing
+		// in it to escape, which is the audit's own numeric case.
+		`"strconv"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
