@@ -613,3 +613,16 @@ func TestStderrWholeMakesADroppedFindingRed(t *testing.T) {
 		t.Error("Steps accepted a `Stderr:` value it does not understand")
 	}
 }
+
+// A norm replaces LITERALLY. `As` is a sentence a reader is shown, not a
+// template: docs/TESTS.md's nova-merge block writes the reader's own path as
+// `$PWD/rehearsal.git`, and a replacement read as a template would take `$PWD`
+// for a capture group, expand it to nothing, and leave the two sides
+// disagreeing about a path that had just been normalised.
+func TestANormReplacesLiterally(t *testing.T) {
+	step := Step{Line: "$ nova-alpha init", Want: []string{"INIT OK remote=$PWD/rehearsal.git"}}
+	res := Result{Stdout: "INIT OK remote=/tmp/T/001/rehearsal.git\n"}
+	if problems := Compare(step, res, []Norm{Path("$PWD/rehearsal.git", "/tmp/T/001/rehearsal.git")}); len(problems) != 0 {
+		t.Errorf("a declared path holding `$` was not normalised: %v", problems)
+	}
+}

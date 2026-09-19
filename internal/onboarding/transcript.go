@@ -385,9 +385,15 @@ type Norm struct {
 	valid func(value string) bool
 }
 
+// A norm with no field replaces LITERALLY. As is a sentence a person reads in a
+// failure message, not a template: `$PWD/rehearsal.git` -- which is how
+// docs/TESTS.md's nova-merge block writes the path a reader types -- would
+// otherwise be read as a reference to a capture group named PWD, expand to
+// nothing, and leave the two sides disagreeing about a path that had just been
+// normalised. The token path below never templated: it copies As whole.
 func (n Norm) apply(line string) string {
 	if n.field == "" {
-		return n.Re.ReplaceAllString(line, n.As)
+		return n.Re.ReplaceAllLiteralString(line, n.As)
 	}
 	var out strings.Builder
 	for i := 0; i < len(line); {
