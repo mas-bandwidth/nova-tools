@@ -168,6 +168,17 @@ anybody, so the flag is required and the repository's own config is never a
 fallback. An email spelled with a bracket still inside it is refused rather
 than quietly matched against no one (#1805).
 
+`--kind` is a card kind this toolchain DECLARES, and there is no default one
+(SPEC-TOOLWORK §5 rules 3 and 6). It unlocks an allowlisted stray exception and
+nothing else, so a kind the tool does not hold used to unlock nothing and print
+`HYGIENE OK` — a clean answer about a shape of work that does not exist. It is
+now refused by name, listing the kinds there are (#1848):
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+```
+
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
@@ -2025,11 +2036,15 @@ MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>
 `seed=` is the first 8 hex of the patch's SHA-256, so a report names which control
 ran. The edit count is asserted, not reported: exactly one, counted from the
 worktree after `git apply` and never from the patch's own `@@` header, else
-`MUTATE REFUSED` and exit 2 before the seeded run. Four more things refuse rather
+`MUTATE REFUSED` and exit 2 before the seeded run. Five more things refuse rather
 than answer, because each of them kills every seed and would print a `PASS` that
 is not about the seed: a patch that does not apply, a `--tests` package `go list`
-does not resolve at that head, a named suite already red at the unseeded head, and
-a `--timeout` deadline that killed the run mid-flight. Neither form writes anything
+does not resolve at that head, a named suite already red at the unseeded head, a
+seeded tree that does not BUILD (a control that did not compile is the `broken`
+seed of SPEC-TOOLWORK §1 rule 6, whose want is the token `build` and not a kill,
+and it kills every suite it is pointed at: `MUTATE REFUSED: seed does not build:
+<the compiler's own line>`), and a `--timeout` deadline that killed the run
+mid-flight. Neither form writes anything
 into the repo it is pointed at, on any path. Full grammar in
 [docs/SPEC-REVIEW.md](SPEC-REVIEW.md).
 

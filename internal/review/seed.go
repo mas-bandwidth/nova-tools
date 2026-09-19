@@ -142,6 +142,12 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	}
 	for _, pkg := range pkgs {
 		red, _, err := runPackage(ctx, wt, pkg)
+		var bad *buildError
+		if errors.As(err, &bad) {
+			// Before the seed, so it is the HEAD's or the bench's and never the
+			// seed's. Named as such, because the two are fixed by different people.
+			return res, fmt.Errorf("%s does not build at %s without the seed, so no seed could be judged against it: %s", cleanPkg(pkg), Short(head), bad.Detail)
+		}
 		if err != nil {
 			return res, err
 		}
@@ -179,6 +185,14 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 
 	for _, pkg := range pkgs {
 		red, green, err := runPackage(ctx, wt, pkg)
+		var bad *buildError
+		if errors.As(err, &bad) {
+			// After the seed, and the head was proved to build and be green above, so
+			// this is the SEED's. A control that does not compile is not a weaker
+			// control -- it is no control at all, and it kills every suite it is
+			// pointed at, which is indistinguishable from the kill it claims (#1847).
+			return res, &SeedBuildError{Pkg: cleanPkg(pkg), Detail: bad.Detail}
+		}
 		if err != nil {
 			return res, err
 		}
@@ -376,8 +390,19 @@ func runPackage(ctx context.Context, wt, pkg string) (red, green int, err error)
 		}
 	}
 	text := string(out)
+	// A PACKAGE THAT DOES NOT BUILD IS NOT A RED, HERE. For a real mutant it is the
+	// strongest red there is -- the range form says so and means it. For a SEED it is
+	// the opposite: a control that is red because nothing compiled has proved nothing
+	// whatever about the suite, and it is §1 rule 6's `broken` seed, whose want is the
+	// token `build` and not a kill. It was scored as a kill, so a seed with a syntax
+	// error in it printed `edits=1 red=1 green=0 PASS` over a tree that did not
+	// compile (the Opus readers' dogfood, #1847; the same class as #1807).
+	//
+	// It is raised as an ERROR and named by the caller, because what it means depends
+	// on WHEN it happened: at the unseeded head it is the head's or the bench's, and
+	// after the seed is applied it is the seed's.
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
-		return 1, 0, nil
+		return 0, 0, &buildError{Pkg: pkg, Detail: firstCompilerLine(text)}
 	}
 	for _, line := range strings.Split(text, "\n") {
 		m := goResult.FindStringSubmatch(line)
@@ -434,4 +459,44 @@ func cleanPkg(pkg string) string {
 		return "."
 	}
 	return pkg
+}
+
+// buildError is "this package did not compile", raised by runPackage and never printed
+// by it: the same fact is the bench's before the seed is applied and the seed's after,
+// and only the caller knows which side of that line it is on.
+type buildError struct {
+	Pkg    string
+	Detail string
+}
+
+func (e *buildError) Error() string {
+	return fmt.Sprintf("%s does not build: %s", e.Pkg, e.Detail)
+}
+
+// SeedBuildError is the does-not-build refusal for the seeded tree: a control that
+// never ran, and a could-not-run rather than a verdict (#1847).
+type SeedBuildError struct {
+	Pkg    string
+	Detail string
+}
+
+func (e *SeedBuildError) Error() string {
+	return fmt.Sprintf("seed does not build: %s", e.Detail)
+}
+
+// firstCompilerLine picks the compiler's own line out of a `go test` build failure --
+// `<file>:<line>:<col>: <what>` -- which is the whole answer for the seed's author and
+// the only part of that output worth carrying into a refusal. `# <package>` above it
+// and `FAIL <pkg> [build failed]` below it say nothing the refusal does not already.
+func firstCompilerLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, "FAIL") {
+			continue
+		}
+		if i := strings.Index(s, ".go:"); i > 0 && strings.Count(s[i:], ":") >= 2 {
+			return s
+		}
+	}
+	return firstLine(text)
 }

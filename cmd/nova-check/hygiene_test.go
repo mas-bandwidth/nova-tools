@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
 // The verb's own surface: the one HYGIENE line, the cap-and-count listing, and the
@@ -222,7 +224,7 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	dir := hygManyFindings(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
-		"--identity", "Emma <emma@mas-bandwidth.com>", "--paths", "sign/**", "--kind", "fix", "--max", "2"}, &out, &errb)
+		"--identity", "Emma <emma@mas-bandwidth.com>", "--paths", "sign/**", "--kind", "fix-red", "--max", "2"}, &out, &errb)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
@@ -339,4 +341,76 @@ func hygFields(cmd string) ([]string, error) {
 		rest = strings.TrimSpace(rest[end+1:])
 	}
 	return args, nil
+}
+
+// The Opus readers' dogfood over seventeen PRs, 2026-09-19 (issue #1848). `--kind` went
+// straight through to hygiene.Check, where it unlocks an allowlisted stray exception and
+// nothing else, so a kind the tool does not declare unlocked nothing and the run printed
+// `HYGIENE OK`. SPEC-TOOLWORK §5 rule 3: "A kind the table does not hold is refused by
+// `cut` and abstained by `accept`; there is no default kind." A clean answer about a
+// shape of work that does not exist is the #1805 failure again, one flag along.
+func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
+	dir := hygLab(t)
+	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
+	hygGit(t, dir, "add", "-A")
+	hygGit(t, dir, "commit", "-q", "-m", "clean")
+	// The two the tools12 cards actually carried, and one nobody could mistake for real.
+	for _, kind := range []string{"fix-with-red-test", "docs-fix", "not-a-kind-at-all"} {
+		t.Run(kind, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
+				"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb)
+			if code != 2 {
+				t.Fatalf("--kind %q: exit %d, want 2\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
+			}
+			if !strings.Contains(errb.String(), kind) {
+				t.Errorf("--kind %q: the refusal does not name the kind: %q", kind, errb.String())
+			}
+			// A refusal a reader can act on names the kinds there are.
+			if !strings.Contains(errb.String(), "fix-red") {
+				t.Errorf("--kind %q: the refusal does not list the kinds the tool declares: %q", kind, errb.String())
+			}
+			if out.String() != "" {
+				t.Errorf("--kind %q: a refusal must print nothing on stdout, got %q", kind, out.String())
+			}
+		})
+	}
+}
+
+// The other half: every kind the tool DOES declare is accepted, and the one the stray
+// list's second column names still unlocks its exception. A guard that refused
+// everything would pass the test above and break the verb.
+func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
+	dir := hygLab(t)
+	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
+	hygGit(t, dir, "add", "-A")
+	hygGit(t, dir, "commit", "-q", "-m", "clean")
+	kinds := hygiene.Kinds()
+	if len(kinds) == 0 {
+		t.Fatal("the tool declares no kinds at all")
+	}
+	for _, kind := range kinds {
+		var out, errb bytes.Buffer
+		if code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
+			"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb); code != 0 {
+			t.Errorf("--kind %q: exit %d, want 0\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
+		}
+	}
+	// No --kind at all stays what it was: the flag is optional, and only a kind that
+	// was GIVEN and is not declared is a refusal.
+	var out, errb bytes.Buffer
+	if code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
+		"--identity", "Rowan <rowan@example.com>"}, &out, &errb); code != 0 {
+		t.Fatalf("no --kind: exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+}
+
+// The stray list's second column names kinds, and until now nothing checked that they
+// were kinds at all. A typo there silently grants an exception to nobody.
+func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
+	for _, kind := range hygiene.StrayKinds() {
+		if !hygiene.KindDeclared(kind) {
+			t.Errorf("the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)
+		}
+	}
 }

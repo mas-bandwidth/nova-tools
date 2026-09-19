@@ -84,6 +84,20 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " hygiene", "--identity is required: `Name <email>`, repeatable with commas")
 	}
 
+	// A kind is a shape of work the TOOL declares and a card cannot widen
+	// (SPEC-TOOLWORK §5 rule 6); §5 rule 3: "A kind the table does not hold is refused
+	// by `cut` and abstained by `accept`; there is no default kind."
+	//
+	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
+	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind
+	// unlocked nothing and the run printed HYGIENE OK -- a clean answer about a shape
+	// of work that does not exist. Eleven of the tools12 cards carried
+	// `fix-with-red-test` and every one of them came back clean (#1848).
+	if *kind != "" && !hygiene.KindDeclared(*kind) {
+		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
+			*kind, strings.Join(hygiene.Kinds(), ", ")))
+	}
+
 	var paths []string
 	for _, p := range strings.Split(*pathsFlag, ",") {
 		if p = strings.TrimSpace(p); p != "" {

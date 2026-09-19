@@ -953,3 +953,59 @@ func TestMutateSeedRefusesALineMovedBetweenFiles(t *testing.T) {
 		t.Fatalf("stderr = %q, want the two-edit refusal for a line moved BETWEEN files", errb.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The Opus readers' dogfood of `mutate --seed` over seventeen PRs, 2026-09-19
+// (issue #1847), and it is the #1807 class: a red that came from a BUILD FAILURE
+// scored as a kill.
+//
+// runPackage scores a package that does not build as red, deliberately -- for a real
+// mutant that is the strongest red there is. For a seed it is the opposite: a control
+// that is red because nothing compiled proves nothing at all about the suite, and it
+// is SPEC-TOOLWORK §1 rule 6's `broken` seed, whose want is the token `build` and not
+// a kill. The reader's receipt was `MUTATE 04b3c236 seed=1d072599 edits=1 red=1
+// green=0 PASS` over a tree that answered `fill.go:367:6: syntax error`.
+func TestMutateSeedRefusesASeedThatDoesNotBuild(t *testing.T) {
+	dir := seedLab(t)
+	broken := `--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -6,6 +6,6 @@ func Sign(n int) int {
+ 	}
+ 	if n == 0 {
+-		return 0
++		return 0 +
+ 	}
+ 	return -1
+ }
+`
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, broken), "--tests", "sign"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2: a seed that does not compile is a control that never ran, never a PASS\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if !strings.HasPrefix(errb.String(), "MUTATE REFUSED: seed does not build") {
+		t.Fatalf("stderr = %q, want the does-not-build refusal", errb.String())
+	}
+	// The refusal names what the compiler said, because the seed's author is the only
+	// person who can fix it and the line number is the whole answer.
+	if !strings.Contains(errb.String(), "sign.go") {
+		t.Fatalf("stderr = %q, want the compiler's own error named", errb.String())
+	}
+	if strings.Contains(out.String()+errb.String(), " PASS") {
+		t.Fatalf("a verdict was printed for a seed that never ran: %q %q", out.String(), errb.String())
+	}
+}
+
+// The negative control for the control: a seed that DOES build is judged as before.
+// A build step that refused everything would pass the test above and break the verb.
+func TestMutateSeedStillRunsASeedThatBuilds(t *testing.T) {
+	dir := seedLab(t)
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if !strings.HasSuffix(out.String(), " edits=1 red=1 green=0 PASS\n") {
+		t.Fatalf("stdout = %q, want the seed verdict line", out.String())
+	}
+}

@@ -223,6 +223,14 @@ $ nova-check hygiene --repo . --base main --head card --identity "Rowan <<rowan@
 nova-check hygiene: --identity "Rowan <<rowan@mas-bandwidth.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
+`--kind` is a card kind the toolchain declares, and there is no default one. One
+it does not hold is refused by name rather than left to unlock nothing (#1848):
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+```
+
 ## nova-self-talk
 
 Fixture: `cmd/nova-self-talk/testdata/example-pages`.

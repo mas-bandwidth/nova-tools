@@ -173,9 +173,16 @@ func mutateSeed(ctx context.Context, repo, head, seed, tests string, out, errOut
 	}
 	res, err := review.MutateSeed(ctx, review.SeedOptions{Repo: repo, Head: head, Seed: seed, Tests: pkgs})
 	var count *review.SeedCountError
+	var broken *review.SeedBuildError
 	switch {
 	case errors.As(err, &count):
 		return refuseMutate(errOut, count.Error())
+	case errors.As(err, &broken):
+		// Both refusals are the same rule: a control whose SHAPE is wrong is not a
+		// control, and running it anyway produces a verdict line somebody can quote.
+		// A seed that does not compile kills every suite it is pointed at, which is
+		// what a kill looks like, so a PASS under it says nothing at all (#1847).
+		return refuseMutate(errOut, broken.Error())
 	case err != nil:
 		return refuseMutate(errOut, err.Error())
 	}

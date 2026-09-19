@@ -43,6 +43,9 @@ var checkAudit = audit.Config{
 	Exempt: map[string]string{
 		"main.go|requireFlags|name":    "a required flag's name, a key of the map this file's callers build from literals",
 		"main.go|cmdAttest|att.SHA256": "sixty-four hex digits from encoding/hex over a SHA-256 sum",
+		`hygiene.go|cmdHygiene|strings.Join(hygiene.Kinds(), ", ")`: "the card kinds this toolchain declares, read from internal/hygiene/kinds.txt, " +
+			"which is embedded into this binary at build time and holds nothing a caller can write. " +
+			"TestHygieneRefusesAKindTheToolDoesNotDeclare and TestHygieneAcceptsEveryDeclaredKind are the behavioural tests for this site.",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
