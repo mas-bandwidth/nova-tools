@@ -277,8 +277,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	// nothing read there is nothing to answer it. The release lane asks for
 	// this refusal by name so it cannot go green on nothing.
 	if len(read.receipts) == 0 && !*allowEmpty {
-		refuse(stderr, " dogfood gate", fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(*receipts)))
-		return 1
+		return refuseRan(stderr, " dogfood gate", fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(*receipts)))
 	}
 	// The discarded receipts are said FIRST, and on every outcome.
 	reportStranded(read, *failMax, stderr)

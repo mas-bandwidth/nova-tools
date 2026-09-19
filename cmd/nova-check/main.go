@@ -158,6 +158,16 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
+// refuseRan is what a check that RAN and answered NO costs: ONE line naming the
+// verdict and its remedy, and no door. The door is for an unusable invocation
+// (refuse), where a reader mis-spelled something and needs the usage; pointing a
+// reader at `nova-check help` after a gate has run is noise, and it sends them to
+// look up a shape that was never the problem.
+func refuseRan(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-check%s: %s\n", oneline.Escape(where), oneline.Escape(what))
+	return 1
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
