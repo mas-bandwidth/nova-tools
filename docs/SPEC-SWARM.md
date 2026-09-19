@@ -1220,6 +1220,18 @@ replaced), and its `permission.external_directory` allows:
   `READ:` line, and that path's parent with a `/*` on it, which is what the
   fence asks about for a file. A walled run takes none of them: the WALL owns
   what the child may read (SPEC-SANDBOX rule 1), and the fence is not a wall.
+  A card is the MODEL's text, and a fence rule a card can widen for itself is
+  no fence; and
+- **on every run, walled or not**, every `read_roots` entry of the worker
+  description, in the same three spellings (issue #1463). This one is the
+  DESK's declaration and not the model's: a person wrote it, `LoadWorker`
+  validated it, and it is the same list the wall is handed on the line above
+  (`nova-sandbox --read <read_roots entry>`). The fence may not deny what the
+  wall grants — a second, weaker fence that contradicts the first one can only
+  cost cards, and it cost one whole card at `NATIVE OK rc=0 harness=ok` before
+  this rule existed. **Red test:** a walled `native` run whose description
+  names `read_roots` writes a config that allows those roots, and still names
+  no path the card asked for.
 
 **Nothing ABOVE the job is ever named** — not the `jobs` parent. The harness
 resolves a card's `../scratch` after the card's own `cd repo`, so a parent rule
@@ -1534,6 +1546,23 @@ The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
 field after it where the remedy needs a path: `watched=<path>`, the log the
 idle monitor watched, or `job=<dir>`, the job directory that holds no result.
+
+**A card the batch KILLED carries `killed=<n>` after its log count, and a card
+the batch did not kill carries no such field** (issue #640). A kill is the
+card's WHOLE PROCESS GROUP and never one pid: the runner, the wall it opened,
+the harness inside it and everything the harness started — terminated, given
+`TerminateGrace`, then killed, and confirmed gone. The terminate comes first
+because the child of a runnerless batch is `nova-swarm native`, which answers a
+TERM by reaping its own tree and folding its usage. `<n>` is the size of that
+group read in the instant before it was ended: exact where the platform
+enumerates a group, and otherwise the one leader it can prove, which is a floor
+and never a guess. **`killed=0` is a real answer** — the group was already gone
+when the deadline fired. **Red test:** a card that leaves an ordinary child
+running and then blocks past the deadline; when the `BATCH` line has been
+printed, the kernel says that child is gone. *A card that puts itself in a new
+session (`setsid`) leaves its group by construction and no group kill reaches
+it; that is the background-subtask violation the supervisor reports, and it is
+not this rule's business.*
 A `done` card whose line 1 ran longer than its contract line carries one more
 bounded field, `tail=<n>` — the number of chars past the contract line — so a
 coordinator reads how the worker's title extended the generator's truncation;
@@ -1568,7 +1597,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1910,7 +1939,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -2471,6 +2500,11 @@ the verbatim-quote condition still holds for every finding that survives it.
 and `nova-swarm` does not read a worker's `RESULT.md` and act on it. The
 templates are shipped in the binary, printable, and a caller may write their own
 file instead — the tool has no list of blessed task shapes.
+
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §5 (draft, 2026-09-19):** a template stays text. A card
+**kind** is a template plus a gate and a negative control declared in the tool, chosen by the
+card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
+card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
 
 ## The `RESULT.md` template
 
