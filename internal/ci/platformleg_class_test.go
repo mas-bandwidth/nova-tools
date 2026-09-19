@@ -50,7 +50,8 @@ func TestPlatformLineMustNameACILeg(t *testing.T) {
 		t.Fatal(err)
 	}
 	var violations []string
-	sections, parsed := 0, map[string]bool{}
+	sections := 0
+	parsed, isSection := map[string]bool{}, map[string]bool{}
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -61,6 +62,7 @@ func TestPlatformLineMustNameACILeg(t *testing.T) {
 			continue
 		}
 		sections++
+		isSection[tool] = true
 		p, found, err := onboarding.SectionPlatforms(md, tool)
 		switch {
 		case !found:
@@ -95,9 +97,16 @@ func TestPlatformLineMustNameACILeg(t *testing.T) {
 	if sections == 0 {
 		t.Fatal("no `## <tool>` sections found in docs/TESTS.md; this walk was looking in the wrong place and would have passed by checking nothing")
 	}
-	// The list only shrinks: a section whose line now parses may not stay listed.
+	// The list only shrinks, and it shrinks two ways: a section whose line now
+	// parses may not stay listed, and an entry naming NO section is an orphan
+	// nothing can ever make stale, so it would sit in the list for good.
 	for tool := range allow {
-		if parsed[tool] {
+		switch {
+		case !isSection[tool]:
+			violations = append(violations, fmt.Sprintf(
+				"%s lists %s, and docs/TESTS.md has no `## %s` section with a directory under cmd/; an entry naming no section is an orphan no re-cut can ever remove, so nothing would shrink it. Delete it, or fix its spelling",
+				platformLegAllowlistPath, tool, tool))
+		case parsed[tool]:
 			violations = append(violations, fmt.Sprintf(
 				"%s lists %s, and its platform line now parses as a GOOS list; delete the stale entry (the list only shrinks)",
 				platformLegAllowlistPath, tool))
