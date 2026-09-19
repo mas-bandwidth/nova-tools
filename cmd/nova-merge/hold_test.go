@@ -1141,6 +1141,7 @@ func TestBatchAndLandRefuseNonexistentLaneDirectory(t *testing.T) {
 
 	head := strings.Repeat("a", 40)
 	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	h.PRs[1] = merge.PR{Number: 1, HeadOID: l.heads[1], Mergeable: "MERGEABLE"}
 	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=1 dropped=none"
 	lexit, _, lstderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
 		"--receipt", receipt, "--lane", missingLane, "--reviewers", revFile)
@@ -1148,6 +1149,7 @@ func TestBatchAndLandRefuseNonexistentLaneDirectory(t *testing.T) {
 		t.Fatalf("land with nonexistent lane directory must exit 2, got %d\nstderr: %s", lexit, lstderr)
 	}
 	contains(t, lstderr, "LAND REFUSED")
+	contains(t, lstderr, "nonexistent-lane")
 }
 
 // 41. TestLandRefusesWhenPRReadFailsUnderNoRequireHolds (Rowan row C):
@@ -1195,4 +1197,37 @@ func TestReviewersWithLaneNoneRefuses(t *testing.T) {
 	}
 	contains(t, lstderr, "--lane is required when --reviewers is specified")
 }
+
+// 42. TestQueueSweepRefusesMalformedLaneRecord (Rowan cold read 3 row 3):
+// A corrupt lane record file must cause queue sweep to refuse exit 2, naming the bad file.
+func TestQueueSweepRefusesMalformedLaneRecord(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("dev")
+	head := strings.Repeat("a", 40)
+	l.host.PRs[951] = merge.PR{Number: 951, HeadOID: head, Mergeable: "MERGEABLE"}
+	l.host.OpenQueue = []merge.PR{{Number: 951, HeadOID: head, Mergeable: "MERGEABLE"}}
+	var c merge.Checks
+	c.AddRun("ci-ok", "success", head)
+	l.host.ChecksBy[head] = c
+
+	// Create corrupt lane record for PR 951
+	readsDir := filepath.Join(l.lane, merge.ReadsDir, "951")
+	if err := os.MkdirAll(readsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	badFile := filepath.Join(readsDir, "corrupt.json")
+	if err := os.WriteFile(badFile, []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	exit, _, stderr := l.run("queue", "--lane", l.lane, "sweep", "--window", "1h")
+	if exit != 2 {
+		t.Fatalf("queue sweep with malformed lane record must exit 2, got %d\nstderr: %s", exit, stderr)
+	}
+	contains(t, stderr, "QUEUE REFUSED")
+	contains(t, stderr, "corrupt.json")
+}
+
+
 
