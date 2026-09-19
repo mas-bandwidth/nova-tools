@@ -1,12 +1,14 @@
 package swarm
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -58,6 +60,14 @@ type RunInput struct {
 	// process, so a dispatcher that dies leaves leases the next take reaps.
 	SlotPoll time.Duration
 	SlotPID  int
+	// THE ROUTE SEAM (issue #1486, SPEC-DECIDE "nova-decide route"). When it is
+	// set, a claimed task is asked of the ladder -- which MIND does this unit of
+	// work -- before it is launched, and a card the ladder marks ask-child or
+	// ask-bus is parked in routed-out/ rather than run on this pool's mechanical
+	// model. The worker's model is the FALLBACK, which is exactly today's
+	// behaviour (rule 5). nil leaves every claimed task to the launch, which is
+	// the behaviour every existing caller has today.
+	Route *RouteInput
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -403,6 +413,28 @@ func Run(in RunInput) int {
 				tasks.Line(line)
 				continue
 			}
+			// THE LADDER ON THE DISPATCH PATH (issue #1486): before a claimed
+			// task is launched the dispatcher asks which mind does the unit,
+			// the same question the batch asks on its fill path. A card the
+			// ladder marks ask-child or ask-bus is judgment work owed to a
+			// child or a friend, and it must not run on this pool's mechanical
+			// model: it is parked in routed-out/ with its ROUTE line, and the
+			// coordinator (or a friend, over the bus) takes it from there.
+			// Every other answer runs on today's model, and the receipt says
+			// which happened. Parking is not a failure, holds no slot and
+			// consumes no lease: the task never started.
+			if in.Route != nil {
+				res, park := in.routeTask(sc, text)
+				fmt.Fprintf(errOut, "ROUTE %s %s\n", oneline.Field(routeTaskLabel(sc)), res.Receipt)
+				if park {
+					_ = p.WriteSidecar(Running, sc)
+					_ = p.Claim(sc.ID, Running, RoutedOut)
+					_ = os.WriteFile(p.Path(RoutedOut, sc.ID+".route"), []byte(res.Receipt+"\n"), 0o644)
+					fmt.Fprintf(out, "RUN ROUTED-OUT id=%s dest=%s rung=%s why=%s\n",
+						oneline.Field(sc.ID), oneline.Field(RoutedOut), oneline.Field(res.Rung), oneline.Field(res.Why))
+					continue
+				}
+			}
 			leased := false
 			if in.SlotsStore != "" {
 				dur := taskDeadline(sc, in.Worker) + 2*time.Minute
@@ -635,6 +667,39 @@ func unionOf(a, b map[int]bool) map[int]bool {
 		out[n] = true
 	}
 	return out
+}
+
+// routeTask asks the ladder which mind does one claimed task. It never fails:
+// a route that cannot be made is today's model with a receipt that says so,
+// because a dispatch path that refuses to dispatch is worse than one that
+// keeps the behaviour it had.
+//
+// park is true where the ladder answered a mind that is ASKED, not run -- a
+// child, a friend, Glenn -- and the card cannot be dispatched to it: the
+// caller parks the task in routed-out/ rather than launching it. Every other
+// answer runs, on today's model where the route fell back, and the receipt
+// says which happened.
+func (in RunInput) routeTask(sc Sidecar, text []byte) (CardRoute, bool) {
+	label := routeTaskLabel(sc)
+	contract := strings.TrimSpace(first(strings.Split(string(text), "\n")))
+	unit, ok := CardUnit(label, contract, string(text))
+	if !ok {
+		receipt := fmt.Sprintf("ROUTE jev=fallback conf=0.00 rung=- model=%s why=%s",
+			oneline.Field(in.Worker.Model), oneline.Field("card-names-no-kind"))
+		return CardRoute{Model: in.Worker.Model, Rung: "-", Source: "rules",
+			Fallback: true, Why: "card-names-no-kind", Receipt: receipt}, false
+	}
+	res := RouteCard(context.Background(), *in.Route, unit, in.Worker.Model)
+	return res, res.Why == RouteFallbackNoModel
+}
+
+// routeTaskLabel is the name a claimed task's ROUTE line carries: the label
+// the task was queued under, or its id where it carries none.
+func routeTaskLabel(sc Sidecar) string {
+	if strings.TrimSpace(sc.Label) != "" {
+		return sc.Label
+	}
+	return sc.ID
 }
 
 // launch is rule 18's transaction, from this side: reserve, spawn, wait for the identity,
