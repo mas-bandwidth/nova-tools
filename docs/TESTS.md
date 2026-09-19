@@ -384,7 +384,7 @@ DECIDE REFUSED reason=no-arguments --questions is required, refusing to guess; r
 $ nova-decide version
 nova-decide devel linux/amd64 go1.26.5
 
-$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
+$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9   # Requires: JEV_API_KEY
 DECIDE gate=go conf=0.94 floor=0.90 below=-
 ```
 
@@ -392,17 +392,20 @@ DECIDE gate=go conf=0.94 floor=0.90 below=-
 
 `route`, `help` and `log` need no key and no network with `--no-jev`: the rules
 alone answer, the same way every time. These lines were produced by running the
-binary built on this branch.
+binary built on this branch. `log` reads a log of your own: the one below is
+the single row the first `route` line writes when it is given `--log
+./decide.jsonl`, and `cmd/nova-decide/firstrun_test.go` writes exactly that row
+before it runs the block.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.65 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
 $ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
-ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.90 wait=- reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
+ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.65 wait=- next=- steps=1 reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
 
 $ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
-ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.90 wait=awaiting_termination reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.65 wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
 
 $ nova-decide help --hours 6 --asked-all-friends
 HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
