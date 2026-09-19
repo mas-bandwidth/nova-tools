@@ -44,9 +44,9 @@ usage:
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--slots-store <dir> --owner <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
-  nova-swarm status    --pool <dir> [--max <n>]
+  nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]
   nova-swarm stop      --pool <dir>
   nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
@@ -602,11 +602,21 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// ONE loud workaround, which a person types and no environment variable can produce.
 	sandboxPath := f.fs.String("sandbox", "", "")
 	noSandbox := f.fs.Bool("no-sandbox", false, "")
+	// THE BENCH SLOT LEASE (docs/SPEC-SWARM.md, "Bench slot leases"): --slots-store names
+	// the store and --owner whose share the one lease per task counts against. Without a
+	// store the launcher is unchanged.
+	slotsStore := f.fs.String("slots-store", "", "")
+	owner := f.fs.String("owner", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *noSandbox && *sandboxPath != "" {
 		f.add("--no-sandbox and --sandbox together: one asks for no wall at all and the other names the wall to use; pass at most one")
+	}
+	if *slotsStore != "" {
+		f.want(*owner, "owner", "whose bench slot share the leases count against; it is required with --slots-store")
+	} else if *owner != "" {
+		f.add("--owner wants --slots-store: without a store there is no bench share for an owner to hold")
 	}
 	f.wantMax(*max)
 	if *backoff < 1 {
@@ -711,6 +721,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
+		SlotsStore: *slotsStore, SlotOwner: *owner,
 	})
 }
 
@@ -787,11 +798,18 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("status")
 	pool := f.fs.String("pool", "", "")
 	max := maxFlag(f.fs)
+	slotsStore := f.fs.String("slots-store", "", "")
+	owner := f.fs.String("owner", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
+	if *slotsStore != "" {
+		f.want(*owner, "owner", "whose bench slot share to report; it is required with --slots-store")
+	} else if *owner != "" {
+		f.add("--owner wants --slots-store: without a store there is no bench share to report")
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -823,6 +841,14 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	quarantined += len(bad)
+	if *slotsStore != "" {
+		held, share, serr := swarm.SlotHoldings(*slotsStore, *owner, now)
+		if serr != nil {
+			fmt.Fprintf(stderr, "nova-swarm status: the slot store could not be read: %s\n", oneline.Err(serr))
+			return 2
+		}
+		fmt.Fprintf(stdout, "STATUS SLOTS owner=%s held=%d share=%d\n", oneline.Field(*owner), held, share)
+	}
 	fmt.Fprintf(stdout, "STATUS OK pending=%d running=%d done=%d failed=%d slots=%d/%d quarantined=%d\n",
 		counts[swarm.Pending], counts[swarm.Running], counts[swarm.Done], counts[swarm.Failed],
 		len(numbers), len(numbers), quarantined)
