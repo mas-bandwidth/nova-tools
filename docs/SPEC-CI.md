@@ -1432,6 +1432,37 @@ Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
 Cellar prefix is read off the launcher rather than guessed by
 `TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
 
+### `ciworkspace` — the workspace cleanup never fails a job before checkout
+
+**The rule.** Every copy of the `remove stale build dirs from the shared runner`
+step in `.github/workflows/ci.yml` refuses an EMPTY `GITHUB_WORKSPACE`
+(`[ -n … ] || exit 1`) and otherwise CONTINUES when the workspace directory does
+not exist (`[ -d … ] || exit 0`). It may not exit non-zero because `.git` is
+absent: the step runs before `actions/checkout`, so an absent `.git` is the
+normal first-run state and not a fault.
+**The hurt.** The step's precheck was
+`[ -n "${GITHUB_WORKSPACE}" ] && [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 1`.
+On 2026-09-19 the captainamerica runners came back into service with fresh
+workspaces and **five jobs across three PRs went red before a line of the
+repository had been read**, `ci-ok` failing downstream of them, every one
+reporting `failed_step: 2:remove stale build dirs from the shared runner`
+(`#1751`, receipts on the issue).
+**The test.** `TestWorkspaceCleanupDoesNotFailBeforeCheckout`
+(`internal/ci/ciworkspace_class_test.go`). It reads `ci.yml` as text, finds
+EVERY copy of the named step, and reports the occurrence index and its line
+number, so a repair made in five of six copies is found rather than passing on
+the first.
+**Its allowlist.** None. Every copy of the step is held to the same shape; a
+copy that needs an exception is a copy that should not exist.
+**Its remedy lines.** `the cleanup step still refuses a workspace with no .git;
+it runs before checkout, so a runner whose workspace does not exist yet goes red
+before a line of the repository is read (#1751)`, and its two companions for a
+dropped `[ -n … ] || exit 1` refusal and a missing `[ -d … ] || exit 0` guard.
+**Its narrowings.** It matches the step by its `- name:` text, so a copy renamed
+or a cleanup inlined into another step would not be counted; and it reads the
+workflow as text, so a value built elsewhere and interpolated in is invisible to
+it.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with
