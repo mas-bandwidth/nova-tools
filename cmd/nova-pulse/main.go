@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +39,7 @@ nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [--memfree-gb <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
@@ -281,6 +285,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdStatus(rest, stdout, stderr, now)
 	case "progress":
 		return cmdProgress(rest, stdout, stderr)
+	case "capacity":
+		return cmdCapacity(rest, stdout, stderr)
 	case "gate":
 		return cmdGate(rest, stdout, stderr)
 	case "run":
@@ -758,6 +764,135 @@ func cmdProgress(args []string, stdout, stderr io.Writer) int {
 		Stdout: stdout,
 		Stderr: stderr,
 	})
+}
+
+// cmdCapacity is the allowed-cards formula as one verb: for --bench <name> it prints the
+// one CAPACITY line every launcher reads, and with no numbers given it reads this host's own
+// cores, load, free disk and free memory, so a bench can ask itself instead of shelling a
+// remote script. A number passed on the command line wins over the local read; that is what
+// lets a test fix all four and touch neither /proc nor df.
+//
+// THE LOCAL READ IS LINUX. /proc/loadavg, /proc/meminfo and `df -BG` are what cap() reads
+// and they are a linux bench's facts; darwin has no /proc and its df has no -BG. On such a
+// host the verb REFUSES and names the flag that was not given, rather than standing a
+// number up out of nothing: every launcher in the fleet acts on this one line, and a guess
+// here is a guess about how much work a machine can take. The fleet's own capacity still
+// comes from the remote script in fill.go, which runs on the linux benches.
+func cmdCapacity(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("capacity")
+	bench := f.fs.String("bench", "", "")
+	cores := f.fs.Int("cores", -1, "")
+	load1 := f.fs.Int("load1", -1, "")
+	freeGB := f.fs.Int("free-gb", -1, "")
+	memFreeGB := f.fs.Int("memfree-gb", -1, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	c := *cores
+	if c < 0 {
+		c = runtime.NumCPU()
+	}
+	l := *load1
+	if l < 0 {
+		v, err := hostLoad1()
+		if err != nil {
+			f.add(fmt.Sprintf("--load1 was not given and /proc/loadavg could not be read: %s", oneline.Err(err)))
+		}
+		l = v
+	}
+	fg := *freeGB
+	if fg < 0 {
+		v, err := hostFreeGB()
+		if err != nil {
+			f.add(fmt.Sprintf("--free-gb was not given and df on the home filesystem failed: %s", oneline.Err(err)))
+		}
+		fg = v
+	}
+	mg := *memFreeGB
+	if mg < 0 {
+		v, err := hostMemFreeGB()
+		if err != nil {
+			f.add(fmt.Sprintf("--memfree-gb was not given and /proc/meminfo could not be read: %s", oneline.Err(err)))
+		}
+		mg = v
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	allowed := pulse.AllowedCards(c, l, fg, mg)
+	fmt.Fprintf(stdout, "CAPACITY bench=%s cores=%d load=%d free=%dG memfree=%dG allowed=%d\n",
+		oneline.Field(*bench), c, l, fg, mg, allowed)
+	return 0
+}
+
+// hostLoad1 reads the whole part of the one-minute load average, the way cap()'s
+// `cut -d. -f1 /proc/loadavg` does.
+func hostLoad1() (int, error) {
+	raw, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("empty /proc/loadavg")
+	}
+	whole := strings.SplitN(fields[0], ".", 2)[0]
+	n, err := strconv.Atoi(whole)
+	if err != nil {
+		return 0, fmt.Errorf("load %q is not a number", fields[0])
+	}
+	return n, nil
+}
+
+// hostMemFreeGB reads MemAvailable from /proc/meminfo as whole GB, the way cap()'s
+// `$2/1048576` does.
+func hostMemFreeGB() (int, error) {
+	raw, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(line, "MemAvailable:")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return 0, fmt.Errorf("MemAvailable has no value")
+		}
+		kb, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return 0, fmt.Errorf("MemAvailable %q is not a number", fields[0])
+		}
+		return kb / 1048576, nil
+	}
+	return 0, fmt.Errorf("no MemAvailable line")
+}
+
+// hostFreeGB reads the free space on the home filesystem as whole GB, the way cap()'s
+// `df -BG "$HOME" | awk 'NR==2{gsub("G","",$4); print $4}'` does.
+func hostFreeGB() (int, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	out, err := exec.Command("df", "-BG", home).Output()
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) < 2 {
+		return 0, fmt.Errorf("df printed no filesystem line")
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return 0, fmt.Errorf("df line has %d fields", len(fields))
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(fields[3], "G"))
+	if err != nil {
+		return 0, fmt.Errorf("df available %q is not a number", fields[3])
+	}
+	return n, nil
 }
 
 func isDeadlineSeconds(s string) bool {
