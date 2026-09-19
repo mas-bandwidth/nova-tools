@@ -2,7 +2,10 @@ package onboarding
 
 import (
 	"fmt"
+	"os"
 	"regexp"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -40,8 +43,64 @@ type Step struct {
 	// command reads nothing. The path is as the document writes it.
 	Stdin string
 	// Want is the block written under the command, in order, with the blank
-	// line the document leaves between commands dropped from the end.
+	// line the document leaves between commands dropped from the end. A line
+	// beginning StderrMarker is one the document shows on standard error.
 	Want []string
+	// Platforms are the GOOS values this command's output was recorded on,
+	// from a trailing `# Platform: darwin` on the command line. Empty means the
+	// step is the same everywhere, which is the ordinary case.
+	Platforms []string
+	// Requires are the things a bench must have before this command can be run
+	// at all, from a trailing `# Requires: JEV_API_KEY`. A credential, another
+	// tool's binary, a network service. Empty means the step needs nothing.
+	Requires []string
+}
+
+// StderrMarker opens a documented line the tool writes to standard error. It is
+// #1570's convention, honoured here so that a swept section executes the moment
+// it is swept: standard output is compared WHOLE -- every unmarked line, in
+// order, and nothing else -- and standard error only for the lines shown, in
+// order, because how loudly a tool narrates its own work is not a promise to a
+// caller the way its protocol output is.
+const StderrMarker = "! "
+
+// KnownGOOS is the spelling a `# Platform:` declaration has to use: Go's own
+// GOOS words, because SkipReason compares the declaration against runtime.GOOS
+// and nothing else can ever match. `macOS` is the one a person writes, and it
+// skipped the step on every bench for ever while reading, in a green build,
+// exactly like a step everybody ran.
+//
+// This is a SPELLING check and not the whole rule. The rule that matters is
+// #1734's TestPlatformLineMustNameACILeg: a platform no leg of
+// .github/workflows/ci.yml runs is a transcript nobody executes -- `windows`
+// is the live case, its legs having been dropped on 2026-09-18. That check
+// reads ci.yml, which this package must not do (it reads no file and runs no
+// process), and it lives in internal/ci on the T23 branch. When T23 lands, its
+// rule wants extending from the section line to the per-step declaration this
+// file parses; the two should not be two readers of ci.yml.
+var KnownGOOS = []string{
+	"aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios",
+	"js", "linux", "nacl", "netbsd", "openbsd", "plan9", "solaris", "wasip1", "windows", "zos",
+}
+
+// SkipReason says why this step cannot be run here, or "" when it can. goos is
+// the platform the test is on; have answers whether a stated requirement is
+// met, and a nil have means nothing stated can be met.
+//
+// A step skipped for a reason the document does not state is NOT this function's
+// business: it returns "" and the step runs and fails, which is the right
+// outcome. #1570's last sentence is the rule -- a step skipped for a reason the
+// file does not state is a defect in the file, not a pass.
+func (s Step) SkipReason(goos string, have func(string) bool) string {
+	if len(s.Platforms) > 0 && !slices.Contains(s.Platforms, goos) {
+		return fmt.Sprintf("the document records this step on %s and this is %s", strings.Join(s.Platforms, " or "), goos)
+	}
+	for _, req := range s.Requires {
+		if have == nil || !have(req) {
+			return fmt.Sprintf("the document states it requires %s, which this bench does not have", req)
+		}
+	}
+	return ""
 }
 
 // Steps cuts a transcript's lines into its commands and their outputs. A line
@@ -66,6 +125,10 @@ func Steps(tool string, lines []string) ([]Step, error) {
 			last.Want = append(last.Want, line)
 			continue
 		}
+		cmd, platforms, requires, err := cutDeclaration(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("the transcript line %q: %w", line, err)
+		}
 		cmd, stdin, err := cutRedirect(cmd)
 		if err != nil {
 			return nil, fmt.Errorf("the transcript line %q: %w", line, err)
@@ -77,7 +140,7 @@ func Steps(tool string, lines []string) ([]Step, error) {
 		if len(args) == 0 || args[0] != tool {
 			return nil, fmt.Errorf("the transcript line %q is not a %s command", line, tool)
 		}
-		steps = append(steps, Step{Line: line, Args: args[1:], Stdin: stdin})
+		steps = append(steps, Step{Line: line, Args: args[1:], Stdin: stdin, Platforms: platforms, Requires: requires})
 	}
 	// The document leaves a blank line between commands; it belongs to neither.
 	for i := range steps {
@@ -111,6 +174,96 @@ func cutRedirect(cmd string) (string, string, error) {
 		return "", "", fmt.Errorf("redirects from %q, which is more than one word", path)
 	}
 	return strings.TrimSpace(head), path, nil
+}
+
+// cutDeclaration separates a trailing `# Platform: ...` or `# Requires: ...`
+// from a documented command line, so a precondition is stated PER STEP rather
+// than per section.
+//
+// The 2026-09-19 dogfood run is the case for it. `## nova-sandbox`'s section
+// header names its platform for the whole section -- #1539's `Platform:` line --
+// and a worker on Linux duly reported three steps as defects anyway, because a
+// section header cannot say that step 1 is platform-bound and step 4 is not. The
+// same run recorded a JEV key, a forge credential and a posting credential as
+// defects for want of anywhere to state them (#1570 §2). Both are properties of
+// a COMMAND.
+//
+// The declaration is written as a shell comment on the command line itself, so a
+// reader who pastes the line still runs it, and it cannot drift away from the
+// step it belongs to the way a paragraph above a block can:
+//
+//	$ nova-sandbox check   # Platform: darwin
+//	$ nova-decide --questions ./questions.json   # Requires: JEV_API_KEY
+//	$ nova-secrets keygen --as rowan   # Platform: darwin; Requires: age-keygen
+//
+// Only a comment whose first word is `Platform:` or `Requires:` is taken as one:
+// a `#` anywhere else in the line is an argument, and is left alone.
+func cutDeclaration(cmd string) (string, []string, []string, error) {
+	rest, decl, found := lastComment(cmd)
+	if !found {
+		return cmd, nil, nil, nil
+	}
+	var platforms, requires []string
+	for _, clause := range strings.Split(decl, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(clause), ":")
+		value = strings.TrimSpace(value)
+		if !ok || value == "" {
+			return "", nil, nil, fmt.Errorf("has the comment %q, which states neither `Platform: <goos>` nor `Requires: <what>`", clause)
+		}
+		switch strings.TrimSpace(key) {
+		case "Platform":
+			for _, goos := range splitList(value) {
+				if !slices.Contains(KnownGOOS, goos) {
+					return "", nil, nil, fmt.Errorf("states `Platform: %s`, and %q is no GOOS Go builds for: a step recorded for a platform that does not exist is skipped on every bench, for ever, and reads in a green build exactly like a step everybody runs. The spellings are %s", value, goos, strings.Join(KnownGOOS, ", "))
+				}
+				platforms = append(platforms, goos)
+			}
+		case "Requires":
+			requires = append(requires, splitList(value)...)
+		default:
+			return "", nil, nil, fmt.Errorf("has the comment %q; a stated precondition is `Platform: <goos>` or `Requires: <what>`", clause)
+		}
+	}
+	return strings.TrimSpace(rest), platforms, requires, nil
+}
+
+// lastComment finds the ` #` that opens a declaration, outside any quotes, and
+// only when what follows names one. Everything else stays in the command.
+func lastComment(cmd string) (string, string, bool) {
+	// BOTH quotes, because SplitShell reads both. Tracking only the double
+	// quote cut `--body 'a # Platform: x'` in half and then reported the
+	// remainder as an unterminated quote -- a defect reported as a different
+	// defect, which is worse than not noticing it.
+	var quote rune
+	for i, r := range cmd {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '#' && i > 0 && (cmd[i-1] == ' ' || cmd[i-1] == '\t'):
+			decl := strings.TrimSpace(cmd[i+1:])
+			for _, key := range []string{"Platform:", "Requires:"} {
+				if strings.HasPrefix(decl, key) {
+					return cmd[:i], decl, true
+				}
+			}
+		}
+	}
+	return cmd, "", false
+}
+
+// splitList reads `darwin, linux` as two values and `age-keygen` as one.
+func splitList(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // SplitShell splits a documented command line the way the shell a reader is
@@ -440,6 +593,9 @@ func (p Problem) Error() string  { return p.Message }
 // reader checks their screen against is the lines, so the lines are what is
 // compared, and the code is carried into the failure message as context.
 func Compare(s Step, res Result, norms []Norm) []Problem {
+	if marked(s.Want) {
+		return compareByStream(s, res, norms)
+	}
 	got, err := res.Lines()
 	if err != nil {
 		return []Problem{{Step: s, Message: fmt.Sprintf("the documented command\n  %s\n%v", s.Line, err)}}
@@ -457,6 +613,59 @@ func Compare(s Step, res Result, norms []Norm) []Problem {
 		problems = append(problems, Problem{Step: s, Message: fmt.Sprintf(
 			"under\n  %s\nthe document's line %d of %d reads\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.%s",
 			s.Line, i+1, len(s.Want), s.Want[i], got[i], declared(norms))})
+	}
+	return problems
+}
+
+func marked(want []string) bool {
+	for _, line := range want {
+		if strings.HasPrefix(line, StderrMarker) {
+			return true
+		}
+	}
+	return false
+}
+
+// compareByStream is the comparison for a block written to #1570's convention.
+// Standard output is compared WHOLE, as always. Standard error is compared only
+// for the lines the document shows, IN ORDER: a tool may narrate more than the
+// page has room for, and a transcript that had to list every progress line would
+// go stale on every change to a spinner. What it may NOT do is print one of the
+// shown lines out of order or not at all.
+//
+// This is what makes a block like nova-self-talk's -- whose seven lines come out
+// of two streams -- executable at all, and it is why the harness reports rather
+// than guesses when a block is unmarked and both streams spoke (#1549).
+func compareByStream(s Step, res Result, norms []Norm) []Problem {
+	var wantOut, wantErr []string
+	for _, line := range s.Want {
+		if marked, ok := strings.CutPrefix(line, StderrMarker); ok {
+			wantErr = append(wantErr, marked)
+			continue
+		}
+		wantOut = append(wantOut, line)
+	}
+	problems := Compare(Step{Line: s.Line, Want: wantOut}, Result{Code: res.Code, Stdout: res.Stdout}, norms)
+
+	gotErr := splitOutput(res.Stderr)
+	// `at` moves forward only when a documented line is FOUND, so one line the
+	// tool stopped printing is one complaint rather than a cascade down the
+	// rest of the block. A line printed out of order is still one complaint,
+	// against whichever of the pair the document put second.
+	at := 0
+	for _, want := range wantErr {
+		found := false
+		for i := at; i < len(gotErr); i++ {
+			if Normalize(want, norms) == Normalize(gotErr[i], norms) {
+				at, found = i+1, true
+				break
+			}
+		}
+		if !found {
+			problems = append(problems, Problem{Step: s, Message: fmt.Sprintf(
+				"under\n  %s\nthe document shows on standard error\n  %s\nand the tool did not print it there, or printed it out of order.\nwhat the tool wrote to standard error:\n%s%s",
+				s.Line, want, Block(gotErr), declared(norms))})
+		}
 	}
 	return problems
 }
@@ -483,16 +692,99 @@ type Runner func(s Step) (Result, error)
 // returns everything the document got wrong. It STOPS at the first command that
 // could not be invoked at all, because every line after it would then be
 // compared against a state that never happened.
+// A STEP THIS BENCH SKIPPED IS RETURNED AS A PROBLEM, and that is the whole
+// difference between Execute and ExecuteWith. Execute is the plain entry point:
+// it is handed no Conditions, so it uses THIS bench's -- runtime.GOOS, and the
+// environment for a stated requirement -- and anything it could not run is a
+// promise in the document that went unchecked here. A caller with a real
+// platform split calls ExecuteWith, logs its skips and decides for itself; the
+// plain entry point must not be green on what it did not run.
+//
+// It was not. `Execute` passed an EMPTY Conditions, which matches no platform
+// and meets no requirement, and then threw the skips away: every step that
+// stated a precondition was skipped and a whole block could turn its test green
+// having run nothing, printing nothing and counting nothing.
 func Execute(steps []Step, run Runner, norms ...Norm) []Problem {
+	problems, skips := ExecuteWith(steps, run, benchConditions(), norms...)
+	if len(steps) > 0 && len(skips) == len(steps) {
+		lines := make([]string, 0, len(skips))
+		for _, s := range skips {
+			lines = append(lines, s.String())
+		}
+		return append(problems, Problem{Step: skips[0].Step, Message: fmt.Sprintf(
+			"every step of this block was skipped: it ran nothing, so it proved nothing.\n%s\nIf these preconditions are right, this bench cannot execute this block and something else must; if they are wrong, they are a defect in the document.",
+			strings.Join(lines, "\n"))})
+	}
+	for _, s := range skips {
+		problems = append(problems, Problem{Step: s.Step, Message: s.String()})
+	}
+	return problems
+}
+
+// benchConditions is what THIS bench can offer, for the caller who did not say.
+// A requirement is met when the environment already names it: the value is
+// never read, printed or copied, only its presence asked after.
+func benchConditions() Conditions {
+	return Conditions{
+		GOOS: runtime.GOOS,
+		Have: func(requirement string) bool {
+			_, set := os.LookupEnv(requirement)
+			return set
+		},
+	}
+}
+
+// Conditions is what this bench can offer a transcript. A step whose stated
+// Platform is not this one, or whose stated Requires this bench cannot meet, is
+// SKIPPED and returned as a Skip rather than run and failed.
+type Conditions struct {
+	// GOOS is the platform, normally runtime.GOOS. An empty GOOS means no step
+	// may be skipped for its platform, so a platform-bound step runs and fails
+	// -- the safe default for a caller that forgot to say where it is.
+	GOOS string
+	// Have answers whether one stated requirement is met. A nil Have means
+	// nothing stated can be met, so every Requires step is skipped.
+	Have func(requirement string) bool
+}
+
+// Skip is one step this bench could not run, with the document's own words for
+// why. It is returned rather than swallowed, because a run whose skips are
+// invisible is a green that means less than it looks like: the caller logs them,
+// and a caller that wants them to be failures says so itself.
+type Skip struct {
+	Step Step
+	Why  string
+}
+
+func (s Skip) String() string {
+	return fmt.Sprintf("SKIP-PRECONDITION\n  %s\nwhy=%s", s.Step.Line, s.Why)
+}
+
+// ExecuteWith is Execute against a bench that may not be able to run every step.
+//
+// A SKIPPED STEP DOES NOT STOP THE SITTING, and that is a judgement worth
+// stating: the transcripts are sittings, so a skipped step can leave a later one
+// comparing against a state that never happened. It is still better than the
+// alternative, because the steps that DO run are then compared rather than
+// silently abandoned, and a consequent failure names the command it is under --
+// which a reader can follow back to the skip printed above it. A section whose
+// later steps depend on a skipped one wants its `Requires:` on those steps too,
+// and that is a defect in the document, which is exactly where #1570 puts it.
+func ExecuteWith(steps []Step, run Runner, cond Conditions, norms ...Norm) ([]Problem, []Skip) {
 	var problems []Problem
+	var skips []Skip
 	for _, s := range steps {
+		if why := s.SkipReason(cond.GOOS, cond.Have); why != "" {
+			skips = append(skips, Skip{Step: s, Why: why})
+			continue
+		}
 		res, err := run(s)
 		if err != nil {
-			return append(problems, Problem{Step: s, Message: fmt.Sprintf("the documented command\n  %s\ncould not be run: %v", s.Line, err)})
+			return append(problems, Problem{Step: s, Message: fmt.Sprintf("the documented command\n  %s\ncould not be run: %v", s.Line, err)}), skips
 		}
 		problems = append(problems, Compare(s, res, norms)...)
 	}
-	return problems
+	return problems, skips
 }
 
 // Block indents a set of lines for a failure message, so the document's block
