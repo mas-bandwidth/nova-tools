@@ -1482,7 +1482,7 @@ today's behaviour. On a remote bench `--runner` is not used: the batch builds
 the `native` command itself from the bench row and the card row, and the run is
 
 ```
-ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n>/jobs/<label> --root <root> --deadline <s> --auth <auth> [--no-wall]
+ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n> --root <root> --deadline <s> --auth <auth> [--no-wall]
 ```
 
 whose first output line is `RUN pgid=<n>`, the remote process group `native`
@@ -1530,7 +1530,7 @@ gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
 fence | harness-silent | rc=<n> | idle=<s> | deadline | result-after-deadline | card-abstain |
 admission <why> | input-limit | bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
-remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
+remote card asks `ssh <host> stat -c %s <root>/<n>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
 dead card: the card stays `unknown` until the batch deadline, when it is
