@@ -35,6 +35,11 @@ import (
 // counting it as a second decision.
 const SourceOutcome = "outcome"
 
+// SourceSkipped marks a row for a route a launcher was explicitly told to skip:
+// not a decision, and carrying the reason that opened the skip. A skip is a
+// fact in the log and not an absence (SPEC-DECIDE housekeeping H4, #1625).
+const SourceSkipped = "skipped"
+
 // Entry is one row of the escalation log.
 type Entry struct {
 	Time          string  `json:"time"`
@@ -145,6 +150,19 @@ func OutcomeEntry(unit, kind, rung, outcome string, now time.Time) Entry {
 		e.RungSucceeded = rung
 	}
 	return e
+}
+
+// SkippedEntry is the row one explicitly skipped route leaves behind: the
+// reason travels in the row, because a skip nobody can explain is the habit H4
+// exists to end.
+func SkippedEntry(unit, reason string, now time.Time) Entry {
+	return Entry{
+		Time:   now.UTC().Format(time.RFC3339),
+		Unit:   unit,
+		Source: SourceSkipped,
+		Reason: reason,
+		Wait:   WaitNone,
+	}
 }
 
 // LastDecision finds the most recent DECISION row for a unit -- never an
@@ -260,6 +278,9 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 	}
 	byKind := map[string]*counts{}
 	for i, e := range entries {
+		if e.Source == SourceSkipped {
+			continue // a skipped route is a fact, not a decision
+		}
 		kind := strings.TrimSpace(e.Kind)
 		if kind == "" {
 			kind = strings.TrimSpace(e.Evidence.Kind)
@@ -300,6 +321,9 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 		if e.Source == SourceOutcome {
 			sum.Outcomes++
 			continue
+		}
+		if e.Source == SourceSkipped {
+			continue // a skip is not one of the decisions coverage counts
 		}
 		sum.Decisions++
 	}
