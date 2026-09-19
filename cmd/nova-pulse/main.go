@@ -612,6 +612,8 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	branch := f.fs.String("branch", "", "")
 	hours := f.fs.Float64("hours", -1, "")
 	max := f.fs.Int("max", bounded.Default, "")
+	bench := f.fs.String("bench", "", "")
+	ssh := f.fs.String("ssh", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -635,6 +637,7 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	return pulse.Manager(pulse.ManagerInput{
 		Policy: *policy, Queue: *queue, Roots: *roots, Bus: *bus, As: *as,
 		Remote: *remote, Branch: *branch,
+		Bench: *bench, SSH: *ssh,
 		Hours: *hours, Max: *max, Stdout: stdout, Stderr: stderr,
 	})
 }
