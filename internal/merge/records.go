@@ -1052,8 +1052,13 @@ const GitIgnore = `# nova-merge: the tracked files are the records and nothing e
 
 // LoadLaneVerdicts reads all line-level read records for pr from <laneDir>/reads/<entry>/.
 func LoadLaneVerdicts(laneDir string, pr int) ([]Verdict, error) {
-	if laneDir == "" {
+	if laneDir == "" || laneDir == "none" {
 		return nil, nil
+	}
+	if fi, err := os.Stat(laneDir); err != nil {
+		return nil, fmt.Errorf("lane directory %s: %w", laneDir, err)
+	} else if !fi.IsDir() {
+		return nil, fmt.Errorf("lane path %s is not a directory", laneDir)
 	}
 	entry := EntryDirName(strconv.Itoa(pr))
 	dir := filepath.Join(laneDir, ReadsDir, entry)
@@ -1062,7 +1067,7 @@ func LoadLaneVerdicts(laneDir string, pr int) ([]Verdict, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", dir, err)
 	}
 	var out []Verdict
 	for _, de := range entries {
@@ -1072,14 +1077,14 @@ func LoadLaneVerdicts(laneDir string, pr int) ([]Verdict, error) {
 		p := filepath.Join(dir, de.Name())
 		data, err := os.ReadFile(p)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", p, err)
 		}
 		var rec Read
 		if err := json.Unmarshal(data, &rec); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", p, err)
 		}
 		if err := ValidRead(rec); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", p, err)
 		}
 		out = append(out, Verdict{
 			ID:       fmt.Sprintf("record:%s", rec.At),

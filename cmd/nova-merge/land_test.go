@@ -55,6 +55,7 @@ func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string
 	effective := append([]string(nil), args...)
 	hasReviewers := false
 	hasNoRequire := false
+	hasLane := false
 	for _, a := range effective {
 		if a == "--reviewers" || strings.HasPrefix(a, "--reviewers=") {
 			hasReviewers = true
@@ -62,9 +63,15 @@ func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string
 		if a == "--no-require-holds" {
 			hasNoRequire = true
 		}
+		if a == "--lane" || strings.HasPrefix(a, "--lane=") {
+			hasLane = true
+		}
 	}
 	if !hasReviewers && !hasNoRequire {
 		effective = append(effective, "--no-require-holds", "--reason", "test")
+	}
+	if hasReviewers && !hasLane {
+		effective = append(effective, "--lane", t.TempDir())
 	}
 	var out, errb bytes.Buffer
 	exit := run(effective, &out, &errb, landDeps(h, q))
@@ -169,6 +176,8 @@ func TestLandTakesABatchOKReceiptFromAFile(t *testing.T) {
 	head := strings.Repeat("e", 40)
 	h, q := merge.NewFakeHost(), &fakeLandEnqueue{}
 	h.PRs[99] = merge.PR{Number: 99, HeadRef: "rowan/nightly", HeadOID: head, Mergeable: "MERGEABLE"}
+	h.PRs[1301] = merge.PR{Number: 1301, HeadOID: head, Mergeable: "MERGEABLE"}
+	h.PRs[1302] = merge.PR{Number: 1302, HeadOID: head, Mergeable: "MERGEABLE"}
 	h.ChecksBy[head] = merge.Checks{Green: 9}
 	path := filepath.Join(t.TempDir(), "receipt")
 	line := "BATCH OK name=nightly base=" + strings.Repeat("f", 40) + " head=" + head + " members=1301,1302 dropped=none\n"
@@ -190,6 +199,7 @@ func TestLandRefusesAReceiptForAnotherHead(t *testing.T) {
 	head := strings.Repeat("e", 40)
 	h, q := merge.NewFakeHost(), &fakeLandEnqueue{}
 	h.PRs[99] = merge.PR{Number: 99, HeadRef: "rowan/nightly", HeadOID: head, Mergeable: "MERGEABLE"}
+	h.PRs[1301] = merge.PR{Number: 1301, HeadOID: strings.Repeat("9", 40), Mergeable: "MERGEABLE"}
 	h.ChecksBy[head] = merge.Checks{Green: 9}
 	receipt := "BATCH OK name=nightly base=" + strings.Repeat("f", 40) + " head=" + strings.Repeat("9", 40) + " members=1301 dropped=none"
 	exit, _, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "99", "--receipt", receipt)

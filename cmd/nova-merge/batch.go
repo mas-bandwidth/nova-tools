@@ -235,6 +235,9 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if (*reviewersFile == "") == (*noRequireHolds == false) {
 		f.problem("exactly one of --reviewers <file> or --no-require-holds --reason <text> is required; exit 2 with neither or both")
 	}
+	if *reviewersFile != "" && strings.TrimSpace(*lane) == "" {
+		f.problem("--lane is required when --reviewers is specified")
+	}
 	if *noRequireHolds && strings.TrimSpace(*reason) == "" {
 		f.problem("--no-require-holds requires --reason <text>")
 	}
@@ -544,7 +547,10 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 
 		var vs []merge.Verdict
 		if in.lane != "" {
-			laneVs, _ := merge.LoadLaneVerdicts(in.lane, n)
+			laneVs, err := merge.LoadLaneVerdicts(in.lane, n)
+			if err != nil {
+				return nil, nil, batchRefused(stderr, fmt.Errorf("lane read records for pull request %d could not be read: %w", n, err))
+			}
 			vs = append(vs, laneVs...)
 		}
 

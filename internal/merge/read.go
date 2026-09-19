@@ -58,13 +58,13 @@ func EvaluateReads(e *Entry, author string) Standing {
 	var approves []Read
 
 	for _, r := range e.Reads {
-		if r.Head != e.OID || e.OID == "" {
-			st.Stale++
-			continue
-		}
 		if r.Verdict == "hold" {
 			holds = append(holds, r)
 		} else if r.Verdict == "approve" {
+			if r.Head != e.OID || e.OID == "" {
+				st.Stale++
+				continue
+			}
 			approves = append(approves, r)
 		}
 	}
@@ -93,6 +93,8 @@ func EvaluateReads(e *Entry, author string) Standing {
 		if !released {
 			st.Holds++
 			st.Held = true
+		} else if h.Head != e.OID {
+			st.Stale++
 		}
 	}
 

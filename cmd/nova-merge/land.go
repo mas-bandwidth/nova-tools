@@ -68,6 +68,9 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if (*reviewersFile == "") == (*noRequireHolds == false) {
 		f.problem("exactly one of --reviewers <file> or --no-require-holds --reason <text> is required; exit 2 with neither or both")
 	}
+	if *reviewersFile != "" && strings.TrimSpace(*lane) == "" {
+		f.problem("--lane is required when --reviewers is specified")
+	}
 	if *noRequireHolds && strings.TrimSpace(*reason) == "" {
 		f.problem("--no-require-holds requires --reason <text>")
 	}
@@ -187,16 +190,16 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 			var err error
 			mPR, err = host.PR(m)
 			if err != nil {
-				if in.noRequireHolds {
-					continue
-				}
 				return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d could not be read: %s", m, oneline.Err(err)))
 			}
 		}
 
 		var vs []merge.Verdict
 		if in.lane != "" {
-			laneVs, _ := merge.LoadLaneVerdicts(in.lane, m)
+			laneVs, err := merge.LoadLaneVerdicts(in.lane, m)
+			if err != nil {
+				return landCouldNotRun(stderr, fmt.Sprintf("lane read records for member pull request %d could not be read: %s", m, oneline.Err(err)))
+			}
 			vs = append(vs, laneVs...)
 		}
 

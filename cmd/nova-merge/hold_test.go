@@ -1052,3 +1052,118 @@ func TestSweepAndReactNeverEnqueueHeldPR(t *testing.T) {
 		t.Fatalf("react enqueued held PR 951: %v", q.Queued)
 	}
 }
+
+// 38. TestReviewersWithoutLaneRefuses (Rowan row B): --lane is required when --reviewers is specified
+func TestReviewersWithoutLaneRefuses(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
+
+	// batch with --reviewers but no --lane
+	exit, _, stderr := l.runBare("batch", "--name", "no-lane", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--reviewers", revFile)
+	if exit != 2 {
+		t.Fatalf("batch without --lane must exit 2, got %d\nstderr: %s", exit, stderr)
+	}
+	contains(t, stderr, "--lane is required when --reviewers is specified")
+
+	// land with --reviewers but no --lane
+	head := strings.Repeat("a", 40)
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=1551 dropped=none"
+	lexit, _, lstderr := runLandBare(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
+		"--receipt", receipt, "--reviewers", revFile)
+	if lexit != 2 {
+		t.Fatalf("land without --lane must exit 2, got %d\nstderr: %s", lexit, lstderr)
+	}
+	contains(t, lstderr, "--lane is required when --reviewers is specified")
+}
+
+// 39. TestBatchAndLandRefuseMalformedLaneRecord (Rowan row A / Stella blocker 1):
+// A corrupt lane record file must cause batch and land to refuse exit 2, naming the bad file.
+func TestBatchAndLandRefuseMalformedLaneRecord(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
+
+	readsDir := filepath.Join(l.lane, merge.ReadsDir, "1")
+	if err := os.MkdirAll(readsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	badFile := filepath.Join(readsDir, "corrupt.json")
+	if err := os.WriteFile(badFile, []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// batch with corrupt lane record must exit 2 and name badFile
+	exit, _, stderr := l.run("batch", "--name", "bad-lane-record", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--lane", l.lane, "--reviewers", revFile)
+	if exit != 2 {
+		t.Fatalf("batch with malformed lane record must exit 2, got %d\nstderr: %s", exit, stderr)
+	}
+	contains(t, stderr, "BATCH REFUSED")
+	contains(t, stderr, "corrupt.json")
+
+	// land with corrupt lane record must exit 2 and name badFile
+	head := strings.Repeat("a", 40)
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	h.PRs[1] = merge.PR{Number: 1, HeadOID: l.heads[1], Mergeable: "MERGEABLE"}
+	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=1 dropped=none"
+	lexit, _, lstderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
+		"--receipt", receipt, "--lane", l.lane, "--reviewers", revFile)
+	if lexit != 2 {
+		t.Fatalf("land with malformed lane record must exit 2, got %d\nstderr: %s", lexit, lstderr)
+	}
+	contains(t, lstderr, "LAND REFUSED")
+	contains(t, lstderr, "corrupt.json")
+}
+
+// 40. TestBatchAndLandRefuseNonexistentLaneDirectory (Stella blocker 1):
+// A supplied missing lane directory must refuse exit 2.
+func TestBatchAndLandRefuseNonexistentLaneDirectory(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
+	missingLane := filepath.Join(l.dir, "nonexistent-lane")
+
+	exit, _, stderr := l.run("batch", "--name", "missing-lane", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--lane", missingLane, "--reviewers", revFile)
+	if exit != 2 {
+		t.Fatalf("batch with nonexistent lane directory must exit 2, got %d\nstderr: %s", exit, stderr)
+	}
+	contains(t, stderr, "BATCH REFUSED")
+
+	head := strings.Repeat("a", 40)
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=1 dropped=none"
+	lexit, _, lstderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
+		"--receipt", receipt, "--lane", missingLane, "--reviewers", revFile)
+	if lexit != 2 {
+		t.Fatalf("land with nonexistent lane directory must exit 2, got %d\nstderr: %s", lexit, lstderr)
+	}
+	contains(t, lstderr, "LAND REFUSED")
+}
+
+// 41. TestLandRefusesWhenPRReadFailsUnderNoRequireHolds (Rowan row C):
+// A member PR read failure under the waiver must be a refusal, never a skip.
+func TestLandRefusesWhenPRReadFailsUnderNoRequireHolds(t *testing.T) {
+	t.Parallel()
+	head := strings.Repeat("a", 40)
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	// Member 999 is NOT in h.PRs, so host.PR(999) fails
+	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=999 dropped=none"
+
+	lexit, _, lstderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
+		"--receipt", receipt, "--no-require-holds", "--reason", "waiver")
+	if lexit != 2 {
+		t.Fatalf("land must refuse when member PR read fails under waiver, got %d\nstderr: %s", lexit, lstderr)
+	}
+	contains(t, lstderr, "LAND REFUSED")
+	contains(t, lstderr, "member pull request 999 could not be read")
+}

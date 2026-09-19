@@ -441,6 +441,7 @@ func (l *lab) run(args ...string) (int, string, string) {
 	if len(effective) > 0 && effective[0] == "batch" {
 		hasReviewers := false
 		hasNoRequire := false
+		hasLane := false
 		for _, a := range effective {
 			if a == "--reviewers" || strings.HasPrefix(a, "--reviewers=") {
 				hasReviewers = true
@@ -448,9 +449,16 @@ func (l *lab) run(args ...string) (int, string, string) {
 			if a == "--no-require-holds" {
 				hasNoRequire = true
 			}
+			if a == "--lane" || strings.HasPrefix(a, "--lane=") {
+				hasLane = true
+			}
 		}
 		if !hasReviewers && !hasNoRequire {
 			effective = append(effective, "--no-require-holds", "--reason", "test")
+		}
+		if hasReviewers && !hasLane && l.lane != "" {
+			_ = os.MkdirAll(l.lane, 0755)
+			effective = append(effective, "--lane", l.lane)
 		}
 	}
 	var out, errb bytes.Buffer
