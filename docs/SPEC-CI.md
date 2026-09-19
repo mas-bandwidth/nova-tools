@@ -1162,6 +1162,9 @@ permanent exemption and it stops firing the moment that branch's section lands.
 per-binary and live in each command's own `firstrun_test.go`, where the example
 lines are EXECUTED, the refusal sentences asserted and the transcript compared
 against real output.
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §7 (draft, 2026-09-19):** that last sentence was
+not true of 8 of 22 sections, and 9 more compared a set of shapes; §7 makes execution, line for
+line through one comparator, the thing the class test asserts.
 
 ### `kernel-components` — no kernel source is compiled by nobody
 

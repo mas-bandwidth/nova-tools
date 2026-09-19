@@ -130,6 +130,9 @@
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
     name the contract, the `RESULT.md`'s own line 1 is the contract, and the refusal stands
     only when neither the file nor a job dir is there.
+    **Amended by `docs/SPEC-TOOLWORK.md` §1 (draft, 2026-09-19):** between this rule's
+    verify and its push stands `nova-pulse accept` — the card's claim is executed, its test is seen
+    red without its change, and a rejected card pushes nothing.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
