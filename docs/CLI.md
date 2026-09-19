@@ -3471,8 +3471,7 @@ See [SPEC-CAIRN.md](SPEC-CAIRN.md).
 
 ```sh
 nova-cairn open --store ./checkpoints --session session-1 --publish never
-nova-cairn append --store ./checkpoints --session session-1 --entry note-1 \
-  --file ./checkpoint.md --publish never
+nova-cairn append --store ./checkpoints --session session-1 --entry note-1 --text "the words to keep" --publish never
 nova-cairn index --store ./checkpoints --max 20
 nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1
 ```
@@ -3489,9 +3488,9 @@ directly under the store — `cairns/<session>.md`, the shape a friend appending
 by hand already has — and is read as it stands:
 
 ```sh
-# cairns/b9395d11.md exists, written by hand
-nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 \
-  --publish manual --file -
+# cairns/b9395d11.md exists, written by hand; this lays down the fixture the tests use
+mkdir -p cairns && cp internal/cairn/testdata/bench-b9395d11.md cairns/b9395d11.md
+nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 --publish manual --text "the words to keep"
 ```
 
 `open` on such a record is a no-op (it never writes a second record under
