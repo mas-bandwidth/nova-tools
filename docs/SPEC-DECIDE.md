@@ -962,13 +962,13 @@ output tail enter neither the provider question nor the log. The public/private 
 stands -- a typed shape alone does not prove its fields public, and S7 is unchanged -- and D6's
 observed-versus-truth split stands: the appended row is observed, never truth.
 
-**The rule table.** Output whose last 3072 bytes match a toolchain pattern from a data file
-(`questions/toolchain.txt`: `command not found`, `executable file not found in $PATH`, `no space
-left on device`, `toolchain not available`, `permission denied` on a path outside the job
-directory, and the like) is `blocked-toolchain` with `red_owner=bench`, no call. A `RESULT.md`
-first line beginning `SKIP` is `skip-precondition`. A first line beginning `CLEAN` with an exit
-status of 0 is `clean`, `na`. The table is the point of the question as much as the provider is: a
-red whose message names a missing toolchain is the bench's and not the row's, and saying which is a rule and not a judgment.
+**The rule table** (mechanical, no call) reads only the tokens TOOLWORK §4 rule 1 writes on `OUTCOME`
+and the supervisor-owned facts below -- never `RESULT.md` prose, never a first-line `SKIP`/`CLEAN`
+marker, never the output tail. `accept=ok` is `clean`, `red_owner=na`; `accept=reject` is the gate's
+verdict, final and not re-derived here. A `gather=` or `reason=` token naming an absent precondition
+(`fixture-missing`, `precondition`) is `skip-precondition`, `na`; the token `toolchain-missing` is
+`blocked-toolchain`, `red_owner=bench`. Upstream `gather` parses the admitted `RESULT` contract once
+to write those tokens; reading that token is not rereading prose, and which red is the bench's is a rule.
 
 **What the caller does.** Each harvested job's line gains ` result=<...> red_owner=<...>`.
 `clean` harvests as today. `defect` prints one `HARVEST FINDING-CANDIDATE job=<id> pointer=<path>`
