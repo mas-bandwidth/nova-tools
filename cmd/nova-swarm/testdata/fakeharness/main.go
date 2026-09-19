@@ -319,6 +319,34 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: The user rejected permission to use this specific tool call.")
 		os.Exit(0)
 	}
+	// FAKE-EXEC-REFUSED is THE GATE THAT NEVER RAN (issue #1465), in the shell's own words.
+	// A Go card inside the wall ran `go test` and the wall refused to execute the toolchain:
+	// the shell printed one line, the card wrote an honest RESULT.md saying the gate could
+	// not be built or run, and the process exited 0. The run then read `NATIVE OK rc=0
+	// harness=ok` and a commit nobody had compiled was green. The directive takes the path
+	// the wall refused, and prints the step the card had reached beside it, so the fixture
+	// writes the real shape and nothing is inferred.
+	if path, ok := directive(prompt, "FAKE-EXEC-REFUSED"); ok {
+		if path == "" {
+			path = "/nowhere/bin/go"
+		}
+		fmt.Println("STEP 3 run the gate")
+		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
+	}
+	// FAKE-DENY-AND-RECOVER is STELLA'S P2 WITNESS (PR #1478 comment 5737662335): a plain
+	// shell REDIRECTION to a path the card may not write prints the very same words as a
+	// refused exec -- `/bin/bash: <path>: Permission denied` -- and then the card carries on
+	// and exits 0, having attempted no program at all. She measured it with
+	// `: > "$1"; printf "RECOVERED\n"` against a non-writable directory. Nothing in the text
+	// says which operation was denied, which is the whole of P2.
+	if path, ok := directive(prompt, "FAKE-DENY-AND-RECOVER"); ok {
+		if path == "" {
+			path = "/nowhere/out.txt"
+		}
+		fmt.Println("STEP 3 write the report")
+		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
+		fmt.Println("RECOVERED")
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
