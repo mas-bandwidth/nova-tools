@@ -542,8 +542,17 @@ work. Fully integrate Jev into nova tools everywhere that it gains efficiency."*
 the amendment that answers it. **Nothing above is renumbered and nothing above is rewritten**:
 rules 1 to 12 stand, every adoption above stands, and where this section and an older one touch the
 same call site the older one keeps its words until the task that replaces it lands. Every rule
-here has no code yet, so each rule's first line is **SPEC-AHEAD: #n**, the issue that builds it, and
-each rule's red tests are listed at the end of the section under *Demanded tests*.
+here has no code yet, so each rule's first line is **SPEC-AHEAD: #n** (the convention of
+SPEC-WORK.md:2567-2569), the issue that builds it, and
+each rule's red tests are listed at the end of the section under *Demanded tests*. Citations are
+by file and line at dev `11aa07a7`, the base this amendment was written on; a bare `:n` is a line
+of this document above this section, which this amendment does not move.
+
+**Two grammars above are amended when their tasks land, and until then keep their words.** H2 adds
+a fourth `--result` value, `skipped`, to the `nova-decide outcome` grammar at :220; the sentence
+there is rewritten by #1623, in the same pull request as the code. H4 makes `--route` the default
+of `nova-swarm batch`; SPEC-SWARM's verbs block is amended by #1625, in the same pull request as
+the code.
 
 **Why these six, and why not routing.** Measured 2026-09-19 from the shared route log (553 rows:
 364 provider decisions, 48 rule decisions, 141 outcomes; a mean of 525 tokens a call): routing is
@@ -558,8 +567,8 @@ about 850 thousand tokens a turn, and in manager children of 250 to 750 thousand
 waking to make a small typed decision inside a huge context: is this note for me, did this card
 find something, is this pull request held, what did that reviewer say, whose red is this. Each of
 those is a closed question over a few hundred bytes. This section moves six of them onto the
-decider, at about five hundred tokens each, and leaves the window asleep unless the answer says to
-wake it.
+decider, at about five hundred tokens each, so that a window is woken at once only for what needs
+it and reads the rest in one later turn instead of one turn each.
 
 ### Security, first
 
@@ -601,8 +610,8 @@ S2. SPEC-AHEAD: #1616
 
 S3. SPEC-AHEAD: #1616
    **The answer set is closed, and nothing free is acted on.** Every question here is a `choice`
-   (rule 1) over an enumerated set stated in this section. The answer is checked against that set
-   at both ends (the existing rule *An answer is checked against the question that asked it*); an
+   (rule 1, :19) over an enumerated set stated in this section. The answer is checked against that set
+   at both ends (*An answer is checked against the question that asked it*, :291); an
    answer outside it is a provider error at exit 2 and never a decision. No free text from a
    provider is parsed, stored as an answer, or acted on. **Every field that names a thing is read
    mechanically and never asked for**: a commit sha, a pull request or issue number, a login, a
@@ -611,29 +620,36 @@ S3. SPEC-AHEAD: #1616
    options; it never names anything.
 
 S4. SPEC-AHEAD: #1616
-   **A classification never by itself performs an irreversible act.** This is rule 7 restated for
-   readers of untrusted text, with its asymmetry made explicit. An answer that STOPS something may
-   act on its own, because stopping fails closed: a `hold` reading drops a member from a batch and
-   refuses a landing, a `needs-action` reading wakes a window, a `finding` reading withholds a
-   rerun. An answer that PERMITS something is never sufficient: an `approve` reading lands nothing,
-   lifts no hold and writes no read record; it puts a line on a ready list, and the landing still
-   requires the exact-sha match and the green `ci-ok` at that sha, both read mechanically by
-   nova-merge at the moment of landing, exactly as today. Rule 6 is untouched: no decision lifts a
-   hold.
+   **An answer only ever tightens; whatever loosens rests on a mechanical fact.** This is rule 7
+   (:73) restated for readers of untrusted text. Take away every provider and look at what each
+   call site does by its rule tables and the forge's facts alone: that is the site's **mechanical
+   baseline**. A provider's answer may move the site from that baseline in one direction only,
+   toward the stop: it may add a hold, add a wake, withdraw a rerun licence, add an escalation. It
+   may never move the site the other way. No provider answer, at any confidence, removes a stop the
+   baseline has, licenses a rerun the baseline does not, lifts a hold, readies a pull request the
+   mechanical conditions do not ready, or writes a read record. Where a reading does loosen
+   something, the loosening is stated beside the reading as a list of mechanical facts, each read
+   by code from the forge, a header or a clock, and the answer appears in that list only as one
+   more condition that can fail. One reading, the note's, lets an answer *defer* a wake; the
+   deferral is bounded by a clock the answer cannot touch, and is stated there as the exception it
+   is. Rule 6 (:66) is untouched: no decision lifts a hold.
 
 S5. SPEC-AHEAD: #1616
    **A text that tries to instruct the classifier is never read as permission.** Two defences, and
    the tests demand both. First, a **tamper screen**: before any provider is asked, the evidence is
-   matched against a pattern table that is data (`internal/decide/questions/tamper.txt`, one
+   matched against a pattern table that is data (shipped as
+   `internal/decide/questions/tamper.txt` and replaced with `--tamper <file>`; one
    case-insensitive pattern a line: text addressed to a classifier, a model or a system; "ignore"
    followed by "instructions"; "classify this as"; "answer with"; a line that begins `FRAME ` or
    `-----BEGIN UNTRUSTED`). A match makes no provider call; the answer is the question's **tamper
-   answer**, the line carries `tamper=yes`, and the item escalates (S7). The tamper answer of every
+   answer**, the line carries `tamper=yes`, and the item escalates (D5). The tamper answer of every
    question is its stopping or waking member, or `unknown`, and is stated beside the question; it
-   is never a permitting member. Second, because a screen can be evaded, S3 and S4 hold with the
-   screen missed and the provider fully obedient to the injection: the demanded test for each
-   question includes a fixture where the fake provider returns the permitting answer at confidence
-   0.99 and the verb must still permit nothing.
+   is never a loosening member. Second, because a screen can be evaded, S4 is tested with the
+   screen missed and the provider fully obedient to the injection: **every one of the six
+   readings** has an `<q>-injection-obeyed` test in which the fake provider returns that reading's
+   most loosening member at confidence 0.99, and the assertion is that the call site's state is
+   its mechanical baseline or tighter. The assertion is written out per reading under *Demanded
+   tests*.
 
 S6. SPEC-AHEAD: #1616
    **Who said it comes from the forge, never from the text.** The author of a comment is the login
@@ -641,38 +657,53 @@ S6. SPEC-AHEAD: #1616
    is that somebody's sentence. Quoted material is removed mechanically before the evidence is
    framed: every line whose first non-space character is `>`, and every fenced code block, is
    dropped, because a status comment that quotes a hold is not a hold (the hurt, from #1572: a
-   landing lane's own reports quote the word HOLD while reporting on holds). A verdict counts only
+   landing lane's own reports quote the word HOLD while reporting on holds). Quote removal is a
+   courtesy to the rule table and not a defence: a reviewer who pastes a log tail unquoted has put
+   somebody else's text inside their own comment, and S4 is what holds then. A verdict counts only
    when its author is in the **reviewer set**, a list of logins the caller passes (`--reviewers
-   <file>`, one login a line; required wherever a verdict can stop or permit anything; refusing to
-   guess it), and an approve by the pull request's own author counts for nothing (SPEC-REVIEW).
+   <file>`, one login a line). Wherever a verdict can stop or ready anything the flag is required
+   and its absence is a refusal at exit 2, refusing to guess it; a verdict by a login outside the
+   set is printed with `why=not-reviewer` and counts for nothing. An approve by the pull request's
+   own author counts for nothing either: that is nova-merge's read condition ("An approve whose
+   `who` resolves to the author does not satisfy the condition", SPEC-MERGE.md:833, quoted at
+   SPEC-REVIEW.md:331-332), applied here to comments.
 
 S7. SPEC-AHEAD: #1616
-   **Privacy is a property of the provider, and rule 4 stands.** Each decider declares what it may
-   see: `sees=public` for a remote provider (assume it trains on what it sees), `sees=private` for
-   one that never leaves the machine (the rule table; a local model on loopback). Each piece of
-   evidence carries where it came from: `public` when the forge reports the repository PUBLIC or
-   the bus clone holds a `.public` marker, `private` otherwise. Private evidence offered to a
-   `sees=public` decider is refused **before** any call, the line says `why=private-evidence`, and
-   the question falls to the next decider in the chain (D2). `nova-bus inbox --decide
-   --allow-private` remains the one explicit door it already is, per bus and per run, a person's
-   choice typed on a command line and recorded in the log row as `allow_private=true`. Secrets are
-   redacted before framing by the existing redaction (`sk-` tokens, `*_KEY=` assignments), and an
-   evidence text that still matches the redaction patterns after redaction is refused.
+   **Privacy is a property of the provider, and rule 4 stands as written.** Rule 4 (:51-55) says
+   the state sent is "never a private bus note", the inbox adoption (:396-400) says "public buses
+   only", and red test 15 (:596) says "a private bus is refused". This amendment keeps all three
+   and opens no door in them. Each decider declares what it may see: `sees=public` for a remote
+   provider (assume it trains on what it sees), `sees=private` for one that never leaves the
+   machine (the rule table; a local model on loopback). Each piece of evidence carries where it
+   came from: `public` when the forge reports the repository PUBLIC or the bus clone holds a
+   `.public` marker, `private` otherwise. Private evidence offered to a `sees=public` decider is
+   refused **before** any call, the line says `why=private-evidence`, and the question falls to
+   the next decider in the chain (D2). So a private bus is triaged by the rule table or by a
+   loopback model, and by nothing else. (`docs/CLI.md:479` documents an `--allow-private` flag on
+   `nova-bus inbox --decide`; rule 4 has no such door, this amendment adopts none, and the
+   disagreement between that line and rule 4 is filed as #1644 for a ruling rather than settled
+   here by accident.) Secrets are redacted before framing. The redaction is new text in this
+   rule, not an existing one: every `sk-` token (the pattern `nova-bus` already redacts,
+   `docs/CLI.md:479`) and every `<NAME>_KEY=`, `<NAME>_TOKEN=` and `<NAME>_SECRET=` assignment is
+   replaced with a placeholder, and an evidence text that still matches any of those patterns
+   after redaction is refused at exit 2 with `why=secret-shaped`, never sent.
 
 ### The decider interface
 
 D1. SPEC-AHEAD: #1616
    **Jev is one provider behind a decider, and nothing in nova-tools is specific to us.** A
    **decider** is anything that answers a typed question over framed evidence:
-   `Decide(ctx, state, questions) (answers, usage, error)`, the interface nova-pulse's gate already
-   declares, moved to `internal/decide` and used by every call site. Four deciders ship:
+   `Decide(ctx, state, questions) (answers, usage, error)`, the interface the code already declares for nova-pulse's
+   gate (`internal/pulse/gate.go:86-88`; a fact about the code at the base, since SPEC-PULSE names
+   no decider), moved to `internal/decide` and used by every call site. Four deciders ship:
    `rules` (a deterministic table per question, stated in this section; confidence is `1.00` where a
    row matches and the answer is absent where none does; `sees=private`; no network, no key);
-   `jev` (rule 2's provider; `sees=public`); `local` (the same wire shape at a loopback
+   `jev` (rule 2's provider, :27; `sees=public`); `local` (the same wire shape at a loopback
    `--base-url`, for a model the operator runs; `sees=private`; refused unless the URL's host is a
    loopback address); and `none`. No question's text, option or rule row names a person, a bench, a
-   repository or a model of ours. A registry, a reviewer set, a flake table and a tamper table are
-   data the caller passes.
+   repository or a model of ours. A registry, a reviewer set, a flake table, a tamper table, the verdict tokens, a
+   toolchain pattern table and a floors file are data the caller passes; where a default ships, it
+   is a file of plain words a caller replaces whole.
 
 D2. SPEC-AHEAD: #1616
    **The chain is rules first, and with no provider every verb still answers and says so.** A call
@@ -684,7 +715,7 @@ D2. SPEC-AHEAD: #1616
    verb never fails and never guesses: it prints the rule table's answer or `answer=unknown`, names
    the decider that answered as `decider=rules` or `decider=none`, gives the reason in `why=`, and
    exits 3 for unknown. `unknown` is a member of no answer set; it is the absence of an answer
-   (rule 11), and what each caller does with it is stated per question and is always today's
+   (rule 11, :99), and what each caller does with it is stated per question and is always today's
    behaviour or the stopping side.
 
 D3. SPEC-AHEAD: #1616
@@ -703,19 +734,21 @@ D3. SPEC-AHEAD: #1616
    ```
    nova-decide classify --question <note|harvest|verdict|backlog|ci-red> --evidence <file|-> --pointer <id>
                         --log <path> --usage <path> [--decider rules[,jev|local]] [--floor <f>]
-                        [--meta <key=value>]... [--reviewers <file>] [--flakes <file>]
-                        [--key-env JEV_API_KEY] [--base-url <url>] [--audit-rate 0.1]
+                        [--floors <file>] [--trial-min 40] [--escalate-to <name>] [--audit-rate 0.1]
+                        [--meta <key=value>]... [--reviewers <file>] [--verdict-tokens <file>] [--flakes <file>]
+                        [--tamper <file>] [--now <stamp>] [--key-env JEV_API_KEY] [--base-url <url>]
    ```
 
    It prints exactly one line, then exits 0 (an answer at or above the floor), 3 (`unknown`: below
    the floor, tampered, no decider, private evidence) or 2 (refusal: bad flags, evidence over its
    bound with no truncation rule, a provider error, no accounting). `--log` and `--usage` are
-   required whenever a provider other than `rules` is in the chain (*Accounting is not optional*).
+   required whenever a provider other than `rules` is in the chain (*Accounting is not optional*,
+   :270).
    `--meta` carries the mechanical facts a question needs from the forge (an author login, a head
    sha, a job conclusion); a key the question does not declare is refused by name.
 
    ```
-   CLASSIFY question=<q>/v<v> answer=<member|unknown> conf=<0.00-1.00|-> floor=<f> decider=<rules|jev|local|none> below=<member|-> tamper=<yes|no> why=<-|below-floor|tamper|no-decider|no-key|no-accounting|private-evidence|provider-error> escalate=<reader|-> audit=<yes|no> <question fields> pointer=<id> bytes=<n> ms=<n|-> tokens=<in|->/<out|-> id=<decision id>
+   CLASSIFY question=<q>/v<v> answer=<member|unknown> conf=<0.00-1.00|-> floor=<f> decider=<rules|jev|local|none> below=<member|-> tamper=<yes|no> why=<-|below-floor|tamper|no-decider|no-key|no-accounting|private-evidence|untuned|provider-error> escalate=<reader|-> audit=<yes|no> <question fields> pointer=<id> bytes=<n> ms=<n|-> tokens=<in|->/<out|-> id=<decision id>
    ```
 
 D4. SPEC-AHEAD: #1616
@@ -730,43 +763,55 @@ D4. SPEC-AHEAD: #1616
 D5. SPEC-AHEAD: #1616
    **Below the floor the item escalates to a named stronger reader, and nobody guesses.** Every
    question names its **escalation reader** as data: `--escalate-to <name>`, default `caller`,
-   meaning whoever ran the verb reads the item themselves, which is today's behaviour. A deployment
-   names a rung of its own registry instead (ours will name a child rung for the backlog and the
-   coordinator for verdicts). The line carries `escalate=<name>` whenever the answer is `unknown`,
-   and `escalate=-` otherwise. The floor of every question in this section starts at **0.9 and is
-   marked untuned**; `nova-decide tune` already refuses to bless a floor with no rows behind it
-   (rule 8), and a question is not switched on in any launcher until a retained trial of at least
-   forty labelled public items exists for it under `reports/jev/` and its floor has been set from
-   those rows. The route's own history is why: its floor moved from 0.9 to 0.65 only when 39 real
-   calls showed where the provider's confidence actually lives.
+   meaning whoever ran the verb reads the item themselves, which is today's behaviour. The name is
+   an opaque word to the tool: a deployment passes a rung of its own registry. The line carries
+   `escalate=<name>` whenever the answer is `unknown` or the item is audit-sampled (D6), and
+   `escalate=-` otherwise. **A floor is a row in a file, with the trial behind it, and a provider
+   with no row is not asked.** `--floors <file>` names a TSV of `question/version`, `decider`,
+   `floor`, `trial` (a path the caller chooses, relative to the floors file), `rows` and `by`.
+   Before any provider other than `rules` is asked, the tool reads that row and the trial file it
+   names: a missing `--floors`, a missing row, a trial file that does not exist, or one holding
+   fewer than **forty** labelled rows for that question and decider, makes no call; the line says
+   `why=untuned` and the chain moves on, so an untuned provider is simply absent and the verb
+   answers by rule or `unknown`. `--floor <f>` may raise the file's floor for one run and never
+   lower it. A trial row is `pointer`, `label`, `answer`, `confidence`, the shape `nova-decide
+   tune` already reads (:488-490), and `tune` refuses to bless a floor with no rows behind it
+   (rule 8, :79). Forty is a flag, `--trial-min`, that may be raised and not lowered below forty.
+   The route's own history is why this is mechanical and not a promise: its floor moved from 0.9
+   to 0.65 only when 39 real calls showed where the provider's confidence actually lives (:206).
 
 D6. SPEC-AHEAD: #1616
    **Every decision is a row, the outcome is a second row, and no human writes either.** The
    classify log is append-only JSON lines, one object per decision:
    `{"time", "id", "source":"decision", "question", "version", "pointer", "evidence_sha256",
-   "evidence_bytes", "evidence_class":"public|private", "allow_private", "decider", "model",
+   "evidence_bytes", "evidence_class":"public|private", "decider", "model",
    "answer", "raw_answer", "confidence", "floor", "tamper", "why", "escalate", "audit", "fields":{},
    "calls", "tokens_in", "tokens_out", "ms", "wall_ms"}`. `id` is the first sixteen hex digits of
-   the SHA-256 of question, version, pointer and evidence hash, so the same item asked twice has
-   the same id and a cache may serve it (the Redis subsection above). **The evidence text is never
-   logged**: it is untrusted and may be private; the pointer (rule 10) and the hash are how a human
-   retrieves and verifies the original. Counters follow *usage presence is per counter*: absent,
-   never zero, where unmeasured. The outcome is its own row, `{"time", "id", "source":"outcome",
+   SHA-256 over the four strings question, version, pointer and evidence hash, each followed by one
+   newline, so the same item asked twice has the same id and a cache may serve it (*Redis*, :472).
+   **The evidence text is never logged**: it is untrusted and may be private; the pointer (rule 10,
+   :92) and the hash are how a human retrieves and verifies the original. Counters follow *A
+   successful answer is not evidence of reported usage* (:277): absent, never zero, where
+   unmeasured. The outcome is its own row, `{"time", "id", "source":"outcome",
    "result":"confirmed|overturned", "truth":"<member|->", "by":"<verb>"}`, appended by the verb that
-   later observes what happened, stated per question below. Two mechanical sources of truth serve
+   later observes what happened, stated per question below; an outcome for an id with no decision
+   row is a refusal, as it is for the route (:219-225). Two mechanical sources of truth serve
    every question: an **escalated** item's stronger reading, recorded with `nova-decide outcome
    --log <path> --decision <id> --truth <member> --by <reader>`, and an **audit sample**, where
-   `--audit-rate` (default 0.1) of the answers at or above the floor are ALSO escalated, chosen by
-   the decision id's first byte so the choice is reproducible, and acted on as answered meanwhile.
-   The audit sample is what makes a floor tunable where nothing else would ever contradict a
-   confident wrong answer.
+   `--audit-rate` (default 0.1) of the answers at or above the floor are ALSO escalated and are
+   acted on as answered meanwhile. An id is sampled exactly when its first eight hex digits, read
+   as an unsigned 32-bit integer, are less than the rate times 2^32, rounded down; so the choice
+   is reproducible, and at rate 0.1 the id `19999998…` is sampled and `19999999…` is not. The
+   audit sample is what makes a floor tunable where nothing else would ever contradict a confident
+   wrong answer.
 
 ### 1. The note reading: does this note wake anybody
 
 SPEC-AHEAD: #1617
 
 **The question.** `note/v1`, asked by `nova-bus inbox --decide` in the same provider call as the
-`kind`, `needs_reply` and `blocked` questions it already asks (which stand unchanged):
+`kind`, `needs_reply` and `blocked` questions it already asks (`docs/CLI.md:479`; they stand
+unchanged):
 `wake` ∈ {`ack`, `info`, `needs-action`}. `ack`: the note only confirms receipt or completion of
 something the reader already knows, and asks nothing. `info`: the note reports a fact and asks
 nothing of this reader. `needs-action`: the note asks this reader to do, decide, review, answer or
@@ -774,43 +819,56 @@ stop something, or reports something broken that this reader owns. Tamper answer
 
 **The evidence.** The note's `Subject` (first 200 bytes) and the first 600 bytes of its body, head
 truncation, after redaction; nothing else, and never the headers' names. Bound: 1024 bytes. The
-bus's privacy is S7's: a bus with no `.public` marker goes to `rules` or `local` unless the
-operator passed `--allow-private`.
+bus's privacy is S7's: a bus with no `.public` marker goes to `rules` or `local` and to nothing
+else.
 
 **The mechanical fields.** `owner=` is the note's `To:` header, read by the tool. `ref=` is every
 `#<digits>` and every `<owner>/<repo>#<digits>` in the subject and then the body, in order, at
 most four, then `+<n>`; `ref=-` where none. Neither is asked of any provider.
 
 **The rule table** (consulted first, no call): a subject beginning `STOP:` or `HOLD:` is
-`needs-action` (the existing structured-signal rule, unchanged: never sent anywhere); a note
-carrying `Re:` whose subject begins `ACK:` or `RECEIPT:` is `ack`. Anything else has no rule row.
+`needs-action` (the existing structured-signal rule, `docs/CLI.md:479`, unchanged: never sent
+anywhere); a note carrying `Re:` whose subject begins with a prefix from the acknowledgement table
+(data, `--ack-prefixes <file>`; the shipped default holds `ACK:` and `RECEIPT:`) is `ack`. Anything
+else has no rule row. A subject is as writable as a body, so a rule-table `ack` is treated below
+exactly as a provider's: it defers and never suppresses.
 
-**What the caller does.** Each `INBOX NOTE` line gains ` wake=<ack|info|needs-action|unknown>
-owner=<lane> ref=<refs>`, and the closing line gains `wake=<n>`, the count that is `needs-action`
-or `unknown`. `nova-bus wait --decide` and `nova-wake watch --bus --decide` relay a bus change to
-the window **only** when that count is above zero for a note addressed to the waking lane; `ack`
-and `info` at or above the floor are left in the inbox, unread and intact (rule 11: the note is
-never altered, moved or marked read by a decision), and are swept into the window's next ordinary
-read. Below the floor, tampered, or with no decider: `unknown`, and `unknown` wakes. The failure
-direction is a wake that was not needed, which costs what every note costs today; the direction
-this rule refuses is a sleeping window and a note that needed it.
+**What the caller does, and the one deferral in this section.** Each `INBOX NOTE` line gains
+` wake=<ack|info|needs-action|unknown> owner=<lane> ref=<refs> due=<stamp|->`, and the closing line
+gains `wake=<n>`, the count that is `needs-action` or `unknown`. The mechanical baseline (S4) is
+today's: every change to the bus is relayed to the waking lane at once. `nova-bus wait --decide`
+and `nova-wake watch --bus --decide` relay at once for `needs-action`, by rule or by answer, and for `unknown` (below the
+floor, tampered, untuned, no decider, private evidence). For `ack` and `info`, by rule or at or
+above the floor, the answer does not suppress the wake; it **defers** it, and the
+deferral is bounded by a clock the answer cannot touch: `--defer-max <duration>` (required with
+`--decide` on `wait` and `watch`; refusing to guess it), counted from the note's arrival as the
+watcher's own monotonic clock saw it. `due=` is that deadline. When the oldest deferred note for a
+lane comes due, the watcher relays ONE wake for all of that lane's deferred notes, and an
+immediate wake for any reason carries the deferred ones with it. So the most an obedient provider
+can do to a note that needed action is delay its wake by `--defer-max`, once; it cannot sleep a
+window. The note itself is never altered, moved or marked read by a decision (rule 11, :99). This
+is the only place in the section where an answer loosens anything by itself, it is reversible, it
+is bounded mechanically, and S4 names it as the exception.
 
 **The outcome, with no human.** The next `inbox --decide` pass that finds a note it has a decision
 row for writes the outcome: a note answered `ack` or `info` that has since drawn a `Re:` reply from
 its owner is `overturned` with `truth=needs-action`; a note answered `needs-action` that its owner
-closed with a `Re:` is `confirmed`; one that left the open list with no reply after seven days is
-`overturned` with `truth=info`. The audit sample (D6) covers the rest.
+closed with a `Re:` is `confirmed`; one that left the open list with no reply after
+`--unreplied-after <duration>` (default `168h`) is `overturned` with `truth=info`. The audit
+sample (D6) covers the rest.
 
 **Cost.** One call a note, already being made where `--decide` is on; the added question is a few
-dozen tokens. The saving is the wake: a window turn avoided is measured in hundreds of thousands
-of tokens, so the adoption pays for itself if it spares one wake in a thousand notes.
+dozen tokens. The saving is in wakes folded together: twenty acknowledgements inside one `--defer-max` are one
+window turn and not twenty, and a window turn is measured in hundreds of thousands of tokens, so
+the adoption pays for itself if it folds one wake in a thousand notes.
 
 ### 2. The harvest reading: what did this card find, and whose red is it
 
 SPEC-AHEAD: #1619
 
 **The questions.** `harvest/v1`, two choices in one call, asked by `nova-pulse harvest --decide`
-beside the branch `class` question it already asks (which stands): `result` ∈ {`clean`, `defect`,
+beside the branch `class` question it already asks (*nova-pulse harvest class*, :407, which
+stands): `result` ∈ {`clean`, `defect`,
 `skip-precondition`, `blocked-toolchain`} and `red_owner` ∈ {`row`, `bench`, `na`}. `clean`: the
 card did what it was asked and found nothing wrong. `defect`: the card reports a wrong behaviour of
 the thing under test, with a receipt. `skip-precondition`: the card could not start because
@@ -830,16 +888,21 @@ left on device`, `toolchain not available`, `permission denied` on a path outsid
 directory, and the like) is `blocked-toolchain` with `red_owner=bench`, no call. A `RESULT.md`
 first line beginning `SKIP` is `skip-precondition`. A first line beginning `CLEAN` with an exit
 status of 0 is `clean`, `na`. The table is the point of the question as much as the provider is: a
-red whose message names a missing toolchain is the bench's and not the row's, and saying which is
-a rule (never land red, never manufacture green).
+red whose message names a missing toolchain is the bench's and not the row's, and saying which is a rule and not a judgment.
 
 **What the caller does.** Each harvested job's line gains ` result=<...> red_owner=<...>`.
 `clean` harvests as today. `defect` prints one `HARVEST FINDING-CANDIDATE job=<id> pointer=<path>`
 line and files nothing (rule 7): a finding is a person's or a stronger reader's to confirm.
 `skip-precondition` marks the job harvested and re-queues nothing. `blocked-toolchain` with
 `red_owner=bench` marks the job eligible for another bench and is **not** appended to the unit as
-a confirmed failure of its rung: the ladder's retry policy steps up on a rung that failed, and a
-bench with no compiler is not a rung that failed. `unknown` runs the path harvest ran before the
+a confirmed failure of its rung (*A card that fails its gate re-enters one rung up*, :374): the
+ladder's retry policy steps up on a rung that failed, and a bench with no compiler is not a rung
+that failed. That is a loosening, so it rests on mechanical facts (S4) and on no answer: it
+requires the rule table's toolchain row AND a fact the card did not write, either the job's exit
+status being 126 or 127 or the supervisor's own harness-error line naming a missing executable;
+and a unit is moved to another bench on this ground at most once. A provider's
+`blocked-toolchain` without those facts is printed, is a label for the manager, and leaves the
+failure counted exactly as today. `unknown` runs the path harvest ran before the
 flag, and the job is listed once in a closing `HARVEST UNREAD n=<n> escalate=<reader>` line.
 
 **The outcome, with no human.** H2 below is this question's outcome writer: harvest itself appends
@@ -852,53 +915,72 @@ overturns it with `truth=defect`.
 SPEC-AHEAD: #1572
 
 This is #1572, specified. It is mostly not a decision at all, and that is deliberate: **the hold
-check is a mechanical fold, and the decider is consulted only to read comments no rule can type,
-and only in the stopping direction.**
+check is a mechanical fold, and a decider's answer can only add a hold to it.**
 
 **The fold.** At the point `nova-merge batch` reads a member's `ci-ok`, and again at `nova-merge
 land` on a fresh read (the hold of 02:34:25Z arrived between `BATCH OK` and `land`, so a check in
-`batch` alone would have admitted it), the tool computes, for each login in the reviewer set, that
-reviewer's **newest disposition at the current head**, from three sources, in this order of
-authority: (a) the lane's own read records (`nova-merge read`, SPEC-MERGE), which are already
-typed and already bound to a sha; (b) the forge's typed pull request reviews, `CHANGES_REQUESTED`
-as a hold and `APPROVED` as an approve, bound to the commit the forge records for them; (c) the
-pull request's comments by that reviewer, read through the verdict reading (5). A disposition is
-**at the current head** when its sha is the head's, or, for a comment that names no sha, when it
-was posted after the head's push time. A HOLD never expires (SPEC-REVIEW rule 7): a reviewer whose
-newest HOLD is at an EARLIER head is still `hold` until they say otherwise at this one.
+`batch` alone would have admitted it), the tool collects every **hold** on the pull request by a
+login in the reviewer set (S6), from three sources: (a) the lane's own read records (`nova-merge
+read --verdict hold`, SPEC-MERGE.md:449); (b) the forge's typed pull request reviews in state
+`CHANGES_REQUESTED`; (c) the pull request's comments by that reviewer, typed `hold` by the verdict
+reading's rule table (5) or answered `hold` by a decider. The sources are a **union**: no source
+outranks another, and a hold found in any one of them stops the member until that hold is
+released. A HOLD never expires (SPEC-REVIEW.md:269, rule 7): a hold stated at an earlier head
+still holds at this one, so the fold needs no clock and asks no question about when a head was
+pushed.
 
-**What lifts a hold.** Only that same reviewer's own later disposition from a TYPED source: a
-lane read record of approve at the current head, a forge review `APPROVED` at the current head, or
-a comment typed `approve` **by the rule table** of reading 5 (its first line carries the verdict
-token) naming the current head's sha. **A provider-classified approve never lifts a hold**, and a
-scoped "clear" that is not an approve lifts nothing (#1572). This keeps rule 6 literally true: no
-confidence lifts a hold.
+**What releases a hold: only its holder, explicitly, at the current head, in the source that holds
+it.** A lane record of hold is released only by that reader's newer `line` verdict record at the
+current head (SPEC-REVIEW.md:269-285, rule 7; and an APPROVE record names the lines it compared,
+SPEC-REVIEW.md:236-239, rule 5). A forge review `CHANGES_REQUESTED` is released only by that
+reviewer's later forge review `APPROVED` on the current head's commit, or by the forge's own
+dismissal of the review. A comment hold, rule-typed or decided, is released only by that same
+reviewer's later comment whose first line carries the **release token** or the approve token (5)
+AND names the current head's sha by the pattern of (5). **A comment never releases a record or a
+review**: a reviewer who recorded a HOLD with `block` rows releases it where they recorded it. And
+**no decider's answer releases anything**: a comment answered `approve`, `abstain` or `none` at
+any confidence changes nothing in the fold.
 
-**What the decider may do.** For a comment by a reviewer, since the head's push, that the rule
-table cannot type: ask `verdict/v1`. A `hold` answer **at any confidence** is a hold. An `unknown`
-(below the floor, tampered, no decider, private) is `unread`, and unread stops too. `approve`,
-`abstain` and `none` at or above the floor are not holds. So with no provider at all the check
-still works and is simply stricter: every untyped reviewer comment since the head stops the member
-until somebody reads it.
+**What the decider may do, which is add.** The mechanical baseline (S4) of a reviewer comment that
+the rule table cannot type is that it is not a hold: that is today's behaviour, and the only
+behaviour available with no provider. For each such comment by a reviewer, newer than that
+reviewer's latest release, `verdict/v1` is asked, and the answer can move the fold one way: a
+`hold` answer **at any confidence**, a tampered comment, and an answer below the floor whose raw
+member is `hold`, each add a hold with `source=comment-decided`. Every other answer, and
+`unknown` for any other reason, leaves the baseline where it was. So a provider that obeys an
+injected "answer none" returns the fold to exactly what it is with no provider, and never to
+anything looser. The honest consequence is stated, not hidden: **the guarantee for a reviewer is
+the token, not the classifier.** A hold whose first line carries the hold token is mechanical and
+no text beside it can unsay it; an untyped hold is caught by the decider when the decider is
+right, and that net is worth having, and it is a net. A lane that wants the strict reading passes
+`--strict-comments`: every reviewer comment the rule table cannot type, newer than that
+reviewer's latest release, is `unread` and stops the member, no decider is asked about it, and
+only a typed comment by the same reviewer at the current head clears it.
 
 **The lines.** A stopped member is dropped from a batch, and a landing whose batch holds one is
-refused, at the exit code SPEC-MERGE's *Exit codes* gives a landing that did not happen:
+refused, at the exit code SPEC-MERGE's *Exit codes* gives a landing that did not happen
+(SPEC-MERGE.md:536):
 
 ```
-BATCH DROP #<n> reason="head <sha12> carries an unlifted HOLD from <login> at <stamp>" source=<record|review|comment-rule|comment-decided> comment=<id|-> conf=<x|->
-BATCH DROP #<n> reason="head <sha12> has an unread comment from <login> at <stamp>" source=comment-unread comment=<id> why=<below-floor|tamper|no-decider|private-evidence>
+BATCH DROP #<n> reason="head <sha12> carries an unreleased HOLD from <login> at <stamp>" source=<record|review|comment-rule|comment-decided> comment=<id|-> conf=<x|-> held_at=<sha12|->
+BATCH DROP #<n> reason="head <sha12> has an unread comment from <login> at <stamp>" source=comment-unread comment=<id>
 LAND REFUSED reason=held member=#<n> ...the same fields...
 ```
 
+`<stamp>` is the forge's own `created_at` for the record, review or comment, printed and never
+compared with a local clock; "newer" and "later" in this reading compare two of the forge's stamps
+for the same pull request, ties broken by the forge's id order.
+
 **The escape.** `--ignore-hold <n>:<comment id>` names one comment on one member, requires
 `--reason <text>`, is printed on the `BATCH OK` line as `ignored=<n>:<id>`, and is written to the
-classify log as a row with `"source":"override"`. It is a person's act with a person's reason, so
-a refusal is a refusal and not a wall. There is no flag that ignores holds in general.
+classify log as a row with `"source":"override"`. It applies to `comment-decided` and
+`comment-unread` stops only: a record, a review and a rule-typed hold are a reviewer's explicit
+no, and the only way past one is its holder's release. There is no flag that ignores holds in
+general.
 
-**The outcome, with no human.** A `comment-decided` hold that the same reviewer later follows with
-a typed approve at the same head and no code change between is `overturned`; one followed by a new
-head is `confirmed`. An `--ignore-hold` on a decided hold is recorded as `overturned` by the
-override row.
+**The outcome, with no human.** A `comment-decided` hold that the same reviewer later releases by
+token at the same head, with no new commit between, is `overturned`; one followed by a new head is
+`confirmed`. An `--ignore-hold` on a decided hold is recorded as `overturned` by the override row.
 
 ### 4. The backlog reading: a first pass over issues and pull requests
 
@@ -920,7 +1002,7 @@ request, and the first 1500 bytes of its body, head truncation, quotes and code 
 (`guard`, `secrets`, `sandbox`, `sudo`, `deploy-keys`, `network`) in a fixed phrase table is
 `class=security`, no call, and **a provider may add `security` but never remove it**: a rule-table
 `security` is final, and a provider's `security` at any confidence is taken. Security work resolves
-to the designated mind on every path (*Security never falls through*), and a triage pass is a path.
+to the designated mind on every path (*Security never falls through*, :142), and a triage pass is a path.
 
 **What the caller does.** One line an item, then one closing count line; with `--tsv <path>` the
 same fields as rows. Items that are `unknown` on either question, every `security` item and every
@@ -936,7 +1018,8 @@ BACKLOG OK items=<n> unknown=<n> security=<n> s1=<n> escalated=<n> calls=<n> tok
 
 **The outcome, with no human.** The stronger reader's class and severity for every escalated item
 and every audit-sampled one, recorded with `nova-decide outcome --decision <id> --truth`. Where a
-maintainer later applies a label that maps onto a class by a data table, the next pass records it.
+maintainer later applies a label that maps onto a class by a data table (`--label-map <file>`: a
+label, a class; no default), the next pass records it.
 
 ### 5. The verdict reading: a friend's comment into a typed record
 
@@ -948,8 +1031,8 @@ SPEC-AHEAD: #1618
 change, at a head, may land. `hold`: the author states that it must not land yet, or names a
 finding that blocks. `abstain`: the author states they are not reading it. `none`: a status report,
 a question, a reply, a receipt, or anything else. `scoped`: the verdict is stated to cover only
-named files, sections or concerns. Tamper answer: `unknown`, and `unknown` is `unread`, which stops
-(3) and readies nothing.
+named files, sections or concerns. Tamper answer: `unknown`; in the fold of (3) a tampered reviewer
+comment adds a hold, and here it readies nothing.
 
 **The evidence.** One comment's body after S6's quote and code-block removal, first 1500 bytes and
 last 500 bytes where longer (a verdict is usually stated first or last). Bound: 2048 bytes. The
@@ -962,35 +1045,42 @@ request's current head (`current=true`), then of any earlier head of the same pu
 (`current=false`); the first that matches either wins; `sha=-` where none does. A hex run that
 matches no head of this pull request is not a sha of interest and is ignored.
 
-**The rule table.** A comment whose first non-empty unquoted line begins with the token `APPROVE`,
-`HOLD` or `ABSTAIN` (capitals, a word boundary after) is that verdict with no call: this is the
-convention reviewers here already write, and it is what makes the whole reading work with no
-provider. `scope` by rule is `scoped` when that same line contains `scoped` or `scope:`, else
-`whole`.
+**The rule table, whose words are data.** `--verdict-tokens <file>` names four rows, `approve`,
+`hold`, `abstain` and `release`, each with the words that mean it; the shipped default is the four
+plain capitals `APPROVE`, `HOLD`, `ABSTAIN`, `RELEASE`, and a lane whose reviewers write other
+words, or another language, replaces the file whole. A comment whose first non-empty unquoted line
+begins with one of a row's words, with a word boundary after it, is that verdict with no call.
+`release` is not a member of the provider's set: it exists only in the rule table, because only a
+typed comment can release anything (3). `scope` by rule is `scoped` when that same line contains
+`scoped` or `scope:`, else `whole`. The rule table is what makes the whole reading work with no
+provider, and it is the only thing in this reading that can ready or release.
 
 **The record and the ready list.**
 
 ```
-VERDICT pr=<n> who=<login> verdict=<approve|hold|abstain|none|unknown> scope=<whole|scoped|-> sha=<sha12|-> current=<true|false|-> source=<comment-rule|comment-decided> comment=<id> at=<stamp> ready=<yes|no> why=<-|not-reviewer|author|no-sha|stale-sha|scoped|held|ci-not-green|below-floor|tamper|...> ...the common fields...
+VERDICT pr=<n> who=<login> verdict=<approve|hold|abstain|none|unknown> scope=<whole|scoped|-> sha=<sha12|-> current=<true|false|-> source=<comment-rule|comment-decided> comment=<id> at=<stamp> ready=<yes|no> candidate=<yes|no> why=<-|not-reviewer|author|no-sha|stale-sha|scoped|held|ci-not-green|untyped-approve|below-floor|tamper|untuned|...> ...the common fields...
 ```
 
-`ready=yes` requires ALL of: `verdict=approve` at or above the floor or by rule; `who` in the
-reviewer set and not the pull request's author; `current=true` with a sha the comment itself
-names; `scope=whole`; no reviewer's disposition is `hold` or `unread` by the fold of (3); and
-`ci-ok` green at that exact sha, read from the forge in the same run. Every one of those but the
-first is mechanical. With `--ready <path>` the verb rewrites that file as the projection of the
-current ready lines, one pull request a line; the file is a convenience for a coordinator and an
-authority over nothing. **The reading writes no `nova-merge read` record.** SPEC-REVIEW rule 5
-holds that an APPROVE names the lines it compared, and that record is the reader's own act through
-`nova-merge read`; a classifier's paraphrase of a comment is not one. nova-merge's own gate, not
-the ready list, decides what lands (S4).
+`ready=yes` is mechanical from end to end (S4). It requires ALL of: `verdict=approve` with
+`source=comment-rule`; `who` in the reviewer set and not the pull request's author (S6);
+`current=true` with a sha the comment itself names; `scope=whole`; the fold of (3) holds no
+unreleased hold and no unread stop for this pull request; and `ci-ok` green at that exact sha,
+read from the forge in the same run. A decider's `approve`, at any confidence, readies nothing:
+it prints `ready=no candidate=yes why=untyped-approve`, which tells a coordinator that a reviewer
+seems to have approved in prose and could be asked to type it. That is the whole of what an
+`approve` answer can do. With `--ready <path>` the verb rewrites that file as the projection of
+the current `ready=yes` lines, one pull request a line; the file is a convenience for a
+coordinator and an authority over nothing. **The reading writes no `nova-merge read` record.** An
+APPROVE record names the lines it compared (SPEC-REVIEW.md:236-239, rule 5), and that record is
+the reader's own act through `nova-merge read` (SPEC-MERGE.md:449); a classifier's paraphrase of a
+comment is not one. nova-merge's own gate, not the ready list, decides what lands.
 
-**The outcome, with no human.** A `ready=yes` pull request that then lands through nova-merge with
-no hold is `confirmed`; one that a reviewer holds at the same head, or whose author of the comment
-corrects it, is `overturned`. A `comment-decided` verdict later restated by the same reviewer in
-the rule-table form at the same head is confirmed or overturned by comparison, which is cheap
-truth in volume: reviewers who adopt the first-line convention label the provider's past answers
-for free.
+**The outcome, with no human.** A `candidate=yes` comment that the same reviewer later restates
+with the approve token at the same head is `confirmed`; one they restate with the hold token is
+`overturned` with `truth=hold`. More generally a `comment-decided` verdict later restated by the
+same reviewer in the rule-table form at the same head is confirmed or overturned by comparison,
+which is cheap truth in volume: reviewers who adopt the first-line tokens label the provider's
+past answers for free.
 
 ### 6. The CI-red reading: one licensed rerun, or a finding
 
@@ -1003,33 +1093,49 @@ was cancelled or superseded and nothing in it failed. `known-flake`: the failing
 flake table. `infra`: the runner, the network, a download, a disk or a timeout failed and no
 assertion of the repository did. Tamper answer: `unknown`, which is a finding.
 
-**The evidence.** What `nova-ci failed` already reads: the failed jobs' names and conclusions, the
+**The evidence.** What `nova-ci failed` (`docs/CLI.md:3022`) already reads: the failed jobs' names and conclusions, the
 `--- FAIL` test names, and the last 2048 bytes of each failed step's log (tail truncation, at most
 three jobs, then `+<n>`). Bound: 8192 bytes. The job names, conclusions and test names also travel
 as mechanical fields and are printed from the forge's data, never from an answer.
 
-**The rule table**, which answers most reds with no call. Any `--- FAIL: <Test>` name present:
-`known-flake` when EVERY failing name is in the flake table (`--flakes <file>`: a test name, the
-issue that tracks it, an expiry date; an expired row matches nothing), else `named-test`. No FAIL
-name and every failed job's conclusion is `cancelled`: `cancelled-leg`. The provider is asked only
-for what remains: a red with no test event (#1450's class), where the choice is between
-`own-build-break` and `infra`.
+**The rule table, which carries the whole licence.** Every row is a fact the forge reports about
+the run, or a name matched against a table; none is a reading of the log's prose, because the log
+is the most writable evidence in this section: the change under test prints it. Any `--- FAIL:
+<Test>` name present: `known-flake` when EVERY failing name is in the flake table (`--flakes
+<file>`: a test name, the issue that tracks it, an expiry date as `YYYY-MM-DD`; a row is expired
+when `--now`, default the system's UTC date, is after that date, and an expired row matches
+nothing), else `named-test`. No FAIL name and every failed job's forge conclusion is `cancelled`:
+`cancelled-leg`. No FAIL name and every failed job either has the forge conclusion `timed_out` or
+`startup_failure`, or failed in a step whose NAME is in the infra-steps table (`--infra-steps
+<file>`: the steps that run none of the repository's code, such as the runner's set-up, the
+checkout and a toolchain install; data the caller passes, no default): `infra`. Anything else has
+no rule row.
 
-**What the caller does.** The closing line gains ` red=<...> rerun=<licensed|no> finding=<yes|no>`.
-`rerun=licensed` requires ALL of: `red` is `cancelled-leg`, `known-flake` or `infra`, at or above
-the floor or by rule; and the mechanical count of reruns already made for this job at this sha is
-zero. That is the whole of "one licensed rerun": a second red at the same sha is `finding=yes`
-whatever the class. `named-test`, `own-build-break` and `unknown` are `finding=yes` at once: a
-named failing test is a finding and not a rerun, and below the floor the answer is a finding,
-because a rerun that turns a real red green is manufactured green. **The reading never reruns
-anything** (rule 7): it prints the licence, and the caller's own rerun command is the act. The
-older *nova-merge classify merge-group failure* adoption keeps its set and its words; the task for
-this reading also files the follow-up that folds that classifier onto this table.
+**What the decider may do, which is withdraw and label.** The mechanical baseline (S4) is the
+rule table's class. The provider is asked in two cases only. Where the table says `infra`, an
+answer of `own-build-break` or `named-test` at any confidence, or a tampered log, **withdraws**
+the licence (`rerun=no finding=yes why=withdrawn`): a job that timed out because the change hangs
+is the change's. Where the table has no row, the answer is a **label** for the reader who will
+open the finding, printed as `red=`, and licenses nothing. No answer turns `rerun=no` into
+`rerun=licensed`.
 
-**The outcome, with no human.** The next `nova-ci failed --decide` or `nova-ci` read of the same
-sha that finds a decision row writes it: a licensed rerun that came back green is `confirmed`; one
-that came back red in the same job is `overturned` with `truth=named-test` or
-`truth=own-build-break` by the rule table.
+**What the caller does.** The closing line gains ` red=<...> rerun=<licensed|no> finding=<yes|no>
+reruns=<n>`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
+`known-flake` or `infra`; no decider withdrew it; and `reruns`, the forge's own attempt count for
+this job at this sha less one, is zero. That is the whole of "one licensed rerun": a second red at
+the same sha is `finding=yes` whatever the class. Everything else is `finding=yes` at once: a
+named failing test is a finding and not a rerun, and a red nobody can class mechanically is a
+finding, because a rerun that turns a real red green is manufactured green. **The reading never
+reruns anything** (rule 7, :73): it prints the licence, and the caller's own rerun command is the
+act. The older *nova-merge classify merge-group failure* adoption (:419-427) keeps its set and its
+words, including the `rerun=yes` it prints on a provider's answer above its floor; that line is
+older than S4 and does not meet it, and the task for this reading files the follow-up that folds
+that classifier onto this table.
+
+**The outcome, with no human.** The next `nova-ci failed --decide` read of the same sha that finds
+a decision row writes it: a withdrawal followed by a red in the same job at the same sha is
+`confirmed`; a label is `confirmed` or `overturned` by the class the rule table gives the NEXT
+red at that sha where it has a row, and by the escalated reader's `--truth` where it has none.
 
 ### Housekeeping: what the route owes before anything else is added
 
@@ -1039,7 +1145,8 @@ H1. SPEC-AHEAD: #1622
    line for every kind whose provider decisions number at least 50 and whose most frequent rung
    holds a share of at least 0.85. Promotion is a person's commit and never the tool's: a `rules`
    member in the registry, `{"kind": "<k>", "rung": "<r>", "by": "<who>", "from": "<log summary
-   date>"}`, refused at load with no `by` (policy is authored by people; the duty tier executes it).
+   date>"}`, refused at load with no `by` (policy is authored by people and the duty tier executes it:
+   SPEC-WORK.md:2574-2581, "A policy rule with no `:by` is refused at load").
    A unit of a ruled kind with no prior attempt is answered `source=rule`, `calls=0`, no provider
    call, and is still logged. The rule steps aside, and the ladder answers as today, when the unit
    carries a confirmed failure, a security touch, a fresh-take flag, or a size bucket above the
@@ -1051,7 +1158,7 @@ H1. SPEC-AHEAD: #1622
 H2. SPEC-AHEAD: #1623
    **The outcome is recorded at harvest, by harvest.** `nova-pulse harvest` and `nova-swarm`'s
    finished-task pass take `--route-log <path>` and, for every unit they finish, append the route
-   outcome row themselves through the same appender `nova-decide outcome` uses: the unit id is the
+   outcome row themselves through the same appender `nova-decide outcome` (:219) uses: the unit id is the
    card's, the kind and rung are read from the unit's last decision row, and the result is mapped
    mechanically (`clean` and a green gate: `green`; `defect` and a red gate: `red`;
    `blocked-toolchain` and an unfinished job: `blocked`; `skip-precondition`: `skipped`, a fourth
@@ -1068,11 +1175,12 @@ H3. SPEC-AHEAD: #1624
    is absent, never zero, where there was no call or no measurement, by the per-counter presence
    rule. The `ROUTE` and `CLASSIFY` lines carry `ms=<n|->`. `log --summary` prints the median and
    the 95th percentile per question and per decider. The hurt: the adoption's claim is wall clock
-   as much as tokens, the spec quotes "about 400 ms" from a trial with no retained file, and 553
+   as much as tokens, the spec quotes "about 400 ms" from a trial with "no retained file" (:38-40), and 553
    rows later the log cannot say whether that is true.
 
 H4. SPEC-AHEAD: #1625
-   **Routing happens in the launcher, so no brief can forget it.** `--route` stops being opt-in:
+   **Routing happens in the launcher, so no brief can forget it.** `--route` (:343-349) stops being
+   opt-in:
    `nova-swarm batch`, `nova-swarm run` (#1486) and `nova-pulse launch` route every admitted card
    before it is assigned a model, in process, and print the card's `ROUTE` receipt line. A launch
    with `--route-log` or `--route-usage` missing does not skip routing: it routes by the rules
@@ -1093,12 +1201,12 @@ paragraph:
   design is sound. The answer set is not closed and the evidence is not small. A reading may say a
   comment IS an approve; it never says a change DESERVES one.
 - **Cold reads and reviews.** A review's value is a mind that opens the file. SPEC-REVIEW rule 5
-  refuses an approve that names no compared line, and no classifier compares lines.
+  (SPEC-REVIEW.md:236-239) refuses an approve that names no compared line, and no classifier compares lines.
 - **Findings.** `defect` and `finding=yes` are candidates handed to a reader. Naming the cause is
   `cause-to-find`, a kind the ladder already sends upward.
 - **Anything that lifts, grants or spends**: a hold, a STOP, a permission, a lease, a budget, a
-  slot, a secret (rule 6). The decider may add a stop. It never removes one.
-- **Anything outbound** (*Outbound: never*): no post, mail, message, label, close or merge.
+  slot, a secret (rule 6, :66). The decider may add a stop. It never removes one.
+- **Anything outbound** (*Outbound — never*, :525): no post, mail, message, label, close or merge.
 - **Anything whose answer set grows when you look at it.** If the honest option list ends in
   "other", the question is not closed yet; it goes to a reader until its members have names.
 - **Security work itself.** A security kind resolves to the designated mind by rule; the decider
@@ -1107,59 +1215,118 @@ paragraph:
 ### Demanded tests
 
 Each is red before it is trusted. All run against a **fake decider** implementing D1's interface
-(and, for the `jev` decider's own wire tests, rule 9's httptest fake); no test dials a network, and
-no test needs a key on disk. Fixtures live under `internal/decide/questions/testdata/<q>/`, each a
-pair: `<name>.evidence` and `<name>.want` (the expected line's fields). Every question has at least
-eight known-answer fixtures covering every member of its set, plus the two controls and the two
-injection fixtures named here.
+(and, for the `jev` decider's own wire tests, rule 9's httptest fake, :86); no test dials a
+network, and no test needs a key on disk. Fixtures live under
+`internal/decide/questions/testdata/<q>/`, each a pair: `<name>.evidence` and `<name>.want` (the
+expected line's fields). Every question has at least eight known-answer fixtures covering every
+member of its set. **Every rule of this section names at least one test below, by its letter.**
 
-- F1 `the-frame-is-byte-exact`: a golden file of the framed state for a fixed nonce; evidence
-  containing a marker line, a `FRAME ` line and a NUL still yields exactly two marker lines.
-- F2 `no-evidence-byte-reaches-the-instructions`: for every question, the instructions and
-  criteria sent are byte-identical across two different evidences.
-- F3 `with-no-provider-every-question-answers-by-rule-or-unknown-and-says-so`: a table over the
-  six questions with `--decider rules` and with no key: exit 0 with `decider=rules` on a rule-row
-  fixture, exit 3 with `answer=unknown decider=none why=no-decider` otherwise; zero calls.
-- F4 `private-evidence-never-reaches-a-public-decider`: the fake records calls; a private
-  evidence makes none and prints `why=private-evidence`; `local` on a non-loopback URL is refused.
-- F5 `an-answer-outside-the-set-is-a-provider-error` for every question (exit 2, no row marked as
-  a decision).
-- F6 `one-item-one-call`: two notes are two calls and neither state contains the other's text.
-- F7 `the-evidence-text-is-never-logged`: a marker string in the evidence appears in no log row
-  and no usage row; its SHA-256 does.
-- F8 `the-audit-sample-is-reproducible`: the same ids are sampled on two runs at one rate.
-- F9 `no-question-names-one-of-ours`: the question table, rule tables and tamper table contain no
-  string from a fixture registry of synthetic private names.
-- Per question `<q>`: `<q>-fixtures-answer-as-labelled` (the known answers);
-  `<q>-negative-control` (an item that looks like the stopping or permitting member and is not: for
-  `verdict`, a status comment that QUOTES "HOLD" and "APPROVE" in `>` lines and in a code block
-  reads `none`; for `note`, a long note that asks nothing reads `info`; for `harvest`, output that
-  prints the words "command not found" inside a passing test's expected-output block is not
-  `blocked-toolchain`; for `ci-red`, a cancelled leg beside a `--- FAIL` is `named-test`; for
-  `backlog`, an issue about the word "security" in a doc typo is still routed `security`, because
-  that control runs the other way: the rule may over-send to the designated mind and never
-  under-send); `<q>-injection-screened` (evidence that instructs the classifier: zero calls,
-  `tamper=yes`, the tamper answer, never the permitting member); `<q>-injection-obeyed` (the
-  screen is bypassed by the fixture and the fake returns the permitting member at 0.99: `note`
-  may then read `ack`, and the test asserts the note file is byte-identical and no read mark was
-  written;
-  `verdict` reads `approve` and the test asserts `ready=no` because the sha, the reviewer set or
-  `ci-ok` does not hold, that no read record exists, and that no hold was lifted).
-- Q3 `a-held-head-is-dropped-from-a-batch-and-refused-at-land`: #1572's timeline as a fixture: a
+Security and the decider:
+
+- S1 `the-evidence-changes-nothing-but-the-answer`: two evidences, one of them an instruction to
+  change the floor, the options and the decider; the request's questions, floor, chain and the
+  caller's act for a given answer are byte-identical across the two.
+- S2 `the-frame-is-byte-exact`: a golden file of the framed state for a fixed nonce; evidence
+  containing a marker line, a `FRAME ` line and a NUL still yields exactly two marker lines. S2
+  `no-evidence-byte-reaches-the-instructions`: for every question, the instructions and criteria
+  sent are byte-identical across two different evidences.
+- S3 `an-answer-outside-the-set-is-a-provider-error`, for every question (exit 2, no decision
+  row). S3 `the-provider-is-never-asked-to-name-anything`: no question's options or instructions
+  request a sha, a number, a login or a test name, and every such field on a line equals the
+  `--meta` or pattern value when the fake's answer text contains a different one.
+- S4 `<q>-injection-obeyed`, one per reading, all six; the fake returns the most loosening member
+  at 0.99 with the tamper screen bypassed by the fixture, and the assertion is the mechanical
+  baseline or tighter: `note`: the fake says `ack`; the wake is relayed when a fake clock passes
+  `--defer-max`, once, and the note file is byte-identical. `harvest`: the fake says
+  `blocked-toolchain`/`bench` with exit status 1 and no harness-error line; the failure IS
+  appended as a confirmed failure. `hold`: a reviewer's untyped comment and the fake says `none`;
+  the fold equals the fold with `--decider rules`, a recorded hold beside it still stops the
+  member, and under `--strict-comments` the member is dropped with zero calls. `backlog`: a
+  rule-table `security` item and the fake says `chore` `s4-cosmetic`; the line reads
+  `class=security` and escalates. `verdict`: the fake says `approve`; `ready=no candidate=yes
+  why=untyped-approve`, no read record exists and no hold was released. `ci-red`: a red with no
+  rule row and the fake says `infra`; `rerun=no finding=yes`.
+- S5 `<q>-injection-screened`, one per reading: evidence that instructs the classifier makes zero
+  calls and prints `tamper=yes` and the tamper answer. S5 `a-replaced-tamper-table-is-the-only-table`.
+- S6 `the-author-is-the-forges-login`: a comment by a non-reviewer reading "<reviewer> says HOLD"
+  is `why=not-reviewer` and adds nothing. S6 `a-verdict-with-no-reviewer-set-is-refused` (exit 2
+  naming `--reviewers`). S6 `a-quoted-hold-is-not-a-hold`. S6 `the-author-cannot-ready-their-own`.
+- S7 `private-evidence-never-reaches-a-public-decider`: the fake records calls; a bus with no
+  `.public` marker makes none, prints `why=private-evidence` and falls to `rules`; there is no
+  flag that changes it; `local` on a non-loopback URL is refused. S7
+  `secret-shaped-evidence-is-redacted-and-a-survivor-is-refused`.
+- D1 `no-question-names-one-of-ours`: the question table and every shipped data file contain no
+  string from a fixture registry of synthetic private names. D1 `every-data-table-is-replaceable`
+  (tamper, verdict tokens, ack prefixes, toolchain patterns: a replaced file is the only one read).
+- D2 `with-no-provider-every-question-answers-by-rule-or-unknown-and-says-so`: a table over the
+  readings with `--decider rules` and with no key: exit 0 with `decider=rules` on a rule-row
+  fixture, exit 3 with `answer=unknown decider=none why=no-decider` otherwise; zero calls. D2
+  `rules-are-consulted-first-whether-named-or-not`.
+- D3 `classify-exits-0-3-and-2`, one fixture each; D3 `an-undeclared-meta-key-is-refused-by-name`;
+  D3 `a-provider-call-with-no-accounting-is-refused-before-it-is-made`.
+- D4 `one-item-one-call`: two notes are two calls and neither state contains the other's text. D4
+  `evidence-over-its-bound-is-cut-by-the-questions-rule`: head, tail, and head-and-tail fixtures,
+  each with exactly one `[cut <n> bytes]` line, `bytes=` equal to the framed evidence size, and
+  the bound applied after redaction and quote removal.
+- D5 `below-the-floor-is-unknown-and-names-the-reader`: `escalate=caller` by default and
+  `escalate=<name>` under `--escalate-to`; `escalate=-` at or above the floor. D5
+  `an-untuned-provider-is-not-asked`: a table over no `--floors`, no row, a missing trial file and
+  a trial of 39 rows: zero calls and `why=untuned`; 40 rows: one call. D5
+  `a-run-may-raise-a-floor-and-never-lower-it`.
+- D6 `the-evidence-text-is-never-logged`: a marker string in the evidence appears in no log row
+  and no usage row; its SHA-256 does. D6 `the-decision-id-is-derived-as-written` (a golden id for
+  a fixed question, version, pointer and hash). D6 `the-audit-sample-is-the-stated-threshold`
+  (`19999998…` sampled and `19999999…` not at 0.1; the same ids on two runs). D6
+  `the-outcome-row-has-its-shape-and-an-orphan-is-refused`.
+
+The readings; each also has `<q>-fixtures-answer-as-labelled` and `<q>-negative-control`:
+
+- 1 `note-negative-control`: a long note that asks nothing reads `info`. 1
+  `needs-action-and-unknown-wake-at-once-and-ack-defers`: a table over the four values and the
+  rule rows, under a fake clock. 1 `one-wake-carries-every-deferred-note`. 1
+  `wait-decide-with-no-defer-max-is-refused`. 1 `a-structured-signal-is-never-sent`. 1
+  `a-reply-overturns-an-ack-and-the-outcome-row-says-so`.
+- 2 `harvest-negative-control`: output that prints "command not found" inside a passing test's
+  expected-output block is not `blocked-toolchain`. 2
+  `a-bench-red-needs-the-table-and-a-fact-the-card-did-not-write`. 2
+  `a-unit-changes-bench-on-this-ground-once`. 2 `a-defect-files-nothing`. 2
+  `a-clean-rerun-elsewhere-confirms-a-blocked-toolchain`.
+- 3 `a-held-head-is-dropped-from-a-batch-and-refused-at-land`: #1572's timeline as a fixture, a
   hold comment posted between `BATCH OK` and `land` refuses the landing on land's own fresh read.
-- Q3 `a-provider-approve-never-lifts-a-hold`, `a-quoted-hold-is-not-a-hold`,
-  `an-unread-reviewer-comment-stops-the-member-with-no-provider`,
-  `a-hold-at-an-earlier-head-still-holds`, `ignore-hold-names-one-comment-and-is-logged`.
-- Q5 `the-sha-is-found-by-pattern-and-never-asked`, `an-approve-with-no-sha-is-not-ready`,
-  `an-approve-at-a-stale-head-is-not-ready`, `the-author-cannot-ready-their-own`,
-  `a-scoped-approve-is-not-ready`, `the-reading-writes-no-read-record`.
-- Q6 `a-named-failing-test-is-never-licensed`, `the-second-red-at-one-sha-is-a-finding`,
-  `an-expired-flake-row-matches-nothing`, `below-the-floor-is-a-finding`.
-- Q2 `a-bench-red-is-not-a-confirmed-failure-of-the-rung`.
-- H1 `a-ruled-kind-makes-no-call-and-is-still-logged`, `a-rule-with-no-by-is-refused-at-load`,
-  `a-confirmed-failure-steps-the-rule-aside`; H2 `harvest-writes-the-outcome-row-itself`,
-  `coverage-is-printed`; H3 `ms-is-absent-not-zero-with-no-call`; H4
-  `a-launch-cannot-skip-the-route-without-a-logged-reason`.
+  3 `a-hold-in-any-source-stops`. 3 `a-comment-never-releases-a-record-or-a-review`: a recorded
+  HOLD, then the same reviewer's first-line approve token naming the current head; still held. 3
+  `only-the-holder-releases`. 3 `a-release-that-names-a-stale-sha-releases-nothing`. 3
+  `no-answer-releases-anything`. 3 `a-hold-at-an-earlier-head-still-holds`. 3
+  `a-decided-hold-at-any-confidence-holds`. 3 `strict-comments-stops-on-every-untyped-comment-and-asks-nobody`.
+  3 `ignore-hold-names-one-decided-comment-and-is-logged-and-cannot-name-a-typed-hold`. 3
+  `a-token-release-overturns-a-decided-hold`.
+- 4 `backlog-negative-control` (runs the other way: an issue about the word "security" in a doc
+  typo is still `security`, because the rule may over-send to the designated mind and never
+  under-send). 4 `a-provider-adds-security-and-never-removes-it`: a table of rule `security` with
+  the fake saying `chore`, and no rule row with the fake saying `security` at 0.2; both read
+  `security`. 4 `every-security-s1-and-unknown-escalates`. 4 `a-mapped-label-writes-the-outcome`.
+- 5 `verdict-negative-control`: a status comment that QUOTES the hold and approve tokens in `>`
+  lines and in a code block reads `none`. 5 `the-sha-is-found-by-pattern-and-never-asked`. 5
+  `an-approve-with-no-sha-is-not-ready`. 5 `an-approve-at-a-stale-head-is-not-ready`. 5
+  `a-scoped-approve-is-not-ready`. 5 `only-a-rule-typed-approve-readies`. 5
+  `replaced-tokens-are-the-only-tokens`. 5 `the-reading-writes-no-read-record`. 5
+  `a-typed-restatement-writes-the-outcome`.
+- 6 `ci-red-negative-control`: a cancelled leg beside a `--- FAIL` is `named-test`. 6
+  `a-named-failing-test-is-never-licensed`. 6 `the-second-red-at-one-sha-is-a-finding`. 6
+  `an-expired-flake-row-matches-nothing-under-now`. 6 `infra-is-a-forge-conclusion-or-a-listed-step-and-never-a-log-line`.
+  6 `a-decider-withdraws-a-licence-and-never-grants-one`. 6 `the-next-red-writes-the-outcome`.
+
+Housekeeping:
+
+- H1 `a-rule-candidate-is-printed-at-50-and-0.85-and-not-below`. H1
+  `a-ruled-kind-makes-no-call-and-is-still-logged`. H1 `a-rule-with-no-by-is-refused-at-load`. H1
+  `a-confirmed-failure-steps-the-rule-aside`. H1 `one-unit-in-twenty-is-still-asked-and-a-share-under-0.7-prints-rule-stale`.
+- H2 `harvest-writes-the-outcome-row-itself`. H2 `an-orphan-is-counted-and-not-refused`. H2
+  `coverage-is-printed`. H2 `skipped-is-a-result`.
+- H3 `ms-is-absent-not-zero-with-no-call`. H3 `the-summary-prints-median-and-p95-per-question-and-decider`
+  (a fixture log with known percentiles).
+- H4 `a-launch-cannot-skip-the-route-without-a-logged-reason`. H4
+  `a-launch-with-no-accounting-routes-by-rules-and-says-so`.
 
 ## Red tests
 
