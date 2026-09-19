@@ -57,6 +57,15 @@ for d in $changed_dirs; do want="$want ./$d"; done
 # package that holds it.
 want="$want ./internal/ci"
 
+# internal/docs has the same blind spot for the same reason: it reads AGENTS.md,
+# docs/SPEC-CI.md and the rest of docs/ as text, so no *.go diff can name it --
+# and a docs-only change names no directory at all. A pull request that added a
+# class rule to SPEC-CI.md's index without naming it on AGENTS.md therefore went
+# green and turned the integration batch that carried it red: #1364
+# (toolchainroots) and #1409 (hostseam), one gate round each. Select it on every
+# run, like internal/ci above.
+want="$want ./internal/docs"
+
 # dependents: every package in the tree that imports a changed one.
 while read -r pkg deps; do
   p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
