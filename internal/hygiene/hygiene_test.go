@@ -1,0 +1,489 @@
+package hygiene
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The four checks, each seen red on the defect it exists for and green on a range that
+// does not carry it. SPEC-TOOLWORK.md §3 (PR #1637), issue #1647.
+
+func git(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Rowan", "GIT_AUTHOR_EMAIL=rowan@example.com",
+		"GIT_COMMITTER_NAME=Rowan", "GIT_COMMITTER_EMAIL=rowan@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func write(t *testing.T, dir, rel, body string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// lab is a repo with one base commit. The card's identity is Rowan, and its declared
+// paths are the sign package.
+func lab(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "go.mod", "module fixture\n\ngo 1.26\n")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 1 }\n")
+	write(t, dir, "sign/sign_test.go", "package sign\n\nimport \"testing\"\n\nfunc TestSign(t *testing.T) {}\n")
+	write(t, dir, "other/other.go", "package other\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "base")
+	return dir
+}
+
+func rowan() []Identity { return []Identity{{Name: "Rowan", Email: "rowan@example.com"}} }
+
+func check(t *testing.T, dir string, o Options) []Finding {
+	t.Helper()
+	if o.Repo == "" {
+		o.Repo = dir
+	}
+	if o.Base == "" {
+		o.Base = "main"
+	}
+	if o.Head == "" {
+		o.Head = "HEAD"
+	}
+	if o.Identities == nil {
+		o.Identities = rowan()
+	}
+	if o.Paths == nil {
+		o.Paths = []string{"sign/**"}
+	}
+	fs, err := Check(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	return fs
+}
+
+func tokens(fs []Finding) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.Token)
+	}
+	return out
+}
+
+func has(fs []Finding, token string) *Finding {
+	for i := range fs {
+		if fs[i].Token == token {
+			return &fs[i]
+		}
+	}
+	return nil
+}
+
+// The positive control. Without it every red below could be a check that says no to
+// everything, which is the cheapest way to pass a suite and proves nothing at all.
+func TestHygienePassesACleanRange(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int {\n\tif n == 0 {\n\t\treturn 0\n\t}\n\treturn 1\n}\n")
+	write(t, dir, "sign/sign_test.go", "package sign\n\nimport \"testing\"\n\nfunc TestSign(t *testing.T) {}\n\nfunc TestSignZero(t *testing.T) {\n\tif Sign(0) != 0 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "fix")
+	if fs := check(t, dir, Options{}); len(fs) != 0 {
+		t.Fatalf("a clean range drew findings: %v", fs)
+	}
+}
+
+// hygiene-rejects-a-foreign-committer: nothing anywhere says whose name a card's commit
+// carries, so it carries whatever the bench's git config held.
+func TestHygieneRejectsAForeignCommitter(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
+	git(t, dir, "add", "-A")
+	cmd := exec.Command("git", "commit", "-q", "-m", "somebody else")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Rowan", "GIT_AUTHOR_EMAIL=rowan@example.com",
+		"GIT_COMMITTER_NAME=Bench", "GIT_COMMITTER_EMAIL=bench@elsewhere.example",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v\n%s", err, out)
+	}
+	f := has(check(t, dir, Options{}), "identity")
+	if f == nil {
+		t.Fatalf("a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
+	}
+	if len(f.At) != 12 {
+		t.Fatalf("at=%q, want a sha12", f.At)
+	}
+}
+
+func TestHygieneRejectsAForeignAuthor(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
+	git(t, dir, "add", "-A")
+	cmd := exec.Command("git", "commit", "-q", "-m", "somebody else")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Stranger", "GIT_AUTHOR_EMAIL=stranger@elsewhere.example",
+		"GIT_COMMITTER_NAME=Rowan", "GIT_COMMITTER_EMAIL=rowan@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v\n%s", err, out)
+	}
+	if has(check(t, dir, Options{}), "identity") == nil {
+		t.Fatal("a foreign AUTHOR drew no identity finding")
+	}
+}
+
+// hygiene-rejects-a-merge-commit.
+func TestHygieneRejectsAMergeCommit(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "side")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 2 }\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "side")
+	git(t, dir, "checkout", "-q", "main")
+	write(t, dir, "sign/sign_test.go", "package sign\n\nimport \"testing\"\n\nfunc TestSign(t *testing.T) {}\n\nfunc TestOther(t *testing.T) {}\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "main moves")
+	base := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "checkout", "-q", "-b", "card")
+	git(t, dir, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+	f := has(check(t, dir, Options{Base: base}), "identity")
+	if f == nil {
+		t.Fatal("a merge commit drew no identity finding")
+	}
+	if !strings.Contains(f.Why, "merge") {
+		t.Fatalf("why=%q, want it to name the merge", f.Why)
+	}
+}
+
+// hygiene-counts-a-rename-on-both-sides: a rename that moves a file OUT of the declared
+// paths is out-of-path on the side that left, not only on the side that arrived.
+func TestHygieneCountsARenameOnBothSides(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	git(t, dir, "mv", "sign/sign.go", "other/sign.go")
+	git(t, dir, "commit", "-q", "-m", "move it out")
+	f := has(check(t, dir, Options{}), "out-of-path")
+	if f == nil {
+		t.Fatal("a rename out of the declared paths drew no out-of-path finding")
+	}
+	if f.At != "other/sign.go" {
+		t.Fatalf("at=%q, want the arriving side named", f.At)
+	}
+	// And the reverse: a rename INTO the declared paths from outside is out-of-path
+	// on the leaving side, which a --find-renames diff would hide entirely.
+	dir2 := lab(t)
+	git(t, dir2, "checkout", "-q", "-b", "card")
+	git(t, dir2, "mv", "other/other.go", "sign/other.go")
+	git(t, dir2, "commit", "-q", "-m", "move it in")
+	f2 := has(check(t, dir2, Options{}), "out-of-path")
+	if f2 == nil {
+		t.Fatal("a rename in from outside the declared paths drew no out-of-path finding")
+	}
+	if f2.At != "other/other.go" {
+		t.Fatalf("at=%q, want the leaving side named", f2.At)
+	}
+}
+
+func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "inside")
+	if f := has(check(t, dir, Options{}), "out-of-path"); f != nil {
+		t.Fatalf("a change inside the declared paths drew %v", *f)
+	}
+}
+
+// A batch member that is a friend's own branch has no card and no PATHS:, so the bound
+// does not apply to it. It is SKIPPED and said to be skipped -- never silently passed,
+// and never failed for not having a card.
+func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "other/other.go", "package other\n\nfunc F() {}\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "a friend's own branch")
+	if f := has(check(t, dir, Options{Paths: []string{}}), "out-of-path"); f != nil {
+		t.Fatalf("an unbounded member drew %v", *f)
+	}
+}
+
+// hygiene-rejects-result-md-in-the-diff: the worker's own report is not part of its
+// change.
+func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/RESULT.md", "line 1\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "ship the report")
+	f := has(check(t, dir, Options{}), "stray-file")
+	if f == nil {
+		t.Fatalf("RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	}
+	if f.At != "sign/RESULT.md" {
+		t.Fatalf("at=%q, want the path", f.At)
+	}
+}
+
+func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
+	for _, rel := range []string{"sign/run.log", "sign/sign.go.orig", "sign/sign.go.rej", "sign/sign.test", "sign/out.out", "sign/.DS_Store", "sign/PROMPT.md", "sign/.sign.go.swp", "scratch/note.txt"} {
+		t.Run(rel, func(t *testing.T) {
+			dir := lab(t)
+			git(t, dir, "checkout", "-q", "-b", "card")
+			write(t, dir, rel, "x\n")
+			git(t, dir, "add", "-A")
+			git(t, dir, "commit", "-q", "-m", "stray")
+			paths := []string{"sign/**", "scratch/**"}
+			if has(check(t, dir, Options{Paths: paths}), "stray-file") == nil {
+				t.Fatalf("%s drew no stray-file finding", rel)
+			}
+		})
+	}
+}
+
+// hygiene-rejects-a-file-over-one-mebibyte.
+func TestHygieneRejectsAFileOverOneMebibyte(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/big.bin", strings.Repeat("a", 1024*1024+1))
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "big")
+	f := has(check(t, dir, Options{}), "stray-file")
+	if f == nil {
+		t.Fatal("a file over one mebibyte drew no stray-file finding")
+	}
+	if !strings.Contains(f.Why, "1 MiB") && !strings.Contains(f.Why, "mebibyte") {
+		t.Fatalf("why=%q, want it to name the size rule", f.Why)
+	}
+}
+
+// hygiene-rejects-a-symlink-and-a-submodule.
+func TestHygieneRejectsASymlink(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	if err := os.Symlink("/etc/passwd", filepath.Join(dir, "sign", "link")); err != nil {
+		t.Skipf("this platform cannot make a symlink: %v", err)
+	}
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "a way out")
+	f := has(check(t, dir, Options{}), "stray-file")
+	if f == nil {
+		t.Fatal("a symlink drew no stray-file finding")
+	}
+	if !strings.Contains(f.Why, "symlink") {
+		t.Fatalf("why=%q, want it to name the symlink", f.Why)
+	}
+}
+
+func TestHygieneRejectsASubmodule(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	// A gitlink is mode 160000 pointing at a commit; it is written into the index
+	// directly here because adding a real submodule needs a network or a second repo.
+	sha := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+sha+",sign/vendor")
+	git(t, dir, "commit", "-q", "-m", "a submodule")
+	f := has(check(t, dir, Options{}), "stray-file")
+	if f == nil {
+		t.Fatal("a submodule drew no stray-file finding")
+	}
+	if !strings.Contains(f.Why, "submodule") {
+		t.Fatalf("why=%q, want it to name the submodule", f.Why)
+	}
+}
+
+// hygiene-rejects-a-conflict-marker: card-16 left `<<<<<<< HEAD` in a fenced block.
+func TestHygieneRejectsAConflictMarker(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "left a marker")
+	f := has(check(t, dir, Options{}), "stray-file")
+	if f == nil {
+		t.Fatalf("a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	}
+	if !strings.Contains(f.Why, "conflict marker") {
+		t.Fatalf("why=%q, want it to name the conflict marker", f.Why)
+	}
+}
+
+// An allowlisted exception names the card kind it is for, and holds for that kind only.
+func TestHygieneStrayExceptionHoldsForItsKindOnly(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/golden.out", "expected\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "a golden file")
+	if has(check(t, dir, Options{}), "stray-file") == nil {
+		t.Fatal("*.out drew no stray-file finding with no kind")
+	}
+	if has(check(t, dir, Options{Kind: "transcript-test"}), "stray-file") != nil {
+		t.Fatal("the transcript-test exception for *.out did not hold")
+	}
+	if has(check(t, dir, Options{Kind: "fix-red"}), "stray-file") == nil {
+		t.Fatal("the transcript-test exception leaked to fix-red")
+	}
+}
+
+// fixtureKey builds a key-SHAPED string at test time, by parts, so that no valid key
+// for any provider is ever written into this repository -- the spec's own rule for the
+// selftest seeds, and the same rule here.
+func fixtureKey() string {
+	return "gh" + "p_" + strings.Repeat("A", 36)
+}
+
+// hygiene-never-prints-the-secret: the output is searched for the fixture string.
+func TestHygieneRejectsAKeyShapeAndNeverPrintsIt(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	key := fixtureKey()
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n\nfunc Sign(n int) int { return 1 }\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("a key shape drew no secret finding: %v", tokens(fs))
+	}
+	if f.At != "sign/sign.go:3" {
+		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
+	}
+	// The whole finding, every field of it, must be printable in a log.
+	all := f.Token + " " + f.At + " " + f.Why + " " + f.String()
+	if strings.Contains(all, key) {
+		t.Fatalf("the matched text reached the finding: %q", all)
+	}
+	// The shape's NAME is what a person needs; it is not the key.
+	if !strings.Contains(f.Why, "forge") && !strings.Contains(f.Why, "token") {
+		t.Fatalf("why=%q, want it to name the shape", f.Why)
+	}
+}
+
+func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/key.pem", "-----BEGIN"+" OPENSSH PRIVATE KEY-----\nnot-a-key\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	if has(check(t, dir, Options{}), "secret") == nil {
+		t.Fatal("a PEM private-key header drew no secret finding")
+	}
+}
+
+// A key shape that was ALREADY in the base is not this card's finding: the check reads
+// added lines, because a range is judged by what it added.
+func TestHygieneReadsAddedLinesOnly(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "go.mod", "module fixture\n\ngo 1.26\n")
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "base already carries it")
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/other.go", "package sign\n\nfunc F() {}\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "an innocent change")
+	if f := has(check(t, dir, Options{}), "secret"); f != nil {
+		t.Fatalf("a key shape already in the base was charged to this range: %v", *f)
+	}
+}
+
+// paths-line-refuses-dotdot-and-bare-doublestar.
+func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
+	for _, bad := range [][]string{
+		{"../elsewhere/**"},
+		{"sign/../../etc/**"},
+		{"/etc/passwd"},
+		{"**"},
+		{"sign/**", "**"},
+		{"a/**", "b/**", "c/**", "d/**", "e/**", "f/**", "g/**", "h/**", "i/**"},
+		{""},
+	} {
+		if err := ValidatePaths(bad); err == nil {
+			t.Fatalf("ValidatePaths(%v) = nil, want a refusal", bad)
+		}
+	}
+	for _, ok := range [][]string{
+		{"sign/**"},
+		{"cmd/nova-ci/firstrun_test.go", "cmd/nova-ci/testdata/firstrun/**"},
+		{"internal/pulse/*.go"},
+	} {
+		if err := ValidatePaths(ok); err != nil {
+			t.Fatalf("ValidatePaths(%v) = %v, want nil", ok, err)
+		}
+	}
+}
+
+// A check that could not run has found nothing, and must never report clean.
+func TestCheckRefusesRatherThanReportingClean(t *testing.T) {
+	dir := lab(t)
+	if _, err := Check(context.Background(), Options{Repo: dir, Base: "no-such-ref", Head: "HEAD", Identities: rowan()}); err == nil {
+		t.Fatal("a bad base returned no error")
+	}
+	if _, err := Check(context.Background(), Options{Repo: t.TempDir(), Base: "main", Head: "HEAD", Identities: rowan()}); err == nil {
+		t.Fatal("a directory that is not a working copy returned no error")
+	}
+	// An empty identity set would admit anybody.
+	if _, err := Check(context.Background(), Options{Repo: dir, Base: "main", Head: "HEAD"}); err == nil {
+		t.Fatal("an empty identity set returned no error")
+	}
+}
+
+// hygiene-rejects-mode-100600, proved where it CAN be proved.
+//
+// git records exactly four modes and normalises everything else to 100644: `git
+// update-index --cacheinfo 100600,<blob>,<path>` and `git mktree` both write 100644,
+// measured on git 2.x here. So there is no repository fixture that carries a 100600
+// entry, and the end-to-end form of this test cannot be written -- not "is hard to
+// write": cannot.
+//
+// The rule stays, and is proved on the entry itself. A check whose green rests on
+// "git would never write that" has assumed away the only case it exists for: a tree
+// written by something that is not git. The whole-repository half of the same rule is
+// carried by the symlink and submodule tests above, which git DOES write.
+func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
+	f, bad := modeFinding(entry{newMode: "100600", path: "sign/private.go", status: "A"})
+	if !bad {
+		t.Fatal("mode 100600 was accepted")
+	}
+	if f.Token != "stray-file" || f.At != "sign/private.go" || !strings.Contains(f.Why, "100600") {
+		t.Fatalf("finding = %+v, want a stray-file naming the mode", f)
+	}
+	for _, mode := range []string{"100644", "100755"} {
+		if _, bad := modeFinding(entry{newMode: mode, path: "sign/sign.go", status: "A"}); bad {
+			t.Fatalf("mode %s was rejected", mode)
+		}
+	}
+	for _, mode := range []string{"120000", "160000", "100664", "040000"} {
+		if _, bad := modeFinding(entry{newMode: mode, path: "sign/x", status: "A"}); !bad {
+			t.Fatalf("mode %s was accepted", mode)
+		}
+	}
+}
