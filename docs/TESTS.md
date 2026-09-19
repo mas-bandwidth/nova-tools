@@ -2,6 +2,40 @@
 
 Every `$` line under a `### First run` heading below is run by a test against the fixture named beside it, and what the tool prints is compared with what is written here by SHAPE: the two-token event prefix and the field names in order, per [docs/ONBOARDING.md](ONBOARDING.md) point 5(c). The values are deliberately not compared, so that this file stays a document instead of becoming a fixture -- but every block below was produced by RUNNING the tool, so the values are a run's own and not anybody's memory of one. [docs/CLI.md](CLI.md) explains the tools; this file is what they do today. Change a tool, change this file in the same commit, or the test says so.
 
+## Reading a block
+
+**Which stream a line is on.** A transcript block shows both of a tool's
+streams and says which is which. A line as written is what the tool wrote to
+**standard output**. A line whose first two characters are `! ` is what it wrote
+to **standard error**: strip the marker and you have the line the tool printed.
+Nothing else about a line says anything about its stream.
+
+The two streams are compared apart, because they are not the same kind of
+promise:
+
+- **Standard output is protocol, and is compared whole.** Every unmarked line
+  must appear on standard output, in the order written here, and standard
+  output must carry nothing else.
+- **Standard error is progress, and is compared only for the lines shown.**
+  Every `!` line must appear on standard error, in the order written here;
+  standard error may carry more, because how loudly a tool narrates its own work
+  is not a promise to a caller. An `INBOX WALK commits=1/1 notes=0 elapsed=11ms`
+  arriving where this file shows none is not drift.
+
+Run the lines with the two streams kept apart. Merging them with `2>&1` drops a
+progress line into the middle of a protocol one and makes a correct run look
+like a defect: six of the twenty-one defect readings in the 2026-09-19
+two-bench dogfood run were only that, on three different tools
+(nova-tools#1549). A harness that grades this file grades standard output
+against the unmarked lines and standard error against the `!` lines, and records
+which stream each expectation was on.
+
+The marker is being applied section by section under nova-tools#1549. Until a
+section carries it, read an unmarked line as *not yet checked* rather than as
+*checked and found to be standard output*. The one line known today to be
+mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
+the tool writes to standard error.
+
 ## nova-bus
 
 Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
