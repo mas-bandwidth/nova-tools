@@ -434,6 +434,8 @@ $ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queu
 PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
 ```
 
+### Cutting cards, and the pool
+
 Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 `./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
@@ -452,7 +454,7 @@ CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
 CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
 
 $ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
-POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 prs=0 work=0 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```
 
 ## nova-board
