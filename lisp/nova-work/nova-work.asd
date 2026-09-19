@@ -82,4 +82,5 @@
                 (:file "tests/replays-8682")
                 (:file "tests/replays-notes")
                 (:file "tests/replays-785-gate")
-                (:file "tests/request-line")))
+                (:file "tests/request-line")
+                (:file "tests/replays-concurrency-witness")))
