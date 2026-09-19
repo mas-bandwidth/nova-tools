@@ -155,6 +155,19 @@ func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
 	if err := os.WriteFile(filepath.Join(bin, "rsync"), []byte(rsync), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// scp is the third program this path runs, and until 2026-09-18 it was the
+	// one nobody faked: the pull ran the REAL scp against a bench name that does
+	// not exist, and the test passed because a failed pull is tolerated. The
+	// host guard found it. This fake is the mirror of the rsync one -- strip the
+	// host, copy the file -- so the pull is exercised rather than failing.
+	scp := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + strconvQuote(filepath.Join(dir, "scp.log")) + "\n" +
+		"src=\"$1\"; dst=\"$2\"; src=\"${src#*:}\"\n" +
+		"mkdir -p \"$(dirname \"$dst\")\"\n" +
+		"cp \"$src\" \"$dst\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	return sshLog, rsyncLog
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // Bench is one row of the benches table: a machine that runs slots.
@@ -293,6 +294,7 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, logFile *os
 		"--root", b.Root,
 		"--deadline", strconv.Itoa(deadline),
 	)
+	testguard.RefuseHosts(argv[0], argv[1:]...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+localRoot)
 	cmd.Stdout = logFile
@@ -304,6 +306,7 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, logFile *os
 // copyCardToBench runs rsync to move the card to the bench's cards directory, the one file
 // that crosses before the run.
 func copyCardToBench(local string, b Bench, dest string) error {
+	testguard.RefuseHosts("rsync", local, b.Host+":"+dest)
 	cmd := exec.Command("rsync", local, b.Host+":"+dest)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

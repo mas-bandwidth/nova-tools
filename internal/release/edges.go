@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
@@ -383,6 +384,7 @@ var SSHOptions = []string{
 // named them).
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
 	args := append(s.sshArgs(machine), argv...)
+	testguard.RefuseHosts(s.Path, args...)
 	return runCommand(ctx, s.Path, args...)
 }
 
@@ -411,6 +413,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	}()
 	defer pr.Close()
 	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
+	testguard.RefuseHosts(s.Path, args...)
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
 
@@ -421,6 +424,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 // trust adopting a release that lives on the host that has the cores.
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
 	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
+	testguard.RefuseHosts(s.Path, args...)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)
