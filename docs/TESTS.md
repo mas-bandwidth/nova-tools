@@ -100,6 +100,8 @@ Ada's first line above is the refusal worth meeting here rather than on a live b
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
 
+Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and `hosts=`, `gpu=`, `used=` and `ancestors=` fields this transcript has no slot for.
+
 `read_root` reads the probe's own executable, `os.Executable()`, because the root it
 exercises is "the directory of the resolved command" and the probe's child is this
 binary; a transcript that named a shell there would be measuring `/bin`, which the
@@ -485,6 +487,8 @@ already holds your words, so it can guard an `add` in one line of shell. Exit 0 
 Fixture: a pool this tool makes in `t.TempDir()`, `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider, and the WALL every job runs inside: `nova-sandbox` itself, built from this repository into the same directory, with `cmd/nova-swarm/testdata/fakesandbox` beside it for the seam tests that must run on a platform whose sandbox body is not built.
 
 Every contract test in `cmd/nova-swarm` runs its jobs **inside the real wall** on darwin (`--sandbox <the built binary>`) and takes this tool's one loud workaround (`--no-sandbox`, SPEC-SWARM; `nova-sandbox` has no such flag) where no body is built, which is the argv a reader sees in the test's own output.
+
+Platform: recorded on a machine whose wall probe fails (containment broken) — the `RUN REFUSED` and `RUN UNSANDBOXED` runs below are that machine's, and it is the last machine a friend should be reading a quickstart on; a bench whose wall proves itself (Linux landlock, say) prints `RUN POOL`, `RUN OK` and `RUN NOTE` instead.
 
 ### The wall at the launch seam
 
