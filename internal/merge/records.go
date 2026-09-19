@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1048,3 +1049,51 @@ const GitIgnore = `# nova-merge: the tracked files are the records and nothing e
 *.lock
 *.log
 `
+
+// LoadLaneVerdicts reads all line-level read records for pr from <laneDir>/reads/<entry>/.
+func LoadLaneVerdicts(laneDir string, pr int) ([]Verdict, error) {
+	if laneDir == "" {
+		return nil, nil
+	}
+	entry := EntryDirName(strconv.Itoa(pr))
+	dir := filepath.Join(laneDir, ReadsDir, entry)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Verdict
+	for _, de := range entries {
+		if de.IsDir() || !strings.HasSuffix(de.Name(), ".json") {
+			continue
+		}
+		p := filepath.Join(dir, de.Name())
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		var rec Read
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return nil, err
+		}
+		if err := ValidRead(rec); err != nil {
+			return nil, err
+		}
+		out = append(out, Verdict{
+			ID:       fmt.Sprintf("record:%s", rec.At),
+			Who:      rec.Who,
+			Head:     rec.Head,
+			Word:     rec.Verdict,
+			Source:   "record",
+			Scope:    rec.Scope,
+			Releases: rec.Releases,
+			At:       rec.At,
+			RawID:    0,
+			Kind:     "line",
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At < out[j].At })
+	return out, nil
+}

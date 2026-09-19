@@ -99,7 +99,45 @@ func ParseReviewers(r io.Reader) (*ReviewerSet, error) {
 	if err := s.Err(); err != nil {
 		return nil, err
 	}
+	if len(set.Reviewers) == 0 {
+		return nil, fmt.Errorf("reviewer file contains no reviewer entries")
+	}
 	return set, nil
+}
+
+// HasWho reports whether who is known in the reviewer file.
+func (rs *ReviewerSet) HasWho(who string) bool {
+	if rs == nil {
+		return false
+	}
+	_, ok := rs.byWho[strings.ToLower(strings.TrimSpace(who))]
+	return ok
+}
+
+// IsExplicitlyDisallowed reports whether who is present in the reviewer file with may-hold=no.
+func (rs *ReviewerSet) IsExplicitlyDisallowed(who string) bool {
+	if rs == nil {
+		return false
+	}
+	r, ok := rs.byWho[strings.ToLower(strings.TrimSpace(who))]
+	return ok && !r.MayHold
+}
+
+// IsLogin reports whether login appears in the logins column of any reviewer.
+func (rs *ReviewerSet) IsLogin(login string) bool {
+	if rs == nil {
+		return false
+	}
+	_, ok := rs.byLogin[strings.ToLower(strings.TrimSpace(login))]
+	return ok
+}
+
+// ReviewersForLogin returns all reviewers mapped to login.
+func (rs *ReviewerSet) ReviewersForLogin(login string) []Reviewer {
+	if rs == nil {
+		return nil
+	}
+	return rs.byLogin[strings.ToLower(strings.TrimSpace(login))]
 }
 
 // IsScanned returns true if the login is mapped in the reviewer file.

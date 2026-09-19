@@ -418,16 +418,25 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *verdict != "approve" && *verdict != "hold" {
 		f.problem(fmt.Sprintf("--verdict is approve or hold, got %q; refusing to guess", *verdict))
 	}
-	if !f.done(stderr) {
-		return 2
+	if *releases != "" && *scope == "" {
+		f.problem("--releases requires --scope <text>")
 	}
 	var releaseIDs []string
 	if *releases != "" {
 		for _, r := range strings.Split(*releases, ",") {
-			if trimmed := strings.TrimSpace(r); trimmed != "" {
-				releaseIDs = append(releaseIDs, trimmed)
+			trimmed := strings.TrimSpace(r)
+			if trimmed == "" {
+				continue
 			}
+			if !isValidReleaseID(trimmed) {
+				f.problem(fmt.Sprintf("release id %q is invalid: must be record:<at>, review:<id>, or comment:<id>", trimmed))
+				break
+			}
+			releaseIDs = append(releaseIDs, trimmed)
 		}
+	}
+	if !f.done(stderr) {
+		return 2
 	}
 	st, code := openLane("read", *f.lane, stderr)
 	if st == nil {
@@ -466,6 +475,19 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		oneline.Field(id), oneline.Field(*who), oneline.Field(*verdict), oneline.Field(merge.Short(*head)),
 		current, approvals, holds, stale, oneline.Field(file))
 	return 0
+}
+
+func isValidReleaseID(id string) bool {
+	prefix, val, has := strings.Cut(id, ":")
+	if !has || strings.TrimSpace(val) == "" {
+		return false
+	}
+	switch prefix {
+	case "record", "review", "comment":
+		return true
+	default:
+		return false
+	}
 }
 
 // nameAnEntryThisLaneDoesNotHold says when a record is being written for an entry this

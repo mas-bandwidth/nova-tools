@@ -54,44 +54,68 @@ func (s Standing) ReadNames(needsRead bool) string {
 // and the lane branch's history keeps the hold.
 func EvaluateReads(e *Entry, author string) Standing {
 	var st Standing
-	newest := map[string]Read{}
-	order := []string{}
-	records := append([]Read{}, e.Reads...)
-	sort.SliceStable(records, func(i, j int) bool {
-		if records[i].At != records[j].At {
-			return records[i].At < records[j].At
-		}
-		// One `at` to the second: the hold folds last, so it is the one that decides.
-		return records[i].Verdict == "approve" && records[j].Verdict == "hold"
-	})
-	for _, r := range records {
+	var holds []Read
+	var approves []Read
+
+	for _, r := range e.Reads {
 		if r.Head != e.OID || e.OID == "" {
 			st.Stale++
 			continue
 		}
-		key := r.Who + "\x00" + r.Head
-		if _, seen := newest[key]; !seen {
-			order = append(order, key)
-		}
-		newest[key] = r
-	}
-	for _, key := range order {
-		r := newest[key]
 		if r.Verdict == "hold" {
+			holds = append(holds, r)
+		} else if r.Verdict == "approve" {
+			approves = append(approves, r)
+		}
+	}
+
+	sort.SliceStable(holds, func(i, j int) bool { return holds[i].At < holds[j].At })
+	sort.SliceStable(approves, func(i, j int) bool { return approves[i].At < approves[j].At })
+
+	for _, h := range holds {
+		released := false
+		for _, a := range approves {
+			if !sameLine(a.Who, h.Who) {
+				continue
+			}
+			if a.At <= h.At {
+				continue
+			}
+			if a.Scope == "" {
+				released = true
+				break
+			}
+			if releasesContains(a.Releases, h.File) || releasesContains(a.Releases, "record:"+h.At) {
+				released = true
+				break
+			}
+		}
+		if !released {
 			st.Holds++
 			st.Held = true
+		}
+	}
+
+	seenApprovers := map[string]bool{}
+	for _, a := range approves {
+		if a.Scope != "" {
 			continue
 		}
-		// A scoped APPROVE record satisfies nothing in the read condition (SPEC-DECIDE:1100-1103):
-		// needs_read is met only by an UNSCOPED APPROVE.
-		if r.Scope != "" {
+		if sameLine(a.Who, author) {
 			continue
 		}
-		st.Approves++
-		// An approve from the author is recorded, is shown, and does not count: the
-		// condition is that somebody other than the writer looked.
-		if !sameLine(r.Who, author) {
-			st.Approvers = append(st.Approvers, r.Who)
+		// An approver cannot have any active unreleased hold
+		hasActiveHold := false
+		for _, h := range holds {
+			if sameLine(h.Who, a.Who) && h.At >= a.At {
+				hasActiveHold = true
+				break
+			}
+		}
+		if !hasActiveHold && !seenApprovers[strings.ToLower(a.Who)] {
+			seenApprovers[strings.ToLower(a.Who)] = true
+			st.Approves++
+			st.Approvers = append(st.Approvers, a.Who)
 		}
 	}
 	sort.Strings(st.Approvers)

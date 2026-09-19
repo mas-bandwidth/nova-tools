@@ -24,6 +24,7 @@ type Verdict struct {
 	Carried  bool     // whether it binds to an earlier head than current
 	RawID    int64    // numeric ID from forge (for tie-breaking)
 	Foreign  bool     // true if login outside reviewer file
+	Kind     string   // "line", "child", "card"
 }
 
 // StripQuotedAndCode removes quotes (lines starting with >) and fenced code blocks.
@@ -111,15 +112,25 @@ func parseKeyValueFields(s string) map[string]string {
 
 // IsAuthorNote checks if the body contains a typed note by the pull request's author:
 // DISPOSITION who=<author> verdict=NOTE
-func IsAuthorNote(body, author string) bool {
+// SPEC-DECIDE lines 1017-1019, 1565: the author's login excuses nothing (S6).
+func IsAuthorNote(body, author string, rsOpt ...*ReviewerSet) bool {
 	if author == "" {
 		return false
+	}
+	var rs *ReviewerSet
+	if len(rsOpt) > 0 {
+		rs = rsOpt[0]
 	}
 	lines := strings.Split(body, "\n")
 	for _, l := range lines {
 		who, _, verdict, _, ok := ParseDispositionLine(l)
-		if ok && strings.EqualFold(who, author) && strings.EqualFold(verdict, "NOTE") {
-			return true
+		if ok && strings.EqualFold(verdict, "NOTE") {
+			if rs != nil && rs.IsLogin(who) && !rs.HasWho(who) {
+				continue
+			}
+			if strings.EqualFold(who, author) {
+				return true
+			}
 		}
 	}
 	return false
@@ -131,16 +142,15 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 		return Verdict{Foreign: true}, false
 	}
 	clean := StripQuotedAndCode(rawBody)
-	if IsAuthorNote(clean, author) {
+	if IsAuthorNote(clean, author, rs) {
 		return Verdict{}, false
 	}
 
 	lines := strings.Split(clean, "\n")
 	for _, l := range lines {
 		typedWho, typedHead, verdict, scope, ok := ParseDispositionLine(l)
-		if ok {
+		if ok && strings.EqualFold(verdict, "HOLD") {
 			resolvedWho, _ := rs.ResolveWho(login, typedWho)
-			word := strings.ToLower(verdict)
 			h := typedHead
 			if h == "" {
 				h = currentHead
@@ -148,13 +158,14 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			v := Verdict{
 				ID:     fmt.Sprintf("comment:%d", id),
 				Who:    resolvedWho,
-				Word:   word,
+				Word:   "hold",
 				Head:   h,
 				At:     at,
 				Source: "comment-rule",
 				Scope:  scope,
 				RawID:  id,
 				Conf:   "-",
+				Kind:   "line",
 			}
 			return v, true
 		}
@@ -170,10 +181,8 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	isHoldHeadingOrBold := containsHoldHeadingOrBold(clean)
 
 	if isHoldFirstLine || isHoldHeadingOrBold {
-		head := firstSHA(first)
-		if head == "" {
-			head = currentHead
-		}
+		// SPEC-DECIDE lines 1037-1040: untyped comment binds to current head
+		head := currentHead
 		v := Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
 			Who:    "unknown",
@@ -183,6 +192,7 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			Source: "comment-rule",
 			RawID:  id,
 			Conf:   "-",
+			Kind:   "line",
 		}
 		return v, true
 	}
@@ -201,6 +211,7 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			Source: "comment-pending",
 			RawID:  id,
 			Conf:   "-",
+			Kind:   "line",
 		}
 		return v, true
 	}
@@ -232,7 +243,9 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 
 	stateUpper := strings.ToUpper(strings.TrimSpace(state))
 	switch stateUpper {
-	case "CHANGES_REQUESTED":
+	case "CHANGES_REQUESTED", "DISMISSED":
+		// SPEC-DECIDE lines 1092-1093, 1533: A dismissal releases nothing;
+		// both CHANGES_REQUESTED and DISMISSED reviews are holds.
 		head := strings.ToLower(strings.TrimSpace(commitID))
 		if head == "" {
 			head = currentHead
@@ -247,10 +260,11 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 			Scope:  scope,
 			RawID:  id,
 			Conf:   "-",
+			Kind:   "line",
 		}
 		return v, true
-	case "APPROVED", "DISMISSED":
-		// Forge approved and dismissed reviews release nothing and hold nothing
+	case "APPROVED":
+		// Forge approved reviews release nothing and hold nothing
 		return Verdict{}, false
 	default:
 		// COMMENTED review: inspect body like comment
@@ -264,6 +278,9 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 	var holds []Verdict
 	var reads []Read
 	for _, v := range vs {
+		if v.Kind != "" && v.Kind != "line" {
+			continue
+		}
 		if v.Source == "record" {
 			reads = append(reads, Read{
 				Who:      v.Who,
@@ -293,12 +310,21 @@ func UnreleasedHolds(holds []Verdict, reads []Read, currentHead, author string, 
 		if h.Word != "hold" && h.Word != "pending" && h.Source != "comment-pending" {
 			continue
 		}
+		if h.Kind != "" && h.Kind != "line" {
+			continue
+		}
 
 		// Holder's may-hold permission check:
 		// S6 / line 1114: if a named holder's may-hold is removed in the reviewer file,
 		// their hold is no longer active.
-		if h.Who != "unknown" && rs != nil && !rs.MayHold(h.Who) {
-			continue
+		// SPEC-DECIDE line 1016: absent from reviewer file becomes who=unknown (never dropped).
+		if h.Who != "unknown" && rs != nil {
+			if rs.IsExplicitlyDisallowed(h.Who) {
+				continue
+			}
+			if !rs.HasWho(h.Who) {
+				h.Who = "unknown"
+			}
 		}
 
 		released := false
@@ -313,7 +339,8 @@ func UnreleasedHolds(holds []Verdict, reads []Read, currentHead, author string, 
 				if !headMatch(rec.Head, currentHead) {
 					continue
 				}
-				if rec.At < h.At {
+				// Same-time approval does not release hold (tie rule)
+				if rec.At <= h.At {
 					continue
 				}
 				if rec.Scope == "" {
@@ -498,8 +525,8 @@ func containsBoldWord(line, word string) bool {
 	return false
 }
 
-// decodeVerdicts reads GitHub API comments and reviews and decodes them array by array.
-func decodeVerdicts(comments, reviews string, n int) ([]Verdict, error) {
+// ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.
+func ParseForgeVerdicts(comments, reviews string, n int, rs *ReviewerSet, author, currentHead string, ignoreUntyped bool) ([]Verdict, error) {
 	var out []Verdict
 	var rawComments []struct {
 		ID        int64                  `json:"id"`
@@ -511,22 +538,9 @@ func decodeVerdicts(comments, reviews string, n int) ([]Verdict, error) {
 		return nil, fmt.Errorf("pull request %d's comments did not answer JSON this tool can read: %w", n, err)
 	}
 	for _, c := range rawComments {
-		// Default decode without reviewer file filter produces raw comments as verdicts
-		v := Verdict{
-			ID:     fmt.Sprintf("comment:%d", c.ID),
-			Who:    c.User.Login,
-			Head:   firstSHA(c.Body),
-			At:     c.CreatedAt,
-			Source: "comment",
-			RawID:  c.ID,
+		if v, ok := ParseComment(c.ID, c.User.Login, c.Body, c.CreatedAt, rs, author, currentHead, ignoreUntyped); ok {
+			out = append(out, v)
 		}
-		clean := StripQuotedAndCode(c.Body)
-		if firstWord := firstToken(firstNonEmptyLine(clean)); strings.EqualFold(firstWord, "HOLD") || containsHoldHeadingOrBold(clean) {
-			v.Word = "hold"
-		} else if strings.EqualFold(firstWord, "APPROVE") {
-			v.Word = "approve"
-		}
-		out = append(out, v)
 	}
 
 	var rawReviews []struct {
@@ -541,23 +555,15 @@ func decodeVerdicts(comments, reviews string, n int) ([]Verdict, error) {
 		return nil, fmt.Errorf("pull request %d's reviews did not answer JSON this tool can read: %w", n, err)
 	}
 	for _, r := range rawReviews {
-		v := Verdict{
-			ID:     fmt.Sprintf("review:%d", r.ID),
-			Who:    r.User.Login,
-			Head:   strings.ToLower(strings.TrimSpace(r.CommitID)),
-			At:     r.SubmittedAt,
-			Source: "review",
-			RawID:  r.ID,
+		if v, ok := ParseReview(r.ID, r.User.Login, r.Body, r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead); ok {
+			out = append(out, v)
 		}
-		switch strings.ToUpper(strings.TrimSpace(r.State)) {
-		case "CHANGES_REQUESTED":
-			v.Word = "hold"
-		case "APPROVED":
-			v.Word = "approve"
-		}
-		out = append(out, v)
 	}
 	return out, nil
+}
+
+func decodeVerdicts(comments, reviews string, n int) ([]Verdict, error) {
+	return ParseForgeVerdicts(comments, reviews, n, nil, "", "", false)
 }
 
 func decodeArrays(raw string, into interface{}) error {

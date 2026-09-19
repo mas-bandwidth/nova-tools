@@ -223,6 +223,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	noRequireHolds := f.fs.Bool("no-require-holds", false, "")
 	reason := f.fs.String("reason", "", "")
 	untypedComments := f.fs.String("untyped-comments", "", "")
+	lane := f.fs.String("lane", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -292,6 +293,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		noRequireHolds:  *noRequireHolds,
 		reason:          strings.TrimSpace(*reason),
 		untypedComments: strings.TrimSpace(*untypedComments),
+		lane:            strings.TrimSpace(*lane),
 	}, stdout, stderr, deps)
 }
 
@@ -317,6 +319,7 @@ type batchRun struct {
 	noRequireHolds  bool
 	reason          string
 	untypedComments string
+	lane            string
 	holdsCount      int
 	dispositions    string
 	reviewersSHA    string
@@ -476,20 +479,32 @@ func checksWord(in batchRun) string {
 // gate will merge it. It is CI's one rollup job, the same name the merge condition reads.
 const batchRequiredCheck = "ci-ok"
 
-func getReviewersSHA(path string) string {
+func getReviewersSHA(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
-		return ""
+		return "", nil
 	}
-	cmd := exec.Command("git", "log", "-1", "--format=%H", "--", path)
-	if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) >= 12 {
-		return strings.TrimSpace(string(out))[:12]
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
 	}
-	dir := filepath.Dir(path)
-	cmd2 := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
-	if out, err := cmd2.Output(); err == nil && len(strings.TrimSpace(string(out))) >= 12 {
-		return strings.TrimSpace(string(out))[:12]
+	dir := filepath.Dir(abs)
+
+	checkCmd := exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree")
+	if out, err := checkCmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "true" {
+		return "", fmt.Errorf("reviewer file %s is outside a git repository", path)
 	}
-	return "000000000000"
+
+	statusCmd := exec.Command("git", "-C", dir, "status", "--porcelain", "--", abs)
+	if out, err := statusCmd.CombinedOutput(); err != nil || len(strings.TrimSpace(string(out))) > 0 {
+		return "", fmt.Errorf("reviewer file %s has uncommitted changes or is untracked", path)
+	}
+
+	logCmd := exec.Command("git", "-C", dir, "log", "-1", "--format=%H", "--", abs)
+	out, err := logCmd.CombinedOutput()
+	if err != nil || len(strings.TrimSpace(string(out))) < 12 {
+		return "", fmt.Errorf("reviewer file %s has no git commit", path)
+	}
+	return strings.TrimSpace(string(out))[:12], nil
 }
 
 // admissible is edge 25's gate in front of the gate: every member whose OWN head has no
@@ -504,45 +519,57 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 		if err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf("reviewer file %s could not be read: %w", in.reviewersFile, err))
 		}
-		in.reviewersSHA = getReviewersSHA(in.reviewersFile)
+		in.reviewersSHA, err = getReviewersSHA(in.reviewersFile)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf("reviewer file %s could not be read: %w", in.reviewersFile, err))
+		}
 		in.dispositions = deps.Now().UTC().Format(time.RFC3339)
 	}
 
 	host := deps.NewHost(in.repo, in.timeout)
+	if stampHost, ok := host.(interface{ DispositionsStamp() string }); ok && stampHost.DispositionsStamp() != "" {
+		in.dispositions = stampHost.DispositionsStamp()
+	}
 
 	// SPEC-DECIDE reading 3: hold check runs for every PR in in.prs
 	var survivors []int
 	for _, n := range in.prs {
 		pr, err := host.PR(n)
 		if err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf(
-				"pull request %d could not be read, and the hold read is on, so this gate cannot tell whether a reader has held it: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+			if !in.noRequireHolds {
+				return nil, nil, batchRefused(stderr, fmt.Errorf(
+					"pull request %d could not be read, and the hold read is on, so this gate cannot tell whether a reader has held it: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+			}
 		}
-		vs, err := host.Verdicts(n)
+
+		var vs []merge.Verdict
+		if in.lane != "" {
+			laneVs, _ := merge.LoadLaneVerdicts(in.lane, n)
+			vs = append(vs, laneVs...)
+		}
+
+		opts := merge.VerdictOpts{
+			Author:          pr.Author,
+			CurrentHead:     pr.HeadOID,
+			Reviewers:       rs,
+			UntypedComments: in.untypedComments,
+		}
+		forgeVs, err := host.Verdicts(n, opts)
 		if err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf(
-				"pull request %d's comments and reviews could not be read, and the hold read is on: %w; pass --no-require-holds to merge it anyway and own that", n, err))
-		}
-
-		if in.noRequireHolds {
-			// Under --no-require-holds, forge sources are waived, lane records still checked!
-			var recordsOnly []merge.Verdict
-			for _, v := range vs {
-				if v.Source == "record" {
-					recordsOnly = append(recordsOnly, v)
-				}
+			if !in.noRequireHolds {
+				return nil, nil, batchRefused(stderr, fmt.Errorf(
+					"pull request %d's comments and reviews could not be read, and the hold read is on: %w; pass --no-require-holds to merge it anyway and own that", n, err))
 			}
-			vs = recordsOnly
-		}
-
-		if in.untypedComments == "ignore" {
-			var nonPending []merge.Verdict
-			for _, v := range vs {
-				if v.Source != "comment-pending" {
-					nonPending = append(nonPending, v)
+		} else {
+			if in.noRequireHolds {
+				for _, v := range forgeVs {
+					if v.Source == "record" {
+						vs = append(vs, v)
+					}
 				}
+			} else {
+				vs = append(vs, forgeVs...)
 			}
-			vs = nonPending
 		}
 
 		holds := merge.UnliftedHolds(vs, pr.HeadOID, pr.Author, rs)

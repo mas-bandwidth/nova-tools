@@ -42,6 +42,7 @@ import (
 func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f := newFlags("land")
 	repo := f.fs.String("repo", "", "")
+	lane := f.fs.String("lane", "", "")
 	pr := f.fs.Int("pr", 0, "")
 	receipt := f.fs.String("receipt", "", "")
 	receiptFile := f.fs.String("receipt-file", "", "")
@@ -97,6 +98,7 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	}
 	return runLandVerb(landRun{
 		repo:            *repo,
+		lane:            strings.TrimSpace(*lane),
 		pr:              *pr,
 		receipt:         line,
 		jump:            !*noJump,
@@ -111,6 +113,7 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 // landRun is one landing's whole invocation, checked.
 type landRun struct {
 	repo            string
+	lane            string
 	pr              int
 	receipt         string
 	jump            bool
@@ -154,10 +157,15 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	// from the wire, immediately before Enqueuer.Enqueue, and one held member refuses the whole landing.
 	var rs *merge.ReviewerSet
 	if !in.noRequireHolds {
-		var err error
-		rs, err = merge.LoadReviewers(in.reviewersFile)
+		sha, err := getReviewersSHA(in.reviewersFile)
 		if err != nil {
 			return landCouldNotRun(stderr, fmt.Sprintf("reviewer file %s could not be read: %s", oneline.Field(in.reviewersFile), oneline.Err(err)))
+		}
+		_ = sha
+		var err2 error
+		rs, err2 = merge.LoadReviewers(in.reviewersFile)
+		if err2 != nil {
+			return landCouldNotRun(stderr, fmt.Sprintf("reviewer file %s could not be read: %s", oneline.Field(in.reviewersFile), oneline.Err(err2)))
 		}
 	}
 
@@ -185,32 +193,34 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 				return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d could not be read: %s", m, oneline.Err(err)))
 			}
 		}
-		vs, err := host.Verdicts(m)
+
+		var vs []merge.Verdict
+		if in.lane != "" {
+			laneVs, _ := merge.LoadLaneVerdicts(in.lane, m)
+			vs = append(vs, laneVs...)
+		}
+
+		opts := merge.VerdictOpts{
+			Author:          mPR.Author,
+			CurrentHead:     mPR.HeadOID,
+			Reviewers:       rs,
+			UntypedComments: in.untypedComments,
+		}
+		forgeVs, err := host.Verdicts(m, opts)
 		if err != nil {
+			if !in.noRequireHolds {
+				return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d's verdicts could not be read: %s", m, oneline.Err(err)))
+			}
+		} else {
 			if in.noRequireHolds {
-				continue
-			}
-			return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d's verdicts could not be read: %s", m, oneline.Err(err)))
-		}
-
-		if in.noRequireHolds {
-			var recordsOnly []merge.Verdict
-			for _, v := range vs {
-				if v.Source == "record" {
-					recordsOnly = append(recordsOnly, v)
+				for _, v := range forgeVs {
+					if v.Source == "record" {
+						vs = append(vs, v)
+					}
 				}
+			} else {
+				vs = append(vs, forgeVs...)
 			}
-			vs = recordsOnly
-		}
-
-		if in.untypedComments == "ignore" {
-			var nonPending []merge.Verdict
-			for _, v := range vs {
-				if v.Source != "comment-pending" {
-					nonPending = append(nonPending, v)
-				}
-			}
-			vs = nonPending
 		}
 
 		holds := merge.UnliftedHolds(vs, mPR.HeadOID, mPR.Author, rs)

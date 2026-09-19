@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,6 +38,14 @@ func testReviewerFile(t *testing.T, dir string, content string) string {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write reviewers: %v", err)
 	}
+	checkCmd := exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree")
+	if out, err := checkCmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "true" {
+		exec.Command("git", "-C", dir, "init", "-q").Run()
+		exec.Command("git", "-C", dir, "config", "user.name", "Test").Run()
+		exec.Command("git", "-C", dir, "config", "user.email", "test@example.com").Run()
+	}
+	exec.Command("git", "-C", dir, "add", path).Run()
+	exec.Command("git", "-C", dir, "commit", "-q", "-m", "reviewers").Run()
 	return path
 }
 
@@ -51,7 +60,7 @@ func testReviewerCommit(t *testing.T, l *lab, content string) (string, string) {
 	return path, sha[:12]
 }
 
-const defaultReviewersTSV = "gafferongames\tgafferongames\tyes\n"
+const defaultReviewersTSV = "alice\talice\tyes\n"
 
 // 1. TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand: #1572's timeline as a fixture:
 // member #1 has a hold comment and is dropped from batch; a hold comment posted between
@@ -63,7 +72,7 @@ func TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand(t *testing.T) {
 	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
 
 	l.host.SetVerdicts(1, merge.Verdict{
-		ID: "comment:101", Who: "gafferongames", Word: "hold", Head: l.heads[1],
+		ID: "comment:101", Who: "alice", Word: "hold", Head: l.heads[1],
 		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
 	})
 
@@ -74,7 +83,7 @@ func TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand(t *testing.T) {
 	if exit == 0 {
 		t.Fatalf("the batch went green over a held member\nstdout: %s\nstderr: %s", stdout, stderr)
 	}
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l.heads[1])+" carries an unreleased HOLD\" who=gafferongames hold=comment:101 source=comment-rule")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l.heads[1])+" carries an unreleased HOLD\" who=alice hold=comment:101 source=comment-rule")
 	contains(t, stdout, "dropped=1")
 	absent(t, stderr, "BATCH MERGED #1 ")
 
@@ -88,7 +97,7 @@ func TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand(t *testing.T) {
 
 	// Between BATCH OK and land:
 	h.SetVerdicts(1551, merge.Verdict{
-		ID: "comment:202", Who: "gafferongames", Word: "hold", Head: memberHead,
+		ID: "comment:202", Who: "alice", Word: "hold", Head: memberHead,
 		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
 	})
 
@@ -100,7 +109,7 @@ func TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand(t *testing.T) {
 	if len(q.enqueued) != 0 {
 		t.Fatalf("the queue was touched: %v", q.enqueued)
 	}
-	contains(t, lstderr, "LAND REFUSED reason=held member=#1551 who=gafferongames hold=comment:202 source=comment-rule")
+	contains(t, lstderr, "LAND REFUSED reason=held member=#1551 who=alice hold=comment:202 source=comment-rule")
 	absent(t, lstdout, "LAND OK")
 }
 
@@ -112,7 +121,7 @@ func TestAHoldInAnySourceStops(t *testing.T) {
 	// Source 1: review
 	l1 := batchRepo(t)
 	l1.host.SetVerdicts(1, merge.Verdict{
-		ID: "review:301", Who: "gafferongames", Word: "hold", Head: l1.heads[1],
+		ID: "review:301", Who: "alice", Word: "hold", Head: l1.heads[1],
 		At: "2026-09-19T01:00:00Z", Source: "review",
 	})
 	exit, _, stderr := l1.run("batch", "--name", "b1", "--pr", "1",
@@ -121,12 +130,12 @@ func TestAHoldInAnySourceStops(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("batch exit %d", exit)
 	}
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l1.heads[1])+" carries an unreleased HOLD\" who=gafferongames hold=review:301 source=review")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l1.heads[1])+" carries an unreleased HOLD\" who=alice hold=review:301 source=review")
 
 	// Source 2: comment
 	l2 := batchRepo(t)
 	l2.host.SetVerdicts(1, merge.Verdict{
-		ID: "comment:302", Who: "gafferongames", Word: "hold", Head: l2.heads[1],
+		ID: "comment:302", Who: "alice", Word: "hold", Head: l2.heads[1],
 		At: "2026-09-19T01:00:00Z", Source: "comment-rule",
 	})
 	exit, _, stderr = l2.run("batch", "--name", "b2", "--pr", "1",
@@ -135,12 +144,12 @@ func TestAHoldInAnySourceStops(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("batch exit %d", exit)
 	}
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l2.heads[1])+" carries an unreleased HOLD\" who=gafferongames hold=comment:302 source=comment-rule")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l2.heads[1])+" carries an unreleased HOLD\" who=alice hold=comment:302 source=comment-rule")
 
 	// Source 3: record
 	l3 := batchRepo(t)
 	l3.host.SetVerdicts(1, merge.Verdict{
-		ID: "record:2026-09-19T01:00:00Z", Who: "gafferongames", Word: "hold", Head: l3.heads[1],
+		ID: "record:2026-09-19T01:00:00Z", Who: "alice", Word: "hold", Head: l3.heads[1],
 		At: "2026-09-19T01:00:00Z", Source: "record",
 	})
 	exit, _, stderr = l3.run("batch", "--name", "b3", "--pr", "1",
@@ -149,7 +158,7 @@ func TestAHoldInAnySourceStops(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("batch exit %d", exit)
 	}
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l3.heads[1])+" carries an unreleased HOLD\" who=gafferongames hold=record:2026-09-19T01:00:00Z source=record")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l3.heads[1])+" carries an unreleased HOLD\" who=alice hold=record:2026-09-19T01:00:00Z source=record")
 }
 
 // 3. TestAnAbstainRecordIsNotAnInput: a recorded HOLD at H1, then reader's ABSTAIN at H1; held.
@@ -162,9 +171,9 @@ func TestAnAbstainRecordIsNotAnInput(t *testing.T) {
 	h2 := l.heads[1]
 
 	l.host.SetVerdicts(1,
-		merge.Verdict{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: h1, At: "2026-09-19T01:00:00Z", Source: "record"},
-		merge.Verdict{ID: "record:at2", Who: "gafferongames", Word: "abstain", Head: h1, At: "2026-09-19T01:05:00Z", Source: "record"},
-		merge.Verdict{ID: "record:at3", Who: "gafferongames", Word: "abstain", Head: h2, At: "2026-09-19T01:10:00Z", Source: "record"},
+		merge.Verdict{ID: "record:at1", Who: "alice", Word: "hold", Head: h1, At: "2026-09-19T01:00:00Z", Source: "record"},
+		merge.Verdict{ID: "record:at2", Who: "alice", Word: "abstain", Head: h1, At: "2026-09-19T01:05:00Z", Source: "record"},
+		merge.Verdict{ID: "record:at3", Who: "alice", Word: "abstain", Head: h2, At: "2026-09-19T01:10:00Z", Source: "record"},
 	)
 
 	exit, _, stderr := l.run("batch", "--name", "b-abstain", "--pr", "1",
@@ -173,27 +182,35 @@ func TestAnAbstainRecordIsNotAnInput(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("batch exit %d", exit)
 	}
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(h2)+" carries an unreleased HOLD\" who=gafferongames hold=record:at1 source=record held_at="+merge.Short(h1)+" carried=yes")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(h2)+" carries an unreleased HOLD\" who=alice hold=record:at1 source=record held_at="+merge.Short(h1)+" carried=yes")
 }
 
 // 4. TestChildAndCardRecordsAreNotInputs: child APPROVE and card APPROVE beside line HOLD: held.
-// child HOLD alone: not held.
+// child HOLD alone: not held. card HOLD alone: not held.
 func TestChildAndCardRecordsAreNotInputs(t *testing.T) {
 	t.Parallel()
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
+
+	// Case A: child APPROVE and card APPROVE beside line HOLD -> still held!
 	records := []merge.Verdict{
-		{ID: "record:1", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "record:1", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record", Kind: "line"},
+		{ID: "record:2", Who: "alice", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "record", Kind: "child"},
+		{ID: "record:3", Who: "alice", Word: "approve", Head: head, At: "2026-09-19T03:00:00Z", Source: "record", Kind: "card"},
 	}
 	holds := merge.UnliftedHolds(records, head, "author", rev)
-	if len(holds) != 1 {
-		t.Fatalf("expected 1 hold, got %d", len(holds))
+	if len(holds) != 1 || holds[0].ID != "record:1" {
+		t.Fatalf("expected 1 line hold preserved despite child/card approves, got %v", holds)
 	}
 
-	var childOnly []merge.Verdict
-	holdsChild := merge.UnliftedHolds(childOnly, head, "author", rev)
-	if len(holdsChild) != 0 {
-		t.Fatalf("child hold should not be an input")
+	// Case B: child HOLD and card HOLD alone -> not held!
+	childAndCardOnly := []merge.Verdict{
+		{ID: "record:4", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record", Kind: "child"},
+		{ID: "record:5", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record", Kind: "card"},
+	}
+	holdsNonLine := merge.UnliftedHolds(childAndCardOnly, head, "author", rev)
+	if len(holdsNonLine) != 0 {
+		t.Fatalf("child and card holds alone should not be inputs, got %v", holdsNonLine)
 	}
 }
 
@@ -207,9 +224,9 @@ func TestAScopedApproveReleasesOnlyTheHoldsItNames(t *testing.T) {
 
 	// Step 1: two holds, scoped approve releasing record:at2
 	v1 := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: head, Scope: "parser", At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "record:at2", Who: "gafferongames", Word: "hold", Head: head, Scope: "docs", At: "2026-09-19T02:00:00Z", Source: "record"},
-		{ID: "record:at3", Who: "gafferongames", Word: "approve", Head: head, Scope: "docs", Releases: []string{"record:at2"}, At: "2026-09-19T03:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: head, Scope: "parser", At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "record:at2", Who: "alice", Word: "hold", Head: head, Scope: "docs", At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at3", Who: "alice", Word: "approve", Head: head, Scope: "docs", Releases: []string{"record:at2"}, At: "2026-09-19T03:00:00Z", Source: "record"},
 	}
 	holds := merge.UnliftedHolds(v1, head, "author", rev)
 	if len(holds) != 1 || holds[0].ID != "record:at1" {
@@ -218,8 +235,8 @@ func TestAScopedApproveReleasesOnlyTheHoldsItNames(t *testing.T) {
 
 	// Step 2: scoped approve naming nothing releases nothing
 	v2 := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: head, Scope: "parser", At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "record:at4", Who: "gafferongames", Word: "approve", Head: head, Scope: "parser", Releases: nil, At: "2026-09-19T04:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: head, Scope: "parser", At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "record:at4", Who: "alice", Word: "approve", Head: head, Scope: "parser", Releases: nil, At: "2026-09-19T04:00:00Z", Source: "record"},
 	}
 	holds2 := merge.UnliftedHolds(v2, head, "author", rev)
 	if len(holds2) != 1 {
@@ -228,9 +245,9 @@ func TestAScopedApproveReleasesOnlyTheHoldsItNames(t *testing.T) {
 
 	// Step 3: unscoped approve at current head releases both
 	v3 := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: head, Scope: "parser", At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "record:at2", Who: "gafferongames", Word: "hold", Head: head, Scope: "docs", At: "2026-09-19T02:00:00Z", Source: "record"},
-		{ID: "record:at5", Who: "gafferongames", Word: "approve", Head: head, Scope: "", At: "2026-09-19T05:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: head, Scope: "parser", At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "record:at2", Who: "alice", Word: "hold", Head: head, Scope: "docs", At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at5", Who: "alice", Word: "approve", Head: head, Scope: "", At: "2026-09-19T05:00:00Z", Source: "record"},
 	}
 	holds3 := merge.UnliftedHolds(v3, head, "author", rev)
 	if len(holds3) != 0 {
@@ -245,8 +262,8 @@ func TestACommentNeverReleasesAnything(t *testing.T) {
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
 	vs := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "comment:501", Who: "gafferongames", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "comment"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "comment:501", Who: "alice", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "comment"},
 	}
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
 	if len(holds) != 1 {
@@ -260,8 +277,8 @@ func TestAForgeApprovedReviewReleasesNothing(t *testing.T) {
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
 	vs := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "review:601", Who: "gafferongames", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "review"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "review:601", Who: "alice", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "review"},
 	}
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
 	if len(holds) != 1 {
@@ -275,7 +292,7 @@ func TestADismissalReleasesNothing(t *testing.T) {
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
 	vs := []merge.Verdict{
-		{ID: "review:701", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "review"},
+		{ID: "review:701", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "review"},
 	}
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
 	if len(holds) != 1 {
@@ -305,8 +322,8 @@ func TestAReleaseAtAStaleHeadReleasesNothing(t *testing.T) {
 	h1 := strings.Repeat("1", 40)
 	h2 := strings.Repeat("2", 40)
 	vs := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: h1, At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "record:at2", Who: "gafferongames", Word: "approve", Head: h1, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: h1, At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "record:at2", Who: "alice", Word: "approve", Head: h1, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds := merge.UnliftedHolds(vs, h2, "author", rev)
 	if len(holds) != 1 || !holds[0].Carried {
@@ -320,8 +337,8 @@ func TestNoAnswerReleasesAnything(t *testing.T) {
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
 	vs := []merge.Verdict{
-		{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
-		{ID: "record:at2", Who: "gafferongames", Word: "abstain", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "record"},
+		{ID: "record:at2", Who: "alice", Word: "abstain", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
 	if len(holds) != 1 {
@@ -337,8 +354,8 @@ func TestAPushReleasesNothing(t *testing.T) {
 	hA := strings.Repeat("a", 40)
 	hB := strings.Repeat("b", 40)
 	vs := []merge.Verdict{
-		{ID: "comment:1", Who: "gafferongames", Word: "hold", Head: hA, At: "2026-09-19T01:00:00Z", Source: "comment-rule"},
-		{ID: "review:2", Who: "gafferongames", Word: "hold", Head: hA, At: "2026-09-19T02:00:00Z", Source: "review"},
+		{ID: "comment:1", Who: "alice", Word: "hold", Head: hA, At: "2026-09-19T01:00:00Z", Source: "comment-rule"},
+		{ID: "review:2", Who: "alice", Word: "hold", Head: hA, At: "2026-09-19T02:00:00Z", Source: "review"},
 	}
 	holds := merge.UnliftedHolds(vs, hB, "author", rev)
 	if len(holds) != 2 {
@@ -357,7 +374,7 @@ func TestADecidedHoldAtAnyConfidenceHolds(t *testing.T) {
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
 	vs := []merge.Verdict{
-		{ID: "comment:801", Who: "gafferongames", Word: "hold", Head: head, Conf: "0.20", At: "2026-09-19T01:00:00Z", Source: "comment-decided"},
+		{ID: "comment:801", Who: "alice", Word: "hold", Head: head, Conf: "0.20", At: "2026-09-19T01:00:00Z", Source: "comment-decided"},
 	}
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
 	if len(holds) != 1 || holds[0].Conf != "0.20" {
@@ -369,7 +386,7 @@ func TestADecidedHoldAtAnyConfidenceHolds(t *testing.T) {
 func TestAnUntypedCommentFromAMayHoldLoginIsPending(t *testing.T) {
 	t.Parallel()
 	l := batchRepo(t)
-	revFile := testReviewerFile(t, l.dir, "gafferongames\tgafferongames\tyes\nstranger\tstranger\tno\n")
+	revFile := testReviewerFile(t, l.dir, "alice\talice\tyes\nstranger\tstranger\tno\n")
 
 	// May-hold login comment is pending
 	l.host.SetVerdicts(1, merge.Verdict{
@@ -419,7 +436,7 @@ func TestAPendingCommentIsClearedOnlyByAReadersVerb(t *testing.T) {
 	// APPROVE without --releases does NOT clear it
 	v2 := []merge.Verdict{
 		{ID: "comment:1001", Who: "unknown", Word: "pending", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-pending"},
-		{ID: "record:at1", Who: "gafferongames", Word: "approve", Head: head, Releases: nil, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "approve", Head: head, Releases: nil, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds2 := merge.UnliftedHolds(v2, head, "author", rev)
 	if len(holds2) != 1 || holds2[0].Source != "comment-pending" {
@@ -429,7 +446,7 @@ func TestAPendingCommentIsClearedOnlyByAReadersVerb(t *testing.T) {
 	// APPROVE with --releases comment:1001 clears it
 	v3 := []merge.Verdict{
 		{ID: "comment:1001", Who: "unknown", Word: "pending", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-pending"},
-		{ID: "record:at2", Who: "gafferongames", Word: "approve", Head: head, Releases: []string{"comment:1001"}, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at2", Who: "alice", Word: "approve", Head: head, Releases: []string{"comment:1001"}, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds3 := merge.UnliftedHolds(v3, head, "author", rev)
 	if len(holds3) != 0 {
@@ -439,10 +456,10 @@ func TestAPendingCommentIsClearedOnlyByAReadersVerb(t *testing.T) {
 	// Recorded HOLD takes it over under their name
 	v4 := []merge.Verdict{
 		{ID: "comment:1001", Who: "unknown", Word: "pending", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-pending"},
-		{ID: "record:at3", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at3", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds4 := merge.UnliftedHolds(v4, head, "author", rev)
-	if len(holds4) != 1 || holds4[0].Who != "gafferongames" || holds4[0].ID != "record:at3" {
+	if len(holds4) != 1 || holds4[0].Who != "alice" || holds4[0].ID != "record:at3" {
 		t.Fatalf("recorded hold should take over pending comment, got %v", holds4)
 	}
 }
@@ -456,7 +473,7 @@ func TestAScopedApproveRecordDoesNotSatisfyNeedsRead(t *testing.T) {
 		OID:       head,
 		NeedsRead: "yes",
 		Reads: []merge.Read{
-			{Who: "gafferongames", Verdict: "approve", Head: head, Scope: "parser", Releases: []string{"record:at1"}},
+			{Who: "alice", Verdict: "approve", Head: head, Scope: "parser", Releases: []string{"record:at1"}},
 		},
 	}
 	st := merge.EvaluateReads(entry, "author")
@@ -469,7 +486,7 @@ func TestAScopedApproveRecordDoesNotSatisfyNeedsRead(t *testing.T) {
 		OID:       head,
 		NeedsRead: "yes",
 		Reads: []merge.Read{
-			{Who: "gafferongames", Verdict: "approve", Head: head, Scope: "", Releases: nil},
+			{Who: "alice", Verdict: "approve", Head: head, Scope: "", Releases: nil},
 		},
 	}
 	st2 := merge.EvaluateReads(entry2, "author")
@@ -485,7 +502,7 @@ func TestBatchOKCarriesHoldsDispositionsAndReviewers(t *testing.T) {
 	revPath, revSHA := testReviewerCommit(t, l, defaultReviewersTSV)
 
 	l.host.SetVerdicts(1, merge.Verdict{
-		ID: "comment:1101", Who: "gafferongames", Word: "hold", Head: l.heads[1],
+		ID: "comment:1101", Who: "alice", Word: "hold", Head: l.heads[1],
 		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
 	})
 
@@ -507,8 +524,8 @@ func TestNewerComparesForgeStampsAndTiesBreakOnID(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	// Two comments with the same created_at: higher ID is newer
 	vs := []merge.Verdict{
-		{ID: "comment:100", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-rule"},
-		{ID: "comment:200", Who: "gafferongames", Word: "approve", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment"},
+		{ID: "comment:100", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-rule"},
+		{ID: "comment:200", Who: "alice", Word: "approve", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment"},
 	}
 	// comment:200 is newer by ID, but comment never releases
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
@@ -533,7 +550,7 @@ func TestEveryLineThatNamesAHoldPrintsItsID(t *testing.T) {
 		t.Run(tc.source, func(t *testing.T) {
 			l := batchRepo(t)
 			l.host.SetVerdicts(1, merge.Verdict{
-				ID: tc.id, Who: "gafferongames", Word: "hold", Head: l.heads[1],
+				ID: tc.id, Who: "alice", Word: "hold", Head: l.heads[1],
 				At: "2026-09-19T01:00:00Z", Source: tc.source,
 			})
 			_, _, stderr := l.run("batch", "--name", "b-id", "--pr", "1",
@@ -545,7 +562,7 @@ func TestEveryLineThatNamesAHoldPrintsItsID(t *testing.T) {
 			head := strings.Repeat("a", 40)
 			h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
 			h.SetVerdicts(1560, merge.Verdict{
-				ID: tc.id, Who: "gafferongames", Word: "hold", Head: head,
+				ID: tc.id, Who: "alice", Word: "hold", Head: head,
 				At: "2026-09-19T01:00:00Z", Source: tc.source,
 			})
 			_, _, landErr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560", "--reviewers", revFile)
@@ -634,15 +651,15 @@ func TestTheAuthorsNoteLineIsNotScannedAndTheAuthorsLoginSkipsNothing(t *testing
 	t.Parallel()
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
-	body := "DISPOSITION who=gafferongames verdict=NOTE\nReporting that PR 1551 carries a HOLD"
-	_, ok := merge.ParseComment(1401, "gafferongames", body, "2026-09-19T01:00:00Z", rev, "gafferongames", head, false)
+	body := "DISPOSITION who=alice verdict=NOTE\nReporting that PR 1551 carries a HOLD"
+	_, ok := merge.ParseComment(1401, "alice", body, "2026-09-19T01:00:00Z", rev, "alice", head, false)
 	if ok {
 		t.Fatalf("author note line should be skipped (ok=false)")
 	}
 
 	// Author's login does not exempt other comments from being scanned
-	body2 := "DISPOSITION who=gafferongames verdict=HOLD\nObjection on parser"
-	c2, ok2 := merge.ParseComment(1402, "gafferongames", body2, "2026-09-19T01:00:00Z", rev, "gafferongames", head, false)
+	body2 := "DISPOSITION who=alice verdict=HOLD\nObjection on parser"
+	c2, ok2 := merge.ParseComment(1402, "alice", body2, "2026-09-19T01:00:00Z", rev, "alice", head, false)
 	if !ok2 || c2.Source != "comment-rule" || c2.Word != "hold" {
 		t.Fatalf("author's hold comment must not be skipped, got %+v (ok=%v)", c2, ok2)
 	}
@@ -661,7 +678,7 @@ func TestAnUnknownHoldIsReleasedOnlyByAReadersVerbNamingIt(t *testing.T) {
 	// Without --releases: not released
 	vs1 := []merge.Verdict{
 		unknownHold,
-		{ID: "record:at1", Who: "gafferongames", Word: "approve", Head: head, Releases: nil, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at1", Who: "alice", Word: "approve", Head: head, Releases: nil, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds1 := merge.UnliftedHolds(vs1, head, "author", rev)
 	if len(holds1) != 1 {
@@ -671,7 +688,7 @@ func TestAnUnknownHoldIsReleasedOnlyByAReadersVerbNamingIt(t *testing.T) {
 	// With --releases comment:1501: released
 	vs2 := []merge.Verdict{
 		unknownHold,
-		{ID: "record:at2", Who: "gafferongames", Word: "approve", Head: head, Releases: []string{"comment:1501"}, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at2", Who: "alice", Word: "approve", Head: head, Releases: []string{"comment:1501"}, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds2 := merge.UnliftedHolds(vs2, head, "author", rev)
 	if len(holds2) != 0 {
@@ -681,10 +698,10 @@ func TestAnUnknownHoldIsReleasedOnlyByAReadersVerbNamingIt(t *testing.T) {
 	// Reader's own HOLD takes it over
 	vs3 := []merge.Verdict{
 		unknownHold,
-		{ID: "record:at3", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "record:at3", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds3 := merge.UnliftedHolds(vs3, head, "author", rev)
-	if len(holds3) != 1 || holds3[0].Who != "gafferongames" || holds3[0].ID != "record:at3" {
+	if len(holds3) != 1 || holds3[0].Who != "alice" || holds3[0].ID != "record:at3" {
 		t.Fatalf("reader hold should take over unknown hold, got %v", holds3)
 	}
 }
@@ -737,8 +754,8 @@ func TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted(t *testing.T) {
 	root := filepath.Join(l.dir, "b-waived")
 
 	l.host.SetVerdicts(1,
-		merge.Verdict{ID: "record:at1", Who: "gafferongames", Word: "hold", Head: l.heads[1], At: "2026-09-19T01:00:00Z", Source: "record"},
-		merge.Verdict{ID: "comment:1701", Who: "gafferongames", Word: "hold", Head: l.heads[1], At: "2026-09-19T02:00:00Z", Source: "comment-rule"},
+		merge.Verdict{ID: "record:at1", Who: "alice", Word: "hold", Head: l.heads[1], At: "2026-09-19T01:00:00Z", Source: "record"},
+		merge.Verdict{ID: "comment:1701", Who: "alice", Word: "hold", Head: l.heads[1], At: "2026-09-19T02:00:00Z", Source: "comment-rule"},
 	)
 
 	exit, stdout, stderr := l.run("batch", "--name", "b-waived", "--pr", "1",
@@ -748,7 +765,7 @@ func TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted(t *testing.T) {
 		t.Fatalf("batch exit %d", exit)
 	}
 	// Recorded hold still drops the member
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l.heads[1])+" carries an unreleased HOLD\" who=gafferongames hold=record:at1 source=record")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l.heads[1])+" carries an unreleased HOLD\" who=alice hold=record:at1 source=record")
 	contains(t, stdout, `holds=waived reason="emergency"`)
 }
 
@@ -791,15 +808,15 @@ func TestRemovingMayHoldByCommitReleasesAndTheReceiptNamesTheCommit(t *testing.T
 	t.Parallel()
 	l := batchRepo(t)
 
-	// Commit 1: gafferongames may-hold
-	testReviewerCommit(t, l, "gafferongames\tgafferongames\tyes\n")
+	// Commit 1: alice may-hold
+	testReviewerCommit(t, l, "alice\talice\tyes\n")
 
-	// Commit 2: gafferongames may-hold removed
-	revPath2, revSHA2 := testReviewerCommit(t, l, "gafferongames\tgafferongames\tno\n")
+	// Commit 2: alice may-hold removed
+	revPath2, revSHA2 := testReviewerCommit(t, l, "alice\talice\tno\n")
 
-	// Member carries a comment hold from gafferongames
+	// Member carries a comment hold from alice
 	l.host.SetVerdicts(1, merge.Verdict{
-		ID: "comment:1801", Who: "gafferongames", Word: "hold", Head: l.heads[1],
+		ID: "comment:1801", Who: "alice", Word: "hold", Head: l.heads[1],
 		At: "2026-09-19T01:00:00Z", Source: "comment-rule",
 	})
 
@@ -812,7 +829,7 @@ func TestRemovingMayHoldByCommitReleasesAndTheReceiptNamesTheCommit(t *testing.T
 	// Hold is no longer active; PR is admitted
 	contains(t, stdout, "members=1")
 	contains(t, stdout, "reviewers="+revSHA2)
-	absent(t, stdout, "gafferongames")
+	absent(t, stdout, "alice")
 }
 
 // 30. TestLandRefusesAHoldPostedAfterBatchOK: fake forge grows a comment between two reads
@@ -825,7 +842,7 @@ func TestLandRefusesAHoldPostedAfterBatchOK(t *testing.T) {
 
 	// Between batch and land, comment is added to forge
 	h.SetVerdicts(1560, merge.Verdict{
-		ID: "comment:1901", Who: "gafferongames", Word: "hold", Head: head,
+		ID: "comment:1901", Who: "alice", Word: "hold", Head: head,
 		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
 	})
 
@@ -834,7 +851,7 @@ func TestLandRefusesAHoldPostedAfterBatchOK(t *testing.T) {
 	if exit != 1 {
 		t.Fatalf("land must refuse a hold posted after BATCH OK: exit %d", exit)
 	}
-	contains(t, stderr, "LAND REFUSED reason=held member=#1560 who=gafferongames hold=comment:1901 source=comment-rule")
+	contains(t, stderr, "LAND REFUSED reason=held member=#1560 who=alice hold=comment:1901 source=comment-rule")
 }
 
 // 31. TestSweepAndReactNeverEnqueueAHeldPR
@@ -870,11 +887,168 @@ func TestAReleaseAtTheSameHeadIsObservedAndWritesNoTruth(t *testing.T) {
 	rev := parseRev(defaultReviewersTSV)
 	head := strings.Repeat("a", 40)
 	vs := []merge.Verdict{
-		{ID: "comment:2001", Who: "gafferongames", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-decided"},
-		{ID: "record:at1", Who: "gafferongames", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
+		{ID: "comment:2001", Who: "alice", Word: "hold", Head: head, At: "2026-09-19T01:00:00Z", Source: "comment-decided"},
+		{ID: "record:at1", Who: "alice", Word: "approve", Head: head, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
 	holds := merge.UnliftedHolds(vs, head, "author", rev)
 	if len(holds) != 0 {
 		t.Fatalf("release at the same head should release the hold, got %v", holds)
+	}
+}
+
+// 33. TestBatchAndLandPreserveRealLaneReadHolds: real lane read records are loaded
+// independently of the forge, and survive forge waivers and forge errors.
+func TestBatchAndLandPreserveRealLaneReadHolds(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	laneDir := filepath.Join(l.dir, "lane")
+
+	// Initialize real lane
+	if exit, _, errb := l.run("init", "--lane", laneDir, "--repo", "o/n", "--base", "dev", "--lane-branch", "nova-merge/dev"); exit != 0 {
+		t.Fatalf("init lane failed: %s", errb)
+	}
+
+	// Write real lane read record using standard "read" verb
+	if exit, _, errb := l.run("read", "--lane", laneDir, "--pr", "1", "--who", "rowan", "--verdict", "hold", "--head", l.heads[1]); exit != 0 {
+		t.Fatalf("read verb failed: %s", errb)
+	}
+
+	// Run batch with --lane and --no-require-holds --reason: lane hold must drop member #1
+	exit, stdout, stderr := l.run("batch", "--name", "lane-hold-test", "--pr", "1,3",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--lane", laneDir, "--no-require-holds", "--reason", "waive forge sources")
+
+	contains(t, stderr, `BATCH DROP #1 reason="head `+l.heads[1][:12]+` carries an unreleased HOLD" who=rowan hold=record:`)
+	contains(t, stderr, "source=record")
+	_ = exit
+	_ = stdout
+
+	// Run land with --lane and --no-require-holds --reason: lane hold must refuse landing PR 1
+	exitLand, _, stderrLand := l.run("land", "--repo", "o/n", "--pr", "1",
+		"--lane", laneDir, "--no-require-holds", "--reason", "waive forge sources")
+	if exitLand != 1 {
+		t.Fatalf("land under lane hold must exit 1, got %d: %s", exitLand, stderrLand)
+	}
+	contains(t, stderrLand, "LAND REFUSED reason=held member=#1 who=rowan hold=record:")
+	contains(t, stderrLand, "source=record")
+}
+
+// 34. TestGetReviewersSHARefusesUncommittedOrMissingRepo (SPEC-DECIDE reading 3, Johnny row 3):
+// Reviewer file outside a repo or uncommitted must refuse exit 2.
+func TestGetReviewersSHARefusesUncommittedOrMissingRepo(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "b-rev-err")
+
+	// Case A: File outside git repo
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "reviewers.tsv")
+	if err := os.WriteFile(outsideFile, []byte("rowan\trowan\tyes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, _, stderr := l.run("batch", "--name", "b1", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--reviewers", outsideFile)
+	if exit != 2 {
+		t.Fatalf("batch with reviewer file outside repo must refuse exit 2, got %d", exit)
+	}
+	contains(t, stderr, "reviewer file")
+
+	// Case B: Uncommitted file in git repo
+	uncommittedFile := filepath.Join(l.dir, "uncommitted-reviewers.tsv")
+	if err := os.WriteFile(uncommittedFile, []byte("rowan\trowan\tyes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, _, stderr = l.run("batch", "--name", "b2", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--reviewers", uncommittedFile)
+	if exit != 2 {
+		t.Fatalf("batch with uncommitted reviewer file must refuse exit 2, got %d", exit)
+	}
+	contains(t, stderr, "reviewer file")
+}
+
+// 35. TestEmptyOrMalformedReviewersFileRefuses (SPEC-DECIDE reading 3, row 9):
+// An empty reviewer file must refuse exit 2, never proceed unfenced.
+func TestEmptyOrMalformedReviewersFileRefuses(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "b-empty-rev")
+
+	emptyFile, _ := testReviewerCommit(t, l, "\n# only comments\n")
+	exit, _, stderr := l.run("batch", "--name", "b-empty", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--reviewers", emptyFile)
+	if exit != 2 {
+		t.Fatalf("batch with empty reviewer file must refuse exit 2, got %d", exit)
+	}
+	contains(t, stderr, "reviewer file")
+}
+
+// 36. TestReadReleasesRequiresScopeAndValidID (SPEC-DECIDE reading 3, row 12):
+// --releases without --scope or with malformed ID must refuse exit 2.
+func TestReadReleasesRequiresScopeAndValidID(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("dev")
+
+	// Case A: --releases without --scope
+	exit, _, stderr := l.run("read", "--lane", l.lane, "--pr", "1", "--who", "rowan",
+		"--verdict", "approve", "--head", strings.Repeat("a", 40),
+		"--releases", "comment:101")
+	if exit != 2 {
+		t.Fatalf("read --releases without --scope must refuse exit 2, got %d", exit)
+	}
+	contains(t, stderr, "--releases requires --scope")
+
+	// Case B: --releases with malformed hold ID
+	exit, _, stderr = l.run("read", "--lane", l.lane, "--pr", "1", "--who", "rowan",
+		"--verdict", "approve", "--head", strings.Repeat("a", 40),
+		"--scope", "parser", "--releases", "bad-hold-id")
+	if exit != 2 {
+		t.Fatalf("read --releases with malformed id must refuse exit 2, got %d", exit)
+	}
+	contains(t, stderr, "release id")
+}
+
+// 37. TestSweepAndReactNeverEnqueueHeldPR (SPEC-DECIDE reading 3, row 6):
+// PR carrying unlifted lane read hold is never enqueued by queue sweep or react.
+func TestSweepAndReactNeverEnqueueHeldPR(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("dev")
+
+	// PR 951 has a recorded HOLD in the lane
+	head := strings.Repeat("b", 40)
+	if exit, _, errb := l.run("read", "--lane", l.lane, "--pr", "951", "--who", "rowan",
+		"--verdict", "hold", "--head", head); exit != 0 {
+		t.Fatalf("read hold failed: %s", errb)
+	}
+
+	// Fake host reports PR 951 green
+	l.host.PRs[951] = merge.PR{Number: 951, HeadOID: head, Mergeable: "MERGEABLE"}
+	l.host.OpenQueue = []merge.PR{{Number: 951, HeadOID: head, Mergeable: "MERGEABLE"}}
+	var c merge.Checks
+	c.AddRun("ci-ok", "success", head)
+	l.host.ChecksBy[head] = c
+
+	// queue sweep must NOT enqueue PR 951 because it carries a hold
+	exit, stdout, _ := l.run("queue", "--lane", l.lane, "sweep", "--window", "1h")
+	if exit != 0 {
+		t.Fatalf("queue sweep exit %d", exit)
+	}
+	if q := l.loadQueue(); hasInt(q.Queued, 951) {
+		t.Fatalf("queue sweep enqueued held PR 951: %v", q.Queued)
+	}
+	_ = stdout
+
+	// react on checks-done must NOT enqueue PR 951 and report REACT hold
+	reactOnce(t, l, `{"number":951,"head":"`+head+`","conclusion":"SUCCESS"}`, func(out string) {
+		contains(t, out, "REACT hold pr=951")
+		absent(t, out, "REACT enqueue")
+	})
+	if q := l.loadQueue(); hasInt(q.Queued, 951) {
+		t.Fatalf("react enqueued held PR 951: %v", q.Queued)
 	}
 }

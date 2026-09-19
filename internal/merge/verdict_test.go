@@ -179,3 +179,128 @@ func TestUnreleasedHoldsFold(t *testing.T) {
 		t.Fatalf("short SHA prefix matching headA should release hold: %+v", unreleased)
 	}
 }
+
+func TestUnreleasedHoldsPreservesHoldOnEqualTimestamp(t *testing.T) {
+	head := "1111111111111111111111111111111111111111"
+	rs := sampleReviewers()
+	at := "2026-09-19T10:00:00Z"
+
+	// Same friend, current head, APPROVE and HOLD with the same At.
+	// HOLD-last rule demands the hold is retained on an equal timestamp tie.
+	hold := Verdict{
+		ID:     "comment:100",
+		Who:    "rowan",
+		Word:   "hold",
+		Head:   head,
+		At:     at,
+		Source: "comment-rule",
+	}
+	read := Read{
+		Who:     "rowan",
+		Verdict: "approve",
+		Head:    head,
+		At:      at,
+	}
+
+	// Order 1: UnreleasedHolds([hold], [read])
+	unreleased1 := UnreleasedHolds([]Verdict{hold}, []Read{read}, head, "author", rs)
+	if len(unreleased1) == 0 {
+		t.Fatalf("equal timestamp tie must retain HOLD, got released: %+v", unreleased1)
+	}
+
+	// Order 2: In UnliftedHolds where verdicts are passed in both orders
+	vs1 := []Verdict{
+		{Source: "record", Who: "rowan", Word: "approve", Head: head, At: at},
+		hold,
+	}
+	if got := UnliftedHolds(vs1, head, "author", rs); len(got) == 0 {
+		t.Fatalf("UnliftedHolds with [approve, hold] at equal At must retain HOLD")
+	}
+
+	vs2 := []Verdict{
+		hold,
+		{Source: "record", Who: "rowan", Word: "approve", Head: head, At: at},
+	}
+	if got := UnliftedHolds(vs2, head, "author", rs); len(got) == 0 {
+		t.Fatalf("UnliftedHolds with [hold, approve] at equal At must retain HOLD")
+	}
+}
+
+func parseRevTSV(t *testing.T, tsv string) *ReviewerSet {
+	t.Helper()
+	rs, err := ParseReviewers(strings.NewReader(tsv))
+	if err != nil {
+		t.Fatalf("ParseReviewers failed: %v", err)
+	}
+	return rs
+}
+
+// SPEC-DECIDE reading 3 (lines 1015-1016): A holder absent from the reviewer file
+// becomes who=unknown; a who=unknown hold holds, never a drop.
+func TestUnliftedHoldsTreatsHolderAbsentFromReviewersFileAsUnknownHold(t *testing.T) {
+	t.Parallel()
+	rs := parseRevTSV(t, "rowan\trowan-login\tyes\n")
+	head := strings.Repeat("a", 40)
+	hold := Verdict{
+		Source: "record",
+		Who:    "stranger",
+		Word:   "hold",
+		Head:   head,
+		At:     "2026-09-19T10:00:00Z",
+		ID:     "record:2026-09-19T10:00:00Z",
+	}
+	got := UnliftedHolds([]Verdict{hold}, head, "author", rs)
+	if len(got) != 1 {
+		t.Fatalf("hold from holder absent from reviewer file must not be dropped: got %v", got)
+	}
+	if got[0].Who != "unknown" {
+		t.Fatalf("holder absent from reviewer file must become who=unknown, got who=%q", got[0].Who)
+	}
+}
+
+// SPEC-DECIDE reading 3 (lines 1092-1093, 1533): A dismissal releases nothing.
+func TestParseReviewDismissalReleasesNothing(t *testing.T) {
+	t.Parallel()
+	rs := parseRevTSV(t, "rowan\trowan-login\tyes\n")
+	head := strings.Repeat("a", 40)
+	v, ok := ParseReview(201, "rowan-login", "", "DISMISSED", head, "2026-09-19T10:00:00Z", rs, "author", head)
+	if !ok {
+		t.Fatalf("ParseReview must not drop a DISMISSED review")
+	}
+	if v.Word != "hold" || v.Source != "review" {
+		t.Fatalf("DISMISSED review must be a hold, got word=%q source=%q", v.Word, v.Source)
+	}
+}
+
+// SPEC-DECIDE reading 3 (lines 1038-1039): An untyped comment binds to current head;
+// an 8-digit date in body does not bind as a head sha.
+func TestCommentDateInBodyDoesNotBindAsHead(t *testing.T) {
+	t.Parallel()
+	rs := parseRevTSV(t, "rowan\trowan-login\tyes\n")
+	currentHead := strings.Repeat("c", 40)
+	body := "HOLD: notes from meeting on 20260919 regarding architecture"
+	v, ok := ParseComment(301, "rowan-login", body, "2026-09-19T10:00:00Z", rs, "author", currentHead, false)
+	if !ok {
+		t.Fatalf("ParseComment failed on hold comment")
+	}
+	if v.Head != currentHead {
+		t.Fatalf("untyped comment must bind to currentHead (%s), not date in body (%s)", currentHead, v.Head)
+	}
+}
+
+// SPEC-DECIDE reading 3 (lines 1017-1019, 1565): The author's login excuses nothing;
+// DISPOSITION who=<login> verdict=NOTE on a shared login does not skip the comment.
+func TestAuthorLoginExcusesNothingOnSharedLoginNote(t *testing.T) {
+	t.Parallel()
+	rs := parseRevTSV(t, "alice\tshared-login\tyes\nbob\tshared-login\tyes\n")
+	head := strings.Repeat("a", 40)
+	// Author is Alice. Comment uses shared-login with who=shared-login:
+	body := "DISPOSITION who=shared-login verdict=NOTE\n**HOLD: issue discovered**"
+	v, ok := ParseComment(401, "shared-login", body, "2026-09-19T10:00:00Z", rs, "alice", head, false)
+	if !ok {
+		t.Fatalf("comment with who=shared-login verdict=NOTE must NOT be skipped as author note when author is alice")
+	}
+	if v.Word != "hold" {
+		t.Fatalf("comment with bold HOLD must hold, got %+v", v)
+	}
+}
