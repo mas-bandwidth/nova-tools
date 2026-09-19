@@ -236,10 +236,14 @@ func harvestBench(in HarvestInput) int {
 				field(in.Bench), field(label), field(branch), oneline.Err(err)))
 			continue
 		}
-		// The destination rule: the repo this push and this PR-open are checked against
-		// the clone's own origin, never the worker's REPO claim alone. One guard covers
-		// the push below and the CreatePR further down -- a refusal skips both.
-		if err := mustMatchCloneOrigin(label, cloneOrigin(clone), repo); err != nil {
+		// THE DESTINATION, resolved once for this job and used by both the push below
+		// and the CreatePR further down -- a refusal skips both. `repo` off the
+		// RESULT.md only ever chose the clone and was then handed straight to
+		// `CreatePR(repo, ...)`, so a bench card named the repository its own pull
+		// request opened on (Johnny's HOLD of #1809). A bench job carries no launch
+		// record to this verb, so the clone's own origin must answer or nothing does.
+		dest, err := resolveDestination(label, clone, "", repo)
+		if err != nil {
 			failed++
 			lines.Line(err.Error())
 			continue
@@ -251,7 +255,7 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		pushed++
-		pr, err := forge.FindPR(repo, branch)
+		pr, err := forge.FindPR(dest.repo, branch)
 		if err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST PR-FAIL bench=%s label=%s branch=%s: %s",
@@ -259,7 +263,7 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		if pr == 0 {
-			pr, err = forge.CreatePR(repo, base, branch, prTitle(line1, label, in.Bench), benchPRBody(in.Bench, j, in.MaxBodyBytes))
+			pr, err = forge.CreatePR(dest.repo, base, branch, prTitle(line1, label, in.Bench), benchPRBody(in.Bench, j, in.MaxBodyBytes))
 			if err != nil {
 				failed++
 				lines.Line(fmt.Sprintf("HARVEST PR-FAIL bench=%s label=%s branch=%s: %s",
@@ -270,7 +274,7 @@ func harvestBench(in HarvestInput) int {
 		prs++
 		markHarvested(shell, in.Bench, j.Dir)
 		lines.Line(fmt.Sprintf("HARVEST JOB bench=%s label=%s branch=%s sha=%s base=%s pr=%s#%d",
-			field(in.Bench), field(label), field(branch), field(sha), field(base), field(repo), pr))
+			field(in.Bench), field(label), field(branch), field(sha), field(base), field(dest.repo), pr))
 	}
 
 	drained := drainLaunched(in, state, lines)

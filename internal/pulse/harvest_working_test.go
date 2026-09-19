@@ -96,6 +96,7 @@ func TestHarvestWorkingReadsTheGuidLayout(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "0123456789abcdef0123456789abcdef01234567 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "0123456789abcdef0123456789abcdef01234567\trefs/heads/rowan/a"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
@@ -161,6 +162,7 @@ func TestHarvestWorkingLeaseComesFromLsRemote(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/rowan/y"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[{"number":9,"headRefName":"rowan/x","headRefOid":"9999","state":"OPEN","title":"t"}]`},
@@ -208,6 +210,7 @@ func TestHarvestWorkingOffBranchAndBeforeSession(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "cccc000000000000000000000000000000000000 2026-09-01T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "cccc000000000000000000000000000000000000\trefs/heads/rowan/s"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 2, Equals: "list", Stdout: "[]"}}})
 	wkJob(t, working, "g-f", "f", wkResult("f", "feature/x", "o/r"))
@@ -258,6 +261,7 @@ func TestHarvestWorkingMarksHarvested(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "ffff000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "ffff000000000000000000000000000000000000\trefs/heads/rowan/h"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
@@ -287,6 +291,7 @@ func TestHarvestWorkingClassesAreTheFive(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "abcd000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "abcd000000000000000000000000000000000000\trefs/heads/rowan/f"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[

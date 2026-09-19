@@ -229,13 +229,25 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
-			url := pushURL(repo)
-			if err := push(in, jobDir, url, branch, c.Label); err != nil {
+			// WHERE this pushes is resolveDestination's answer, not the RESULT's
+			// claim. The line this replaced built the push URL out of the RESULT's
+			// own REPO field, so every guard beside it was only ever an opinion
+			// about a destination the worker had already chosen (Johnny's HOLD of
+			// #1809). Resolved here so the refusal is counted and named; push and
+			// openPR resolve it again for themselves, because a leaf handed a URL
+			// is a leaf with no rule.
+			if _, err := resolveDestination(c.Label, jobDir, c.Card, repo); err != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
+				continue
+			}
+			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
 			pushed++
-			pr, err := openPR(in, jobDir, url, c.Label, branch, resultLines)
+			pr, err := openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
 			if err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
@@ -581,32 +593,26 @@ func lastRefusal(logPath string) string {
 	return oneline.Cap(lines[len(lines)-1], 200)
 }
 
-// pushURL is the https clone url for a repo, used for the explicit refspec push.
-func pushURL(repo string) string {
-	if repo == "" {
-		return ""
-	}
-	return "https://github.com/" + repo + ".git"
-}
-
-// push runs git push <url> <branch>:<branch> from the job's clone; never a bare git push.
-func push(in HarvestInput, dir, url, branch, label string) error {
+// push runs git push <resolved url> <branch>:<branch> from the job's clone; never a bare
+// git push, and never a URL its caller formed.
+//
+// `record` is the launch record (the card file the pulse cut) and `claimed` the RESULT.md's
+// own REPO line: the two are the resolver's inputs, not the destination. The leaf resolves
+// rather than taking a URL, so that the rule holds whichever caller reaches it (Johnny's
+// HOLD of #1809: a rule implemented once per caller is as many rules as there are callers).
+func push(in HarvestInput, dir, record, claimed, branch, label string) error {
 	// The branch rule, at the push itself and not only at the caller that decided to
 	// push (Johnny's hold on #1809). One implementation, every path.
 	if err := mustBranchPrefix(branch); err != nil {
 		return err
 	}
-	// The destination rule, too: the url this pushes is checked against the clone's own
-	// origin, never the worker's claim alone.
-	if err := mustMatchCloneOrigin(label, cloneOrigin(dir), normalizeRepo(url)); err != nil {
+	dest, err := resolveDestination(label, dir, record, claimed)
+	if err != nil {
 		return err
-	}
-	if url == "" {
-		return fmt.Errorf("no REPO line in RESULT.md")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "push", url, branch+":"+branch)
+	cmd := exec.CommandContext(ctx, "git", "push", dest.url, branch+":"+branch)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -617,11 +623,15 @@ func push(in HarvestInput, dir, url, branch, label string) error {
 
 // openPR opens a draft PR (or updates an existing one) whose body is the RESULT.md lines,
 // capped at MaxBodyBytes. It returns the PR number.
-func openPR(in HarvestInput, dir, url, label, branch string, resultLines []string) (int, error) {
+func openPR(in HarvestInput, dir, record, claimed, label, branch string, resultLines []string) (int, error) {
 	if err := mustBranchPrefix(branch); err != nil {
 		return 0, err
 	}
-	if err := mustMatchCloneOrigin(label, cloneOrigin(dir), normalizeRepo(url)); err != nil {
+	// The repository the pull request is opened on is the resolver's answer, named
+	// explicitly with -R rather than left to whatever remote gh infers from the working
+	// directory: the destination is decided in one place and then said out loud.
+	dest, err := resolveDestination(label, dir, record, claimed)
+	if err != nil {
 		return 0, err
 	}
 	body := strings.Join(resultLines, "\n")
@@ -631,17 +641,17 @@ func openPR(in HarvestInput, dir, url, label, branch string, resultLines []strin
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 
-	update := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number")
+	update := exec.CommandContext(ctx, "gh", "pr", "view", branch, "-R", dest.repo, "--json", "number")
 	update.Dir = dir
 	if _, err := update.CombinedOutput(); err == nil {
 		// An existing PR is updated in place; the number is re-read from the view output.
-		edit := exec.CommandContext(ctx, "gh", "pr", "edit", branch, "--body-file", "-")
+		edit := exec.CommandContext(ctx, "gh", "pr", "edit", branch, "-R", dest.repo, "--body-file", "-")
 		edit.Dir = dir
 		edit.Stdin = strings.NewReader(body)
 		if _, err := edit.CombinedOutput(); err != nil {
 			return 0, err
 		}
-		view2 := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number")
+		view2 := exec.CommandContext(ctx, "gh", "pr", "view", branch, "-R", dest.repo, "--json", "number")
 		view2.Dir = dir
 		out, err := view2.CombinedOutput()
 		if err != nil {
@@ -650,7 +660,7 @@ func openPR(in HarvestInput, dir, url, label, branch string, resultLines []strin
 		return parsePRNumber(string(out)), nil
 	}
 
-	create := exec.CommandContext(ctx, "gh", "pr", "create", "--draft", "--title", label, "--body-file", "-")
+	create := exec.CommandContext(ctx, "gh", "pr", "create", "-R", dest.repo, "--draft", "--head", branch, "--title", label, "--body-file", "-")
 	create.Dir = dir
 	create.Stdin = strings.NewReader(body)
 	out, err := create.CombinedOutput()

@@ -17,9 +17,11 @@ func TestHarvestFoldsBareSwarmRoot(t *testing.T) {
 	fakeGit(t, specs, arglog)
 	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/628")
 
-	// A bare swarm root: no cards.tsv, one card a batch left in its job dir.
+	// A bare swarm root: no cards.tsv, one card a batch left in its job dir, with the
+	// clone it made -- whose `origin` is the only thing here that names a repository
+	// without a worker having written it (resolveDestination; Johnny's HOLD of #1809).
 	job := filepath.Join(root, "1", "jobs", "card-880")
-	if err := os.MkdirAll(job, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(job, "RESULT.md"),

@@ -365,6 +365,9 @@ func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 	b2.fake(t, "git", fakeSpec{Rules: []fakeRule{
 		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
 		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager_test.go"},
+		// The clone's own origin: where the manager pushes and opens its PR is
+		// resolveDestination's answer now, never the RESULT.md's REPO line.
+		originRule("mas-bandwidth/nova-tools"),
 	}})
 	b2.fakeGH(t, "{}", "[]")
 	rootA2 := strings.Split(b2.roots, ",")[0]

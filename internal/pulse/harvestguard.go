@@ -50,8 +50,18 @@ func pulseCardsPath(root, id string) string {
 // repoRef matches an owner/name repository as a card or a remote spells it.
 var repoRef = regexp.MustCompile(`(?:github\.com[/:])?([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*?)(?:\.git)?(?:$|[\s"'` + "`" + `,)])`)
 
-// allowedPush reports whether this card's RESULT may push to the repo it names, and refuses
-// with the reason and the door when it may not.
+// allowedPush is the local fold's pre-push rule about the RESULT.md ITSELF: it must name a
+// repository at all, and it must name a branch that is not a trunk and is under the prefix.
+//
+// WHAT IT NO LONGER DOES is decide WHERE the push goes. It used to compare the RESULT's
+// REPO line against the card, then against the clone origin, and return nil when it liked
+// the answer -- a second destination rule, with its own message, sitting in front of the
+// resolver on ONE of the four paths. On the real probe of 2026-09-19 that is exactly what
+// happened: the card refused correctly and printed a sentence no other path prints, so an
+// operator grepping for `HARVEST REFUSED repo-mismatch` found nothing. Johnny's HOLD of
+// #1809 is about one rule with one implementation, and the destination rule is
+// resolveDestination (harvestdest.go), which Harvest calls next and which push and openPR
+// call again for themselves.
 func allowedPush(in HarvestInput, jobDir string, c CardRow, repo, branch string) error {
 	claimed := normalizeRepo(repo)
 	if claimed == "" {
@@ -66,26 +76,7 @@ func allowedPush(in HarvestInput, jobDir string, c CardRow, repo, branch string)
 	// generates (cut.go, branchOf) and the one a bench harvest already filters by: there
 	// is no new prefix and no flag to relax it, because a guard with a configuration
 	// escape is a guard the next caller turns off.
-	if err := mustBranchPrefix(branch); err != nil {
-		return err
-	}
-
-	if want := cardRepo(c.Card); want != "" {
-		if want != claimed {
-			return fmt.Errorf("the RESULT.md asks to push to %s, and the card %s is for %s -- a RESULT is a worker's report, not an instruction (SPEC-SWARM: everything a worker writes is data); nothing was pushed",
-				field(claimed), field(c.Card), field(want))
-		}
-		return nil
-	}
-	if want := cloneOrigin(jobDir); want != "" {
-		if want != claimed {
-			return fmt.Errorf("the RESULT.md asks to push to %s, and this job's clone has origin %s -- a RESULT is a worker's report, not an instruction (SPEC-SWARM: everything a worker writes is data); nothing was pushed",
-				field(claimed), field(want))
-		}
-		return nil
-	}
-	return fmt.Errorf("the RESULT.md asks to push to %s and nothing else says that is this card's repository: the card %s names none and the job directory has no clone with an origin -- cut the card with its repository, or harvest this root with --bench; nothing was pushed",
-		field(claimed), field(c.Card))
+	return mustBranchPrefix(branch)
 }
 
 // normalizeRepo reduces a repository reference to owner/name.
@@ -161,8 +152,9 @@ func cloneOrigin(jobDir string) string {
 // rules that will disagree.
 //
 // Every function in this package that runs `git push` or opens a pull request calls this
-// first, and TestEveryPushPathChecksTheBranchPrefix enumerates those functions from the
-// package's own source so a fifth push site cannot be added without one.
+// first, and TestEveryPushPathChecksTheBranchPrefixAndResolvesItsDestination enumerates
+// those functions from the package's own source, so a fifth push site cannot be added
+// without one -- nor without resolving its destination (harvestdest.go).
 func mustBranchPrefix(branch string) error {
 	b := strings.TrimSpace(branch)
 	if b == "" {
@@ -176,22 +168,4 @@ func mustBranchPrefix(branch string) error {
 			oneline.Quote(b), field(DefaultBranchPrefix))
 	}
 	return nil
-}
-
-// mustMatchCloneOrigin is the destination guard every push and PR-open site takes in
-// addition to mustBranchPrefix: the job's own clone origin -- read by the caller with
-// cloneOrigin, and never a value the worker wrote -- is what a push or a PR-open is
-// checked against. An origin nothing could resolve (cloneOrigin returned "") verifies
-// nothing and passes: the site's own existing rule (the card's REPO field for the local
-// fold; nothing at all, before this card, for --working, --bench and the manager) is what
-// governs then, exactly as it does today. An origin that WAS resolved and disagrees with
-// what is about to be pushed is refused, by name, in the one line every call site's stderr
-// carries verbatim, so a reader grepping for the door finds it no matter which path pushed:
-//
-//	HARVEST REFUSED repo-mismatch card=<label> origin=<origin>
-func mustMatchCloneOrigin(label, origin, claimed string) error {
-	if origin == "" || origin == claimed {
-		return nil
-	}
-	return fmt.Errorf("HARVEST REFUSED repo-mismatch card=%s origin=%s", label, origin)
 }

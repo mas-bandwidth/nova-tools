@@ -224,7 +224,6 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	if repo == "" {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", "-")}
 	}
-	url := "https://github.com/" + repo + ".git"
 
 	prs, err := r.loadPRs(clone)
 	if err != nil {
@@ -240,6 +239,21 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 			oneline.Field(j.label), oneline.Field(branch), pr.Number, oneline.Field(commit),
 			oneline.Field(r.base12), took)}
 	}
+
+	// WHERE this force-pushes, and which repo its pull request is opened on, is the
+	// resolver's answer and not the RESULT's claim. The line this replaced --
+	// `url := "https://github.com/" + repo + ".git"` -- built the destination out of the
+	// worker's own bytes, which is Johnny's HOLD of #1809 exactly. The working layout
+	// carries no launch record (the job is all there is), so the clone's own origin must
+	// answer or nothing does, and nothing does is a refusal. Resolved HERE, at the first
+	// call that reaches the remote: a job already classified no-change or already-fixed
+	// publishes nothing and needs no destination.
+	dest, err := resolveDestination(j.label, clone, "", repo)
+	if err != nil {
+		fmt.Fprintln(r.in.Stderr, err)
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
+	url := dest.url
 
 	remote := ""
 	if out, err := runChild(clone, nil, "git", "ls-remote", url, "refs/heads/"+branch); err == nil {
@@ -259,12 +273,6 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	if err := mustBranchPrefix(branch); err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
-	// The destination rule the same way: the repo this force-pushes is checked against
-	// the clone's own origin, never the worker's REPO claim alone.
-	if err := mustMatchCloneOrigin(j.label, cloneOrigin(clone), repo); err != nil {
-		fmt.Fprintln(r.in.Stderr, err)
-		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
-	}
 	if _, err := runChild(clone, nil, "git", "push", url, "refs/heads/"+branch,
 		"--force-with-lease=refs/heads/"+branch+":"+remote); err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, dash(strconv.Itoa(pr.Number)), commit)}
@@ -272,12 +280,12 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 
 	prNum := 0
 	if found {
-		if _, err := runChild(clone, nil, "gh", "pr", "edit", strconv.Itoa(pr.Number), "--body-file", "-"); err != nil {
+		if _, err := runChild(clone, nil, "gh", "pr", "edit", strconv.Itoa(pr.Number), "-R", dest.repo, "--body-file", "-"); err != nil {
 			return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, strconv.Itoa(pr.Number), commit), pushed: 1}
 		}
 		prNum = pr.Number
 	} else {
-		out, err := runChild(clone, strings.NewReader(strings.Join(lines, "\n")), "gh", "pr", "create", "--draft", "--title", j.label, "--body-file", "-")
+		out, err := runChild(clone, strings.NewReader(strings.Join(lines, "\n")), "gh", "pr", "create", "-R", dest.repo, "--draft", "--head", branch, "--title", j.label, "--body-file", "-")
 		if err != nil {
 			return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit), pushed: 1}
 		}

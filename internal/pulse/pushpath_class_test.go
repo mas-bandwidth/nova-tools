@@ -30,13 +30,21 @@ import (
 // theGuard is the one implementation every push path must call.
 const theGuard = "mustBranchPrefix"
 
-// theOriginGuard is the destination check every push path must call in addition to the
-// branch rule. Unlike the branch rule it is NOT duplicated inside the Forge adapter: the
-// origin is resolved from the job's own clone before the forge is ever reached (DESIGN
-// DEFAULT 2).
-const theOriginGuard = "mustMatchCloneOrigin"
+// theResolver is THE destination rule: the one function that answers WHERE a push goes and
+// which repo a pull request is opened on. Every publishing function calls it. The single
+// exception is the shipped Forge adapter ghForge.CreatePR, which is handed a repo and has no
+// clone to resolve from; theForgeLeaf below names it and pins its callers.
+const theResolver = "resolveDestination"
 
-func TestEveryPushPathChecksTheBranchPrefix(t *testing.T) {
+// theForgeLeaf is the one publishing function that does not resolve its own destination, and
+// theForgeLeafCaller is the only function allowed to call it -- so a second caller that
+// resolved nothing cannot appear beside it.
+const (
+	theForgeLeaf       = "CreatePR"
+	theForgeLeafCaller = "harvestBench"
+)
+
+func TestEveryPushPathChecksTheBranchPrefixAndResolvesItsDestination(t *testing.T) {
 	t.Parallel()
 
 	fset := token.NewFileSet()
@@ -97,13 +105,21 @@ func TestEveryPushPathChecksTheBranchPrefix(t *testing.T) {
 		t.Fatalf("this test found no guarded push site at all; the detector has stopped seeing them, which makes it worse than no test")
 	}
 
-	// THE ORIGIN RULE, BY NAME. The four functions the first walk names must each also
-	// call mustMatchCloneOrigin, so the repo destination is checked at every site the
-	// same way the branch is. This second check is explicit -- by function name through
-	// file.Decls -- and not through pushSiteIn's generic scan, because the origin guard
-	// deliberately does NOT reach inside the Forge adapter (DESIGN DEFAULT 2). Each
-	// missing call is its own failure.
-	originSites := map[string]bool{"push": false, "openPR": false, "one": false, "harvestBench": false}
+	// THE DESTINATION RULE, ENUMERATED (Johnny's HOLD of #1809 at 8bfa4020). The first
+	// cut of this section held a hardcoded list of four function names, which is a list
+	// and not a class: the guard it asked for was a veto that only fired when an origin
+	// resolved, and three of the four sites still formed their destination out of the
+	// worker's own RESULT.md. So this walk is generic. Every function the SAME detector
+	// finds -- every `git push`, `gh pr create`, `gh pr edit` and Forge.CreatePR in this
+	// package -- must call resolveDestination, and a fifth site fails on the commit that
+	// adds it.
+	//
+	// The one exception is the shipped Forge adapter: it is handed a repo and has no clone
+	// to resolve from, so it is named, and its callers are pinned to exactly one function
+	// which must itself resolve. That is the whole exception, and it is one line long.
+	resolves := map[string]bool{}
+	var unresolved []site
+	var forgeLeafCallers []string
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -118,21 +134,43 @@ func TestEveryPushPathChecksTheBranchPrefix(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			if _, want := originSites[fn.Name.Name]; !want {
+			if callsSelector(fn, theForgeLeaf) && fn.Name.Name != theForgeLeaf {
+				forgeLeafCallers = append(forgeLeafCallers, fn.Name.Name)
+			}
+			what, pos := pushSiteIn(fn)
+			if what == "" {
 				continue
 			}
-			originSites[fn.Name.Name] = true
-			if !callsGuard(fn, theOriginGuard) {
-				t.Errorf("PUSH-PATH %s %s: this pushes or opens a PR without calling %s (the repo destination must be checked against the job's own clone origin at every site)",
-					filepath.Join("internal/pulse", name)+":"+strconv.Itoa(fset.Position(fn.Pos()).Line),
-					fn.Name.Name, theOriginGuard)
+			if fn.Name.Name == theForgeLeaf {
+				// The adapter itself: named, and covered by its caller below.
+				continue
 			}
+			if callsGuard(fn, theResolver) {
+				resolves[fn.Name.Name] = true
+				continue
+			}
+			unresolved = append(unresolved, site{
+				where: filepath.Join("internal/pulse", name) + ":" + strconv.Itoa(fset.Position(pos).Line),
+				what:  fn.Name.Name + " -> " + what,
+			})
 		}
 	}
+	for _, u := range unresolved {
+		t.Errorf("PUSH-PATH %s %s: this reaches a forge without calling %s -- the push URL and the PR repo are the resolver's answer from the clone's own origin, never a destination taken off a RESULT.md (Johnny's HOLD of #1809)",
+			u.where, u.what, theResolver)
+	}
+	// The detector, again, by name: the five functions this package is known to publish
+	// from must each be seen resolving. A detector that has gone blind fails here rather
+	// than passing forever.
 	for _, want := range []string{"push", "openPR", "one", "harvestBench"} {
-		if !originSites[want] {
-			t.Errorf("the origin-guard check no longer sees %s() as a push path; it is one, and this test is now blind to it", want)
+		if !resolves[want] {
+			t.Errorf("%s() is a publish path in this package and this walk did not see it call %s; either it stopped resolving or the detector stopped seeing it", want, theResolver)
 		}
+	}
+	sort.Strings(forgeLeafCallers)
+	if len(forgeLeafCallers) != 1 || forgeLeafCallers[0] != theForgeLeafCaller {
+		t.Errorf("%s is called by %v; the destination is resolved in %s alone, so a new caller must resolve it too",
+			theForgeLeaf, forgeLeafCallers, theForgeLeafCaller)
 	}
 
 	t.Logf("PUSH-PATH OK sites=%d guarded=%d unguarded=%d", guarded+len(unguarded), guarded, len(unguarded))
@@ -184,8 +222,12 @@ func pushSiteIn(fn *ast.FuncDecl) (string, token.Pos) {
 				return true
 			}
 			args := literalArgs(call)
-			if args["gh"] && args["pr"] && args["create"] {
-				what, pos = "gh pr create", call.Pos()
+			if args["gh"] && args["pr"] && (args["create"] || args["edit"]) {
+				verb := "create"
+				if args["edit"] {
+					verb = "edit"
+				}
+				what, pos = "gh pr "+verb, call.Pos()
 				return false
 			}
 			return true
@@ -232,6 +274,24 @@ func callsGuard(fn *ast.FuncDecl, guard string) bool {
 			return true
 		}
 		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == guard {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// callsSelector reports whether this function calls a method of the given final name --
+// `forge.CreatePR(...)` -- which is how the Forge seam is reached.
+func callsSelector(fn *ast.FuncDecl, name string) bool {
+	found := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == name {
 			found = true
 			return false
 		}

@@ -479,7 +479,7 @@ func TestHarvestIDChecksThePulseTablesOwnContract(t *testing.T) {
 //
 // Johnny then held PR #1809 because the rule lived on the local Harvest() path alone:
 // `harvest --working` and `harvest --bench` still pushed past it. The class test
-// TestEveryPushPathChecksTheBranchPrefix enumerates the push sites; these are the
+// TestEveryPushPathChecksTheBranchPrefixAndResolvesItsDestination enumerates the push sites; these are the
 // behaviours, per path.
 // ============================================================================
 
@@ -544,6 +544,7 @@ func TestHarvestWorkingRefusesAnOffPrefixBranch(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/stella/z"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[]`},

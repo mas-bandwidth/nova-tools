@@ -94,6 +94,10 @@ func benchGit(t *testing.T, specs, arglog string, counts map[string]string) {
 	rules = append(rules,
 		fakeRule{Arg: 3, Equals: "rev-list", Stdout: "3"},
 		fakeRule{Arg: 3, Equals: "rev-parse", Stdout: "abc1234"},
+		// The clone's own origin, which is what these fixtures push and open PRs
+		// against now: the destination is resolved from git's record, never from the
+		// bench RESULT.md's REPO line (resolveDestination; Johnny's HOLD of #1809).
+		originRule("mas-bandwidth/nova-tools"),
 	)
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: rules})
 }

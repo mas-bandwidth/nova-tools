@@ -63,10 +63,24 @@ func queueCard(t *testing.T, root, label string) string {
 	return card
 }
 
-// fakeGit records every git invocation and succeeds; nothing here has a repository.
+// fakeGit records every git invocation and succeeds, and answers `remote get-url origin`
+// with the repository the fixtures' cards are all for.
+//
+// It used to answer NOTHING to that question, and the harvest pushed anyway -- which is the
+// defect Johnny held #1809 for, modelled in the fixture: a real job's clone always has an
+// origin, because a card that pushes is a card that cloned. A harvest whose destination
+// nothing but the worker's RESULT.md can name now refuses (resolveDestination,
+// HARVEST REFUSED repo-unknown), so a fixture with no origin tests the refusal and not the
+// push. Tests that want the refusal leave this rule out on purpose and say so.
 func fakeGit(t *testing.T, specs, arglog string) {
 	t.Helper()
-	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{originRule("owner/repo")}})
+}
+
+// originRule teaches a fake git to answer `git -C <dir> remote get-url origin` -- argument 3
+// is the verb -- with a repository, the way every clone a card made does.
+func originRule(repo string) fakeRule {
+	return fakeRule{Arg: 3, Equals: "remote", Stdout: "https://forge.invalid/" + repo + ".git"}
 }
 
 // fakeGH records every gh invocation, refuses `gh pr view` (no PR exists yet) and answers

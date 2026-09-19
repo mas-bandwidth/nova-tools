@@ -417,25 +417,29 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Err(err))
 		return
 	}
-	// The destination rule the same way: the repo this force-pushes is checked against
-	// the clone's own origin, never the worker's REPO claim alone.
-	if err := mustMatchCloneOrigin(card, cloneOrigin(dir), repo); err != nil {
+	// THE DESTINATION, resolved once and used by both the force-push and the PR-open
+	// below. The old `pushURL` of `repo`, and `gh pr create -R repo`, took the destination off
+	// the worker's RESULT.md, which is what Johnny held #1809 for -- and #1885 at
+	// 3fa6a99b is the same family on this same function. The manager's job directory is
+	// the card's own, so the card file is the launch record when git cannot answer.
+	dest, err := resolveDestination(card, dir, filepath.Join(m.in.Queue, "launched", card), repo)
+	if err != nil {
 		m.move(card, "failed")
 		m.event("%s", err)
 		return
 	}
-	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
+	if out, err := m.sh(dir, 120*time.Second, "git", "push", dest.url, "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return
 	}
-	pr := m.prNumber(repo, branch)
+	pr := m.prNumber(dest.repo, branch)
 	if pr == 0 {
 		title := oneline.Cap(strings.TrimSpace(firstNonEmpty(lines)), 110)
 		body := strings.Join(lines, "\n")
 		if len(body) > 4096 {
 			body = body[:4096]
 		}
-		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
+		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", dest.repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
 		if err != nil {
 			m.event("MANAGER NOTE pr failed card=%s: %s", oneline.Field(card), oneline.Cap(strings.TrimSpace(out), 120))
 			return
@@ -445,8 +449,8 @@ func (m *manager) openPR(card, job string, lines []string) {
 	m.move(card, "done")
 	m.prs++
 	m.decisions++
-	m.event("MANAGER PR repo=%s pr=%d card=%s branch=%s", oneline.Field(repo), pr, oneline.Field(card), oneline.Field(branch))
-	m.cutCard(Candidate{Source: repo, ID: fmt.Sprintf("%s#%d", repo, pr), Kind: "read", Title: fmt.Sprintf("read of %s PR%d and post the verdict line PR%d: APPROVE|HOLD head=<sha>", repo, pr, pr), Template: "read"}, 0)
+	m.event("MANAGER PR repo=%s pr=%d card=%s branch=%s", oneline.Field(dest.repo), pr, oneline.Field(card), oneline.Field(branch))
+	m.cutCard(Candidate{Source: dest.repo, ID: fmt.Sprintf("%s#%d", dest.repo, pr), Kind: "read", Title: fmt.Sprintf("read of %s PR%d and post the verdict line PR%d: APPROVE|HOLD head=<sha>", dest.repo, pr, pr), Template: "read"}, 0)
 }
 
 func (m *manager) prNumber(repo, branch string) int {
