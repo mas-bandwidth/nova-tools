@@ -205,7 +205,29 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// <job>/.lease carries this process's pid and a heartbeat for as long as the child runs,
 	// and the reaper never touches a leased job or the slot's data/ and tmp/ around it. It
 	// is released, and the file removed, when this run returns by any path.
-	releaseLease := swarm.StartJobLease(jobDir, cfg.label)
+	//
+	// AND IT IS THE JOB DIRECTORY'S OWNERSHIP (issue #1585). Two `native` runs were given
+	// one physical <slot>/jobs/<label>: the bench store gave each its own seat, but the job
+	// directory, the data home, the temp directory and the logs under it were ONE set of
+	// paths, and the first run to exit removed the other's lease. SPEC-SWARM settles
+	// whether that is lawful before any repair is designed: under **Slots** a worker has
+	// "its own data home" and "its own job directory" and "a slot is held by exactly one
+	// worker", and under **the races, taken out** two workers on one data home is the
+	// 2026-09-10 `database is locked` failure, closed on purpose. So the second run is
+	// REFUSED rather than made safe, and it is refused HERE -- the take is the first thing
+	// this verb does to the job directory that was not already there, and nothing of the
+	// holder's is touched on the way out.
+	releaseLease, err := swarm.StartJobLease(jobDir, cfg.label)
+	if err != nil {
+		if held, ok := swarm.HeldJobLease(err); ok {
+			refuseNative(errOut, fmt.Sprintf("the job directory %s is held by a live run: pid=%d host=%s label=%s started=%s; two runs in one job directory share one data home, one temp directory and one set of logs, and the first of them to end removes the other's lease -- give the second run a job directory of its own",
+				oneline.Field(jobDir), held.PID, oneline.Field(held.Host),
+				oneline.Field(held.Label), oneline.Field(held.Started)))
+			return nativeRunResult{}, 2
+		}
+		refuseNative(errOut, fmt.Sprintf("the job lease on %s could not be taken: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 	defer releaseLease()
 	dataHome := filepath.Join(cfg.slotDir, "data")
 	if err := os.MkdirAll(dataHome, 0o755); err != nil {
