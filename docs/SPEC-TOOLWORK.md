@@ -1,4 +1,4 @@
-# Mechanical tool work — specification (draft 5, 2026-09-19)
+# Mechanical tool work — specification (draft 6, 2026-09-19: five corrections the day measured)
 
 Glenn, 2026-09-19: *"I want to upgrade our tools so we can push more work to swarms
 mechanically."*
@@ -340,10 +340,16 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    changed file test green at head (`build`, `vet`, `red-at-head`, each with the first
    failing line that is not a notice). (d) **Negative control for the card**, for the kinds that declare the range form
    (§5): `nova-review mutate --repo <tree> --base <base> --head <head>` must print `PASS`.
-   A `MUTATE GREEN` line is `reason=vacuous-test at=<test>`: a test that is green
-   without the change it claims to cover proves nothing
-   (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection and not a reader's
-   finding. The card's named `TEST:` must be among the tests that went red
+   A `MUTATE GREEN` line **for a test the card wrote or changed** is
+   `reason=vacuous-test at=<test>`: a test that is green without the change it claims
+   to cover proves nothing (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection
+   and not a reader's finding. A pre-existing test the card did not touch is not
+   charged: `mutate` runs every `Test` in a changed file, so such a test is `MUTATE
+   GREEN` under the revert on every ordinary fix card, and the letter of draft 5
+   ("a `MUTATE GREEN` line is `vacuous-test`") rejected the known-good fix (measured
+   2026-09-19, gate lane PR #1721, negative control B: `vacuous-test at=TestSign` on the
+   fixture's untouched test; `TestAcceptDoesNotCallAPreExistingGreenVacuous` pins the
+   intent). The card's named `TEST:` must be among the tests that went red
    (`named-test-not-red`). (e) The kind's own control, where mutate's revert is not the
    right defect (§5: `transcript-test`, `mutation-kill`, `sweep`).
 5. **A red test is a finding, never a rerun.** `accept` runs each command once. A test
