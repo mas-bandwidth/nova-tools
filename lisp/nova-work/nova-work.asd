@@ -25,6 +25,7 @@
                (:file "src/session")
                (:file "src/state-export")
                (:file "src/verifier")
+               (:file "src/verification-cache-file")
                (:file "src/receipt-admission")
                (:file "src/needs")
                (:file "src/fleet")
