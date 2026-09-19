@@ -779,3 +779,69 @@ func TestStealAdvancesPastContinuouslyHeldCardLock(t *testing.T) {
 		t.Fatalf("victim queue = %v, want ['first'] preserved", cards)
 	}
 }
+
+// TestStealRefreshesCapacityBetweenTakes verifies Stella's regression witness:
+// with cards a, b, c, d at capacity 2, holding a.lock, launching steal in a goroutine,
+// concurrently renaming d into taken, and then releasing a.lock:
+// Steal must take only 'a' and leave 'b' and 'c' queued (2 queued cards, respecting capacity 2).
+func TestStealRefreshesCapacityBetweenTakes(t *testing.T) {
+	victim := t.TempDir()
+	plantCard(t, victim, "a")
+	plantCard(t, victim, "b")
+	plantCard(t, victim, "c")
+	plantCard(t, victim, "d")
+
+	taken := TakenDir(victim)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWait := cardLockWait
+	cardLockWait = 500 * time.Millisecond
+	t.Cleanup(func() { cardLockWait = origWait })
+
+	// Pre-lock 'a'
+	unlockA, err := takeCardLock(taken, "a", cardLockWait)
+	if err != nil {
+		t.Fatalf("takeCardLock for 'a' failed: %v", err)
+	}
+
+	type stealResult struct {
+		stolen []string
+		err    error
+	}
+	done := make(chan stealResult, 1)
+
+	go func() {
+		stolen, sErr := Steal(victim, "thief", 2)
+		done <- stealResult{stolen: stolen, err: sErr}
+	}()
+
+	// Small pause so steal starts and begins waiting on 'a' lock
+	time.Sleep(50 * time.Millisecond)
+
+	// Concurrently rename 'd' into taken/
+	queue := QueueDir(victim)
+	if err := os.Rename(filepath.Join(queue, "d"+CardExt), filepath.Join(taken, "other-d"+CardExt)); err != nil {
+		t.Fatalf("concurrent rename of d failed: %v", err)
+	}
+
+	// Release 'a' lock so steal can acquire 'a'
+	unlockA()
+
+	res := <-done
+	if res.err != nil {
+		t.Fatalf("Steal failed: %v", res.err)
+	}
+	if len(res.stolen) != 1 || res.stolen[0] != "a" {
+		t.Fatalf("Steal = %v, want ['a'] (capacity reduced by concurrent rename of d)", res.stolen)
+	}
+
+	cards, qErr := QueueCards(victim)
+	if qErr != nil {
+		t.Fatalf("QueueCards failed: %v", qErr)
+	}
+	if len(cards) != 2 || cards[0] != "b" || cards[1] != "c" {
+		t.Fatalf("remaining queue = %v, want ['b', 'c'] (exactly capacity 2 preserved)", cards)
+	}
+}

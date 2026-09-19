@@ -21,6 +21,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -546,8 +547,7 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 	if err != nil {
 		return stolen, err
 	}
-	toSteal := len(names) - capacity
-	if toSteal <= 0 {
+	if len(names) <= capacity {
 		return stolen, nil
 	}
 	if err := os.MkdirAll(taken, 0o755); err != nil {
@@ -555,9 +555,20 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 	}
 
 	for _, name := range names {
-		if len(stolen) >= toSteal {
+		// Re-check victim's current queue count before taking another card.
+		// A victim at or below its line is left alone (SPEC-JOBS: each card is
+		// counted before it is renamed, never emptying the victim below its line).
+		current, qErr := QueueCards(victimDir)
+		if qErr != nil {
+			return stolen, qErr
+		}
+		if len(current) <= capacity {
 			break
 		}
+		if !slices.Contains(current, name) {
+			continue // card was already taken concurrently
+		}
+
 		unlock, err := takeCardLock(taken, name, cardLockWait)
 		if err != nil {
 			if errors.Is(err, ErrCardLockTimeout) {
