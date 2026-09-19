@@ -126,6 +126,10 @@ var mergeAudit = audit.Config{
 		// notices it drops off the front of a failing step's output. Match and
 		// FindStringSubmatch are pure reads that return strings, and every one of them
 		// reaches a line through oneline.Escape or oneline.Field.
+		// sync holds no writer of its own: react.go's one use is a sync.Once that installs
+		// go-redis's logger once for the process (#1609), and quietRedis drops every line
+		// it is handed rather than writing one. It cannot write past the escape.
+		`"sync"`,
 		`"regexp"`,
 		// sort holds no writer of its own: queue.go uses it to put `queue status`'s
 		// skipped set in one deterministic order, so two reads of one file print the
