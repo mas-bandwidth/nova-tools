@@ -49,7 +49,7 @@ usage:
     or located rather than extensioned (Makefile, .github/workflows/). The
     --deny-ext flags govern the EXTENSION list only; --allow is the escape
     for the name floor, and names where machinery may live.
-  nova-check floors --core <SEED-CORE.md> --source <SEED.md>
+  nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
                                                      the door's floor set matches the seed's
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
@@ -78,7 +78,7 @@ exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 example:
   nova-check quickstart --dir ./self
   nova-check attest --home ./self --manifest ./self/MANIFEST
-  nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
+  nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
   nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
   nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 
