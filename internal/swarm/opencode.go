@@ -148,16 +148,38 @@ func findOpenCodeStore(dataHome string) (string, error) {
 // present and `sqlite3 -readonly` answers `database is locked`; recording a dash for that
 // window loses tokens the harness really spent.
 func queryOpenCodeWaiting(path string) ([][]string, error) {
-	deadline := time.Now().Add(usageSettleWait)
+	return walWait{
+		settle: usageSettleWait,
+		pause:  usageSettlePause,
+		query:  queryOpenCode,
+		now:    time.Now,
+		sleep:  time.Sleep,
+	}.read(path)
+}
+
+// walWait is that retry with its clock and its read named, so the waiting itself can be
+// held by a test that turns on no clock of its own and starts no process.
+type walWait struct {
+	settle time.Duration
+	pause  time.Duration
+	query  func(string) ([][]string, error)
+	now    func() time.Time
+	sleep  func(time.Duration)
+}
+
+// read takes one reading and, while the refusal came with a -wal still beside the
+// database, waits for the writer to checkpoint it.
+func (w walWait) read(path string) ([][]string, error) {
+	deadline := w.now().Add(w.settle)
 	for {
-		rows, err := queryOpenCode(path)
+		rows, err := w.query(path)
 		if err == nil {
 			return rows, nil
 		}
-		if !walPending(path) || !time.Now().Before(deadline) {
+		if !walPending(path) || !w.now().Before(deadline) {
 			return nil, err
 		}
-		time.Sleep(usageSettlePause)
+		w.sleep(w.pause)
 	}
 }
 
