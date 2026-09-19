@@ -3,6 +3,7 @@ package ci
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -43,6 +44,14 @@ type verbEntry struct {
 	Description   string   `json:"description"`
 	OrderedFields []string `json:"ordered_fields"`
 	GrammarLine   string   `json:"grammar_line"`
+
+	// The dependency gate's three marks (nova-tools #785, SPEC-WORK.md:4878).
+	// NeedsGate is "refuses", "withholds" or "exempt"; NeedsGateForms lists the
+	// gated forms by the flag that selects each, and a verb whose every form is
+	// gated omits the list; NeedsGateReason is required of "exempt".
+	NeedsGate       string   `json:"needs_gate"`
+	NeedsGateForms  []string `json:"needs_gate_forms"`
+	NeedsGateReason string   `json:"needs_gate_reason"`
 }
 
 type missingVerbEntry struct {
@@ -55,6 +64,12 @@ type missingVerbEntry struct {
 	Rationale     string   `json:"rationale"`
 	OrderedFields []string `json:"ordered_fields"`
 	GrammarLine   string   `json:"grammar_line"`
+
+	// A missing verb carries the same three marks a built one does: it can name
+	// an admitting event kind, and the coverage rule reads both lists.
+	NeedsGate       string   `json:"needs_gate"`
+	NeedsGateForms  []string `json:"needs_gate_forms"`
+	NeedsGateReason string   `json:"needs_gate_reason"`
 }
 
 type coordinatorDomain struct {
@@ -605,5 +620,428 @@ func TestJSONRequestFrameParsing(t *testing.T) {
 	}
 	if len(parsed.Args) == 0 {
 		t.Errorf("parsed.Args is empty")
+	}
+}
+
+// --------------------------------------------------------------------------
+// The dependency gate's coverage test (nova-tools #785).
+//
+// Replay a-verb-that-can-admit-declares-its-needs-gate, docs/SPEC-WORK.md:6942.
+// Rule 3 (SPEC-WORK.md:4878): "A later verb is caught by an instrument and not
+// by a promise": the one generated schema file names every verb's event kinds,
+// and its coverage test holds the closed list of admitting kinds and fails on
+// any verb able to write one, in its own envelope or in one it derives, whose
+// entry carries none of three marks.
+//
+//	needs-gate: refuses    the verb answers an unmet need with its FAIL line
+//	                       and writes nothing
+//	needs-gate: withholds  the verb is admitted and records what it records but
+//	                       creates no lease, allocation or transition while a
+//	                       need is unmet -- `execution reconcile` and no other
+//	                       verb today, since `refuses` would be false of it: a
+//	                       reconcile over an unmet need exits 0
+//	needs-gate: exempt     with its reason
+//
+// "The mark is per verb and the gate is per form, so the entry names its gated
+// forms": needs_gate_forms lists them by the flag that selects each, and a verb
+// whose every form is gated omits the list.
+// --------------------------------------------------------------------------
+
+// admittingEventKinds is the closed list, in this schema's own spelling of the
+// kinds. The spec names `:lease`, `:handoff`, `:reassign`, `:offer`,
+// `:acknowledge`, the allocation, `:packet` and a `:transition` that can carry
+// `:to :doing`; this schema writes the lease, handoff and allocation kinds as
+// `:assignment`, and has no entry for `reassign` or `task packet` at all --
+// see TestRule3VerbsWithoutASchemaEntryAreNamed below.
+var admittingEventKinds = map[string]bool{
+	// The spec's closed list of admitting kinds (SPEC-WORK.md:4880), named
+	// literally. Stella's [P2] on 3967655e: the first cut listed only the kinds
+	// the SHIPPED file happens to use, so a schema carrying an unmarked verb of
+	// kind :lease, :handoff, :reassign, :allocation or :packet passed the
+	// coverage test. The closed list is the closed list.
+	":lease":       true,
+	":handoff":     true,
+	":reassign":    true,
+	":offer":       true,
+	":acknowledge": true,
+	":allocation":  true,
+	":packet":      true,
+	":transition":  true,
+
+	// This schema's own spellings of the same effects. It has no `:lease` kind:
+	// `take`, `release`, `heartbeat`, `attempt` and `responsible` all carry
+	// `:assignment`, which is where a lease, a handoff and an allocation are
+	// written. `:undo` and `:redo` carry the compensating take and the
+	// compensating `state --to doing` rule 3 names.
+	":assignment": true,
+	":undo":       true,
+	":redo":       true,
+}
+
+// canonicalAdmittingKinds is the spec's closed list on its own, so a fixture
+// can be built per kind and the shipped file can be checked to use only
+// spellings this test knows.
+var canonicalAdmittingKinds = []string{
+	":lease", ":handoff", ":reassign", ":offer", ":acknowledge",
+	":allocation", ":packet", ":transition",
+}
+
+// rule3Marks is rule 3's own list of admission verbs, as this schema spells
+// them, with the mark each must carry. `execution reconcile` alone is
+// `withholds`.
+var rule3Marks = map[string]string{
+	"take":                "refuses",
+	"release":             "refuses",
+	"offer":               "refuses",
+	"acknowledge":         "refuses",
+	"state":               "refuses",
+	"goal update":         "refuses",
+	"undo":                "refuses",
+	"redo":                "refuses",
+	"execution reconcile": "withholds",
+}
+
+// rule3Forms is the gated form each verb's entry must name, by the flag that
+// selects it (SPEC-WORK.md:4885). A verb absent from this map has every form
+// gated and omits the list.
+var rule3Forms = map[string]string{
+	"release":     "--handed",
+	"acknowledge": "--stage accepted",
+	"state":       "--to doing",
+	"goal update": "--progress",
+}
+
+func validNeedsGate(mark string) bool {
+	return mark == "refuses" || mark == "withholds" || mark == "exempt"
+}
+
+// checkNeedsGateCoverage is the coverage rule itself, run over any schema so
+// the fixture cases of the replay can exercise it. It returns one finding per
+// offending verb, each naming the verb.
+// missingVerbAsEntry reads a `missing_verbs` row as a verb entry, so the one
+// coverage rule can be run over both lists.
+//
+// The stand-in's low finding on 82421311: `checkNeedsGateCoverage` and
+// `TestShippedSchemaUsesOnlyKnownEventKinds` iterated `ws.Verbs` ONLY, so
+// flipping an EXISTING `missing_verbs` entry's `event_kind` to `":lease"` with
+// no `needs_gate` left `./internal/ci` green. A missing verb with an admitting
+// kind is exactly the "later verb" rule 3 wants caught (SPEC-WORK.md:4878);
+// that it is not built yet is what its `status` says, not a reason to skip it.
+func missingVerbAsEntry(m missingVerbEntry) verbEntry {
+	return verbEntry{
+		Verb:            m.Verb,
+		Op:              m.Op,
+		EventKind:       m.EventKind,
+		Mutating:        true,
+		NeedsGate:       m.NeedsGate,
+		NeedsGateForms:  m.NeedsGateForms,
+		NeedsGateReason: m.NeedsGateReason,
+	}
+}
+
+// schemaVerbEntries is every entry the coverage rule reads: the built verbs and
+// the missing-verb register, which carry event kinds too.
+func schemaVerbEntries(ws workSchema) []verbEntry {
+	entries := append([]verbEntry{}, ws.Verbs...)
+	for _, m := range ws.MissingVerbs {
+		entries = append(entries, missingVerbAsEntry(m))
+	}
+	return entries
+}
+
+func checkNeedsGateCoverage(ws workSchema) []string {
+	var findings []string
+	for _, v := range schemaVerbEntries(ws) {
+		kind := ""
+		if v.EventKind != nil {
+			kind = *v.EventKind
+		}
+		admitting := admittingEventKinds[kind]
+		_, inRule3 := rule3Marks[v.Verb]
+		if !admitting && !inRule3 {
+			continue
+		}
+		if v.NeedsGate == "" {
+			findings = append(findings, fmt.Sprintf(
+				"%s can write the admitting kind %s and carries no needs-gate mark", v.Verb, kind))
+			continue
+		}
+		if !validNeedsGate(v.NeedsGate) {
+			findings = append(findings, fmt.Sprintf(
+				"%s carries needs-gate %q, which is not one of refuses, withholds, exempt",
+				v.Verb, v.NeedsGate))
+			continue
+		}
+		if v.NeedsGate == "exempt" && strings.TrimSpace(v.NeedsGateReason) == "" {
+			findings = append(findings, fmt.Sprintf(
+				"%s is marked needs-gate: exempt with no reason", v.Verb))
+		}
+		if want, ok := rule3Marks[v.Verb]; ok && v.NeedsGate != want {
+			findings = append(findings, fmt.Sprintf(
+				"%s is a rule 3 admission verb and must be marked %q, not %q",
+				v.Verb, want, v.NeedsGate))
+		}
+		if form, ok := rule3Forms[v.Verb]; ok {
+			found := false
+			for _, f := range v.NeedsGateForms {
+				if f == form {
+					found = true
+					break
+				}
+			}
+			if !found {
+				findings = append(findings, fmt.Sprintf(
+					"%s is gated per form and its needs-gate-forms omits %q", v.Verb, form))
+			}
+		}
+	}
+	return findings
+}
+
+// TestAVerbThatCanAdmitDeclaresItsNeedsGate is the fixture half of the replay:
+// the coverage rule itself, exercised over schemas built for the purpose.
+func TestAVerbThatCanAdmitDeclaresItsNeedsGate(t *testing.T) {
+	assignment := ":assignment"
+	acknowledge := ":acknowledge"
+
+	fixture := func(entries ...verbEntry) workSchema {
+		return workSchema{Verbs: entries}
+	}
+
+	// a verb entry whose event kinds include the lease kind and which carries
+	// no needs-gate fails the test naming the verb
+	findings := checkNeedsGateCoverage(fixture(verbEntry{
+		Verb: "hypothetical-take", Op: "hypothetical-take", EventKind: &assignment, Mutating: true,
+	}))
+	if len(findings) != 1 {
+		t.Fatalf("an unmarked admitting verb must produce exactly one finding, got %v", findings)
+	}
+	if !strings.Contains(findings[0], "hypothetical-take") {
+		t.Fatalf("the finding must name the verb, got %q", findings[0])
+	}
+
+	// the same entry with needs-gate: refuses passes
+	findings = checkNeedsGateCoverage(fixture(verbEntry{
+		Verb: "hypothetical-take", Op: "hypothetical-take", EventKind: &assignment, Mutating: true,
+		NeedsGate: "refuses",
+	}))
+	if len(findings) != 0 {
+		t.Fatalf("a marked admitting verb must pass, got %v", findings)
+	}
+
+	// needs-gate: exempt with no reason fails
+	findings = checkNeedsGateCoverage(fixture(verbEntry{
+		Verb: "hypothetical-heartbeat", Op: "hypothetical-heartbeat", EventKind: &assignment,
+		Mutating: true, NeedsGate: "exempt",
+	}))
+	if len(findings) != 1 || !strings.Contains(findings[0], "exempt with no reason") {
+		t.Fatalf("exempt with no reason must fail by name, got %v", findings)
+	}
+
+	// an acknowledge entry marked refuses whose needs-gate-forms omits
+	// "--stage accepted" fails
+	findings = checkNeedsGateCoverage(fixture(verbEntry{
+		Verb: "acknowledge", Op: "acknowledge", EventKind: &acknowledge, Mutating: true,
+		NeedsGate: "refuses", NeedsGateForms: []string{"--stage declined"},
+	}))
+	if len(findings) != 1 || !strings.Contains(findings[0], "--stage accepted") {
+		t.Fatalf("a missing gated form must fail by name, got %v", findings)
+	}
+
+	// and it passes once the form is named
+	findings = checkNeedsGateCoverage(fixture(verbEntry{
+		Verb: "acknowledge", Op: "acknowledge", EventKind: &acknowledge, Mutating: true,
+		NeedsGate: "refuses", NeedsGateForms: []string{"--stage accepted"},
+	}))
+	if len(findings) != 0 {
+		t.Fatalf("a correctly marked acknowledge must pass, got %v", findings)
+	}
+}
+
+// TestShippedSchemaDeclaresEveryNeedsGate is the shipped half: the file in the
+// repository passes the same rule, with every verb of rule 3's list marked
+// refuses and execution reconcile alone marked withholds.
+func TestShippedSchemaDeclaresEveryNeedsGate(t *testing.T) {
+	ws := loadWorkSchema(t)
+	if findings := checkNeedsGateCoverage(ws); len(findings) != 0 {
+		for _, f := range findings {
+			t.Errorf("needs-gate coverage: %s", f)
+		}
+	}
+
+	byVerb := map[string]verbEntry{}
+	for _, v := range ws.Verbs {
+		byVerb[v.Verb] = v
+	}
+	// Both lists. `withholds` is reconcile and no other verb today -- `refuses`
+	// would be false of it, since a reconcile over an unmet need exits 0 -- and
+	// the missing-verb register carries the same verb under its short spelling,
+	// folded into the built one, so the two must agree.
+	withholds := map[string]bool{}
+	for _, v := range schemaVerbEntries(ws) {
+		if v.NeedsGate == "withholds" {
+			withholds[v.Verb] = true
+		}
+	}
+	for name := range withholds {
+		if name != "execution reconcile" && name != "reconcile" {
+			t.Errorf("only reconcile may be marked withholds today; %s is too", name)
+		}
+	}
+	if !withholds["execution reconcile"] {
+		t.Errorf("the built execution reconcile must be marked withholds")
+	}
+	for verb, want := range rule3Marks {
+		entry, ok := byVerb[verb]
+		if !ok {
+			t.Errorf("rule 3 names %q and the schema has no entry for it", verb)
+			continue
+		}
+		if entry.NeedsGate != want {
+			t.Errorf("%s: needs-gate is %q, want %q", verb, entry.NeedsGate, want)
+		}
+	}
+}
+
+// TestRule3VerbsWithoutASchemaEntryAreNamed keeps the two admission verbs rule
+// 3 names and this schema does not carry from being forgotten. `reassign` has
+// no line in Output grammar yet (SPEC-WORK.md:4911) and `task packet` is the
+// packet verb of a section this schema predates; neither has an entry, so
+// neither can carry a mark, and the coverage rule cannot see them. This test is
+// the register that says so, and it fails the day an entry appears unmarked --
+// which is the coverage rule's job from then on.
+func TestRule3VerbsWithoutASchemaEntryAreNamed(t *testing.T) {
+	ws := loadWorkSchema(t)
+	byVerb := map[string]bool{}
+	for _, v := range ws.Verbs {
+		byVerb[v.Verb] = true
+	}
+	for _, verb := range []string{"reassign", "task packet"} {
+		if byVerb[verb] {
+			t.Errorf("%s now has a schema entry: add it to rule3Marks and rule3Forms", verb)
+		}
+	}
+}
+
+// TestEveryCanonicalAdmittingKindIsCovered is Stella's [P2] on 3967655e made
+// into a test. She mutated the shipped schema with one unmarked hypothetical
+// verb of each canonical admitting kind and TestShippedSchemaDeclaresEveryNeedsGate
+// still passed, because the kind list held only the spellings the shipped file
+// happens to use. One negative fixture per kind, so the list cannot quietly
+// shrink again.
+func TestEveryCanonicalAdmittingKindIsCovered(t *testing.T) {
+	for _, kind := range canonicalAdmittingKinds {
+		k := kind
+		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
+			if !admittingEventKinds[k] {
+				t.Fatalf("%s is a canonical admitting kind and the coverage rule does not know it", k)
+			}
+			verb := "hypothetical-" + strings.TrimPrefix(k, ":")
+			findings := checkNeedsGateCoverage(workSchema{Verbs: []verbEntry{{
+				Verb: verb, Op: verb, EventKind: &k, Mutating: true,
+			}}})
+			if len(findings) != 1 {
+				t.Fatalf("an unmarked %s verb must produce one finding, got %v", k, findings)
+			}
+			if !strings.Contains(findings[0], verb) {
+				t.Fatalf("the finding must name the verb, got %q", findings[0])
+			}
+			findings = checkNeedsGateCoverage(workSchema{Verbs: []verbEntry{{
+				Verb: verb, Op: verb, EventKind: &k, Mutating: true,
+				NeedsGate: "refuses",
+			}}})
+			if len(findings) != 0 {
+				t.Fatalf("a marked %s verb must pass, got %v", k, findings)
+			}
+		})
+	}
+}
+
+// TestShippedSchemaSurvivesAnInjectedUnmarkedVerb is the mutation Stella ran,
+// as a test: the shipped file plus one unmarked hypothetical verb of each
+// canonical admitting kind must FAIL the coverage rule. The first cut passed.
+func TestShippedSchemaSurvivesAnInjectedUnmarkedVerb(t *testing.T) {
+	ws := loadWorkSchema(t)
+	for _, kind := range canonicalAdmittingKinds {
+		k := kind
+		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
+			verb := "injected-" + strings.TrimPrefix(k, ":")
+			mutated := workSchema{Verbs: append(append([]verbEntry{}, ws.Verbs...), verbEntry{
+				Verb: verb, Op: verb, EventKind: &k, Mutating: true,
+			})}
+			named := false
+			for _, f := range checkNeedsGateCoverage(mutated) {
+				if strings.Contains(f, verb) {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("an unmarked %s verb injected into the shipped schema must be found", k)
+			}
+		})
+	}
+}
+
+// TestShippedSchemaUsesOnlyKnownEventKinds keeps the kind list honest from the
+// other side: a verb entry whose event kind this test has never heard of is a
+// verb the coverage rule silently ignores.
+func TestShippedSchemaUsesOnlyKnownEventKinds(t *testing.T) {
+	ws := loadWorkSchema(t)
+	// Kinds the shipped file uses that are deliberately NOT admitting, listed
+	// so a NEW kind appearing forces a decision rather than being ignored.
+	nonAdmitting := map[string]bool{
+		":machine": true, ":structure": true, ":scope": true, ":evidence": true,
+		":execution-control": true, ":decline": true, ":prioritise": true,
+		":goal": true, ":friend": true, ":model": true, ":observe": true,
+		":config": true, ":route": true, ":report": true, ":dep": true,
+	}
+	// Both lists: a `missing_verbs` row carries an event kind too, and one with
+	// an admitting kind is exactly the later verb rule 3 wants caught.
+	for _, v := range schemaVerbEntries(ws) {
+		if v.EventKind == nil {
+			continue
+		}
+		k := *v.EventKind
+		if !admittingEventKinds[k] && !nonAdmitting[k] {
+			t.Errorf("%s carries event kind %s, which this coverage test has never heard of: decide whether it admits", v.Verb, k)
+		}
+	}
+}
+
+// TestAMissingVerbWithAnAdmittingKindIsCaught is the stand-in's low finding on
+// 82421311, as a test. Flipping an EXISTING `missing_verbs` entry's event kind
+// to an admitting one, with no `needs_gate`, left `./internal/ci` green,
+// because both loops read `ws.Verbs` only.
+func TestAMissingVerbWithAnAdmittingKindIsCaught(t *testing.T) {
+	ws := loadWorkSchema(t)
+	if len(ws.MissingVerbs) == 0 {
+		t.Fatal("the shipped schema has no missing_verbs to mutate")
+	}
+	for _, kind := range canonicalAdmittingKinds {
+		k := kind
+		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
+			// the shipped file, with ONE existing missing verb flipped to an
+			// admitting kind and left unmarked
+			mutated := workSchema{Verbs: ws.Verbs}
+			mutated.MissingVerbs = append([]missingVerbEntry{}, ws.MissingVerbs...)
+			mutated.MissingVerbs[0].EventKind = &k
+			mutated.MissingVerbs[0].NeedsGate = ""
+			named := false
+			for _, f := range checkNeedsGateCoverage(mutated) {
+				if strings.Contains(f, mutated.MissingVerbs[0].Verb) {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("a missing verb flipped to %s and left unmarked must be found", k)
+			}
+			// and marking it clears the finding
+			mutated.MissingVerbs[0].NeedsGate = "refuses"
+			for _, f := range checkNeedsGateCoverage(mutated) {
+				if strings.Contains(f, mutated.MissingVerbs[0].Verb) {
+					t.Errorf("a marked missing verb must pass, got %q", f)
+				}
+			}
+		})
 	}
 }
