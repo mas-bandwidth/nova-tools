@@ -54,7 +54,7 @@ usage:
 
   nova-decide log --log <path> --summary [--registry <path>]
 
-  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked
+  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
                      (what HAPPENED to a unit a decision routed; the kind and
                       the rung are read from that decision, never retyped)
 
@@ -127,7 +127,8 @@ opaque ids rather than any mind's name.
                       timeout-terminated | abandoned. A bare timeout is a
                       silence; timeout-terminated is the proof it is dead
   --touches <t>       guard | secrets | sandbox | sudo | deploy-keys | network
-  --summary           (log) escalations per kind and the regenerated start rung
+  --summary           (log) escalations per kind, the regenerated start rung, and
+                      coverage=<outcomes>/<decisions> on the closing line
 
 Accounting is not optional. Token spend reporting is an obligation and every
 decision is logged, so a route that will call the provider is refused unless it

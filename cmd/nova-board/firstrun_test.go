@@ -184,23 +184,35 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 	}
 }
 
-// (c) The transcript in TESTS.md, checked against the tool. The commands in it are RUN
-// against the fixture, and each command's block is compared with what that command printed
-// AS A SEQUENCE: the same event lines, in the same order, and the same number of them.
-// Numbers, paths and tails are a run's own business and are deliberately NOT compared:
-// pinning those would make the document a fixture.
+// The `### First run` transcript of docs/TESTS.md is EXECUTED: every documented command is
+// run, in order, against one board, and its whole output is compared with the block written
+// under it -- same number of lines, same lines, same order.
 //
-// IT USED TO BE A SET, and that is why this comment is long. Every transcript line had to
-// be a shape the tool printed SOMEWHERE in that command's output — a weaker promise than it
-// reads as, and one an ABRIDGED transcript satisfies perfectly. `list --max 2` prints two
-// BOARD CARD lines, two BOARD LINE lines and two BOARD LEG lines; the document showed one
-// of each; this test was green while the document contradicted its own
-// `BOARD MORE kind=card shown=2` on the very next line. The two-bench dogfood run of
-// 2026-09-19 compared line for line, read it as a tool defect on one bench, and missed it
-// on the other (nova-tools#1547). A reader runs the command and reads DOWN THE SCREEN, so
-// order and completeness are half of what a transcript promises.
-func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
+// WHAT THIS REPLACES, AND WHAT IT KEEPS. The walk was already ORDERED and already counted
+// its steps, and both are kept: those were bought by `nova-board list --max 2`, which prints
+// two BOARD CARD lines, two BOARD LINE lines and two BOARD LEG lines while the document
+// showed one of each, so this test was green while the document contradicted its own
+// `BOARD MORE kind=card shown=2` on the very next line (nova-tools#1547). What it did NOT
+// compare was the VALUES: it reduced both sides to onboarding.Shape, so
+// `BOARD OK cards=5 open=4 ...` and `BOARD OK cards=0 open=0 ...` were the same line, and a
+// board that had stopped reading its own cards read as green.
+//
+// NOTHING IS NORMALISED, AND THE CLOCK IS WHY. `age=` and `taken=` are wall-clock arithmetic
+// against the fixture's own `since=`, so under the real clock they change every second and
+// no transcript could ever have pinned them. This binary takes its clock as an argument, so
+// the test hands it the instant the block was recorded at -- `since=2026-09-10T11:00:00Z`
+// plus the `age=208h11m4s` the document shows -- and every value on every line reproduces.
+//
+// The board is typed as written: `./board` is what a reader types and what the tool PRINTS
+// BACK on `source=`, so the fixture is copied to that name in a directory of the test's own
+// rather than the path being rewritten, which is what `localize` did and why the old
+// comparison could not have compared `source=./board` at all.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs(exampleBoard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,64 +220,79 @@ func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	var command string
-	var want, got []string
-	seen := map[string]int{}
-	ran := 0
-	compare := func() {
-		if command == "" {
-			return
-		}
-		ran++
-		for i := 0; i < len(want) || i < len(got); i++ {
-			switch {
-			case i >= len(want):
-				t.Errorf("%q printed a line docs/TESTS.md does not show, at position %d:\n  %s\nThe document abridges what the tool said. Re-run the command and paste ALL of it.", command, i+1, got[i])
-			case i >= len(got):
-				t.Errorf("%q printed only %d lines and docs/TESTS.md shows %d; the document's line %d, %q, was never printed.", command, len(got), len(want), i+1, want[i])
-			case want[i] != got[i]:
-				t.Errorf("docs/TESTS.md line %d under %q has shape\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.", i+1, command, want[i], got[i])
-			}
-		}
-		for _, s := range want {
-			seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	steps, err := onboarding.Steps("nova-board", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-board command; this test would pass by running nothing")
+	}
+	// Deleting a whole `$ ` step deletes BOTH sides of the comparison, so no per-line
+	// walk can notice. The sitting is the three verbs a first run has.
+	verbs := map[string]bool{}
+	for _, s := range steps {
+		verbs[s.Args[0]] = true
+	}
+	for _, verb := range []string{"quickstart", "check", "list"} {
+		if !verbs[verb] {
+			t.Errorf("the `### First run` block never runs `nova-board %s`; the first sitting is all three", verb)
 		}
 	}
 
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-board "); ok {
-			compare()
-			exit, stdout, stderr := runFixture(t, strings.Fields(cmd)...)
-			if exit == 2 {
-				t.Fatalf("the transcript command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			command, want, got = line, nil, shapesOf(stdout)
+	dir := t.TempDir()
+	copyTree(t, fixture, filepath.Join(dir, "board"))
+	t.Chdir(dir)
+	for _, p := range onboarding.Execute(steps, documentedBoard) {
+		t.Error(p)
+	}
+}
+
+// transcriptNow is the instant the `### First run` block was recorded at: the fixture's
+// oldest card is `since=2026-09-10T11:00:00Z` and the document shows `age=208h11m4s`
+// against it. It is spelled here rather than parsed out of the document, because a test
+// that read its own expected value from the file it is checking would agree with anything.
+var transcriptNow = time.Date(2026, 9, 10, 11, 0, 0, 0, time.UTC).Add(208*time.Hour + 11*time.Minute + 4*time.Second)
+
+// documentedBoard runs one line of the transcript on that clock, with the deterministic
+// id source every other test in this package uses.
+func documentedBoard(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
+	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, &out, &errb, transcriptNow, &seq{})
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-board reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}
+
+// copyTree copies the fixture board to where the transcript says it is.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			copyTree(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
 			continue
 		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
+		body, err := os.ReadFile(filepath.Join(from, e.Name()))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if command == "" {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		want = append(want, s)
-	}
-	compare()
-
-	if ran == 0 {
-		t.Fatal("the `### First run` block holds no nova-board command; this test passed by running nothing")
-	}
-	// The counts stay although the walk above is now complete, and they guard a
-	// different thing: deleting a whole `$ ` step from the document deletes BOTH
-	// sides of the comparison, so an ordered walk cannot notice. These numbers can
-	// only be satisfied by the steps being there.
-	for prefix, want := range map[string]int{
-		"QUICKSTART OK": 1, "BOARD NEXT": 2, "BOARD OK": 2, "CHECK OK": 1, "CHECK HIT": 1, "BOARD LEG": 4,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("the TESTS.md First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

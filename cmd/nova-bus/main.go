@@ -1553,7 +1553,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 	code, r := inboxListing(o, stdout, stderr, now)
-	if code != 0 || !o.advance || (o.bodies && r.AdvanceTo == "") {
+	// r.Bounded is the listing that did not run: the since-walk stopped at --max-commits,
+	// the remedy is already on stderr, and there is nothing read for a cursor to stand on.
+	if code != 0 || r.Bounded || !o.advance || (o.bodies && r.AdvanceTo == "") {
 		return code
 	}
 	if o.bodies {
@@ -1634,6 +1636,13 @@ type inboxReading struct {
 	Legacy bus.LegacyLine
 	// Cursor is the commit this run read from, and "" for a full read.
 	Cursor string
+	// Bounded says the since-walk STOPPED at --max-commits and this listing read nothing:
+	// the run printed one INBOX WALK bounded line with the remedy and exited 0. It is on
+	// the reading rather than in the exit code because "nothing to report" and "I did not
+	// look" are the same 0 to a shell and must not be the same thing to a caller holding
+	// --advance: a cursor moved over a walk nobody made takes every note behind the bound
+	// as read.
+	Bounded bool
 	// Full says the run walked the whole bus.
 	Full bool
 	// SwitchDay says this listing PRINTED the INBOX SWITCH line: the reader's cursor
@@ -1781,6 +1790,20 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			}
 			if over {
 				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
+				// THE BOUND ENDS THE RUN, AND THAT INCLUDES THE ADVANCE. This is the one
+				// exit-0 way out of a listing that did not run, and the caller reads exit 0
+				// plus --advance as "the listing is done, move the cursor". It used to hand
+				// back the ZERO reading -- Me is resolved onto it at the END of a listing
+				// that finished -- so the advance ran with an EMPTY LANE, wrote CURSOR at
+				// the checkout ROOT, and left it there for every later run on that bus to
+				// refuse over until a human deleted it.
+				//
+				// Both halves are named here: who the reader is, so nothing downstream is
+				// guessing, and Bounded, which is the caller's instruction not to advance. A
+				// walk that read NOTHING has no claim to make -- advancing over it would take
+				// every unread note behind the bound as read, which is the one outcome the
+				// bound exists to prevent.
+				r.Me, r.Bounded = me, true
 				return 0, r
 			}
 			var walk *walkProgress
@@ -2231,6 +2254,28 @@ func legacyToken(l bus.LegacyLine) string {
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
 func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+	// NO LANE, NO WRITE, AND NOTHING TOUCHED. Every state path this function builds is
+	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
+	// paths that land at the checkout ROOT and that git refuses to stage as outside the
+	// repository. That is how the 2026-09-19 break ended: the cursor was written at the
+	// root, the staging failed, and the stray file refused every later run on the bus.
+	//
+	// A lane-less reader is a shape the roster can hold -- a participant with no lane of
+	// their own is listed so they can be addressed -- so this is a refusal and not a
+	// panic, and it comes FIRST, before the checkout is read or a byte is written. The
+	// cost of the old order was never the exit code; it was the file left behind.
+	if me.Lane == "" {
+		// A reader who reached here with no name either is not on the roster at all or was
+		// never resolved against it, and "" has no lane on this bus is a line nobody can act
+		// on. The refusal says which reader it is when it knows and says so plainly when it
+		// does not.
+		who := me.Name
+		if who == "" {
+			who = "this reader"
+		}
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s has no lane on this bus, so there is nowhere to write a cursor\n", oneline.Field(who))
+		return 1
+	}
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane), bus.BeatPath(me.Lane)}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
@@ -3350,6 +3395,13 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	code, r := inboxListing(o, &buf, stderr, now)
 	if code != 0 {
 		return code, r, buf.String(), false
+	}
+	// A poll whose since-walk hit the bound read nothing, so it has neither news to return
+	// on nor a read to advance over. `wait` refuses a cursor already past the bound before
+	// it blocks (WAIT BLIND, #1518); this is the same state arriving mid-wait, when the bus
+	// moves past the bound while the wait is standing there.
+	if r.Bounded {
+		return 0, r, "", false
 	}
 	if !keep(r) {
 		return 0, r, "", false
