@@ -41,9 +41,10 @@ import "strings"
 // doing while it does it. They are written on stderr ONLY, they are not
 // protocol, and a consumer that parses nova-bus's output drops them.
 //
-// Each entry is matched as a whole-token prefix, so "INBOX WALK" covers both
-// `INBOX WALK commits=...` and `INBOX WALK bounded commits=...` and does not
-// cover a hypothetical `INBOX WALKER`.
+// Each entry is matched as a whole-token prefix, so "INBOX WALK" covers
+// `INBOX WALK commits=...` and does not cover a hypothetical `INBOX WALKER`.
+// The bounded walk is no longer progress: it is the event line `INBOX BOUNDED`
+// below, printed on stdout, and it is not matched here.
 var ProgressPrefixes = []string{
 	"INBOX WALK",
 }
@@ -61,7 +62,7 @@ var ProtocolPrefixes = []string{
 	"BUS INDEX", "BUS OK", "BUS SCOPE", "BUS WARN",
 	"CLOSE OK",
 	"DRAFT OK",
-	"INBOX BODIES", "INBOX BODY", "INBOX CURSOR", "INBOX HEARD", "INBOX LEGACY",
+	"INBOX BODIES", "INBOX BODY", "INBOX BOUNDED", "INBOX CURSOR", "INBOX HEARD", "INBOX LEGACY",
 	"INBOX NOTE", "INBOX OK", "INBOX OPEN", "INBOX RECEIPT", "INBOX SCOPE",
 	"INBOX SWITCH", "INBOX UNADDRESSED", "INBOX UNREADABLE",
 	"NAMES GROUP", "NAMES NAME", "NAMES OK",

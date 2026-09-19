@@ -461,7 +461,7 @@ func defaultsPath(busDir string) string {
 //
 // It is GENERAL on purpose. The file was born holding one key, `receipt-max-words`, read
 // by a function that knew that key's name; so when `--max-commits` turned out to need a
-// per-bus default too -- a reader five thousand commits behind gets `INBOX WALK bounded`
+// per-bus default too -- a reader five thousand commits behind gets `INBOX BOUNDED`
 // and no notes until they remember the flag -- there was nowhere to put it. A defaults
 // file that can only hold the keys somebody special-cased is not a defaults file. Any flag
 // of the verb may sit in it, under its own name and its own parser, which is also what
@@ -1596,7 +1596,7 @@ type inboxOpts struct {
 	maxBytes     int64
 	after        string
 	// maxCommits bounds the since-walk: a cursor more than this many commits behind HEAD
-	// stops the run with one INBOX WALK bounded line and a remedy rather than walking a
+	// stops the run with one INBOX BOUNDED line and a remedy rather than walking a
 	// history nobody asked to read. Zero means the default; `wait` leaves it zero.
 	maxCommits int
 	// walkProgress is set by `inbox` (and not by `wait`, whose polls are short and plural)
@@ -1771,17 +1771,22 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			}
 			if over {
 				// THE LINE SAYS WHAT HAPPENED AND NOT ONLY THAT SOMETHING DID. What this
-				// printed first was `INBOX WALK bounded commits=500` and nothing else,
-				// and a reader who did not already know their cursor was thousands of
-				// commits back could not tell that line from a quiet bus: no notes, no
-				// reason, no number. So it carries whose cursor stopped it, that the
-				// cursor is behind by MORE than the bound (how much more is deliberately
-				// not known -- see CommitsSinceBounded, which is the whole point of the
-				// bound), that nothing was read, and the way out. All on the one line,
-				// because a remedy on a second line is a remedy somebody's grep drops.
-				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d cursor=%s behind=more-than-%d notes=0 %s\n",
-					limit, oneline.Field(cursor.Commit), limit, boundedWalkRemedy)
-				return 0, r
+				// printed first was `INBOX WALK bounded commits=500` on stderr and an
+				// exit 0, and a reader who did not already know their cursor was
+				// thousands of commits back could not tell that line from a quiet bus:
+				// no notes, no reason, no number, and every mechanical caller greps for
+				// `^INBOX OK` on stdout and reads "gave up" as "no mail". So the run is
+				// a NO now: exit 1, no INBOX OK, and one `INBOX BOUNDED` line on STDOUT
+				// carrying whose cursor stopped it, that the cursor is behind by MORE
+				// than the bound (how much more is deliberately not known -- see
+				// CommitsSinceBounded, which is the whole point of the bound), that
+				// nothing was read, and the way out. All on the one line, because a
+				// remedy on a second line is a remedy somebody's grep drops. The cursor
+				// is not advanced, whatever the flag says: moving it across an unread
+				// horizon erases mail.
+				fmt.Fprintf(stdout, "INBOX BOUNDED as=%s cursor=%s limit=%d behind=more-than-%d notes=0 %s\n",
+					oneline.Field(me.Name), oneline.Field(sha7(cursor.Commit)), limit, limit, boundedWalkRemedy)
+				return 1, r
 			}
 			var walk *walkProgress
 			// A continuation (`--after`) is an explicit resume of a bounded snapshot, and its
@@ -2287,7 +2292,7 @@ const remedyLarge = "reply or receipt each note, or close --before <instant> as 
 // a number names one too small and is then refused the read they wanted.
 const defaultMaxCommits = 500
 
-// boundedWalkRemedy is the one-line remedy an INBOX WALK bounded line carries. It names
+// boundedWalkRemedy is the one-line remedy an INBOX BOUNDED line carries. It names
 // both doors: raise the bound to read the stale cursor, or draw a switch-day line with
 // close --before to take the history as read and start the cursor over.
 const boundedWalkRemedy = `remedy="raise --max-commits or close --before <instant>"`
@@ -3197,6 +3202,19 @@ func sha8(s string) string {
 		return s
 	}
 	return s[:8]
+}
+
+// sha7 renders a commit the way the INBOX BOUNDED line names the cursor it refused to
+// cross: seven characters, the grammar's `<sha7>`, rendered as "-" rather than a panic
+// for an empty one.
+func sha7(s string) string {
+	if len(s) < 7 {
+		if s == "" {
+			return "-"
+		}
+		return s
+	}
+	return s[:7]
 }
 
 // printSwitchDayNote prints the ONE line this whole change exists to print, and prints

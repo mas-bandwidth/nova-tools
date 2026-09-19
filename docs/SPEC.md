@@ -2723,7 +2723,7 @@ INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
 INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
-INBOX WALK bounded commits=<n> cursor=<sha> behind=more-than-<n> notes=0 remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
+INBOX BOUNDED as=<name> cursor=<sha7> limit=<n> behind=more-than-<n> notes=0 remedy="raise --max-commits or close --before <instant>"   (event line on stdout)
 WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->[ until=<instant|-> idle-exit=<n>]   (the pair only with --until or --idle-exit)
 WAIT NOTE <why this wait is not waiting>
 WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
@@ -3531,7 +3531,7 @@ the run refuses only when neither supplies one.
 **the flag on the command line always wins**. The file was born holding
 `receipt-max-words` alone, read by a reader that knew that one key's name; so
 when `--max-commits` turned out to need a per-bus default too — a reader
-habitually thousands of commits behind gets `INBOX WALK bounded` and no notes
+habitually thousands of commits behind gets `INBOX BOUNDED` and no notes
 until they remember the flag — there was nowhere to put it, which is what a
 defaults file that can only hold the keys somebody special-cased is worth. Any
 flag of the verb may sit in it under its own name, parsed by that flag's own

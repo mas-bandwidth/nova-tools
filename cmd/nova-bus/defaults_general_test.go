@@ -18,7 +18,7 @@ var defaultsRel = filepath.Join(".nova-bus", "defaults")
 // `<bus>/.nova-bus/defaults` used to be a file with ONE key in it. `receipt-max-words` was
 // read from it and nothing else was, so a bus whose reader is habitually five thousand
 // commits behind had to remember `--max-commits` by hand on every call, and forgetting it
-// bought an `INBOX WALK bounded` line and no notes.
+// bought an `INBOX BOUNDED` line and no notes.
 //
 // That is the wrong shape for the same reason a one-key config file is always the wrong
 // shape: the key that needs a default next is never the key somebody special-cased. So the
@@ -52,8 +52,8 @@ func TestAnyDocumentedFlagMayHaveItsDefaultInTheDefaultsFile(t *testing.T) {
 	// commits back.
 	writeFile(t, checkout, ".nova-bus/defaults", "# this bus's reader is habitually behind\nmax-commits=1\n")
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
-		mustCode(t, 0).
-		mustContain(t, "stderr", "INBOX WALK bounded commits=1 ")
+		mustCode(t, 1).
+		mustContain(t, "stdout", "INBOX BOUNDED as=Ada cursor=")
 
 	// THE FLAG WINS. The same file, with the bound named on the line: the walk runs.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--max-commits", "500").
@@ -94,11 +94,13 @@ func TestAnyDocumentedFlagMayHaveItsDefaultInTheDefaultsFile(t *testing.T) {
 }
 
 // TestABoundedWalkSaysHowFarBehindTheCursorIs is the other half of the same report: the
-// run printed `INBOX WALK bounded commits=500` and no notes, and a reader who did not
-// already know their cursor was five thousand commits back had no way to tell that line
-// from a quiet bus. The line now says whose cursor, that it is behind by MORE than the
+// run used to print `INBOX WALK bounded commits=500` and no notes on stderr and exit 0,
+// and a reader who did not already know their cursor was five thousand commits back had
+// no way to tell that line from a quiet bus. The run is now a REFUSAL: exit 1, one
+// `INBOX BOUNDED` line on STDOUT saying whose cursor, that it is behind by MORE than the
 // bound, that nothing was read, and what to do -- all on the one line, because a remedy
-// on a second line is a remedy somebody's grep drops.
+// on a second line is a remedy somebody's grep drops. And the cursor never advances, so
+// `--advance` over an unread horizon is the same refusal and leaves the cursor byte-identical.
 func TestABoundedWalkSaysHowFarBehindTheCursorIs(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -106,31 +108,45 @@ func TestABoundedWalkSaysHowFarBehindTheCursorIs(t *testing.T) {
 	writeFile(t, checkout, "from-ada/CURSOR", base+" 2026-09-18T12:00:00Z open=0\n")
 
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--max-commits", "2").
-		mustCode(t, 0)
+		mustCode(t, 1)
 	for _, want := range []string{
-		"INBOX WALK bounded commits=2",
-		"cursor=" + base,
+		"INBOX BOUNDED as=Ada",
+		"cursor=" + base[:7],
+		"limit=2",
 		"behind=more-than-2",
 		"notes=0",
 		`remedy="raise --max-commits or close --before <instant>"`,
 	} {
-		if !strings.Contains(r.stderr, want) {
-			t.Fatalf("the bounded line does not carry %q:\n%s", want, r.stderr)
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("the bounded line does not carry %q:\n%s", want, r.stdout)
 		}
+	}
+	// No INBOX OK anywhere: a reader who greps for `^INBOX OK` must never read this
+	// refusal as "the bus is fine, you have no mail".
+	if strings.Contains(r.stdout, "INBOX OK") || strings.Contains(r.stderr, "INBOX OK") {
+		t.Fatalf("a bounded walk printed INBOX OK, the success it is not:\nstdout: %s\nstderr: %s", r.stdout, r.stderr)
 	}
 	// One line, not two: everything above is on the same one.
 	var bounded string
-	for _, l := range strings.Split(r.stderr, "\n") {
-		if strings.HasPrefix(l, "INBOX WALK bounded") {
+	for _, l := range strings.Split(r.stdout, "\n") {
+		if strings.HasPrefix(l, "INBOX BOUNDED") {
 			if bounded != "" {
-				t.Fatalf("two bounded lines:\n%s", r.stderr)
+				t.Fatalf("two bounded lines:\n%s", r.stdout)
 			}
 			bounded = l
 		}
 	}
-	for _, want := range []string{"cursor=" + base, "behind=more-than-2", "notes=0", "remedy="} {
+	for _, want := range []string{"as=Ada", "cursor=" + base[:7], "limit=2", "behind=more-than-2", "notes=0", "remedy="} {
 		if !strings.Contains(bounded, want) {
 			t.Fatalf("%q is not on the bounded line itself: %s", want, bounded)
 		}
+	}
+	// --advance must not move the cursor across an unread horizon: the cursor file is
+	// byte-identical after the same run.
+	before := read(t, checkout, "from-ada/CURSOR")
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--max-commits", "2", "--advance", "--remote", "origin", "--branch", "main").
+		mustCode(t, 1)
+	if after := read(t, checkout, "from-ada/CURSOR"); after != before {
+		t.Fatalf("--advance moved the cursor across an unread horizon:\nbefore: %q\nafter:  %q", before, after)
 	}
 }

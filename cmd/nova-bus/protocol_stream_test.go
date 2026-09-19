@@ -45,8 +45,9 @@ func TestProgressNeverEntersTheProtocolStream(t *testing.T) {
 	// A bus whose cursor stands 1000 commits behind HEAD, which is what makes
 	// the since-walk long enough to narrate at all: with --max-commits 2000 it
 	// finishes and prints progress, and at the default bound it stops and
-	// prints the bounded line. Both are progress, and the point of the test is
-	// that a consumer sees neither on stdout.
+	// prints the `INBOX BOUNDED` event line. The point of the test is that no
+	// PROGRESS line reaches stdout -- the event line is protocol, not progress,
+	// and progress stays on stderr.
 	long := longBus(t, 1000)
 	plain, _ := busDir(t)
 
@@ -97,14 +98,14 @@ func TestProgressNeverEntersTheProtocolStream(t *testing.T) {
 }
 
 // TestTheProgressRegistryMatchesTheLineThisProgramWrites keeps the registry in
-// internal/bus honest about THIS program: the walk's two shapes are both
-// progress by the shared answer, so a consumer that asks internal/bus drops
-// both without having heard of either.
+// internal/bus honest about THIS program: the walk's progress shape is progress
+// by the shared answer, and the bounded walk -- once `INBOX WALK bounded`
+// progress on stderr -- is now the `INBOX BOUNDED` event line on stdout, so it
+// is protocol and must never be dropped as progress.
 func TestTheProgressRegistryMatchesTheLineThisProgramWrites(t *testing.T) {
 	t.Parallel()
 	for _, line := range []string{
 		"INBOX WALK commits=1/1 notes=0 elapsed=3ms",
-		`INBOX WALK bounded commits=500 cursor=0edc81b7 behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`,
 	} {
 		if !bus.IsProgress(line) {
 			t.Errorf("internal/bus does not know this is progress, so no consumer does:\n%s", line)
@@ -116,6 +117,7 @@ func TestTheProgressRegistryMatchesTheLineThisProgramWrites(t *testing.T) {
 	// The complement: the lines consumers DO parse are protocol and are never
 	// dropped as progress.
 	for _, line := range []string{
+		`INBOX BOUNDED as=Ada cursor=0edc81b7 limit=500 behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`,
 		"INBOX NOTE id=bo-abcdef012345 from=Bo addr=to at=2026-09-07T00:01:00Z path=from-bo/x.md: A question",
 		"INBOX OPEN carrying=2 heard=1 large=false remedy=-",
 		"INBOX OK as=Ada carrying=2 open=0 notes=1 receipts=0 heard=1 unaddressed=0 unreadable=0",

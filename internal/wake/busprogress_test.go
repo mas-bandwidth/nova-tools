@@ -27,7 +27,7 @@ func TestProgressIsNeverRelayedAsABusLine(t *testing.T) {
 	b := &Bus{}
 	res := b.Classify(strings.Join([]string{
 		"INBOX WALK commits=1/1 notes=0 elapsed=3ms",
-		`INBOX WALK bounded commits=500 cursor=0edc81b7 behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`,
+		`INBOX BOUNDED as=Rowan cursor=0edc81b7 limit=500 behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`,
 		"INBOX NOTE id=stella-aaaaaaaaaaaa from=Stella addr=to at=2026-09-18T11:00:00Z path=from-stella/a.md: the first note",
 		"INBOX OPEN carrying=1 heard=0 large=false remedy=-",
 		"INBOX REFUSED: the bus is not a git checkout",
@@ -64,12 +64,12 @@ func TestProgressIsNeverRelayedAsABusLine(t *testing.T) {
 		t.Error("INBOX REFUSED was not relayed; the default case PRINTS, and a refusal on stderr is the reason this tool reads both streams")
 	}
 
-	// Rule 7's sum, over the PROTOCOL lines only: four of them here -- NOTE
-	// relayed, OPEN and OK suppressed, REFUSED relayed -- and the two progress
-	// lines counted nowhere.
+	// Rule 7's sum, over the PROTOCOL lines only: five of them here -- BOUNDED
+	// and NOTE relayed, OPEN and OK suppressed, REFUSED relayed -- and the one
+	// progress line counted nowhere.
 	read, suppress, relay, standing := b.Counts()
-	if read != 4 {
-		t.Errorf("read=%d, want 4: progress is not a line of the protocol this poll read", read)
+	if read != 5 {
+		t.Errorf("read=%d, want 5: progress is not a line of the protocol this poll read", read)
 	}
 	if read != suppress+relay+standing {
 		t.Errorf("rule 7's sum does not hold: read=%d suppressed=%d relayed=%d standing=%d", read, suppress, relay, standing)
