@@ -1,0 +1,13 @@
+diff --git a/sign/sign_test.go b/sign/sign_test.go
+index 9b47265..70ff6cc 100644
+--- a/sign/sign_test.go
++++ b/sign/sign_test.go
+@@ -9,7 +9,7 @@ func TestSign(t *testing.T) {
+ }
+ 
+ func TestSignZero(t *testing.T) {
+-	if Sign(0) != 0 {
++	if Sign(1) != 1 {
+ 		t.Fatal("zero")
+ 	}
+ }

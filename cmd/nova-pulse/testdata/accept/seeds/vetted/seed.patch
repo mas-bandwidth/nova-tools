@@ -1,0 +1,13 @@
+diff --git a/sign/sign.go b/sign/sign.go
+index 61ff89b..aaff255 100644
+--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -3,7 +3,7 @@ package sign
+ import "fmt"
+ 
+ // Describe names n for a log line.
+-func Describe(n int) string { return fmt.Sprintf("sign(%d)", n) }
++func Describe(n int) string { return fmt.Sprintf("sign(%s)", n) }
+ 
+ // Sign is 0 at zero and 1 elsewhere.
+ func Sign(n int) int {

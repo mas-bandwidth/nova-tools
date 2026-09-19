@@ -1,0 +1,10 @@
+diff --git a/other/other.go b/other/other.go
+index 0753318..c208725 100644
+--- a/other/other.go
++++ b/other/other.go
+@@ -1,4 +1,4 @@
+ package other
+ 
+ // Other is a package the card's PATHS: do not name.
+-func Other() int { return 2 }
++func Other() int { return 2 } // touched

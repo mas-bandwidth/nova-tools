@@ -30,7 +30,7 @@ func TestAcceptUsageLine(t *testing.T) {
 	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
 		t.Fatalf("help exit = %d", code)
 	}
-	if !strings.Contains(out.String(), "nova-pulse accept  --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity") {
+	if !strings.Contains(out.String(), "nova-pulse accept  --selftest --root <dir> --bench <name> --cert <path>") {
 		t.Fatalf("help has no accept line:\n%s", out.String())
 	}
 }
