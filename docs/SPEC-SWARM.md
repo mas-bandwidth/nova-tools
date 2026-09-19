@@ -1351,7 +1351,10 @@ b2	b2	/home/me/swarm	1-15	/home/me/.local/bin/opencode	/home/me/.config/nova/aut
 reads, prints or copies `auth`; it names the path on the bench's `native`
 command line and checks that it exists with mode `0600` (`stat`, never a
 read). Rule 6 seen from a bench: the key is data, and here not even data this
-tool holds.
+tool holds. A remote bench answers that with one `ssh <host> stat -c %a <auth>`
+round trip; the `local` row answers it with the Go standard library, because
+`-c` is GNU's spelling and darwin's `stat` refuses the option, and no tool of
+ours may require GNU coreutils on the operator's own Mac.
 
 **`--harness <path>` on `batch --cards`** runs every local card through this same
 binary's own `native`, with no runner script at all (#636: `native` lives in the
@@ -1538,6 +1541,7 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 1. `bench-table-parsed` — the seven columns, a `-` cores row, and each refusal above by name.
 2. `bench-probe-refuses-version-mismatch` — `BENCH REFUSED check=version` names both identities.
 3. `bench-probe-never-reads-auth` — the fake ssh sees `stat` on the auth path and never a read of it; mode `0644` is a refusal.
+   Its darwin half, `bench-probe-local-row-needs-no-gnu-stat`: with a BSD `stat` on `PATH` (no `-c`), a `local` row with a `0600` auth still admits and `stat` is never exec'd at all; `0644` still refuses.
 4. `batch-pins-slot-to-core` — slot 3 on `cores=1-15` runs under `taskset -c 3`, and every remote argv carries `taskset`.
 5. `batch-refuses-more-slots-than-cores` — 16 slots on `1-15` is `ADMIT REFUSED bench=b2 slots=16 cores=15` and no card starts.
 6. `batch-copies-card-only` — exactly one file crosses before the run, and it is the card.
