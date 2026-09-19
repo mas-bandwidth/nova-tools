@@ -2157,6 +2157,19 @@ two minutes of grace, and releases it on every exit path including a run that fa
 take that grants nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=…
 holders=…` line and exits 2, having started nothing.
 
+**A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
+ids it granted — not a count — and a holder hands exactly those back to
+`ReleaseSlotLeasesByID(store, ids, pid)`, which re-reads each lease and leaves it alone
+unless the pid is still the holder's. An owner is a bench and a label is a card's name, and
+two runs that share both — two slots, two benches, a retry — would otherwise each give away
+the other's live seat; a run that refused before it started, on a missing harness say, would
+delete a lease it never took. An id that is already gone is not an error: a release is
+allowed to be late.
+
+`slots release --store <dir> --owner <o> (--label <text> | --all)` is unchanged and stays
+by owner and label, because that is what a PERSON at a prompt means by it and a person can
+see the store. A deferred cleanup cannot, so it does not get that verb.
+
 Asked without either flag, `native` prints exactly one line and exits 2:
 
 ```

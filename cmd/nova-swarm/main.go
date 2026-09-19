@@ -1773,8 +1773,16 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// refusal, not a run, and no worker starts. The lease is released on every exit path,
 	// including a run that fails: the release is DEFERRED here, above every remaining
 	// return, so there is no exit from this function that leaves a seat held.
+	//
+	// IT RELEASES BY IDENTITY, not by owner and label (Stella's hold on PR #1562). The
+	// first cut handed `ReleaseSlotLeases(store, owner, label, false)` to the defer, and
+	// that removes EVERY lease matching the owner and the label -- so two native runs
+	// sharing a bench and a card name each gave away the other's live seat, and a run that
+	// refused before it started (a missing harness, say) deleted a lease it never took.
+	// `leaseIDs` is exactly what this invocation was granted and exactly what it hands back.
+	leasePID := os.Getpid()
 	dur := d + 2*time.Minute
-	_, held, share, free, holders, granted, lerr := swarm.TakeSlotLeases(*slotsStore, *slotOwner, 1, dur, lbl, time.Now().UTC(), os.Getpid())
+	leaseIDs, held, share, free, holders, granted, lerr := swarm.TakeSlotLeases(*slotsStore, *slotOwner, 1, dur, lbl, time.Now().UTC(), leasePID)
 	if lerr != nil {
 		fmt.Fprintf(stderr, "nova-swarm native: the slot store could not be read: %s\n", oneline.Err(lerr))
 		return 2
@@ -1788,7 +1796,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	defer func() {
-		if _, _, err := swarm.ReleaseSlotLeases(*slotsStore, *slotOwner, lbl, false); err != nil {
+		if _, err := swarm.ReleaseSlotLeasesByID(*slotsStore, leaseIDs, leasePID); err != nil {
 			fmt.Fprintf(stderr, "nova-swarm native: releasing the slot lease: %s\n", oneline.Err(err))
 		}
 	}()

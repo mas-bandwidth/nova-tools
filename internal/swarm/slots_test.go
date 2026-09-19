@@ -19,12 +19,11 @@ func writeSlotStore(t *testing.T, shares string) string {
 
 func mustSlotTake(t *testing.T, store, owner string, k int, d time.Duration, label string, now time.Time, pid int) (bool, int, int, int, int, string) {
 	t.Helper()
-	granted, held, share, free, holders, ok, err := TakeSlotLeases(store, owner, k, d, label, now, pid)
+	ids, held, share, free, holders, ok, err := TakeSlotLeases(store, owner, k, d, label, now, pid)
 	if err != nil {
 		t.Fatalf("TakeSlotLeases: %v", err)
 	}
-	_ = granted
-	return ok, granted, held, share, free, holders
+	return ok, len(ids), held, share, free, holders
 }
 
 // Two owners at share 2 each with capacity 4 reserve 0 cannot take a fifth.

@@ -134,7 +134,7 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	granted, held, share, free, holders, ok, terr := swarm.TakeSlotLeases(
+	ids, held, share, free, holders, ok, terr := swarm.TakeSlotLeases(
 		*store, *owner, *n, dur, *label, time.Now().UTC(), os.Getpid())
 	if terr != nil {
 		fmt.Fprintf(stderr, "nova-swarm slots take: %s\n", oneline.Err(terr))
@@ -142,7 +142,7 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	}
 	if ok {
 		fmt.Fprintf(stdout, "SLOTS OK owner=%s granted=%d held=%d share=%d free=%d\n",
-			oneline.Field(*owner), granted, held, share, free)
+			oneline.Field(*owner), len(ids), held, share, free)
 		return 0
 	}
 	if holders == "" {

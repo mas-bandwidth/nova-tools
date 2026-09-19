@@ -2073,6 +2073,13 @@ same two flags and **refuses the whole batch with the same line before any card 
 batch with its own `--runner` launches no `native` and is not held to this. The store path
 is resolved on the machine that runs the card, which for a bench row is the bench.
 
+**The release is by identity.** `native` keeps the lease ids `TakeSlotLeases` granted it
+and gives back exactly those, pid-fenced. Releasing by owner and label would mean that two
+runs sharing a bench and a card name each give away the other's live seat, and that a run
+refusing before it started — a missing harness, say — deletes a lease it never took
+(Stella, on #1562). `nova-swarm slots release --owner … --label …` keeps the by-owner-and-label
+behaviour, because that is what a person at a prompt means by it.
+
 
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
