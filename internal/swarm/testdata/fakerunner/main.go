@@ -57,10 +57,23 @@ type spec struct {
 // the whole process tree's CPU time, and a burner that is not in the tree proves nothing.
 const spinArg = "--spin-ms"
 
+// LINGER IS THE SHAPE OF ISSUE #640, and it is not the spin above: a `linger` step starts a
+// child and RETURNS, so the child is still running when the card is killed. It is an
+// ORDINARY child -- no setsid, no new process group -- which is exactly what the run that
+// wrote the issue left behind: nova-sandbox wrappers and go test binaries, every one of them
+// inside the card process's own group. The child carries its OWN bound so a red run of the
+// test that drives it leaves nothing behind whatever the batch does or fails to do.
+const lingerArg = "--linger-ms"
+
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == spinArg {
 		ms, _ := strconv.Atoi(os.Args[2])
 		burn(time.Duration(ms) * time.Millisecond)
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == lingerArg {
+		ms, _ := strconv.Atoi(os.Args[2])
+		sleep(ms)
 		return
 	}
 	var r *runner
@@ -221,6 +234,8 @@ func (r *runner) run(s spec) int {
 			sleep(st.Ms)
 		case "spin":
 			r.spin(st.N, st.Ms)
+		case "linger":
+			r.linger(st.Path, st.N, st.Ms)
 		case "exit":
 			return st.N
 		default:
@@ -363,4 +378,25 @@ func must(err error) {
 		fmt.Fprintf(os.Stderr, "fakerunner: %v\n", err)
 		os.Exit(2)
 	}
+}
+
+// linger starts an ordinary child, records its pid at Path so the test can ask the kernel
+// about it afterwards, and then sleeps Ms -- so when the batch's deadline fires, the card is
+// a running process with a running child beneath it. N is the child's OWN bound in
+// milliseconds: it ends on its own whatever happens to its parent, so a RED run of the test
+// that drives this leaves no process behind.
+//
+// It is deliberately NOT `setsid`. A card that puts itself in a new session leaves its
+// parent's process group by construction and no group kill can reach it; that is rule 11's
+// background-subtask violation, which the supervisor reports, and it is not what this step
+// stands for. This is the ordinary tree of issue #640.
+func (r *runner) linger(pidPath string, childMs, ms int) {
+	exe, err := os.Executable()
+	must(err)
+	cmd := exec.Command(exe, lingerArg, strconv.Itoa(childMs))
+	must(cmd.Start())
+	// Published atomically (temp + rename, writeFile), so a test that waits for the file to
+	// EXIST can never catch it created and still empty.
+	r.writeFile(r.expand(pidPath), strconv.Itoa(cmd.Process.Pid), false)
+	sleep(ms)
 }

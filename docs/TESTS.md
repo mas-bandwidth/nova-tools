@@ -307,11 +307,19 @@ WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default 
 
 `nova-review` builds an artifact from a lane already initialized by
 `nova-merge`; it has no state-creating quickstart. Its first safe command only
-identifies the binary:
+identifies the binary.
+
+Two parts of the line below belong to the run and not to the document, and both
+are declared by `cmd/nova-review/firstrun_test.go`. The build triple
+`<goos>/<goarch> go<version>` is whichever machine runs it -- the one pasted
+here is the Mac it was recorded on (2026-09-19). The version word is whatever
+the build stamped itself with: a build you make prints the stamp shown here,
+and the unstamped binary `go test` builds prints `devel`. Everything else on
+the line is compared.
 
 ```
 $ nova-review version
-nova-review devel
+nova-review v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1
 ```
 
 A packet needs the lane, one selector, a reader and a new relative output
@@ -568,23 +576,31 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 
 ## nova-play
 
-Fixture: a source text in a temp directory, annotated and read back. The notes
-live beside the source; every path is a flag.
+Fixture: `story.txt`, three lines of prose holding the documented passage once,
+written into `t.TempDir()` by `cmd/nova-play/firstrun_test.go`, which runs the
+sitting below there. The notes live beside the source, in `story.txt.notes`;
+every path is a flag, and nothing here leaves that directory.
+
+This block is compared LINE BY LINE AND IN ORDER, which most of the transcripts
+in this document are not: a run that prints one line fewer or one line more than
+is written here is red. The ids are content addresses and reproduce exactly, so
+they are compared as written; the `created=` instant is the one value belonging
+to the run rather than to the document, and is matched as an instant.
 
 ### First run
 
 ```text
 $ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
-ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-19T06:29:53Z
 
 $ nova-play read --source story.txt
 READ OK source=story.txt notes=1
-NOTE id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+NOTE id=f24beb35f0df author=Emma created=2026-09-19T06:29:53Z
   PASSAGE The lantern room held a brass fitting.
   BODY I wonder what alloy this is.
 
 $ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
-REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
+REPLY OK id=727fe2158637 author=Stella created=2026-09-19T06:29:53Z
 ```
 
 
