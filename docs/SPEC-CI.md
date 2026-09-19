@@ -246,17 +246,21 @@ A `--- FAIL: TestX` that printed nothing of its own, beside a reported
 `TestX/case`, is the go command repeating itself and is dropped.
 
 **Its output.** One block per failing test — a `FAILED` line, then that test's
-own message lines indented as it printed them — then one line per cancellation
-and per timeout, then the closing count:
+own message lines indented as it printed them — then one block per job that went
+red with no test in it, one line per cancellation and per timeout, then the
+closing count:
 
 ```
 FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
     <the test's own message lines>
     ...+<n> more lines
+NOTEST job="<name>" step="<name>" tests=none
+    ...+<n> earlier lines
+    <the lines the runner marked as errors>
 CANCELLED job="<name>" step="<name>" after=<d>
 TIMEOUT job="<name>" pkg=<pkg> running=<TestA,TestB,TestC,+<n>>
 NOLOG job="<name>" reason="<the forge's own words>"
-FAILED OK jobs=<n> tests=<n> [unread=<n>]
+FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n> [unread=<n>]
 ```
 
 A job name and a step name are QUOTED rather than escaped as fields: `test (3/4
@@ -266,9 +270,29 @@ package, a test name and a `file:line` hold no space and stay bare, so one grep
 reads a column. `at=` is omitted, never guessed, when the test printed no
 position. A test's own words are bounded by `--max-lines` (default 8) and the
 rest are COUNTED, the same cap-and-count rule `slowtests` uses; the `running=`
-list is capped at three the same way. The closing `FAILED OK` line always
-prints, and its counts are the truth about the run whether or not every line
-printed. `running=none` is said out loud rather than left blank.
+list is capped at three the same way. The closing count always prints, and its
+counts are the truth about the run whether or not every line printed; its verdict
+word is `OK` only when the run said nothing red, so it agrees with the exit code
+instead of heading a report of reds, and the jobs are split into the `failed=<n>`
+that went red of their own and the `cancelled=<n>` cut down with them, each field
+omitted when it is zero. `running=none` and `tests=none` are said out loud rather
+than left blank.
+
+**Every red job gets a line.** A job whose conclusion is not `success` or
+`skipped` and whose log holds no test event at all — a C compiler error under
+`-Werror` inside a `make test` step, so `go test` never ran — is
+`NOTEST job="<name>" step="<name>" tests=none`, with the step read off the job
+(omitted, never guessed, when the forge named none) and, under it, the lines the
+RUNNER itself marked as errors: the compiler's own diagnosis, already picked out
+of the log by the forge that recorded it. That block is bounded by `--max-lines`
+from the END, because the errors that ended the step are the last ones annotated
+and the earlier ones in a long log may belong to a negative control that was
+supposed to be red; the dropped lines are counted above the ones shown. The
+specimen is run 35329874611 of `mas-bandwidth/schema`, where one
+`inline-gate (ubuntu-latest, go)` went red inside `make test` and seven siblings
+were cancelled: the run was reported as seven `CANCELLED` lines and
+`jobs=8 tests=0` under the word `OK`, and the one job worth chasing was counted
+and never named.
 
 **A log the forge will not give is a LINE.** A job whose log cannot be read is
 `NOLOG job="<name>" reason="<the forge's own words>"`, and `unread=<n>` joins the
@@ -279,8 +303,9 @@ refusing the whole run over that hides every other job's red, which is the one
 thing this verb exists to surface. It was found by running the verb on its own
 pull request the hour it was written.
 
-**Its exit codes.** 0 when the run said nothing red, 1 when it said something,
-2 on a refusal. `failed` is a READER, so a red run is exit 1 — the caller asked
+**Its exit codes.** 0 when the run said nothing red, 1 when it said something —
+which every job that did not succeed does, since each one gets a line, a
+cancelled-only run included — 2 on a refusal. `failed` is a READER, so a red run is exit 1 — the caller asked
 what broke and got an answer — while exit 2 stays what it is everywhere else in
 this family: the invocation could not run.
 
@@ -309,14 +334,16 @@ hand, to turn four megabytes of log into five lines — and the sixth time still
 missed the cancelled siblings of a failed leg, because a cancellation leaves
 nothing in the text. It is read here off the job's own steps instead.
 
-**Red tests.** `internal/ci/failed_test.go` parses four real job logs, cut from
+**Red tests.** `internal/ci/failed_test.go` parses five real job logs, cut from
 the runs of 2026-09-18 and committed under `internal/ci/testdata/failed/` with
 their timestamps, ANSI and CRLF intact — `windows-sandbox.log` (job
 105673713280, plain output, five failing tests), `studio-review.log` (job
 105673768922, `-json` frames), `pulse-flake.log` (job 105696546293, `-json`
-frames) and `merge-darwin-timeout.log` (job 105698657603 of run 35375346271, the
-`1m40s` timeout). `cmd/nova-ci/failed_test.go` runs the verb over them through a
-fake forge:
+frames), `merge-darwin-timeout.log` (job 105698657603 of run 35375346271, the
+`1m40s` timeout) and `inline-gate-werror.log` (job 105551505883 of run
+35329874611 of `mas-bandwidth/schema`, a `-Werror` compiler error inside
+`make test` and no test event at all). `cmd/nova-ci/failed_test.go` runs the verb
+over them through a fake forge:
 
 1. The plain log yields five failing tests, each with its package from the `FAIL`
    trailer and its `file:line` from the test's own first message.
@@ -336,6 +363,12 @@ fake forge:
    `unread=` count, and the run's other failing jobs still report in full.
 9. Every refusal above exits 2, writes nothing on stdout and ends at the door,
    and `failed --help` opens the verb's own door without asking a forge anything.
+10. A job whose conclusion is failure and whose log holds no test event is a
+    `NOTEST` line naming the job and the step that went red, carrying the last of
+    the lines the runner marked as errors, and the run exits 1. Over the shape of
+    run 35329874611 — that one job and seven cancelled siblings — the summary is
+    `FAILED RED jobs=8 failed=1 cancelled=7 tests=0`, and a cancelled-only run is
+    the exit 1 it has always been.
 
 ## The CI class test against a real network host on the CI path
 
@@ -479,7 +512,9 @@ here that has one points at it.
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
 next card: a rule lands with its sweep of the tree, or it does not land
-([pit-stop ledger item 20](../reports/pitstop-tests-2026-09-17.md)).
+(pit-stop ledger item 20, 2026-09-17, which lives in the `rowan-new`
+repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
+this one, so the citation is deliberately prose and not a link).
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier
@@ -659,10 +694,13 @@ cancelled sibling as silence.
 `TestARunReadsOnlyTheJobsThatDidNotSucceed`,
 `TestTheJobFilterReadsOnlyThatJobsLog`,
 `TestAJobFilterThatMatchesNothingSaysWhichJobsFailed`,
-`TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport` and
-`TestTheSelectorReachesTheForgeUntouched` (`internal/ci/failed_test.go`), over
-four real job logs in `internal/ci/testdata/failed/`, with the verb run end to
-end in `cmd/nova-ci/failed_test.go`.
+`TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport`,
+`TestTheSelectorReachesTheForgeUntouched`,
+`TestAFailingJobWithNoTestEventIsNamedAnyway`,
+`TestTheSummarySplitsARealRedFromItsCancelledSiblings` and
+`TestACancelledOnlyRunStaysExitOne` (`internal/ci/failed_test.go`), over five
+real job logs in `internal/ci/testdata/failed/`, with the verb run end to end in
+`cmd/nova-ci/failed_test.go`.
 **Its allowlist.** None: it reports what a run said, and there is nothing to
 excuse.
 **Its remedy lines.** None; its refusals are the verb's own, each naming what the
@@ -670,10 +708,11 @@ input wants — `--repo` as `<owner>/<name>`, exactly one of `--run`, `--pr` and
 `--branch`, `--merge-group` with `--pr`, a positive `--max-lines` and `--timeout`.
 **Its narrowings.** It reads only the jobs whose conclusion is not `success` or
 `skipped`, and only the two shapes `go test` prints; a failure that is neither a
-`--- FAIL`, a `-json` fail frame nor a timeout panic — a compile error, a
-runner that died — is left to the log, which `--job` then narrows to one. A log
-it cannot read at all is a `NOLOG` line and an `unread=` count, never a refusal. Full
-section: *The failing tests of a run*.
+`--- FAIL`, a `-json` fail frame nor a timeout panic — a compile error, a runner
+that died — is a `NOTEST` line naming the job and its failed step, with the lines
+the runner marked as errors under it, and the rest of that log is left to `--job`
+and the forge. A log it cannot read at all is a `NOLOG` line and an `unread=`
+count, never a refusal. Full section: *The failing tests of a run*.
 
 ### `removeall` — no `os.RemoveAll` of a computed path
 
@@ -702,6 +741,59 @@ path is not read. It follows `MkdirTemp` within one function, so a temp director
 passed in as an argument reads as computed (refused, and the remedy is the
 safepath route anyway). `os.Remove`, `RemoveAll` behind an interface, and a shell
 `rm` in a script are other rules' business.
+
+### `hostseam` — no test reaches a host through an unfaked seam
+
+**The rule.** Every function under `cmd/` and `internal/` that reaches another
+machine calls `testguard.RefuseHosts(<program>, <args>…)` before it starts the
+child. Under `NOVA_TEST_NO_HOST`, which `make test` exports for every tier, that
+call panics with the command line, so a test that constructed production code
+and injected no fake refuses THERE instead of on a bench. A function is a host
+seam when it starts a child (`exec.Command`/`exec.CommandContext`) and names an
+ssh-family program — `ssh`, `scp`, `sftp`, `rsync` — in a string literal, or
+when its own name or its receiver's carries one of those words.
+**The hurt.** 2026-09-18: a unit test in the certify verb's first cut (`#1382`)
+ran the REAL workloads on hulk and reached redis on space. Nobody wrote a
+hostname in the test — the test held production code, production code built its
+own default because nothing injected a fake, and that default was
+`exec.Command("ssh", …)`. The `net` class reads test files for a real host and
+could not see it: the host was never in the test's text, it was in a default two
+packages away. That is the difference between the two rules — `net` reads what a
+test SAYS, this reads what production DOES.
+**The test.** `TestNoTestReachesAHostThroughAnUnfakedSeam`
+(`internal/ci/hostseam_class_test.go`), with `TestNoHostSeamIsFoundByASubstring`,
+the table that pins the name heuristic against the three false positives its
+first sweep had (`IsSHA`, `HarnessSHA256`, `hasShebang`). The guard itself is
+`internal/testguard`, held by `TestUnsetGuardLetsTheSeamRun`,
+`TestArmedGuardNamesTheCommandAndTheRemedy`, `TestAFakeOnPATHIsNotAHost` and
+`TestAllowHostsIsScopedAndNests`; the fake-less red that bought the rule is
+`TestTheRealSSHRunnerPanicsUnderTheGuard`
+(`internal/pulse/hostguard_test.go`), which constructs the real `SSHRunner`,
+injects nothing, and ran a child `ssh` before the guard existed.
+**Its allowlist.** `internal/ci/testdata/hostseam_allowlist.txt`, one
+`file:function  # reason` per row — six today, every one a function that reaches
+its host through another function in the tree that DOES call the guard (the
+`FleetRunner` implementation, the two `…OverSSH` fan-outs, `powerWaitSSH`,
+`ExecSSH.sshArgs`, and an error type named for ssh's exit code). A row with no
+reason is refused, and the list is checked in both directions, so it only
+shrinks.
+**Its remedy lines.** ``add `testguard.RefuseHosts(<program>, <args>...)` before
+the child runs, or list it in testdata/hostseam_allowlist.txt with a reason``;
+for a guard below the exec, `a guard that runs once the host has been reached
+guards nothing`; for a stale row, `delete the stale entry (the list only
+shrinks)`; and from the guard itself, `inject the fake the seam takes, or
+install a fake on PATH and declare it with testguard.AllowHosts()`.
+**Its narrowings.** A seam that reaches a host without spawning an ssh-family
+program — a Go SSH library, a raw socket — is not seen; nothing in this tree
+does that today. The guard treats a program that resolves INSIDE a temp
+directory as a fake, which is what this repository's fake `ssh` scripts are, so
+a test that installs its fake somewhere else must say `defer
+testguard.AllowHosts()()`, and a test that builds the real seam while another
+fake sits on PATH is not caught. `AllowHosts` is process-wide for its scope, so
+a test that opens one must not run in parallel with one relying on the guard.
+And the class test reads names and literals, not types: a program held in a
+variable, in another package's constant, or behind an interface is invisible to
+it — which is why the rule is written where the CHILD is started.
 
 ### `pathassert` — no test compares a path against a slash literal
 
@@ -914,101 +1006,6 @@ and these tests must answer identically on every platform in the matrix — so a
 command assembled in a variable or hidden in a composite action is not seen, and
 the allowlist is matched by prefix.
 
-### `windows-pr` — a pull request gets a Windows leg, and it stays cheap
-
-**The rule.** `test-windows-pr` runs on `windows-latest` over the packages
-`.github/scripts/select-packages.sh` selects — the same script the self-hosted
-shards call, so there is one answer to "what does this change test" — sharded,
-skipped when the PR moves no Go file, fork-guarded, and aggregated by `ci-ok`.
-**The hurt.** Windows ran only in the merge group and on push, so a Windows-only
-failure was found after a PR was enqueued, where a red shard drops the whole
-group and restarts every PR behind it: one PR's small mistake became every PR's
-delay (ledger items 22, 26). `#1317` landed the leg; it paid for itself three
-times in its first real run (ledger 38) — `#1324`'s install-skip, and behind it a
-product bug (`adopt` named a bare `nova-update` on a Windows target), and the
-execute-bit assertion class.
-**The test.** `TestPullRequestsGetAWindowsLeg` (`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** None; the shape is the contract and the test is the shape.
-**Its remedy line.** Each finding names the missing part of the shape — the
-runner, the shard count, the sizes file, the selection script, the skip
-condition, the fork guard or the `ci-ok` need.
-**Its narrowings.** It reads `ci.yml` as text, so it pins the words a reviewer
-would look for rather than the semantics a YAML parser would give; a leg that
-satisfies every string and still does the wrong thing passes here and is caught
-by the run.
-
-### `windows-sizes` — the shard plan comes from measurements, never a convention
-
-**The rule.** The three numbers that decide this leg's cost — the measured sizes
-in `testdata/ci/package-sizes-windows.tsv`, the shard budget, and
-`WINDOWS_TIMEOUT` in the Makefile — stay in one place and in step, and the
-ceiling can never drop back below a size actually observed.
-**The hurt.** Ledger items 39–40. The leg shipped with the hosted convention of
-100 s per package; its first real run (`#1332`) found four packages ON that
-ceiling under `-short`. A ceiling a tree's packages sit on is not naming a hang,
-it IS the hang. Then the PR leg's six-minute cap killed finished shards 2–4
-seconds into cleanup, and the merge leg's cap cut a shard mid-listing. The lesson
-the whole day repeated: **a number in a table or a cap must come from a
-measurement, and a measurement made at a cap is a floor, not a size.**
-**The test.** `TestWindowsPRShardPlanIsDerivedFromMeasurements`
-(`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
-floors rather than written as sizes; the forcing packages `#1332` measured at the
-ceiling are named in the test, so they cannot quietly fall out of the table.
-**Its remedy line.** `the Makefile does not say where WINDOWS_TIMEOUT's number
-comes from; a ceiling is a claim about the machine and belongs in the repository
-with its measurement`.
-**Its narrowings.** It checks that the numbers are measured and consistent, not
-that they are still TRUE: a package that doubles on windows-latest keeps its old
-row until somebody measures again, and only the run says so.
-
-### `windows-table` — the merge gate's Windows leg deals from the Windows table
-
-**The rule.** The merge group's windows leg reads the FULL column of the Windows
-sizes table, takes its ceiling from `make -s windows-timeout`, and deals an
-unmeasured or censored package across EVERY slot; linux and darwin keep the Linux
-table, which is their measurement.
-**The hurt.** Ledger item 38: the merge group's windows leg dealt from the LINUX
-table — `cmd/nova-bus` at 6.4 s bought three shards, and shard 0 was killed at
-the 100 s ceiling with three tests still running. Linux could not have said
-otherwise: `cmd/nova-bus` is 10.0 s on hulk and at least 100 s there,
-`cmd/nova-swarm` 51.0 s on hulk and 37 s there.
-**The test.** `TestMergeGateWindowsLegDealsFromTheWindowsTable`
-(`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** None.
-**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
-windows leg would deal from the Linux column again, which is how integration-4's
-group was dropped`; `an unknown Windows size must be dealt across every slot,
-never guessed downward`; and `the merge gate's windows leg does not take its
-ceiling from make -s windows-timeout; the Windows number would be written twice
-and drift`.
-**Its narrowings.** It asserts the shell branch's text inside one named step; if
-the step is renamed the test fails loudly rather than silently passing, which is
-the trade it takes.
-
-### `one-windows-leg` — exactly one Windows leg on a pull request
-
-**The rule.** Exactly one `pull_request` job reaches `windows-latest`, and it is
-`test-windows-pr`; the packages and path filters of the retired hosted leg are
-still present in it.
-**The hurt.** Ledger items 39–40: integration-4 ran both legs on the same commit.
-The three sharded shards passed at 13:37–13:43Z and the older unsharded leg was
-cancelled by its own six-minute timeout at 13:43:39 and failed the run. A second
-leg that can only fail is not redundancy, it is a second thing to fix.
-**The test.** `TestOnlyOneWindowsLegRunsOnAPullRequest`
-(`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** None. The retirement is only correct if nothing it covered was
-lost, so the two packages it ran and the three paths it watched are asserted
-present in `test-windows-pr` — the paths matter on their own, because a change to
-a fixture under `cmd/nova-bus` moves no `.go` file and `select-packages.sh`
-cannot see it.
-**Its remedy line.** `the pull_request jobs that reach windows-latest are <jobs>,
-want exactly [test-windows-pr]; two Windows legs on one PR is a second thing to
-fix and integration-4 is what it costs`.
-**Its narrowings.** It counts jobs that name `windows-latest` AND the
-`pull_request` event in their text; a Windows runner reached through a reusable
-workflow or a matrix value built elsewhere would not be counted.
-
 ### `darwin-sizes` — the darwin cap is measured on a quiet host, with a stated margin
 
 **The rule.** The numbers that decide the darwin merge leg's cost — the measured
@@ -1167,6 +1164,72 @@ permanent exemption and it stops firing the moment that branch's section lands.
 per-binary and live in each command's own `firstrun_test.go`, where the example
 lines are EXECUTED, the refusal sentences asserted and the transcript compared
 against real output.
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §7 (draft, 2026-09-19):** that last sentence was
+not true of 8 of 22 sections, and 9 more compared a set of shapes; §7 makes execution, line for
+line through one comparator, the thing the class test asserts.
+
+### `kernel-components` — no kernel source is compiled by nobody
+
+**The rule.** Every `.lisp` file under `lisp/nova-work/src/` and
+`lisp/nova-work/tests/` is named by a `:components` list in
+`lisp/nova-work/nova-work.asd`, or is named in the `notCompiled` ledger with the
+issue that owes its removal. The system names no file that is gone, and an entry
+whose file is gone or has become a component fails too, so the ledger only
+shrinks.
+**The hurt.** ASDF loads a file because the system names it, never because it is
+in the directory, so an unnamed file is not slow-to-load — SBCL never reads it.
+On 2026-09-19, `dev@47d81e9c`: **28 of the 60 files in `src/` were in no system**
+— all 17 `replays-86NN.lisp` and 11 feature-named `replays-*.lisp`, roughly 700
+defuns and defstructs that nothing compiled — while `run-tests.sh` reported
+`total=327 pass=327 fail=0`. `#1102` read that as a naming problem and called the
+fold mechanical. It is not: appending all 28 to the system and running the suite
+dies with `attempt to redefine the STRUCTURE-OBJECT class SAVEPOINT incompatibly
+with the current definition` loading `src/replays-8641.fasl`, exit 1, the 327
+cases never reached. A card told to move that file into `src/savepoint.lisp`
+would have landed a kernel that does not load — or dropped the colliding form to
+get green, with nobody able to say which of the 700 forms went.
+**The test.** `TestEveryKernelSourceIsACompiledComponent`
+(`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
+on purpose: the lisp job runs only when `lisp/**` or `docs/SPEC-WORK.md` moved,
+and a file nothing compiles is exactly what a green lisp run cannot see.
+**Its allowlist.** `notCompiled` in the test file: 28 entries, every one owed to
+`#1102`. It is the point of the test rather than a hole in it — a silent file is
+invisible, a listed one is a debt with an issue number that cannot grow without
+this test saying so.
+**Its remedy line.** The finding names the file and says SBCL never reads it: it
+compiles nothing, no acceptance case covers it, and `run-tests.sh` is green
+without it.
+**Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
+under `src/` and `tests/`. It reads the component list, not the load: whether the
+system as named *loads* is `make test-lisp`'s business.
+### `one section` — docs/TESTS.md names each tool exactly once
+
+**The rule.** No two `## ` headings in `docs/TESTS.md` carry the same name. A
+tool with more than one thing to say says it in `###` subsections of its one
+section.
+**The hurt.** `docs/TESTS.md` carried `## nova-work` twice. `onboarding.Section`
+cuts to the FIRST match and cannot fail, so `cmd/nova-work/firstrun_test.go`
+executed the first section and the second was read by no test at all. It drifted
+into two sentences the binary no longer printed — a bare-command refusal in the
+retired spelling (`nova-work: no verb given`, against the shipped
+`WORK REFUSED: a verb is required`) and an `events` line carrying `--repo`, the
+flag that switches ON the `gh pr list` fallback that section's own prose says is
+off. Both reproduced as DEFECT on space AND on hulk in the 2026-09-18 two-bench
+dogfood run while every test in this repository was green, which is `#1506`
+read from its other end: the drift was not a test that was too weak, it was a
+document half of which no test could see.
+**The test.** `TestNoToolIsWrittenTwiceInTheTranscripts`
+(`internal/ci/onboarding_test.go`), over the parse in
+`onboarding.RepeatedSections`.
+**Its allowlist.** None. A repeated heading has no good case: the second copy's
+readership is nobody.
+**Its remedy line.** The finding names every repeated heading and says only the
+first is read — by `onboarding.Section`, by every `firstrun_test.go`, and by a
+person looking for the one place to change.
+**Its narrowings.** Only `docs/TESTS.md` and only `## ` headings; a repeated
+`###` inside one tool's section is that section's business, and `cmd/nova-work`'s
+own `TestTESTSRefusalsAreWhatTheToolPrints` is what holds a second subsection to
+what the tool prints.
 
 ### `version` — every tool prints the one version line
 
@@ -1317,3 +1380,267 @@ so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 **Its narrowings.** Two independent selections are pinned by two regular
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
+
+### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
+
+**The rule.** `internal/swarm/toolchain.go` is the ONE list of the bench
+toolchain roots the sandbox wall grants a card, **per GOOS**, and each root
+carries its KIND: `~/sdk` read **and execute**, `~/go/pkg/mod` read **without**
+execute, `~/go/bin` granted under neither, and on darwin the installed trees
+(`/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`,
+`/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`,
+`/usr/local/share/dotnet`) read **and execute**, never a launcher directory.
+Each OS's side of the agreement is that OS's provisioning standard:
+`tools/bench-standard.sh` carries the linux names between its
+`NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
+`pulse.FleetStandardChecks`'s `toolchain-*` checks carry both OSes' — a linux
+root **demanded**, a darwin root **reported**, because a Mac's toolchains are
+installed rather than provisioned into a home. Both `docs/SPEC-SWARM.md` and
+`docs/CLI.md` name every granted root.
+**The hurt.** Two contracts named the same paths in two places and disagreed: the
+provisioning standard put Go under `~/sdk`, the wall's implicit worker
+description named no toolchain root at all and pinned `GOTOOLCHAIN=local`, so
+every Go card on hulk was denied EXECUTION of the bench's own `go`, fell back to
+`/usr/bin/go` 1.22.2 and died on `go: go.mod requires go >= 1.26` (the schema
+dogfood loop, 2026-09-18). The kind half is Johnny's security read of `#1364`: a
+`--read` root CARRIES EXECUTE on both wall bodies, so the first fix was one
+review away from handing a card execute over the module cache and `~/go/bin`.
+The per-OS half is the same day's darwin face, measured on the M2 Air: a Mac's
+toolchains are INSTALLED and on `PATH`, and three of them still died inside the
+bare wall — `go: cannot find GOROOT directory: 'go' binary is trimmed`,
+`dotnet: Failed to resolve full path of the current executable []`, `java: Unable
+to locate a Java Runtime` — because each resolves its runtime from the directory
+of the launcher that ran it and that launcher is a symlink OUT of any granted
+tree. One list for every OS would have left the Mac benches dead.
+**The test.** `TestBenchStandardAndTheWallNameTheSameToolchainRoots`
+(`internal/ci/toolchainroots_class_test.go`), per OS and checked in BOTH
+directions — a root the wall grants that the standard does not name is a wall
+granting a path that will not be there, and a root the standard names that the
+wall does not grant is the original bug returning — plus the kinds by name and
+the refusal of any `.../bin`.
+**Its allowlist.** None. The list is read from the one source at run time, over
+every OS it speaks for (`swarm.ToolchainRootOSes`), so a root — or an OS — added
+tomorrow is held to the standard and to a kind on the day it appears.
+**Its remedy line.** `the <os> provisioning standard and the wall name different
+toolchain roots … They are ONE list. Edit both sides together`, and for a kind,
+`the wall grants the module cache ~/go/pkg/mod EXECUTE: it is the
+read-without-execute kind`.
+**Its narrowings.** It reads the declaration, not a running wall: that the two
+kinds are ENFORCED is proved by the wall's own tests on both bodies
+(`TestLandlockReadNoExecReadsAndRefusesToExecute`,
+`TestReadNoExecReadsAndRefusesToExecuteOnDarwin`), that the argv carries each
+root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots` and, on a
+Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
+Cellar prefix is read off the launcher rather than guessed by
+`TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
+
+### `ciworkspace` — the workspace cleanup never fails a job before checkout
+
+**The rule.** Every copy of the `remove stale build dirs from the shared runner`
+step in `.github/workflows/ci.yml` refuses an EMPTY `GITHUB_WORKSPACE`
+(`[ -n … ] || exit 1`), CONTINUES when the workspace directory does not exist
+(`[ -d … ] || exit 0`), and CONTINUES when the workspace holds no `.git`
+(`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0`). It may not exit non-zero
+because `.git` is absent: the step runs before `actions/checkout`, so an absent
+`.git` is the normal first-run state and not a fault. The last guard is the
+BELT, and it points the other way from the first two: the step ends in
+`find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`, so
+the shape has to keep that sweep off any directory that is not a checkout of
+this repository. `GITHUB_WORKSPACE` is whatever the runner was configured with;
+a runner pointed at a home directory, a mount, or a hand-made path by a
+misconfiguration would have had its contents deleted by the repair for #1751 as
+written, which traded a red job for a lost directory. A workspace with no `.git`
+has nothing of ours in it to clean, and `actions/checkout` empties a
+non-repository workspace itself before it clones, so continuing loses nothing.
+**The hurt.** The step's precheck was
+`[ -n "${GITHUB_WORKSPACE}" ] && [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 1`.
+On 2026-09-19 the captainamerica runners came back into service with fresh
+workspaces and **five jobs across three PRs went red before a line of the
+repository had been read**, `ci-ok` failing downstream of them, every one
+reporting `failed_step: 2:remove stale build dirs from the shared runner`
+(`#1751`, receipts on the issue).
+**The test.** `TestWorkspaceCleanupDoesNotFailBeforeCheckout`
+(`internal/ci/ciworkspace_class_test.go`). It reads `ci.yml` as text, finds
+EVERY copy of the named step, and reports the occurrence index and its line
+number, so a repair made in five of six copies is found rather than passing on
+the first.
+**Its allowlist.** None. Every copy of the step is held to the same shape; a
+copy that needs an exception is a copy that should not exist.
+**Its remedy lines.** `the cleanup step still refuses a workspace with no .git;
+it runs before checkout, so a runner whose workspace does not exist yet goes red
+before a line of the repository is read (#1751)`; its two companions for a
+dropped `[ -n … ] || exit 1` refusal and a missing `[ -d … ] || exit 0` guard;
+and, for the belt, `the cleanup step runs `find … -exec rm -rf` with no
+`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0` belt in front of it; a workspace
+that exists but is not a checkout of this repository must be left alone rather
+than emptied (#1751)`.
+**Its narrowings.** It matches the step by its `- name:` text, so a copy renamed
+or a cleanup inlined into another step would not be counted; and it reads the
+workflow as text, so a value built elsewhere and interpolated in is invisible to
+it.
+
+## Parked class tests
+
+A parked rule is one this repository decided to stop enforcing, kept here with
+its hurt so the decision can be read rather than rediscovered. The test files are
+DELETED — a class test that does not run is worse than no test, because it reads
+like cover — and `internal/docs`' index test knows this section by name, so the
+`Test…` names below are allowed to name tests that no longer exist. Nothing else
+in this document is allowed to.
+
+**Why these four are parked.** Glenn, 2026-09-18: *"drop the native windows CI
+runners. WSL only from now on."* Every `windows-latest` leg left `ci.yml` in that
+change — `test-windows-pr`'s four shards, `test-hosted-merge`'s windows leg, and
+`test-hosted`'s windows entry on the push and nightly matrix — and with them the
+measured Windows size table, `WINDOWS_TIMEOUT` and `make windows-timeout`. What
+remains on the CL path is ONE cheap compile guard in the `lint` job,
+`make vet-windows` (`GOOS=windows go vet ./...`), which type-checks every package
+and every `_test.go` for Windows on a Linux runner in seconds; the merge gate
+(`nova-merge`'s `vet-windows` step) runs the same command, so the guard is
+paid twice before a change lands. Running Windows TESTS is the certification
+tier's job, which is a release blocker and never a CL one. Windows as a place to
+put work is the Threadripper under WSL2 — a LINUX bench with Linux runners
+labelled `linux,X64,threadripper` — see `docs/BENCH-STANDARD-WINDOWS.md`.
+
+**What would unpark them.** A native Windows CI runner, or a measured Windows leg
+that fits the two-minute law. Read `windows-sizes` below before writing either:
+its rule — a number in a table or a cap must come from a MEASUREMENT, and a
+measurement made at a cap is a floor and not a size — is the one that cost the
+most to learn and it is live today, one platform over, as `darwin-sizes`.
+
+### `windows-pr` — a pull request gets a Windows leg, and it stays cheap
+
+**The rule.** `test-windows-pr` runs on `windows-latest` over the packages
+`.github/scripts/select-packages.sh` selects — the same script the self-hosted
+shards call, so there is one answer to "what does this change test" — sharded,
+skipped when the PR moves no Go file, fork-guarded, and aggregated by `ci-ok`.
+**The hurt.** Windows ran only in the merge group and on push, so a Windows-only
+failure was found after a PR was enqueued, where a red shard drops the whole
+group and restarts every PR behind it: one PR's small mistake became every PR's
+delay (ledger items 22, 26). `#1317` landed the leg; it paid for itself three
+times in its first real run (ledger 38) — `#1324`'s install-skip, and behind it a
+product bug (`adopt` named a bare `nova-update` on a Windows target), and the
+execute-bit assertion class.
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." `test-windows-pr` is gone from `ci.yml` and `TestPullRequestsGetAWindowsLeg` is deleted with it. The rule is kept here for the record, and it is the one to read first if a Windows leg is ever wanted again.
+**Its allowlist.** None; the shape is the contract and the test is the shape.
+**Its remedy line.** Each finding names the missing part of the shape — the
+runner, the shard count, the sizes file, the selection script, the skip
+condition, the fork guard or the `ci-ok` need.
+**Its narrowings.** It reads `ci.yml` as text, so it pins the words a reviewer
+would look for rather than the semantics a YAML parser would give; a leg that
+satisfies every string and still does the wrong thing passes here and is caught
+by the run.
+
+### `windows-sizes` — the shard plan comes from measurements, never a convention
+
+**The rule.** The three numbers that decide this leg's cost — the measured sizes
+in `testdata/ci/package-sizes-windows.tsv`, the shard budget, and
+`WINDOWS_TIMEOUT` in the Makefile — stay in one place and in step, and the
+ceiling can never drop back below a size actually observed.
+**The hurt.** Ledger items 39–40. The leg shipped with the hosted convention of
+100 s per package; its first real run (`#1332`) found four packages ON that
+ceiling under `-short`. A ceiling a tree's packages sit on is not naming a hang,
+it IS the hang. Then the PR leg's six-minute cap killed finished shards 2–4
+seconds into cleanup, and the merge leg's cap cut a shard mid-listing. The lesson
+the whole day repeated: **a number in a table or a cap must come from a
+measurement, and a measurement made at a cap is a floor, not a size.**
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." `TestWindowsPRShardPlanIsDerivedFromMeasurements` is deleted, `WINDOWS_TIMEOUT` is out of the Makefile and `testdata/ci/package-sizes-windows.tsv` is out of the tree; the measurements are in git at dev `65e86175`. **The rule itself is NOT parked**: it runs today as `darwin-sizes`, on the platform that still has a measured merge leg.
+**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
+floors rather than written as sizes; the forcing packages `#1332` measured at the
+ceiling are named in the test, so they cannot quietly fall out of the table.
+**Its remedy line.** `the Makefile does not say where WINDOWS_TIMEOUT's number
+comes from; a ceiling is a claim about the machine and belongs in the repository
+with its measurement`.
+**Its narrowings.** It checks that the numbers are measured and consistent, not
+that they are still TRUE: a package that doubles on windows-latest keeps its old
+row until somebody measures again, and only the run says so.
+
+### `windows-table` — the merge gate's Windows leg deals from the Windows table
+
+**The rule.** The merge group's windows leg reads the FULL column of the Windows
+sizes table, takes its ceiling from `make -s windows-timeout`, and deals an
+unmeasured or censored package across EVERY slot; linux and darwin keep the Linux
+table, which is their measurement.
+**The hurt.** Ledger item 38: the merge group's windows leg dealt from the LINUX
+table — `cmd/nova-bus` at 6.4 s bought three shards, and shard 0 was killed at
+the 100 s ceiling with three tests still running. Linux could not have said
+otherwise: `cmd/nova-bus` is 10.0 s on hulk and at least 100 s there,
+`cmd/nova-swarm` 51.0 s on hulk and 37 s there.
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." The merge gate's windows leg, its arm of the shard plan and `make windows-timeout` are all gone. **The rule itself is NOT parked**: it runs today as `darwin-table`.
+**Its allowlist.** None.
+**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
+windows leg would deal from the Linux column again, which is how integration-4's
+group was dropped`; `an unknown Windows size must be dealt across every slot,
+never guessed downward`; and `the merge gate's windows leg does not take its
+ceiling from make -s windows-timeout; the Windows number would be written twice
+and drift`.
+**Its narrowings.** It asserts the shell branch's text inside one named step; if
+the step is renamed the test fails loudly rather than silently passing, which is
+the trade it takes.
+
+### `one-windows-leg` — exactly one Windows leg on a pull request
+
+**The rule.** Exactly one `pull_request` job reaches `windows-latest`, and it is
+`test-windows-pr`; the packages and path filters of the retired hosted leg are
+still present in it.
+**The hurt.** Ledger items 39–40: integration-4 ran both legs on the same commit.
+The three sharded shards passed at 13:37–13:43Z and the older unsharded leg was
+cancelled by its own six-minute timeout at 13:43:39 and failed the run. A second
+leg that can only fail is not redundancy, it is a second thing to fix.
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." Exactly ZERO `pull_request` jobs reach `windows-latest` now, which is the same rule at its limit, and `TestOnlyOneWindowsLegRunsOnAPullRequest` is deleted. What a pull request gets instead is the `lint` job's `make vet-windows` (`GOOS=windows go vet ./...`), which compiles every package and every test file for Windows on a Linux runner.
+**Its allowlist.** None. The retirement is only correct if nothing it covered was
+lost, so the two packages it ran and the three paths it watched are asserted
+present in `test-windows-pr` — the paths matter on their own, because a change to
+a fixture under `cmd/nova-bus` moves no `.go` file and `select-packages.sh`
+cannot see it.
+**Its remedy line.** `the pull_request jobs that reach windows-latest are <jobs>,
+want exactly [test-windows-pr]; two Windows legs on one PR is a second thing to
+fix and integration-4 is what it costs`.
+**Its narrowings.** It counts jobs that name `windows-latest` AND the
+`pull_request` event in their text; a Windows runner reached through a reusable
+workflow or a matrix value built elsewhere would not be counted.
+
+## How the class tests read the tree: one walk, one parse, in parallel
+
+Every rule above is a sweep of this repository's own source, and for a while
+every rule paid for its own sweep: `filepath.WalkDir` over `cmd/` and
+`internal/`, `os.ReadFile` on each of the 1,052 `.go` files, and `go/parser`
+over each of them again. Eight rules, eight walks, eight parses of the same
+bytes. Measured on hulk at `dev` `04bb4e1c`, `go test ./internal/ci/ -count=1`
+took 10.2 s and 10.4 s, and `-race` took 49.4 s — for a package the CL tier is
+held to a two-minute budget with.
+
+**One walk, one parse, per test process.** `internal/ci/tree_test.go` holds the
+shared tree: a `sync.Once` walks the repository root exactly once, reads the
+bytes of every `.go` file and of everything under `.github/`, and parses the
+`.go` files into ONE `token.FileSet`. `repoTree(t)` hands every rule the same
+index; `.git` is never descended into. The contract is pinned by
+`TestSharedRepoTreeListsAndParsesTheRepository` and
+`TestSharedRepoTreeSkipsTheGitDirectory` — the tree is this repository and not
+empty, every `.go` file it lists carries a usable syntax tree, and the loader
+runs exactly once however many callers ask for it. A cache that reloads is a
+walk with extra bookkeeping.
+
+**The rules are READ-ONLY over the tree.** No test in this package writes a file
+the walk can see, so nothing invalidates the cache and the second walk was never
+buying anything. That is also why the rules are safe to run concurrently: each
+class test carries `t.Parallel()` and reads the shared tree and its own
+`testdata/` allowlist, and writes only to its own `t.TempDir()`. A test that
+chdirs, sets an environment variable, or writes shared state does NOT get
+`t.Parallel()`, and the shared tree is not a licence to add one.
+
+**Each rule filters the tree itself.** It does not ask for a pre-filtered list,
+because the filters differ in ways that decide whether a rule holds: the
+wall-clock budget rule reads `testdata` (it holds its own fixtures to the law),
+the shared-temp and output-path rules skip it (they would otherwise find the
+offenders they plant), and the build-tag rule skips `vendor` and `node_modules`
+as well. Skipping the wrong one is the difference between a rule that holds and
+a rule that passes by checking nothing.
+
+**On parse mode.** The tree is parsed with mode `0`, because every rule that
+reads it walks declarations and expressions and none of them reads a comment.
+The production checkers that DO want comments — `CheckNet`, which reads
+`// net-ok:` reasons — take a caller-supplied root, are not tests, and keep
+their own walk. A rule here that ever needs comments caches a SECOND variant
+keyed by `parser.Mode` rather than widening this one, so that changing the mode
+can never quietly change what an existing rule sees.

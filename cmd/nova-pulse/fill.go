@@ -1,7 +1,9 @@
 package main
 
 // The fill verb: fill-loop.sh's tick body, once per tick, for every bench. --machines names
-// the machines registry, and a --bench whose roles lack `bench` is refused before any ssh:
+// the machines registry, and with no --bench the pool IS the registry: every row whose roles
+// carry `bench` and whose notes carry `certified=<YYYY-MM-DD>` (#1476). No fleet name is
+// written down here. A --bench whose roles lack `bench` is refused before any ssh:
 // runner hosts are CI-only (Glenn 2026-09-18), and the fill is the path a CARD takes. It reads the
 // bench's capacity over ssh, pops that many ready cards, moves them to launched and hands
 // each to flash-native-bench.sh. A card's `LANE: <name>` line serializes its area: at most
@@ -25,10 +27,13 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-// fillBenches is the fleet fill-loop.sh fills when the caller names none.
-var fillBenches = []string{"hulk", "vision", "space"}
+// defaultSwarmRoot is where a bench keeps the swarm root unless --swarm-root says
+// otherwise. It is expanded ON THE BENCH, by the bench's own shell, and it is a path and
+// not a machine name: this package names no machine in the fleet.
+const defaultSwarmRoot = "$HOME/rowan-swarm-root"
 
 // benchFlag collects a repeatable --bench, split on commas.
 type benchFlag []string
@@ -54,6 +59,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	once := f.fs.Bool("once", false, "")
 	capacity := f.fs.Int("capacity", -1, "")
 	launcher := f.fs.String("launcher", "", "")
+	swarmRoot := f.fs.String("swarm-root", defaultSwarmRoot, "")
 	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
 	grace := f.fs.String("launch-grace", defaultLaunchGrace.String(), "")
 	var benches benchFlag
@@ -80,10 +86,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	if len(benches) == 0 {
-		benches = fillBenches
-	}
-	var reader pulse.Capacity = sshCapacity{}
+	var reader pulse.Capacity = sshCapacity{root: *swarmRoot}
 	if *capacity >= 0 {
 		reader = fixedCapacity(*capacity)
 	}
@@ -104,10 +107,37 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	})
 }
 
+// swarmRootScript resolves the volume a card's I/O actually lands on and leaves it in $r.
+// It is a prelude and not a whole script so a test can run it alone over tmp directories.
+//
+// The root is resolved THROUGH its symlinks (`cd` then `pwd -P`), because on antman
+// `~/rowan-swarm-root` is a link to `/data/swarm` on a second disk: `df $HOME` there
+// measures the root LV, which is not the volume the cards fill. A root that is not
+// configured, or is configured and not there, falls back to $HOME -- the number every
+// bench answered before this, and never a refusal in the middle of a tick.
+//
+// The root is expanded by the bench's own shell, so `$HOME` in it means the bench's home.
+func swarmRootScript(root string) string {
+	home := `r=$(cd "$HOME" 2>/dev/null && pwd -P); [ -n "$r" ] || r="$HOME"`
+	if strings.TrimSpace(root) == "" {
+		return home
+	}
+	return `r=$(cd "` + shellDoubleQuoted(root) + `" 2>/dev/null && pwd -P); [ -n "$r" ] || ` + home
+}
+
+// shellDoubleQuoted makes a path safe inside the double quotes above while leaving `$`
+// alone, because the whole point of the default is that the BENCH expands `$HOME`.
+func shellDoubleQuoted(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "`", "\\`")
+	return r.Replace(s)
+}
+
 // capacityScript is fill-loop.sh's formula, run on the bench: the min of core headroom
 // (cores*1.5 - load1 - cores/8, a CI reserve), disk headroom ((free_gb-25)/2) and memory
-// headroom (memfree_gb/2).
-const capacityScript = `c=$(nproc); l=$(cut -d. -f1 /proc/loadavg); f=$(df -BG "$HOME" | awk 'NR==2{gsub("G","",$4); print $4}'); m=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo); a1=$(( c*3/2 - l - c/8 )); a2=$(( (f-25)/2 )); a3=$(( m/2 )); a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3; echo "$a"`
+// headroom (memfree_gb/2). The disk term reads the swarm root's volume, not $HOME's.
+func capacityScript(root string) string {
+	return swarmRootScript(root) + `; c=$(nproc); l=$(cut -d. -f1 /proc/loadavg); f=$(df -BG "$r" | awk 'NR==2{gsub("G","",$4); print $4}'); m=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo); a1=$(( c*3/2 - l - c/8 )); a2=$(( (f-25)/2 )); a3=$(( m/2 )); a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3; echo "$a"`
+}
 
 // fixedCapacity is --capacity: the same number for every bench, and no child at all. It is
 // what makes a dry run of the tick possible on a bench-less machine.
@@ -115,15 +145,17 @@ type fixedCapacity int
 
 func (c fixedCapacity) Capacity(string) (int, error) { return int(c), nil }
 
-// sshCapacity reads one bench's capacity over the same ssh the hand loop used.
-type sshCapacity struct{ ssh string }
+// sshCapacity reads one bench's capacity over the same ssh the hand loop used. root is the
+// swarm root on the BENCH, whose volume the disk term measures.
+type sshCapacity struct{ ssh, root string }
 
 func (c sshCapacity) Capacity(bench string) (int, error) {
 	ssh := c.ssh
 	if ssh == "" {
 		ssh = "ssh"
 	}
-	cmd := exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript)
+	testguard.RefuseHosts(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript(c.root))
+	cmd := exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript(c.root))
 	var out bytes.Buffer
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = &out, said

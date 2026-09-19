@@ -17,16 +17,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
-const usage = `nova-pulse — one tool, five verbs, no model call
+const usage = `nova-pulse: bounded open work, cut into cards and folded back, no model call (see docs/SPEC-PULSE.md)
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -36,7 +37,7 @@ nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired
         [--day-start <HH:MMZ>] [--gh-config <dir>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
+nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
@@ -269,7 +270,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
-		return cmdHarvest(rest, stdout, stderr)
+		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":
 		return cmdBeat(rest, stdout, stderr, now)
 	case "watch":
@@ -396,7 +397,13 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	slots := f.fs.Int("slots", 0, "")
 	deadline := f.fs.String("deadline", "", "")
 	queue := f.fs.Bool("queue", false, "")
+	benches := f.fs.String("benches", "", "")
+	bench := f.fs.String("bench", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
+	routes := f.fs.String("routes", "", "")
+	floor := f.fs.Float64("floor", 0.9, "")
+	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
+	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -412,17 +419,22 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
+	if *floor < 0 || *floor > 1 {
+		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g; answers below it keep the card's own worker", *floor))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
+		Benches: *benches, Bench: *bench,
+		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,
 	})
 }
 
-func cmdHarvest(args []string, stdout, stderr io.Writer) int {
+func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("harvest")
 	id := f.fs.String("id", "", "")
 	root := f.fs.String("root", "", "")
@@ -446,9 +458,34 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	failedDir := f.fs.String("failed", "", "")
 	var clones benchFlag
 	f.fs.Var(&clones, "clone", "")
+	working := f.fs.String("working", "", "")
+	roots := f.fs.String("roots", "", "")
+	timer := f.fs.String("timer", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	// The working layout names no --id and no --root: it folds the bench's jobs
+	// under --working and the swarm roots under --roots. The old layout is
+	// unchanged and still wants both.
+	if strings.TrimSpace(*working) != "" || strings.TrimSpace(*roots) != "" {
+		if *max < 0 {
+			f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+		}
+		if f.refused(stderr) {
+			return 2
+		}
+		return pulse.HarvestWorking(pulse.HarvestInput{
+			Working:    *working,
+			Roots:      *roots,
+			Base:       *base,
+			SinceStamp: *since,
+			Timer:      *timer,
+			Max:        *max,
+			Stdout:     stdout,
+			Stderr:     stderr,
+			Now:        func() time.Time { return now },
+		})
 	}
 	// A bench harvest folds what is on the bench. There is no pulse packet to name and no
 	// relaunch to feed, so --id, --sources and --templates are not its to supply: a

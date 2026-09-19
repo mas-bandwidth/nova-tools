@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // `nova-swarm lint --card` is the mechanical shape check that runs BEFORE any spend. A card
@@ -115,16 +117,86 @@ func TestLintRefusesNovaSandbox(t *testing.T) {
 	}
 }
 
-// A card at or over the ceiling is refused before it spends a token, and the finding says
-// which check and how big.
-func TestLintRefusesAnOversizeCard(t *testing.T) {
+// issue #1471: a new friend who follows the help (`nova-swarm template --name <t>` then
+// `nova-swarm lint --card`) meets a result-first refusal before writing a word. Every card
+// template the tool ships must lint clean, and a template that is not a card (result, worker,
+// setup, capacity) must answer by name rather than as a result-first drift.
+func TestTemplateThenLintPasses(t *testing.T) {
+	cardTemplates := map[string]bool{
+		"read-pr":   true,
+		"probe-row": true,
+		"fix-card":  true,
+	}
+	for _, name := range swarm.TemplateNames() {
+		t.Run(name, func(t *testing.T) {
+			exit, body, stderr := runSwarm(t, "template", "--name", name)
+			if exit != 0 {
+				t.Fatalf("template --name %s exited %d: %s", name, exit, stderr)
+			}
+			card := writeLintCard(t, name+".md", body)
+			exit, stdout, _ := runSwarm(t, "lint", "--card", card)
+			if cardTemplates[name] {
+				if exit != 0 {
+					t.Fatalf("the %s card template lints clean at exit 0, got %d\nstdout: %s", name, exit, stdout)
+				}
+				if !strings.Contains(stdout, "LINT OK") {
+					t.Fatalf("the %s card template reports LINT OK: %q", name, stdout)
+				}
+				return
+			}
+			if strings.Contains(stdout, "result-first") {
+				t.Fatalf("the %s template is not a card; lint says so by name, not as a result-first drift: %q", name, stdout)
+			}
+			if !strings.Contains(stdout, "not a card") || !strings.Contains(stdout, name) {
+				t.Fatalf("the %s template gets a named not-a-card answer: %q", name, stdout)
+			}
+		})
+	}
+}
+
+// A card over the ceiling is ADVISED and never refused (issues #1494, #1527). This test
+// wanted exit 2 and a `LINT DRIFT` until 2026-09-19, which is the reading that made two
+// managers trim good cards to reach a number while two others shipped over it on purpose.
+// The ceiling is a reading budget, not an input limit -- a 12422-byte card was measured
+// through the harness untruncated -- so the finding says how big, says `advisory`, and
+// leaves the verdict alone.
+func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	body := lintGoodCard() + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "big.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("an oversize card drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 0 {
+		t.Fatalf("an oversize card is advice, not a defect, so the lint exits 0, got %d\nstdout: %s", exit, stdout)
 	}
-	if !strings.Contains(stdout, "LINT DRIFT card=big.card size:") {
-		t.Fatalf("the size finding names the check: %q", stdout)
+	if !strings.Contains(stdout, "LINT NOTE card=big.card size:") {
+		t.Fatalf("the size finding is a NOTE naming the check: %q", stdout)
+	}
+	if strings.Contains(stdout, "LINT DRIFT card=big.card size:") {
+		t.Fatalf("the size finding is never a DRIFT, which is the line a caller refuses on: %q", stdout)
+	}
+	if !strings.Contains(stdout, "advisory") {
+		t.Fatalf("the word a manager needs is in the line: advisory, not a limit: %q", stdout)
+	}
+	if !strings.Contains(stdout, "bytes=") || !strings.Contains(stdout, "cap=12000") {
+		t.Fatalf("a clean card still carries its size and the cap: %q", stdout)
+	}
+}
+
+// A card that is BOTH over the ceiling and drifting is refused for the drift alone, and the
+// closing size line answers the advisory question in the bytes.
+func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t *testing.T) {
+	body := lintGoodCard() + "STEP 6. cd ../elsewhere\n" + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
+	card := writeLintCard(t, "bigdrift.card", body)
+	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
+	if exit != 2 {
+		t.Fatalf("a card that walks above the job is refused, got %d\nstdout: %s", exit, stdout)
+	}
+	if !strings.Contains(stdout, "LINT DRIFT card=bigdrift.card no-parent-path:") {
+		t.Fatalf("the drift it is refused for is named: %q", stdout)
+	}
+	if strings.Contains(stdout, "LINT DRIFT card=bigdrift.card size:") {
+		t.Fatalf("the size is still never a DRIFT, even on a card that has one: %q", stdout)
+	}
+	if !strings.Contains(stdout, "LINT SIZE card=bigdrift.card bytes=") || !strings.Contains(stdout, "advisory=true") {
+		t.Fatalf("the closing size line says advisory=true: %q", stdout)
 	}
 }

@@ -70,6 +70,12 @@ const (
 // runner role comes off hulk and vision and the note goes with it.
 const allowSharedPrefix = "allow-shared="
 
+// certifiedPrefix is how a machine's notes say it has been through certification: the
+// machine was provisioned, probed and proven to carry a real card end to end, and the day
+// it was is on the line. It is the field the fill pool is derived from -- an uncertified
+// bench may be named by hand, but no tick puts a card on it by default.
+const certifiedPrefix = "certified="
+
 // Machine is one line of the registry.
 type Machine struct {
 	Name  string   // the bench name every verb's --bench takes
@@ -114,6 +120,25 @@ func (m Machine) AllowShared() (date, why string, ok bool) {
 		return "", "", false
 	}
 	return date, why, true
+}
+
+// Certified reads the certification out of the notes: `certified=<YYYY-MM-DD>`, with
+// anything after the date free text (the report it was written from, usually). It answers
+// the date and whether the machine carries one at all.
+func (m Machine) Certified() (date string, ok bool) {
+	i := strings.Index(m.Notes, certifiedPrefix)
+	if i < 0 {
+		return "", false
+	}
+	rest := strings.TrimSpace(m.Notes[i+len(certifiedPrefix):])
+	date = rest
+	if j := strings.IndexAny(rest, " \t"); j >= 0 {
+		date = rest[:j]
+	}
+	if !isDate(date) {
+		return "", false
+	}
+	return date, true
 }
 
 // isDate reads YYYY-MM-DD and nothing else. The exception must carry the day it was made,
@@ -193,6 +218,20 @@ func (r *Registry) BenchNames() []string {
 	out := make([]string, 0, len(r.machines))
 	for _, m := range r.WithRole(RoleBench) {
 		out = append(out, m.Name)
+	}
+	return out
+}
+
+// CertifiedBenchNames is THE POOL: every machine that may take work AND has been certified,
+// in file order. It is what a verb fills when the caller names no bench, so a bench joins
+// the fleet's work by its registry row and by nothing else -- no list in any Go file, no
+// edit to any tool, no release.
+func (r *Registry) CertifiedBenchNames() []string {
+	out := make([]string, 0, len(r.machines))
+	for _, m := range r.WithRole(RoleBench) {
+		if _, ok := m.Certified(); ok {
+			out = append(out, m.Name)
+		}
 	}
 	return out
 }

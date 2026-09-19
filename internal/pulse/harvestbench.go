@@ -43,6 +43,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // requireBench holds a bench NAME against the machines registry before the verb opens an
@@ -216,6 +217,24 @@ func harvestBench(in HarvestInput) int {
 			markHarvested(shell, in.Bench, j.Dir)
 			lines.Line(fmt.Sprintf("HARVEST NO-COMMIT bench=%s label=%s branch=%s base=%s (nothing was committed; not pushed)",
 				field(in.Bench), field(label), field(branch), field(base)))
+			continue
+		}
+		// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). Every Space card is harvested
+		// through this verb, and this verb pushes the branch and builds the PR body out of
+		// the bench's RESULT.md, so it is the path that most needs the guard. The diff is
+		// read from the fetched ref in the local clone, which is exactly what the push
+		// would carry. A hit refuses, quarantines the job ON THE BENCH over the same shell
+		// seam, writes the HUMAN line, and never marks the job harvested.
+		findings, scanErr := secretFindings(j.Dir, clone, "origin/"+base+".."+ref, j.Result)
+		if scanErr != nil {
+			failed++
+			fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest-bench", label, scanErr))
+			continue
+		}
+		if len(findings) > 0 {
+			failed++
+			secretRefusal{Site: "harvest-bench", Label: label, JobDir: j.Dir,
+				Out: in.Stderr, Move: benchMover(func(script string) (string, error) { return shell.Run(in.Bench, script) })}.refuse(findings)
 			continue
 		}
 		sha, _ := gitIn(clone, "rev-parse", "--short", ref)
@@ -555,6 +574,7 @@ func (s sshShell) Run(bench, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
+	testguard.RefuseHosts(prog, "-n", "-o", "BatchMode=yes", bench, script)
 	cmd := exec.CommandContext(ctx, prog, "-n", "-o", "BatchMode=yes", bench, script)
 	var out bytes.Buffer
 	said := &benchTail{}

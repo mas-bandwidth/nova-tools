@@ -54,6 +54,10 @@ usage:
 
   nova-decide log --log <path> --summary [--registry <path>]
 
+  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
+                     (what HAPPENED to a unit a decision routed; the kind and
+                      the rung are read from that decision, never retyped)
+
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
@@ -123,7 +127,8 @@ opaque ids rather than any mind's name.
                       timeout-terminated | abandoned. A bare timeout is a
                       silence; timeout-terminated is the proof it is dead
   --touches <t>       guard | secrets | sandbox | sudo | deploy-keys | network
-  --summary           (log) escalations per kind and the regenerated start rung
+  --summary           (log) escalations per kind, the regenerated start rung, and
+                      coverage=<outcomes>/<decisions> on the closing line
 
 Accounting is not optional. Token spend reporting is an obligation and every
 decision is logged, so a route that will call the provider is refused unless it
@@ -194,6 +199,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runRoute(args[1:], stdout, stderr)
 		case "log":
 			return runLog(args[1:], stdout, stderr)
+		case "outcome":
+			return runOutcome(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("nova-decide", flag.ContinueOnError)
@@ -398,6 +405,6 @@ func parseFloors(list string) ([]float64, error) {
 // refuse prints the one refusal line: the prefix, REFUSED, a one-word reason
 // and the detail. It goes to stderr; the key is never printed.
 func refuse(stderr io.Writer, prefix, reason, detail string) int {
-	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
+	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s; run: nova-decide help\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
 	return 2
 }

@@ -22,6 +22,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -46,7 +47,20 @@ type fakeDiskutil struct {
 	inAdd, maxAdd int
 	// nextDisk numbers the volumes this fake hands out.
 	nextDisk int
+	// mountDenied makes `info` report no mount point at all, which is what a caller
+	// that is itself inside an OS sandbox sees: addVolume succeeds and the volume comes
+	// up unmounted.
+	mountDenied bool
+	// frameworkDenied makes every command fail the way diskutil fails when it cannot
+	// reach DiskArbitration at all, which is what a seatbelt wall around the caller
+	// does. It is the same cause as mountDenied, one step earlier.
+	frameworkDenied bool
 }
+
+// diskutilFrameworkLine is diskutil's own sentence when DiskArbitration is out of reach,
+// copied from a run nested inside the bare wall form and not invented. It blames
+// single-user mode, which is not what happened and not where to look.
+const diskutilFrameworkLine = "framework being unavailable due to being booted in single-user mode."
 
 func (f *fakeDiskutil) record(args []string) {
 	f.mu.Lock()
@@ -62,6 +76,9 @@ func (f *fakeDiskutil) argv() []string {
 
 func (f *fakeDiskutil) run(args ...string) (string, error) {
 	f.record(args)
+	if f.frameworkDenied {
+		return "", fmt.Errorf("diskutil %s: exit status 1: %s", strings.Join(args, " "), diskutilFrameworkLine)
+	}
 	switch {
 	case len(args) >= 2 && args[0] == "apfs" && args[1] == "addVolume":
 		f.mu.Lock()
@@ -83,6 +100,11 @@ func (f *fakeDiskutil) run(args ...string) (string, error) {
 		f.mu.Unlock()
 		return "Disk from APFS operation: " + disk + "\n", nil
 	case len(args) == 2 && args[0] == "info":
+		if f.mountDenied {
+			// diskutil names the field and leaves it empty, which is the output the
+			// mount-denied refusal is read off.
+			return "   Mount Point:              \n", nil
+		}
 		return "   Mount Point:              /Volumes/nova-x\n", nil
 	case len(args) >= 2 && args[0] == "apfs" && args[1] == "deleteVolume":
 		return "", nil
@@ -268,6 +290,116 @@ func TestCreateRefusesAVolumeThatNeverBecomesWritable(t *testing.T) {
 	}
 	if n := strings.Count(strings.Join(f.argv(), " "), "apfs deleteVolume"); n != volumeCreateAttempts {
 		t.Errorf("%d of %d unusable volumes were deleted; every one that was made and refused goes", n, volumeCreateAttempts)
+	}
+}
+
+// A volume that comes up with no mount point was CREATED, and what failed is the mount.
+// Every caller inside an OS sandbox meets this, so the refusal has to say which of the two
+// happened, name the cause it almost always is, and name the form that needs no volume —
+// and it must not say the volume could not be created, which sends a reader to diskutil
+// and to the container for a fault in neither.
+func TestCreateSaysTheVolumeWasMadeAndTheMountDenied(t *testing.T) {
+	f := benchDiskutil(t, alwaysUsable)
+	f.mountDenied = true
+
+	_, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	if err == nil {
+		t.Fatal("Create returned a volume with no mount point; there is nowhere to work and the run would fail at mkdir with no cause")
+	}
+	got := err.Error()
+	for _, want := range []string{"disk3s1", "was created", "no mount point", volumesRoot, "OS sandbox", "--write"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not carry %q, so it does not say what happened or what to do:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "could not be created") {
+		t.Errorf("the refusal says the volume could not be created; it WAS created, and the mount is what was denied:\n%s", got)
+	}
+	if !errors.Is(err, errVolumeNotMounted) {
+		t.Errorf("the mount-denied error is not the sentinel the run verb reads, so the verb cannot tell it from a create that failed:\n%s", got)
+	}
+	// And the volume that was made goes, whatever the mount did: the leak is the one
+	// thing this path may not leave behind.
+	if !strings.Contains(strings.Join(f.argv(), " "), "apfs deleteVolume disk3s1") {
+		t.Errorf("the unmounted volume was not deleted again:\n%s", strings.Join(f.argv(), " | "))
+	}
+}
+
+// The second face of the same cause, one step earlier than an unmounted volume: under a
+// seatbelt wall diskutil cannot reach DiskArbitration at all, and it blames single-user
+// mode. Both refusals the verb can reach that way say what really happened and what to do,
+// and the `--container` advice is dropped on the container one, because naming the
+// container by hand fails the same way one step later.
+//
+// The two seams compose here: the manager is the REAL diskutil manager and diskutil itself
+// is the fake, so what is under test is the sentence a caller reads.
+func withDeniedDiskService(t *testing.T) *fakeDiskutil {
+	t.Helper()
+	f := benchDiskutil(t, alwaysUsable)
+	f.frameworkDenied = true
+	old := runVolumes
+	t.Cleanup(func() { runVolumes = old })
+	runVolumes = diskutilVolumes{}
+	return f
+}
+
+func refuseRun(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	f := parseRun(args)
+	code := runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	return code, errb.String()
+}
+
+func TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag(t *testing.T) {
+	withDeniedDiskService(t)
+
+	code, errOut := refuseRun(t, runFlagsFor(t)...)
+	if code != 125 || !strings.Contains(errOut, "reason=no_container") {
+		t.Fatalf("a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
+	}
+	for _, want := range []string{"OS sandbox", "--write", diskutilFrameworkLine} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("the refusal does not carry %q, so a reader is left with single-user mode:\n%s", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "--container disk3") {
+		t.Errorf("the refusal still advises --container, which cannot help when diskutil reaches nothing:\n%s", errOut)
+	}
+}
+
+func TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails(t *testing.T) {
+	withDeniedDiskService(t)
+
+	code, errOut := refuseRun(t, runFlagsFor(t, "--container", "disk3")...)
+	if code != 125 || !strings.Contains(errOut, "reason=volume_failed") {
+		t.Fatalf("a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
+	}
+	for _, want := range []string{"could not be listed", "OS sandbox", "--write", diskutilFrameworkLine} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("the refusal does not carry %q:\n%s", want, errOut)
+		}
+	}
+}
+
+// One sentence, one constant: the mount that never happened and the disk service out of
+// reach are two faces of one cause, and a reader who meets the second must not be told
+// something different from the first.
+func TestTheSandboxedCallerSentenceIsWrittenOnce(t *testing.T) {
+	f := benchDiskutil(t, alwaysUsable)
+	f.mountDenied = true
+	_, mountErr := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	if mountErr == nil {
+		t.Fatal("Create returned a volume with no mount point")
+	}
+	if !strings.Contains(mountErr.Error(), sandboxedCallerRemedy) {
+		t.Errorf("the mount-denied refusal does not carry the shared sentence:\n%s", mountErr)
+	}
+
+	withDeniedDiskService(t)
+	_, errOut := refuseRun(t, runFlagsFor(t)...)
+	if !strings.Contains(errOut, sandboxedCallerRemedy) {
+		t.Errorf("the denied-disk-service refusal does not carry the shared sentence:\n%s", errOut)
 	}
 }
 

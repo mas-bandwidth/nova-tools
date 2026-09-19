@@ -131,7 +131,19 @@ func (c *Client) SetFloor(f float64) { c.floor = f }
 
 // DefaultFloor is the confidence floor a decision is gated on when the caller
 // names none, matching nova-decide's --floor default.
-const DefaultFloor = 0.9
+//
+// It was 0.9, and 0.9 was a number nobody had rows behind (rule 8 asks for the
+// rows). The rows exist now: 39 real route calls over 13 units on 2026-09-18
+// came back between 0.61 and 0.91, and the SAME unit with the SAME evidence
+// came back 0.78, 0.80, 0.81 and 0.82 on four calls. A floor inside that band
+// does not separate a right answer from a wrong one -- it separates one call
+// from the next, and the schema campaign watched three row cards miss 0.90 by
+// 0.01 and step a whole rung off pro, which then landed all four green. So the
+// floor sits BELOW the band: a step-up now means the provider's confidence
+// actually collapsed, not that it returned its ordinary number. 0.65 and not
+// 0.7, because 0.7 was still inside it -- one rebase unit came back 0.68, 0.69
+// and 0.71 on three calls and routed two ways.
+const DefaultFloor = 0.65
 
 // record appends one row per answer to the client's decisions table. It is
 // best effort: the table is a projection of the journal and never an authority,

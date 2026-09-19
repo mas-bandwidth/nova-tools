@@ -63,6 +63,15 @@ type HarvestInput struct {
 	Launched string
 	Done     string
 	Failed   string
+	// The working layout (SPEC-PULSE, "Harvest on the working layout"): every
+	// path from a flag. --working names the bench's working root, --roots the
+	// swarm roots it also folds, --base the ref the commit is measured past,
+	// --since (SinceStamp) the session window and --timer installs the bench's
+	// own clock.
+	Working    string
+	Roots      string
+	SinceStamp string
+	Timer      string
 }
 
 func field(s string) string {
@@ -170,6 +179,26 @@ func Harvest(in HarvestInput) int {
 			writeSeen(in.Root, c, "refused")
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
 		case "done":
+			// THE KEY-SHAPE SCAN COMES FIRST (#1814), before the typed decision and long
+			// before any push: the two things a harvest publishes are the card's commits
+			// and its RESULT.md, copied into the PR body, and neither leaves this machine
+			// until both have been read for the shape of a key. A hit refuses, quarantines
+			// the job and writes the HUMAN line, and prints nothing it matched
+			// (harvest_secret.go).
+			findings, scanErr := secretScan(jobDir, resultLines)
+			if scanErr != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest", c.Label, scanErr))
+				continue
+			}
+			if len(findings) > 0 {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				secretRefusal{Site: "harvest", Label: c.Label, JobDir: jobDir,
+					QuarantineRoot: in.Root, HumanDir: in.Root, Out: in.Stderr}.refuse(findings)
+				continue
+			}
 			done++
 			// The typed decision is asked after the job is read and before any push:
 			// fixed and failed push as today, no-change and already-fixed push nothing

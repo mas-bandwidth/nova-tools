@@ -118,6 +118,16 @@ var messageBusAudit = audit.Config{
 		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
 		// duration is rendered through oneline.Field like every other line here.
 		`"sync"`,
+
+		// context carries the Decide call's cancellation only; it holds no writer.
+		`"context"`,
+		// regexp is redactSK's pattern and replacement: it returns a string that reaches
+		// the provider as the request body, never a stream this package prints to.
+		`"regexp"`,
+		// decide is --decide's provider client, whose Decide returns typed answers; the
+		// only bytes it touches are the HTTP request body, and every value this package
+		// prints from an answer goes through oneline.Field or is numeric.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at

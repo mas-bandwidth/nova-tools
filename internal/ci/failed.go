@@ -67,20 +67,40 @@ type Unread struct {
 	Reason string
 }
 
-// FailedReport is everything one run's failing jobs said.
-type FailedReport struct {
-	Jobs     int // failing jobs this report looked at, read or not
-	Failures []TestFailure
-	Cancels  []Cancellation
-	Timeouts []Timeout
-	Unread   []Unread
+// NoTest is one red job whose log held no test event at all, so there is no failing test
+// to name: the job went red outside `go test`, and a C compiler error under -Werror
+// inside a `make test` step is the specimen. The job's own failed step says where, and
+// the lines the runner itself marked as errors say why.
+type NoTest struct {
+	Job   string
+	Step  string   // the step whose conclusion was failure, "" when the forge named none
+	Lines []string // the log lines the runner annotated as errors, in the order it wrote them
 }
 
-// Empty is true when the run's failing jobs held nothing this tool recognises. A log it
-// could not read is NOT nothing: it is the one thing a reader must be told about, or they
-// will read a short report as a small failure.
+// FailedReport is everything one run's failing jobs said.
+type FailedReport struct {
+	Jobs      int // failing jobs this report looked at, read or not
+	Cancelled int // of those jobs, the ones cancelled rather than red of their own
+	Failures  []TestFailure
+	NoTests   []NoTest
+	Cancels   []Cancellation
+	Timeouts  []Timeout
+	Unread    []Unread
+}
+
+// findings is how many lines this report holds above its summary. Every red job
+// contributes at least one of them, so the count is also the answer to whether the run
+// said anything.
+func (r FailedReport) findings() int {
+	return len(r.Failures) + len(r.NoTests) + len(r.Cancels) + len(r.Timeouts) + len(r.Unread)
+}
+
+// Empty is true when the run's failing jobs held nothing to report. A log this tool could
+// not read is NOT nothing, and neither is a job that went red with no test event in it:
+// those are the two a reader must be told about, or they will read a short report as a
+// small failure.
 func (r FailedReport) Empty() bool {
-	return len(r.Failures) == 0 && len(r.Cancels) == 0 && len(r.Timeouts) == 0 && len(r.Unread) == 0
+	return r.findings() == 0
 }
 
 // ExitCode is 1 when the run said anything red, 0 when it said nothing. A refusal is the
@@ -93,22 +113,41 @@ func (r FailedReport) ExitCode() int {
 }
 
 // SummaryLine is the closing line: the failing jobs looked at and the failing tests
-// found, whether or not every line printed. A job whose log could not be read is counted
-// in unread= so the reader knows the report is short for a reason, and the field is
-// omitted when there is nothing to say.
+// found, whether or not every line printed. The verdict word is OK only when the run said
+// nothing red, so it agrees with the exit code rather than heading a report of reds. The
+// jobs are split into the ones red of their own and the cancelled=<n> cut down with them,
+// because a reader chases the first kind; a job whose log could not be read is counted in
+// unread=. Each split field is omitted when there is nothing to say.
 func (r FailedReport) SummaryLine() string {
-	line := fmt.Sprintf("FAILED OK jobs=%d tests=%d", r.Jobs, len(r.Failures))
+	word := "RED"
+	if r.Empty() {
+		word = "OK"
+	}
+	line := fmt.Sprintf("FAILED %s jobs=%d", word, r.Jobs)
+	if red := r.Jobs - r.Cancelled; red > 0 {
+		line += fmt.Sprintf(" failed=%d", red)
+	}
+	if r.Cancelled > 0 {
+		line += fmt.Sprintf(" cancelled=%d", r.Cancelled)
+	}
+	line += fmt.Sprintf(" tests=%d", len(r.Failures))
 	if n := len(r.Unread); n > 0 {
 		line += fmt.Sprintf(" unread=%d", n)
 	}
 	return line
 }
 
-// Lines renders the whole report: one block per failing test, then the cancellations, the
-// timeouts and the logs it could not read, then the summary. maxLines bounds each test's
-// own output; zero or less means
+// Lines renders the whole report: one block per failing test, then one per job that went
+// red with no test event in its log, then the cancellations, the timeouts and the logs it
+// could not read, then the summary. maxLines bounds each test's own output; zero or less
+// means
 // the default rather than unlimited, because an unbounded log is the thing this tool
 // exists to replace.
+//
+// A NOTEST block is bounded the same way but from the END: the errors that ended the step
+// are its last annotated lines, and the earlier ones in a long log may belong to a
+// negative control that was supposed to be red. The lines dropped are counted above the
+// ones shown, so the block reads in the order the runner wrote it.
 //
 // A job name and a step name are QUOTED, not escaped as fields: `test (3/4 studio)` is
 // what the reader pastes back into --job, and oneline.Field would hand them
@@ -134,6 +173,23 @@ func (r FailedReport) Lines(maxLines int) []string {
 		}
 		if dropped := len(f.Lines) - len(shown); dropped > 0 {
 			out = append(out, fmt.Sprintf("    ...+%d more lines", dropped))
+		}
+	}
+	for _, n := range r.NoTests {
+		head := fmt.Sprintf("NOTEST job=%s", oneline.Quote(n.Job))
+		if n.Step != "" {
+			head += " step=" + oneline.Quote(n.Step)
+		}
+		out = append(out, head+" tests=none")
+		shown := n.Lines
+		if len(shown) > maxLines {
+			shown = shown[len(shown)-maxLines:]
+		}
+		if dropped := len(n.Lines) - len(shown); dropped > 0 {
+			out = append(out, fmt.Sprintf("    ...+%d earlier lines", dropped))
+		}
+		for _, l := range shown {
+			out = append(out, "    "+oneline.Cap(oneline.Escape(l), oneline.TailBytes))
 		}
 	}
 	for _, c := range r.Cancels {
@@ -182,6 +238,33 @@ func CancelledSteps(job FailedJob) []Cancellation {
 			after = s.Completed.Sub(s.Started)
 		}
 		out = append(out, Cancellation{Job: job.Name, Step: s.Name, After: after})
+	}
+	return out
+}
+
+// FailedStepName is the first step of a job whose conclusion was failure, and "" when the
+// forge named none: a step is never guessed, the way a file:line never is.
+func FailedStepName(job FailedJob) string {
+	for _, s := range job.Steps {
+		if strings.EqualFold(strings.TrimSpace(s.Conclusion), "failure") {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+// LogErrorLines is the lines of one job's log the RUNNER itself marked as errors, in the
+// order it wrote them, with its annotation and its wrapper taken off. It is what a job
+// that went red outside `go test` has instead of a failing test: the compiler's own
+// diagnosis, already picked out of the log by the forge that recorded it.
+func LogErrorLines(text string) []string {
+	const marker = "##[error]"
+	var out []string
+	for _, raw := range strings.Split(text, "\n") {
+		line := StripLogLine(raw)
+		if strings.HasPrefix(line, marker) {
+			out = append(out, strings.TrimPrefix(line, marker))
+		}
 	}
 	return out
 }

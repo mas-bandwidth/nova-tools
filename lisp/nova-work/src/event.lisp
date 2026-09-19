@@ -47,7 +47,14 @@
     ;; is journaled and never applied: a decision advises and the machinery
     ;; decides (rules 6 and 7).
     (:decide     :question-hash :question-kind :answer :proposed :confidence
-                 :floor :suggestion :evidence))
+                 :floor :suggestion :evidence)
+    ;; The assignment receipt (SPEC-WORK.md:3857-3868): the request's own half,
+    ;; and the session's own half, derived from the operator-configured
+    ;; verifier's result and never from the request. Neither addresses a node of
+    ;; the containment forest.
+    (:receipt      :change :offer :attempt :reply :stage :provenance
+                   :provenance-sha256 :reason)
+    (:receipt-seal :offer :reply :sender :receipt-digest :effect))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")

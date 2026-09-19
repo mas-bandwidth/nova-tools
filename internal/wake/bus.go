@@ -74,6 +74,44 @@ var suppressed = map[string]bool{
 	"INBOX LEGACY": true,
 }
 
+// waitBookkeeping reports whether toks is a line the inner `nova-bus wait`
+// printed about its own block-and-return. Under --refresh this source runs
+// `nova-bus wait` and classifies every line it printed, and three of those
+// lines say, in words, that NOTHING ARRIVED: the status line it opens with,
+// `WAIT as=<name> timeout=<d> interval=<d> cursor=<sha>`; its
+// `WAIT TIMEOUT after=<d> polls=<n> cursor=<sha>`; and its
+// `WAIT DONE reason=timeout rearm=required next=<cmd>`. They are the same
+// every poll, they are the wait's own bookkeeping, and they are COUNTED and
+// suppressed exactly like the tokens above -- never relayed and never
+// standing, because relaying one woke the watcher at once and made the verb
+// unable to wait at all.
+//
+// The two-token key built in classify cannot carry the plain status line: its
+// second token is `as=<name>`, which is not a constant. So the shapes are
+// matched here and the result is consulted beside suppressed[token], and both
+// land on the same b.suppress++. THE ALLOW-LIST RULE IS UNCHANGED: this adds
+// to what is SUPPRESSED, never to what is shown. A WAIT DONE with any other
+// reason, a WAIT REFUSED, and a WAIT line from a future nova-bus this tool has
+// not heard of all still print.
+func waitBookkeeping(toks []string) bool {
+	if len(toks) < 2 || toks[0] != "WAIT" {
+		return false
+	}
+	switch toks[1] {
+	case "TIMEOUT":
+		return true
+	case "DONE":
+		for _, t := range toks[2:] {
+			if t == "reason=timeout" {
+				return true
+			}
+		}
+		return false
+	default:
+		return strings.HasPrefix(toks[1], "as=")
+	}
+}
+
 // Bus is the bus-inbox source.
 type Bus struct {
 	Dir             string
@@ -305,7 +343,7 @@ func (b *Bus) classify(out string, res *Result) {
 		if len(toks) >= 2 {
 			token = toks[0] + " " + toks[1]
 		}
-		if suppressed[token] {
+		if suppressed[token] || waitBookkeeping(toks) {
 			b.suppress++
 			continue
 		}
