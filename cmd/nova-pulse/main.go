@@ -70,7 +70,10 @@ one cards.tsv -- to nova-swarm batch's card form (--id --cards --deadline
 --runner --root), queueing the rest only when --queue is set. --slots is the
 ceiling on the free slots it may use, and --deadline is the whole pulse's one
 deadline in whole seconds. It makes no model call itself: nova-swarm must be on
-your PATH.
+your PATH. These examples run against a fixture in this repo; lay it down first
+from the repo root, so ./cards.tsv and ./bin/nova-swarm exist where the lines
+name them:
+  cp -R cmd/nova-pulse/testdata/example-pulse/. ./
 
 example:
   nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
