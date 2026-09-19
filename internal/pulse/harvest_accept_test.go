@@ -22,7 +22,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
-const testBaseSHA = "0123456789abcdef0123456789abcdef01234567"
+const (
+	testBaseSHA = "0123456789abcdef0123456789abcdef01234567"
+	// testHeadSHA is what the job's clone answers for HEAD: the object the gate judges
+	// and the object the push must name.
+	testHeadSHA = "89abcdef0123456789abcdef0123456789abcdef"
+)
 
 // gateCall is one recorded call of the accept seam.
 type gateCall struct {
@@ -48,11 +53,11 @@ func (g *fakeGate) fn() func(AcceptInput) int {
 }
 
 func gateOK(label string) *fakeGate {
-	return &fakeGate{code: 0, line: "ACCEPT OK label=" + label + " kind=fix-red head=abcdef123456 base=0123456789ab tests=3 red_without=1 edits=- control=c0ffee bench=space cert=cert1 took=9s"}
+	return &fakeGate{code: 0, line: "ACCEPT OK label=" + label + " kind=fix-red head=89abcdef0123 base=0123456789ab tests=3 red_without=1 edits=- control=c0ffee bench=space cert=cert1 took=9s"}
 }
 
 func gateReject(label, reason, at string) *fakeGate {
-	return &fakeGate{code: 1, line: "ACCEPT REJECT label=" + label + " kind=fix-red head=abcdef123456 reason=" + reason + " at=" + at + " control=c0ffee bench=space cert=cert1 took=2s"}
+	return &fakeGate{code: 1, line: "ACCEPT REJECT label=" + label + " kind=fix-red head=89abcdef0123 reason=" + reason + " at=" + at + " control=c0ffee bench=space cert=cert1 took=2s"}
 }
 
 func gateAbstain(label, reason string) *fakeGate {
@@ -108,6 +113,7 @@ func harvestGated(t *testing.T, root, queue string, gate *fakeGate, tweak func(*
 func fakeGitWithBase(t *testing.T, specs, arglog, sha string) {
 	t.Helper()
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 4, Equals: "HEAD^{commit}", Stdout: testHeadSHA},
 		{Arg: 1, Equals: "rev-parse", Stdout: sha},
 	}})
 }
@@ -444,5 +450,59 @@ func TestHarvestRecordsTheOutcomeWithNovaDecide(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The red team's item 9 (report of T03 at 98e3f3a9), with no live receipt of its own at
+// the time because accept was not wired into harvest yet: once it is, pushing
+// `branch:branch` re-resolves the branch IN THE WORKER'S CLONE at push time. A worker
+// that commits again between the gate's verdict and the push gets the second commit
+// published under an ACCEPT OK that never saw it. The push is by the sha the gate
+// judged, to the branch's full ref.
+func TestHarvestPushesTheShaTheGateJudgedNeverTheBranchRef(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGitWithBase(t, specs, arglog, testBaseSHA)
+	fakeGH(t, specs, arglog, "https://forge.invalid/mas-bandwidth/nova-tools/pull/21")
+	contract := "RESULT card-11 done"
+	addGatedCard(t, root, "card-11", "0", "fix-red", contract, doneResult(contract))
+
+	harvestGated(t, root, filepath.Join(root, "queue"), gateOK("card-11"), nil)
+
+	var pushes []string
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") {
+			pushes = append(pushes, l)
+		}
+	}
+	if len(pushes) != 1 {
+		t.Fatalf("want one push, got %d: %v", len(pushes), pushes)
+	}
+	if strings.Contains(pushes[0], "rowan/fix-1:rowan/fix-1") {
+		t.Errorf("the push re-resolves the branch in the worker's clone: %q", pushes[0])
+	}
+	if !strings.Contains(pushes[0], testHeadSHA+":refs/heads/rowan/fix-1") {
+		t.Errorf("the push does not name the sha the gate judged and the branch's full ref: %q", pushes[0])
+	}
+}
+
+// And when the worker moved HEAD under the gate, nothing is pushed at all.
+func TestHarvestPushesNothingWhenTheHeadMovedUnderTheGate(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGitWithBase(t, specs, arglog, testBaseSHA)
+	fakeGH(t, specs, arglog, "https://forge.invalid/mas-bandwidth/nova-tools/pull/22")
+	contract := "RESULT card-12 done"
+	addGatedCard(t, root, "card-12", "0", "fix-red", contract, doneResult(contract))
+
+	// The gate's OK names a head the job's clone no longer has.
+	g := &fakeGate{code: 0, line: "ACCEPT OK label=card-12 kind=fix-red head=deadbeefcafe base=0123456789ab tests=3 red_without=1 edits=- control=c0ffee bench=space cert=cert1 took=9s"}
+	out, _, _ := harvestGated(t, root, filepath.Join(root, "queue"), g, nil)
+
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") {
+			t.Fatalf("a head that moved under the gate was pushed: %q", l)
+		}
+	}
+	if !strings.Contains(out, "gate=abstain") {
+		t.Errorf("a head that moved under the gate is not a verdict on anything:\n%s", out)
 	}
 }

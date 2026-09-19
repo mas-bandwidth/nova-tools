@@ -44,7 +44,8 @@ type gateResult struct {
 	verdict string // ok | reject | abstain | none
 	reason  string
 	at      string
-	head    string
+	head    string // the sha12 the ACCEPT line reported
+	sha     string // the job's HEAD as a full sha, resolved ONCE before the gate ran
 	base    string
 	control string
 	cert    string
@@ -151,6 +152,16 @@ func (in HarvestInput) runGate(jobDir, cardPath, label string) gateResult {
 		fmt.Fprintf(in.Stderr, "HARVEST NOTE gate could not start label=%s: %s\n", field(label), oneline.Err(err))
 		return gateResult{verdict: "abstain", reason: "toolchain", at: "-", head: "-", base: "-", control: "-", cert: "-"}
 	}
+	// The job's HEAD is resolved ONCE, before the gate: it is the object the gate is
+	// about to judge and the object the push will name. A push of `branch:branch`
+	// re-resolves the branch in the WORKER's clone at push time, so a worker that
+	// commits again between the verdict and the push gets that commit published under an
+	// ACCEPT OK that never saw it (the red team of 98e3f3a9, item 9).
+	sha, shaErr := resolveBase(jobDir, "HEAD")
+	if shaErr != nil {
+		fmt.Fprintf(in.Stderr, "HARVEST NOTE gate could not start label=%s: %s\n", field(label), oneline.Err(shaErr))
+		return gateResult{verdict: "abstain", reason: "toolchain", at: "-", head: "-", base: "-", control: "-", cert: "-"}
+	}
 	var buf bytes.Buffer
 	code := gate(AcceptInput{
 		Job: jobDir, Card: cardPath, Base: base,
@@ -168,6 +179,7 @@ func (in HarvestInput) runGate(jobDir, cardPath, label string) gateResult {
 		head:    acceptToken(line, "head"),
 		control: acceptToken(line, "control"),
 		base:    base,
+		sha:     sha,
 		cert:    acceptToken(line, "cert"),
 		line:    line,
 	}
@@ -367,4 +379,24 @@ func gitHookOffEnv() []string {
 		"GIT_CONFIG_KEY_0=core.hooksPath", "GIT_CONFIG_VALUE_0=/dev/null",
 		"GIT_CONFIG_KEY_1=core.fsmonitor", "GIT_CONFIG_VALUE_1=false",
 	)
+}
+
+// judgedHead is the sha the gate actually judged, or "" when the job's HEAD moved under
+// it. The ACCEPT line carries head=<sha12>; the push must name the full sha the harvest
+// resolved before the gate ran, and the two must be the same object. They differ only if
+// the worker committed again while the gate was running, and then the verdict is a
+// verdict on something that is no longer there (the red team of 98e3f3a9, item 9).
+func (g gateResult) judgedHead() string {
+	if g.sha == "" {
+		return ""
+	}
+	if g.head == "-" || g.head == "" {
+		// The line named no head: nothing to disagree with, and the resolved sha is
+		// still the object the gate was pointed at.
+		return g.sha
+	}
+	if !strings.HasPrefix(g.sha, g.head) {
+		return ""
+	}
+	return g.sha
 }

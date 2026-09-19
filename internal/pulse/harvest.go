@@ -349,7 +349,22 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
 				continue
 			}
-			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
+			// A gated card is pushed by the sha the gate judged, and only if the job's
+			// HEAD is still that object: a head that moved under the gate is a verdict
+			// on something that is no longer there, and it is not the card's fault
+			// either, so nothing is pushed and nobody is charged.
+			judged := g.judgedHead()
+			if g.verdict == "ok" && judged == "" {
+				benched++
+				oc.Accept, oc.Reason, oc.Class, oc.Conf = "abstain", "head-moved", "-", "-"
+				fmt.Fprintf(in.Stderr, "HARVEST NOTE label=%s: the job's HEAD moved while the gate ran (gate judged %s, the clone is at %s); nothing pushed\n",
+					field(c.Label), field(g.head), field(short12(g.sha)))
+				lines = append(lines, fmt.Sprintf("HARVEST ABSTAIN label=%s kind=%s gate=abstain reason=head-moved",
+					field(c.Label), field(oc.Kind)))
+				finish(jobDir)
+				continue
+			}
+			if err := push(in, jobDir, c.Card, repo, branch, c.Label, judged); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				finish(jobDir)
 				continue
@@ -725,7 +740,14 @@ func lastRefusal(logPath string) string {
 // so they are compared and never read. The leaf resolves rather than taking a URL, so that
 // the rule holds whichever caller reaches it (Johnny's HOLD of #1809: a rule implemented
 // once per caller is as many rules as there are callers).
-func push(in HarvestInput, dir, record, claimed, branch, label string) error {
+// push runs git push <url> <src>:refs/heads/<branch> from the job's clone; never a bare
+// git push. The url is the RESOLVER's answer -- the launch record's repository, never the
+// RESULT's claim (#1809, Johnny's holds at 8bfa4020 and 7f692ef6). src is the SHA the
+// accept gate judged when there is one: `branch:branch` re-resolves the branch in the
+// worker's clone at push time, and a worker that commits again between the verdict and
+// the push would get that commit published under a verdict that never saw it (the red
+// team of 98e3f3a9, item 9).
+func push(in HarvestInput, dir, record, claimed, branch, label, sha string) error {
 	// The branch rule, at the push itself and not only at the caller that decided to
 	// push (Johnny's hold on #1809). One implementation, every path.
 	if err := mustBranchPrefix(branch); err != nil {
@@ -739,9 +761,13 @@ func push(in HarvestInput, dir, record, claimed, branch, label string) error {
 	if err != nil {
 		return err
 	}
+	src := branch
+	if fullSHA.MatchString(sha) {
+		src = sha
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "push", dest.url, branch+":"+branch)
+	cmd := exec.CommandContext(ctx, "git", "push", dest.url, src+":refs/heads/"+branch)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

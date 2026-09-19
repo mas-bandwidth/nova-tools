@@ -189,8 +189,13 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	for _, l := range alls {
 		if strings.HasPrefix(l, "git push ") {
 			pushes++
-			if !strings.Contains(l, "rowan/br1:rowan/br1") {
-				t.Fatalf("push must name the branch by explicit refspec, got: %s", l)
+			// Both halves of the rule on one line: the DESTINATION ref is the full
+			// rowan/br1 the card named (#1809), and it is written as an explicit
+			// src:refs/heads/<branch> refspec so the src can be the sha the gate
+			// judged rather than a name the worker's clone re-resolves (red team
+			// item 9 of 98e3f3a9).
+			if !strings.Contains(l, "rowan/br1:refs/heads/rowan/br1") {
+				t.Fatalf("push must name the branch by explicit refspec (src:refs/heads/<branch>), got: %s", l)
 			}
 			if !strings.Contains(l, "https://") {
 				t.Fatalf("push must be to an explicit https url, got: %s", l)
