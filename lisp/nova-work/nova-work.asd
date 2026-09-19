@@ -44,6 +44,8 @@
                (:file "src/control")
                (:file "src/roadmap")
                (:file "src/savepoint")
+               (:file "src/savepoint-create")
+               (:file "src/savepoint-restore")
                (:file "src/compaction")
                (:file "src/new-verbs")
                (:file "src/decide")
