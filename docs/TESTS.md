@@ -100,7 +100,7 @@ Ada's first line above is the refusal worth meeting here rather than on a live b
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
 
-Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and `hosts=`, `gpu=`, `used=` and `ancestors=` fields this transcript has no slot for.
+Platform: darwin — recorded on macOS; the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and `hosts=`, `gpu=`, `used=` and `ancestors=` fields this transcript has no slot for.
 
 `read_root` reads the probe's own executable, `os.Executable()`, because the root it
 exercises is "the directory of the resolved command" and the probe's child is this
