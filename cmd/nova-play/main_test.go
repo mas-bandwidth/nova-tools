@@ -315,3 +315,152 @@ func TestCLIStaleSourceReplyRefusal(t *testing.T) {
 		t.Errorf("sidecar modified after missing source reply refusal:\nbefore:\n%s\nafter:\n%s", sidecarBefore, sidecarAfterMissing)
 	}
 }
+
+func TestCLIProseBeginningWithKeywords(t *testing.T) {
+	dir := t.TempDir()
+	passage := "Passage line 1\nPASSAGE line 2\nPassage line 3"
+	src := writeSource(t, dir, "story.txt", passage+"\n")
+
+	noteBody := "First line\nNOTE this is ordinary prose\nLast line"
+	replyBody := "Reply line 1\nREPLY this is ordinary prose\nReply line 3"
+
+	var stdout, stderr bytes.Buffer
+	got := run([]string{"annotate", "--source", src, "--author", "Emma Antigravity", "--passage", passage, "--note", noteBody}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("annotate: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	var noteID string
+	for _, part := range strings.Fields(stdout.String()) {
+		if strings.HasPrefix(part, "id=") {
+			noteID = strings.TrimPrefix(part, "id=")
+		}
+	}
+	if noteID == "" {
+		t.Fatalf("could not find note ID in stdout: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"reply", "--source", src, "--id", noteID, "--author", "Stella Codex", "--body", replyBody}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("reply: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"read", "--source", src}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("read: exit %d, stderr=%s", got, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "notes=1") {
+		t.Errorf("stdout missing notes=1:\n%s", out)
+	}
+	if !strings.Contains(out, "NOTE this is ordinary prose") {
+		t.Errorf("stdout missing note keyword line:\n%s", out)
+	}
+	if !strings.Contains(out, "REPLY this is ordinary prose") {
+		t.Errorf("stdout missing reply keyword line:\n%s", out)
+	}
+
+	// Verify ReadNotes parses the raw fields intact
+	notes, _, err := play.ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("expected 1 note, got %d", len(notes))
+	}
+	if notes[0].Passage != passage {
+		t.Errorf("passage mismatch: got %q, want %q", notes[0].Passage, passage)
+	}
+	if notes[0].Note != noteBody {
+		t.Errorf("note mismatch: got %q, want %q", notes[0].Note, noteBody)
+	}
+	if len(notes[0].Replies) != 1 {
+		t.Fatalf("expected 1 reply, got %d", len(notes[0].Replies))
+	}
+	if notes[0].Replies[0].Note != replyBody {
+		t.Errorf("reply mismatch: got %q, want %q", notes[0].Replies[0].Note, replyBody)
+	}
+}
+
+func TestCLIFullAuthorNames(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
+
+	var stdout, stderr bytes.Buffer
+	got := run([]string{"annotate", "--source", src, "--author", "Test Reader", "--passage", "The lantern room held a brass fitting.", "--note", "Note text."}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("annotate: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	var noteID string
+	for _, part := range strings.Fields(stdout.String()) {
+		if strings.HasPrefix(part, "id=") {
+			noteID = strings.TrimPrefix(part, "id=")
+		}
+	}
+	if noteID == "" {
+		t.Fatalf("could not find note ID in stdout: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"reply", "--source", src, "--id", noteID, "--author", "Second Reviewer With Long Name", "--body", "Reply text."}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("reply: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"read", "--source", src}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("read: exit %d, stderr=%s", got, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Test Reader") {
+		t.Errorf("stdout missing full author 'Test Reader':\n%s", out)
+	}
+	if !strings.Contains(out, "Second Reviewer With Long Name") {
+		t.Errorf("stdout missing full author 'Second Reviewer With Long Name':\n%s", out)
+	}
+}
+
+func TestCLICRLFPreserved(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\r\n")
+
+	noteBody := "Line 1\r\nLine 2\r\n\r\nLine 4"
+
+	var stdout, stderr bytes.Buffer
+	got := run([]string{"annotate", "--source", src, "--author", "Emma Antigravity", "--passage", "The lantern room held a brass fitting.", "--note", noteBody}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("annotate: exit %d, stderr=%s", got, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	got = run([]string{"read", "--source", src}, &stdout, &stderr)
+	if got != 0 {
+		t.Fatalf("read: exit %d, stderr=%s", got, stderr.String())
+	}
+	out := stdout.String()
+	// In read stdout, oneline.Escape turns \r\n into \x0d\x0a
+	if !strings.Contains(out, `Line 1\x0d\x0aLine 2\x0d\x0a\x0d\x0aLine 4`) {
+		t.Errorf("read stdout does not contain oneline-escaped CRLF bytes:\n%q", out)
+	}
+
+	// Verify ReadNotes parses the raw fields intact with exact \r\n bytes
+	notes, _, err := play.ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("expected 1 note, got %d", len(notes))
+	}
+	if notes[0].Note != noteBody {
+		t.Errorf("note body mismatch:\ngot  %q\nwant %q", notes[0].Note, noteBody)
+	}
+}

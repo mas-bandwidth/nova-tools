@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,23 +63,87 @@ func NoteFile(source string) string {
 	return filepath.Join(dir, base+".notes")
 }
 
+func escapeText(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func unescapeText(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '\\':
+				b.WriteByte('\\')
+				i++
+			case 'n':
+				b.WriteByte('\n')
+				i++
+			case 'r':
+				b.WriteByte('\r')
+				i++
+			default:
+				b.WriteByte(s[i])
+			}
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+func formatAuthor(author string) string {
+	if strings.ContainsAny(author, " \"") {
+		return strconv.Quote(author)
+	}
+	return author
+}
+
+func parseAuthor(val string) string {
+	if strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`) {
+		if unquoted, err := strconv.Unquote(val); err == nil {
+			return unquoted
+		}
+	}
+	return val
+}
+
 // LoadStore reads the annotation store for a source.
 // Returns an empty store if the file does not exist.
 func LoadStore(source string) (*Store, error) {
 	nf := NoteFile(source)
 	b, err := os.ReadFile(nf)
 	if os.IsNotExist(err) {
-		return &Store{Version: 1}, nil
+		return &Store{Version: 2}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	content := strings.ReplaceAll(string(b), "\r\n", "\n")
-	if strings.HasSuffix(content, "\n") {
+	content := string(b)
+	if strings.HasSuffix(content, "\r\n") {
+		content = content[:len(content)-2]
+	} else if strings.HasSuffix(content, "\n") {
 		content = content[:len(content)-1]
 	}
-	lines := strings.Split(content, "\n")
+	rawLines := strings.Split(content, "\n")
+	lines := make([]string, len(rawLines))
+	for i, l := range rawLines {
+		lines[i] = strings.TrimSuffix(l, "\r")
+	}
+
 	s := &Store{Version: 1}
 	if len(lines) < 1 || !strings.HasPrefix(lines[0], "ANCHOR ") {
 		return s, nil
@@ -91,16 +156,22 @@ func LoadStore(source string) (*Store, error) {
 		s.Anchor.SourcePath = rest
 	}
 
+	startIdx := 1
+	if len(lines) > 1 && strings.HasPrefix(lines[1], "VERSION ") {
+		vStr := strings.TrimPrefix(lines[1], "VERSION ")
+		if v, err := strconv.Atoi(vStr); err == nil {
+			s.Version = v
+		}
+		startIdx = 2
+	}
+
 	var currentNote *Note
 	var currentReply *Reply
 	var currentField *string
-	hasPassage := false
-	hasBody := false
-	hasReplyBody := false
 
-	for i := 1; i < len(lines); i++ {
+	for i := startIdx; i < len(lines); i++ {
 		line := lines[i]
-		if currentField == nil && (line == "" || strings.HasPrefix(line, "#")) {
+		if (s.Version >= 2 || currentField == nil) && (line == "" || strings.HasPrefix(line, "#")) {
 			continue
 		}
 		switch {
@@ -110,41 +181,55 @@ func LoadStore(source string) (*Store, error) {
 			currentNote = &s.Notes[len(s.Notes)-1]
 			currentReply = nil
 			currentField = nil
-			hasPassage = false
-			hasBody = false
-			hasReplyBody = false
-		case !hasPassage && (line == "PASSAGE" || strings.HasPrefix(line, "PASSAGE ")) && currentNote != nil:
+		case (line == "PASSAGE" || strings.HasPrefix(line, "PASSAGE ")) && currentNote != nil:
+			var val string
 			if len(line) > len("PASSAGE") {
-				currentNote.Passage = line[len("PASSAGE")+1:]
-			} else {
-				currentNote.Passage = ""
+				val = line[len("PASSAGE")+1:]
 			}
-			currentField = &currentNote.Passage
-			hasPassage = true
-		case !hasBody && (line == "BODY" || strings.HasPrefix(line, "BODY ")) && currentNote != nil:
+			if s.Version >= 2 {
+				val = unescapeText(val)
+			}
+			currentNote.Passage = val
+			if s.Version < 2 {
+				currentField = &currentNote.Passage
+			} else {
+				currentField = nil
+			}
+		case (line == "BODY" || strings.HasPrefix(line, "BODY ")) && currentNote != nil:
+			var val string
 			if len(line) > len("BODY") {
-				currentNote.Note = line[len("BODY")+1:]
-			} else {
-				currentNote.Note = ""
+				val = line[len("BODY")+1:]
 			}
-			currentField = &currentNote.Note
-			hasBody = true
+			if s.Version >= 2 {
+				val = unescapeText(val)
+			}
+			currentNote.Note = val
+			if s.Version < 2 {
+				currentField = &currentNote.Note
+			} else {
+				currentField = nil
+			}
 		case strings.HasPrefix(line, "REPLY ") && currentNote != nil:
 			r := parseReplyLine(line)
 			currentNote.Replies = append(currentNote.Replies, r)
 			currentReply = &currentNote.Replies[len(currentNote.Replies)-1]
 			currentField = nil
-			hasReplyBody = false
-		case !hasReplyBody && (line == "REPLY_BODY" || strings.HasPrefix(line, "REPLY_BODY ")) && currentReply != nil:
+		case (line == "REPLY_BODY" || strings.HasPrefix(line, "REPLY_BODY ")) && currentReply != nil:
+			var val string
 			if len(line) > len("REPLY_BODY") {
-				currentReply.Note = line[len("REPLY_BODY")+1:]
-			} else {
-				currentReply.Note = ""
+				val = line[len("REPLY_BODY")+1:]
 			}
-			currentField = &currentReply.Note
-			hasReplyBody = true
+			if s.Version >= 2 {
+				val = unescapeText(val)
+			}
+			currentReply.Note = val
+			if s.Version < 2 {
+				currentField = &currentReply.Note
+			} else {
+				currentField = nil
+			}
 		default:
-			if currentField != nil {
+			if s.Version < 2 && currentField != nil {
 				*currentField += "\n" + line
 			}
 		}
@@ -157,6 +242,7 @@ func SaveStore(source string, s *Store) error {
 	nf := NoteFile(source)
 	var b strings.Builder
 	fmt.Fprintf(&b, "ANCHOR %s %s\n", s.Anchor.SourcePath, s.Anchor.SourceHash)
+	fmt.Fprintf(&b, "VERSION 2\n")
 	for _, n := range s.Notes {
 		writeNote(&b, n)
 	}
@@ -164,14 +250,20 @@ func SaveStore(source string, s *Store) error {
 }
 
 func parseNoteLine(line string) Note {
-	// NOTE <id> author=<author> passage=<passage_sha12> created=<ts>
+	// NOTE id=<id> author=<author> created=<ts>
 	rest := strings.TrimPrefix(line, "NOTE ")
 	n := Note{}
-	for _, part := range splitFields(rest) {
+	parts := splitFields(rest)
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
 		if strings.HasPrefix(part, "id=") {
 			n.ID = strings.TrimPrefix(part, "id=")
 		} else if strings.HasPrefix(part, "author=") {
-			n.Author = strings.TrimPrefix(part, "author=")
+			n.Author = parseAuthor(strings.TrimPrefix(part, "author="))
+			for i+1 < len(parts) && !strings.Contains(parts[i+1], "=") {
+				i++
+				n.Author += " " + parts[i]
+			}
 		} else if strings.HasPrefix(part, "created=") {
 			t, _ := time.Parse(time.RFC3339, strings.TrimPrefix(part, "created="))
 			n.CreatedAt = t
@@ -183,11 +275,17 @@ func parseNoteLine(line string) Note {
 func parseReplyLine(line string) Reply {
 	rest := strings.TrimPrefix(line, "REPLY ")
 	r := Reply{}
-	for _, part := range splitFields(rest) {
+	parts := splitFields(rest)
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
 		if strings.HasPrefix(part, "id=") {
 			r.ID = strings.TrimPrefix(part, "id=")
 		} else if strings.HasPrefix(part, "author=") {
-			r.Author = strings.TrimPrefix(part, "author=")
+			r.Author = parseAuthor(strings.TrimPrefix(part, "author="))
+			for i+1 < len(parts) && !strings.Contains(parts[i+1], "=") {
+				i++
+				r.Author += " " + parts[i]
+			}
 		} else if strings.HasPrefix(part, "created=") {
 			t, _ := time.Parse(time.RFC3339, strings.TrimPrefix(part, "created="))
 			r.CreatedAt = t
@@ -209,8 +307,10 @@ func splitFields(s string) []string {
 			if inQuote {
 				current.WriteRune(r)
 			} else {
-				fields = append(fields, current.String())
-				current.Reset()
+				if current.Len() > 0 {
+					fields = append(fields, current.String())
+					current.Reset()
+				}
 			}
 		default:
 			current.WriteRune(r)
@@ -224,13 +324,13 @@ func splitFields(s string) []string {
 
 func writeNote(b *strings.Builder, n Note) {
 	fmt.Fprintf(b, "NOTE id=%s author=%s created=%s\n",
-		n.ID, n.Author, n.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(b, "PASSAGE %s\n", n.Passage)
-	fmt.Fprintf(b, "BODY %s\n", n.Note)
+		n.ID, formatAuthor(n.Author), n.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(b, "PASSAGE %s\n", escapeText(n.Passage))
+	fmt.Fprintf(b, "BODY %s\n", escapeText(n.Note))
 	for _, r := range n.Replies {
 		fmt.Fprintf(b, "REPLY id=%s author=%s created=%s\n",
-			r.ID, r.Author, r.CreatedAt.Format(time.RFC3339))
-		fmt.Fprintf(b, "REPLY_BODY %s\n", r.Note)
+			r.ID, formatAuthor(r.Author), r.CreatedAt.Format(time.RFC3339))
+		fmt.Fprintf(b, "REPLY_BODY %s\n", escapeText(r.Note))
 	}
 }
 

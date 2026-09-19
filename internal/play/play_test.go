@@ -345,3 +345,141 @@ func TestExistingSidecarFixturePreserved(t *testing.T) {
 		t.Errorf("reply body = %q, want %q", store.Notes[1].Replies[0].Note, wantReply)
 	}
 }
+
+// Lines beginning with NOTE, REPLY, PASSAGE, and BODY in note, passage, and reply
+// must not be confused with record delimiters.
+func TestProseBeginningWithKeywordsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	srcText := "A shared passage for keyword test.\nWith multiple lines.\n"
+	src := writeSource(t, dir, "story.txt", srcText)
+
+	passage := "A shared passage for keyword test.\nWith multiple lines."
+	// Note containing delimiter keywords at the beginning of internal lines
+	noteText := "First line\nNOTE this is ordinary prose\nPASSAGE this is not a passage\nBODY this is not a body\nREPLY this is not a reply\nREPLY_BODY this is not a reply body\nLast line"
+
+	n, err := Annotate(src, "Emma", passage, noteText)
+	if err != nil {
+		t.Fatalf("Annotate failed: %v", err)
+	}
+
+	notes, status, err := ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes failed: %v", err)
+	}
+	if status != "ANCHOR OK" {
+		t.Fatalf("status = %q, want ANCHOR OK", status)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d notes, want exactly 1 (must not invent extra notes from keyword lines)", len(notes))
+	}
+	if notes[0].Note != noteText {
+		t.Errorf("Note mismatch:\ngot:  %q\nwant: %q", notes[0].Note, noteText)
+	}
+
+	// Reply containing keyword lines as well
+	replyText := "Reply line 1\nNOTE ordinary reply note\nBODY ordinary reply body\nReply line 3"
+	_, err = ReplyTo(src, n.ID, "Stella", replyText)
+	if err != nil {
+		t.Fatalf("ReplyTo failed: %v", err)
+	}
+
+	notes, status, err = ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes after reply failed: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d notes after reply, want 1", len(notes))
+	}
+	if notes[0].Note != noteText {
+		t.Errorf("Note mismatch after reply:\ngot:  %q\nwant: %q", notes[0].Note, noteText)
+	}
+	if len(notes[0].Replies) != 1 {
+		t.Fatalf("got %d replies, want 1", len(notes[0].Replies))
+	}
+	if notes[0].Replies[0].Note != replyText {
+		t.Errorf("Reply mismatch after reload:\ngot:  %q\nwant: %q", notes[0].Replies[0].Note, replyText)
+	}
+}
+
+// CRLF (\r\n) bytes in note and reply content must be preserved without normalization to LF.
+func TestCRLFPreservation(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
+
+	crlfNote := "First line\r\nSecond line\r\n\r\nFourth line\r\n"
+	n, err := Annotate(src, "Emma", "The lantern room held a brass fitting.", crlfNote)
+	if err != nil {
+		t.Fatalf("Annotate failed: %v", err)
+	}
+
+	notes, _, err := ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes failed: %v", err)
+	}
+	if notes[0].Note != crlfNote {
+		t.Errorf("CRLF note mismatch:\ngot:  %q\nwant: %q", notes[0].Note, crlfNote)
+	}
+
+	crlfReply := "Reply line 1\r\nReply line 2\r\n"
+	_, err = ReplyTo(src, n.ID, "Stella", crlfReply)
+	if err != nil {
+		t.Fatalf("ReplyTo failed: %v", err)
+	}
+
+	notes, _, err = ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes after reply failed: %v", err)
+	}
+	if notes[0].Note != crlfNote {
+		t.Errorf("CRLF note after reply mismatch:\ngot:  %q\nwant: %q", notes[0].Note, crlfNote)
+	}
+	if notes[0].Replies[0].Note != crlfReply {
+		t.Errorf("CRLF reply mismatch:\ngot:  %q\nwant: %q", notes[0].Replies[0].Note, crlfReply)
+	}
+}
+
+// Multi-word author names must be preserved losslessly for both notes and replies.
+func TestFullAuthorNamesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
+
+	author1 := "Test Reader"
+	n, err := Annotate(src, author1, "The lantern room held a brass fitting.", "A note by Test Reader.")
+	if err != nil {
+		t.Fatalf("Annotate failed: %v", err)
+	}
+	if n.Author != author1 {
+		t.Fatalf("Annotate returned author = %q, want %q", n.Author, author1)
+	}
+
+	notes, _, err := ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes failed: %v", err)
+	}
+	if notes[0].Author != author1 {
+		t.Errorf("ReadNotes author = %q, want %q", notes[0].Author, author1)
+	}
+
+	author2 := "Second Reviewer With Long Name"
+	r, err := ReplyTo(src, n.ID, author2, "A reply with full author name.")
+	if err != nil {
+		t.Fatalf("ReplyTo failed: %v", err)
+	}
+	if r.Author != author2 {
+		t.Fatalf("ReplyTo returned author = %q, want %q", r.Author, author2)
+	}
+
+	notes, _, err = ReadNotes(src)
+	if err != nil {
+		t.Fatalf("ReadNotes after reply failed: %v", err)
+	}
+	if notes[0].Author != author1 {
+		t.Errorf("ReadNotes author = %q, want %q", notes[0].Author, author1)
+	}
+	if len(notes[0].Replies) != 1 {
+		t.Fatalf("got %d replies, want 1", len(notes[0].Replies))
+	}
+	if notes[0].Replies[0].Author != author2 {
+		t.Errorf("ReadNotes reply author = %q, want %q", notes[0].Replies[0].Author, author2)
+	}
+}
