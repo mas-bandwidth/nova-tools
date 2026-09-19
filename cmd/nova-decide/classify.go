@@ -61,6 +61,18 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "CLASSIFY", "bad-arguments", "--pointer is required; an answer nobody can join to an item is not a record")
 	}
 
+	// The floor is a confidence, and every other entry point already refuses
+	// one that is not (main.go:236, route.go:101, decide/ladder.go:469). This
+	// verb is the door a stranger comes through, so it refuses here too, BEFORE
+	// the evidence is read and before anybody is asked. NaN compares false
+	// against both bounds, so a bare range check gates a decision on a number
+	// that is not one; -1 is a floor nothing can fall below and 1.1 one nothing
+	// can reach, and both read as a tuned run rather than a mistyped flag.
+	if err := decide.ValidFloor(*floor); err != nil {
+		return refuse(stderr, "CLASSIFY", "bad-floor",
+			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
+	}
+
 	text, err := readEvidence(*evidencePath)
 	if err != nil {
 		return refuse(stderr, "CLASSIFY", "bad-evidence", oneline.Cap(err.Error(), oneline.TailBytes))

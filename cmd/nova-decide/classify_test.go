@@ -131,3 +131,60 @@ func TestClassifyLogNeverHoldsTheEvidenceText(t *testing.T) {
 		t.Errorf("negative control: two classifications are two rows, got %d", n)
 	}
 }
+
+// THE FLOOR IS A CONFIDENCE, AND THE FLAG REFUSES ANYTHING THAT IS NOT ONE.
+// `decide.ValidFloor` exists and every other entry point calls it
+// (cmd/nova-decide/main.go:236, route.go:101, internal/decide/ladder.go:469,
+// internal/swarm/routeladder.go:155); the generic verb of D3 -- the one door a
+// stranger with none of our other tools comes through -- did not. The failures
+// are two different shapes and both are silent: `-1` is a floor nothing can
+// fall below, so every answer stands and the verb exits 0 as though it had been
+// tuned; `1.1`, `NaN` and `+Inf` are floors nothing can reach, so every
+// answer becomes `unknown` at exit 3 and reads as an untuned model rather than
+// a mistyped flag. NaN is the one worth naming: it compares false against every
+// bound, so a bare `f < 0 || f > 1` lets it through.
+//
+// Each is a flag refusal at exit 2, before any question is asked: no line on
+// standard output and no durable row.
+func TestClassifyRefusesAnInvalidFloor(t *testing.T) {
+	ev := writeEvidence(t, "go: command not found")
+	rules := filepath.Join(t.TempDir(), "rules.tsv")
+	if err := os.WriteFile(rules, []byte("command not found\tblocked-toolchain\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bad := range []string{"-1", "1.1", "NaN", "+Inf"} {
+		t.Run(bad, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "decisions.jsonl")
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"classify", "--question", "harvest", "--evidence", ev,
+				"--pointer", "card-1", "--rules", rules, "--floor", bad, "--log", logPath}, &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("--floor %s is a flag refusal at exit 2, got %d (stdout=%q stderr=%q)", bad, code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "bad-floor") {
+				t.Errorf("--floor %s must refuse by name, got %q", bad, stderr.String())
+			}
+			if strings.TrimSpace(stdout.String()) != "" {
+				t.Errorf("--floor %s printed a classification anyway: %q", bad, stdout.String())
+			}
+			if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+				t.Errorf("--floor %s wrote a durable row for a question it had no business asking", bad)
+			}
+		})
+	}
+
+	// NEGATIVE CONTROL: the same command with each END of the supported range,
+	// and with the default, classifies. Without this the test would pass
+	// against a verb that refused every floor there is.
+	for _, good := range []string{"0", "0.65", "1"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"classify", "--question", "harvest", "--evidence", ev,
+			"--pointer", "card-1", "--rules", rules, "--floor", good}, &stdout, &stderr); code != 0 {
+			t.Errorf("negative control: --floor %s is a confidence and must classify, got %d (stderr=%q)", good, code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "answer=blocked-toolchain") {
+			t.Errorf("negative control: --floor %s did not classify: %q", good, stdout.String())
+		}
+	}
+}
