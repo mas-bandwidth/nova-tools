@@ -474,13 +474,9 @@ func TestAcceptRemovesItsWorktreeOnEveryPath(t *testing.T) {
 	if list := acceptGit(t, l.job, nil, "worktree", "list"); strings.Count(list, "\n") != 0 {
 		t.Fatalf("a worktree was left behind:\n%s", list)
 	}
-	// The gate's build cache is the one thing that outlives a run; every run directory
-	// is gone.
 	entries, _ := os.ReadDir(filepath.Join(l.slot, "accept"))
-	for _, e := range entries {
-		if e.Name() != "gocache" {
-			t.Fatalf("the accept directory holds %s after the run; only the gate's build cache may stay", e.Name())
-		}
+	if len(entries) != 0 {
+		t.Fatalf("the accept directory is not empty after the run: %d entries", len(entries))
 	}
 	if after := acceptGit(t, l.job, nil, "status", "--porcelain"); after != before {
 		t.Fatalf("the job's clone changed: before %q after %q", before, after)
@@ -799,4 +795,68 @@ func TestAcceptWrittenTestsAreKeyedPerPackage(t *testing.T) {
 	acceptWrite(t, l.job, "sign/sign_test.go", fixTest+"\nfunc TestOther(t *testing.T) {\n\tif Sign(2) != 1 {\n\t\tt.Fatal(\"two\")\n\t}\n}\n")
 	l.commit(t, "a fix and a vacuous TestOther of its own")
 	wantVerdict(t, l.run(t, l.card(t, fixRedHeader), nil), 1, " reason=vacuous-test at=TestOther ")
+}
+
+// ---- cold read 2 of d9528173 (coldread-t03/REPORT-2.md) ----
+
+// CRITICAL: the wall refuses the mutate phase (as the real wall did with the operator's
+// HOME: home_outside, exit 125). That is the bench's, ABSTAIN toolchain -- never an OK
+// scored from runs that never happened, and never a vacuous-test either.
+func TestAcceptMutateCouldNotRunIsToolchain(t *testing.T) {
+	l := newAcceptLab(t)
+	l.goodFix(t)
+	r := l.run(t, l.card(t, fixRedHeader), &fakeSpec{
+		Rules:   []fakeRule{{CwdContains: "nova-review-mutate-", Stderr: "SANDBOX REFUSED reason=home_outside: HOME /Users/op is not inside a --write", Exit: 125}},
+		Default: fakeRule{Exec: true},
+	})
+	wantVerdict(t, r, 2, "ACCEPT ABSTAIN ", " reason=toolchain ")
+}
+
+// 4 PARTIAL: a compiler error that happens to name WALL is the card's build error, not
+// the bench's.
+func TestAcceptBuildErrorNamingTheWallIsTheCards(t *testing.T) {
+	l := newAcceptLab(t)
+	acceptWrite(t, l.job, "sign/sign.go", "package sign\n\nfunc Sign(n int) int {\n\tif n == 0 {\n\t\treturn WALL\n\t}\n\treturn 1\n}\n")
+	acceptWrite(t, l.job, "sign/sign_test.go", fixTest)
+	l.commit(t, "undefined: WALL")
+	wantVerdict(t, l.run(t, l.card(t, fixRedHeader), nil), 1, " reason=build at=")
+}
+
+// MEDIUM: the build cache the card's tests may write is this run's alone, under its own
+// directory, and is gone with it.
+func TestAcceptBuildCacheIsPerRunAndRemoved(t *testing.T) {
+	l := newAcceptLab(t)
+	l.goodFix(t)
+	r := l.run(t, l.card(t, fixRedHeader), nil)
+	wantVerdict(t, r, 0, "ACCEPT OK ")
+	for _, line := range strings.Split(strings.TrimSpace(r.wall), "\n") {
+		if !strings.Contains(line, " -- go ") {
+			continue
+		}
+		f := strings.Fields(line)
+		cwd, cache := "", ""
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "--cwd" {
+				cwd = f[i+1]
+			}
+			if f[i] == "--write" && strings.HasSuffix(f[i+1], string(filepath.Separator)+"gocache") {
+				cache = f[i+1]
+			}
+		}
+		if cache == "" || cwd == "" {
+			t.Fatalf("no gocache write or no cwd: %q", line)
+		}
+		// The cache sits in the run directory beside the tree, never under <slot>/accept
+		// directly where the next run would find it.
+		if filepath.Dir(cache) == filepath.Join(l.slot, "accept") {
+			t.Fatalf("the build cache is shared across runs: %s", cache)
+		}
+		if !strings.HasPrefix(cwd, filepath.Dir(cache)) && !strings.HasPrefix(filepath.Dir(cwd), filepath.Dir(cache)) {
+			t.Fatalf("the build cache %s is not this run's (%s)", cache, cwd)
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Join(l.slot, "accept"))
+	if len(entries) != 0 {
+		t.Fatalf("the accept directory holds %d entries after the run; nothing outlives a run", len(entries))
+	}
 }
