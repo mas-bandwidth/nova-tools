@@ -149,6 +149,7 @@ func findOpenCodeStore(dataHome string) (string, error) {
 // window loses tokens the harness really spent.
 func queryOpenCodeWaiting(path string) ([][]string, error) {
 	return walWait{
+		first:  usageTimeout,
 		settle: usageSettleWait,
 		pause:  usageSettlePause,
 		query:  queryOpenCode,
@@ -158,11 +159,13 @@ func queryOpenCodeWaiting(path string) ([][]string, error) {
 }
 
 // walWait is that retry with its clock and its read named, so the waiting itself can be
-// held by a test that turns on no clock of its own and starts no process.
+// held by a test that turns on no clock of its own and starts no process. `first` is what
+// the first read is allowed; every retry is allowed what is left of the window.
 type walWait struct {
+	first  time.Duration
 	settle time.Duration
 	pause  time.Duration
-	query  func(string) ([][]string, error)
+	query  func(path string, limit time.Duration) ([][]string, error)
 	now    func() time.Time
 	sleep  func(time.Duration)
 }
@@ -179,7 +182,7 @@ type walWait struct {
 // for a writer that checkpointed a moment later. So a refusal with a -wal beside it always
 // buys at least one more look, and the window measures the looking.
 func (w walWait) read(path string) ([][]string, error) {
-	rows, err := w.query(path)
+	rows, err := w.query(path, w.first)
 	if err == nil {
 		return rows, nil
 	}
@@ -189,7 +192,7 @@ func (w walWait) read(path string) ([][]string, error) {
 			return nil, err
 		}
 		w.sleep(w.pause)
-		if rows, err = w.query(path); err == nil {
+		if rows, err = w.query(path, w.first); err == nil {
 			return rows, nil
 		}
 	}
@@ -205,8 +208,8 @@ func walPending(path string) bool {
 // queryOpenCode runs the one statement, read-only, under the timeout. The database is the
 // job's own and this tool never writes it: `-readonly` is that promise kept by the program
 // that opens it, and `-tabs` is the shape the rows come back in.
-func queryOpenCode(path string) ([][]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+func queryOpenCode(path string, limit time.Duration) ([][]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, messagesSQL)
 	var out, errb bytes.Buffer
@@ -214,8 +217,8 @@ func queryOpenCode(path string) ([][]string, error) {
 	cmd.WaitDelay = usageWaitDelay
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("the usage source %s could not be read: %s did not answer within %ds",
-			path, SQLiteBinary, int(usageTimeout/time.Second))
+		return nil, fmt.Errorf("the usage source %s could not be read: %s did not answer within %s",
+			path, SQLiteBinary, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("the usage source %s could not be read: %s: %v: %s",
