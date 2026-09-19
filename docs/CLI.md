@@ -1351,7 +1351,7 @@ line with the swarm's reason.
 ### cut
 
 ```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 ```
 
@@ -1387,6 +1387,20 @@ on success:
 
 ```
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+```
+
+**`--validate-contract`** preflights the pool form before any card file is
+written. `cut` already refuses a template whose rendered card violates the
+practice-17 contract (line 1 `RESULT <label> sha=<sha12>`, `STEP 1` carrying
+`mkdir -p scratch`, an `https://` clone and `checkout -b`, no `TMPDIR` of its
+own, no `../scratch`), but it only learns that while writing, and a locator that
+does not resolve is not checked at all. With the flag, every distinct candidate
+locator is confirmed once through `gh repo view <owner/repo>` before the first
+card exists, so a dead repo never spends an admission and a scaffold before it
+abstains:
+
+```
+CUT REFUSED locator=<owner/repo>: does not resolve (check gh auth and the repo name)
 ```
 
 **`--issue`, `--rows` and `--branch-from`** are the **validated-template** form, and

@@ -20,7 +20,7 @@ import (
 const usage = `nova-pulse: bounded open work, cut into cards and folded back, no model call (see docs/SPEC-PULSE.md)
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
@@ -801,6 +801,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	probe := f.fs.Bool("probe", false, "")
 	history := f.fs.String("history", "", "")
 	probeBudget := f.fs.Int("probe-budget", 0, "")
+	validateContract := f.fs.Bool("validate-contract", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -859,7 +860,10 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		Probe:     *probe,
 		History:   *history,
 		Budget:    *probeBudget,
-		Stdout:    stdout,
-		Stderr:    stderr,
+		// ValidateContract preflights the candidate locators before any card file is
+		// written, so a dead repo is refused at cut rather than after admission.
+		ValidateContract: *validateContract,
+		Stdout:           stdout,
+		Stderr:           stderr,
 	})
 }
