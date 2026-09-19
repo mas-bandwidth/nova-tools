@@ -169,17 +169,29 @@ type walWait struct {
 
 // read takes one reading and, while the refusal came with a -wal still beside the
 // database, waits for the writer to checkpoint it.
+//
+// THE WINDOW BOUNDS THE WAITING AND NEVER THE FIRST READ. The deadline is taken AFTER the
+// first attempt returns, because usageSettleWait is how long this tool waits for a
+// checkpoint -- not how long the whole read may take. Taken before the attempt, a slow
+// first open spends the budget that exists to outlast the writer: on a loaded macOS bench
+// the first `sqlite3` is a Mach-O the machine has never seen and the kernel assesses it on
+// that first exec, which cost the reader its every retry and recorded `database is locked`
+// for a writer that checkpointed a moment later. So a refusal with a -wal beside it always
+// buys at least one more look, and the window measures the looking.
 func (w walWait) read(path string) ([][]string, error) {
+	rows, err := w.query(path)
+	if err == nil {
+		return rows, nil
+	}
 	deadline := w.now().Add(w.settle)
 	for {
-		rows, err := w.query(path)
-		if err == nil {
-			return rows, nil
-		}
 		if !walPending(path) || !w.now().Before(deadline) {
 			return nil, err
 		}
 		w.sleep(w.pause)
+		if rows, err = w.query(path); err == nil {
+			return rows, nil
+		}
 	}
 }
 
