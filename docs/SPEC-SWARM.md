@@ -2164,6 +2164,28 @@ the bench over the same shell seam the harvest already reaches it through —
 `mkdir -p`, `test ! -e`, `mv`, and never a delete — and its `.harvested` marker
 is never written, so a refused card is not silently skipped next time either.
 
+**AN UNREAD DIFF REFUSES THE PUSH.** The guard reads two things — the card's
+`RESULT.md` and the patch the push would carry — and for a while it failed
+*open*: a `git diff` that could not run returned an empty diff, the `RESULT.md`
+half found nothing, and all four callers pushed a card whose patch nobody had
+read. A check that could not see half of what it was asked to read must not
+report clean. A diff that could not run is now its own error and every caller
+prints
+
+```
+HARVEST REFUSED diff-unread reason=<err> label=<label> site=<site>
+```
+
+and ends the card there. **An empty diff from a base that DID resolve is a real
+answer** — the branch changes nothing against it — and is not an error; the
+guessing form needs one base ref to resolve, not all four. Nothing is
+quarantined on this path: nothing was found, and a bench that dropped an ssh, or
+a clone whose base ref is not fetched yet, is a reason to stop rather than to
+move a card's work out from under it. The card counts failed and the next
+harvest reads it again. `TestTheGuardsErrorPathIsTerminal` reads the syntax tree
+and fails unless every function that calls the guard tests its error and ENDS
+that branch — `return` or `continue`, never a fall-through to the push.
+
 ### `/proc/<pid>/environ`: the shim does not close it, and the wall cannot
 
 **Measured on `space`, inside the real wall, from the card's own tool shell**
@@ -2233,6 +2255,11 @@ harness's own child and shares whatever uid it runs as.
 `TestHarvestWorkingRefusesToPushAKeyShape`,
 `TestManagerOpenPRRefusesToPushAKeyShape`,
 `TestEveryPublishSiteIsBehindTheSecretScan`, `TestTheWrapperIsTheGuard`,
+`TestTheGuardsErrorPathIsTerminal`, `TestHarvestRefusesAnUnreadDiff`,
+`TestHarvestBenchRefusesAnUnreadDiff`, `TestHarvestWorkingRefusesAnUnreadDiff`,
+`TestManagerRefusesAnUnreadDiff`,
+`TestAnEmptyDiffFromABaseThatResolvedIsNotAnError`,
+`TestAnUnreadDiffIsItsOwnError`,
 `TestThePRBodyIsAPrefixOfWhatTheScanRead`.
 
 ## Slots

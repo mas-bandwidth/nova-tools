@@ -255,8 +255,7 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	// directory, writes the HUMAN line, and pushes nothing.
 	findings, scanErr := secretFindings(j.dir, clone, r.base12+"..HEAD", lines)
 	if scanErr != nil {
-		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: the key-shape scan could not run, so nothing is pushed: %s\n",
-			field(j.label), oneline.Err(scanErr))
+		fmt.Fprintln(r.in.Stderr, secretScanRefusalLine("harvest-working", j.label, scanErr))
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
 	if len(findings) > 0 {

@@ -189,8 +189,7 @@ func Harvest(in HarvestInput) int {
 			if scanErr != nil {
 				refused++
 				writeSeen(in.Root, c, "refused")
-				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: the key-shape scan could not run, so nothing is pushed: %s\n",
-					field(c.Label), oneline.Err(scanErr))
+				fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest", c.Label, scanErr))
 				continue
 			}
 			if len(findings) > 0 {

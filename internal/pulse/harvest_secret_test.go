@@ -309,3 +309,163 @@ func TestManagerOpenPRRefusesToPushAKeyShape(t *testing.T) {
 		t.Fatal("the refusal printed the matched text")
 	}
 }
+
+// --- Johnny's second HOLD: an unread diff must refuse, never pass as clean ---------------
+
+// The guard used to fail OPEN: harvestDiff returned an empty diff on error, the RESULT.md
+// half found nothing, and the card was pushed. A check that could not see half of what it
+// was asked to read must not report clean. One edit turns each of these four red: make
+// harvestDiff return ("", "", nil) instead of the *diffUnread.
+
+func TestHarvestRefusesAnUnreadDiff(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	// Every git works except `diff`, which cannot run at all: no base ref resolves.
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 3, Equals: "diff", Exit: 128, Stderr: "fatal: bad revision"}}})
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
+	addCard(t, root, "clean", "1", "flash", "RESULT clean sha=aaa",
+		"RESULT clean sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+
+	out, errs := runHarvest(t, root)
+	assertDiffUnread(t, "harvest", out, errs, arglog)
+	if !strings.Contains(out, "refused=1") || !strings.Contains(out, "pushed=0") {
+		t.Fatalf("an unread diff was not counted refused:\n%s", out)
+	}
+}
+
+func TestHarvestBenchRefusesAnUnreadDiff(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	// gitIn runs `git -C <dir> <verb> ...`, so the verb is the third argument.
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 3, Equals: "diff", Exit: 128, Stderr: "fatal: bad revision"},
+		{Arg: 3, Equals: "rev-list", Stdout: "3"},
+		{Arg: 3, Equals: "rev-parse", Stdout: "abc1234"},
+	}})
+	job := "/home/gaffer/rowan-swarm-root/0/jobs/clean"
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		if strings.Contains(script, "touch") || strings.Contains(script, "mv ") {
+			return "", nil
+		}
+		return benchJobListing(job, []string{
+			"RESULT clean sha=abc", "DONE", "BRANCH rowan/clean", "REPO mas-bandwidth/nova-tools",
+		}), nil
+	}}
+	forge := &fakeForge{}
+	_, out, errs := runBenchHarvest(t, benchHarvestInput(t, root, shell, forge))
+	assertDiffUnread(t, "harvest-bench", out, errs, arglog)
+	if len(forge.opened) != 0 {
+		t.Fatalf("a PR was opened behind an unread diff: %+v", forge.opened)
+	}
+	if shell.ran("touch " + shellQuote(job+"/.harvested")) {
+		t.Error("a card refused for an unread diff was marked harvested")
+	}
+}
+
+func TestHarvestWorkingRefusesAnUnreadDiff(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 3, Equals: "diff", Exit: 128, Stderr: "fatal: bad revision"},
+		{Arg: 1, Equals: "log", Stdout: "abc1234567890abc 2026-09-19T18:00:00Z\n"},
+		{Arg: 1, Equals: "ls-remote", Stdout: "abc1234567890abc\trefs/heads/rowan/clean\n"},
+	}})
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 1, Equals: "pr", Stdout: "[]"}}})
+
+	job := filepath.Join(root, "working", "jobs", "clean")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"),
+		[]byte("RESULT clean sha=abc\nDONE\nBRANCH rowan/clean\nREPO owner/repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	r := &workingRun{in: HarvestInput{Stdout: &bytes.Buffer{}, Stderr: &errb}, base12: "origin/dev"}
+	outcome := r.one(harvestJob{dir: job, label: "clean"})
+	assertDiffUnread(t, "harvest-working", "", errb.String(), arglog)
+	if outcome.pushed != 0 || outcome.prs != 0 {
+		t.Fatalf("the card was published behind an unread diff: %+v", outcome)
+	}
+	if outcome.class != classFailed {
+		t.Errorf("class = %s, want failed", outcome.class)
+	}
+	if _, err := os.Stat(job); err != nil {
+		t.Errorf("an unread diff quarantined the job; nothing was found, so it is left alone: %v", err)
+	}
+}
+
+func TestManagerRefusesAnUnreadDiff(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 3, Equals: "diff", Exit: 128, Stderr: "fatal: bad revision"}}})
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 1, Equals: "pr", Stdout: "[]"}}})
+
+	queue := filepath.Join(root, "queue")
+	for _, d := range []string{"launched", "failed", "done"} {
+		if err := os.MkdirAll(filepath.Join(queue, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(queue, "launched", "clean.md"), []byte("card\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	job := filepath.Join(root, "swarm", "jobs", "clean")
+	if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	m := &manager{in: ManagerInput{Queue: queue, Stdout: &out, Stderr: &out}, out: bound(&out, 20)}
+	m.openPR("clean.md", job, []string{"RESULT clean sha=abc", "DONE", "BRANCH rowan/clean", "REPO owner/repo", "red: T"})
+	assertDiffUnread(t, "manager", "", out.String(), arglog)
+	if m.prs != 0 {
+		t.Fatalf("the manager opened %d PRs behind an unread diff", m.prs)
+	}
+}
+
+// assertDiffUnread is the one shape all four refusals share: Johnny's token, the reason,
+// and nothing on the forge.
+func assertDiffUnread(t *testing.T, site, stdout, stderr, arglog string) {
+	t.Helper()
+	both := stdout + "\n" + stderr
+	if !strings.Contains(both, "HARVEST REFUSED diff-unread") && !strings.Contains(both, "diff-unread") {
+		t.Fatalf("%s: no diff-unread refusal; an unread diff passed as clean:\nstdout=%s\nstderr=%s", site, stdout, stderr)
+	}
+	if !strings.Contains(both, "reason=") {
+		t.Errorf("%s: the refusal names no reason:\n%s", site, both)
+	}
+	if !strings.Contains(both, "site="+site) {
+		t.Errorf("%s: the refusal does not name its site:\n%s", site, both)
+	}
+	for _, l := range arglogLines(t, arglog) {
+		if strings.Contains(l, "push") || strings.Contains(l, "pr create") || strings.Contains(l, "pr edit") {
+			t.Fatalf("%s: something reached the forge behind an unread diff: %s", site, l)
+		}
+	}
+}
+
+// TestAnEmptyDiffFromABaseThatResolvedIsNotAnError: the fence must not turn every card
+// with no changes against its base into a refusal. A spec that RAN is an answer.
+func TestAnEmptyDiffFromABaseThatResolvedIsNotAnError(t *testing.T) {
+	_, specs, arglog := setupPulse(t)
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
+	diff, path, err := harvestDiff(t.TempDir(), "origin/dev..HEAD")
+	if err != nil || diff != "" || path != "" {
+		t.Fatalf("an empty diff from a base that resolved: diff=%q path=%q err=%v", diff, path, err)
+	}
+	if isDiffUnread(err) {
+		t.Fatal("an empty diff was called unread")
+	}
+}
+
+// TestAnUnreadDiffIsItsOwnError pins the type the callers switch on.
+func TestAnUnreadDiffIsItsOwnError(t *testing.T) {
+	_, specs, arglog := setupPulse(t)
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 3, Equals: "diff", Exit: 128}}})
+	_, _, err := harvestDiff(t.TempDir(), "origin/dev..HEAD")
+	if err == nil {
+		t.Fatal("a diff that could not run returned no error")
+	}
+	if !isDiffUnread(err) {
+		t.Fatalf("err = %v, want a *diffUnread", err)
+	}
+	if line := secretScanRefusalLine("harvest", "lbl", err); !strings.HasPrefix(line, "HARVEST REFUSED diff-unread reason=") {
+		t.Fatalf("refusal line = %q", line)
+	}
+}

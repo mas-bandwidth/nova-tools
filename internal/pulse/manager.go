@@ -417,7 +417,7 @@ func (m *manager) openPR(card, job string, lines []string) {
 	findings, scanErr := secretFindings(job, dir, "", lines)
 	if scanErr != nil {
 		m.move(card, "failed")
-		m.event("MANAGER REFUSED card=%s: the key-shape scan could not run, so nothing is pushed: %s", oneline.Field(card), oneline.Err(scanErr))
+		m.event("MANAGER REFUSED card=%s: %s", oneline.Field(card), secretScanRefusalLine("manager", card, scanErr))
 		return
 	}
 	if len(findings) > 0 {

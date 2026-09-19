@@ -228,8 +228,7 @@ func harvestBench(in HarvestInput) int {
 		findings, scanErr := secretFindings(j.Dir, clone, "origin/"+base+".."+ref, j.Result)
 		if scanErr != nil {
 			failed++
-			lines.Line(fmt.Sprintf("HARVEST REFUSED bench=%s label=%s branch=%s: the key-shape scan could not run, so nothing is pushed: %s",
-				field(in.Bench), field(label), field(branch), oneline.Err(scanErr)))
+			fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest-bench", label, scanErr))
 			continue
 		}
 		if len(findings) > 0 {

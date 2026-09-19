@@ -29,6 +29,7 @@ package pulse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,12 +41,42 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// diffUnread is the one error that says the patch a push would carry could not be READ.
+// It is its own type because a caller must tell it apart from a data-file fault: the line
+// it prints is `HARVEST REFUSED diff-unread reason=<err>`, and either way the push does
+// not happen.
+//
+// IT EXISTS BECAUSE THE GUARD USED TO FAIL OPEN (Johnny's second HOLD of #1838 at
+// bc6f3ec3). harvestDiff returned an empty diff on error, secretFindings then scanned the
+// RESULT.md alone, found nothing in it, and all four callers pushed. A check that could not
+// see half of what it was asked to read must not report clean: the whole point of the scan
+// is that it is the fence between a key a card can still reach and the forge.
+type diffUnread struct {
+	Spec string
+	Err  error
+}
+
+func (d *diffUnread) Error() string {
+	return fmt.Sprintf("the diff %s could not be read: %s", oneline.Field(d.Spec), oneline.Err(d.Err))
+}
+
+func (d *diffUnread) Unwrap() error { return d.Err }
+
+// isDiffUnread says whether an error from the guard is the unread-diff one, so a caller
+// prints the token Johnny's rule names and not a different one.
+func isDiffUnread(err error) bool {
+	var d *diffUnread
+	return errors.As(err, &d)
+}
+
 // secretFindings is THE guard. resultLines is the card's own RESULT.md, which every PR
 // body this package builds is a prefix of; diffDir and diffSpec name the patch the push
 // would carry, and an empty diffSpec asks the caller's clone for the first base ref that
-// resolves. A diff that cannot be read is no finding and no error: the RESULT.md half
-// still runs, and a check that could not see the diff says nothing about it rather than
-// passing it.
+// resolves.
+//
+// AN ERROR IS TERMINAL. A diff that could not be read is a *diffUnread, and every caller
+// refuses the push on it -- it is never "no finding". An empty diff from a base that DID
+// resolve is a real answer (the branch changes nothing against it) and is not an error.
 //
 // The environment it compares values against is this process's own: `nova-secrets exec`
 // sets the seat's key around a pulse, so the one key most worth catching is one this
@@ -59,7 +90,10 @@ func secretFindings(jobDir, diffDir, diffSpec string, resultLines []string) ([]k
 	if diffDir == "" {
 		return out, nil
 	}
-	diff, path := harvestDiff(diffDir, diffSpec)
+	diff, path, err := harvestDiff(diffDir, diffSpec)
+	if err != nil {
+		return nil, err
+	}
 	if diff == "" {
 		return out, nil
 	}
@@ -77,26 +111,40 @@ func secretScan(jobDir string, resultLines []string) ([]keyshape.Finding, error)
 
 // harvestDiff is the patch the push would carry. A named spec is asked for as given; an
 // empty one tries the base refs commitsPastBase asks in, in the same order.
-func harvestDiff(dir, spec string) (diff, path string) {
+//
+// A SPEC THAT RAN is an answer, empty or not: the branch changes nothing against that base.
+// A spec that could NOT run is not an answer, and when no spec ran at all the diff is
+// unread and the error says so. The guessing form needs one base to resolve, not all four:
+// a clone that has `origin/dev` and no `main` has been read.
+func harvestDiff(dir, spec string) (diff, path string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	specs := []string{spec}
 	if strings.TrimSpace(spec) == "" {
 		specs = []string{"origin/dev...HEAD", "dev...HEAD", "origin/main...HEAD", "main...HEAD"}
 	}
+	ran := false
+	var last error
 	for _, s := range specs {
-		cmd := exec.CommandContext(ctx, "git", "diff", s)
-		cmd.Dir = dir
-		out, err := cmd.Output()
-		if err != nil {
+		// `git -C <dir>` rather than a chdir, the shape gitIn already uses in this package:
+		// one argv, no working-directory state, and a directory that is not there is git's own
+		// nonzero rather than an exec error with a different shape.
+		cmd := exec.CommandContext(ctx, "git", "-C", dir, "diff", s)
+		out, runErr := cmd.Output()
+		if runErr != nil {
+			last = runErr
 			continue
 		}
+		ran = true
 		if strings.TrimSpace(string(out)) == "" {
 			continue
 		}
-		return string(out), "diff:" + s
+		return string(out), "diff:" + s, nil
 	}
-	return "", ""
+	if !ran {
+		return "", "", &diffUnread{Spec: strings.Join(specs, ","), Err: last}
+	}
+	return "", "", nil
 }
 
 // secretRefusal is what one hit does, held apart from the four callers so all four do the
@@ -216,4 +264,21 @@ func appendSecretHuman(dir, line string) {
 	}
 	defer f.Close()
 	fmt.Fprint(f, line)
+}
+
+// secretScanRefusalLine is the ONE line every site prints when the guard could not run.
+// `diff-unread` is Johnny's token for the fence this closes: the patch a push would carry
+// could not be read, so the push does not happen. Anything else the guard can fail on is a
+// data-file fault and says so, and both are terminal.
+//
+// The job is NOT quarantined on this path: nothing was found, and a bench that dropped an
+// ssh or a clone with no base ref yet is a reason to stop, not a reason to move a card's
+// work out from under it. The card is counted failed and the next harvest reads it again.
+func secretScanRefusalLine(site, label string, err error) string {
+	token := "secret-scan-unavailable"
+	if isDiffUnread(err) {
+		token = "diff-unread"
+	}
+	return fmt.Sprintf("HARVEST REFUSED %s reason=%s label=%s site=%s",
+		token, oneline.Err(err), field(label), field(site))
 }

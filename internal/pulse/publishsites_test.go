@@ -227,3 +227,100 @@ func TestTheWrapperIsTheGuard(t *testing.T) {
 		t.Fatalf("secretScan does not delegate to secretFindings:\n%s", body[i:i+200])
 	}
 }
+
+// TestTheGuardsErrorPathIsTerminal is the second half of the class rule, and it exists
+// because the guard used to fail OPEN (Johnny's second HOLD of #1838 at bc6f3ec3):
+// harvestDiff returned an empty diff on error, the RESULT.md half found nothing, and all
+// four callers pushed a card whose patch nobody had read.
+//
+// Every function that calls the guard must test the error it returns and END that branch --
+// `return` or `continue`, never fall through to the push. The test reads the syntax tree,
+// so a fifth site, or an existing one edited to log-and-carry-on, is a named failure.
+func TestTheGuardsErrorPathIsTerminal(t *testing.T) {
+	guards := map[string]bool{"secretFindings": true, "secretScan": true}
+
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+		for _, decl := range f.Decls {
+			d, ok := decl.(*ast.FuncDecl)
+			if !ok || d.Body == nil {
+				continue
+			}
+			// The error name the guard's call binds here, if any.
+			errName := ""
+			var at token.Pos
+			ast.Inspect(d.Body, func(n ast.Node) bool {
+				as, ok := n.(*ast.AssignStmt)
+				if !ok || len(as.Rhs) != 1 || len(as.Lhs) != 2 {
+					return true
+				}
+				call, ok := as.Rhs[0].(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				id, ok := call.Fun.(*ast.Ident)
+				if !ok || !guards[id.Name] {
+					return true
+				}
+				if name, ok := as.Lhs[1].(*ast.Ident); ok {
+					errName, at = name.Name, as.Pos()
+				}
+				return true
+			})
+			if errName == "" || errName == "_" {
+				if errName == "_" {
+					t.Errorf("%s:%d: %s throws the guard's error away", e.Name(), fset.Position(at).Line, d.Name.Name)
+				}
+				continue
+			}
+			checked++
+			terminal := false
+			ast.Inspect(d.Body, func(n ast.Node) bool {
+				ifs, ok := n.(*ast.IfStmt)
+				if !ok {
+					return true
+				}
+				bin, ok := ifs.Cond.(*ast.BinaryExpr)
+				if !ok || bin.Op != token.NEQ {
+					return true
+				}
+				x, okx := bin.X.(*ast.Ident)
+				y, oky := bin.Y.(*ast.Ident)
+				if !okx || !oky || x.Name != errName || y.Name != "nil" {
+					return true
+				}
+				if len(ifs.Body.List) == 0 {
+					return true
+				}
+				switch last := ifs.Body.List[len(ifs.Body.List)-1].(type) {
+				case *ast.ReturnStmt:
+					terminal = true
+				case *ast.BranchStmt:
+					if last.Tok == token.CONTINUE {
+						terminal = true
+					}
+				}
+				return true
+			})
+			if !terminal {
+				t.Errorf("%s:%d: %s calls the guard and its `if %s != nil` branch does not end the card -- an unread diff would be pushed",
+					e.Name(), fset.Position(at).Line, d.Name.Name, errName)
+			}
+		}
+	}
+	if checked < 4 {
+		t.Fatalf("only %d guarded functions were checked; there are four publish paths", checked)
+	}
+}
