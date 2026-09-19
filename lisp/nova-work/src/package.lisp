@@ -2063,7 +2063,19 @@
     #:notes-write
     #:notes-supersede
     #:check-not-weaker-kind
-    #:make-replacement-note))
+    #:make-replacement-note
+    ;; `execution reconcile` and `execution status` over the kernel's own
+    ;; controls (SPEC-WORK.md:3997-4019); see src/execution-reconcile.lisp
+    #:observation-manifest-id
+    #:execution-reconcile
+    #:execution-status
+    #:control-reconciliations
+    #:control-observations
+    #:control-target-ids
+    #:target-disposition
+    #:target-observed
+    #:target-observed-at
+    #:target-usage))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
