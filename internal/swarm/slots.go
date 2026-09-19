@@ -319,6 +319,20 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("owner and label are one line")
 	}
+	// The store is read once here so that a store that was never `slots init`ed says so
+	// in its own sentence before this run makes a lock file inside it.
+	if _, _, _, err := loadSlotShares(store); err != nil {
+		return nil, 0, 0, 0, "", false, err
+	}
+	// THE WHOLE GRANT IS ONE TRANSACTION (issue #1900). Reap, count, test against the
+	// share and the capacity, and make the lease directories -- under the store lock, so
+	// that two takers cannot both read total=0 and both win the last seat. Everything
+	// read before this point is read again under it.
+	unlock, err := takeSlotStoreLock(store)
+	if err != nil {
+		return nil, 0, 0, 0, "", false, err
+	}
+	defer unlock()
 	capacity, reserve, shares, err := loadSlotShares(store)
 	if err != nil {
 		return nil, 0, 0, 0, "", false, err
@@ -391,6 +405,11 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 	if strings.TrimSpace(owner) == "" {
 		return 0, 0, fmt.Errorf("owner is required")
 	}
+	// Under the store lock (issue #1900), so that a release cannot interleave with a
+	// take's count-then-mkdir and leave the count the grant was made against wrong.
+	if unlock, lerr := takeSlotStoreLock(store); lerr == nil {
+		defer unlock()
+	}
 	entries, err := os.ReadDir(slotStoreDir(store))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -441,6 +460,12 @@ func ReleaseSlotLeasesByID(store string, ids []string, pid int) (released int, e
 	if pid <= 0 {
 		return 0, fmt.Errorf("pid is required")
 	}
+	// Under the store lock (issue #1900): the same reason as ReleaseSlotLeases. A store
+	// this process cannot lock -- one that is already gone, say -- is not a reason to
+	// refuse to stop holding, so the release goes on unlocked rather than erroring.
+	if unlock, lerr := takeSlotStoreLock(store); lerr == nil {
+		defer unlock()
+	}
 	for _, id := range ids {
 		if strings.TrimSpace(id) == "" {
 			continue
@@ -474,3 +499,31 @@ func ReleaseSlotLeasesByID(store string, ids []string, pid int) (released int, e
 // "pass --slots-store <dir>" on a bench that has never had one is not a remedy, it is a
 // second question.
 const NoSlotsStoreRefusal = "NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)"
+
+// SlotStoreLockName is the bench store's one lock file, beside shares.tsv and the
+// slots/ directory. It is NOT part of the store's format in the sense that matters:
+// shares.tsv keeps every byte of its shape, `slots list` still reads directories, and
+// a store made by an older `slots init` grows this file the first time a take runs
+// against it.
+const SlotStoreLockName = "slots.lock"
+
+// SlotStoreWait is how long a take or a release waits for the store lock. Every
+// holder does a bounded reap, a count and at most `--n` mkdirs and then releases; a
+// wait longer than this is a holder that is stuck, not a bench that is busy.
+const SlotStoreWait = 10 * time.Second
+
+// takeSlotStoreLock serialises the whole grant (issue #1900). os.Mkdir is atomic PER
+// ID, which is what the comment at the top of this file says; it is not atomic per
+// CAPACITY. Two takers who both read total=0 against a capacity-1 store both counted,
+// both passed the share test, and both made a directory with a different name: three
+// of four 50-way trials over-granted. The count and the mkdir have to be one
+// transaction, and the store is a directory on one bench, so an flock on a file inside
+// it is the transaction -- the same primitive, and the same dies-with-its-holder
+// property, as the pool's slots.lock.
+//
+// The lock file is only created inside a store that already exists: a take against a
+// store that was never `slots init`ed must still say `shares.tsv: ...` rather than
+// quietly making a directory.
+func takeSlotStoreLock(store string) (func(), error) {
+	return takeFileLock(filepath.Join(store, SlotStoreLockName), SlotStoreWait)
+}
