@@ -103,10 +103,31 @@ with `dur_ms` and `err` when it finishes. A hang is then just a `start` with no 
 - **The merge queue.** `enqueue` with the PR and head sha, `group_start` with the group name and
   the run id, `group_verdict` with the conclusion, the failing test and the poison verdict, and
   `park` when a PR is set aside with the reason and the age.
+  **What landed** (`nova-merge`, source `nova-merge`): `batch-start`, `batch-member` (the PR and
+  `state=merged`, or `state=dropped` with the reason), `batch-verdict` (`OK`, or `FAIL` at
+  `ERROR` with the step, the failing packages and the failing tests) and `batch-enqueued` (the
+  branch a green batch built and the head a caller pushes); `queue-depth` on **every** read of
+  the queue, carrying `running`, `waiting` and `unmergeable`; `queue-audit` per entry whose
+  automatic merge the queue turned off (`skip`, `park`, `hold`) with the reason, which is the
+  audit trail the house rule needs -- merge only after the checks show zero failures, never
+  `--auto`; and, from `react`, one line per message it reacted to whose **kind is the channel
+  name** the message arrived on, so the vocabulary a query selects on is the vocabulary the bus
+  carries. `park` is a `queue-audit` with `action=park` rather than a kind of its own: one
+  event answers "what stopped merging and why", whoever stopped it.
+  **The numbers live in `msg`** as `name=value` pairs. The fields above are fixed and a
+  sixteenth would break every `| json` query the fleet already runs, so a panel that wants a
+  number reads it with `line_format "{{.msg}}"` and a regexp.
 - **The coordinator's loops.** One event per action, not one per turn: `harvest` per RESULT.md
   disposed, `sweep` per pool folded into the ledger, `fill` per card cut or refused (with the
   source and the dedup that stopped it). The turn's `WIDTH`/`MANAGER` line stays as today's one
   human line.
+  **What landed** for the fill loop (`nova-pulse fill`): one `fill-tick` **per bench per tick**,
+  carrying that bench's `capacity`, what it `launched`, what was `held` behind a live lane card,
+  what was `refused` for naming a lane the lanes file does not, and the `ready` count left in the
+  directory when the tick ended. A bench whose capacity could not be read is `capacity=unknown`
+  at `WARN`: a fleet whose fill went quiet because `ssh` failed must not look like a fleet with
+  nothing to do. The `bench` LABEL is the machine running the loop; the bench a tick FILLS is a
+  field of the message, because one loop fills many benches.
 - **The work language's expander.** One `derive` event per node derived from the graph (the
   node id, the parent, the rule), one `cut` event per card cut (the card id, the pool candidate,
   the template and the route). The journal stays the replayable truth; these events are how a

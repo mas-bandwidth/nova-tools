@@ -24,7 +24,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once] [--label <name>] [--log <path>]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
@@ -115,6 +115,19 @@ line goes to <queue>/pulse.log; the console keeps the WIDTH line. <queue>/pulse.
 is re-read every tick -- a changed value takes effect on the next one and is named
 on one CONFIG line, with no restart -- and the counters live in <queue>/pulse.state,
 so a restart carries on rather than starting again.
+
+fill writes one structured JSON line per bench per tick as well as its FILL line
+(SPEC-LOGS.md Part 2): event fill-tick, carrying that bench's capacity, what it
+launched, what was held behind a live lane card, what was refused for naming a
+lane the lanes file does not, and the ready count left in the directory when the
+tick ended -- the number the fleet dashboard used to read out of the status
+page's metrics.tsv. --log <path> appends those lines to the file Alloy tails;
+without it they go to stderr, which under systemd is the unit's journal and so a
+source Alloy already reads. A --log that cannot be opened is refused before the
+first ssh, never a silent run with no log. --label is the fleet name of THIS
+machine, the bench label every line carries (else $NOVA_BENCH, else the short
+hostname); the bench each tick FILLS is a field of the line, because one fill
+loop fills many benches from one machine.
 
 example:
   nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6

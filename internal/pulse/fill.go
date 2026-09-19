@@ -46,8 +46,14 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// EventFillTick is the kind of the per-bench tick line. It is a noun of this verb, the way
+// batch-member and queue-depth are nouns of the merge lane: `{source="nova-pulse",
+// verb="fill"} | json | event="fill-tick"` is exactly "what did the fill loop do".
+const EventFillTick = "fill-tick"
 
 // FillCap is the most cards one bench may take in a tick: fill-loop.sh holds this reserve
 // back so a filling bench never eats the machine its own CI needs.
@@ -132,6 +138,13 @@ type FillInput struct {
 	Sleep    func(time.Duration)
 	Launcher CardLauncher
 	Capacity Capacity
+	// Events is the structured sink of SPEC-LOGS.md Part 2 (internal/log): one fill-tick
+	// line per bench per tick, carrying what that bench launched, what was held behind a
+	// live lane card, what was refused for naming a lane the file does not, and the ready
+	// count left in the directory when the tick ended. The ready count is the number the
+	// fleet dashboard read out of the status page's metrics.tsv until this existed, and
+	// it is emitted HERE because here is where it is known. A nil Events writes nothing.
+	Events *novalog.Emitter
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -223,6 +236,16 @@ type tickResult struct {
 // answered 0.
 func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed == r.benches }
 
+// fillTickCounts is one bench's share of one tick, as the numbers the fill-tick event
+// carries. capacity is -1 when the bench could not be read at all, which is the one case
+// that is a WARN rather than an INFO: a fleet whose fill went quiet because ssh failed must
+// not look like a fleet with nothing to do.
+type fillTickCounts struct {
+	bench                   string
+	launched, held, refused int
+	capacity                int
+}
+
 // fillTick is one turn: list ready once in filename order, then for each bench take up to
 // min(capacity, FillCap) cards and launch them. A LANE card is launched only when its lane
 // has no live card; otherwise it is held, and the live card it is held behind is named. A
@@ -237,6 +260,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
+	var benchCounts []fillTickCounts
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
 		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
@@ -248,13 +272,16 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	for _, bench := range in.Benches {
 		want := 0
 		capacityFailed := false
+		counts := fillTickCounts{bench: bench}
 		if n, err := in.Capacity.Capacity(bench); err != nil {
 			capacityFailed = true
+			counts.capacity = -1
 			if res.err == nil {
 				res.err = fmt.Errorf("capacity on %s: %w", field(bench), err)
 			}
 		} else {
 			want = n
+			counts.capacity = n
 		}
 		if want > FillCap {
 			want = FillCap
@@ -271,11 +298,13 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			if lane != "" {
 				if _, known := lanes[lane]; !known {
 					refuseLane(in, card, lane)
+					counts.refused++
 					continue
 				}
 				if holder, isLive := live[lane]; isLive {
 					held = append(held, fmt.Sprintf("FILL HELD card=%s lane=%s live=%s",
 						oneline.Field(filepath.Base(card)), oneline.Field(lane), oneline.Field(holder)))
+					counts.held++
 					continue
 				}
 			}
@@ -304,7 +333,9 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		if capacityFailed || (launched == 0 && failed > 0) {
 			res.failed++
 		}
+		counts.launched = launched
 		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d", oneline.Field(bench), launched, failed))
+		benchCounts = append(benchCounts, counts)
 	}
 
 	var b strings.Builder
@@ -314,8 +345,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		b.WriteByte(' ')
 		b.WriteString(p)
 	}
+	readyLeft := len(readyCards(in.Ready))
 	b.WriteString(" ready=")
-	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
+	b.WriteString(strconv.Itoa(readyLeft))
+	for _, c := range benchCounts {
+		emitFillTick(in.Events, tick, readyLeft, c)
+	}
 	lines := append([]string{b.String()}, held...)
 	return lines, res
 }
@@ -392,6 +427,25 @@ func lanesStamp(path string) int64 {
 		return 0
 	}
 	return info.ModTime().Unix()
+}
+
+// emitFillTick writes one bench's share of one tick as one structured line. Every value
+// that came from outside this program -- the bench's name -- goes through oneline.Field, so
+// the `name=value` pairs a panel reads out of the message cannot be split by a name holding
+// a space.
+func emitFillTick(e *novalog.Emitter, tick, readyLeft int, c fillTickCounts) {
+	capacity := strconv.Itoa(c.capacity)
+	level := "INFO"
+	if c.capacity < 0 {
+		capacity = "unknown"
+		level = "WARN"
+	}
+	l := e.Line(EventFillTick)
+	l.Level = level
+	l.Slot = oneline.Field(c.bench)
+	l.Msg = fmt.Sprintf("bench=%s tick=%d capacity=%s launched=%d held=%d refused=%d ready=%d",
+		oneline.Field(c.bench), tick, capacity, c.launched, c.held, c.refused, readyLeft)
+	e.Send(l)
 }
 
 // cardLane reads a card's `LANE: <name>` line, or "" when it names none. Only the exact

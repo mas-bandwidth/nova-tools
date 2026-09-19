@@ -72,8 +72,15 @@ func New(clock Clock, guid GUIDSource, source string) Line {
 }
 
 // Write emits the event as exactly one JSON object with the spec's fifteen fields. The
-// message and the error go through internal/oneline first, so a newline in either cannot
-// add a second line and the object is one line whatever the sentence holds. The writer is
+// message and the error go through internal/oneline's Escape first, so a newline in either
+// cannot add a second line and the object is one line whatever the sentence holds.
+//
+// ESCAPE AND NOT FIELD, for the two of them. Field is the form a SCANNER reads as one
+// token: it escapes every space and every "=" as well, which is right for a value inside
+// the human one-line grammar and wrong here, where JSON already delimits the value and the
+// msg is a sentence a person reads -- `name\x3dintegration-1\x20prs\x3d3` is not a
+// sentence, and a panel that reads a number out of the message cannot match it either.
+// The ids keep Field, because each of them IS one token. The writer is
 // injected: stderr in production (a unit's stderr is the systemd journal), a buffer in a
 // test. The handler is slog's JSON handler; the handler's own time, level and msg keys are
 // replaced by the spec's ts, level and msg fields so the object is the spec's object and
@@ -93,7 +100,7 @@ func (l Line) Write(w io.Writer) error {
 			return a
 		},
 	})
-	r := slog.NewRecord(time.Time{}, levelOf(l.Level), Redact(oneline.Field(l.Msg)), 0)
+	r := slog.NewRecord(time.Time{}, levelOf(l.Level), Redact(oneline.Escape(l.Msg)), 0)
 	r.AddAttrs(
 		slog.String("ts", l.TS),
 		slog.String("source", l.Source),

@@ -50,7 +50,10 @@ func cmdQueueAudit(args []string, stdout, stderr io.Writer, deps Deps) int {
 	}
 	res, err := merge.Audit(context.Background(), deps.NewAuditHost(*repo, time.Duration(*timeout)*time.Second), *dry)
 	if err != nil {
-		return queueRefuse(stderr, fmt.Sprintf("the repository's auto-merges could not be read: %s", oneline.Err(err)))
+		// `queue audit` is taken off the line BEFORE the lane is opened, so it has
+		// no emitter: it is a property of the forge, not of a lane. A nil emitter
+		// is the honest answer and every Emitter method takes one.
+		return queueRefuse(nil, stderr, fmt.Sprintf("the repository's auto-merges could not be read: %s", oneline.Err(err)))
 	}
 	// EVERY ONE IS NAMED. A count with no names is a number nobody can check, and the
 	// question a reader has after this verb is which pull requests were carrying one.

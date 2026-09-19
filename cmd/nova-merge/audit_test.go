@@ -32,6 +32,7 @@ var mergeAudit = audit.Config{
 		"main.go|done|f.verb":                                           "the verb's own name, a literal at every newFlags call site in this file",
 		"verbs.go|cmdInit|c.name":                                       "a flag's own name, one of the two literals \"base\" and \"lane-branch\" in the table above the site",
 		"pass.go|cmdRun|strconv.FormatFloat(*hours, 'g', -1, 64)":       "a float this binary's own flag package parsed, rendered as digits, a dot and an exponent letter",
+		"events.go|openEmitter|strings.ToUpper(verb)":                   "the verb's own name upper-cased, a literal at every openEmitter call site (\"batch\", \"queue\", \"react\")",
 		"verbs.go|openLane|verb":                                        "the verb's own name, a literal at every call site in this file",
 		"verbs.go|openLane|strings.ToUpper(verb)":                       "the same verb name upper-cased, a literal at every call site in this file",
 		"verbs.go|nameAnEntryThisLaneDoesNotHold|strings.ToUpper(verb)": "the verb's own name upper-cased, the literal \"read\" at its one call site in this file",
@@ -62,6 +63,12 @@ var mergeAudit = audit.Config{
 	// the rest are the numeric run id, pull request, confidence and floor.
 	Escapers: []string{"buildinfo.Line", "classifyLine"},
 	Imports: []string{
+		// internal/log holds the structured JSON line of SPEC-LOGS.md Part 2. It cannot
+		// write past the escape: its one writer is the sink the verb hands it, every
+		// field whose content comes from outside the program goes through oneline and
+		// then Redact inside Line.Write, and the object is rendered by log/slog's own
+		// JSON handler, which escapes a newline as \n rather than ending the line.
+		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by

@@ -35,6 +35,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -65,6 +66,13 @@ type Gate interface {
 
 // Reactor is the stateful subscriber. sent remembers the rebase-wanted it already
 // published per head, so a republished dev-moved does not cut the same rebase twice.
+//
+// Events is the structured sink of SPEC-LOGS.md Part 2 (internal/log). It is the REACTOR's
+// half of the stream: one line per message it reacted to, whose KIND IS THE CHANNEL NAME
+// the message arrived on, so the vocabulary a LogQL query selects on is the vocabulary the
+// bus carries, and whose message says what the reactor did about it -- enqueue, skip, hold,
+// rebase-wanted, or nothing at all. A nil Events writes nothing, so every caller and every
+// test that predates this keeps its exact output.
 type Reactor struct {
 	RDB   *redis.Client
 	Forge Forge
@@ -74,6 +82,7 @@ type Reactor struct {
 	// knows where the queue is: nova-merge react writes the lane's queue.json.
 	Enqueue func(ctx context.Context, pr int, head string) error
 	Log     io.Writer
+	Events  *novalog.Emitter
 
 	// Dropped counts the messages this reactor could not read and carried on past.
 	Dropped int
@@ -115,7 +124,10 @@ func (r *Reactor) Handle(ctx context.Context, channel, payload string) error {
 	switch channel {
 	case ChannelCardDone:
 		// The recorder and the harvester consume the stream directly, as the card says;
-		// republishing card-done must not make the reactor do anything at all.
+		// republishing card-done must not make the reactor do anything at all. It is
+		// still emitted: "the reactor saw this and did nothing on purpose" is an answer,
+		// and a channel with no line at all reads as a reactor that was not listening.
+		r.reacted(channel, 0, "action=none reason=the recorder reads the stream directly")
 		return nil
 	case ChannelPRChecksDone:
 		return r.onChecksDone(ctx, payload)
@@ -141,6 +153,7 @@ func (r *Reactor) onChecksDone(ctx context.Context, payload string) error {
 		}
 		if skip {
 			r.line("REACT skip pr=%d head=%s reason=queue-skip\n", e.Number, oneline.Field(e.Head))
+			r.reacted(ChannelPRChecksDone, e.Number, "action=skip reason=queue-skip head="+oneline.Field(e.Head))
 			return nil
 		}
 		held, reason, err := r.Gate.Held()
@@ -149,6 +162,7 @@ func (r *Reactor) onChecksDone(ctx context.Context, payload string) error {
 		}
 		if held {
 			r.line("REACT hold pr=%d head=%s reason=%s\n", e.Number, oneline.Field(e.Head), oneline.Field(reason))
+			r.reacted(ChannelPRChecksDone, e.Number, "action=hold reason="+oneline.Field(reason)+" head="+oneline.Field(e.Head))
 			return nil
 		}
 	}
@@ -156,6 +170,7 @@ func (r *Reactor) onChecksDone(ctx context.Context, payload string) error {
 		return fmt.Errorf("enqueue %d: %w", e.Number, err)
 	}
 	r.line("REACT enqueue pr=%d head=%s\n", e.Number, oneline.Field(e.Head))
+	r.reacted(ChannelPRChecksDone, e.Number, "action=enqueue head="+oneline.Field(e.Head))
 	return nil
 }
 
@@ -185,6 +200,7 @@ func (r *Reactor) onDevMoved(ctx context.Context, payload string) error {
 			return fmt.Errorf("publish %s: %w", ChannelRebaseWanted, err)
 		}
 		r.line("REACT rebase-wanted pr=%d head=%s base=%s\n", pr.Number, oneline.Field(pr.Head), oneline.Field(e.SHA))
+		r.reacted(ChannelDevMoved, pr.Number, "action=rebase-wanted head="+oneline.Field(pr.Head)+" base="+oneline.Field(e.SHA))
 	}
 	return nil
 }
@@ -240,6 +256,19 @@ func (r *Reactor) RunOnce(ctx context.Context) error {
 		return err
 	}
 	return r.act(ctx, msg.Channel, msg.Payload)
+}
+
+// reacted is the structured half of every action above: one line whose kind is the channel
+// the message arrived on and whose message says what was done about it. A nil Events
+// emitter writes nothing (internal/log), so this costs a nil check on a quiet reactor.
+func (r *Reactor) reacted(channel string, pr int, msg string) {
+	if r.Events == nil {
+		return
+	}
+	l := r.Events.Line(channel)
+	l.PR = pr
+	l.Msg = msg
+	r.Events.Send(l)
 }
 
 // line writes one action line. A nil log discards it.
