@@ -378,7 +378,7 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 		}
 	}
 	for _, name := range missing {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
+		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess; run: nova-bus help\n", f.verb, name)
 	}
 	return len(missing) == 0
 }
@@ -414,7 +414,7 @@ func (f *flags) atLeastZero(name string, value int, stderr io.Writer) bool {
 // count reads a required positive integer flag.
 func (f *flags) count(name string, value int, stderr io.Writer) bool {
 	if value < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s must be given and at least 1, got %d; refusing to guess\n", f.verb, name, value)
+		fmt.Fprintf(stderr, "nova-bus %s: --%s must be given and at least 1, got %d; refusing to guess; run: nova-bus help\n", f.verb, name, value)
 		return false
 	}
 	return true
@@ -445,7 +445,7 @@ func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, s
 		}
 	}
 	if flagValue < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var\n", f.verb, flagValue)
+		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var; run: nova-bus help\n", f.verb, flagValue)
 		return 0, false
 	}
 	return flagValue, true
@@ -666,7 +666,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*to) == "" {
-			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess\n")
+			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 	} else {
@@ -809,7 +809,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 		return 2
 	}
 	if (*file == "") == !*useStdin {
-		fmt.Fprint(stderr, "nova-bus prepare: give exactly one of --file and --stdin; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus prepare: give exactly one of --file and --stdin; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	source := "(stdin)"
@@ -896,12 +896,12 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	}
 	if hasPrepared {
 		if (*preparedFile == "") == !*usePreparedStdin {
-			fmt.Fprint(stderr, "nova-bus send: give exactly one of --prepared and --prepared-stdin; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus send: give exactly one of --prepared and --prepared-stdin; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 	} else {
 		if (*file == "") == !*useStdin {
-			fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 	}
@@ -1201,7 +1201,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if len(notes) == 0 {
-		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
@@ -1296,7 +1296,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	before, err := time.Parse(time.RFC3339, *beforeFlag)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess\n", *beforeFlag)
+		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess; run: nova-bus help\n", *beforeFlag)
 		return 2
 	}
 	if !*dryRun {
@@ -1304,7 +1304,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus close: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run)\n")
+			fmt.Fprint(stderr, "nova-bus close: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run); run: nova-bus help\n")
 			return 2
 		}
 	}
@@ -1499,7 +1499,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// a report should do unless it was asked otherwise.
 	if *advance {
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 		if !f.attempts(*attempts, stderr) {
@@ -1510,7 +1510,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	if *askDecide && (*decideFloor < 0 || *decideFloor > 1) {
-		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess\n", *decideFloor)
+		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess; run: nova-bus help\n", *decideFloor)
 		return 2
 	}
 	// A bus with no .public marker is a private one, and --decide would hand its note
@@ -2899,7 +2899,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *timeout <= 0 {
-		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	// THE CEILING IS ABOUT THE HARNESS AND NOT ABOUT THE BUS. This verb is meant to be
@@ -3540,7 +3540,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// what they want checked. There is no default here for the same reason there is no
 	// default bus.
 	if !*full && strings.TrimSpace(*as) == "" && strings.TrimSpace(*since) == "" {
-		fmt.Fprint(stderr, "nova-bus check: give one of --full, --as <name> or --since <commit>; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus check: give one of --full, --as <name> or --since <commit>; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	if *rebuildIndex && !*full {
