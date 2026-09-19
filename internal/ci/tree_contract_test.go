@@ -1,6 +1,8 @@
 package ci
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -124,5 +126,43 @@ func TestSharedRepoTreeSkipsTheGitDirectory(t *testing.T) {
 		if f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/") {
 			t.Fatalf("the shared tree walked into .git (%s); no rule reads it and the walk is the cost", f.Rel)
 		}
+	}
+}
+
+// TestSharedRepoTreeSkipsAGitFileToo is the half of the rule above that only a
+// `git worktree` could find, and it finds it here instead. In a worktree `.git`
+// is not a directory: it is a one-line FILE holding `gitdir: <path>`. The walk
+// used to test `d.IsDir()` BEFORE the skip list, so in a worktree it skipped
+// nothing, took `.git` in as an ordinary file, and the test above failed on
+// every run inside one while passing in a clone. `nova-sandbox worktree` is how
+// a worker gets its own checkout, so that red was waiting for every worker that
+// ran the full gate where it was told to, and a gate that is red because of
+// WHERE it ran is a gate a worker learns to ignore.
+//
+// Building the case here rather than relying on the checkout means the rule is
+// held in a clone too, which is where CI runs it.
+func TestSharedRepoTreeSkipsAGitFileToo(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/w\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := loadRepoTree(root)
+	if err != nil {
+		t.Fatalf("loading a tree whose .git is a file: %v", err)
+	}
+	var names []string
+	for _, f := range idx.Files {
+		if f.Rel == ".git" {
+			t.Errorf("the walk took in .git as a file; in a worktree that is what .git is, and no rule reads it")
+		}
+		names = append(names, f.Rel)
+	}
+	if len(names) != 1 || names[0] != "a.go" {
+		t.Errorf("the walk listed %q, want exactly [a.go]", names)
 	}
 }

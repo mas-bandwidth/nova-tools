@@ -174,10 +174,21 @@ func loadRepoTree(root string) (*repoTreeIndex, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() {
-			if treeSkipDirs[d.Name()] {
+		// The skip is by NAME, before the directory test, because `.git` is not
+		// always a directory. In a `git worktree` -- which is how nova-sandbox gives
+		// a worker its own checkout -- `.git` is a one-line FILE holding `gitdir:
+		// <path>`. A skip written as "a directory called .git" therefore skipped
+		// nothing there, the walk took .git in as an ordinary file, and
+		// TestSharedRepoTreeSkipsTheGitDirectory failed for every run inside a
+		// worktree while passing in a clone. A gate that is red because of where it
+		// was run teaches a worker to ignore it.
+		if treeSkipDirs[d.Name()] {
+			if d.IsDir() {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		// Anything that is not a directory is a file the walks this replaces
