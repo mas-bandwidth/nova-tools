@@ -56,6 +56,11 @@ var swarmAudit = audit.Config{
 		// oneline.Field inside itself. The path and step come from the card's own log and
 		// the branch from the clone, so nothing but escaped fields can come back.
 		"swarm.WallLine",
+		// termSuffix (main.go, issue #779) renders the one token a manager's TERM carries,
+		// ` reason=terminated`, and puts the reason through oneline.Field inside itself, so
+		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
+		// escaped literal can come back.
+		"termSuffix",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -69,6 +74,11 @@ var swarmAudit = audit.Config{
 		// stream except through the fmt calls the classifier walks; os/exec starts children
 		// whose own output is the harness's, not this binary's line.
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"path/filepath"`, `"strings"`, `"time"`,
+		// native_proc_unix.go (issue #779) needs these two and neither writes a stream.
+		// os/signal only routes the manager's SIGTERM into a channel the run selects on;
+		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
+		// the whole tree -- and holds no writer of its own.
+		`"os/signal"`, `"syscall"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts
@@ -87,8 +97,8 @@ var swarmAudit = audit.Config{
 		// this package renders through oneline.Err, and the Lua scripts run inside Redis
 		// and write only that instance's own keys.
 		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
-		// native.go (issue #296) needs these five and none of them writes a stream, so
-		// none can write past the escape. context only gives CommandContext its deadline
+		// native.go (issue #296) needs these and none of them writes a stream, so
+		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
 		// two recorded hashes (bytes in, a string out); encoding/base64 decodes the wall's
 		// cwdb64 receipt and holds no writer, and the cwd it yields is put through
@@ -126,6 +136,12 @@ var swarmAudit = audit.Config{
 		// the key travelling only on the Authorization header and never printed.
 		`"math"`, `"sort"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
+		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every
+		// production run. It holds no writer and writes no stream. Its one output is a
+		// PANIC under the test guard, which the runtime writes, in a test process, on a
+		// path this binary never takes in production.
+		`"github.com/mas-bandwidth/nova-tools/internal/testguard"`,
 	},
 	MinClassified: 40,
 }

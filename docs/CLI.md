@@ -2055,6 +2055,13 @@ Where the card names no `KIND:`, the kind is read from its contract line by a de
 provider `--model` names is checked against `--auth`; a provider whose options carry
 `baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.
 
+**The deadline ends the whole tree, and a TERM is the same cleanup (issue #779).** The
+harness runs as the leader of its own process group, so at `--deadline` the run kills the
+entire tree the card started — grandchildren included, never just the leader — and writes
+`usage.tsv` from what it had up to the kill, so the spend is known. A `SIGTERM` from outside
+(the manager) is handled the same way: the tree is reaped, `usage.tsv` is written, and the
+`NATIVE OK` line carries `reason=terminated` instead of a silent exit.
+
 ### First run
 
 `quickstart` needs nothing but a directory: it makes the pool's structure and names the

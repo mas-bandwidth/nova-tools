@@ -27,6 +27,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // defaultSwarmRoot is where a bench keeps the swarm root unless --swarm-root says
@@ -153,6 +154,7 @@ func (c sshCapacity) Capacity(bench string) (int, error) {
 	if ssh == "" {
 		ssh = "ssh"
 	}
+	testguard.RefuseHosts(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript(c.root))
 	cmd := exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript(c.root))
 	var out bytes.Buffer
 	said := &tail{}

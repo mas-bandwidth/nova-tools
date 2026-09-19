@@ -703,6 +703,59 @@ passed in as an argument reads as computed (refused, and the remedy is the
 safepath route anyway). `os.Remove`, `RemoveAll` behind an interface, and a shell
 `rm` in a script are other rules' business.
 
+### `hostseam` — no test reaches a host through an unfaked seam
+
+**The rule.** Every function under `cmd/` and `internal/` that reaches another
+machine calls `testguard.RefuseHosts(<program>, <args>…)` before it starts the
+child. Under `NOVA_TEST_NO_HOST`, which `make test` exports for every tier, that
+call panics with the command line, so a test that constructed production code
+and injected no fake refuses THERE instead of on a bench. A function is a host
+seam when it starts a child (`exec.Command`/`exec.CommandContext`) and names an
+ssh-family program — `ssh`, `scp`, `sftp`, `rsync` — in a string literal, or
+when its own name or its receiver's carries one of those words.
+**The hurt.** 2026-09-18: a unit test in the certify verb's first cut (`#1382`)
+ran the REAL workloads on hulk and reached redis on space. Nobody wrote a
+hostname in the test — the test held production code, production code built its
+own default because nothing injected a fake, and that default was
+`exec.Command("ssh", …)`. The `net` class reads test files for a real host and
+could not see it: the host was never in the test's text, it was in a default two
+packages away. That is the difference between the two rules — `net` reads what a
+test SAYS, this reads what production DOES.
+**The test.** `TestNoTestReachesAHostThroughAnUnfakedSeam`
+(`internal/ci/hostseam_class_test.go`), with `TestNoHostSeamIsFoundByASubstring`,
+the table that pins the name heuristic against the three false positives its
+first sweep had (`IsSHA`, `HarnessSHA256`, `hasShebang`). The guard itself is
+`internal/testguard`, held by `TestUnsetGuardLetsTheSeamRun`,
+`TestArmedGuardNamesTheCommandAndTheRemedy`, `TestAFakeOnPATHIsNotAHost` and
+`TestAllowHostsIsScopedAndNests`; the fake-less red that bought the rule is
+`TestTheRealSSHRunnerPanicsUnderTheGuard`
+(`internal/pulse/hostguard_test.go`), which constructs the real `SSHRunner`,
+injects nothing, and ran a child `ssh` before the guard existed.
+**Its allowlist.** `internal/ci/testdata/hostseam_allowlist.txt`, one
+`file:function  # reason` per row — six today, every one a function that reaches
+its host through another function in the tree that DOES call the guard (the
+`FleetRunner` implementation, the two `…OverSSH` fan-outs, `powerWaitSSH`,
+`ExecSSH.sshArgs`, and an error type named for ssh's exit code). A row with no
+reason is refused, and the list is checked in both directions, so it only
+shrinks.
+**Its remedy lines.** ``add `testguard.RefuseHosts(<program>, <args>...)` before
+the child runs, or list it in testdata/hostseam_allowlist.txt with a reason``;
+for a guard below the exec, `a guard that runs once the host has been reached
+guards nothing`; for a stale row, `delete the stale entry (the list only
+shrinks)`; and from the guard itself, `inject the fake the seam takes, or
+install a fake on PATH and declare it with testguard.AllowHosts()`.
+**Its narrowings.** A seam that reaches a host without spawning an ssh-family
+program — a Go SSH library, a raw socket — is not seen; nothing in this tree
+does that today. The guard treats a program that resolves INSIDE a temp
+directory as a fake, which is what this repository's fake `ssh` scripts are, so
+a test that installs its fake somewhere else must say `defer
+testguard.AllowHosts()()`, and a test that builds the real seam while another
+fake sits on PATH is not caught. `AllowHosts` is process-wide for its scope, so
+a test that opens one must not run in parallel with one relying on the guard.
+And the class test reads names and literals, not types: a program held in a
+variable, in another package's constant, or behind an interface is invisible to
+it — which is why the rule is written where the CHILD is started.
+
 ### `pathassert` — no test compares a path against a slash literal
 
 **The rule.** A test that compares a path against a string literal containing `/`

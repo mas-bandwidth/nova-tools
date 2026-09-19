@@ -55,14 +55,14 @@ with its sweep of the tree or it does not land.
     `os.TempDir()`, and every path a tool writes is named there
     (`testoutpath`, `sharedtemp`).
 
-**The rest of the index, by name.** `templates`, `goenv`, `pathassert`,
-`busprogress`, `outputs`, `windows-pr`, `windows-sizes`, `windows-table`,
-`one-windows-leg`, `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`,
-`ci-ok`, `failed`, `benchname`, `nightly-tags`, `selection`, `toolchainroots`. Every
-entry — the ten above too — is written out in [docs/SPEC-CI.md](docs/SPEC-CI.md)
-under **The class tests** with its rule, the hurt that bought it, its allowlist, its
-remedy line and its narrowings. Read the entry, not the test. An allowlist only ever
-shrinks: a new row is a refusal, not a place to park a fault.
+**The rest of the index, by name.** `templates`, `goenv`, `pathassert`, `busprogress`,
+`outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
+`darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
+`benchname`, `nightly-tags`, `selection`, `toolchainroots`, `hostseam`. Every entry —
+the ten above too — is written out in [docs/SPEC-CI.md](docs/SPEC-CI.md) under **The
+class tests** with its rule, the hurt that bought it, its allowlist, its remedy line
+and its narrowings. Read the entry, not the test. An allowlist only ever shrinks: a new
+row is a refusal, not a place to park a fault.
 
 **Two more that are not class tests.** A fake is **strict like the real tool** —
 a lenient fake ships the real thing broken, so a fake refuses what the real one

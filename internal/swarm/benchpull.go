@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // pullResultWait is how long the pull waits for RESULT.md to appear on the bench after the
@@ -187,6 +188,7 @@ func findResultUnderRepo(host, job string) (string, error) {
 // scpFile copies one remote file to one local path. One file, named on both sides: no
 // recursion, no include filter, nothing that can succeed while copying nothing.
 func scpFile(host, remote, local string) error {
+	testguard.RefuseHosts("scp", host+":"+remote, local)
 	cmd := exec.Command("scp", host+":"+remote, local)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("scp %s: %s", remote, strings.TrimSpace(string(out)))
@@ -195,6 +197,7 @@ func scpFile(host, remote, local string) error {
 }
 
 func sshRun(host string, args ...string) error {
+	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
 	cmd := exec.Command("ssh", append([]string{host}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
@@ -203,6 +206,7 @@ func sshRun(host string, args ...string) error {
 }
 
 func sshOutput(host string, args ...string) (string, error) {
+	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
 	cmd := exec.Command("ssh", append([]string{host}, args...)...)
 	out, err := cmd.Output()
 	if err != nil {
