@@ -2472,6 +2472,11 @@ and `nova-swarm` does not read a worker's `RESULT.md` and act on it. The
 templates are shipped in the binary, printable, and a caller may write their own
 file instead — the tool has no list of blessed task shapes.
 
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §5 (draft, 2026-09-19):** a template stays text. A card
+**kind** is a template plus a gate and a negative control declared in the tool, chosen by the
+card's `KIND:` line and by nothing a worker writes; and the pit-stop rule there names the paths
+no swarm card changes, this tool among them.
+
 ## The `RESULT.md` template
 
 One shape, printed by `nova-swarm template --name result`, and the shape
