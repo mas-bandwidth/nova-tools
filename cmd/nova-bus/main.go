@@ -78,7 +78,7 @@ usage:
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--until <instant>] [--idle-exit <n>]
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
-        [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+        [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>] [--max-commits <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
         [--quiet-beats]
@@ -1560,7 +1560,8 @@ type inboxOpts struct {
 	after        string
 	// maxCommits bounds the since-walk: a cursor more than this many commits behind HEAD
 	// stops the run with one INBOX WALK bounded line and a remedy rather than walking a
-	// history nobody asked to read. Zero means the default; `wait` leaves it zero.
+	// history nobody asked to read. Zero means the default; `inbox` and `wait` both take
+	// the flag and pass it here, and on the wait path the bound also prints WAIT BLIND.
 	maxCommits int
 	// walkProgress is set by `inbox` (and not by `wait`, whose polls are short and plural)
 	// so the since-walk reports INBOX WALK progress on stderr. The bound applies either
@@ -1749,6 +1750,15 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			}
 			if over {
 				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
+				// THE WAIT PATH SAYS IT OUT LOUD. inbox stops and its caller reads the
+				// line; a wait polls, and a bound hit on every poll returns an empty
+				// reading that looks exactly like a quiet bus. So the same bound that
+				// inbox reports as routine is a WAIT BLIND line here, naming the count
+				// it could not cross and the remedy. The INBOX WALK bounded line above
+				// stays byte for byte: other tools parse it.
+				if !o.walkProgress {
+					fmt.Fprintf(stderr, "WAIT BLIND commits=%d %s\n", limit, boundedWalkRemedy)
+				}
 				return 0, r
 			}
 			var walk *walkProgress
@@ -2802,6 +2812,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	bodies := f.fs.Bool("bodies", false, "print bodies for NEW notes, bounded by --max-notes and --max-bytes")
 	maxNotes := f.fs.Int("max-notes", defaultBodiesNotes, "with --bodies, maximum NEW items to print")
 	maxBytes := f.fs.Int64("max-bytes", defaultBodiesBytes, "with --bodies, maximum body bytes to print")
+	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
 	after := f.fs.String("after", "", "continue a bounded --bodies snapshot")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it when this wait returns, the way inbox --advance does")
 	remote := f.fs.String("remote", "", "the git remote to fetch the bus from (required: a wait that cannot fetch cannot notice anything)")
@@ -2849,6 +2860,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
+		return 2
+	}
+	if !f.count("max-commits", *maxCommits, stderr) {
 		return 2
 	}
 	if !f.attempts(*attempts, stderr) {
@@ -2950,6 +2964,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
+		maxCommits: *maxCommits,
 		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
