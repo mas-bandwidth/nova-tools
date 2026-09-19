@@ -1,6 +1,6 @@
 // The worktree verb materialises one pull request's exact head in a scratch
 // tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's
-// 0/1/2 grammar (0 the verb ran, 1 --prune removed nothing, 2 could not run),
+// 0/1/2 grammar (0 the verb ran, 2 could not run),
 // reads the repository through git on PATH, and reads the pull request through
 // a forge client seam so a test can put a fake there. Every seam the verb
 // reaches the outside world through is a package-level var, because the tests
@@ -349,9 +349,6 @@ func worktreePrune(f worktreeFlags, stdout, stderr io.Writer, env []string) int 
 		}
 	}
 	fmt.Fprintf(stdout, "WORKTREE OK removed=%d kept=%d\n", removed, kept)
-	if removed == 0 {
-		return 1
-	}
 	return 0
 }
 
