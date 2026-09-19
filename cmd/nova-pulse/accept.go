@@ -16,6 +16,7 @@ import (
 
 func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("accept")
+	kinds := f.fs.Bool("kinds", false, "")
 	job := f.fs.String("job", "", "")
 	card := f.fs.String("card", "", "")
 	base := f.fs.String("base", "", "")
@@ -27,6 +28,11 @@ func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := f.fs.Int("max", bounded.Default, "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	// --kinds prints the table and judges nothing, so it wants no job, no bench and no
+	// certification record (SPEC-TOOLWORK §5 rule 3).
+	if *kinds {
+		return pulse.PrintKinds(stdout)
 	}
 	f.want(*job, "job", "the job directory whose clone holds the card's commit")
 	f.want(*card, "card", "the card file cut wrote; its header names the kind, the paths and the test")
