@@ -2,7 +2,9 @@ package onboarding
 
 import (
 	"fmt"
+	"os"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -72,6 +74,25 @@ type Step struct {
 // order, because how loudly a tool narrates its own work is not a promise to a
 // caller the way its protocol output is.
 const StderrMarker = "! "
+
+// KnownGOOS is the spelling a `# Platform:` declaration has to use: Go's own
+// GOOS words, because SkipReason compares the declaration against runtime.GOOS
+// and nothing else can ever match. `macOS` is the one a person writes, and it
+// skipped the step on every bench for ever while reading, in a green build,
+// exactly like a step everybody ran.
+//
+// This is a SPELLING check and not the whole rule. The rule that matters is
+// #1734's TestPlatformLineMustNameACILeg: a platform no leg of
+// .github/workflows/ci.yml runs is a transcript nobody executes -- `windows`
+// is the live case, its legs having been dropped on 2026-09-18. That check
+// reads ci.yml, which this package must not do (it reads no file and runs no
+// process), and it lives in internal/ci on the T23 branch. When T23 lands, its
+// rule wants extending from the section line to the per-step declaration this
+// file parses; the two should not be two readers of ci.yml.
+var KnownGOOS = []string{
+	"aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios",
+	"js", "linux", "nacl", "netbsd", "openbsd", "plan9", "solaris", "wasip1", "windows", "zos",
+}
 
 // SkipReason says why this step cannot be run here, or "" when it can. goos is
 // the platform the test is on; have answers whether a stated requirement is
@@ -205,7 +226,12 @@ func cutDeclaration(cmd string) (string, declaration, error) {
 		}
 		switch strings.TrimSpace(key) {
 		case "Platform":
-			decl.platforms = append(decl.platforms, splitList(value)...)
+			for _, goos := range splitList(value) {
+				if !slices.Contains(KnownGOOS, goos) {
+					return "", decl, fmt.Errorf("states `Platform: %s`, and %q is no GOOS Go builds for: a step recorded for a platform that does not exist is skipped on every bench, for ever, and reads in a green build exactly like a step everybody runs. The spellings are %s", value, goos, strings.Join(KnownGOOS, ", "))
+				}
+				decl.platforms = append(decl.platforms, goos)
+			}
 		case "Requires":
 			decl.requires = append(decl.requires, splitList(value)...)
 		case "Stderr":
@@ -230,12 +256,20 @@ type declaration struct {
 // lastComment finds the ` #` that opens a declaration, outside any quotes, and
 // only when what follows names one. Everything else stays in the command.
 func lastComment(cmd string) (string, string, bool) {
-	quoted := false
+	// BOTH quotes, because SplitShell reads both. Tracking only the double
+	// quote cut `--body 'a # Platform: x'` in half and then reported the
+	// remainder as an unterminated quote -- a defect reported as a different
+	// defect, which is worse than not noticing it.
+	var quote rune
 	for i, r := range cmd {
 		switch {
-		case r == '"':
-			quoted = !quoted
-		case r == '#' && !quoted && i > 0 && (cmd[i-1] == ' ' || cmd[i-1] == '\t'):
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '#' && i > 0 && (cmd[i-1] == ' ' || cmd[i-1] == '\t'):
 			decl := strings.TrimSpace(cmd[i+1:])
 			for _, key := range []string{"Platform:", "Requires:", "Stderr:"} {
 				if strings.HasPrefix(decl, key) {
@@ -383,6 +417,15 @@ type Norm struct {
 	// refuses is LEFT ON THE LINE, so the comparison shows it: a tool printing
 	// `created=2026-99-99T99:99:99Z` is a finding, not a run-owned value.
 	valid func(value string) bool
+	// run says the pattern covers a whole RUN of whitespace-delimited tokens
+	// rather than a `field=value` token, and must begin and end on a token
+	// boundary. It is the same rule as field, for the norms that have no field
+	// name to anchor to: a `version` line's build triple is two tokens and the
+	// version word is one, and neither of them may be matched from the middle
+	// of a longer token. A norm with neither field nor run is a plain
+	// substitution -- Path and Elide, where the caller wrote the pattern and
+	// owns its boundaries.
+	run bool
 }
 
 // A norm with no field replaces LITERALLY. As is a sentence a person reads in a
@@ -392,6 +435,9 @@ type Norm struct {
 // nothing, and leave the two sides disagreeing about a path that had just been
 // normalised. The token path below never templated: it copies As whole.
 func (n Norm) apply(line string) string {
+	if n.run {
+		return n.applyRun(line)
+	}
 	if n.field == "" {
 		return n.Re.ReplaceAllLiteralString(line, n.As)
 	}
@@ -424,6 +470,38 @@ func (n Norm) replaceToken(token string) string {
 		return token
 	}
 	return n.As
+}
+
+// applyRun replaces every match of Re that begins and ends on a whitespace
+// boundary, and leaves every match that does not -- so a pattern written for a
+// whole token, or a whole run of them, cannot be taken from the middle of a
+// longer one. Everything between the matches is copied through untouched.
+func (n Norm) applyRun(line string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range n.Re.FindAllStringIndex(line, -1) {
+		start, end := m[0], m[1]
+		if !boundary(line, start-1) || !boundary(line, end) {
+			continue
+		}
+		if n.valid != nil && !n.valid(line[start:end]) {
+			continue
+		}
+		out.WriteString(line[last:start])
+		out.WriteString(n.As)
+		last = end
+	}
+	out.WriteString(line[last:])
+	return out.String()
+}
+
+// boundary answers whether index i of line is off the end of it or a space --
+// that is, whether a token may start after it or end before it.
+func boundary(line string, i int) bool {
+	if i < 0 || i >= len(line) {
+		return true
+	}
+	return line[i] == ' ' || line[i] == '\t'
 }
 
 // Normalize applies every declared norm to a line, in the order declared.
@@ -654,9 +732,46 @@ type Runner func(s Step) (Result, error)
 // returns everything the document got wrong. It STOPS at the first command that
 // could not be invoked at all, because every line after it would then be
 // compared against a state that never happened.
+// A STEP THIS BENCH SKIPPED IS RETURNED AS A PROBLEM, and that is the whole
+// difference between Execute and ExecuteWith. Execute is the plain entry point:
+// it is handed no Conditions, so it uses THIS bench's -- runtime.GOOS, and the
+// environment for a stated requirement -- and anything it could not run is a
+// promise in the document that went unchecked here. A caller with a real
+// platform split calls ExecuteWith, logs its skips and decides for itself; the
+// plain entry point must not be green on what it did not run.
+//
+// It was not. `Execute` passed an EMPTY Conditions, which matches no platform
+// and meets no requirement, and then threw the skips away: every step that
+// stated a precondition was skipped and a whole block could turn its test green
+// having run nothing, printing nothing and counting nothing.
 func Execute(steps []Step, run Runner, norms ...Norm) []Problem {
-	problems, _ := ExecuteWith(steps, run, Conditions{}, norms...)
+	problems, skips := ExecuteWith(steps, run, benchConditions(), norms...)
+	if len(steps) > 0 && len(skips) == len(steps) {
+		lines := make([]string, 0, len(skips))
+		for _, s := range skips {
+			lines = append(lines, s.String())
+		}
+		return append(problems, Problem{Step: skips[0].Step, Message: fmt.Sprintf(
+			"every step of this block was skipped: it ran nothing, so it proved nothing.\n%s\nIf these preconditions are right, this bench cannot execute this block and something else must; if they are wrong, they are a defect in the document.",
+			strings.Join(lines, "\n"))})
+	}
+	for _, s := range skips {
+		problems = append(problems, Problem{Step: s.Step, Message: s.String()})
+	}
 	return problems
+}
+
+// benchConditions is what THIS bench can offer, for the caller who did not say.
+// A requirement is met when the environment already names it: the value is
+// never read, printed or copied, only its presence asked after.
+func benchConditions() Conditions {
+	return Conditions{
+		GOOS: runtime.GOOS,
+		Have: func(requirement string) bool {
+			_, set := os.LookupEnv(requirement)
+			return set
+		},
+	}
 }
 
 // Conditions is what this bench can offer a transcript. A step whose stated
@@ -723,16 +838,44 @@ func Block(lines []string) string {
 
 // GoBuild declares the tail of a `version` line -- `<goos>/<goarch> go<version>`
 // -- which is the machine the transcript was recorded on rather than anything
-// the document promises. The version word before it is NOT covered: whether a
-// build says `devel` or a tag is the tool's own answer and is compared.
+// the document promises. The version word before it is NOT covered here; that
+// is Version's, and a `version` line wants both declared.
 //
 // Several sections already paste a real triple (`devel linux/amd64 go1.26.5`),
 // so this reduces both sides to the same sentence rather than asking the
 // document to carry a placeholder it has no convention for.
+//
+// The two tokens must stand as two whole tokens: an unanchored pattern here was
+// a ReplaceAll over every line of every step of the sitting, which is the thing
+// the Norm contract above exists to forbid.
 func GoBuild() Norm {
 	return Norm{
 		Name: "<goos>/<goarch> go<version> (the machine this run is on)",
 		Re:   regexp.MustCompile(`[a-z0-9]+/[a-z0-9]+ go[0-9]+(\.[0-9]+)*`),
 		As:   "<the machine this run is on>",
+		run:  true,
+	}
+}
+
+// Version declares the version word of a `version` line: the word a build
+// stamps itself with.
+//
+// It has to be declared, and the reason is worth writing down. Under `go test`
+// the binary is not stamped and every one of these tools prints `devel`
+// (internal/buildinfo's Unknown). A build a reader makes -- `go build
+// ./cmd/nova-review && ./nova-review version` -- prints the stamp, today
+// `v0.16.0-dev.<base>.0.<date>-<sha>`. So a transcript that pastes `devel` is
+// green under `go test` and FALSE for the reader it is written for, and one
+// that pastes the stamp is true for the reader and red in the test, and the sha
+// in it changes with every commit. The document therefore shows what a reader
+// sees, and the word is compared as a SHAPE: a stamp or `devel`, and nothing
+// else -- a tool that answered `unknown`, or printed nothing at all, still
+// fails.
+func Version() Norm {
+	return Norm{
+		Name: "the version word (`devel` under `go test`, a stamp in a build)",
+		Re:   regexp.MustCompile(`devel|v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*`),
+		As:   "<the version of this build>",
+		run:  true,
 	}
 }

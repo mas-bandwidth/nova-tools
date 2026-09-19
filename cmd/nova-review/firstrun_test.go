@@ -22,10 +22,13 @@ import (
 
 // TestTESTSFirstRunIsWhatTheToolPrints runs the transcript and compares it.
 //
-// ONE normalisation is declared: the `<goos>/<goarch> go<version>` tail, which
-// is the machine the line was recorded on rather than anything nova-review
-// promises. The version word in front of it is compared, so a build that stopped
-// answering `devel` in a checkout is still red.
+// TWO normalisations are declared, and the document says so above the block.
+// The `<goos>/<goarch> go<version>` tail is the machine the line was recorded
+// on. The version word in front of it is what the build stamped itself with: a
+// build a reader makes prints the stamp the document shows, and the unstamped
+// binary this test builds prints `devel`, so the word is compared as a SHAPE --
+// a tool that answered neither is still red. Pasting `devel` instead would be a
+// document that is true only for the test and false for the reader.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Chdir(repoRoot(t))
 	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
@@ -43,7 +46,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if len(steps) == 0 {
 		t.Fatal("the `### First run` block holds no nova-review command; this test would pass by running nothing")
 	}
-	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.GoBuild()) {
+	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Version(), onboarding.GoBuild()) {
 		t.Error(p)
 	}
 }
