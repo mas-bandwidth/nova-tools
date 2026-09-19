@@ -178,7 +178,10 @@ wire:
   for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
   to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
   stderr, exit 2, ending "run: nova-work help". Values travel as given: the
-  session validates every one and refuses with its own naming.
+  session validates every one and refuses with its own naming. An exchange is
+  bounded by a 30-second default; a declared wait keeps a bounded 30-second
+  transport allowance, an explicit --deadline caps the bound, and a deadline
+  already past refuses before anything is dialled.
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
@@ -826,6 +829,61 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	if socket == "" {
 		return refused(stderr, "--session is required; refusing to guess (the socket has no default path)")
 	}
+	deadline, timeout, gitTimeout := "", "", ""
+	if p, ok := strs["deadline"]; ok {
+		deadline = *p
+	}
+	if p, ok := strs["timeout"]; ok {
+		timeout = *p
+	}
+	if p, ok := strs["git-timeout"]; ok {
+		gitTimeout = *p
+	}
+	// Presence is separate from the value, and it comes from the FlagSet and
+	// from nothing else: `--deadline=`, `-deadline=` and `--deadline ""` all
+	// leave the string "", and a scan of args for the literal "--deadline"
+	// would disagree with the parser on at least one of them. Visit walks only
+	// the flags the caller actually set, where VisitAll walks every defined
+	// flag. The two empty states need opposite answers -- a supplied empty cap
+	// is invalid RFC3339 and refuses below, while a true omission keeps the
+	// ordinary finite default -- so presence is handed to deadlineParse rather
+	// than folded back into the empty string.
+	deadlineGiven := false
+	f.Visit(func(fl *flag.Flag) {
+		if fl.Name == "deadline" {
+			deadlineGiven = true
+		}
+	})
+	// A supplied-but-empty --deadline is PRESENT and invalid RFC3339, not an
+	// omitted flag: it must not silently fall back to the ordinary default. It
+	// is refused here, before guard (a) and before anything is dialled. A true
+	// omission is deadlineAbsent and keeps the ordinary default below. The
+	// client sizes its own socket bound from --deadline, so this is the one
+	// flag it PARSES AND USES rather than merely forwards; it must not act on a
+	// value it could not read, and an unreadable value is not an absent one.
+	_, state := deadlineParse(deadline, deadlineGiven)
+	if state == deadlineEmptyPresent {
+		return refused(stderr, "--deadline was given with no value; an explicit cap is invalid RFC3339, not an omitted flag")
+	}
+	if state == deadlineMalformed {
+		return refused(stderr, fmt.Sprintf("the deadline %s is not an instant; the client sizes its own bound from --deadline and will not send a request it cannot bound",
+			oneline.Field(deadline)))
+	}
+	// Guard (a): a deadline already past is refused before anything is dialled.
+	// The measuring instant is the real clock, never --now, which is the
+	// engine's instant for fencing and receipts. A malformed explicit deadline
+	// was already refused above; here only a well-formed past one refuses.
+	if at, ok := deadlineStamp(deadline); ok && !at.After(time.Now()) {
+		return refused(stderr, fmt.Sprintf("the deadline %s is not after %s; an ask that is late before it is sent is not an ask",
+			oneline.Field(at.UTC().Format(time.RFC3339)), oneline.Field(time.Now().UTC().Format(time.RFC3339))))
+	}
+	// Guard (b): the belt. The derivation can go non-positive on a pathological
+	// declared wait, and workclient's budget() reads a non-positive bound as NO
+	// DEADLINE AT ALL, so it never reaches the wire.
+	within := derivedBound(deadline, timeout, gitTimeout)
+	if within <= 0 {
+		within = askTimeout
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", oneline.Escape(verb))
 	for _, s := range specs {
@@ -844,7 +902,7 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	return ask(socket, b.String(), stdout, stderr)
+	return ask(socket, b.String(), within, stdout, stderr)
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable
@@ -864,8 +922,8 @@ var askTimeout = workclient.DefaultTimeout
 // client that stopped waiting is no more a rollback than a disconnect is
 // (docs/SPEC-WORK.md, "The engine and its client"). A reply past the wire's cap
 // is a session speaking a shape this wire does not carry.
-func ask(socket, request string, stdout, stderr io.Writer) int {
-	line, err := workclient.ExchangeWithin(socket, request, askTimeout)
+func ask(socket, request string, within time.Duration, stdout, stderr io.Writer) int {
+	line, err := workclient.ExchangeWithin(socket, request, within)
 	switch {
 	case err == nil:
 		return printReply(line, stdout, stderr)

@@ -99,6 +99,11 @@ var swarmAudit = audit.Config{
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// safepath (issue #1923) answers ONE question about a string -- NameOK, is this a
+		// name and not a path -- and returns a bool. It holds no writer of any kind and
+		// prints nothing; the label it judges is rendered by this package through
+		// oneline.Field in the refusal that follows.
+		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
 		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
 		// slot lease and the in-flight cap. It holds no writer of its own: every call
 		// either returns a value this package prints through oneline.Field or an error
