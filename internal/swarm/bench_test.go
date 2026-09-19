@@ -340,3 +340,70 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 		t.Fatalf("no runner script, config or key crosses: %q", lines[0])
 	}
 }
+
+// TestRemoteRunSlotIsTheSlotDir: remoteRun hands native the slot directory, not the job
+// directory, as --slot: native computes the job itself as <slot>/jobs/<label>, so a --slot
+// of <root>/<n>/jobs/<label> made the job <root>/<n>/jobs/<label>/jobs/<label> instead of
+// the <root>/<n>/jobs/<label> the local path is (#656). The fake ssh records argv; the
+// --slot value has no /jobs/ component and the job directory the pull reads the card's
+// files from equals slotDir/jobs/label.
+func TestRemoteRunSlotIsTheSlotDir(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	benchRoot := filepath.Join(dir, "benchroot")
+	bench := writeBenches(t, dir, "b2\tb2\t"+benchRoot+"\t-\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone")
+	sshLog, _ := fakeBin(t, dir)
+	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\tb2:1\tmodel\t"+a+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb strings.Builder
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
+		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
+	})
+	if code == 2 {
+		t.Fatalf("the batch refused admission: %s", errb.String())
+	}
+	var runs []string
+	for _, l := range readLines(t, sshLog) {
+		if strings.Contains(l, "nova-swarm native") {
+			runs = append(runs, l)
+		}
+	}
+	if len(runs) != 1 {
+		t.Fatalf("one remote card runs, the fake ssh saw %d runs:\n%v", len(runs), runs)
+	}
+	fields := strings.Fields(runs[0])
+	slot := ""
+	for i, f := range fields {
+		if f == "--slot" && i+1 < len(fields) {
+			slot = fields[i+1]
+		}
+	}
+	if slot == "" {
+		t.Fatalf("the run argv carries a --slot value: %q", runs[0])
+	}
+	if rel := strings.TrimPrefix(slot, benchRoot); strings.Contains(rel, "/jobs/") {
+		t.Fatalf("--slot is the slot directory, not the job directory: got %q", slot)
+	}
+	if want := filepath.Join(benchRoot, "1"); slot != want {
+		t.Fatalf("--slot is <root>/<n>: got %q, want %q", slot, want)
+	}
+	wantJob := filepath.Join(slot, "jobs", "a")
+	// The pull reads the card's files from the job directory on the bench, which native
+	// computes as <slot>/jobs/<label>: the two must name one path.
+	found := false
+	for _, l := range readLines(t, sshLog) {
+		if _, after, ok := strings.Cut(l, "test -f "); ok && strings.HasSuffix(after, "/RESULT.md") {
+			if job := strings.TrimSuffix(after, "/RESULT.md"); job == wantJob {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the job directory is <slot>/jobs/<label>, and the pull reads the card from it: want %s, run %q", wantJob, runs[0])
+	}
+}
