@@ -67,6 +67,7 @@ func Seed(nodes []Node) (*Graph, error) {
 	}
 	// rule 2: every need resolves, and the same insert writes the reverse edge.
 	for _, id := range g.order {
+		written := make(map[string]bool)
 		for _, dep := range g.node[id].Needs {
 			dep = strings.TrimSpace(dep)
 			if dep == "" {
@@ -75,6 +76,10 @@ func Seed(nodes []Node) (*Graph, error) {
 			if _, ok := g.node[dep]; !ok {
 				return nil, fmt.Errorf("rule 2: %s needs %s which does not exist", id, dep)
 			}
+			if written[dep] {
+				continue
+			}
+			written[dep] = true
 			g.needs[id] = append(g.needs[id], dep)
 			g.blocks[dep] = append(g.blocks[dep], id)
 		}
