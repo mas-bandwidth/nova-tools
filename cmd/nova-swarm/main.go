@@ -74,7 +74,10 @@ usage:
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+                        --force frees it anyway and can oversubscribe the bench: an operator's act,
+                        never a card's and never a manager's default)
    nova-swarm slots list --store <dir>
    nova-swarm worker    check <description.json> [--env] [--max <n>]
    nova-swarm pull      --bench <dir> --worker <name> --cores <n> --load1 <n> --free-gb <n> --memfree-gb <n> [--running <n>]

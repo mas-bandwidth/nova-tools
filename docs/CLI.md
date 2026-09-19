@@ -2302,6 +2302,14 @@ whose pid is alive and is not this process is kept, counted in the `live=` field
 back your OWN seat is always allowed — that is how `run` and `native` end. `--force` is
 the loud override for a person who knows something the store cannot.
 
+`nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]`
+
+`--force` frees a lease whose holder is still running, which **oversubscribes the bench**:
+the holder keeps its seat in fact while the store hands the same seat to the next taker.
+It is an operator's act, typed at a prompt by someone who knows what the store cannot see
+— a holder on another host, a pid the kernel has since handed to somebody else. No card
+carries it, and no manager, launcher or cleanup path passes it by default.
+
 
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
