@@ -737,18 +737,19 @@ func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
 			how.hide(t, dir)
 			git(t, dir, "add", "-A")
 			git(t, dir, "commit", "-q", "-m", "a marker the subject would rather git did not print")
-			fs := check(t, dir, Options{})
-			found := false
-			for _, f := range fs {
+			// All three markers, each at its own line. The line number is what a
+			// person navigates by, and it used to be git's own: `--check` counted
+			// it, and now this package does, off the hunk header. Pinning the
+			// three says the counter did not drift when the counting moved.
+			var at []string
+			for _, f := range check(t, dir, Options{}) {
 				if strings.Contains(f.Why, "conflict marker") {
-					found = true
-					if !strings.HasPrefix(f.At, "sign/sign.go:") {
-						t.Errorf("at=%q, want sign/sign.go:<line>", f.At)
-					}
+					at = append(at, f.At)
 				}
 			}
-			if !found {
-				t.Fatalf("the attribute hid the conflict marker: %v", fs)
+			want := "sign/sign.go:3 sign/sign.go:5 sign/sign.go:7"
+			if got := strings.Join(at, " "); got != want {
+				t.Fatalf("markers at %q, want %q", got, want)
 			}
 		})
 	}
