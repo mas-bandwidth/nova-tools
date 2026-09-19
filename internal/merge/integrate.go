@@ -86,29 +86,15 @@ func (g *GHIntegrate) gh(args ...string) (string, error) {
 	return out, nil
 }
 
-// bodyFile writes the body to a temporary file and hands gh --body-file.
+// THE BODY IS AN ARGUMENT AND NEVER A FILE THIS PACKAGE WROTE.
 //
-// THE BODY IS NEVER AN ARGUMENT. A batch body is thousands of characters of receipt and
-// basis, it holds newlines and backticks, and a shell-quoted argument of that size is
-// both an ARG_MAX question and lesson 48's: a body beginning with a dash would be an
-// option. --body-file takes bytes and asks nothing of them.
-func (g *GHIntegrate) bodyFile(body string) (string, func(), error) {
-	f, err := os.CreateTemp("", "nova-merge-body-*.md")
-	if err != nil {
-		return "", func() {}, err
-	}
-	clean := func() { _ = os.Remove(f.Name()) }
-	if _, err := f.WriteString(body); err != nil {
-		f.Close()
-		clean()
-		return "", func() {}, err
-	}
-	if err := f.Close(); err != nil {
-		clean()
-		return "", func() {}, err
-	}
-	return f.Name(), clean, nil
-}
+// `--body-file` would be the natural spelling and it is the one the hand loop typed, but
+// rule 7 of docs/SPEC-MERGE.md holds this package to four writing sites, each named in
+// internal/merge/source_test.go: the lane's state, its log, its lock and the rebase
+// marker. A temp file for a pull request body is a fifth, and a rule whose exemption list
+// grows whenever somebody needs one is not a rule. `--body <text>` costs nothing here: it
+// is one argv element, so a body beginning with a dash is a body and not an option
+// (lesson 48), and a batch body is kilobytes against an ARG_MAX of megabytes.
 
 // CreatePR opens the pull request and reads its number back off the forge rather than
 // out of the URL gh prints: the number is what every later call takes, and parsing it
@@ -120,13 +106,8 @@ func (g *GHIntegrate) CreatePR(p NewPR) (PRRef, error) {
 	if err := ValidRefName(p.Base); err != nil {
 		return PRRef{}, fmt.Errorf("the base branch is not a name this tool hands to a forge: %w", err)
 	}
-	path, clean, err := g.bodyFile(p.Body)
-	if err != nil {
-		return PRRef{}, err
-	}
-	defer clean()
 	args := []string{"pr", "create", "--repo", g.Repo, "--base", p.Base, "--head", p.Head,
-		"--title", p.Title, "--body-file", path}
+		"--title", p.Title, "--body", p.Body}
 	if p.Draft {
 		args = append(args, "--draft")
 	}
@@ -152,12 +133,7 @@ func (g *GHIntegrate) CreatePR(p NewPR) (PRRef, error) {
 
 // Comment says one thing on one pull request.
 func (g *GHIntegrate) Comment(n int, body string) error {
-	path, clean, err := g.bodyFile(body)
-	if err != nil {
-		return err
-	}
-	defer clean()
-	_, err = g.gh("pr", "comment", strconv.Itoa(n), "--repo", g.Repo, "--body-file", path)
+	_, err := g.gh("pr", "comment", strconv.Itoa(n), "--repo", g.Repo, "--body", body)
 	return err
 }
 
@@ -165,12 +141,7 @@ func (g *GHIntegrate) Comment(n int, body string) error {
 // pointer line and the close cannot come apart -- a member closed with no pointer is a
 // member nobody can trace to the batch that carried it.
 func (g *GHIntegrate) ClosePR(n int, comment string) error {
-	path, clean, err := g.bodyFile(comment)
-	if err != nil {
-		return err
-	}
-	defer clean()
-	_, err = g.gh("pr", "close", strconv.Itoa(n), "--repo", g.Repo, "--comment-file", path)
+	_, err := g.gh("pr", "close", strconv.Itoa(n), "--repo", g.Repo, "--comment", comment)
 	return err
 }
 
@@ -232,4 +203,94 @@ func (f *FakeIntegrateForge) ClosePR(n int, comment string) error {
 	}
 	f.Closed = append(f.Closed, FakeComment{PR: n, Body: comment})
 	return nil
+}
+
+// IntegrationBody is the batch pull request's body: the gate's receipt verbatim, the
+// caller's basis file whole, the lease said out loud, and the hold read named.
+//
+// IT IS PROSE AND IT LIVES HERE RATHER THAN IN cmd/nova-merge, where every printed
+// argument goes through internal/oneline and nothing may write bytes past that path
+// (cmd/nova-merge/audit_test.go). That rule is right for a tool whose stdout a harness
+// parses, and a markdown body escaped for a one-line grammar would be a body nobody
+// could read. The caller's basis is copied WORD FOR WORD and never summarised: what a
+// member landed on is a judgement, and a tool that composed that sentence would be a
+// tool asserting a read it did not do.
+type IntegrationBody struct {
+	Bench     string
+	Receipt   string
+	Basis     string
+	Branch    string
+	Head      string
+	Lane      string
+	Reviewers string
+}
+
+// Render writes the body.
+func (b IntegrationBody) Render() string {
+	var out strings.Builder
+	out.WriteString("Gated on `" + b.Bench + "` by `nova-merge integrate` (#1845).\n\n")
+	out.WriteString("## The gate's receipt\n\n```\n" + b.Receipt + "\n```\n\n")
+	out.WriteString("## The basis, per member\n\n" + b.Basis)
+	if !strings.HasSuffix(b.Basis, "\n") {
+		out.WriteString("\n")
+	}
+	out.WriteString("\n## The push\n\n`" + b.Branch + "` was pushed at `" + b.Head +
+		"` under a **must-not-exist lease**: `origin` held no ref of that name before the push " +
+		"(`ls-remote` count 0), the push was a plain one and never a force, and the ref read back `" +
+		b.Head + "`.\n\n")
+	out.WriteString("## The hold read\n\nThe members were read for holds twice — once at admission and " +
+		"once at the door — through `internal/merge`'s verdict fold (`LoadLaneVerdicts`, `Host.Verdicts`, " +
+		"`UnliftedHolds`), over the lane `" + b.Lane + "` and the reviewer file `" + b.Reviewers +
+		"`. No flag in this verb lifts a hold.\n")
+	return out.String()
+}
+
+// MemberPointer is the comment a member is closed with: which batch carried it, the
+// gate's receipt, the head that did not move, and where its basis is. Prose, for the
+// reason IntegrationBody is.
+type MemberPointer struct {
+	Batch     int
+	Name      string
+	Bench     string
+	Head      string
+	BatchHead string
+	Base      string
+	Members   string
+	Receipt   string
+}
+
+// Render writes the pointer comment.
+func (p MemberPointer) Render() string {
+	n := strconv.Itoa(p.Batch)
+	var out strings.Builder
+	out.WriteString("Landed in batch #" + n + " (`" + p.Name + "`), gated on `" + p.Bench + "`.\n\n")
+	out.WriteString("- head: `" + p.Head + "` — the head this landing folded, and it did not move between the read and the door\n")
+	out.WriteString("- batch head: `" + p.BatchHead + "`, base `" + p.Base + "`\n")
+	out.WriteString("- members: `" + p.Members + "`\n")
+	out.WriteString("- basis: stated per member in #" + n + "'s body\n\n")
+	out.WriteString("The gate's receipt:\n\n```\n" + p.Receipt + "\n```\n\n")
+	out.WriteString("Closed by `nova-merge integrate` (#1845): the work is on the batch, not lost.\n")
+	return out.String()
+}
+
+// ReadPrefixes reads a file of path prefixes: one per line, blanks and lines beginning
+// with # ignored. It is the sensitive-prefix rule's input (SPEC-TOOLWORK eligibility
+// rule 13), and an empty one is a refusal rather than a rule that passes everything.
+func ReadPrefixes(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s names no prefix; an empty rule would pass everything", path)
+	}
+	return out, nil
 }
