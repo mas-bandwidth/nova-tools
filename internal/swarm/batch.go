@@ -625,10 +625,10 @@ func Batch(in BatchInput) int {
 	// row that names ONE reason token (issue #461), so the packet is the whole read.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain, idle, stalled int
-		holds                        []string
-		totalIn, totalOut            int
-		total                        float64
+		done, abstain, idle, stalled, partial int
+		holds                                 []string
+		totalIn, totalOut                     int
+		total                                 float64
 	)
 	type row struct {
 		label    string
@@ -653,6 +653,17 @@ func Batch(in BatchInput) int {
 		// A row says nothing about a kill until the batch has made one (issue #640).
 		rows[i].killed = -1
 	}
+	// THE STORE READS HAPPEN BEFORE THE GATHER WALK, AND IN PARALLEL (Fable's cold read of
+	// this change). Each one runs a `sqlite3` under the usage reader's own 20-second timeout
+	// plus its 2-second wait delay, and done inline, one card at a time, n reaped cards
+	// would add up to 22n seconds to a gather that is otherwise all file reads -- three
+	// minutes on an eight-slot batch that timed out. Running them together bounds the whole
+	// pass at roughly one card's timeout, and the concurrency is capped because these are
+	// processes, not goroutines, and a batch should not fork a sqlite3 per slot at once.
+	spends := storeSpends(in.Root, cards, func(i int) bool {
+		_, wrote := cardUsageRow(in.Root, scratchName(cards[i]), cards[i].label)
+		return !wrote && cards[i].admitWhy == ""
+	})
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
@@ -667,7 +678,37 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
-		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, scratchName(c), c.label))
+		// A CARD THE BATCH REAPED NEVER WROTE THAT FILE, AND IT IS NOT FREE. `usage.tsv` is
+		// composed by `native` at the END of a run, so a card killed for idleness or at the
+		// deadline leaves none, `readCardUsage` answers zeroes, and the BATCH line reports a
+		// card that ran for minutes as `in=0 out=0 usd=0.0000` (Studio, 2026-09-19 14:58Z).
+		// That is a NUMBER where there should be a measurement, and a shift that trusted it
+		// would under-report its spend.
+		//
+		// The provider's own numbers are in the harness's store, which is where `native`
+		// reads them from (#1712). When the card wrote no row, the batch reads the same
+		// store the same way. THE ROW WINS WHENEVER IT EXISTS: `native` composed it from
+		// this store with the run's own window, provider and model, and a second reader
+		// summing the same database over the top of it would double-count a card that
+		// already reported -- the same false ledger in the other direction.
+		if row, ok := cardUsageRow(in.Root, scratchName(c), c.label); ok {
+			rows[i].in, _ = row.Int("tokens_in")
+			rows[i].out, _ = row.Int("tokens_out")
+			rows[i].usd, _ = strconv.ParseFloat(strings.TrimSpace(row["usd"]), 64)
+		} else {
+			s := spends[i]
+			rows[i].in, rows[i].out, rows[i].usd = s.in, s.out, s.usd
+			if s.partial {
+				partial++
+			}
+			// A READER THAT STOPPED IS NAMED. A locked database, a query that did not
+			// answer, a missing sqlite3 -- each leaves this card at zero, and a zero nobody
+			// was told about is the very fault this fallback exists to close.
+			if s.reason != "" {
+				fmt.Fprintf(in.Stderr, "BATCH NOTE %s store unread: %s\n",
+					oneline.Field(c.label), oneline.Field(s.reason))
+			}
+		}
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
@@ -756,6 +797,15 @@ func Batch(in BatchInput) int {
 	// past n + 12 lines whatever the batch holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	// partial=<n> IS THE FLOOR SAYING IT IS A FLOOR. Every card whose numbers came from the
+	// harness store rather than from its own usage row was killed mid-turn, and the turn in
+	// flight carries no tokens object anywhere -- the provider charged for it and no
+	// database on this machine holds the figure. The totals above are therefore at LEAST
+	// what they say for those cards. The field is printed only when there is one, the way
+	// benches= and uniform-abstain= are, so an ordinary batch's line is unchanged.
+	if partial > 0 {
+		fmt.Fprintf(in.Stdout, " partial=%d", partial)
+	}
 	if uniform != "" {
 		fmt.Fprintf(in.Stdout, " uniform-abstain=%s", oneline.Field(uniform))
 	}
@@ -1934,4 +1984,138 @@ func groupSize(pgid int, started string) int {
 		return 1
 	}
 	return 0
+}
+
+// cardUsageRow is the row the card composed for itself, and whether there is one. It is the
+// ONE resolver for that question: `cardUsagePath` above answers "which path would I read",
+// and this answers "is there a row there, and is it THIS CARD'S". They were two spellings of
+// the same walk and one of them was wrong.
+//
+// THE SLOT FALLBACK IS CHECKED AGAINST THE LABEL (Fable's cold read of #1739). A slot
+// directory is reused across batches, so a `usage.tsv` left at the slot root by an EARLIER
+// card is a file that exists, says nothing about this one, and -- before this check -- both
+// answered "the card reported" and contributed a previous card's numbers. Every row carries a
+// `job` column naming the label that wrote it, so the question has a mechanical answer. The
+// job-directory row needs no such check: that directory is this card's.
+func cardUsageRow(root, scratch, label string) (UsageRow, bool) {
+	jobPath := filepath.Join(root, scratch, "jobs", label, "usage.tsv")
+	if row, err := readUsageFile(jobPath); err == nil {
+		return row, true
+	}
+	row, err := readUsageFile(filepath.Join(root, scratch, "usage.tsv"))
+	if err != nil {
+		return nil, false
+	}
+	if strings.TrimSpace(row["job"]) != label {
+		return nil, false
+	}
+	return row, true
+}
+
+// storeCardSpend is what the provider billed a card that never got to write its own row: the
+// same harness store `native` samples (#1712), under the card's own data home. It returns the
+// numbers, whether they are a LOWER BOUND, and the reason no number could be had.
+//
+// THE WINDOW IS THE CARD'S WHOLE LIFE, and that is not a widening. `native` brackets its read
+// with the run's own timestamps because one data home can hold more than one ATTEMPT of the
+// same job; this data home is `<root>/<scratch>/data`, made for this card in this batch, and
+// every turn in it is this card's. A window narrower than the card would drop turns it was
+// billed for, which is the very failure this reader exists to close.
+//
+// WHAT COMES BACK IS A LOWER BOUND, ALWAYS (Fable's cold read of #1739). The card was killed
+// mid-turn; the assistant row for the turn in flight carries no `tokens` object, so the
+// provider's charge for it is in nobody's database. A reaped card's spend is at least this,
+// and the BATCH line says so rather than presenting a floor as a total.
+//
+// A STORE THAT COULD NOT BE READ IS NAMED, NEVER SILENT. `ReadCardUsage` maps a locked
+// database, a timed-out query and a missing sqlite3 all onto a reason, and swallowing it
+// would put this change's own fault -- a silent zero for a card that spent -- straight back.
+// The reason is returned for the caller to print.
+func storeCardSpend(root, scratch string) (in, out int, usd float64, partial bool, reason string) {
+	usage, _, _, why := ReadCardUsage(filepath.Join(root, scratch, "data"),
+		time.UnixMilli(0), time.Now())
+	if why != "" {
+		// TWO OF THE FOUR REASONS ARE ABSENCES AND ARE SILENT. `no-store` is a harness that
+		// never wrote a database; `no-rows` is one that wrote the schema and was killed
+		// before its first answer -- a store READ PERFECTLY that holds nothing. Neither is
+		// a reader that stopped, and a note on either would fire on every card reaped early
+		// and teach its readers to scroll past the line. Then the note that matters -- a
+		// locked database, a query past its timeout -- goes unread with them.
+		//
+		// `no-sqlite3` and `query-failed` ARE readers that stopped, and those are said out
+		// loud. They were one token with `no-rows` until 2026-09-19.
+		if why == "no-store" || why == "no-rows" {
+			return 0, 0, 0, false, ""
+		}
+		return 0, 0, 0, false, why
+	}
+	in = usageInt(usage, "tokens_in")
+	out = usageInt(usage, "tokens_out")
+	if f, err := strconv.ParseFloat(strings.TrimSpace(usage.Values["usd"]), 64); err == nil {
+		usd = f
+	}
+	return in, out, usd, true, ""
+}
+
+// usageInt reads one token column of a store's fold. A dash is an absence and reads as zero:
+// the BATCH line's in= and out= are sums and have no spelling for "unreported".
+func usageInt(u ProviderUsage, column string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(u.Values[column]))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// cardSpend is one card's accounting as the harness store answered it.
+type cardSpend struct {
+	in, out int
+	usd     float64
+	partial bool   // the numbers are a LOWER BOUND: the turn in flight was never recorded
+	reason  string // the reader stopped, and this names why; empty when it did not
+}
+
+// storeSpendWorkers caps how many `sqlite3` processes a gather forks at once. These are
+// processes, not goroutines: a batch with sixteen reaped cards should not put sixteen
+// readers on the machine at the same instant, and four is enough to turn a serial 22n-second
+// pass into roughly one card's timeout.
+const storeSpendWorkers = 4
+
+// storeSpends reads the harness store for every card `want` selects, at most
+// storeSpendWorkers at a time, and returns one entry per card. A card `want` did not select
+// keeps its zero value and no reader ran for it.
+func storeSpends(root string, cards []batchCard, want func(i int) bool) []cardSpend {
+	out := make([]cardSpend, len(cards))
+	var todo []int
+	for i := range cards {
+		if want(i) {
+			todo = append(todo, i)
+		}
+	}
+	if len(todo) == 0 {
+		return out
+	}
+	work := make(chan int)
+	var wg sync.WaitGroup
+	workers := storeSpendWorkers
+	if len(todo) < workers {
+		workers = len(todo)
+	}
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				var s cardSpend
+				s.in, s.out, s.usd, s.partial, s.reason = storeCardSpend(root, scratchName(cards[i]))
+				out[i] = s
+			}
+		}()
+	}
+	for _, i := range todo {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	return out
 }
