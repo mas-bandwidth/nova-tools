@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -273,7 +272,9 @@ func jobBody(src, name string) string {
 // holding a reason, and the check reads the code before any comment on the
 // line, so prose about the rule cannot trip it.
 func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	sub10Re := regexp.MustCompile(`(^|[^0-9])([1-9])\s*[\*]\s*time[.]Second\b`)
 	anySecRe := regexp.MustCompile(`time[.]Second\b`)
 	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
@@ -291,20 +292,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	// reason (issue #916).
 	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
 	for _, dir := range []string{"internal", "cmd"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Errorf("cannot read %s: %v", path, err)
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
+		for _, f := range tree.GoFilesUnder(true, dir) {
+			raw := f.Src
+			rel := f.Rel
 			// The batch-deadline shape is scoped to the files that drive the batch:
 			// only there does a short deadline/idle literal reach a real process.
 			// A file drives the batch when it builds a BatchInput -- through the
@@ -334,10 +324,6 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				// A bare duration with no multiplier on the line is one second.
 				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }

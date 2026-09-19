@@ -241,7 +241,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
     rewritten, the row's `seen.tsv` state becomes `retry`, and only then does `pool` pick
     the item up again (rule 2). An abstain is a prompt defect
-    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
+    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*). When
+    `nova-pulse run` is given `--decide`, each harvest makes one typed decision per newly
+    finished task before it disposes of it: a task whose `needs_human` is at or above
+    `--floor` is appended to `<queue>/HUMAN` as one line
+    `HUMAN task=<id> reason=<r> conf=<c> card=<label>` and is not auto-retried, so a person
+    reads the inbox instead of the loop retrying a task that needs them; a
+    `provider_error` above the floor is requeued once by rule 14's own path; below the
+    floor nothing changes and the pool's own class stands. The decision is the core of
+    `nova-swarm triage --decide` (`internal/swarm.DecideFinished`), and the loop makes no
+    model call of its own.
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
     and `launch` in that order, with `queue.tsv` rows first, then `next.tsv`, then
     the sources, and prints the next `PULSE` line as its own last line. When the pool and the
