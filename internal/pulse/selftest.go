@@ -144,6 +144,7 @@ type selftest struct {
 	control  string
 	run      string // the selftest's own directory under <root>/accept
 	job      string // the fixture repository: <run>/slot/jobs/FIXTURE
+	base     string // the fixture base commit's full sha: the gate takes a sha, never a ref
 	card     string // <run>/card.md
 	identity hyg.Identity
 	cardText string
@@ -319,7 +320,7 @@ func (s *selftest) note(n string) { s.notes = append(s.notes, n) }
 func (s *selftest) gate(card string) (string, string) {
 	var out, errb bytes.Buffer
 	Accept(AcceptInput{
-		Job: s.job, Card: card, Base: "main", Bench: s.in.Bench, Cert: s.in.Cert,
+		Job: s.job, Card: card, Base: s.base, Bench: s.in.Bench, Cert: s.in.Cert,
 		Identities: []hyg.Identity{s.identity}, Sandbox: s.in.Sandbox, Root: s.in.Root,
 		Timeout: s.in.Timeout, Max: 0, Stdout: &out, Stderr: &errb, Now: s.in.Now,
 		control: s.control, noControlCheck: true, Build: s.build,
@@ -370,6 +371,13 @@ func (s *selftest) buildFixtureRepo() error {
 	if err := s.commit(nil, "base"); err != nil {
 		return err
 	}
+	// The gate takes the base as a full sha and refuses a ref (the cold read of
+	// f927bccc, HIGH 2); the selftest owns this repository and reads the sha itself.
+	base, err := s.git(nil, "rev-parse", "main^{commit}")
+	if err != nil {
+		return err
+	}
+	s.base = base
 	if _, err := s.git(nil, "checkout", "-q", "-b", "card"); err != nil {
 		return err
 	}
