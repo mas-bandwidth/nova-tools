@@ -43,14 +43,14 @@ itself is a cycle of length one, as *The coordination tree is one edge* says of
                           (and n (some #'reach (wnode-deps n))))))))
       (reach need))))
 
-(defun %dep-line (kernel node change need rev &key (changed 1) view request)
+(defun %dep-line-for (state node change need rev &key (changed 1) view request)
   "The `DEP OK` line of SPEC-WORK.md:6031, without its trailing `emitted=`,
 which is the CLI's count of what it printed and there is no CLI in this kernel
 -- the same omission every other OK line here makes.
 
 `met=` is the named need's; `unmet=` and `needs-broken=` are the node's, read
 AFTER the change (:4996)."
-  (let ((state (kernel-state kernel)))
+  (progn
     (multiple-value-bind (met) (need-met-p state need :view view :dependent node)
       (multiple-value-bind (unmet) (node-needs-status state node :view view)
         (format nil "DEP OK id=~D request=~A node=~A rev=~D pushed=- change=~(~A~) need=~A met=~A unmet=~D needs-broken=~A changed=~D"
@@ -112,7 +112,10 @@ admission verb, and there is no needs precondition here."
     (flet ((refuse1 (what)
              (return-from %dep-submit
                (values nil (format nil "DEP FAIL node=~A: ~A" node what) 1 nil))))
-      (unless n (refuse1 (format nil "rule 2: no such node ~A" node)))
+      ;; The replay answer comes BEFORE every mutable-state precondition, as
+      ;; Stella's [P2] on 1a11652d requires of every command on this path: an
+      ;; identical recorded payload answers its original receipt whatever the
+      ;; set has done since.
       (let* ((event (make-work-event
                      :kind :dep :node node :by by
                      :fields (list :change change :need need
@@ -142,6 +145,8 @@ admission verb, and there is no needs precondition here."
                    (values nil (format nil "DEP FAIL node=~A request=~A: reused with a different payload"
                                        node rid)
                            1 nil))))))
+        ;; and only now the mutable state
+        (unless n (refuse1 (format nil "rule 2: no such node ~A" node)))
         (ecase change
           (:add
            (when (equal node need)
@@ -170,22 +175,27 @@ admission verb, and there is no needs precondition here."
           (:remove
            (unless (member need (wnode-deps n) :test #'equal)
              (refuse1 (format nil "no such edge ~A -> ~A" node need)))))
-        ;; The line is built from the state AFTER the change, so it is built
-        ;; after the apply and not before it.
-        (multiple-value-bind (okp line code envelope)
-            (%oneshot-submit kernel rid digest
-                             ;; a placeholder the installer replaces below
-                             "DEP OK" event "DEP"
-                             (list :verb :dep :node node :need need :change change
-                                   :request rid))
-          (declare (ignore line))
-          (if okp
-              (let ((final (%dep-line kernel node change need (work-event-rev event)
-                                      :view (kernel-needs-view kernel) :request rid)))
-                (journal-record (kernel-journal kernel) rid digest final
-                                (work-event-rev event))
-                (values t final code envelope))
-              (values nil "DEP FAIL: journal refused acceptance" code envelope)))))))
+        ;; ONE DURABLE RECORD PER MUTATION.
+        ;;
+        ;; STELLA'S [P1] ON 1a558076: the first cut handed `%oneshot-submit` a
+        ;; PLACEHOLDER "DEP OK". That recorded and applied; the detailed receipt
+        ;; was then written with a SECOND `journal-record`, which has no pending
+        ;; envelope left. Against a real `file-journal` an ordinary add returned
+        ;; `MUTATION FAIL ... journal-record mismatch: expected pending envelope`
+        ;; at exit 2 WITH THE EDGE ALREADY APPLIED, and the retry answered a
+        ;; bare `DEP OK`. The `ordering-journal` fake permits the overwrite and
+        ;; hid it.
+        ;;
+        ;; The line is read AFTER the change, so it is computed from a PRIVATE
+        ;; CANDIDATE -- `apply-envelope` never touches the live state -- and the
+        ;; finished receipt goes into the one record-then-apply.
+        (let* ((candidate (apply-envelope state (list :request rid :digest digest
+                                                      :events (list event))))
+               (line (%dep-line-for candidate node change need (work-event-rev event)
+                                    :view (kernel-needs-view kernel) :request rid)))
+          (%oneshot-submit kernel rid digest line event "DEP"
+                           (list :verb :dep :node node :need need :change change
+                                 :request rid)))))))
 
 (defun dep-edit (kernel &key node change need as reason request stamp view)
   "`dep --add <id>` / `dep --remove <id>`: one recorded edit of one reference

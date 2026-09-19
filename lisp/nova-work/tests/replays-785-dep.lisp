@@ -272,3 +272,113 @@ another repository work set of the same O.")
         (ok (not okp) "a duplicate add with no request id is still refused")
         (check-equal 2 code "at exit 2")
         (ok (search "--request" line) "naming the field: ~A" line)))))
+
+;;; ------------------------------------------------------------------
+;;; the same, against the REAL file journal
+;;;    Stella's [P1] on 1a558076          SPEC-WORK.md:307, :315
+;;; ------------------------------------------------------------------
+;;;
+;;; The `ordering-journal` fake permits an overwrite of a recorded receipt. The
+;;; real `file-journal` does not: it expects exactly one record per pending
+;;; envelope. The first cut recorded a PLACEHOLDER and then recorded again, so
+;;; an ordinary add returned `MUTATION FAIL ... journal-record mismatch:
+;;; expected pending envelope` at exit 2 WITH THE EDGE ALREADY APPLIED, and the
+;;; retry answered a bare `DEP OK`. No failure was injected. Every case below is
+;;; the fake's case run again against the real thing.
+
+(defun dep-file-kernel (path &key (seed *dep-seed*))
+  (let ((state (make-seed-state seed)))
+    (make-kernel :state state
+                 :journal (open-file-journal
+                           path :initial-state-hash (root-digest state))
+                 :rev-base 1)))
+
+(deftest "a-dep-edit-is-one-record-in-the-real-file-journal" "docs/SPEC-WORK.md:307"
+    "expected=one-durable-append-per-mutation-and-the-complete-receipt-on-it"
+  (let* ((path (test-journal-path "dep-file-journal"))
+         (k (dep-file-kernel path)))
+    (unwind-protect
+         (progn
+           ;; an ordinary --add: exit 0, and the COMPLETE receipt, not a bare
+           ;; `DEP OK` and not a MUTATION FAIL after the edge was applied
+           (multiple-value-bind (okp line code) (dep-add k "acme/work/d" "acme/work/m"
+                                                         :request "file-add")
+             (ok okp "an ordinary add succeeds against a real journal: ~A" line)
+             (check-equal 0 code "at exit 0")
+             (ok (search "change=add" line) "with the complete receipt: ~A" line)
+             (ok (search "need=acme/work/m" line) "naming the need: ~A" line)
+             (ok (search "unmet=" line) "and the counts read after the change: ~A" line)
+             (ok (not (search "MUTATION FAIL" line)) "and no mutation failure: ~A" line))
+           (check-equal '("acme/work/n" "acme/work/m")
+                        (node-deps (kernel-state k) "acme/work/d")
+                        "and the edge is installed")
+           ;; the identical request replays to that same complete receipt
+           (multiple-value-bind (okp again code) (dep-add k "acme/work/d" "acme/work/m"
+                                                          :request "file-add")
+             (ok okp "the identical request replays")
+             (check-equal 0 code "at exit 0")
+             (ok (search "change=add" again)
+                 "to the COMPLETE receipt the file journal holds, not a bare DEP OK: ~A"
+                 again))
+           ;; --remove, on the real journal
+           (multiple-value-bind (okp line code) (dep-remove k "acme/work/d" "acme/work/n"
+                                                            :request "file-remove")
+             (ok okp "an ordinary remove succeeds: ~A" line)
+             (check-equal 0 code "at exit 0")
+             (ok (search "change=remove" line) "with its own receipt: ~A" line))
+           ;; a conflicting payload under one id is refused by the real journal
+           (multiple-value-bind (okp line code) (dep-remove k "acme/work/d" "acme/work/m"
+                                                            :request "file-add")
+             (ok (not okp) "a different payload under the same id is refused")
+             (check-equal 1 code "at exit 1")
+             (ok (search "reused with a different payload" line) "by name: ~A" line))
+           ;; close and reopen: the edges replay from the durable record
+           (close-file-journal (kernel-journal k))
+           (let* ((state (make-seed-state *dep-seed*))
+                  (j2 (open-file-journal path :initial-state-hash (root-digest state))))
+             (unwind-protect
+                  (let* ((k2 (make-kernel :state state :journal j2 :rev-base 1))
+                         (replayed (progn (replay-journal j2 k2) (kernel-state k2))))
+                    (check-equal '("acme/work/m") (node-deps replayed "acme/work/d")
+                                 "a journal replay rebuilds the forward edges exactly")
+                    (check-equal '("acme/work/d") (node-dependents replayed "acme/work/m")
+                                 "and the reverse edge")
+                    (check-equal '() (node-dependents replayed "acme/work/n")
+                                 "and the removed one stays removed")
+                    (check-equal 2 (length (remove-if-not
+                                            (lambda (e) (eq :dep (getf e :verb)))
+                                            (node-structure-log replayed "acme/work/d")))
+                                 "and both audit records"))
+               (close-file-journal j2))))
+      (ignore-errors (close-file-journal (kernel-journal k))))))
+
+(deftest "a-failed-durable-append-leaves-the-edge-alone" "docs/SPEC-WORK.md:307"
+    "expected=refusal-before-change-and-nothing-written"
+  ;; "the session appends it with its request id to the local recovery journal,
+  ;; acknowledges only after the journal is durable, THEN applies it": a failed
+  ;; append must leave the edge exactly where it was.
+  (let* ((path (test-journal-path "dep-file-append-fail"))
+         (state (make-seed-state *dep-seed*))
+         (k (make-kernel :state state :rev-base 1
+                         :journal (open-file-journal
+                                   path :initial-state-hash (root-digest state)
+                                        :fail-pre-write-on "boom-add"))))
+    (unwind-protect
+         (let ((deps (node-deps (kernel-state k) "acme/work/d")))
+           ;; a pre-write failure signals rather than answering a line; either
+           ;; way the contract is the same: nothing is applied.
+           (handler-case
+               (multiple-value-bind (okp line code)
+                   (dep-add k "acme/work/d" "acme/work/m" :request "boom-add")
+                 (declare (ignore line))
+                 (ok (not okp) "a failed durable append refuses")
+                 (ok (member code (list 1 2)) "at a refusing exit code, got ~A" code))
+             (error (c)
+               (ok (search "injected pre-write failure" (princ-to-string c))
+                   "or signals the injected failure: ~A" c)))
+           (check-equal deps (node-deps (kernel-state k) "acme/work/d")
+                        "and the edge is exactly where it was")
+           (check-equal '() (remove-if-not (lambda (e) (eq :dep (getf e :verb)))
+                                           (node-structure-log (kernel-state k) "acme/work/d"))
+                        "with no audit record left behind"))
+      (ignore-errors (close-file-journal (kernel-journal k))))))
