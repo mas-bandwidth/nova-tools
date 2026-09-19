@@ -263,6 +263,28 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 	defer releaseLease()
+	// THE SLOT IS HELD BY EXACTLY ONE WORKER (issue #1901). The job lease above refuses a
+	// second run in the same <slot>/jobs/<label>. It cannot refuse a second run in the same
+	// SLOT under a different label, and the data home below is per SLOT, not per job: two
+	// labels in one slot is one HOME, one cache and one opencode.db, which is the
+	// 2026-09-10 `database is locked` failure SPEC-SWARM closed on purpose. The bench store
+	// cannot answer this -- its lease is a count and names no directory -- so the slot says
+	// it itself, with the same lease machinery and the same four rules, and it is taken
+	// HERE, after the job lease, so that same-slot-same-label keeps saying what #1585 made
+	// it say.
+	releaseSlot, err := swarm.StartSlotLease(cfg.slotDir, cfg.label)
+	if err != nil {
+		if held, ok := swarm.HeldJobLease(err); ok {
+			refuseNative(errOut, fmt.Sprintf("the slot %s is held by a live run: pid=%d host=%s label=%s started=%s; two runs in one slot share one data home, one cache and one opencode.db -- give the second run a slot of its own",
+				oneline.Field(cfg.slotDir), held.PID, oneline.Field(held.Host),
+				oneline.Field(held.Label), oneline.Field(held.Started)))
+			return nativeRunResult{}, 2
+		}
+		refuseNative(errOut, fmt.Sprintf("the slot lease on %s could not be taken, so this run cannot prove it holds the slot alone and will not start: %s; clear or repair %s and run it again",
+			oneline.Field(cfg.slotDir), oneline.Escape(err.Error()), oneline.Field(filepath.Join(cfg.slotDir, swarm.SlotLeaseName))))
+		return nativeRunResult{}, 2
+	}
+	defer releaseSlot()
 	dataHome := filepath.Join(cfg.slotDir, "data")
 	if err := os.MkdirAll(dataHome, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
