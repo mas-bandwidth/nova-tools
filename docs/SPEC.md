@@ -1392,7 +1392,7 @@ four-column table indented after a blank line is not checked. Indented rows
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
-nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--allow-empty] [--fail-max <n>]
 ```
 
 **Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
@@ -1512,7 +1512,21 @@ half a dogfooder is least likely to use.
   finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
   way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate
   is one line: `DOGFOOD GATE OK verbs=<n> by-nonauthor=<n> open-edges=<n>
-  unfiled=<n> require-all=<yes|no>`.
+  unfiled=<n> unmatched=<n> require-all=<yes|no> allow-empty=<yes|no>`.
+- `gate` read nothing that counts — `by-nonauthor=0` — and was not given
+  `--allow-empty`. **A gate cannot go green on no evidence**, and this is the
+  hole it closes: an empty `--receipts` directory printed the OK line at exit 0,
+  so the one line a release lane calls passed on nothing at all. The three kinds
+  of nothing are named apart, because they want different work: no receipt in
+  the directory at all, receipts every one of which is stranded against a verb
+  the list does not declare, and receipts holding no non-author's pass. It is one
+  line, `DOGFOOD GATE FAIL verbs=<n> records=<n> by-nonauthor=<n>
+  unmatched=<n>: <which nothing>; <the run to record>, or pass --allow-empty to
+  gate a lane that has none`, and the count of receipt records is `records=` as
+  it is on the unreadable-receipt line, where `receipts=` is the directory.
+  `--allow-empty` is the allowance a caller states, for a lane gating before
+  anybody has dogfooded anything; the green line then says `allow-empty=yes`, so
+  a pass that was granted rather than earned is readable as one.
 
 **Refuses (exit 2) when** neither `--cli` nor `--tools` is given, on any of the
 three; `--receipts` is missing or is not a directory; `--tool`, `--verb`,

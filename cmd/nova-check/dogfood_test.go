@@ -294,6 +294,116 @@ func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 	}
 }
 
+// Nothing counted for anything is NO, and the four cases below are the whole of
+// that rule. `gate` is the line a release lane calls, so a green gate over a
+// directory nobody has recorded anything in is a lane passing on no evidence at
+// all -- the one outcome this verb exists to make impossible. The allowance is a
+// flag somebody types, and the green line says it was in force.
+func TestDogfoodGateRefusesAReceiptsDirectoryWithNothingInIt(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	if err := os.MkdirAll(receipts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1: a gate cannot go green on no evidence\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "DOGFOOD GATE OK") {
+		t.Fatalf("the gate said OK over an empty directory:\n%s", stdout)
+	}
+	line := strings.TrimSuffix(stderr, "\n")
+	if strings.Count(line, "\n") != 0 {
+		t.Fatalf("the refusal spans more than one line:\n%q", stderr)
+	}
+	for _, want := range []string{"DOGFOOD GATE FAIL", "records=0", "by-nonauthor=0", "no receipt at all", "dogfood record", "--allow-empty"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the refusal does not carry %q:\n%s", want, line)
+		}
+	}
+}
+
+// The near-empty set, which is the same hole with files in it: every receipt is
+// stranded against a verb the list does not declare, so the arithmetic the gate
+// reads is a directory's worth of nothing.
+func TestDogfoodGateRefusesReceiptsThatCountedForNothing(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "stranded.json", map[string]any{
+		"tool": "nova-example", "verb": "lnks", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1: one stranded receipt is no evidence\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "DOGFOOD GATE OK") {
+		t.Fatalf("the gate said OK over receipts that counted for nothing:\n%s", stdout)
+	}
+	for _, want := range []string{"DOGFOOD GATE FAIL", "records=1", "by-nonauthor=0", "counts for nothing", "--allow-empty"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("the refusal does not carry %q:\n%s", want, stderr)
+		}
+	}
+}
+
+// --allow-empty is how a lane says it means to gate over no evidence, and the
+// green line carries the allowance: a reader of the line can see that the pass
+// was granted rather than earned.
+func TestDogfoodGateAllowEmptyIsTheAllowanceAndTheLineSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	empty := filepath.Join(dir, "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stranded := filepath.Join(dir, "stranded")
+	writeReceipt(t, stranded, "stranded.json", map[string]any{
+		"tool": "nova-example", "verb": "lnks", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	for _, tc := range []struct {
+		name string
+		dir  string
+		want string
+	}{
+		{"an empty directory", empty, "DOGFOOD GATE OK verbs=3 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0 require-all=no allow-empty=yes"},
+		{"receipts that count for nothing", stranded, "DOGFOOD GATE OK verbs=3 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=1 require-all=no allow-empty=yes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", tc.dir, "--allow-empty")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0 with --allow-empty\n%s", code, stderr)
+			}
+			if !strings.Contains(stdout, tc.want) {
+				t.Fatalf("gate line:\n got: %s\nwant: %s", stdout, tc.want)
+			}
+		})
+	}
+}
+
+// And a set that counts is untouched: the gate reads it exactly as it always
+// has, and says the allowance was not in force.
+func TestDogfoodGateReadsASetThatCountsExactlyAsBefore(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, stderr)
+	}
+	want := "DOGFOOD GATE OK verbs=3 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0 require-all=no allow-empty=no"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("gate line:\n got: %s\nwant: %s", stdout, want)
+	}
+}
+
 // Without --require-all the gate still says no to an edge nobody has cleared:
 // feedback filed is not feedback applied.
 func TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll(t *testing.T) {
@@ -491,7 +601,9 @@ func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
 	if !strings.Contains(stderr, "stranded.json") || !strings.Contains(stderr, "nova-example links") {
 		t.Fatalf("the gate discarded a receipt and did not say so:\n%s", stderr)
 	}
-	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	// The allowance is what keeps this gate green: the only receipt there counts
+	// for nothing, and a gate over nothing says NO unless a caller asks for it.
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--allow-empty")
 	if code != 0 {
 		t.Fatalf("exit %d, want 0 without --require-all\n%s", code, stderr)
 	}

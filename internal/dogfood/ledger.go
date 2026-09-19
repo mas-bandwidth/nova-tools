@@ -433,13 +433,38 @@ func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([
 }
 
 // GateLine is the gate's green line: what it checked and what it found.
-func (s Summary) GateLine(requireAll bool) string {
-	require := "no"
-	if requireAll {
-		require = "yes"
+// `allow-empty=yes` says the pass was granted rather than earned — a gate over
+// no evidence is green only because a caller asked for it, and the line a lane
+// keeps has to say so.
+func (s Summary) GateLine(requireAll, allowEmpty bool) string {
+	return fmt.Sprintf("DOGFOOD GATE OK verbs=%d by-nonauthor=%d open-edges=%d unfiled=%d unmatched=%d require-all=%s allow-empty=%s",
+		s.Verbs, s.ByNonAuthor, s.OpenEdges, s.Unfiled, s.Unmatched, yesNo(requireAll), yesNo(allowEmpty))
+}
+
+// NoEvidence reports whether nothing in the receipts counted: no verb has a
+// non-author's pass, so every question the gate asks is answered by an empty
+// set. A gate that went green here would be a release lane passing on evidence
+// it never read, which is the one outcome this verb exists to make impossible.
+// `--allow-empty` is the caller's way of saying they mean it.
+func (s Summary) NoEvidence() bool { return s.ByNonAuthor == 0 }
+
+// GateNoEvidenceLine is what the gate says instead of going green over nothing.
+// It names which kind of nothing it read — an empty directory, receipts that are
+// all stranded, or receipts that count for no non-author's pass — because the
+// three want different work from the reader, and it carries both remedies: the
+// run to record, and the flag that accepts a gate with none.
+func (s Summary) GateNoEvidenceLine(records int) string {
+	var reason string
+	switch {
+	case records == 0:
+		reason = "no receipt at all: nobody has recorded a run in this directory"
+	case s.Unmatched == records:
+		reason = fmt.Sprintf("all %d receipt(s) name a verb the list does not declare, so the evidence counts for nothing", records)
+	default:
+		reason = fmt.Sprintf("not one of %d receipt(s) is a non-author's pass, so the evidence counts for nothing", records)
 	}
-	return fmt.Sprintf("DOGFOOD GATE OK verbs=%d by-nonauthor=%d open-edges=%d unfiled=%d unmatched=%d require-all=%s",
-		s.Verbs, s.ByNonAuthor, s.OpenEdges, s.Unfiled, s.Unmatched, require)
+	return fmt.Sprintf("DOGFOOD GATE FAIL verbs=%d records=%d by-nonauthor=%d unmatched=%d: %s; record a real run with: nova-check dogfood record --tool <t> --verb <v> --by <who ran it> --ok --notes <the work you ran it on> --receipts <dir>, or pass --allow-empty to gate a lane that has none",
+		s.Verbs, records, s.ByNonAuthor, s.Unmatched, reason)
 }
 
 // GateCountLine is the gate's red count line: the total, and how much of it was

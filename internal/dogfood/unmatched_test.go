@@ -36,8 +36,8 @@ func TestUnmatchedReceiptsAreCountedOnTheLine(t *testing.T) {
 		t.Errorf("the ledger line does not count the evidence it threw away: %s", summary.Line())
 	}
 	_, gateSummary := Gate(list, got, nil, false)
-	if !strings.Contains(gateSummary.GateLine(false), "unmatched=2") {
-		t.Errorf("the gate line does not count the evidence it threw away: %s", gateSummary.GateLine(false))
+	if !strings.Contains(gateSummary.GateLine(false, false), "unmatched=2") {
+		t.Errorf("the gate line does not count the evidence it threw away: %s", gateSummary.GateLine(false, false))
 	}
 	if !strings.Contains(gateSummary.GateCountLine(1, 1), "unmatched=2") {
 		t.Errorf("the gate's red count line does not carry it either: %s", gateSummary.GateCountLine(1, 1))

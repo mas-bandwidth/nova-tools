@@ -266,6 +266,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
 	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
+	allowEmpty := fs.Bool("allow-empty", false, "pass a gate whose receipts hold no non-author's pass at all, an empty directory included")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
@@ -281,7 +282,16 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	reportStranded(read, *failMax, stderr)
 	findings, summary := dogfood.Gate(read.verbs, read.receipts, read.authors, *requireAll)
 	if len(findings) == 0 {
-		fmt.Fprintln(stdout, oneline.Escape(summary.GateLine(*requireAll)))
+		// The gate found nothing to say NO about, which is one line away from
+		// having read nothing at all: an empty directory, or receipts that every
+		// one of them counted for nothing, used to print the same OK a lane reads
+		// as evidence. Green needs a non-author's pass, or a caller who asked for
+		// a gate without one.
+		if summary.NoEvidence() && !*allowEmpty {
+			fmt.Fprintln(stderr, oneline.Escape(summary.GateNoEvidenceLine(len(read.receipts))))
+			return 1
+		}
+		fmt.Fprintln(stdout, oneline.Escape(summary.GateLine(*requireAll, *allowEmpty)))
 		return 0
 	}
 	// The token is one word: bounded escapes what it is given, and a token with
