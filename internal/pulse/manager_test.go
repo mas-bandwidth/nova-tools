@@ -385,6 +385,31 @@ func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 	}
 }
 
+// JOHNNY'S HOLD, the repo destination on the manager: a RESULT.md REPO line that is not the
+// job's own clone origin must force-push nothing and open no PR (issue #1824's receipt, on
+// the manager path). The branch is in-prefix and the diff names a test file, so neither of
+// the manager's earlier refusals is what stops it.
+func TestManagerRefusesARepoMismatchAndPushesNothing(t *testing.T) {
+	b := setupManager(t)
+	b.fake(t, "git", fakeSpec{Rules: []fakeRule{
+		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
+		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager_test.go"},
+		{Arg: 3, Equals: "remote", Stdout: "https://example.com/real/repo.git"},
+	}})
+	b.fakeGH(t, "{}", "[]")
+	rootA := strings.Split(b.roots, ",")[0]
+	result := "RESULT: CARD-1 fix the slot lock\nBRANCH: rowan/fix-slot-lock\nREPO: attacker/exfil\n"
+	b.job(t, rootA, "1", "card-1", "RESULT: CARD-1 fix the slot lock\n", result)
+	p := b.policy(t, "floor=0\n")
+	out, _, _ := b.run(t, p, 0)
+	if strings.Contains(b.argv(t), "git push") || strings.Contains(b.argv(t), "gh pr create") {
+		t.Fatalf("a repo the worker's RESULT claimed was pushed: %q", b.argv(t))
+	}
+	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1.md origin=real/repo") {
+		t.Fatalf("the repo-mismatch refusal is absent: %q", out)
+	}
+}
+
 // manager-hands-merge-to-lane: an approved, revalidated, green PR is handed to nova-merge's
 // lane with `nova-merge add`, never merged by `gh pr merge` -- the lane is the merge queue.
 func TestManagerHandsMergeToLane(t *testing.T) {

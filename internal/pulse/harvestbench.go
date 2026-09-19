@@ -236,6 +236,14 @@ func harvestBench(in HarvestInput) int {
 				field(in.Bench), field(label), field(branch), oneline.Err(err)))
 			continue
 		}
+		// The destination rule: the repo this push and this PR-open are checked against
+		// the clone's own origin, never the worker's REPO claim alone. One guard covers
+		// the push below and the CreatePR further down -- a refusal skips both.
+		if err := mustMatchCloneOrigin(label, cloneOrigin(clone), repo); err != nil {
+			failed++
+			lines.Line(err.Error())
+			continue
+		}
 		if out, err := gitIn(clone, "push", "origin", ref+":refs/heads/"+branch); err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST PUSH-FAIL bench=%s label=%s branch=%s: %s",

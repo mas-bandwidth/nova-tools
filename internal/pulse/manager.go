@@ -417,6 +417,13 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Err(err))
 		return
 	}
+	// The destination rule the same way: the repo this force-pushes is checked against
+	// the clone's own origin, never the worker's REPO claim alone.
+	if err := mustMatchCloneOrigin(card, cloneOrigin(dir), repo); err != nil {
+		m.move(card, "failed")
+		m.event("%s", err)
+		return
+	}
 	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return

@@ -390,6 +390,33 @@ func TestHarvestWorkingOutputIsBounded(t *testing.T) {
 	}
 }
 
+// JOHNNY'S HOLD, the repo destination on `harvest --working`: a RESULT.md REPO line is a
+// worker's claim, never an instruction, and a claim that is not the job's own clone origin
+// must force-push nothing (issue #1824's receipt, on the --working path).
+func TestHarvestWorkingRefusesARepoMismatchAndForcePushesNothing(t *testing.T) {
+	working := t.TempDir()
+	specs := fakePATH(t)
+	arglog := filepath.Join(working, "argv.log")
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
+		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/rowan/w"},
+		{Arg: 3, Equals: "remote", Stdout: "https://example.com/real/repo.git"},
+	}})
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 2, Equals: "list", Stdout: "[]"},
+		{Arg: 2, Equals: "create", Stdout: "https://forge.invalid/attacker/exfil/pull/23"},
+	}})
+	wkJob(t, working, "g-w", "w", wkResult("w", "rowan/w", "attacker/exfil"))
+
+	_, errs, _ := wkRun(t, HarvestInput{Working: working, Base: "0123456789ab", Max: 20})
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") && strings.Contains(l, "exfil") {
+			t.Fatalf("--working force-pushed a repo the worker's RESULT claimed: %s", l)
+		}
+	}
+	wkHasLine(t, errs, "HARVEST REFUSED repo-mismatch card=w origin=real/repo")
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

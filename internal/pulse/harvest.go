@@ -230,7 +230,7 @@ func Harvest(in HarvestInput) int {
 				continue
 			}
 			url := pushURL(repo)
-			if err := push(in, jobDir, url, branch); err != nil {
+			if err := push(in, jobDir, url, branch, c.Label); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
@@ -590,10 +590,15 @@ func pushURL(repo string) string {
 }
 
 // push runs git push <url> <branch>:<branch> from the job's clone; never a bare git push.
-func push(in HarvestInput, dir, url, branch string) error {
+func push(in HarvestInput, dir, url, branch, label string) error {
 	// The branch rule, at the push itself and not only at the caller that decided to
 	// push (Johnny's hold on #1809). One implementation, every path.
 	if err := mustBranchPrefix(branch); err != nil {
+		return err
+	}
+	// The destination rule, too: the url this pushes is checked against the clone's own
+	// origin, never the worker's claim alone.
+	if err := mustMatchCloneOrigin(label, cloneOrigin(dir), normalizeRepo(url)); err != nil {
 		return err
 	}
 	if url == "" {
@@ -614,6 +619,9 @@ func push(in HarvestInput, dir, url, branch string) error {
 // capped at MaxBodyBytes. It returns the PR number.
 func openPR(in HarvestInput, dir, url, label, branch string, resultLines []string) (int, error) {
 	if err := mustBranchPrefix(branch); err != nil {
+		return 0, err
+	}
+	if err := mustMatchCloneOrigin(label, cloneOrigin(dir), normalizeRepo(url)); err != nil {
 		return 0, err
 	}
 	body := strings.Join(resultLines, "\n")

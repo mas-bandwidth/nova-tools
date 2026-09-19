@@ -30,6 +30,12 @@ import (
 // theGuard is the one implementation every push path must call.
 const theGuard = "mustBranchPrefix"
 
+// theOriginGuard is the destination check every push path must call in addition to the
+// branch rule. Unlike the branch rule it is NOT duplicated inside the Forge adapter: the
+// origin is resolved from the job's own clone before the forge is ever reached (DESIGN
+// DEFAULT 2).
+const theOriginGuard = "mustMatchCloneOrigin"
+
 func TestEveryPushPathChecksTheBranchPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +69,7 @@ func TestEveryPushPathChecksTheBranchPrefix(t *testing.T) {
 				continue
 			}
 			seen[fn.Name.Name] = true
-			if callsGuard(fn) {
+			if callsGuard(fn, theGuard) {
 				guarded++
 				continue
 			}
@@ -90,6 +96,45 @@ func TestEveryPushPathChecksTheBranchPrefix(t *testing.T) {
 	if guarded == 0 {
 		t.Fatalf("this test found no guarded push site at all; the detector has stopped seeing them, which makes it worse than no test")
 	}
+
+	// THE ORIGIN RULE, BY NAME. The four functions the first walk names must each also
+	// call mustMatchCloneOrigin, so the repo destination is checked at every site the
+	// same way the branch is. This second check is explicit -- by function name through
+	// file.Decls -- and not through pushSiteIn's generic scan, because the origin guard
+	// deliberately does NOT reach inside the Forge adapter (DESIGN DEFAULT 2). Each
+	// missing call is its own failure.
+	originSites := map[string]bool{"push": false, "openPR": false, "one": false, "harvestBench": false}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			if _, want := originSites[fn.Name.Name]; !want {
+				continue
+			}
+			originSites[fn.Name.Name] = true
+			if !callsGuard(fn, theOriginGuard) {
+				t.Errorf("PUSH-PATH %s %s: this pushes or opens a PR without calling %s (the repo destination must be checked against the job's own clone origin at every site)",
+					filepath.Join("internal/pulse", name)+":"+strconv.Itoa(fset.Position(fn.Pos()).Line),
+					fn.Name.Name, theOriginGuard)
+			}
+		}
+	}
+	for _, want := range []string{"push", "openPR", "one", "harvestBench"} {
+		if !originSites[want] {
+			t.Errorf("the origin-guard check no longer sees %s() as a push path; it is one, and this test is now blind to it", want)
+		}
+	}
+
 	t.Logf("PUSH-PATH OK sites=%d guarded=%d unguarded=%d", guarded+len(unguarded), guarded, len(unguarded))
 	if len(unguarded) > 0 {
 		sort.Slice(unguarded, func(i, j int) bool { return unguarded[i].where < unguarded[j].where })
@@ -179,14 +224,14 @@ func isGitHelper(fun ast.Expr) bool {
 	return false
 }
 
-func callsGuard(fn *ast.FuncDecl) bool {
+func callsGuard(fn *ast.FuncDecl, guard string) bool {
 	found := false
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == theGuard {
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == guard {
 			found = true
 			return false
 		}

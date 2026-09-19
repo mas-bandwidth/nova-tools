@@ -177,3 +177,21 @@ func mustBranchPrefix(branch string) error {
 	}
 	return nil
 }
+
+// mustMatchCloneOrigin is the destination guard every push and PR-open site takes in
+// addition to mustBranchPrefix: the job's own clone origin -- read by the caller with
+// cloneOrigin, and never a value the worker wrote -- is what a push or a PR-open is
+// checked against. An origin nothing could resolve (cloneOrigin returned "") verifies
+// nothing and passes: the site's own existing rule (the card's REPO field for the local
+// fold; nothing at all, before this card, for --working, --bench and the manager) is what
+// governs then, exactly as it does today. An origin that WAS resolved and disagrees with
+// what is about to be pushed is refused, by name, in the one line every call site's stderr
+// carries verbatim, so a reader grepping for the door finds it no matter which path pushed:
+//
+//	HARVEST REFUSED repo-mismatch card=<label> origin=<origin>
+func mustMatchCloneOrigin(label, origin, claimed string) error {
+	if origin == "" || origin == claimed {
+		return nil
+	}
+	return fmt.Errorf("HARVEST REFUSED repo-mismatch card=%s origin=%s", label, origin)
+}

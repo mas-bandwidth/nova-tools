@@ -259,6 +259,12 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	if err := mustBranchPrefix(branch); err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
+	// The destination rule the same way: the repo this force-pushes is checked against
+	// the clone's own origin, never the worker's REPO claim alone.
+	if err := mustMatchCloneOrigin(j.label, cloneOrigin(clone), repo); err != nil {
+		fmt.Fprintln(r.in.Stderr, err)
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
 	if _, err := runChild(clone, nil, "git", "push", url, "refs/heads/"+branch,
 		"--force-with-lease=refs/heads/"+branch+":"+remote); err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, dash(strconv.Itoa(pr.Number)), commit)}
