@@ -2864,8 +2864,20 @@ nova-version diff --from ./before.tsv --to ./after.tsv
 
 Create `after.tsv` with a later snapshot of the directory you want to compare.
 `snapshot` runs `version` on the `nova-*` regular files in the explicit directory,
-with a five-second deadline per binary. It skips symlinks, refuses an unreadable
+with a thirty-second `--timeout` per binary and a sixty-second `--budget` for the
+run, both of which you can set. It skips symlinks, refuses an unreadable
 version or mixed stamps, and writes `name`, `stamp`, `revision`, `platform` columns.
+
+The per-binary deadline is thirty seconds rather than the five every other verb
+takes because of when this verb is run: right after `go install ./cmd/...`, on a
+directory of binaries this machine has never executed. The platform assesses the
+first run of a never-seen executable and charges it to that deadline — measured
+on a darwin/arm64 Studio at 164–571 ms cold against 5 ms warm when idle, and at
+a 7.03 s maximum while a tree compiled beside it, which is the state the
+`go install` one command earlier leaves the machine in. At five seconds that
+refused healthy binaries and named a build repair that would have found nothing
+([#890](https://github.com/mas-bandwidth/nova-tools/issues/890)). Lower it with
+`--timeout` on a bin whose binaries you have already been running.
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
 
