@@ -241,10 +241,11 @@ type Classification struct {
 	Evidence      HarvestEvidence
 }
 
-// ClassifyHarvest applies the boundary to one unit. conf is whatever the chain
-// returned; it is ignored entirely where the gate already decided.
-func ClassifyHarvest(ev HarvestEvidence, conf, floor float64) Classification {
-	c := Classification{Confidence: conf, Floor: floor, Decider: DeciderRules, Why: WhyNone, Evidence: ev}
+// ClassifyHarvest applies the boundary to one unit. res is the chain's own
+// answer, decider and why; it is ignored entirely where the gate already
+// decided, because a decision already made is not a question (§4 rule 2).
+func ClassifyHarvest(ev HarvestEvidence, res Result, floor float64) Classification {
+	c := Classification{Confidence: res.Confidence, Floor: floor, Decider: DeciderRules, Why: WhyNone, Evidence: ev}
 
 	// Where the gate decided, the rules answer and nobody is asked (§4 rule 2).
 	switch strings.ToLower(strings.TrimSpace(ev.Accept)) {
@@ -258,14 +259,25 @@ func ClassifyHarvest(ev HarvestEvidence, conf, floor float64) Classification {
 		return c
 	}
 	if !NeedsProvider(ev) {
+		// A shape that was never a question had no decider to be missing, so
+		// the why is `-` and not `no-decider`. Spending `no-decider` here is
+		// the misuse D2's `decider=none why=no-decider` row separates from.
 		c.Class = ClassUnknown
+		return c
+	}
+
+	// A question the walk could not answer at all. The chain already knows how
+	// to say this; the boundary must not overwrite it with a class.
+	if res.Decider == DeciderNone {
+		c.Class = ClassUnknown
+		c.Decider = DeciderNone
 		c.Why = WhyNoDecider
 		return c
 	}
 
 	c.AskedProvider = true
-	c.Decider = DeciderJev
-	if conf < floor {
+	c.Decider = res.Decider
+	if res.Confidence < floor {
 		// D2/D3: below the floor the answer is the absence of an answer, and
 		// rule 14's requeue-once path runs as today -- once, because `once` is
 		// a fact about the unit and not a preference.
@@ -274,7 +286,16 @@ func ClassifyHarvest(ev HarvestEvidence, conf, floor float64) Classification {
 		c.RequeueOnce = !ev.Requeued
 		return c
 	}
-	c.Class = ClassBlockedToolchain
+	// The class is the answer the chain returned where the harvest question
+	// admits it. Classify does not re-police the set; an answer that is somehow
+	// not a member falls to the absence of an answer, with no why.
+	if q, ok := questions.Lookup("harvest", 1); ok && q.Member(res.Answer) {
+		c.Class = res.Answer
+		c.Why = res.Why
+	} else {
+		c.Class = ClassUnknown
+		c.Why = WhyNone
+	}
 	return c
 }
 

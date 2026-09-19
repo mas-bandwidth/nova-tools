@@ -1,11 +1,14 @@
 package decide
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/decide/questions"
 )
 
 // The prose that must never cross the boundary. It is written the way a card's
@@ -88,7 +91,7 @@ func TestAcceptRejectIsClassRejectedNeverFailedAndNoProviderIsAsked(t *testing.T
 	} {
 		ev := evidence()
 		ev.Accept = accept
-		c := ClassifyHarvest(ev, 0.0, 0.65)
+		c := ClassifyHarvest(ev, Result{}, 0.65)
 		if c.Class != want {
 			t.Errorf("accept=%s is class %s, got %s", accept, want, c.Class)
 		}
@@ -159,7 +162,7 @@ func TestAHarvestClassNeverPushesARejectedCard(t *testing.T) {
 func TestBelowFloorIsUnknownAndRequeuesOnce(t *testing.T) {
 	ev := evidence()
 
-	low := ClassifyHarvest(ev, 0.61, 0.65)
+	low := ClassifyHarvest(ev, Result{Answer: ClassDefect, Confidence: 0.61, Decider: DeciderJev, Why: WhyNone}, 0.65)
 	if low.Class != ClassUnknown {
 		t.Errorf("0.61 under a floor of 0.65 is unknown, got %s", low.Class)
 	}
@@ -173,13 +176,13 @@ func TestBelowFloorIsUnknownAndRequeuesOnce(t *testing.T) {
 	// ONCE. A unit already requeued once is not requeued again.
 	again := ev
 	again.Requeued = true
-	if ClassifyHarvest(again, 0.61, 0.65).RequeueOnce {
+	if ClassifyHarvest(again, Result{Answer: ClassDefect, Confidence: 0.61, Decider: DeciderJev, Why: WhyNone}, 0.65).RequeueOnce {
 		t.Errorf("a second requeue: `once` is not once")
 	}
 
 	// NEGATIVE CONTROL: at or above the floor the answer stands and nothing is
 	// requeued, so the test is about the floor and not about the path.
-	at := ClassifyHarvest(ev, 0.65, 0.65)
+	at := ClassifyHarvest(ev, Result{Answer: ClassDefect, Confidence: 0.65, Decider: DeciderJev, Why: WhyNone}, 0.65)
 	if at.Class == ClassUnknown || at.RequeueOnce {
 		t.Errorf("negative control: 0.65 is AT the floor and stands, got class=%s requeue=%v", at.Class, at.RequeueOnce)
 	}
@@ -195,11 +198,11 @@ func TestEveryOutcomeIsOneAppendedJSONLRow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
 	ev := evidence()
 
-	first := ClassifyHarvest(ev, 0.90, 0.65)
+	first := ClassifyHarvest(ev, Result{Answer: ClassDefect, Confidence: 0.90, Decider: DeciderJev, Why: WhyNone}, 0.65)
 	if err := AppendOutcomeRow(path, "card-1", first); err != nil {
 		t.Fatal(err)
 	}
-	if err := AppendOutcomeRow(path, "card-2", ClassifyHarvest(ev, 0.61, 0.65)); err != nil {
+	if err := AppendOutcomeRow(path, "card-2", ClassifyHarvest(ev, Result{Answer: ClassDefect, Confidence: 0.61, Decider: DeciderJev, Why: WhyNone}, 0.65)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -239,7 +242,7 @@ func TestEveryOutcomeIsOneAppendedJSONLRow(t *testing.T) {
 	// NEGATIVE CONTROL: appended, never rewritten. A third row leaves the first
 	// two byte-identical.
 	before := lines
-	if err := AppendOutcomeRow(path, "card-1", ClassifyHarvest(ev, 0.95, 0.65)); err != nil {
+	if err := AppendOutcomeRow(path, "card-1", ClassifyHarvest(ev, Result{Answer: ClassDefect, Confidence: 0.95, Decider: DeciderJev, Why: WhyNone}, 0.65)); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ = os.ReadFile(path)
@@ -251,6 +254,165 @@ func TestEveryOutcomeIsOneAppendedJSONLRow(t *testing.T) {
 		if after[i] != before[i] {
 			t.Errorf("row %d was rewritten\n before: %s\n  after: %s", i+1, before[i], after[i])
 		}
+	}
+}
+
+// capturingProvider is chain_test.go:13's fake in this file's own words: it
+// records every state handed to it and counts calls, so a test can prove a
+// question was, or was not, asked. It is deliberately its own type rather than
+// that file's `fake`: a shared fixture is one edit away from proving nothing.
+type capturingProvider struct {
+	name   string
+	sees   string
+	answer string
+	conf   float64
+	err    error
+	calls  int
+	states []string
+}
+
+func (f *capturingProvider) Name() string { return f.name }
+func (f *capturingProvider) Sees() string { return f.sees }
+func (f *capturingProvider) Ask(_ context.Context, _ questions.Question, state string) (string, float64, Usage, error) {
+	f.calls++
+	f.states = append(f.states, state)
+	return f.answer, f.conf, Usage{}, f.err
+}
+
+// The class is the answer the chain returned. The constant cannot pass this:
+// one unit, two provider answers, two different classes.
+func TestTheHarvestClassIsTheAnswerTheChainReturned(t *testing.T) {
+	q := harvestQ(t)
+	ev := evidence()
+	const floor = 0.65
+	f := &capturingProvider{name: DeciderJev, sees: SeesPublic, answer: ClassDefect, conf: 0.90}
+	ch := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), f}}
+
+	res := ch.Classify(context.Background(), q, publicEvidence("the card's output"), floor)
+	c := ClassifyHarvest(ev, res, floor)
+	if c.Class != ClassDefect {
+		t.Fatalf("the class must be the answer the chain returned, got %q for answer %q", c.Class, res.Answer)
+	}
+	if c.Decider != DeciderJev || !c.AskedProvider {
+		t.Errorf("the answer is the provider's and the line must say so, got %+v", c)
+	}
+
+	f.answer = ClassClean
+	res = ch.Classify(context.Background(), q, publicEvidence("the card's output"), floor)
+	c = ClassifyHarvest(ev, res, floor)
+	if c.Class != ClassClean {
+		t.Fatalf("two answers, two classes: defect was %q, clean is %q", ClassDefect, c.Class)
+	}
+}
+
+// A question nobody answered is DeciderNone and says so -- the row D2's
+// `decider=none why=no-decider` had no code path for.
+func TestAQuestionWithNoDeciderIsDeciderNoneAndNotAsked(t *testing.T) {
+	q := harvestQ(t)
+	ev := evidence()
+	const floor = 0.65
+	f := &capturingProvider{name: DeciderJev, sees: SeesPublic, answer: ClassClean, conf: 0.99}
+
+	res := Chain{Deciders: []ChainDecider{NewRulesDecider(nil)}}.Classify(
+		context.Background(), q, publicEvidence("nothing the table knows"), floor)
+	if res.Decider != DeciderNone || res.Why != WhyNoDecider {
+		t.Fatalf("fixture: this walk must end with no decider, got %+v", res)
+	}
+
+	c := ClassifyHarvest(ev, res, floor)
+	if c.Class != ClassUnknown {
+		t.Errorf("no decider is the absence of an answer, got class=%q", c.Class)
+	}
+	if c.Decider != DeciderNone || c.Why != WhyNoDecider {
+		t.Errorf("a question with no decider must say so, got decider=%q why=%q", c.Decider, c.Why)
+	}
+	if c.AskedProvider {
+		t.Errorf("nobody was asked, so asked must be false")
+	}
+	if f.calls != 0 {
+		t.Errorf("the fake was never in the walk; calls=%d", f.calls)
+	}
+}
+
+// Where the gate already decided, no provider is asked and `asked=false`.
+func TestTheProviderIsNeverCalledWhereTheGateAlreadyDecided(t *testing.T) {
+	q := harvestQ(t)
+	const floor = 0.65
+	for _, accept := range []string{AcceptOK, AcceptReject} {
+		ev := evidence()
+		ev.Accept = accept
+		f := &capturingProvider{name: DeciderJev, sees: SeesPublic, answer: ClassDefect, conf: 0.99}
+
+		// The caller's contract: the chain runs only where the gate left the
+		// question open, which is the shape this boundary is used in.
+		var res Result
+		if NeedsProvider(ev) {
+			res = Chain{Deciders: []ChainDecider{NewRulesDecider(nil), f}}.Classify(
+				context.Background(), q, publicEvidence("card output"), floor)
+		}
+		c := ClassifyHarvest(ev, res, floor)
+		if f.calls != 0 {
+			t.Errorf("accept=%s called a provider about a decision the gate already made: calls=%d", accept, f.calls)
+		}
+		if c.AskedProvider {
+			t.Errorf("accept=%s must not be asked, got asked=true", accept)
+		}
+	}
+}
+
+// Neither RESULT.md prose nor the raw output tail enters the provider question
+// or the outcome row. Only the three closed-set OUTCOME fields and the bounded
+// reason token may appear.
+func TestTheCapturedRequestCarriesNoProseAndNoOutputTail(t *testing.T) {
+	const proseMarker = "PROSE_MARKER_RESULT.md_must_not_cross_7f3a"
+	const tailMarker = "OUTPUT_TAIL_MARKER_must_not_cross_9b21"
+
+	ev := evidence()
+	ev.Prose = proseMarker
+
+	// The unit as the caller holds it: the typed fields the boundary reads, and
+	// the raw output tail beside them. Nothing hands the tail to the boundary.
+	type unit struct {
+		ev         HarvestEvidence
+		outputTail string
+	}
+	u := unit{ev: ev, outputTail: tailMarker}
+
+	const floor = 0.65
+	f := &capturingProvider{name: DeciderJev, sees: SeesPublic, answer: ClassDefect, conf: 0.90}
+	q := harvestQ(t)
+	state, err := HarvestState(u.ev)
+	if err != nil {
+		t.Fatalf("the state refused to build: %v", err)
+	}
+	for _, want := range []string{"accept: abstain", "line2: blocked", "reason: toolchain-missing"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("the state is missing %q", want)
+		}
+	}
+	answer, conf, _, err := f.Ask(context.Background(), q, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := Result{Answer: answer, Confidence: conf, Decider: f.Name(), Why: WhyNone}
+	c := ClassifyHarvest(u.ev, res, floor)
+
+	for i, s := range f.states {
+		if strings.Contains(s, proseMarker) || strings.Contains(s, tailMarker) || strings.Contains(s, "RESULT.md") {
+			t.Errorf("the provider question %d carries prose or an output tail:\n%s", i, s)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	if err := AppendOutcomeRow(path, "unit-1", c); err != nil {
+		t.Fatal(err)
+	}
+	row, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(row), proseMarker) || strings.Contains(string(row), tailMarker) || strings.Contains(string(row), "RESULT.md") {
+		t.Errorf("the outcome row carries prose or an output tail: %s", row)
 	}
 }
 

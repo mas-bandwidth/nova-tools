@@ -948,9 +948,12 @@ network or permission. `red_owner` is asked only meaningfully for a red: `row` w
 thing is the work's own, `bench` when it is the machine's, `na` when nothing is red. Tamper answer:
 `unknown` for both.
 
-**The evidence.** The `RESULT.md` first line, its `red:` line where present, and the last 3072
-bytes of the card's output, tail truncation, after redaction. Bound: 4096 bytes. A card's output
-is private unless the pool's repository is PUBLIC (S7).
+**The evidence.** Not the `RESULT.md` first line and not the card's output tail: what enters this
+question is the machinery-owned OUTCOME fields plus bounded typed reason fields, and
+**`docs/SPEC-TOOLWORK.md` §4 governs what may enter this question**. `RESULT.md` prose and the raw
+output tail enter neither the provider question nor the log. The public/private admission check
+stands -- a typed shape alone does not prove its fields public, and S7 is unchanged -- and D6's
+observed-versus-truth split stands: the appended row is observed, never truth.
 
 **The rule table.** Output whose last 3072 bytes match a toolchain pattern from a data file
 (`questions/toolchain.txt`: `command not found`, `executable file not found in $PATH`, `no space
