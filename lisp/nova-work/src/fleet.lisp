@@ -25,8 +25,21 @@ tests and do profiling. An unknown role is a refusal, never a guess.")
   "SPEC-WORK.md:3548 --- a field named any of these in a machine record is a
 credential; the record is refused whole and the value is not echoed.")
 
+;;; ONE `machine` struct, two constructors (nova-tools #1612). This file
+;;; defined it twice -- here and again at the head of the folded #1102 section
+;;; below -- with IDENTICAL slots and two constructor names. SBCL calls that
+;;; "Duplicate definition for COPY-MACHINE found in one file", a full WARNING
+;;; and not a style-warning, which makes `(asdf:load-system :nova-work)` FAIL:
+;;; the system loaded at all only because run-tests.sh muffled every warning.
+;;; `defstruct` takes as many `(:constructor ...)` options as it is given, so
+;;; both call shapes keep working from the one definition.
 (defstruct (machine (:constructor %make-machine
+                        (&key id name owner connect roles permits excludes limits facts))
+                    (:constructor make-machine
                         (&key id name owner connect roles permits excludes limits facts)))
+  "One CONFIG `:machine` member: equipment, never a work-tree node. Its roles,
+permits and excludes are declared facts; a probe or a heartbeat never writes
+them."
   id name owner connect roles permits excludes limits facts)
 
 (defstruct (fleet (:constructor %make-fleet ()))
@@ -1503,12 +1516,8 @@ numbers and bumps the machine generation; an allocation is never touched
 ;;; (SPEC-WORK.md:3557-3590)
 ;;; ------------------------------------------------------------------
 
-(defstruct (machine (:constructor make-machine
-                                  (&key id name owner connect roles permits excludes limits facts)))
-  "One CONFIG `:machine` member: equipment, never a work-tree node. Its roles,
-permits and excludes are declared facts; a probe or a heartbeat never writes
-them."
-  id name owner connect roles permits excludes limits facts)
+;;; `machine` was defined again here (nova-tools #1612). It is one struct with
+;;; two constructors at the head of this file now; `make-machine` is unchanged.
 
 (defstruct (fleet-session (:constructor make-fleet-session (&key who leases)))
   "The caller's view, held only so a replay can prove the ask writes nothing to

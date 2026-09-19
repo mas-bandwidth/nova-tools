@@ -763,9 +763,15 @@ cadence and every bound, each read rather than remembered
             (session-build-identity)
             (session-emitted session))))
 
-(defun session-identity-line (session)
-  "The `SESSION OK` identity line a running session prints and serves."
-  (session-status-line session))
+;;; `session-identity-line` was defined HERE as a one-line delegation to
+;;; `session-status-line`, and AGAIN below, in this same file, with a whole
+;;; format string of its own (nova-tools #1612). The second definition is the
+;;; one that has been running -- the two lines are not the same line; this one
+;;; prints `session=`, `file=`, `journal=` and the counts and the other does
+;;; not -- so the dead delegation is removed and the live definition is left
+;;; exactly as it is. Which of the two shapes the grammar wants is a question
+;;; for `docs/SPEC-WORK.md:5340`, not something to decide by deleting the copy
+;;; that happens to lose the load.
 
 ;;; ------------------------------------------------------------------
 ;;; `session stop` and `session handoff` (SPEC-WORK.md:814-828).

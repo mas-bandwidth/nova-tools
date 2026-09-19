@@ -1722,147 +1722,23 @@ holder-only release: the coordinator never signs for a holder
   (equal actor holder))
 
 ;;; ------------------------------------------------------------------
-;;; `session replay` bundle intake (SPEC-WORK.md:2214-2218, :2240-2251)
+;;; `session replay` bundle intake --- MOVED to src/transport.lisp
 ;;; ------------------------------------------------------------------
 ;;;
-;;; A request bundle is the bus's durable unit: "a request bundle is a file a
-;;; note carries, and `session replay --from` is its intake, so no second
-;;; transport is invented here". The replay applies the bundle one request at a
-;;; time, validated fresh against the live O. `--as` names the coordinator
-;;; applying the bundle and is recorded in `:generation-owner`; the event's
-;;; `:by` stays the request's own author, because a replay moves a request and
-;;; never re-authors it. A request whose `--expect` is behind its node's own
-;;; accepted event refuses `stale` naming the current revision, but the bundle's
-;;; own earlier requests are exactly what its later ones saw and never stale
-;;; them. A retry of a recorded request is answered by the journal's dedup
-;;; predicate with the recorded disposition and applies no second event.
-
-(defstruct (request-bundle
-             (:constructor make-request-bundle (base clipped-revision requests)))
-  "The parsed intake of `session replay --from`: the commit the bundle was
-written at, the clipped revision its requests expect, and the ordered requests."
-  base clipped-revision requests)
-
-(defun read-request-bundle (text)
-  "Read one restricted s-expression request bundle. The bundle is
-`(:request-bundle :base <sha> :clipped-revision <n> :requests (<request> ...))`
-where each request is a plist carrying `:verb`, `:node`, `:by`, `:request`,
-`:expect` and the verb's own fields. A malformed or absent boundary refuses
-rather than being guessed."
-  (let ((form (read-restricted text)))
-    (unless (and (consp form) (eq (first form) :request-bundle))
-      (error 'unsupported-input :what "not a request bundle"))
-    (let ((clipped (getf (rest form) :clipped-revision +absent+))
-          (requests (getf (rest form) :requests +absent+)))
-      (unless (and (integerp clipped) (not (minusp clipped)))
-        (error 'unsupported-input
-               :what "request bundle needs a nonnegative :clipped-revision"))
-      (unless (listp requests)
-        (error 'unsupported-input :what "request bundle needs a :requests list"))
-      (dolist (request requests)
-        (unless (and (consp request) (keywordp (first request)))
-          (error 'unsupported-input :what "a bundle request is not a plist"))
-        (unless (getf request :request)
-          (error 'unsupported-input :what "a bundle request carries no :request id")))
-      (make-request-bundle (getf (rest form) :base +absent+) clipped requests))))
-
-(defun %bundle-request (request coordinator &key now)
-  "The kernel request a bundle entry becomes. `--expect` is the replay's own
-precondition and is not a kernel field, so it is removed; the replayer replaces
-`:generation-owner`; the bundle's `:by` is left alone."
-  (let ((req (copy-list request)))
-    (remf req :expect)
-    (setf (getf req :generation-owner) coordinator)
-    (let ((stamp (getf req :stamp)))
-      (cond
-        (stamp (unless (getf req :clock) (setf (getf req :clock) :given)))
-        (now (setf (getf req :stamp) now (getf req :clock) :given))
-        (t (setf (getf req :stamp) "1970-01-01T00:00:00Z"
-                 (getf req :clock) :tool))))
-    req))
-
-(defun %bundle-apply (session request coordinator &key now)
-  "Apply one bundle request through the session's single writer and answer a
-verdict line for it."
-  (multiple-value-bind (okp line code)
-      (wire-session-mutate session (%bundle-request request coordinator :now now))
-    (if okp
-        (values t (format nil "REPLAY OK request=~A node=~A"
-                          (getf request :request) (getf request :node))
-                0)
-        (values nil (format nil "REPLAY FAIL request=~A node=~A: ~A"
-                            (getf request :request) (getf request :node)
-                            (or (and (stringp line) line)
-                                (format nil "exit ~A" code)))
-                1))))
-
-(defun %replay-verdict (session request coordinator baseline &key now)
-  "Answer (values OK-P LINE EXIT) for one bundle request. A recorded id is
-answered by the journal's dedup predicate; a fresh request whose node has
-accepted an event of its own after the revision `--expect` names is refused
-`stale`; otherwise it is applied."
-  (let* ((kernel (wire-session-kernel session))
-         (node (getf request :node))
-         (rid (getf request :request))
-         (expect (getf request :expect)))
-    (multiple-value-bind (found recorded-digest recorded-line)
-        (journal-lookup (kernel-journal kernel) rid)
-      (declare (ignore recorded-digest recorded-line))
-      (cond
-        ((eq found :unavailable)
-         (values nil (format nil "REPLAY FAIL request=~A node=~A: dedup unavailable" rid node) 1))
-        (found
-         ;; The id and body are already recorded: the kernel's dedup predicate
-         ;; returns the recorded disposition and applies no second event.
-         (%bundle-apply session request coordinator :now now))
-        ((null expect)
-         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect is required on a bundle request"
-                             rid node)
-                 1))
-        ((not (and (integerp expect) (not (minusp expect))))
-         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect must be a nonnegative revision"
-                             rid node)
-                 1))
-        ((let ((latest (gethash node baseline)))
-           (and latest (> latest expect)))
-         (values nil (format nil "REPLAY FAIL request=~A node=~A expect=~D current=~D: stale"
-                             rid node expect (gethash node baseline))
-                 1))
-        (t
-         (%bundle-apply session request coordinator :now now))))))
-
-(defun session-replay (session bundle &key as max now)
-  "Apply BUNDLE one request at a time through the session's kernel, bounded by
-MAX (NIL or 0 means every request; a negative bound refuses). `--as` names the
-coordinator applying the bundle and is recorded in `:generation-owner`, while
-the event's `:by` stays the request's own author. Answer (values OK-P LINES
-EXIT): one verdict line per request, exit 0 only when every one applied."
-  (unless (and (stringp as) (plusp (length as)))
-    (error 'unsupported-input :what "session replay needs --as <name>"))
-  (when (and max (minusp max))
-    (error 'unsupported-input :what "session replay: a negative --max is refused"))
-  (let* ((kernel (wire-session-kernel session))
-         (baseline (make-hash-table :test #'equal))
-         (requests (request-bundle-requests bundle))
-         (selected (if (or (null max) (zerop max))
-                       requests
-                       (subseq requests 0 (min max (length requests)))))
-         (lines '())
-         (exit 0))
-    ;; The per-node accepted-revision baseline is read once, before the replay,
-    ;; so a bundle's own earlier requests never stale its later ones.
-    (dolist (record (state-history (kernel-state kernel)))
-      (dolist (form (getf record :events))
-        (let ((node (getf form :node))
-              (rev (getf form :rev)))
-          (when (and (stringp node) (integerp rev)
-                     (or (null (gethash node baseline))
-                         (> rev (gethash node baseline))))
-            (setf (gethash node baseline) rev)))))
-    (dolist (request selected)
-      (multiple-value-bind (okp line code)
-          (%replay-verdict session request as baseline :now now)
-        (declare (ignore okp))
-        (push line lines)
-        (when (plusp code) (setf exit 1))))
-    (values (zerop exit) (nreverse lines) exit)))
+;;; This file held a SECOND, older copy of the whole bundle-intake block:
+;;; the `request-bundle` struct and `read-request-bundle`, `%bundle-request`,
+;;; `%bundle-apply`, `%replay-verdict` and `session-replay` (nova-tools #1612).
+;;; `src/transport.lisp` defines all six and loads AFTER this file
+;;; (`nova-work.asd`), so transport's definitions are the ones that have been
+;;; running and this copy was dead -- a repair made here would have compiled,
+;;; loaded, passed the suite and changed nothing.
+;;;
+;;; The two had DIVERGED, which is what made it more than untidiness: this
+;;; copy's `make-request-bundle` took `(base clipped-revision requests)`
+;;; POSITIONALLY and transport's takes keywords, so SBCL reported
+;;; "redefinition of MAKE-REQUEST-BUNDLE clobbers structure constructor" -- a
+;;; full WARNING, which made `(asdf:load-system :nova-work)` FAIL outright. The
+;;; only reason the system loaded at all is that run-tests.sh muffled every
+;;; warning; see the runner's own note.
+;;;
+;;; Nothing is kept here: the live text is src/transport.lisp:1125 onward.
