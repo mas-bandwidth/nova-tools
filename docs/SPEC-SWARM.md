@@ -1631,9 +1631,14 @@ turn in flight carries no tokens object — the provider charged for it and no
 database holds the figure. The field is printed only when `n` is above zero,
 the way `benches=` is.
 
-A store that is absent contributes zero, because an absence is an absence. A
-store that **could not be read** — a locked database, a query that did not
-answer, no `sqlite3` on `PATH` — contributes zero too and is **never silent**:
+**An absence contributes zero, silently; a reader that stopped contributes zero
+and says so.** The two absences are a store that is **not there** (`no-store`)
+and one that is there, was read perfectly, and holds nothing in the window
+(`no-rows`) — the shape a harness killed before its first answer leaves. Neither
+is a fault, and a note on either would fire on every card reaped early and teach
+its readers to scroll past the line, taking the note that matters with it. The
+two failures are `no-sqlite3` and `query-failed` — a missing program, a locked
+or corrupt database, a query past its timeout — and for those
 `BATCH NOTE <label> store unread: <reason>` goes to stderr, because a zero
 nobody was told about is the fault this whole reader exists to close. The store
 reads run **in parallel, at most four at a time**: each carries the usage

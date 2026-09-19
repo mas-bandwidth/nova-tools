@@ -74,7 +74,7 @@ type nativeRunResult struct {
 	binarySHA256 string            // sha256 of the harness binary, lowercase hex
 	job          string            // the job directory <slot>/jobs/<label> the child ran in
 	usageState   string            // the store path the NATIVE OK line names when no store answered, "" otherwise
-	usageReason  string            // no-rows | no-store | no-sqlite3, "" when the store answered
+	usageReason  string            // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
 	configSHA    string            // sha8 of the carried provider config, "" when --config named none
 	tmp          string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found

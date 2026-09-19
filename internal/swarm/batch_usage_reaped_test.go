@@ -282,3 +282,94 @@ func TestAStaleSlotUsageRowIsNotThisCardsRow(t *testing.T) {
 		t.Fatalf("a stale slot row must not block this card's own store:\n%s", out)
 	}
 }
+
+// AN EMPTY STORE WAS READ FINE (Rowan's re-read of this change). `ReadCardUsage` collapsed
+// TWO different things onto the one token `no-rows`: a query that FAILED, and a query that
+// succeeded against a table with nothing in it. They are not the same fact.
+//
+// A harness killed before its first answer leaves a store with the schema and no message
+// rows -- read perfectly, holding nothing. Reporting that as `store unread: no-rows` names a
+// reader that stopped where there was none, and a note that cries wolf on every early kill
+// is a note people learn to scroll past. The one that matters -- a locked database, a query
+// that timed out -- then goes unread with it.
+//
+// So a failed query has its own reason, and an empty store is an absence like a missing one:
+// zero, counted, and silent.
+func TestAnEmptyStoreIsNotUnread(t *testing.T) {
+	windowsIsNotABench(t)
+	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+		t.Skipf("%s is not on PATH", SQLiteBinary)
+	}
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The schema and not one row: the store a harness killed before its first answer leaves.
+	fixture := loadCardUsageSQL(t, filepath.Join(dir, "store", "opencode.db"), cardUsageSchema)
+	runner := runnerDoing(t, dir, "emptystore",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "copy", Path: "{root}/{slot}/data/opencode/opencode.db", Body: fixture},
+		runnerStep{Op: "write", Path: "{root}/empty-started"},
+		runnerStep{Op: "sleep", Ms: 30000},
+	)
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "empty-started"))
+		clk.waitTick()
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
+	if code != 1 {
+		t.Fatalf("a batch with a reaped card exits 1, got %d:\n%s", code, out)
+	}
+	if strings.Contains(errs, "store unread") {
+		t.Fatalf("a store that was read and held nothing is an absence, not a reader that stopped:\n%s", errs)
+	}
+	// And it is still zero, and still not claimed as a measured floor.
+	if !strings.Contains(out, "in=0 out=0 usd=0.0000") {
+		t.Fatalf("an empty store contributes zero:\n%s", out)
+	}
+	if strings.Contains(out, "partial=") {
+		t.Fatalf("a store with no turns in it is no lower bound:\n%s", out)
+	}
+}
+
+// AND THE READER THAT REALLY STOPPED KEEPS ITS OWN REASON, distinct from the empty store
+// above. This is the pair: one token each, so the note fires for exactly one of them.
+func TestAFailedQueryAndAnEmptyTableAreDifferentReasons(t *testing.T) {
+	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+		t.Skipf("%s is not on PATH", SQLiteBinary)
+	}
+	dir := t.TempDir()
+	started, ended := cardUsageWindow()
+
+	// A store that is not a database at all: the query fails.
+	bad := filepath.Join(dir, "bad", "opencode", "opencode.db")
+	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("not a database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, badReason := ReadCardUsage(filepath.Join(dir, "bad"), started, ended)
+
+	// A store with the schema and no rows: the query succeeds and answers nothing.
+	loadCardUsageSQL(t, filepath.Join(dir, "empty", "opencode", "opencode.db"), cardUsageSchema)
+	_, _, _, emptyReason := ReadCardUsage(filepath.Join(dir, "empty"), started, ended)
+
+	if badReason == emptyReason {
+		t.Fatalf("a failed query and an empty table are different facts and want different reasons; both said %q", badReason)
+	}
+	if emptyReason != "no-rows" {
+		t.Errorf("a store read fine and holding nothing is no-rows, got %q", emptyReason)
+	}
+	if badReason == "" || badReason == "no-rows" {
+		t.Errorf("a query that failed has its own reason, got %q", badReason)
+	}
+}

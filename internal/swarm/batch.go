@@ -2035,10 +2035,16 @@ func storeCardSpend(root, scratch string) (in, out int, usd float64, partial boo
 	usage, _, _, why := ReadCardUsage(filepath.Join(root, scratch, "data"),
 		time.UnixMilli(0), time.Now())
 	if why != "" {
-		// `no-store` is an ABSENCE and not a failure: this card's harness never wrote a
-		// database, so there is nothing that could have been read and nothing to report.
-		// The other reasons are a reader that stopped, and those are said out loud.
-		if why == "no-store" {
+		// TWO OF THE FOUR REASONS ARE ABSENCES AND ARE SILENT. `no-store` is a harness that
+		// never wrote a database; `no-rows` is one that wrote the schema and was killed
+		// before its first answer -- a store READ PERFECTLY that holds nothing. Neither is
+		// a reader that stopped, and a note on either would fire on every card reaped early
+		// and teach its readers to scroll past the line. Then the note that matters -- a
+		// locked database, a query past its timeout -- goes unread with them.
+		//
+		// `no-sqlite3` and `query-failed` ARE readers that stopped, and those are said out
+		// loud. They were one token with `no-rows` until 2026-09-19.
+		if why == "no-store" || why == "no-rows" {
 			return 0, 0, 0, false, ""
 		}
 		return 0, 0, 0, false, why
