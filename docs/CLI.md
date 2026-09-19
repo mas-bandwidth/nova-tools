@@ -1286,6 +1286,76 @@ build-level half of the same class on the bench, in seconds, with no second mach
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
 
+### integrate
+
+```
+nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--sensitive <file> --designated <who>] [--checks "<a>,<b>"] [--reference <mirror>] [--ci-timeout <duration>] [--ci-interval <duration>] [--title <text>] [--no-draft] [--gomaxprocs <n>] [--timeout <duration>] [--untyped-comments ignore --reason <text>]
+```
+
+`integrate` is **the landing verb**: the integration batch, which seven landing shifts ran
+by hand on 2026-09-19 — sixteen times in one shift — as ONE verb. Issue #1845, L6 of
+#1725. It **composes and duplicates nothing**: steps 3, 4 and 9 below are `simulate`,
+`batch` and `land` run with the arguments a hand would have typed; the hold read is
+`internal/merge`'s verdict fold (#1572), the same one `batch` and `land` use, and there is
+no second parser for a `DISPOSITION` line in it; a red is named through the same engine
+`nova-ci failed` prints.
+
+The eleven steps, each one typed line, in order:
+
+```
+INTEGRATE START     name=<name> base=<branch> members=<#n@sha,...> lane=<dir> on=<bench> dry_run=<bool> steps=11
+INTEGRATE HEADS     ok=<n> moved=none members=<list>                       1 the heads are the CALLER'S
+INTEGRATE HOLD      pass=1 member=#<n> head=<sha> verdict=clear verdicts=<n> sensitive=<who|none|unchecked>
+INTEGRATE SIMULATE  entries=<n> conflicts=none base=<branch>               3 onto the base AS IT STANDS
+INTEGRATE BATCH     on=<bench> head=<sha> members=<list> dropped=none      4 the gate
+INTEGRATE PUSH      branch=<b> head=<sha> lease=must-not-exist existed=0 readback=<sha> forced=no
+INTEGRATE PR        number=<n> url=<url> draft=<bool> receipt=in-body basis=<file>
+INTEGRATE CI        pr=<n> head=<sha> check=ci-ok state=<pending|green|failure|timeout>
+INTEGRATE HOLD      pass=2 ...                                             8 the read AT THE DOOR
+INTEGRATE LAND      pr=<n> head=<sha> members=<list>                       9 `land`, the one door
+INTEGRATE CLOSE     member=#<n> head=<sha> pointer=batch-<n> verdict=closed
+INTEGRATE REVERIFY  pr=#<n> base=<branch> mergeable=<state>               11 what the move left behind
+INTEGRATE DONE      name=<name> pr=<n> head=<sha> members=<list> closed=<n> steps=11/11
+INTEGRATE FAIL      pr=<n> run=<id> test=<name> pkg=<pkg> job=<job> at=<file:line>
+INTEGRATE REFUSED   step=<step> member=#<n> reason="<what it was>"
+```
+
+**`--members` takes the head and will not guess one** — `1749@4f7092ad,1753@9589cc26`. A
+member whose head the forge now reports differently is refused by name and nothing is
+gated: every read this landing folds was recorded at the head the caller named, and a
+verb that read the head off the forge at the moment of the merge would fold a read of a
+commit nobody looked at.
+
+**The hold is read twice by this verb and once more by the gate**, so a member is read
+three times: at admission, inside `batch`'s own reading-3 fold, and at the door
+immediately before `land`. `--lane` is required — reading 3 makes the lane's own records
+half the evidence — and **no flag here lifts a hold**.
+
+**The push is a must-not-exist lease and never a force.** `origin` is asked for the ref
+first and a branch that already exists is a refusal; the push itself is a plain one,
+which creates a branch and cannot overwrite one, and the ref is read back and compared.
+The gated object lives only in the gate's own clone (`batch` pushes nothing), so it is
+fetched from `<root>/<name>/repo` and checked against the receipt's head before the push.
+
+**`--dry-run` runs steps 1-3 and nothing else**: it gates nothing, pushes nothing, opens
+nothing and queues nothing, and its `INTEGRATE DONE` says `steps=3/11 landed=none`.
+
+**A red is terminal and nothing is retried.** `ci-ok` is polled to `--ci-timeout`; a red
+is read through `nova-ci failed`'s engine and every failing test is named on its own
+`INTEGRATE FAIL` line. A named failing test is a finding, never a rerun. The
+runner-cleanup shape of #1751 is **not** special-cased: it was repaired on dev by #1779,
+and a verb carrying a permanent exemption for a fault that has been fixed is a verb that
+will one day swallow a real red wearing the same clothes.
+
+**`--sensitive <file> --designated <who>`** is `docs/SPEC-TOOLWORK.md` eligibility rule 13:
+a member whose diff touches one of the named path prefixes has one reader, and only that
+mind's APPROVE **at this head** admits it. With no `--sensitive` file the rule is
+`sensitive=unchecked` on the line rather than silently passed — the same discipline
+hygiene's `paths=-` keeps.
+
+Exit 0 is a landing; 1 is the verb saying NO; 2 is an unusable invocation or something
+outside the decision that could not run.
+
 ## nova-pulse
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
