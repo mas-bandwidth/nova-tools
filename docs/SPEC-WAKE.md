@@ -538,7 +538,10 @@ The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
 the verdict line that ends the listing, and `AWAKE REFUSED` the shape for the
 things wrong about the world rather than the invocation (no `--bus`, a `--bus`
 that is not a git repository, a `--window` that is not positive, a negative
-`--max`). The four `FACT` lines are the awake grammar's presence record: four
+`--max`). Every one of those four ends in the door -- `; run: nova-wake help`
+-- because a refusal that does not say where the usage is costs the reader the
+whole banner to find out (#1451); the grammar above is unchanged, because the
+door sits inside `<reason>`. The four `FACT` lines are the awake grammar's presence record: four
 facts a harness must prove separately — **process** alive; **beat** (the bus
 heartbeat) written; **delivery** handled (the note was receipted); **wake**
 (the parent was notified, the model woke) — each `proven` or `unproven`.
