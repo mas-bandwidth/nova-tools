@@ -740,6 +740,13 @@
    #:accept-record-of
    #:accept-journal-count
    #:recover-operation
+   ;; the local recovery journal and the restart reconciliation
+   ;; (SPEC-WORK.md:2728-2733, :2759-2760)
+   #:*operation-journal-initial-state*
+   #:operation-journal-ids
+   #:reconcile-operation-registry
+   #:open-durable-operation-registry
+   #:close-durable-operation-registry
    #:session-operation-list
    #:registry-operation-list
    #:work-session-cancellations
