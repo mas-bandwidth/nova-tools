@@ -67,7 +67,9 @@ and the mechanical law that already holds **after** it.
    `state` (`ready` | `withdrawn`), `evidence`, `by`, `at`. It is append-only: a
    withdrawal is a new row, and per `(kind, area)` the newest `at` wins, a tie folding
    **withdrawn-last**, the way a hold folds last (`docs/SPEC-MERGE.md:820-827`). Its
-   author is a person or the coordinator, and it reaches `dev` the way any change does
+   author (the `by` field, and the commit's) is Glenn or a friend who is **not** the
+   writer of the pilot's cards — never the coordinator that cut those cards, alone, since
+   that is marking one's own work (Q9, awaiting Glenn) — and it reaches `dev` the way any change does
    — a pull request, a read, a batch. No verb in these tools writes the file: a class
    test asserts no non-test Go file names its path for writing, and §3's hygiene rejects
    any card's diff that touches it (`readiness-self`), so a swarm cannot grant itself a
@@ -96,7 +98,7 @@ and the mechanical law that already holds **after** it.
 
    | kind | area | state | evidence | by |
    |---|---|---|---|---|
-   | `read`, `probe` | `**` | `ready` | `trial=` 504 read cards in one day, 2026-09-17 (`docs/SPEC-REVIEW.md:644`); 326 cards in the practice-17 shape, 2026-09-15 (`docs/WORKER-CARDS.md:317-319`). These kinds change nothing, so no gate is owed. | Rowan, to be confirmed by the read of this PR |
+   | `read`, `probe` | `**` | `ready` | `trial=` 504 read cards in one day, 2026-09-17 (`docs/SPEC-REVIEW.md:644`); 326 cards in the practice-17 shape, 2026-09-15 (`docs/WORKER-CARDS.md:317-319`). These kinds change nothing, so no gate is owed. | proposed by Rowan; in force only when Glenn or a friend confirms it in the read of this PR (rule 1) |
 
    **No code-changing kind has a row, for any area, because no accept gate exists yet**
    (work items T1-T6). That is the whole reason the gate is built by a **builder** with a friend's read — a
@@ -110,10 +112,16 @@ and the mechanical law that already holds **after** it.
    `evidence=pilot:<n>`, which admits at most `<n>` cards, one at a time (§5 rule 5),
    every one of them read by a friend whatever the gate said. (iii) The pilot's
    `OUTCOME` rows and the reads' dispositions go into a trial file; where the area's
-   tests are the question, a mutation pass gives the score. (iv) A person or the
-   coordinator writes the `ready` row citing them, by commit. There is no threshold in
-   this spec: the row is a judgment, and the evidence is there so the judgment can be
-   read. **Withdrawal** is one appended row by the same hands, for any reason, and is in
+   tests are the question, a mutation pass gives the score. (iv) Glenn, or a
+   friend who did not write the pilot's cards, writes the `ready` row citing them, by
+   commit. The row is a judgment, and under it sits a small floor **held in data, not in
+   this prose**: `docs/READINESS-FLOOR.tsv`, one row per kind — `kind`, `min_pilot`,
+   `max_accepted_then_held` — seeded with a minimum pilot count and **zero**
+   accepted-then-held in the trial. `cut` refuses a `ready` row whose `trial=` file shows
+   fewer pilot cards than `min_pilot` or more accepted-then-held than the maximum
+   (`CUT REFUSED readiness … below-floor`); the floor file is changed by commit, like the
+   table, and is `readiness-self` to a card. The numbers are Q9's and await Glenn. **Withdrawal** tightens, so it is open to more hands: one appended row by Glenn, any
+   friend or the coordinator, for any reason, in
    force from the commit that lands it; `harvest` re-reads the table, so a card launched
    before a withdrawal and harvested after it is `ACCEPT ABSTAIN reason=not-ready` and
    pushes nothing. A HOLD on an accepted swarm PR whose finding the gate should have
@@ -187,15 +195,23 @@ every card whatever its area, and the ruling does not loosen them:
     by the card writer, inside the contract hash (§5 rule 1) — and only the named file
     is excused. A deleted test file is never excused.
 12. **HOLDs still block** (§6), and nothing here lifts one.
-13. **Security-kind units still route to Johnny for the READ, by machinery.** A card
-    whose `PATHS:` or diff touches a guard, secrets, the sandbox, sudo, deploy keys or
-    the network is a security kind, *"a kind and not a height"*, resolved *"to the
-    designated rung on EVERY path: with the provider on or off, at any floor"*
-    (`docs/SPEC-DECIDE.md:136-148`). **That governs who reviews, not who may write.** A
-    swarm may write such a card when (a) and (b) hold; `harvest`'s read card for its PR
-    goes to the designated mind and to nobody else, the read condition for that PR is
-    satisfied only by that mind's APPROVE at the current head, and where the designated
-    mind is asleep the PR **waits** — it is never re-routed to a reader who is awake.
+13. **A security-kind unit is the designated mind's, by machinery, and that IS the
+    classifier's answer.** A card whose `PATHS:` or diff touches a guard, secrets, the
+    sandbox, sudo, deploy keys or the network is a security kind: *"a kind and not a
+    height"*, chosen *"by the machinery rather than the provider … so no provider call
+    is made"*, resolved *"to the designated rung on EVERY path: with the provider on or
+    off, at any floor"*, where handing it to another mind because the right one is busy
+    *"is the failure this rule exists to prevent"* (`docs/SPEC-DECIDE.md:136-148`). The
+    rule routes the **unit**, not only its read. So for these kinds condition (b) is
+    answered, and the answer is not a swarm: the route resolves to a rung that is asked
+    and not run, the line reads `why=rung-is-asked-not-run`, and by rule 5 the card is
+    **not swarm-eligible**, whatever readiness row exists. This is Glenn's ruling
+    applied, not an exception to it — the route is the classifier, and for these kinds
+    it says the designated mind — and it stays so until a person changes the routing
+    table by commit. The read of any pull request that touches these kinds is the
+    designated mind's and nobody else's: the read condition is satisfied only by that
+    mind's APPROVE at the current head, and where that mind is asleep the work
+    **waits**; it is never re-routed to whoever is awake.
 14. **Reading is never gated on readiness for an area.** `read` and `probe` change
     nothing and rule 3's row covers `**`.
 
@@ -212,9 +228,13 @@ dispatch); `a-yes-at-0.99-with-no-row-cuts-nothing` (#1627 S5's obeyed-provider 
 `an-injected-issue-body-changes-no-eligibility`; `harvest-writes-the-route-outcome`;
 `a-later-hold-appends-a-red-outcome`; `a-card-that-weakens-the-gate-is-rejected`;
 `base-tests-overlaid-on-head-must-pass`; `test-edit-excuses-only-the-named-file`;
+`a-security-kind-card-is-never-swarm-eligible-by-route` (a ready row and a fake provider
+saying yes at 0.99 still cut nothing: no provider call is made at all);
+`a-routing-table-commit-is-the-only-thing-that-changes-that`;
 `security-kind-read-goes-to-the-designated-mind-only`;
 `security-kind-pr-waits-when-the-designated-mind-is-asleep`;
-`pilot-row-admits-n-cards-and-no-more`.
+`pilot-row-admits-n-cards-and-no-more`; `a-row-by-the-pilots-card-writer-is-refused`;
+`a-trial-under-min-pilot-is-below-floor`; `one-accepted-then-held-in-the-trial-is-below-floor`.
 
 ## 1. The accept gate — mechanical accept or reject, with a negative control
 
@@ -246,7 +266,7 @@ nova-pulse accept --selftest --fixtures <dir> --bench <name> --cert <path> [--ti
 ```
 ACCEPT OK      label=<label> kind=<kind> head=<sha12> base=<sha12> tests=<n> red_without=<n> edits=<n|-> control=<id> bench=<name> cert=<id> took=<d>
 ACCEPT REJECT  label=<label> kind=<kind> head=<sha12|-> reason=<token> at=<path[:line]|test|-> control=<id> bench=<name> cert=<id> took=<d>
-ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
+ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|not-ready|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
 ACCEPT SELFTEST control=<id> accepted=<n>/<n> rejected=<n>/<n> edits=1 build=<build identity> fixtures=<sha12> bench=<name> <PASS|FAIL>
 ACCEPT SEED    name=<seed> edits=<n> want=<token> got=<token|ACCEPT> <ok|WRONG>
 ACCEPT REFUSED: <reason> (<remedy>)
@@ -444,7 +464,7 @@ leg.**
    proves; for `sbcl`, `SBCL_HOME` and the core; for `sqlite3`, nothing but the binary.
    Each resolved root is printed on the `SANDBOX OK` line's `toolchain=` field so the
    wall a card ran behind is a fact on its record. An unknown leg is `SANDBOX REFUSED
-   reason=bad_toolchain`. This is a sandbox change, a security kind: whoever writes it, its read is the designated
+   reason=bad_toolchain`. This is a sandbox change, a security kind: the unit and its read are the designated
    mind's (the eligibility rule, 13).
 3. **`native` and `accept` pass the card's legs to the wall.** A card's `LEGS:` line
    (§5) names what its gate needs; the dispatcher turns it into `--toolchain`, and the
@@ -751,9 +771,14 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
    `at` wins and a tie folds **hold-last** (`docs/SPEC-MERGE.md:820-827`). `who` is a
    name in the lane's `reviewers.tsv` (`who`, `logins`, `may-hold`) and is never
    inferred from a login: a login is evidence about an account.
-2. **What on the forge adds a hold.** From any login listed in `reviewers.tsv`, posted
-   after the current head was pushed: a review in state `CHANGES_REQUESTED` (bound to
-   its `commit_id`); a comment carrying the typed line
+2. **What on the forge adds a hold, and the head each one binds to.** From any login
+   listed in `reviewers.tsv`, **whenever it was posted** — there is no time filter on a
+   hold, because a filter that drops what came before the last push lets a push lift a
+   hold, and on this repository holds ARE forge comments: that is #1572 by one push. A
+   review in state `CHANGES_REQUESTED` binds to its `commit_id`; an untyped comment binds
+   to the head that was current when it was posted; a typed line binds to its own
+   `head=`. All three then carry forward under rule 3 until the holder's own release
+   (rule 4). The three forms: the review; a comment carrying the typed line
 
    ```
    DISPOSITION who=<name> head=<sha40> verdict=HOLD [scope="<text>"]
@@ -826,7 +851,9 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
    nobody else's (the eligibility rule, 13).
 
 **Red tests**, the forge a fake in every one: `batch-drops-a-member-held-at-its-head`;
-`batch-drops-a-carried-hold-after-a-push`; `a-newer-approve-by-the-same-who-lifts-it`;
+`batch-drops-a-carried-hold-after-a-push`; `a-forge-hold-posted-before-a-push-still-holds`
+(three fixtures — a typed line, a `CHANGES_REQUESTED` review, an untyped comment — each
+posted at head A, then a push to B, with NO lane record at all: still held, `hold-carried`); `a-newer-approve-by-the-same-who-lifts-it`;
 `another-reviewers-approve-lifts-nothing`; `a-pasted-approve-line-lifts-nothing` (the
 shared login types `verdict=APPROVE who=<holder>`; the member stays held);
 `a-forge-approved-review-counts-for-nothing`; `changes-requested-is-a-hold-bound-to-its-commit-id`;
@@ -935,7 +962,7 @@ strongest controls.
 | T9 (#1654) | swarm | `transcript-test`, one card per tool, the set-of-shapes tests moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
 | T10 (#1655) | swarm | `fix-red` cards over the triage's defects, area by area as each earns its row (the first pool: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
 | T11 (#1656) | swarm | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
-| T12 (#1657) | builder | the transcript tests of the four tools whose areas will earn a row last — nova-sandbox and nova-secrets (unexecuted; security kinds, so the read is the designated mind's), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, eligibility rule 13 |
+| T12 (#1657) | builder | the transcript tests of the four tools whose areas will earn a row last — nova-sandbox and nova-secrets (unexecuted; security kinds, so the unit and its read are the designated mind's and no readiness row makes them a swarm's), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, eligibility rule 13 |
 | T13 (#1658) | builder | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
 | T14 (#1659) | swarm | `rebase`: the conflicting open PRs that are ours, oldest first, one per card (54 conflicted at the triage); the read card lists the files that conflicted | §5 `rebase` |
 | T15 (#1660) | swarm | `mutation-kill`: one card per surviving mutant, from a mutation pass a builder runs with hand-written one-edit seeds and files (Q8) — the same pass is an area's `mutation=` evidence | §5 `mutation-kill`, eligibility rule 2 |
@@ -988,18 +1015,19 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
 - **Q8. `mutation-kill` needs a mutant source.** Default stands: hand-written one-edit
   seeds by a builder, as the nova-work hardening lane did on 2026-09-19; no generator is
   specified here.
-- **Q9 (new). Who may write a readiness row?** The ruling says *we* are confident. This
-  draft reads that as a person or the coordinator, by commit, read like any change —
-  and sets no numeric threshold for a row (the eligibility rule, 4). If Glenn wants a
-  floor under the judgment (a minimum pilot size, a minimum mutation score), it is one
-  sentence there.
+- **Q9 (new). Who may write a readiness row, and what floor sits under it? — AWAITING
+  GLENN.** Default, taken from the cold read of draft 2: Glenn, or a friend who is not
+  the pilot's card writer, by commit — never the coordinator that cut the cards alone;
+  and a small numeric floor in `docs/READINESS-FLOOR.tsv` (a minimum pilot count, zero
+  accepted-then-held in the trial), in data and not in prose. The numbers themselves
+  are Glenn's.
 
 ## What this draft does not do
 
 It lands no code. It forbids no path to a swarm. It does not let a swarm land anything,
 lift a hold, skip a read, enqueue anything, write its own readiness or edit what judges
-it. It does not change the read condition, except to name whose read counts for a
-security kind. It lets no classifier answer suffice for anything. It does not specify Jev's
+it. It does not change the read condition, and it does not move a security-kind unit off
+the designated mind: SPEC-DECIDE's routing table does that, by commit, or nothing does. It lets no classifier answer suffice for anything. It does not specify Jev's
 question, options, state or floor — that is the Jev lane's SPEC-DECIDE amendment. It
 does not widen the wall: §2 names narrower roots per leg and refuses an unknown one. It
 does not make a mutant generator (Q8). It does not certify any Linux bench for a walled
