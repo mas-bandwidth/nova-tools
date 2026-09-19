@@ -1205,7 +1205,7 @@ source, not a string built in three places, and `policy` prints them:
 | platform | roots |
 |---|---|
 | darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
-| linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/run/systemd/resolve`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
+| linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/run/systemd/resolve`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command, and the directory `/etc/resolv.conf` resolves to (its symlink target's parent: `/run/systemd/resolve` on a systemd machine, `/mnt/wsl` on WSL2); plus **write** on `/dev/null` and `/dev/tty` |
 | windows | `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command |
 
 `/` itself and `/dev` are in the darwin list because they were measured to be
@@ -1263,6 +1263,17 @@ of the one roots table, not a separate policy and not a caller switch: there is
 no flag that turns them off. The `SANDBOX OK` line's `read=` count is the
 caller's `--read` list and does not include them; `nova-swarm` passes nothing
 new and inherits the table.
+
+The same shape has a machine-chosen target, and a fixed row cannot name it:
+measured 2026-09-19 on WSL2 (kernel 6.18.33.2), the distro's `/etc/resolv.conf`
+is a symlink to `/mnt/wsl/resolv.conf`, `/mnt/wsl` is in no row above, and glibc
+inside the wall had no nameserver — every lookup failed with `Could not resolve
+host` while TCP by IP still worked. So `addRules` applies `linuxRoots`, not the
+bare `linuxReadRoots` slice: it is the table above plus the directory
+`/etc/resolv.conf` resolves to, read-only and skip-if-absent like every other
+root. The containing directory is granted rather than the file, because WSL
+rewrites the file and a rule on the old inode would be left holding a path that
+is no longer read.
 
 The home directory is never a root — **including by way of the command**. One
 root is computed rather than named, "the directory of the resolved command", and
