@@ -51,3 +51,41 @@ func TestReadItemRefusesInvalidReadShape(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateReadsRetainsParserHoldAfterDocsScopedApprove(t *testing.T) {
+	t.Parallel()
+	head := strings.Repeat("a", 40)
+	entry := &Entry{
+		PR:        1,
+		OID:       head,
+		NeedsRead: "no",
+		Reads: []Read{
+			{
+				Who:     "rowan",
+				Verdict: "hold",
+				Scope:   "parser",
+				Head:    head,
+				At:      "2026-09-19T10:00:00Z",
+			},
+			{
+				Who:      "rowan",
+				Verdict:  "approve",
+				Scope:    "docs",
+				Head:     head,
+				At:       "2026-09-19T10:05:00Z",
+				Releases: []string{},
+			},
+		},
+	}
+
+	st := EvaluateReads(entry, "author")
+	if !st.Held {
+		t.Fatalf("expected st.Held to be true (parser hold must not be wiped by docs approve), got: %+v", st)
+	}
+	if st.Holds != 1 {
+		t.Fatalf("expected st.Holds to be 1, got: %d", st.Holds)
+	}
+	if st.Satisfied {
+		t.Fatalf("held entry must not be satisfied, got: %+v", st)
+	}
+}

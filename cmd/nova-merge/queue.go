@@ -401,6 +401,10 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 					if hasInt(q.Queued, pr.Number) {
 						already++
 					} else {
+						laneVs, _ := merge.LoadLaneVerdicts(lane, pr.Number)
+						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, pr.Author, nil)) > 0 {
+							continue
+						}
 						green++
 						q.Queued = append(q.Queued, pr.Number)
 						queued++
@@ -408,6 +412,10 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 				case hasStaleRed(checks, pr.HeadOID):
 					staleRed++
 					if len(q.Queued) <= 5 {
+						laneVs, _ := merge.LoadLaneVerdicts(lane, pr.Number)
+						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, pr.Author, nil)) > 0 {
+							continue
+						}
 						q.Queued = append(q.Queued, pr.Number)
 						queued++
 						rerun++
