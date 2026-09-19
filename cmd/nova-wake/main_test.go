@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -53,54 +54,75 @@ func wakeRunAt(t *testing.T, start time.Time, args ...string) result {
 }
 
 // The fakes are Go programs rather than shell scripts because this repo's CI
-// runs on Windows too -- and they are built ONCE for the package and copied
-// into each test's own directory, because a `go build` per test was most of
-// this package's wall clock and the two-minute rule is a rule. Nothing here
-// leaves t.TempDir(): the build lands in the first caller's, and what survives
-// it is the bytes.
-var (
-	fakeOnce  sync.Once
-	fakeBins  map[string][]byte
-	fakeBuilt error
-)
+// runs on Windows too -- and ALL of them are built ONCE for the package, in
+// TestMain, before any test runs. A `go build` per test was most of this
+// package's wall clock once (163 s, #516) and is long gone; what this removes
+// is the last of it -- three separate `go build` invocations, each behind its
+// own sync.Once, each starting the toolchain again, and each CHARGED TO
+// WHICHEVER TEST HAPPENED TO ASK FIRST. That last part is why the record in
+// docs/TEST-DURATIONS.md showed a 6.8 s test in this package that is a 2 s
+// test: it was the one that woke the builder. A measurement that names the
+// wrong test sends the next person to the wrong place.
+//
+// What survives the build is the BYTES. Nothing here keeps a directory alive
+// beyond TestMain's own.
+var fakeBins map[string][]byte
 
-func buildFakes(t *testing.T) {
-	t.Helper()
-	fakeOnce.Do(func() {
-		dir := t.TempDir()
-		cmd := exec.Command("go", "build", "-o", dir,
-			"./testdata/fakebus", "./testdata/fakegh", "./testdata/fakenote", "./testdata/fakegit")
-		cmd.Env = goenv.Clean(os.Environ())
-		if raw, err := cmd.CombinedOutput(); err != nil {
-			fakeBuilt = fmt.Errorf("building the fakes: %v\n%s", err, raw)
-			return
-		}
-		fakeBins = map[string][]byte{}
-		for _, f := range []struct{ name, built string }{
-			{"nova-bus", "fakebus"}, {"gh", "fakegh"}, {"on-note", "fakenote"}, {"git", "fakegit"},
-		} {
-			built := filepath.Join(dir, f.built)
-			if runtime.GOOS == "windows" {
-				built += ".exe"
-			}
-			raw, err := os.ReadFile(built)
-			if err != nil {
-				fakeBuilt = err
-				return
-			}
-			fakeBins[f.name] = raw
-		}
-	})
-	if fakeBuilt != nil {
-		t.Fatal(fakeBuilt)
+// fakePrograms are the test programs built together: the four fakes on PATH and
+// the recording wrapper advance_test.go puts in front of the real nova-bus. The
+// map key is the name the tool will start the program by.
+var fakePrograms = map[string]string{
+	"nova-bus":  "fakebus",
+	"gh":        "fakegh",
+	"on-note":   "fakenote",
+	"git":       "fakegit",
+	"recordbus": "recordbus",
+}
+
+// buildFakes builds every program in fakePrograms with ONE `go build` and reads
+// the results into fakeBins. It returns an error rather than taking a *testing.T
+// because it runs in TestMain, where there is no test to fail yet.
+func buildFakes() error {
+	dir, err := os.MkdirTemp("", "nova-wake-build-")
+	if err != nil {
+		return err
 	}
+	defer os.RemoveAll(dir)
+
+	args := []string{"build", "-o", dir}
+	names := make([]string, 0, len(fakePrograms))
+	for name := range fakePrograms {
+		names = append(names, name)
+	}
+	sort.Strings(names) // one build, one stable command line
+	for _, name := range names {
+		args = append(args, "./testdata/"+fakePrograms[name])
+	}
+	cmd := exec.Command("go", args...)
+	cmd.Env = goenv.Clean(os.Environ())
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("building the fakes: %v\n%s", err, raw)
+	}
+
+	fakeBins = map[string][]byte{}
+	for _, name := range names {
+		built := filepath.Join(dir, fakePrograms[name])
+		if runtime.GOOS == "windows" {
+			built += ".exe"
+		}
+		raw, err := os.ReadFile(built)
+		if err != nil {
+			return err
+		}
+		fakeBins[name] = raw
+	}
+	return nil
 }
 
 // install writes one of the built fakes into dir under the name the tool will
 // start it by, and returns the path.
 func install(t *testing.T, dir, name string) string {
 	t.Helper()
-	buildFakes(t)
 	out := filepath.Join(dir, name)
 	if runtime.GOOS == "windows" {
 		out += ".exe"
@@ -112,9 +134,12 @@ func install(t *testing.T, dir, name string) string {
 }
 
 // TestMain owns the one directory in this package outside t.TempDir(): the shared
-// PATH directory fakeBinDir builds the fake nova-bus and gh into. It has to outlive
-// the first test that asks for it and be gone when the process is, so it is made here
-// and removed on every path out, including a failing run.
+// PATH directory the fakes are written into. It has to outlive the first test that
+// asks for it and be gone when the process is, so it is made here and removed on
+// every path out, including a failing run.
+//
+// It also BUILDS, before a single test runs, so that no test is charged for the
+// toolchain and the recorded per-test seconds are the tests.
 func TestMain(m *testing.M) {
 	os.Exit(func() int {
 		dir, err := os.MkdirTemp("", "nova-wake-fakes-")
@@ -124,6 +149,10 @@ func TestMain(m *testing.M) {
 		}
 		defer os.RemoveAll(dir)
 		fakeRoot = dir
+		if err := buildFakes(); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 2
+		}
 		return m.Run()
 	}())
 }
@@ -144,7 +173,6 @@ var (
 
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
-	buildFakes(t)
 	sharedBinOnce.Do(func() {
 		dir := filepath.Join(fakeRoot, "bin")
 		if err := os.MkdirAll(dir, 0o755); err != nil {

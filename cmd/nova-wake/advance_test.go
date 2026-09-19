@@ -32,14 +32,6 @@ var (
 	busBinary  []byte
 	busVersion string
 	busBuild   error
-
-	// The recording wrapper is built ONCE for the package and copied into each
-	// test's own directory, for the reason main_test.go gives about the fakes:
-	// a `go build` per test was six of them in this file alone, and the
-	// two-minute rule is a rule.
-	recordOnce  sync.Once
-	recordBin   []byte
-	recordBuild error
 )
 
 // realBus builds nova-bus from this tree once for the package, installs it into
@@ -116,28 +108,7 @@ func realBus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		shim += ".exe"
 	}
-	recordOnce.Do(func() {
-		out := filepath.Join(t.TempDir(), "recordbus")
-		if runtime.GOOS == "windows" {
-			out += ".exe"
-		}
-		build := exec.Command("go", "build", "-o", out, "./testdata/recordbus")
-		build.Env = goenv.Clean(os.Environ())
-		if raw, err := build.CombinedOutput(); err != nil {
-			recordBuild = fmt.Errorf("building the recording nova-bus: %v\n%s", err, raw)
-			return
-		}
-		raw, err := os.ReadFile(out)
-		if err != nil {
-			recordBuild = err
-			return
-		}
-		recordBin = raw
-	})
-	if recordBuild != nil {
-		t.Fatal(recordBuild)
-	}
-	if err := os.WriteFile(shim, recordBin, 0o755); err != nil {
+	if err := os.WriteFile(shim, fakeBins["recordbus"], 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("NOVA_WAKE_REAL_BUS", real)
