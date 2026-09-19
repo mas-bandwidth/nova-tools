@@ -30,6 +30,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/decide/questions"
 )
 
 // The accept gate's verdict, as the OUTCOME line carries it. These are read
@@ -72,17 +74,25 @@ const (
 	ClassFailed = "failed"
 )
 
-// askedClasses is the closed set a provider is offered: the four the reading
-// names, and not one more. Sorted, so the offer is stable across calls and a
-// diff of two frames is a diff of their evidence.
-var askedClasses = []string{ClassBlockedToolchain, ClassClean, ClassDefect, ClassSkipPrecondition}
+// askedClasses is the closed set a provider is offered, and it is READ FROM THE
+// QUESTION TABLE rather than written out again here. Two copies of one answer
+// set is two answer sets, and they drift the first time somebody adds a member
+// to the one they happened to be looking at.
+func askedClasses() []string {
+	q, ok := questions.Lookup("harvest", 1)
+	if !ok {
+		return nil
+	}
+	return q.Members
+}
 
 // AskedHarvestClasses is the set a provider may choose among. `rejected` and
 // `unknown` are deliberately absent: the first is mechanical, the second is the
 // absence of an answer.
 func AskedHarvestClasses() []string {
-	out := make([]string, len(askedClasses))
-	copy(out, askedClasses)
+	src := askedClasses()
+	out := make([]string, len(src))
+	copy(out, src)
 	sort.Strings(out)
 	return out
 }
