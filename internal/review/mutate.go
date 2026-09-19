@@ -607,21 +607,16 @@ func runUnits(ctx context.Context, execFn func(context.Context, string, string, 
 			failed[m[2]] = true
 		}
 	}
-	// A non-zero exit is a kill only when the run SAID so: a FAIL unit above, a
-	// package-level FAIL line, or a panic. A run that exited non-zero having printed
-	// no result at all proved nothing -- a wall that refused, a binary that could not
-	// start -- and scoring it as every unit red made a dead control look like a kill
-	// (cold read 2 of #1721: a vacuous card was ACCEPT OK red_without=2).
+	// HOLD on #1721 (johnny-357c06749499): a kill is never read off free text a
+	// card's own TestMain or init can print -- "panic:" and a bare "FAIL\t" line
+	// are exactly that. Only a --- FAIL: line (scored above) says which unit died;
+	// a non-zero exit with none named is "could not be run", whatever the process
+	// printed alongside it.
 	if err != nil && len(failed) == 0 {
-		if strings.Contains(text, "panic:") || strings.Contains(text, "\nFAIL\t") || strings.HasPrefix(text, "FAIL\t") {
-			for _, u := range units {
-				failed[u.name] = true
-			}
-			return failed, ""
-		}
 		if results == 0 {
 			return nil, "the suite could not be run: the run exited non-zero with no test result: " + firstLine(text)
 		}
+		return nil, "the suite could not be run: the run exited non-zero with no --- FAIL: line naming a unit: " + firstLine(text)
 	}
 	return failed, ""
 }
