@@ -153,6 +153,30 @@ fi
 if ! command -v sbcl >/dev/null 2>&1; then
   drift "sbcl not on PATH"
 fi
+
+# (3b) THE TOOLCHAIN MUST BE RUNNABLE INSIDE THE WALL, not merely on PATH.
+# `command -v sbcl` answers about the bench user's own shell. A card runs behind the
+# sandbox wall, whose linux read roots are the system table of
+# internal/sandbox/wrap_linux.go plus the toolchain roots of internal/swarm/toolchain.go
+# ($HOME/sdk, exec; $HOME/go/pkg/mod, no exec). An sbcl at $HOME/.local/bin/sbcl is on
+# PATH and is `Permission denied` inside the wall, which is why every lisp card was
+# forced onto the one bench whose sbcl is /usr/bin/sbcl -- measured 2026-09-19: E09-G1
+# on vision 1036 s against 248-393 s for the same class on space, and the r1785 worker
+# on mini fetched an SBCL 2.4.0 of its own into $TMPDIR before it could run a test.
+for tool in go sbcl; do
+  p="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$p" ] || continue          # absent is the check above's DRIFT, not this one's
+  rp="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+  granted=0
+  for root in /usr /bin /sbin /lib /lib64 /opt "$HOME_DIR/sdk"; do
+    rroot="$(readlink -f "$root" 2>/dev/null || echo "$root")"
+    [ -n "$rroot" ] || continue
+    case "$rp" in "$rroot"/*) granted=1 ;; esac
+  done
+  if [ "$granted" != "1" ]; then
+    drift "$tool on PATH is $p -> $rp, under NO read root the sandbox wall grants (the system roots, and \$HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under $HOME_DIR/sdk/$tool-<ver>/ and point the PATH entry there"
+  fi
+done
 harness_ok=0
 if [ -n "$NOVA_HARNESS" ]; then
   if [ -x "$NOVA_HARNESS" ]; then
