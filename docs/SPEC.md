@@ -4967,8 +4967,8 @@ than trusted. And its transport is git: what it cannot do is make anybody pull.
 
 ## nova-update and nova-version
 
-[SPEC-UPDATE.md](docs/SPEC-UPDATE.md) defines the shared inventory reader, optional
-updates and reporting. [Prepared delivery](docs/SPEC-BUS-DELIVERY.md) keeps one
+[SPEC-UPDATE.md](SPEC-UPDATE.md) defines the shared inventory reader, optional
+updates and reporting. [Prepared delivery](SPEC-BUS-DELIVERY.md) keeps one
 identity across retries. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNOWN,
 CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
