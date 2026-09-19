@@ -114,12 +114,13 @@ below the state's revision is refused rather than silently reissued."
     ;; immutable stage the readers produced outside the mutation loop; :lease-by
     ;; and :lease-default are the CLI's --by and --default, renamed here because
     ;; :by is this kernel's author field on every request.
-    (:acknowledge :verb :node :by :offer :attempt :reply :stage :provenance
-                  :provenance-sha256 :staged :lease-by :lease-default
+    (:acknowledge :verb :node :by :offer :attempt :generation :reply :stage
+                  :provenance :provenance-sha256 :staged :expect
+                  :staged-payload :payload-sha256 :lease-by :lease-default
                   :observed-model :bench :execution :reason
                   :request :stamp :clock :generation-owner)
-    (:decline :verb :node :by :offer :attempt :reply :provenance
-              :provenance-sha256 :staged :reason
+    (:decline :verb :node :by :offer :attempt :generation :reply :provenance
+              :provenance-sha256 :staged :expect :reason
               :request :stamp :clock :generation-owner)))
 
 (defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
