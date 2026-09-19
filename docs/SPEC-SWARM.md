@@ -847,7 +847,7 @@ meaning of "pull the intelligence up, push down to machinery."
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
@@ -1444,6 +1444,43 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   packet — an abstain that names *why* it stopped and the log it watched, never
   a bare missing result — and the BATCH line's `idle=<n>` counts those kills.
 
+- `--stall-after <seconds>` (default 0, off) is the **first-token** deadline,
+  and it is not the idle window. Every signal `--idle` has needs a FIRST sample
+  to compare against — a log that grew, a tree whose CPU advanced — so a card
+  that never speaks once is invisible to it and runs to the batch deadline,
+  paid for. On **2026-09-17** a fresh known-answer card hung for its entire
+  150 s having produced no token at all, while `deepseek-flash` on the same
+  bench in the same second answered in 11 s. A card that has produced **nothing
+  at all** since it launched is therefore ended at `--stall-after` and scored
+  `<label> slot=<n>: ABSTAIN reason=stalled log=0 watched=<path>`. A card that
+  produced one byte and then went quiet is the idle window's business and this
+  check never fires for it.
+
+- `--max-inflight <n>` (default 0, no cap) is the **per-route** in-flight cap.
+  A route is the **provider, the model and the key**: two models on one key
+  share that key's queue and the same model on two keys do not, so neither
+  alone is the unit, and the key is named by its **profile** — this string
+  reaches a log. At most `n` of the batch's cards run against one route at a
+  time; the rest **wait**, holding no process, no bench slot lease and no
+  spend, with their deadlines not yet begun. Measured **2026-09-17**: above
+  roughly 30–40 concurrent requests on one Muse contributor-free key the tail
+  latency goes to infinity — hulk and vision returned **zero** results in
+  thirteen minutes at load 0.5–2.0 — and every card launched past that point
+  burns its whole deadline for nothing. A launcher with no cap turns a free
+  tier's queue into spend.
+
+  When a cap is set the batch prints one line per route, after the BATCH line:
+
+  ```
+  BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
+  ```
+
+  `peak` is the most ever in flight on that route and `held-back` is how many
+  launches had to wait, so a reader chasing a slow batch can rule the cap in or
+  out without guessing. A batch that set no cap prints no such line and behaves
+  exactly as it did before. A card still held when the batch's deadline passes
+  is never launched at all, and is scored `deadline`.
+
 ### gather — one bounded packet, mechanically
 
 `gather` reads every card's `RESULT.md` and folds the batch into **one
@@ -1506,6 +1543,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
+| `stalled` | was killed because it produced NOTHING AT ALL -- no first token -- within `--stall-after` of launching; not the idle window, which needs a first sample to compare against (#917) |
 | `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
@@ -1597,7 +1635,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1973,7 +2011,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>

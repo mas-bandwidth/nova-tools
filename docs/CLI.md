@@ -2171,6 +2171,26 @@ Where the card names no `KIND:`, the kind is read from its contract line by a de
 
 **A card that fails its gate re-enters one rung up.** The ladder is the retry policy: a confirmed failure is appended to the unit as evidence, and the rung that failed — and its lineage at that height — is out of the eligible set, so the answer is another lineage on the same rung where there is one (sideways before up) and the rung above where there is not. It is never a retry on the rung that just failed.
 
+**The free tier that queues forever: `--max-inflight` and `--stall-after` (#917).** Both default to **0, which is off**, and a batch that names neither behaves exactly as it does today.
+
+```
+nova-swarm batch --cards <tsv> ... [--max-inflight <n>] [--stall-after <seconds>]
+```
+
+`--max-inflight <n>` caps how many of the batch's cards run against **one route** at a time, where a route is the **provider, the model and the key** — two models on one key share that key's queue and the same model on two keys do not, so neither alone is the unit. The key is named by its **auth profile** (the `--auth` file), never by its value: this string is printed. Cards past the cap **wait** — they hold no process, no bench slot lease and no spend, and their deadlines have not begun. When the batch's own deadline passes, every card still waiting is released unlaunched and scored `deadline`.
+
+With a cap set, one line per route follows the BATCH line:
+
+```
+BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
+```
+
+`peak` is the most ever in flight on that route and `held-back` is how many launches had to wait for a slot; a route whose `peak` is under the cap and whose `held-back` is `0` never was the constraint. With no cap no such line is printed.
+
+`--stall-after <seconds>` is the **first-token** deadline and is **not** `--idle`. Every signal the idle window has needs a first sample to compare against, so a card that never speaks once is invisible to it and burns its whole deadline. A card that has produced **nothing at all** since it launched is ended at `--stall-after` and scored `ABSTAIN reason=stalled`; a card that spoke once and went quiet is `--idle`'s business and this never fires for it, and a card burning CPU in silence has moved and is not stalled (#593).
+
+Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contributor-free key the tail latency goes to infinity — hulk and vision returned zero results in thirteen minutes at load 0.5–2.0 — while `deepseek-flash` on the same bench in the same second answered in 11 s. A launcher with no cap turns a free tier's queue into spend.
+
 **`native` takes a bench slot lease, and refuses a launch it cannot lease (#1546).**
 `--slots-store <dir>` and `--owner <name>` are **required**. The run takes exactly one
 lease before any job directory is made, holds it for the deadline plus two minutes of
