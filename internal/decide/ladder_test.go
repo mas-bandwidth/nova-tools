@@ -193,8 +193,22 @@ func TestTheTopIsAllFriendsThenGlenn(t *testing.T) {
 }
 
 // The lane's owner wins among rungs of the same height.
+//
+// It builds its own ladder rather than reading the embedded one, because the
+// embedded registry carries tonight's availability -- who is actually awake --
+// and a rule about lane ownership must not go red the evening a lane's owner
+// goes to sleep. The two facts are separate and the test says which one it is
+// about (see nova-tools#1501, where they stop being hand-written at all).
 func TestLaneOwnerWinsAtEqualHeight(t *testing.T) {
-	reg := testRegistry(t)
+	reg, err := ParseRegistry([]byte(`{"minds":[
+	  {"name":"opus","lineage":"rowan","height":2,"kinds":[],"lanes":["rowan-children"],"availability":"available","ask":"child"},
+	  {"name":"emma","lineage":"emma","height":3,"kinds":[],"lanes":["code"],"availability":"available","ask":"bus"},
+	  {"name":"freddy","lineage":"freddy","height":3,"kinds":[],"lanes":["opencode"],"availability":"available","ask":"bus"},
+	  {"name":"astra","lineage":"stella","height":4,"kinds":[],"lanes":["coordination"],"availability":"available","ask":"bus"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	u := Unit{ID: "l1", Kind: KindNewVerb, Files: 12, Packages: 4, Lanes: 2, LaneOwner: "opencode"}
 	res := mustRoute(t, reg, u, DefaultFloor)
 	if res.Rung.Name != "freddy" {
