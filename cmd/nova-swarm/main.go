@@ -1495,15 +1495,18 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	// A GATE THAT DID NOT EXECUTE ITS COMMAND CANNOT RETURN OK (issue #1465). This is the
-	// ONE refusal that lands AFTER the spend, and it is a refusal rather than a token on the
-	// OK line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
-	// card whose `go test` the wall would not let it execute, and a coordinator reading
-	// dispositions and not prose shipped a commit nobody had compiled. There is no OK line
-	// here at all. The reason names the job directory, so the work and the usage row the
-	// child did produce are still harvestable.
-	if (res.execRefusal != swarm.WallRefusal{}) {
-		refuseNative(stderr, swarm.ExecRefusalReason(cfg.label, res.job, res.execRefusal))
+	// AN UNREAD DENIAL IS NEVER AN OK (issue #1465; Stella's HOLD on #1478). This is the ONE
+	// refusal that lands AFTER the spend, and it is a refusal rather than a token on the OK
+	// line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
+	// card whose shell had been denied the toolchain, and a coordinator reading dispositions
+	// and not prose shipped a commit nobody had compiled. There is no OK line here at all.
+	//
+	// THE REFUSAL ASSERTS NO CAUSE. The shell's words name a path, not an operation, so the
+	// reason labels it `operation=unverified`, quotes the line, and asks for the one
+	// measurement that would settle it. The job directory is named, so the work and the usage
+	// row the child did produce are still harvestable.
+	if (res.shellDenial != swarm.ShellDenial{}) {
+		refuseNative(stderr, swarm.ShellDenialReason(cfg.label, res.job, res.wall, res.rc, res.shellDenial))
 		return 2
 	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only

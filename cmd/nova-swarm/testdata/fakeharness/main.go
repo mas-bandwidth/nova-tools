@@ -304,6 +304,20 @@ func main() {
 		fmt.Println("STEP 3 run the gate")
 		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
 	}
+	// FAKE-DENY-AND-RECOVER is STELLA'S P2 WITNESS (PR #1478 comment 5737662335): a plain
+	// shell REDIRECTION to a path the card may not write prints the very same words as a
+	// refused exec -- `/bin/bash: <path>: Permission denied` -- and then the card carries on
+	// and exits 0, having attempted no program at all. She measured it with
+	// `: > "$1"; printf "RECOVERED\n"` against a non-writable directory. Nothing in the text
+	// says which operation was denied, which is the whole of P2.
+	if path, ok := directive(prompt, "FAKE-DENY-AND-RECOVER"); ok {
+		if path == "" {
+			path = "/nowhere/out.txt"
+		}
+		fmt.Println("STEP 3 write the report")
+		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
+		fmt.Println("RECOVERED")
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}

@@ -2211,30 +2211,36 @@ must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
 
-**The toolchain those three names are for must be inside the wall, and the run
-says so when it is not.** A Go toolchain installed under a user directory —
-`~/go/bin/go`, usually a symlink into an SDK tree — is under no system root, so
-name it in the worker description's `read_roots`; `native` passes every
-`read_roots` entry to the wall as a `--read` and into the harness's own
-permission block, walled or not. Name **both** the directory holding the
-launcher and the tree it resolves into: the kernel checks the grant against the
-resolved target.
+**The toolchain those three names are for must be inside the wall.** A Go
+toolchain installed under a user directory — `~/go/bin/go`, usually a symlink
+into an SDK tree — is under no system root, so name it in the worker
+description's `read_roots`; `native` passes every `read_roots` entry to the wall
+as a `--read` and into the harness's own permission block, walled or not. Name
+**both** the directory holding the launcher and the tree it resolves into: the
+kernel checks the grant against the resolved target.
 
-A run whose card could not execute what it was told to run is **refused**, never
-`NATIVE OK`:
+**A denial in the capture that nobody read is refused, never `NATIVE OK`** — and
+the refusal says what it measured and what it did not:
 
 ```
-NATIVE REFUSED: go-card the wall refused the card's own shell the program
-/home/glenn/go/bin/go at step=3, so the gate never executed its command and this
-run is not OK: the report under <job> is about work that nothing compiled.
-Remedy: name /home/glenn/go/bin and /home/glenn/nova-bench/sdk/go1.26.5 in the
-worker description's read_roots -- both, because the kernel checks the grant
-against the RESOLVED target and that program is a symlink into another tree, or
-run with --no-wall and own every read the child makes
+NATIVE REFUSED: go-card a denial the card's shell reported went unread, so this
+run's disposition is refused rather than OK: step=3 rc=0 wall=landlock
+denied_path=/opt/sdk tool/bin/go operation=unverified job=<job>
+line="/usr/bin/bash: line 1: /opt/sdk tool/bin/go: Permission denied". The shell
+names a path and a refusal and NOT an operation: a denied exec, a redirection to
+a path the card may not write, and a cd into a directory it may not read all
+print these words, and a card can carry on from any of them, so what failed here
+is not established by this line. Remedy: re-run the card's own gate against the
+commit under <job> and read its stderr -- that is the measurement this refusal is
+standing in for. One candidate among the others, if that path was one the child
+had to read or execute: it is under no root this wall was handed, and
+"/opt/sdk tool/bin" would be the read_roots entries for it. That is a candidate
+and not the diagnosis
 ```
 
-The exit is 2 and the job directory is named, so the result and the usage row
-the child did write are still there to harvest.
+The exit is 2 and the job directory is named, so the result and the usage row the
+child did write are still there to harvest. A run typed `--no-wall` had no
+sandbox, is told so, and is offered no read set.
 
 ## nova-sandbox
 

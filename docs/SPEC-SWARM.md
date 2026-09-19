@@ -946,24 +946,48 @@ rejection is now REPORTED: `native` reads its own capture and carries
 `fence=rejected path=<p>` on its `NATIVE OK` line, which the batch reads and
 scores `ABSTAIN reason=fence`, never `no-result`.
 
-**A gate that did not execute its command cannot return OK** (issue #1465). A
-`native` run reads its own capture for the words a SHELL uses when the wall
-denies it a path it was told to RUN — `/usr/bin/bash: line 1: <path>:
-Permission denied`, and the dash, zsh and Go `fork/exec` spellings of the same
-thing — and a run that holds one is **refused**. There is no `NATIVE OK` line
-at all; one `NATIVE REFUSED` names the program, the step the card had reached,
-the job directory the spend is sitting in, and the `read_roots` entries that
-would have let it run, resolving a symlinked toolchain to BOTH the launcher's
-directory and the tree it points into, because the kernel checks the grant
-against the resolved target.
+**An unread denial cannot return OK, and it is not a diagnosis either** (issue
+#1465; Stella's HOLD on PR #1478). A `native` run reads its own capture for the
+words a SHELL uses when it is denied a path — `/usr/bin/bash: line 1: <path>:
+Permission denied`, and the dash, zsh and Go `fork/exec` spellings — and a run
+that holds one is **refused**. There is no `NATIVE OK` line at all.
+
+**The path is the whole segment between the shell's own `: ` delimiters**,
+spaces and parentheses included, because those are ordinary pathname
+characters. A grammar that required a token with no spaces in it reopened this
+whole class through `/opt/sdk tool/bin/go`, an everyday absolute path, and a
+path truncated at its first space is one a coordinator cannot act on. What
+keeps the reader off prose is the SHELL at the head of the line, never the
+shape of the path.
+
+**The refusal asserts no cause.** The shell's line names a path and a refusal
+and *not an operation*: a denied exec, a redirection to a path the card may not
+write, and a `cd` into a directory it may not read all print these words, and a
+card can carry on from any of them — an owned `bash` running `: > "$1"` against
+a non-writable directory printed exactly this shape, attempted no program, and
+exited 0. So the line carries what was measured — `step=`, `rc=`, `wall=`,
+`denied_path=`, `job=` and the shell's own line quoted — plus
+`operation=unverified`, and its remedy is a **measurement**: re-run the card's
+own gate against the commit and read its stderr. On a *walled* run the read set
+is offered beside it as **one candidate among the others**, said to be a
+candidate, with a symlinked path resolved to BOTH the launcher's directory and
+the tree it points into, because the kernel checks the grant against the
+resolved target. A run typed `--no-wall` had no sandbox and is told so:
+nothing is attributed to a wall that was not there.
+
+**What this still cannot do.** It cannot bind the verdict to the card's own
+declared gate, because `native` is handed a card as free text and no
+machine-readable declaration of what the gate is or what it returned. Until a
+card declares its gate in a form the tool can read, the honest signal is this
+one: a denial was seen, its operation is unknown, and the disposition is refused
+rather than OK.
 
 This is the ONE refusal that lands after the spend, and it is a refusal rather
 than another token on the OK line because the run it closes carried `rc=0
-sandbox=landlock harness=ok` over a Go card whose `go test` the wall would not
-let it execute: the card's own `RESULT.md` said so in prose, and a coordinator
-reading dispositions shipped a commit nobody had compiled. Unlike a wall death,
-it fires **with a published result beside it** — the published report is
-precisely the lie.
+sandbox=landlock harness=ok` over a Go card whose `go test` never compiled: the
+card's own `RESULT.md` said so in prose, and a coordinator reading dispositions
+shipped it. Unlike a wall death, it fires **with a published result beside it**
+— the published report is what made the denial invisible.
 
 **A local model is one slot, and it stays off the critical path.** The fault
 behind the silent-harness rule below (issue #591, landed in #604) was a local

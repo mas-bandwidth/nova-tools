@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// A GATE THAT DID NOT EXECUTE ITS COMMAND CANNOT RETURN OK (issue #1465).
+// AN UNREAD DENIAL CANNOT RETURN OK (issue #1465, as Stella's HOLD on #1478 reshaped it).
 //
 // The run this closes: a `native` Go card was handed GOMODCACHE, GOCACHE and
 // GOTOOLCHAIN=local, wrote its test, and could not compile it --
@@ -25,13 +25,19 @@ import (
 // usd 0.0993, and a commit nobody had compiled read as green. The card was honest; every
 // machine-readable field lied. A coordinator reading dispositions and not prose ships it.
 //
-// The class is made impossible here rather than papered over: a run whose capture holds the
-// wall refusing the card's own shell a path it tried to RUN is a HARD REFUSAL. There is no
-// NATIVE OK line at all, the exit is non-zero, and the one line names the path, the step and
-// the roots to open.
+// The class is made impossible here rather than papered over: a run whose capture holds a
+// denial the card's own shell reported is a HARD REFUSAL. There is no NATIVE OK line at all
+// and the exit is non-zero.
+//
+// WHAT THE REFUSAL MAY SAY is a separate question, and Stella's P2 settled it: the shell
+// names a path and a refusal and NOT an operation, so the line labels the operation
+// unverified and asks for the measurement instead of inventing a cause. This case is WALLED,
+// because the run it closes was (sandbox=landlock), and a walled run may offer the read set
+// as one candidate.
 func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	root, slot := aSlot(t)
 	const refused = "/opt/sdk/go1.26.5/bin/go"
 	cardPath := filepath.Join(root, "card.md")
@@ -42,12 +48,12 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 	}
 	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "go-card", "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "30s", "--no-wall"}
+		"--deadline", "30s", "--sandbox", nativeSandbox(t)}
 	var stdout, stderr bytes.Buffer
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 
 	if strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Errorf("the gate never executed its command and the run still reported OK:\n%s", stdout.String())
+		t.Errorf("a denial nobody read and the run still reported OK:\n%s", stdout.String())
 	}
 	if rc == 0 {
 		t.Errorf("a run whose gate could not execute exits non-zero, got %d:\n%s%s", rc, stdout.String(), stderr.String())
@@ -56,9 +62,16 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 	if !strings.Contains(line, "NATIVE REFUSED") {
 		t.Fatalf("the run owes one refusal line naming the class:\n%s", line)
 	}
-	for _, want := range []string{refused, "read_roots", "step=3"} {
+	// What is MEASURED is named, and the one thing that is not measured is named as not
+	// measured. Nothing here claims the path was a program or that a gate did not run.
+	for _, want := range []string{refused, "step=3", "operation=unverified", "Permission denied", "read_roots"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the refusal names %q; it reads:\n%s", want, line)
+		}
+	}
+	for _, forbidden := range []string{"never executed", "nothing compiled", "the gate never"} {
+		if strings.Contains(line, forbidden) {
+			t.Errorf("the refusal asserts %q, which the shell's line cannot establish:\n%s", forbidden, line)
 		}
 	}
 	// THE WORK IS NOT THROWN AWAY. The child ran and was paid for: the job directory, its
@@ -73,8 +86,8 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 }
 
 // TestNativeOrdinaryRunIsStillOK: the guard above fires on the class and on nothing else. A
-// card that merely prints the words -- a refused READ it routed around, its own prose -- is
-// a finished run and still says OK.
+// card that merely prints the words -- another program's refusal it routed around, its own
+// prose -- is a finished run and still says OK.
 func TestNativeOrdinaryRunIsStillOK(t *testing.T) {
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)

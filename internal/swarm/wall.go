@@ -314,73 +314,103 @@ func gitOut(dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// THE GATE THAT NEVER RAN (issue #1465).
+// A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER
+// (issue #1465, and Stella's HOLD on PR #1478, comment 5737662335).
 //
-// A `native` Go card is handed GOMODCACHE, GOCACHE and GOTOOLCHAIN=local, and a writable
-// cache directory beside its job, all for a toolchain that lives under a USER directory --
-// `~/go/bin/go`, itself a symlink into an SDK tree -- which is under no root the wall
-// admits. The card wrote its test, tried to compile it, and got one line back:
+// THE RUN THIS CLOSES. A `native` Go card was handed GOMODCACHE, GOCACHE and
+// GOTOOLCHAIN=local for a toolchain under a user directory that the wall admitted no root
+// for. It wrote its test, could not compile it, said so in its own RESULT.md, and the tool
+// reported `NATIVE OK ... rc=0 sandbox=landlock harness=ok`. A commit nobody had compiled
+// read as green, because the only record of the failure was one line in a log:
 //
 //	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied
 //
-// There is no `SANDBOX REFUSED` in that line, no `Operation not permitted`, and no fence
-// rejection, so WallRefused above saw nothing. The card published an honest RESULT.md
-// saying the gate could not be built or run, the child exited 0, and the run reported
-// `NATIVE OK ... rc=0 sandbox=landlock harness=ok`. A commit nobody had compiled read as
-// green, and the only thing that said otherwise was prose inside the card's own report.
+// WHAT THAT LINE PROVES, AND WHAT IT DOES NOT. The first version of this reader called the
+// line an EXEC refusal, named the path a program, concluded that the gate never ran and that
+// nothing had been compiled, and prescribed `read_roots`. Stella measured that none of it
+// follows. An owned bash running `: > "$1"; printf "RECOVERED\n"` against a non-writable
+// directory prints
 //
-// THE CLASS, NOT THE INSTANCE. The remedy for one bench is to name the toolchain in
-// `read_roots`; the remedy for the CLASS is that a gate which could not execute its command
-// cannot return OK. This is the reader that makes it impossible: the words a SHELL uses when
-// the wall denies it a path it was told to RUN.
+//	/bin/bash: <absolute output path>: Permission denied
 //
-// IT FIRES WITH A RESULT BESIDE IT, and that is the whole difference from WallDeath and
-// WallRefused. Those two ask for the result first, because a card that published despite a
-// refusal is a card that routed around it and finished. Here the published result IS the
-// lie: it is a report about work that was never compiled.
+// -- the identical shape -- attempts no program at all, and exits 0 having RECOVERED. A `cd`
+// into an unreadable directory is a third shape with the same words. The shell names a PATH
+// and a refusal; it does not name the OPERATION. And this reader runs on `--no-wall` runs
+// too, where there is no wall to attribute anything to.
 //
-// IT IS DELIBERATELY NARROW. `cat: /etc/shadow: Permission denied` is a READ a card was
-// refused and worked around, and a card's own prose about permissions is prose. The line's
-// own first word must be a SHELL -- by name or by the path it was launched from -- or the
-// words must be Go's own `fork/exec`, and the path it names must be absolute.
+// SO THE VERDICT IS A REFUSAL AND THE CAUSE IS UNVERIFIED. What is established is enough on
+// its own: the card's shell was denied something, nobody read it, and a disposition of OK
+// over an unread denial is what cost the card of #1465. The run is refused. The line is
+// quoted verbatim, the operation is labelled `unverified`, and the remedy is to re-run the
+// gate and read its stderr -- not a cause invented to fill the field. On a WALLED run the
+// read set is offered as ONE CANDIDATE, said to be a candidate.
+//
+// WHAT THIS STILL CANNOT DO. It cannot bind the verdict to the card's own declared gate,
+// because `native` is handed a card as free text and no machine-readable declaration of what
+// the gate is or what it returned. Until a card declares its gate in a form the tool can
+// read, the honest signal is this one: a denial was seen, its operation is unknown, and the
+// disposition is refused rather than OK.
 
-// execShells are the shells whose refusal this reads, by the base name of whatever ran them.
+// execShells are the shells whose denial this reads, by the base name of whatever ran them.
 // A line whose first field is anything else is some other program's complaint about a path.
 var execShells = map[string]bool{
 	"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "ash": true,
 	"csh": true, "tcsh": true, "fish": true,
 }
 
+// SandboxNoneByFlag is the name the OK line carries for a run the caller unwalled with
+// --no-wall: a run that had no sandbox, told apart here from one that had a real one, so no
+// refusal attributes a denial to a wall that was not there.
+const SandboxNoneByFlag = "none-by-flag"
+
 // permissionDeniedMark is the refusal itself, matched case-insensitively: bash capitalises
 // it, Go's os/exec does not.
 const permissionDeniedMark = "permission denied"
 
-// ExecRefused reports the FIRST path the wall refused to a card's own shell in one capture,
-// and whether it refused any. The first is the one that matters: every later line is a
-// consequence of the same closed root. The step the card had reached rides with it, exactly
-// as it does for a wall death, so the refusal can say where the gate died.
-func ExecRefused(log []byte) (WallRefusal, bool) {
+// ShellDenial is one denial a card's own shell reported: the path it named, the step the card
+// had reached, and the line itself, which is the only thing a person can act on. There is no
+// field for the operation, because the text does not carry one.
+type ShellDenial struct {
+	Path string
+	Step string
+	Line string
+}
+
+// ShellDenied reports the FIRST denial a card's shell printed in one capture, and whether it
+// printed any. The first is the one that matters: every later line is downstream of the same
+// closed path.
+func ShellDenied(log []byte) (ShellDenial, bool) {
 	for _, raw := range strings.Split(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		if line == "" {
 			continue
 		}
-		if p, ok := execRefusedPath(line); ok {
-			return WallRefusal{Path: p, Step: WallStep(log)}, true
+		if p, ok := deniedPath(line); ok {
+			return ShellDenial{Path: p, Step: WallStep(log), Line: line}, true
 		}
 	}
-	return WallRefusal{}, false
+	return ShellDenial{}, false
 }
 
-// execRefusedPath is the grammar, and nothing outside it is this class. Four spellings are
-// read, each one measured off a real log:
+// deniedPath is the grammar, and nothing outside it is this class. Five spellings are read,
+// each measured off a real log:
 //
 //	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied   bash, by path
 //	bash: /home/glenn/go/bin/go: Permission denied                    bash, by name
 //	sh: 1: /opt/sdk/go1.26.5/bin/go: Permission denied                dash, which numbers
 //	zsh: permission denied: /opt/sdk/go1.26.5/bin/go                  zsh, path last
 //	fork/exec /opt/sdk/go1.26.5/bin/go: permission denied             Go's own os/exec
-func execRefusedPath(line string) (string, bool) {
+//
+// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS (Stella's P1). A shell delimits its
+// fields with `: `, and everything between two delimiters is the path -- spaces, parentheses
+// and all, because those are ordinary pathname characters. The first version required a
+// token with no spaces in it, and `/opt/sdk tool/bin/go` therefore recreated the whole silent
+// green of #1465 through an ordinary absolute path. A whitespace-bearing path is not prose.
+//
+// WHAT KEEPS IT FROM EATING PROSE is the shell at the head of the line, not the shape of the
+// path: `cat: /etc/shadow: Permission denied` is some other program's complaint, and a
+// sentence a model wrote is not a shell speaking at all.
+func deniedPath(line string) (string, bool) {
 	if !strings.Contains(strings.ToLower(line), permissionDeniedMark) {
 		return "", false
 	}
@@ -388,14 +418,14 @@ func execRefusedPath(line string) (string, bool) {
 	if len(parts) < 2 {
 		return "", false
 	}
-	// Go's own os/exec, which a harness that launched the toolchain itself prints. The
-	// words are a whole segment, never a substring of a longer one.
+	// Go's own os/exec, which a harness that launched a program itself prints. The words are
+	// a whole segment, never a substring of a longer one.
 	for _, p := range parts {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(p), "fork/exec ")
 		if !ok {
 			continue
 		}
-		if cand := absToken(rest); cand != "" {
+		if cand := absSegment(rest); cand != "" {
 			return cand, true
 		}
 	}
@@ -404,25 +434,27 @@ func execRefusedPath(line string) (string, bool) {
 	}
 	// zsh puts its refusal before the path: `zsh: permission denied: <path>`.
 	if len(parts) >= 3 && strings.EqualFold(strings.TrimSpace(parts[1]), permissionDeniedMark) {
-		if cand := absToken(parts[2]); cand != "" {
+		if cand := absSegment(strings.Join(parts[2:], ": ")); cand != "" {
 			return cand, true
 		}
 	}
-	// Every other shell puts the program in the segment before the refusal, with an optional
+	// Every other shell puts the path in the segment before the refusal, with an optional
 	// `line <n>` or bare `<n>` segment in between which this never has to read.
 	if !strings.EqualFold(strings.TrimSpace(parts[len(parts)-1]), permissionDeniedMark) {
 		return "", false
 	}
-	cand := absToken(parts[len(parts)-2])
+	cand := absSegment(parts[len(parts)-2])
 	return cand, cand != ""
 }
 
-// absToken is one segment read as a path: an absolute path and nothing else. A segment
-// holding a space, a quote or a parenthesis is a sentence about a path, not the path.
-func absToken(s string) string {
+// absSegment is one delimited segment read as a path: absolute, and taken whole. Surrounding
+// quotes are stripped because a shell that quotes a path is naming the same path. A segment
+// that does not begin with `/` is not one.
+func absSegment(s string) string {
 	t := strings.TrimSpace(s)
 	t = strings.Trim(t, `"'`)
-	if !strings.HasPrefix(t, "/") || strings.ContainsAny(t, " \t'\"()") {
+	t = strings.TrimSpace(t)
+	if !strings.HasPrefix(t, "/") {
 		return ""
 	}
 	return t
@@ -436,17 +468,16 @@ func isShellWord(field string) bool {
 	return execShells[base]
 }
 
-// ExecRefusalRoots is the remedy, worked out rather than guessed at: the read roots that
-// would have let this program run. A toolchain reached through a symlink needs TWO of them
-// -- the directory holding the launcher, and the tree the launcher resolves into -- because
-// the kernel checks the grant against the RESOLVED target, and a coordinator who names one
-// and not the other loses the card again. An SDK's launcher sits in `<root>/bin`, so the
-// root is that directory's parent; anything else is named by its own directory.
+// DeniedPathRoots is the read set a coordinator would have to open IF the denied path was one
+// the child had to read or execute -- a candidate, never a diagnosis. A path reached through
+// a symlink needs TWO roots, because the kernel checks the grant against the resolved target
+// and a coordinator who names one and not the other loses the card again. A launcher in a
+// `bin` directory belongs to the tree above it; anything else is named by its own directory.
 //
-// Nothing here is specific to Go, to a bench or to a user: every path is read off the
-// refused program itself.
-func ExecRefusalRoots(refused string) []string {
-	if !filepath.IsAbs(refused) {
+// Nothing here is specific to Go, to a bench or to a user: every path is read off the denied
+// path itself.
+func DeniedPathRoots(denied string) []string {
+	if !filepath.IsAbs(denied) {
 		return nil
 	}
 	var out []string
@@ -458,9 +489,9 @@ func ExecRefusalRoots(refused string) []string {
 		seen[dir] = true
 		out = append(out, dir)
 	}
-	add(filepath.Dir(refused))
-	resolved, err := filepath.EvalSymlinks(refused)
-	if err != nil || resolved == refused {
+	add(filepath.Dir(denied))
+	resolved, err := filepath.EvalSymlinks(denied)
+	if err != nil || resolved == denied {
 		return out
 	}
 	dir := filepath.Dir(resolved)
@@ -472,31 +503,47 @@ func ExecRefusalRoots(refused string) []string {
 	return out
 }
 
-// ExecRefusalReason is the ONE line a gate that never ran owes its caller, and the one place
-// its words live. It names what was refused, where the card had got to, where the spend it
-// already made is sitting, and the roots to open so the next run works -- `nova-swarm help`
-// says of every listing that it carries one more line naming the remedy, and a refusal a
-// coordinator cannot act on costs the same card twice.
-func ExecRefusalReason(label, jobDir string, w WallRefusal) string {
+// ShellDenialReason is the ONE line an unread denial owes its caller, and the one place its
+// words live. It separates what was measured from what was not, by construction:
+//
+//   - MEASURED: the step, the child's exit code, the wall this ran under, the path named, and
+//     the shell's own line, quoted.
+//   - NOT MEASURED: which operation was denied. The field says `operation=unverified` and the
+//     sentence says why, so nobody reads a cause into it.
+//   - THE REMEDY IS A MEASUREMENT, not a guess: re-run the card's own gate against this
+//     commit and read its stderr. On a walled run the read set is offered beside it as one
+//     candidate among the others.
+//
+// `wall` is the wall's own name, or empty for a run that had none; a run with no wall is told
+// so and nothing is attributed to a sandbox that was not there.
+func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s the wall refused the card's own shell the program %s at step=%s, so the gate never executed its command and this run is not OK: the report under %s is about work that nothing compiled",
-		oneline.Field(label), oneline.Field(dashOr(w.Path)), oneline.Field(dashOr(w.Step)), oneline.Field(jobDir))
-	roots := ExecRefusalRoots(w.Path)
-	if len(roots) == 0 {
-		b.WriteString(". Remedy: name the directory holding that program in the worker description's read_roots -- the wall names every path and grants nothing it was not handed -- or run with --no-wall and own every read the child makes")
+	fmt.Fprintf(&b, "%s a denial the card's shell reported went unread, so this run's disposition is refused rather than OK: step=%s rc=%d wall=%s denied_path=%s operation=unverified job=%s line=%q",
+		oneline.Field(label), oneline.Field(dashOr(d.Step)), rc, oneline.Field(dashOr(wall)),
+		oneline.Field(dashOr(d.Path)), oneline.Field(jobDir), d.Line)
+	b.WriteString(". The shell names a path and a refusal and NOT an operation: a denied exec, a redirection to a path the card may not write, and a cd into a directory it may not read all print these words, and a card can carry on from any of them, so what failed here is not established by this line")
+	b.WriteString(". Remedy: re-run the card's own gate against the commit under ")
+	b.WriteString(oneline.Field(jobDir))
+	b.WriteString(" and read its stderr -- that is the measurement this refusal is standing in for")
+	if wall == "" || wall == SandboxNoneByFlag {
+		b.WriteString("; this run had no sandbox, so nothing here is attributable to one")
 		return b.String()
 	}
-	b.WriteString(". Remedy: name ")
+	roots := DeniedPathRoots(d.Path)
+	if len(roots) == 0 {
+		return b.String()
+	}
+	b.WriteString(". One candidate among the others, if that path was one the child had to read or execute: it is under no root this wall was handed, and ")
 	for i, r := range roots {
 		if i > 0 {
 			b.WriteString(" and ")
 		}
-		b.WriteString(oneline.Field(r))
+		b.WriteString(`"` + r + `"`)
 	}
-	b.WriteString(" in the worker description's read_roots")
+	b.WriteString(" would be the read_roots entries for it")
 	if len(roots) > 1 {
-		b.WriteString(" -- both, because the kernel checks the grant against the RESOLVED target and that program is a symlink into another tree")
+		b.WriteString(" -- both, because the kernel checks a grant against the RESOLVED target and that path is a symlink into another tree")
 	}
-	b.WriteString(", or run with --no-wall and own every read the child makes")
+	b.WriteString(". That is a candidate and not the diagnosis")
 	return b.String()
 }
