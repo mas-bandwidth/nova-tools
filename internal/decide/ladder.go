@@ -917,6 +917,16 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	}
 	offered := offer(reg, u, rules.Rung.Height, tried, failedAt)
 	rules.Offered = mindNames(offered)
+	// #1513 / Stella's HOLD on #1860: mechanical work with no CONFIRMED failure
+	// never reaches the provider -- not even when the supported height holds
+	// more than one eligible mind (offer()'s own bound only limits how many
+	// HEIGHTS are gathered; a height can hold two lineages). The semantic
+	// decision boundary is HERE: a fact about the unit and its attempts, never
+	// a proxy on len(offered).
+	if Mechanical(u.Kind) && len(failedAt) == 0 {
+		rules.Reason += "; one eligible rung, so no decision to ask"
+		return rules, nil
+	}
 	if len(offered) < 2 {
 		rules.Reason += "; one eligible rung, so no decision to ask"
 		return rules, nil
