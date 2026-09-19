@@ -33,7 +33,7 @@ func TestSeedTimeoutIsACouldNotRunAndNeverAKill(t *testing.T) {
 
 	ctx, cancel := expired()
 	defer cancel()
-	red, green, err := runPackage(ctx, t.TempDir(), "sign")
+	red, green, err := runPackage(ctx, nil, t.TempDir(), "sign")
 	if err == nil {
 		t.Fatalf("a killed run was judged: red=%d green=%d", red, green)
 	}
@@ -49,7 +49,7 @@ func TestSeedTimeoutIsACouldNotRunAndNeverAKill(t *testing.T) {
 
 	ctx2, cancel2 := expired()
 	defer cancel2()
-	if err := listPackage(ctx2, t.TempDir(), "sign"); err == nil {
+	if err := listPackage(ctx2, nil, t.TempDir(), "sign"); err == nil {
 		t.Fatal("a killed `go list` reported a package that exists")
 	} else if !strings.Contains(err.Error(), wantDeadline) {
 		// It must not read as the caller's typo either: the package was never looked
@@ -71,7 +71,7 @@ func TestSeedRefusalForAMissingPackageCarriesNoTempPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "go.mod"), []byte("module fixture\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := listPackage(context.Background(), wt, "nosuch")
+	err := listPackage(context.Background(), nil, wt, "nosuch")
 	if err == nil {
 		t.Fatal("a package that does not exist was accepted")
 	}

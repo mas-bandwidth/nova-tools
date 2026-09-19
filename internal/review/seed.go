@@ -56,6 +56,10 @@ type SeedOptions struct {
 	Seed     string // path to a unified diff
 	Tests    []string
 	TempRoot string
+	// Exec builds the command for every go run this form makes -- the package listing
+	// and the suites -- or is nil for exec.CommandContext; the accept gate hands one that
+	// wraps the argv in nova-sandbox, as MutateOptions.Exec does for the range form.
+	Exec func(ctx context.Context, dir string, name string, args ...string) *exec.Cmd
 }
 
 // SeedResult is the whole answer: the head the mutant was put into, the seed's own
@@ -136,12 +140,12 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	// a reason that has nothing to do with the seed -- and the PASS printed under it
 	// is the head's own failure wearing the control's name.
 	for _, pkg := range pkgs {
-		if err := listPackage(ctx, wt, pkg); err != nil {
+		if err := listPackage(ctx, opts.Exec, wt, pkg); err != nil {
 			return res, err
 		}
 	}
 	for _, pkg := range pkgs {
-		red, _, err := runPackage(ctx, wt, pkg)
+		red, _, err := runPackage(ctx, opts.Exec, wt, pkg)
 		if err != nil {
 			return res, err
 		}
@@ -170,7 +174,7 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	}
 
 	for _, pkg := range pkgs {
-		red, green, err := runPackage(ctx, wt, pkg)
+		red, green, err := runPackage(ctx, opts.Exec, wt, pkg)
 		if err != nil {
 			return res, err
 		}
@@ -232,14 +236,16 @@ func countEdits(numstat string) int {
 // this head. `go test ./nosuch/` exits non-zero having run nothing, which every
 // later count reads as a suite that died -- so a typo in --tests was a control that
 // held, every time, for any seed.
-func listPackage(ctx context.Context, wt, pkg string) error {
+func listPackage(ctx context.Context, execFn seedExec, wt, pkg string) error {
 	pkg = cleanPkg(pkg)
-	cmd := exec.CommandContext(ctx, "go", "list", "./"+pkg+"/")
-	if pkg == "." {
-		cmd = exec.CommandContext(ctx, "go", "list", "./")
-	}
+	cmd := seedCommand(ctx, execFn, wt, "go", "list", pkgArg(pkg))
 	cmd.Dir = wt
-	cmd.Env = goenv.Clean(os.Environ())
+	if cmd.Env == nil {
+		// The seam's Env is the seam's (the accept gate's HOME and GOCACHE inside its
+		// wall); only a bare command gets the cleaned environment. Cold read 2 of
+		// #1721: replacing it ran the card's tests with the operator's HOME.
+		cmd.Env = goenv.Clean(os.Environ())
+	}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return deadlineErr(pkg)
@@ -266,17 +272,19 @@ func listPackage(ctx context.Context, wt, pkg string) error {
 // module that would not load. The kill is the run saying so: a `--- FAIL:` unit, a
 // package-level `FAIL\t<pkg>` line, or a `panic:`. Anything else non-zero is a
 // could-not-run and leaves this verb with no verdict to print.
-func runPackage(ctx context.Context, wt, pkg string) (red, green int, err error) {
+func runPackage(ctx context.Context, execFn seedExec, wt, pkg string) (red, green int, err error) {
 	pkg = cleanPkg(pkg)
-	cmd := exec.CommandContext(ctx, "go", "test", "-count=1", "-v", "./"+pkg+"/")
-	if pkg == "." {
-		cmd = exec.CommandContext(ctx, "go", "test", "-count=1", "-v", "./")
-	}
+	cmd := seedCommand(ctx, execFn, wt, "go", "test", "-count=1", "-v", pkgArg(pkg))
 	cmd.Dir = wt
 	// The verdict is a property of the seed, never of the environment the verb was
 	// started in: CI's `make test` exports GOFLAGS=-json, and under it no
 	// `--- PASS:` line is printed at all.
-	cmd.Env = goenv.Clean(os.Environ())
+	if cmd.Env == nil {
+		// The seam's Env is the seam's (the accept gate's HOME and GOCACHE inside its
+		// wall); only a bare command gets the cleaned environment. Cold read 2 of
+		// #1721: replacing it ran the card's tests with the operator's HOME.
+		cmd.Env = goenv.Clean(os.Environ())
+	}
 	out, runErr := cmd.CombinedOutput()
 	// The deadline is the caller's, never the seed's: the run was killed mid-flight
 	// and nothing at all was proved about the mutant.
@@ -348,4 +356,23 @@ func cleanPkg(pkg string) string {
 		return "."
 	}
 	return pkg
+}
+
+// seedExec is the command builder the seed form runs go through: nil is
+// exec.CommandContext, and the accept gate's is the wall.
+type seedExec = func(ctx context.Context, dir string, name string, args ...string) *exec.Cmd
+
+func seedCommand(ctx context.Context, execFn seedExec, dir, name string, args ...string) *exec.Cmd {
+	if execFn == nil {
+		return exec.CommandContext(ctx, name, args...)
+	}
+	return execFn(ctx, dir, name, args...)
+}
+
+// pkgArg is the ./<pkg>/ pattern go takes, or ./ for the module root.
+func pkgArg(pkg string) string {
+	if pkg == "." {
+		return "./"
+	}
+	return "./" + pkg + "/"
 }
