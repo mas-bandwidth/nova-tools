@@ -2146,6 +2146,7 @@ nova-swarm status   --pool <dir> [--max <n>]                                    
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
 nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity            # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
+nova-swarm lint     --card <file> [--rules] [--typed] [--trust <file>] [--max <n>]          # the mechanical card check a cutter runs before launching: one file, no model, no probe
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
@@ -2254,6 +2255,33 @@ entire tree the card started — grandchildren included, never just the leader �
 `usage.tsv` from what it had up to the kill, so the spend is known. A `SIGTERM` from outside
 (the manager) is handled the same way: the tree is reaped, `usage.tsv` is written, and the
 `NATIVE OK` line carries `reason=terminated` instead of a silent exit.
+
+### lint
+
+`lint` reads the card mechanically — no model, no probe, one file — so its defects are named
+before any spend. `--card <file>` is required and names the card whose shape is checked; the
+answer is one `LINT OK` line, or one `LINT DRIFT` line per defect carrying the rule, the line
+and the excerpt, each with a `remedy=` naming the fix. Twelve shape rules come from
+docs/WORKER-CARDS.md:23-36, and four typed-header tokens come from SPEC-TOOLWORK §5 rule 1.
+
+**`--rules` prints the rule table, asked of the binary and not the clone.** A card writer on a
+bench has the binary and a clone months behind it, so the rule tokens are not in the clone;
+`lint --rules` prints every rule with its remedy, and it takes no card, because the question is
+asked before there is one (issue #1464).
+
+**`--typed` says a card with no header was meant to have one.** A card cut under SPEC-TOOLWORK
+§5 carries five typed lines, and the header tokens fire on any card that declares one of them;
+an older card carries none and is still linted by the twelve rules, so `--typed` asks for the
+header check when there is no header to trigger it.
+
+**`--trust <file>` supplies the per-kind state, and without it `paused` is not checked.** The
+file is a fixture in the exact shape `nova-pulse trust` will print, so the day that verb ships
+its own stdout is what is handed here; with no `--trust` there is no state, and `paused` is not
+checked rather than guessed at.
+
+**`--max <n>` bounds the drift lines.** It is the cap-and-count ceiling every listing here
+carries (default 20; `0` means all); a card with more findings than that ends with one
+`LINT MORE` line naming `--max 0` to see the rest.
 
 ### First run
 
