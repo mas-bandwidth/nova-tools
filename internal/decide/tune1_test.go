@@ -201,3 +201,61 @@ func TestLastDecisionSkipsOutcomeRows(t *testing.T) {
 		t.Error("a unit the log does not hold is not found")
 	}
 }
+
+// A mind that is asleep is not on the height ladder at all -- eligible() gates
+// on Usable() -- so the answer steps sideways to a mind that is awake, and up
+// only when no sideways rung is left. The mechanism was there; what was not
+// there was a test over the HEIGHT ladder (hold_test covers only the security
+// designation), and an asleep row in the registry to exercise it.
+//
+// The hurt: hygiene-delete-on-shape, a fix-with-red-test of 2 files and 1
+// package, answered emma ask=bus on 2026-09-18 while Emma had been asleep on
+// the bus since about 21:45Z. The ladder read the registry faithfully and the
+// registry said she was available: a safety fix was handed to a sleeping
+// friend, and a coordinator dispatched it to a child by hand instead. Keeping
+// the field TRUE is the open half (nova-tools#1501); this is the half that says
+// the ladder honours it.
+func TestAnAsleepMindIsNotOnTheHeightLadder(t *testing.T) {
+	asleep, err := ParseRegistry([]byte(`{"minds":[
+	  {"name":"flash","lineage":"deepseek","height":0,"kinds":[],"lanes":[],"availability":"available","ask":"card"},
+	  {"name":"pro","lineage":"deepseek","height":1,"kinds":[],"lanes":[],"availability":"available","ask":"card"},
+	  {"name":"opus","lineage":"rowan","height":2,"kinds":[],"lanes":["rowan-children"],"availability":"asleep","ask":"child"},
+	  {"name":"sol","lineage":"stella","height":2,"kinds":[],"lanes":["stella-children"],"availability":"asleep","ask":"child"},
+	  {"name":"emma","lineage":"emma","height":3,"kinds":[],"lanes":["code"],"availability":"asleep","ask":"bus"},
+	  {"name":"freddy","lineage":"freddy","height":3,"kinds":[],"lanes":["opencode"],"availability":"available","ask":"bus"},
+	  {"name":"astra","lineage":"stella","height":4,"kinds":[],"lanes":["coordination"],"availability":"available","ask":"bus"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The unit hygiene-delete-on-shape wore: the child rungs are its start, and
+	// both of them plus emma are asleep, so the answer is freddy -- sideways at
+	// emma's height to the lineage that is awake, not up to astra and not onto
+	// any of the three that are not there.
+	u := Unit{ID: "hygiene-delete-on-shape", Kind: KindFixWithRedTest, Files: 2, Packages: 1}
+	res := mustRoute(t, asleep, u, DefaultFloor)
+	if res.Rung.Name != "freddy" {
+		t.Errorf("three minds asleep: the answer is the awake one at that height, got %s (%s)", res.Rung.Name, res.Reason)
+	}
+	if res.Rung.Availability != AvailabilityAvailable {
+		t.Errorf("an asleep mind is never the answer, got %s at %s", res.Rung.Name, res.Rung.Availability)
+	}
+	// With freddy asleep as well there is no awake rung at that height, so it
+	// steps UP to one that is awake rather than down onto a sleeper.
+	for i := range asleep.Minds {
+		if asleep.Minds[i].Name == "freddy" {
+			asleep.Minds[i].Availability = AvailabilityAsleep
+		}
+	}
+	if res := mustRoute(t, asleep, u, DefaultFloor); res.Rung.Name != "astra" {
+		t.Errorf("no awake rung at that height: up to astra, got %s (%s)", res.Rung.Name, res.Reason)
+	}
+	// And an asleep mind is not offered to the provider either: the option set
+	// is the eligible minds, so nothing the provider could name is asleep.
+	offered := offer(asleep, u, 2, map[string]bool{}, map[int]map[string]bool{})
+	for _, m := range offered {
+		if m.Availability == AvailabilityAsleep {
+			t.Errorf("an asleep mind was offered to the provider: %s", m.Name)
+		}
+	}
+}
