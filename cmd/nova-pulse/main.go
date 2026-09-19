@@ -43,6 +43,7 @@ nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
 nova-pulse hygiene reap <slot> --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>

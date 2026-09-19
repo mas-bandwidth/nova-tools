@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  THE LOOP, not the verb (Glenn, 2026-09-18: "we want this certification to be mechanized").
+
+  `nova-pulse fleet certify` is the primitive. This is what runs it with nobody watching:
+  every six hours, the whole registry, with the "if stale" flag so that a fleet with nothing
+  to do costs one file read and one `nova-merge version` per machine. Install it the way
+  every other agent here is installed:
+
+      cp fleet/launchd/com.rowan.fleet-certify.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/com.rowan.fleet-certify.plist
+      launchctl load  ~/Library/LaunchAgents/com.rowan.fleet-certify.plist
+
+  RunAtLoad is false on purpose: loading an agent must not start a fleet-wide pass at the
+  moment somebody is installing it. The first run is the next six-hour boundary, or
+  `launchctl start com.rowan.fleet-certify` when it is wanted now.
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.rowan.fleet-certify</string>
+  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>-lc</string><string>/Users/glenn/.local/bin/nova-pulse fleet certify --all --if-stale --machines /Users/glenn/rowan-working/queue/control/machines.tsv --certs /Users/glenn/rowan-working/queue/control/certs.tsv --standard /Users/glenn/rowan-new/tools/bench-standard.sh --log /Users/glenn/rowan-working/queue/control/certify.log</string></array>
+  <key>StartCalendarInterval</key><array>
+    <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>15</integer></dict>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>WorkingDirectory</key><string>/Users/glenn/rowan-new</string>
+  <key>StandardOutPath</key><string>/Users/glenn/rowan-working/queue/control/certify.log</string>
+  <key>StandardErrorPath</key><string>/Users/glenn/rowan-working/queue/control/certify.log</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/Users/glenn/.local/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+</dict></plist>

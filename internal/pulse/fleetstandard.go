@@ -111,7 +111,7 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		},
 		{
 			Name: "runner-path", OS: "darwin", Match: MatchEquals, Want: "ok",
-			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; case "$(head -n 1 "$p")" in /usr/bin:*|/usr/bin) bad="$p";; esac; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
+			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; head -n 1 "$p" | grep -Eq '^/usr/bin(:|$)' && bad="$p"; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
 		},
 		// The toolchain roots the sandbox wall grants a card, one check each.
 		{
@@ -185,6 +185,41 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		{
 			Name: "disk-free", Match: MatchAtLeast, Want: strconv.Itoa(minFreeGB),
 			Probe: `df -Pk "$HOME" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}'`,
+		},
+		// The four the by-hand certification of 2026-09-18 added. Every one of them was
+		// true of every Linux machine in the fleet that morning, and no check anywhere
+		// could see any of them, because they are all faults of the NON-INTERACTIVE
+		// environment -- the one an ssh, a card and a CI shard actually get -- and every
+		// check we had ran in a login shell.
+		{
+			// Ubuntu's ~/.bashrc returns before any PATH line for a non-interactive shell
+			// and ~/.profile is never read, so `ssh <bench> nova-merge version` answered
+			// `command not found` on hulk, vision, space and mini while the same command
+			// in a login shell worked.
+			Name: "path-noninteractive", Match: MatchEquals, Want: "ok",
+			Probe: `if printf '%s' ":$PATH:" | grep -Fq ":$HOME/.local/bin:"; then echo ok; else echo "$PATH"; fi`,
+		},
+		{
+			// Eighteen `go install`-built nova-* binaries in ~/go/bin, answering v0.15.3,
+			// AHEAD of the release in ~/.local/bin on the same PATH. This is also why
+			// `release adopt` reported tools=0 skipped=21: it asked the binary in --bin,
+			// which was current, while the shadow was what served PATH.
+			Name: "gobin-shadow", Match: MatchEquals, Want: "0",
+			Probe: `ls "$HOME"/go/bin/nova-* 2>/dev/null | wc -l | tr -d ' '`,
+		},
+		{
+			// Empty on all four Linux machines. A card that commits in a clone with no
+			// repo-local config fails at the commit, after the work is done.
+			Name: "git-identity", Match: MatchNonempty,
+			Probe: `git config --global --get user.email 2>/dev/null`,
+		},
+		{
+			// A runner reads its PATH from the `.path` file beside it and from no shell at
+			// all, so every fault there is invisible to every other check. space's sixteen
+			// carried the bare distro PATH -- no go -- and batman's six led with
+			// /usr/local/bin, where go is 1.25.5, below go.mod's line.
+			Name: "runner-path-go", Match: MatchEquals, Want: "ok",
+			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path "$HOME"/actions-runner-*/.path; do [ -f "$p" ] || continue; PATH="$(head -n 1 "$p")" command -v go >/dev/null 2>&1 || bad="$bad $(basename "$(dirname "$p")")"; done; [ -n "$bad" ] && echo "no go on the .path of:$bad" || echo ok`,
 		},
 	}
 	out := make([]StandardCheck, 0, len(all))
@@ -333,6 +368,14 @@ func fleetValue(v string) string {
 // fleetStandardScript is the remote side: HOME set to the bench's home column, then one
 // `CHECK<TAB>name<TAB>value` line per check. A probe that fails prints an empty value; the
 // Go side decides what that means.
+//
+// NO `case` IN A PROBE. Every probe is spliced into `v=$( { <probe>; } ... )`, and bash 3.2
+// -- which is the /bin/bash every Mac in this fleet has -- mis-parses the `)` that closes a
+// case PATTERN as the `)` that closes the `$( )`. Bash 4 fixed it; macOS never shipped bash
+// 4. The failure is silent and it is worse than a refusal: `bash -s` reads its script from
+// the pipe in chunks, so everything before the bad line runs and prints, and every check
+// AFTER it simply never happens. A darwin shard read six checks, four empty values and a
+// clean exit. TestNoStandardProbeUsesCase keeps it from coming back.
 func fleetStandardScript(home string, checks []StandardCheck) string {
 	lines := []string{"HOME=" + fleetQuote(home), "export HOME", "LC_ALL=C", "export LC_ALL"}
 	for _, c := range checks {

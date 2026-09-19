@@ -380,7 +380,7 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", version,
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", version,
 		"--machines", machines, "--ssh", "ssh", "--from", "build-host:/home/gaffer/release",
 		"--stage", filepath.Join(dir, "stage"), "--expect-sums-from", digestPath,
 		"--bin", "~/.local/bin", "--dest", "~/nova-release", "--platform", "linux-amd64"},
@@ -409,7 +409,7 @@ func TestAdoptRefusesADigestFileOnTheFarSide(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machines, "--ssh", "ssh", "--from", "build-host:/home/gaffer/release",
 		"--stage", filepath.Join(dir, "stage"), "--expect-sums-from", "build-host:/home/gaffer/release/SUMS.digest",
 		"--bin", "~/.local/bin", "--dest", "~/nova-release", "--platform", "linux-amd64"},
@@ -436,7 +436,7 @@ func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
 	}
 	s := &fakeSSH{}
 	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.17.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.17.0",
 		"--machines", machines, "--ssh", "ssh", "--from", filepath.Dir(filepath.Dir(built)),
 		"--bin", "~/.local/bin", "--dest", "~/nova-release", "--platform", "linux-amd64"},
 		&out, &errs, Deps{SSH: s, Self: func() string { return "v0.16.0" }})
