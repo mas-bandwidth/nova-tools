@@ -309,11 +309,19 @@ WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default 
 
 `nova-review` builds an artifact from a lane already initialized by
 `nova-merge`; it has no state-creating quickstart. Its first safe command only
-identifies the binary:
+identifies the binary.
+
+Two parts of the line below belong to the run and not to the document, and both
+are declared by `cmd/nova-review/firstrun_test.go`. The build triple
+`<goos>/<goarch> go<version>` is whichever machine runs it -- the one pasted
+here is the Mac it was recorded on (2026-09-19). The version word is whatever
+the build stamped itself with: a build you make prints the stamp shown here,
+and the unstamped binary `go test` builds prints `devel`. Everything else on
+the line is compared.
 
 ```
 $ nova-review version
-nova-review devel
+nova-review v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1
 ```
 
 A packet needs the lane, one selector, a reader and a new relative output
