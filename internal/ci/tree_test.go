@@ -131,11 +131,12 @@ func (x *repoTreeIndex) GoFilesUnder(tests bool, dirs ...string) []*treeFile {
 	return out
 }
 
-// treeSkipDirs are the directory names the shared walk never descends into.
-// .git is not source, it is tens of thousands of objects, and walking it would
-// cost more than every rule that reads the tree put together. No rule reads it:
-// the ones that walk the whole root skip it by name already.
-var treeSkipDirs = map[string]bool{".git": true}
+// treeSkipNames are the names the shared walk skips, as a directory it never
+// descends into and as a file it never lists. .git is not source, it is tens of
+// thousands of objects, and walking it would cost more than every rule that
+// reads the tree put together. No rule reads it: the ones that walk the whole
+// root skip it by name already.
+var treeSkipNames = map[string]bool{".git": true}
 
 var (
 	repoTreeOnce  sync.Once
@@ -174,10 +175,15 @@ func loadRepoTree(root string) (*repoTreeIndex, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() {
-			if treeSkipDirs[d.Name()] {
+		if treeSkipNames[d.Name()] {
+			if d.IsDir() {
 				return fs.SkipDir
 			}
+			// A linked worktree's `.git` is a FILE holding one `gitdir:` line.
+			// The name is what this list is about, so the entry goes whatever it is.
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		// Anything that is not a directory is a file the walks this replaces
