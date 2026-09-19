@@ -357,6 +357,8 @@ func buildUnit(path string, set map[string]bool, stderr io.Writer, fromFlags dec
 		}
 		return unit, 0
 	}
+	// ...and here for the flag path, the one the manager lanes use.
+	fromFlags.Kind = decide.CanonicalKind(fromFlags.Kind)
 	if len(given) == 0 {
 		return decide.Unit{}, refuse(stderr, "ROUTE", "bad-unit", "--unit (or --unit-id and --kind) is required; the evidence is not guessed")
 	}

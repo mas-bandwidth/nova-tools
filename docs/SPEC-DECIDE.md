@@ -169,6 +169,16 @@ The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `s
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
 
+**A second NAME is not a second kind.** `chore` is what the shift lanes typed on 2026-09-19 and
+the ladder refused it — `ROUTE REFUSED reason=no-rung ... has kind "chore", want one of rebase,
+stack, fixture-retarget, fleet-chore, ...` — so the work was dispatched off the ladder and the log
+learned nothing from it. A chore of the fleet IS a `fleet-chore` under a shorter name: the same
+start height, the same mechanical eligibility, the same rung. It is therefore an **alias**, and it
+adds no row to the kind list and no rung to the ladder. The alias is resolved ONCE, where the
+evidence is read, so the kind the ladder decides on and the kind the log records are the same
+name: an alias that reached the log would split every per-kind floor in two. A near miss is still
+a refusal — `choree` is not a kind and the alias table is not a spell-corrector.
+
 **A row test is card work, and its size says so wrongly.** `row-test` is a kind of its own and it
 starts at `pro`, not at the bottom: one row of a table-driven suite, on a leg whose card shape has
 already been proven, is work a card rung does well and work the cheapest rung does not. The kind
