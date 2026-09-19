@@ -22,23 +22,40 @@ var specKinds = []struct {
 	steps   []string
 	control bool // the spec's table names a control for this kind
 	tokens  []string
+	built   bool // this binary holds the row (rebase, sweep and mutation-kill are T13's)
 }{
-	{"fix-red", []string{"hygiene", "shape", "positive", "mutate"}, true, []string{"no-test", "vacuous-test", "named-test-not-red"}},
-	{"transcript-test", []string{"hygiene", "shape", "positive"}, true, []string{"doc-edited", "transcript-not-read"}},
-	{"read", nil, false, nil},
-	{"probe", nil, false, nil},
-	{"text", nil, false, nil},
-	{"tone", nil, false, nil},
+	{"fix-red", []string{"hygiene", "shape", "positive", "mutate"}, true, []string{"no-test", "vacuous-test", "named-test-not-red"}, true},
+	{"transcript-test", []string{"hygiene", "shape", "positive"}, true, []string{"doc-edited", "transcript-not-read"}, true},
+	{"rebase", nil, false, nil, false},
+	{"sweep", nil, false, nil, false},
+	{"mutation-kill", nil, false, nil, false},
+	{"read", nil, false, nil, true},
+	{"probe", nil, false, nil, true},
+	{"text", nil, false, nil, true},
+	{"tone", nil, false, nil, true},
+}
+
+// builtSpecKinds is the rows this binary holds, in the spec's order.
+func builtSpecKinds() []int {
+	var out []int
+	for i, k := range specKinds {
+		if k.built {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 func TestKindsTableMatchesTheSpec(t *testing.T) {
-	if len(Kinds) != len(specKinds) {
-		t.Fatalf("the table holds %d kinds, the spec's §5 table %d: %v", len(Kinds), len(specKinds), kindNames())
+	built := builtSpecKinds()
+	if len(Kinds) != len(built) {
+		t.Fatalf("the table holds %d rows, the spec's §5 table declares %d this binary builds: %v", len(Kinds), len(built), kindNames())
 	}
-	for i, want := range specKinds {
-		got := Kinds[i]
+	for n, i := range built {
+		want := specKinds[i]
+		got := Kinds[n]
 		if got.Name != want.name {
-			t.Fatalf("row %d is %q, the spec's is %q (the table is in the spec's order)", i, got.Name, want.name)
+			t.Fatalf("row %d is %q, the spec's is %q (the table is in the spec's order)", n, got.Name, want.name)
 		}
 		if strings.Join(got.Steps, ",") != strings.Join(want.steps, ",") {
 			t.Errorf("%s: gate is %v, the spec's is %v", got.Name, got.Steps, want.steps)
@@ -70,7 +87,7 @@ func TestKindsPrintsOneLinePerKindAndNamesTheSameTable(t *testing.T) {
 		lines = append(lines, l)
 	}
 	if len(lines) != len(specKinds) {
-		t.Fatalf("--kinds printed %d KIND lines for %d kinds:\n%s", len(lines), len(specKinds), out.String())
+		t.Fatalf("--kinds printed %d KIND lines for %d DECLARED kinds:\n%s", len(lines), len(specKinds), out.String())
 	}
 	// The DRIFT block is the names the CUTTERS write that the table does not hold: it
 	// comes last, it never claims a gate, and every row names a kind the table DOES hold
@@ -101,7 +118,21 @@ func TestKindsPrintsOneLinePerKindAndNamesTheSameTable(t *testing.T) {
 	for i, want := range specKinds {
 		line := lines[i]
 		if !strings.HasPrefix(line, "KIND name="+want.name+" ") {
-			t.Fatalf("line %d is %q; the rows are the table's own order and each names its kind first", i, line)
+			t.Fatalf("line %d is %q; the rows are the DECLARED set's own order and each names its kind first", i, line)
+		}
+		if !want.built {
+			// A name §5 declares whose control this binary does not build says so
+			// rather than going missing from the table a person reads.
+			if !strings.Contains(line, " built=false ") || !strings.Contains(line, " gate=- ") {
+				t.Errorf("%s is declared and not built here; the row must say so: %q", want.name, line)
+			}
+			if !KindDeclaredNotBuilt(want.name) {
+				t.Errorf("KindDeclaredNotBuilt(%q) is false", want.name)
+			}
+			if near, ok := NearestKind(want.name); ok {
+				t.Errorf("%s is the spec's own name and was offered %q instead; its remedy is the task that builds it", want.name, near)
+			}
+			continue
 		}
 		gate := "none"
 		if len(want.steps) > 0 {
@@ -133,4 +164,51 @@ func kindNames() []string {
 		out = append(out, k.Name)
 	}
 	return out
+}
+
+// ONE LIST. The fix-review-bugs lane put the card kinds' NAME SET in
+// internal/hygiene/kinds.txt on #1842 (d29674df), embedded beside stray.txt, because
+// internal/pulse is ABOVE internal/hygiene (SPEC-TOOLWORK §3 rule 7: one implementation,
+// three callers) and a gate's step list must not end up inside the check the gate calls.
+// That is the way chosen here: this table reads its NAMES from there and keeps the gate
+// steps, the controls and the reject tokens, which are the only part `accept` needs and
+// the part `nova-check hygiene` and `nova-merge batch` cannot use.
+//
+// The swap is one function body -- DeclaredKinds returns hygiene.Kinds() -- and it
+// happens when #1842 is on dev, before this PR leaves draft. #1842 is an open PR on
+// another lane's branch carrying 852 lines across internal/review/seed.go, cmd/nova-check
+// and the docs, and merging all of that into this stack to reach one data file would bury
+// this change in a reader's diff.
+//
+// Until then this test is the coupling: kinds.txt's nine rows, transcribed, held against
+// DeclaredKinds. It turns red the moment the two lists disagree, whichever of them moved.
+func TestDeclaredKindsAreTheOneNameSet(t *testing.T) {
+	// internal/hygiene/kinds.txt at d29674df, name column, in file order.
+	want := []string{"fix-red", "transcript-test", "rebase", "sweep", "mutation-kill", "read", "probe", "text", "tone"}
+	got := DeclaredKinds()
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("DeclaredKinds() = %v\ninternal/hygiene/kinds.txt = %v\none list: change both, or wire DeclaredKinds to hygiene.Kinds()", got, want)
+	}
+	// Every row of the gate's table is a declared name, and nothing else is.
+	for _, k := range Kinds {
+		found := false
+		for _, d := range got {
+			if d == k.Name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the table holds %q, which the name set does not declare", k.Name)
+		}
+	}
+	// And the names this binary does not build are exactly T13's three.
+	var notBuilt []string
+	for _, d := range got {
+		if KindDeclaredNotBuilt(d) {
+			notBuilt = append(notBuilt, d)
+		}
+	}
+	if strings.Join(notBuilt, ",") != "rebase,sweep,mutation-kill" {
+		t.Errorf("declared and not built here = %v, want rebase,sweep,mutation-kill (T13, #1658)", notBuilt)
+	}
 }

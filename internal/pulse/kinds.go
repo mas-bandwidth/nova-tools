@@ -112,7 +112,16 @@ func (k Kind) ControlBuilt() bool {
 // One line of `key=value` tokens, like every other line this tool prints: a value with a
 // space in it is quoted by oneline.Field, so a row stays one line and stays greppable.
 func PrintKinds(w io.Writer) int {
-	for _, k := range Kinds {
+	// Every name the toolchain DECLARES gets a row, in the spec's order, so the printed
+	// table is the whole name set and not just the part this binary can judge. A name
+	// §5 declares whose control is not built here says so instead of going missing.
+	for _, name := range DeclaredKinds() {
+		k, built := KindNamed(name)
+		if !built {
+			fmt.Fprintf(w, "KIND name=%s gate=- tokens=- built=false does=%q paths=%q control=%q\n",
+				oneline.Field(name), "declared in SPEC-TOOLWORK \u00a75; this binary builds no gate for it yet (T13, #1658)", "-", "-")
+			continue
+		}
 		gate := "none"
 		if k.Gated() {
 			gate = strings.Join(k.Steps, ",")
@@ -203,4 +212,54 @@ func UnknownKindRemedy(name string) string {
 			oneline.Field(name), oneline.Field(near), oneline.Field(name))
 	}
 	return fmt.Sprintf("the kinds table does not hold %s, and there is no default kind (run `nova-pulse accept --kinds` for the table)", oneline.Field(name))
+}
+
+// DeclaredKinds is the card kinds THIS TOOLCHAIN declares, in SPEC-TOOLWORK §5 rule 2's
+// order. It is the NAME SET, which is a different thing from the table above: the table
+// is name PLUS gate steps PLUS control PLUS reject tokens, and only `accept` needs that.
+// `nova-check hygiene` and `nova-merge batch` check a branch without running a gate, so
+// the name set is all they can use.
+//
+// ONE LIST, AND WHERE IT WILL LIVE. The fix-review-bugs lane put this set in
+// `internal/hygiene/kinds.txt` on #1842 (d29674df), embedded beside stray.txt, and that
+// is the right home: `internal/pulse` is ABOVE `internal/hygiene` (§3 rule 7's one
+// implementation, three callers), so this table can read its names from there, while the
+// reverse would invert the dependency and put a gate's step list inside the check the
+// gate calls. That is the way chosen here.
+//
+// It is not wired yet for one reason, said out loud rather than left as a surprise:
+// #1842 is an OPEN PR on another lane's branch, 852 lines across `internal/review/seed.go`,
+// `cmd/nova-check` and the docs. Merging it into this stack to reach one data file would
+// bury this change under someone else's work in a reader's diff. The swap is one
+// function body -- `DeclaredKinds` returns `hygiene.Kinds()` -- and it happens when
+// #1842 is on dev, before this PR leaves draft. The class test below is what turns red
+// the moment the two lists disagree.
+func DeclaredKinds() []string {
+	return []string{
+		"fix-red",
+		"transcript-test",
+		"rebase",
+		"sweep",
+		"mutation-kill",
+		"read",
+		"probe",
+		"text",
+		"tone",
+	}
+}
+
+// KindDeclaredNotBuilt says the name is one §5 declares and THIS BINARY does not build a
+// gate for: `rebase`, `sweep` and `mutation-kill` are T13's (#1658). Such a name is never
+// offered a nearest kind -- its remedy is the task that builds it, not a different shape
+// of card.
+func KindDeclaredNotBuilt(name string) bool {
+	if _, built := KindNamed(name); built {
+		return false
+	}
+	for _, d := range DeclaredKinds() {
+		if d == name {
+			return true
+		}
+	}
+	return false
 }
