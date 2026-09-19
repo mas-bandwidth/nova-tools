@@ -1594,7 +1594,7 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
@@ -1621,9 +1621,25 @@ card wrote no usage row, the totals read the store under its own data home, the
 same store `native` samples its usage from. **The row wins wherever it exists**:
 `native` composed it from that store with the run's own window, provider and
 model, and reading the database over the top of a row that already reported
-would double-count the card. A store that is absent, or that no reader could
-open, still contributes zero — an absence is an absence, and nothing here is
-invented.
+would double-count the card. A row at the **slot** root counts only when its
+`job` column names this card: slot directories are reused, and an earlier
+card's leftover row is not this one's.
+
+**A reaped card's numbers are a LOWER BOUND, and `partial=<n>` says how many
+cards are floors.** The card was killed mid-turn, and the assistant row for the
+turn in flight carries no tokens object — the provider charged for it and no
+database holds the figure. The field is printed only when `n` is above zero,
+the way `benches=` is.
+
+A store that is absent contributes zero, because an absence is an absence. A
+store that **could not be read** — a locked database, a query that did not
+answer, no `sqlite3` on `PATH` — contributes zero too and is **never silent**:
+`BATCH NOTE <label> store unread: <reason>` goes to stderr, because a zero
+nobody was told about is the fault this whole reader exists to close. The store
+reads run **in parallel, at most four at a time**: each carries the usage
+reader's 20-second timeout, and serially `n` reaped cards would add `22n`
+seconds to a gather that is otherwise all file reads.
+
 One card line per card, in admission order: its label, its resolved slot, and
 either its disposition line — line 2 verbatim, capped — or `ABSTAIN` with its
 one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and
@@ -1945,7 +1961,7 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
 BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s> stopped=<b>
 BATCH NOTE slot=<n> stale-lock id=<id> taken

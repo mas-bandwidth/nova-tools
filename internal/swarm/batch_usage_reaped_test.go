@@ -3,7 +3,9 @@ package swarm
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -124,4 +126,159 @@ func reapedStoreSQL(at time.Time) string {
 		row(1, 100, 50, 10, 20, 5, "0.9000", 0) +
 		row(2, 5, 3, 0, 0, 0, "0.0600", 10) +
 		row(3, 3, 2, 0, 0, 0, "0.0400", 20)
+}
+
+// A STORE THE READER COULD NOT OPEN IS NAMED, NEVER A SILENT ZERO (Fable's cold read of this
+// change, MEDIUM). `ReadCardUsage` maps a locked database, a query that did not answer and a
+// missing `sqlite3` all onto a reason, and the first version of `storeCardSpend` dropped it
+// on the floor and returned zeroes -- which is this change's own fault, a card that spent
+// reported as free, put straight back for every unreadable store.
+//
+// The card here has a file where its database should be that is NOT a database, so the
+// reader reaches it, fails on it, and has something to say.
+func TestAReapedCardsUnreadableStoreIsNoted(t *testing.T) {
+	windowsIsNotABench(t)
+	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+		t.Skipf("%s is not on PATH", SQLiteBinary)
+	}
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := runnerDoing(t, dir, "unreadable",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "mkdir", Path: "{root}/{slot}/data/opencode"},
+		runnerStep{Op: "write", Path: "{root}/{slot}/data/opencode/opencode.db",
+			Body: "this is not a database, and a reader that reaches it has something to say"},
+		runnerStep{Op: "write", Path: "{root}/unreadable-started"},
+		runnerStep{Op: "sleep", Ms: 30000},
+	)
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "unreadable-started"))
+		clk.waitTick()
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
+	if code != 1 {
+		t.Fatalf("a batch with a reaped card exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(errs, "BATCH NOTE a store unread:") {
+		t.Fatalf("a store the reader could not open is named on stderr, never a silent zero:\n%s", errs)
+	}
+	// And the line is honest about having no number: it says zero AND it does not claim the
+	// zero is a measured floor, because nothing was measured.
+	if strings.Contains(out, "partial=") {
+		t.Fatalf("a card whose store could not be read has no lower bound to report:\n%s", out)
+	}
+}
+
+// THE REAPED SUM IS A LOWER BOUND AND THE LINE SAYS SO (Fable's cold read, MEDIUM). The card
+// was killed mid-turn. The assistant row for the turn in flight has no `tokens` object --
+// the harness writes those when the turn completes -- so the provider charged for work that
+// is in nobody's database. `partial=<n>` counts the cards whose numbers are a floor.
+func TestReapedSpendIsALowerBound(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Three completed turns, and a FOURTH row with no tokens object: the turn that was in
+	// flight when the batch killed the card. It adds nothing to the sum, which is precisely
+	// why the sum is a floor.
+	inFlight := `INSERT INTO message VALUES (4, '{"role":"assistant","providerID":"opencode","modelID":"m"}', ` +
+		strconv.FormatInt(time.Now().UnixMilli()+30, 10) + ");\n"
+	fixture := loadCardUsageSQL(t, filepath.Join(dir, "store", "opencode.db"),
+		reapedStoreSQL(time.Now())+inFlight)
+	runner := runnerDoing(t, dir, "lowerbound",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "copy", Path: "{root}/{slot}/data/opencode/opencode.db", Body: fixture},
+		runnerStep{Op: "write", Path: "{root}/lb-started"},
+		runnerStep{Op: "sleep", Ms: 30000},
+	)
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "lb-started"))
+		clk.waitTick()
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
+	if code != 1 {
+		t.Fatalf("a batch with a reaped card exits 1, got %d:\n%s", code, out)
+	}
+	// The three completed turns are counted; the fourth contributes nothing.
+	if !strings.Contains(out, "in=108 out=55 usd=1.0000") {
+		t.Fatalf("the completed turns are summed and the turn in flight adds nothing:\n%s", out)
+	}
+	if !strings.Contains(out, "partial=1") {
+		t.Fatalf("a reaped card's spend is a floor and the BATCH line says so:\n%s", out)
+	}
+}
+
+// A STALE SLOT usage.tsv FROM AN EARLIER CARD IS NOT THIS CARD'S ROW (Fable's cold read,
+// LOW). Slot directories are reused across batches. A `usage.tsv` left at the slot root by a
+// previous card exists, so the first version read it as "this card reported" -- twice wrong:
+// it blocked the store fallback AND it put another card's numbers on this card's row. Every
+// row carries a `job` column naming the label that wrote it, so the question is mechanical.
+func TestAStaleSlotUsageRowIsNotThisCardsRow(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The previous occupant of slot 1 left its row behind, saying 999 and 999 and 9.9999.
+	slot := filepath.Join(root, "1")
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := UsageRow{
+		"job": "some-earlier-card", "attempt": "1", "started": "2026-09-01T00:00:00Z",
+		"ended": "2026-09-01T00:01:00Z", "rc": "0", "provider": "opencode", "model": "m",
+		"tokens_in": "999", "tokens_out": "999",
+		"cache_write": "-", "cache_read": "-", "reasoning": "-", "usd": "9.9999",
+	}
+	if err := WriteCardUsage(filepath.Join(slot, "usage.tsv"), stale); err != nil {
+		t.Fatal(err)
+	}
+	fixture := loadCardUsageSQL(t, filepath.Join(dir, "store", "opencode.db"), reapedStoreSQL(time.Now()))
+	runner := runnerDoing(t, dir, "stale",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "copy", Path: "{root}/{slot}/data/opencode/opencode.db", Body: fixture},
+		runnerStep{Op: "write", Path: "{root}/stale-started"},
+		runnerStep{Op: "sleep", Ms: 30000},
+	)
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "stale-started"))
+		clk.waitTick()
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
+	if code != 1 {
+		t.Fatalf("a batch with a reaped card exits 1, got %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "in=999") || strings.Contains(out, "usd=9.9999") {
+		t.Fatalf("an earlier card's row is never this card's spend:\n%s", out)
+	}
+	if !strings.Contains(out, "in=108 out=55 usd=1.0000") {
+		t.Fatalf("a stale slot row must not block this card's own store:\n%s", out)
+	}
 }
