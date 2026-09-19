@@ -202,6 +202,15 @@ func RemoveUnderRoots(path string, roots ...string) error {
 	}
 	var last error
 	for _, root := range roots {
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			last = fmt.Errorf("%w: the root %q does not resolve: %v", ErrUnsafe, root, err)
+			continue
+		}
+		if err := refuseUnsafeRoot(rootAbs); err != nil {
+			last = err
+			continue
+		}
 		resolved, err := ResolvedUnder(path, root)
 		if err != nil {
 			last = err
