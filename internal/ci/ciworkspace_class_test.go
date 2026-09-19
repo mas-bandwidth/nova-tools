@@ -16,15 +16,30 @@ var (
 	// A workspace directory that does not exist yet is the normal first-run
 	// state: clean nothing and continue.
 	absentWorkspaceContinueRe = regexp.MustCompile(`-d\s+"?\$\{?GITHUB_WORKSPACE\}?"?\s*\]\s*\|\|\s*exit\s+0`)
+	// THE BELT. A workspace that exists but carries no `.git` is not a
+	// checkout of this repository, and `find … -exec rm -rf` over it would be
+	// emptying a directory nobody has identified. Continue instead: there is
+	// nothing of ours in there to clean, and actions/checkout empties a
+	// non-repository workspace itself before it clones.
+	nonRepoWorkspaceBeltRe = regexp.MustCompile(`-d\s+"?\$\{?GITHUB_WORKSPACE\}?"?/\.git"?\s*\]\s*\|\|\s*exit\s+0`)
+	// A `.git` test that exits NON-zero is the #1751 defect itself: the step
+	// runs before checkout, so an absent `.git` is the normal first-run state.
+	gitRefusalRe = regexp.MustCompile(`\.git[^\n]*\|\|\s*exit\s+[1-9]`)
+	// The destructive line the two guards above stand in front of.
+	sweepRe = regexp.MustCompile(`find\s+"?\$\{?GITHUB_WORKSPACE\}?"?[^\n]*rm\s+-rf`)
 )
 
-// ciworkspace_class_test.go closes #1751. The `remove stale build dirs from the
-// shared runner` step runs BEFORE actions/checkout and its first line demands a
-// `.git` under GITHUB_WORKSPACE, so on a runner whose workspace does not exist
-// yet the step exits 1 and the job is red before the repository is read. The
-// step is read as TEXT, like the rest of internal/ci, because go.mod carries no
-// YAML library. It appears once per self-hosted job, so the test walks EVERY
-// occurrence: asserting only the first would pass a tree where five are fixed.
+// ciworkspace_class_test.go closes #1751 and carries its belt. The `remove
+// stale build dirs from the shared runner` step runs BEFORE actions/checkout,
+// and its original first line demanded a `.git` under GITHUB_WORKSPACE, so on a
+// runner whose workspace did not exist yet the step exited 1 and the job was red
+// before the repository was read. The repair may not swing the other way: the
+// step ends in `find "${GITHUB_WORKSPACE}" … -exec rm -rf`, so it must refuse an
+// empty variable, continue over a workspace that does not exist, AND continue
+// over a workspace that is not a checkout of this repository. The step is read
+// as TEXT, like the rest of internal/ci, because go.mod carries no YAML library.
+// It appears once per self-hosted job, so the test walks EVERY occurrence:
+// asserting only the first would pass a tree where five are fixed.
 func TestWorkspaceCleanupDoesNotFailBeforeCheckout(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
@@ -34,7 +49,7 @@ func TestWorkspaceCleanupDoesNotFailBeforeCheckout(t *testing.T) {
 	}
 	for i, body := range bodies {
 		where := fmt.Sprintf("occurrence %d of %d (ci.yml line %d)", i+1, len(bodies), lines[i])
-		if strings.Contains(body, ".git") {
+		if gitRefusalRe.MatchString(body) {
 			t.Errorf("%s: the cleanup step still refuses a workspace with no .git; it runs before checkout, so a runner whose workspace does not exist yet goes red before a line of the repository is read (#1751)", where)
 		}
 		if !emptyWorkspaceRefusalRe.MatchString(body) {
@@ -42,6 +57,9 @@ func TestWorkspaceCleanupDoesNotFailBeforeCheckout(t *testing.T) {
 		}
 		if !absentWorkspaceContinueRe.MatchString(body) {
 			t.Errorf("%s: the cleanup step has no `[ -d \"${GITHUB_WORKSPACE}\" ] || exit 0` guard; a missing workspace directory is the normal first-run state and must continue (#1751)", where)
+		}
+		if sweepRe.MatchString(body) && !nonRepoWorkspaceBeltRe.MatchString(body) {
+			t.Errorf("%s: the cleanup step runs `find \"${GITHUB_WORKSPACE}\" … -exec rm -rf` with no `[ -d \"${GITHUB_WORKSPACE}/.git\" ] || exit 0` belt in front of it; a workspace that exists but is not a checkout of this repository must be left alone rather than emptied (#1751)", where)
 		}
 	}
 }

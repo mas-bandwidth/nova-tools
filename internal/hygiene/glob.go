@@ -3,8 +3,17 @@ package hygiene
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 )
+
+// driveLetterRE is a Windows drive-letter prefix, `C:` or `c:`, with or without the
+// slash after it. IT IS LEXICAL AND NOT `filepath.VolumeName`, ON PURPOSE (#1853, Emma's
+// item-4 dogfood): a card is linted on the bench that cuts it and run on another, so a
+// rule that answers differently on darwin and on windows is a rule a card can walk
+// through by being written on the right machine. `C:/Windows/system32` is an absolute
+// path on every bench that reads this card, whatever the bench's own separator is.
+var driveLetterRE = regexp.MustCompile(`^[A-Za-z]:`)
 
 // maxPaths is the cap on a card's PATHS: line. Eight globs is enough to name a fix's
 // source file, its test, a fixture directory and a few siblings; a card that needs
@@ -35,7 +44,7 @@ func ValidatePaths(paths []string) error {
 		if strings.TrimSpace(p) != p || p == "" {
 			return fmt.Errorf("PATHS: %q is empty or padded", p)
 		}
-		if strings.HasPrefix(p, "/") {
+		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || driveLetterRE.MatchString(p) {
 			return fmt.Errorf("PATHS: %q is absolute; the globs are repo-relative", p)
 		}
 		if boundsNothing(p) {
