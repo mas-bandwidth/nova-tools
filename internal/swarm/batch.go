@@ -24,6 +24,7 @@ package swarm
 // once, out loud.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -77,8 +79,17 @@ type BatchInput struct {
 	Benches  string // path to the benches table; empty means no table is read
 	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
 	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
-	Stdout   io.Writer
-	Stderr   io.Writer
+	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
+	// it is set, the model a card is dispatched with is the ladder's answer --
+	// which MIND does this unit of work -- and not the string the fill script
+	// wrote in the TSV. The TSV's model becomes the FALLBACK, which is exactly
+	// today's behaviour (rule 5): it stands where there is no key, where the
+	// provider refused, where the confidence is under the floor and where the
+	// rung is a mind a card cannot be dispatched to. Every card carries one
+	// receipt line saying which happened. nil leaves the TSV's model alone.
+	Route  *RouteInput
+	Stdout io.Writer
+	Stderr io.Writer
 	// clock is the batch's time source. nil means the real clock; a test injects a
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
@@ -121,6 +132,15 @@ type batchCard struct {
 	cardPath string
 	contract string // line 1 of the card's text, the line by which it was admitted
 	admitWhy string // non-empty when this card alone was refused at admission; the reason
+	// unit is the card's own typed evidence for the ladder, read from the card
+	// text by CardUnit; routable is false where the card names no kind the
+	// ladder knows, and such a card is never routed.
+	unit     decide.Unit
+	routable bool
+	// receipt is the one ROUTE line this card carries once the route has
+	// answered: which rung, at what confidence, on which model, and -- where
+	// today's model stands -- why.
+	receipt string
 }
 
 // maxHoldLines is the HOLD ceiling. A packet is BATCH + n card lines + HOLD lines, and the
@@ -210,6 +230,12 @@ func Batch(in BatchInput) int {
 	}
 	defer releaseSlots(in.Root, taken)
 
+	// THE ROUTE, BEFORE A CARD IS ASSIGNED A MODEL. One decision per admitted
+	// card, in process through internal/decide: which mind does this unit of
+	// work. The answer names the model; today's model in the TSV is the
+	// fallback; the receipt line says which of the two the card runs on.
+	routeCards(in, cards)
+
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
@@ -245,6 +271,10 @@ func Batch(in BatchInput) int {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
 		}
+		// The card's ROUTE line travels with the job rather than living only in the
+		// dispatcher's stderr: which rung the ladder answered, on which model, and --
+		// where today's model stands -- why.
+		writeRouteReceipt(job, c.receipt)
 		// A card's log is the runner's own stdout pinned to a regular file under the job, the
 		// way the spec records a job: harness.log. Idle means this file stopped growing.
 		//
@@ -939,6 +969,7 @@ func readCards(path string) ([]batchCard, error) {
 			}
 			why = ar.why
 		}
+		unit, routable := CardUnit(parts[0], contract, string(cardRaw))
 		cards = append(cards, batchCard{
 			label:    parts[0],
 			slot:     slot,
@@ -947,6 +978,8 @@ func readCards(path string) ([]batchCard, error) {
 			cardPath: cardPath,
 			contract: contract,
 			admitWhy: why,
+			unit:     unit,
+			routable: routable,
 		})
 	}
 	return cards, nil
@@ -1667,4 +1700,53 @@ func mentionsLauncher(lines []string) bool {
 		}
 	}
 	return false
+}
+
+// routeCards is the ladder on the fill/launch path: one decision per admitted
+// card, before that card is assigned a model.
+//
+// It is the whole of what Glenn asked for on 2026-09-19 -- "Are we all using
+// Jev yet when selecting which model to send work to?" -- and it is written so
+// the answer to that question is mechanical rather than a habit: with a route
+// input set, NO card on this path gets its model from a person's hand without
+// the ladder having been asked and the answer written down.
+//
+// Every card's receipt line is said once on stderr, in TSV order, and written
+// into the card's own job directory as route.txt so it travels with the job.
+// A card the ladder cannot type -- one whose text names no kind it knows -- is
+// not routed at all, and its line says so rather than inventing evidence.
+func routeCards(in BatchInput, cards []batchCard) {
+	if in.Route == nil {
+		return
+	}
+	if ok, why := in.Route.Accountable(); !ok {
+		fmt.Fprintf(in.Stderr, "BATCH NOTE route: %s\n", why)
+	}
+	for i := range cards {
+		c := &cards[i]
+		if c.admitWhy != "" {
+			continue // a card refused at admission never runs, so it is never routed
+		}
+		if !c.routable {
+			c.receipt = fmt.Sprintf("ROUTE jev=fallback conf=0.00 rung=- model=%s why=%s",
+				oneline.Field(c.model), oneline.Field("card-names-no-kind"))
+			fmt.Fprintf(in.Stderr, "ROUTE %s %s\n", oneline.Field(c.label), c.receipt)
+			continue
+		}
+		res := RouteCard(context.Background(), *in.Route, c.unit, c.model)
+		c.model = res.Model
+		c.receipt = res.Receipt
+		fmt.Fprintf(in.Stderr, "ROUTE %s %s\n", oneline.Field(c.label), c.receipt)
+	}
+}
+
+// writeRouteReceipt puts a card's ROUTE line in its job directory, beside the
+// log the run writes, so the decision travels with the job rather than living
+// only in the dispatcher's stderr. A receipt that cannot be written is not a
+// reason not to run the card: the line has already been said out loud.
+func writeRouteReceipt(jobDir, receipt string) {
+	if strings.TrimSpace(receipt) == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(jobDir, "route.txt"), []byte(receipt+"\n"), 0o644)
 }

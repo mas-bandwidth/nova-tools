@@ -513,9 +513,12 @@ nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lan
 nova-decide route ... [--step-up] [--max-steps 3]
                   (below the floor, re-ask with that rung excluded from the criteria;
                    every step is a logged decision, and --max-steps caps how many)
+nova-decide route ... [--paste]
+                  (one more line, for a coordinator to act on:
+                   ROUTE <unit> -> <mind> (<model id>) conf=<x>)
 ```
 
-Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, and how it is `ask`ed) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
+Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, how it is `ask`ed, and — for a rung that is a model rather than a person — the `model` id a unit dispatched to it runs with) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
 
 The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
 
@@ -571,6 +574,19 @@ exit=3
 **An answer is checked against the question that asked it.** A choice answer must name one of the options the question offered: an answer the criteria never held (`deepseek-flash` to a question offering `continue|ask-all-friends|ask-glenn`), an answer naming **nothing at all** (`{"type":"choice","confidence":0.99}`), and an answer of the wrong type are all **provider errors** at exit 2, naming the answer and the offered set — not decisions with a confidence on them. A decision that was never made cannot be authorized by the number attached to it, and the floor never sees one.
 
 **Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the typed `wait` (`-` or `awaiting_termination`), the `next` rung, the step count, the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 the answer may be acted on, **1 the verb ran and said NOT YET** (a wait: the rung named owns the work and an attempt on it is not known dead), 3 below the floor (the line already carries the rung it stepped up to and the one above that), 2 on refusal. Only exit 0 is permission to dispatch.
+
+**Before every Agent spawn: ask, then take the rung.** The route verb is the mechanism by which a model is chosen, not a report about one. A coordinator about to hand work to a child, a card or a friend runs this first, and `--paste` prints the one line it acts on:
+
+```
+$ nova-decide route --unit-id <id> --kind <kind> --files <n> --packages <n> \
+      --usage ~/rowan-working/usage/decide.tsv --log ~/rowan-working/queue/decide.jsonl --paste
+ROUTE unit=<id> rung=flash confidence=0.94 floor=0.90 wait=- next=pro steps=1 reason="..." ask=card
+ROUTE <id> -> flash (opencode/deepseek-v4-flash) conf=0.94
+```
+
+Take the rung on the second line and nothing else: `ask=card` means cut the card on that **model id**, `ask=child` means spawn a child of that lineage, `ask=bus` means put the ask on the bus — the line prints `(ask-bus)` in place of a model id where the mind is asked and not run. Exit **0** is permission to dispatch; **1** is the verb saying NOT YET (a wait — establish what happened to the prior attempt before anything is started); **3** is below the floor, where the line already names the rung it stepped up to; **2** is a refusal. `--usage` and `--log` are required whenever jev is asked, so the spend and the decision are both on the record before the child exists.
+
+The same decision runs by machinery on the swarm's own fill/launch path — `nova-swarm batch --route` below — so a card's model is the ladder's answer rather than a string somebody wrote in a TSV. A coordinator dispatching by hand asks the same verb over the same registry, and the two answers are the same decision.
 
 ### help — continue, ask all friends, ask Glenn
 
@@ -1992,6 +2008,44 @@ nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)      
 ### native and batch
 
 routes: see docs/MODELS.md
+
+**`--route`: the ladder chooses the model, not the TSV.** `batch --cards` reads `label<TAB>slot<TAB>model<TAB>card-path`, and until `--route` that `model` column was the last word — a string a fill script wrote by hand. With `--route`, the batch asks the ladder one typed decision per card, in process, **before the card is assigned a model**: which mind does this unit of work. The answer's rung names the model id, from the registry; the TSV's model becomes the **fallback**, which is exactly today's behaviour (SPEC-DECIDE rule 5).
+
+```
+nova-swarm batch --cards <tsv> --route --route-log <path> --route-usage <path>
+                 [--route-registry <path>] [--route-floor 0.9]
+                 [--route-key-env JEV_API_KEY] [--route-base-url <url>]
+```
+
+`--route-log` and `--route-usage` are **required** with `--route`: accounting is not optional, and a call nobody can account for is not made. Every card carries one receipt line, said on stderr in TSV order and written into the card's job directory as `route.txt`:
+
+```
+ROUTE card-742 ROUTE jev=flash conf=0.94 rung=flash model=opencode/deepseek-v4-flash why=-
+ROUTE card-743 ROUTE jev=fallback conf=0.61 rung=pro model=opencode/deepseek-v4-flash why=below-floor
+ROUTE card-744 ROUTE jev=fallback conf=0.90 rung=opus model=opencode/deepseek-v4-flash why=rung-is-asked-not-run
+```
+
+`jev=` is the rung where the answer chose the model and the literal `fallback` where today's model stands; `rung=` always names what the ladder answered, so a fallback never hides the rung; `why=` is one enumerated token — `no-key`, `no-accounting`, `below-floor`, `refused`, `rung-is-asked-not-run`, `card-names-no-kind`, `no-ladder`. The third line above is the one worth reading in the log: the ladder says that card is judgment work owed to a child or a friend, and the batch ran it on a mechanical model because dispatching a card is the only thing a batch can do. That is evidence for the escalation log, not a silent success.
+
+**The card's own evidence.** The ladder wants a kind, a size, a lane, a platform need and what security is touched, and it reads them from the card's own text — never from a model, and never from anything outside the card. A card may state them outright, one `FIELD: value` line anywhere in its text, and a fill script should write them from now on:
+
+```
+KIND: fix-with-red-test
+FILES: 4
+PACKAGES: 1
+LANES: 1
+LANE: code
+PLATFORM: windows
+TOUCHES: sandbox
+```
+
+Where the card names no `KIND:`, the kind is read from its contract line by a deterministic table of phrases — security phrases first, so security never falls through to a cheaper reading of the same line. A card whose kind cannot be read is **not routed at all**: no evidence is no decision, its line says `why=card-names-no-kind`, and today's model stands. What reaches the provider is never the card: it is the bucketed public projection of the unit and nothing else (SPEC-DECIDE rule 4).
+
+**Two routes, two questions — do not point both at the same column.** `internal/swarm/route.go` (`nova-swarm route`, `nova-pulse launch --routes`) asks what KIND of work a card's text is and picks the **worker description** for it from a routes table, writing that path into the cards TSV's model column. `--route` here asks which MIND does the unit — over the registry ladder, with the escalation policy on it — and names that mind's **model id**. One chooses the harness a card runs under; the other chooses who does the work, and neither answer is the other's. They write the same column, so a pulse that already rewrote it with `--routes` should run `nova-swarm batch` **without** `--route`, and a batch that routes by the ladder should be handed a TSV carrying model ids.
+
+**No key is no call.** An absent key is said once, by the name of the variable and never by its value, and the batch runs on today's models — so the loop runs on a bench with no API at all.
+
+**A card that fails its gate re-enters one rung up.** The ladder is the retry policy: a confirmed failure is appended to the unit as evidence, and the rung that failed — and its lineage at that height — is out of the eligible set, so the answer is another lineage on the same rung where there is one (sideways before up) and the rung above where there is not. It is never a retry on the rung that just failed.
 
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
