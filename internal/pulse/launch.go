@@ -28,6 +28,11 @@ type LaunchInput struct {
 	Files    int    // the --files budget every card in the batch carries; 0 takes the default
 	Tokens   string // the --tokens budget; empty takes the default
 	QueueDir string // the queue directory STOP lives in; empty falls back to Root (admission.go)
+	// Benches and Bench are handed straight to nova-swarm batch so one pulse can fill more
+	// than one bench (docs/SPEC-SWARM.md, "Benches"); empty passes neither flag and the
+	// batch runs on this machine exactly as before (issue #637).
+	Benches string // the benches table file
+	Bench   string // the benches to fill, comma separated
 	// Routes is the routes.tsv the typed decision reads to pick each card's worker. Empty
 	// means no routing: the cards group by their own model column, exactly as before.
 	Routes  string
@@ -203,6 +208,14 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 		"--root", in.Root,
 		"--files", strconv.Itoa(files),
 		"--then", then)
+	// One pulse can fill more than one bench: both flags reach `nova-swarm batch`
+	// untouched, and an empty one is not passed at all (issue #637).
+	if in.Benches != "" {
+		cmd.Args = append(cmd.Args, "--benches", in.Benches)
+	}
+	if in.Bench != "" {
+		cmd.Args = append(cmd.Args, "--bench", in.Bench)
+	}
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
