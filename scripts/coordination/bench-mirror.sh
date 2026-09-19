@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# bench-mirror.sh: keep bare mirrors of the public repos under $HOME/nova-bench/mirror so a card clones locally (git clone --reference), pulling only the delta from GitHub. Fetch only; deletes nothing.
+set -u; M=$HOME/nova-bench/mirror; mkdir -p "$M"; for r in nova-tools schema serialize; do d=$M/$r.git; if [ -d "$d" ]; then git -C "$d" fetch -q --prune origin '+refs/heads/*:refs/heads/*' 2>/dev/null; else git clone -q --mirror "https://github.com/mas-bandwidth/$r.git" "$d" 2>/dev/null; fi; echo "MIRROR $(hostname -s) $r $(git -C "$d" rev-parse --short refs/heads/dev 2>/dev/null || git -C "$d" rev-parse --short refs/heads/main 2>/dev/null) $(du -sh "$d" 2>/dev/null | cut -f1)"; done

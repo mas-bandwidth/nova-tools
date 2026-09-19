@@ -1,0 +1,5 @@
+# safe-rm.sh: source this; safe_rm PATH... removes only paths strictly below $HOME/rowan-working or $HOME/rowan-swarm-root, never a symlink, never a root, and logs each one.
+safe_rm() { local p r ok rp rr rc=0; [ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ] && [ "$(printf %s "$HOME" | tr -cd / | wc -c)" -ge 2 ] || { echo "safe_rm REFUSE: bad HOME" >&2; return 2; }
+  for p in "$@"; do ok=0; [ -n "$p" ] || continue; [ -L "$p" ] && { echo "safe_rm REFUSE: $p (a symlink)" >&2; rc=1; continue; }; [ -e "$p" ] || continue; rp=$(realpath -- "$p" 2>/dev/null) || continue
+    for r in "$HOME/rowan-working" "$HOME/rowan-swarm-root"; do rr=$(realpath -- "$r" 2>/dev/null) || continue; case "$rp" in "$rr"/*) ok=1;; esac; done
+    [ $ok = 1 ] || { echo "safe_rm REFUSE: $p (outside the roots)" >&2; rc=1; continue; }; printf '%s rm %s\n' "$(date -u +%FT%TZ)" "$rp" >> "$HOME/hygiene.log"; rm -rf -- "$rp" || rc=1; [ -e "$rp" ] && rc=1; done; return $rc; } # returns 1 when any path was refused or survived; a path that does not exist is success (nothing to do). Pit stop 2026-09-17: a silent refusal let child-clone --gc print "removed" for a directory that was still there.
