@@ -70,7 +70,7 @@ func greenBatchPR(t *testing.T, number int, head string) *merge.FakeHost {
 func TestLandEnqueuesAGreenBatchAtTheFront(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	h, q := greenBatchPR(t, 1341, head), &fakeLandEnqueue{}
-	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "mas-bandwidth/nova-tools", "--pr", "1341")
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "mas-bandwidth/nova-tools", "--pr", "1341", "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("land: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -91,7 +91,7 @@ func TestLandRefusesAPullRequestThatIsNotABatch(t *testing.T) {
 	h, q := merge.NewFakeHost(), &fakeLandEnqueue{}
 	h.PRs[1207] = merge.PR{Number: 1207, HeadRef: "rowan/impl-something", HeadOID: head, Mergeable: "MERGEABLE"}
 	h.ChecksBy[head] = merge.Checks{Green: 9}
-	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1207")
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1207", "--readers", "gafferongames")
 	if exit != 1 {
 		t.Fatalf("a non-batch head must be REFUSED at exit 1, got %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -117,7 +117,7 @@ func TestLandRefusesAPullRequestWhoseChecksAreNotGreen(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, q := greenBatchPR(t, 1341, head), &fakeLandEnqueue{}
 			h.ChecksBy[head] = checks
-			exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341")
+			exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341", "--readers", "gafferongames")
 			if exit != 1 {
 				t.Fatalf("exit %d, want 1\n%s\n%s", exit, stdout, stderr)
 			}
@@ -136,7 +136,7 @@ func TestLandRefusesAPullRequestThatIsNotOpen(t *testing.T) {
 	pr := h.PRs[1341]
 	pr.Merged = true
 	h.PRs[1341] = pr
-	exit, _, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341")
+	exit, _, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341", "--readers", "gafferongames")
 	if exit != 1 || len(q.enqueued) != 0 {
 		t.Fatalf("a merged pull request was landed again: exit %d enqueued %v\n%s", exit, q.enqueued, stderr)
 	}
@@ -154,7 +154,7 @@ func TestLandTakesABatchOKReceiptFromAFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "99", "--receipt-file", path)
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "99", "--receipt-file", path, "--no-require-holds")
 	if exit != 0 {
 		t.Fatalf("land: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -171,7 +171,7 @@ func TestLandRefusesAReceiptForAnotherHead(t *testing.T) {
 	h.PRs[99] = merge.PR{Number: 99, HeadRef: "rowan/nightly", HeadOID: head, Mergeable: "MERGEABLE"}
 	h.ChecksBy[head] = merge.Checks{Green: 9}
 	receipt := "BATCH OK name=nightly base=" + strings.Repeat("f", 40) + " head=" + strings.Repeat("9", 40) + " members=1301 dropped=none"
-	exit, _, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "99", "--receipt", receipt)
+	exit, _, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "99", "--receipt", receipt, "--no-require-holds")
 	if exit != 1 || len(q.enqueued) != 0 {
 		t.Fatalf("a receipt for another head landed: exit %d enqueued %v\n%s", exit, q.enqueued, stderr)
 	}
@@ -182,7 +182,7 @@ func TestLandRefusesAReceiptForAnotherHead(t *testing.T) {
 func TestLandWithoutJumpQueuesBehind(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	h, q := greenBatchPR(t, 1341, head), &fakeLandEnqueue{}
-	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341", "--no-jump")
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341", "--no-jump", "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("land: exit %d\n%s\n%s", exit, stdout, stderr)
 	}

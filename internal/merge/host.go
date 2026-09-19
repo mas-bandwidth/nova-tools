@@ -197,6 +197,10 @@ type Host interface {
 	PR(n int) (PR, error)
 	// BranchOID resolves a branch entry's head commit.
 	BranchOID(branch string) (string, error)
+	// Verdicts reads the pull request's comments and reviews: the HOLDs and APPROVEs a
+	// reviewer posted, which are the one objection no check on a commit can carry
+	// (#1572). Every field of one is DATA -- a body is parsed for two words and a sha.
+	Verdicts(n int) ([]Verdict, error)
 	// Checks reads a commit's check buckets. The base's evidence is read the same way
 	// an entry's is.
 	Checks(oid string) (Checks, error)
@@ -378,4 +382,22 @@ func (h *GH) AtomicMerge() bool { return false }
 // Merge is never reached on this host, and says so rather than doing something weaker.
 func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	return fmt.Errorf("this host offers no merge primitive taking both an expected head and an expected base, so publication is the compare-and-swap push of rule 21; gh pr merge is never called")
+}
+
+// Verdicts reads this pull request's comments and its reviews, in two calls, and folds
+// each into the two words the gate acts on. It is READ-ONLY and it mutates nothing.
+//
+// The REST endpoints rather than `gh pr view --json comments,reviews`: a review's own
+// `commit_id` is the sha the forge recorded it against, which is better evidence than a
+// sha typed into a sentence, and `gh pr view` does not carry it.
+func (h *GH) Verdicts(n int) ([]Verdict, error) {
+	comments, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	reviews, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	return decodeVerdicts(comments, reviews, n)
 }

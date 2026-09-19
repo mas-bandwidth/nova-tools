@@ -61,8 +61,8 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
-  nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--readers <login,...> | --no-require-holds) [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--ignore-hold <n>]
+  nova-merge land       --repo <owner>/<name> --pr <n> (--readers <login,...> | --no-require-holds) [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>] [--ignore-hold <n>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
@@ -91,7 +91,21 @@ the gate runs on one operating system and CI runs on three and a member nobody h
 on its own would turn the whole batch red for its own fault. A member whose head is a
 batch's own branch (rowan/integration-*) or is named by a BATCH OK line in --receipt-file
 is admitted on the gate's own evidence instead -- the same receipt nova-merge land takes.
---no-require-checks waives the whole check and says so on the verdict line. Pushing that
+--no-require-checks waives the whole check and says so on the verdict line.
+
+A HOLD IS READ THE WAY A RED IS (#1572). At the same point it reads a member's ci-ok,
+the gate reads that member's comments and reviews, and DROPS a member carrying an
+unlifted HOLD from one of --readers, with the login and the instant on the line. A
+HOLD is unlifted unless that same reader posted an APPROVE after it NAMING THIS VERY
+HEAD: an approve for code the batch does not carry lifts nothing. --readers is a named
+set rather than anyone who types the word, because a lane's own status comments quote
+HOLD while reporting on one. --ignore-hold <n> steps over one member's hold and prints
+which, and --no-require-holds waives the read entirely and says so. The land verb asks
+same question again on its own fresh read, over the batch AND every member its receipt
+names: on 2026-09-19 a held head reached dev because the HOLD was posted in the nine
+minutes between BATCH OK and the landing.
+
+Pushing that
 branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give

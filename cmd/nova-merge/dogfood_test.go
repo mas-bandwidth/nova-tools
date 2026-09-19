@@ -320,7 +320,7 @@ func TestBatchRefusesAToolchainThisMachineHasNot(t *testing.T) {
 	l.git(l.work, "checkout", "-q", "main")
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-tc", "--pr", "1",
-		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m", "--readers", "gafferongames")
 	if exit != 2 {
 		t.Fatalf("a toolchain this machine has not is exit 2, got %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -341,7 +341,7 @@ func TestBatchRequireLispFailsWhenTheStepCannotRun(t *testing.T) {
 	l := batchRepo(t)
 	exit, stdout, stderr := l.run("batch", "--name", "integration-lisp", "--pr", "1",
 		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev",
-		"--timeout", "5m", "--require-lisp")
+		"--timeout", "5m", "--require-lisp", "--readers", "gafferongames")
 	if exit != 1 {
 		t.Fatalf("--require-lisp over a checkout with no lisp suite is exit 1, got %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -366,7 +366,7 @@ func TestBatchDropsAMemberWhoseOwnHeadIsNotGreen(t *testing.T) {
 	l.host.SetCheckRuns(l.heads[3], merge.CheckDetail{Name: "build", Conclusion: "success", SHA: l.heads[3]})
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-checks", "--pr", "1,3",
-		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m", "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("a batch whose members were all dropped still runs its gate: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -387,7 +387,7 @@ func TestBatchNoRequireChecksIsSaidOutLoud(t *testing.T) {
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-waived", "--pr", "1",
 		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev",
-		"--timeout", "5m", "--no-require-checks")
+		"--timeout", "5m", "--no-require-checks", "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("a waived batch that goes green is exit 0, got %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -412,7 +412,7 @@ func TestBatchAdmitsAMemberTheGateItselfVouchedFor(t *testing.T) {
 	l.host.PRs[1] = pr
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-branch", "--pr", "1",
-		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m", "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("a member on a batch branch is admitted: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -432,7 +432,7 @@ func TestBatchAdmitsAMemberTheGateItselfVouchedFor(t *testing.T) {
 	}
 	exit, stdout, stderr = l2.run("batch", "--name", "integration-receipt", "--pr", "1",
 		"--repo", "o/n", "--root", filepath.Join(l2.dir, "batch"), "--base", "dev",
-		"--timeout", "5m", "--receipt-file", receipt)
+		"--timeout", "5m", "--receipt-file", receipt, "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("a member a receipt vouches for is admitted: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -448,7 +448,7 @@ func TestBatchAdmitsAMemberTheGateItselfVouchedFor(t *testing.T) {
 	}
 	if exit, _, errb := l2.run("batch", "--name", "integration-empty", "--pr", "1",
 		"--repo", "o/n", "--root", filepath.Join(l2.dir, "batch"), "--base", "dev",
-		"--timeout", "5m", "--receipt-file", empty); exit != 2 {
+		"--timeout", "5m", "--receipt-file", empty, "--readers", "gafferongames"); exit != 2 {
 		t.Errorf("a --receipt-file with no BATCH OK line is exit 2, got %d: %s", exit, errb)
 	}
 }
