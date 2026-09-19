@@ -27,7 +27,12 @@ const cardMaxBytes = 12000
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
-const cardLintChecks = 12
+//
+// It counts the twelve shape rules of docs/WORKER-CARDS.md:23-36 and the four typed-header
+// tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
+// and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
+// gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc).
+const cardLintChecks = 16
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -64,6 +69,20 @@ var cardLintRemedies = map[string]string{
 	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
 	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
 	"size":             "cut the card under the ceiling so a model reads it in one window: point at a file instead of pasting it, and drop quoted source",
+}
+
+// THE TYPED HEADER'S FOUR TOKENS JOIN THE SAME TABLE (SPEC-TOOLWORK.md §5 rule 1, #1651).
+// They are defined in internal/swarm beside the header rules themselves, because that is
+// where the grammar the gate parses is restated; they are merged here so `--rules` prints
+// one listing and cardLintChecks counts one set. A token defined in both places is a
+// collision this init refuses to paper over.
+func init() {
+	for name, remedy := range swarm.CardHeaderRemedies {
+		if _, clash := cardLintRemedies[name]; clash {
+			panic("nova-swarm lint: two remedies for the rule " + name)
+		}
+		cardLintRemedies[name] = remedy
+	}
 }
 
 // cardLintRuleNames is every rule token in one order, so the listing is byte-stable.
@@ -271,6 +290,18 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "")
 	rules := f.fs.Bool("rules", false, "")
+	// THE TYPED HEADER IS CHECKED WHEN THE CARD HAS ONE, AND ON DEMAND WHEN IT DOES NOT.
+	// A card cut under SPEC-TOOLWORK §5 carries five typed lines; every card written before
+	// it carries none, and those are still linted by the twelve older rules. So the header
+	// tokens fire on any card that declares one of the five lines, and `--typed` says that
+	// this card is meant to have a header even though it has none.
+	typed := f.fs.Bool("typed", false, "")
+	// `--trust <file>` IS A FIXTURE UNTIL `nova-pulse trust` EXISTS. The per-kind state is
+	// T06a's other half and lives in the lane that owns internal/pulse; the file this flag
+	// reads is in the exact shape that verb's listing prints, so the day it ships, its own
+	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
+	// checked rather than guessed at.
+	trustPath := f.fs.String("trust", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -309,7 +340,19 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			oneline.Escape("not a card; lint --card wants a card, and the card templates are read-pr, probe-row, fix-card"))
 		return 1
 	}
+	var trust swarm.TrustState
+	if *trustPath != "" {
+		t, err := swarm.ReadTrustFixture(*trustPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --trust wants a readable file of `TRUST kind=<kind> ... state=<trial|trusted|paused>` lines, in the shape `nova-pulse trust` prints: %s\n", oneline.Err(err))
+			return 2
+		}
+		trust = t
+	}
 	findings := lintCard(raw)
+	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
+		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+	}
 	if len(findings) == 0 {
 		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
 		return 0
