@@ -146,6 +146,8 @@ red bench or a red PR), then green (small, already-approved PRs), then small
 tie the rule cannot break is asked of Jev as one typed decision in 400 ms behind
 the 0.9 floor, and a refusal keeps source order.
 
+Before the examples, make ./pool: cp -R cmd/nova-swarm/testdata/cards ./pool
+
 example:
   nova-swarm template --name read-pr
   nova-swarm quickstart --pool ./pool
