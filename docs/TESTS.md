@@ -514,7 +514,7 @@ $ nova-pulse reap --roots ./roots --queue ./queue --deadline 60 --dry-run
 REAP roots=1 killed=0 locks=0 requeued=0 failed=0 temp=0 restarted=0 dry-run=true
 
 $ nova-pulse hygiene run --home /Users/me/bench --dry-run --hostname bench-a
-HYGIENE bench-a slots=0 reaped=0 jobs-deleted=0 slots-deleted=0 cache=kept(0G) free 1.7T -> 1.7T
+HYGIENE bench-a slots=0 reaped=0 jobs-deleted=0 slots-deleted=0 diag-deleted=0 diag-freed=0 cache=kept(0G) free - -> -
 
 $ nova-pulse fleet registry --machines ./machines.tsv
 MACHINE hulk ssh=hulk os=linux/x64 roles=bench seat=swarm-hulk cores=64 notes="-"
