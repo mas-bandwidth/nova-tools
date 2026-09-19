@@ -39,7 +39,10 @@ func TestFleetRegistryPrintsOneLinePerMachineInFileOrder(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("printed %d lines, want 3: %q", len(lines), out.String())
 	}
-	want := "MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 notes="
+	// The provider column stands on the line whether the file wrote it or not: this registry
+	// is written in the seven-column form, and `tailnet` is what a seven-column line means
+	// (SPEC-FLEET-NET.md R1).
+	want := "MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 provider=tailnet notes="
 	if !strings.HasPrefix(lines[0], want) {
 		t.Errorf("first line = %q, want it to start %q", lines[0], want)
 	}
