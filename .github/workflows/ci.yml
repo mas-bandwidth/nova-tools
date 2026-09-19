@@ -174,6 +174,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: roadmap parity
+        # ROADMAP.md states progress; docs/roadmaps/nova-work.sexp holds the data.
+        # The class test runs first so a broken check cannot pass the page.
+        shell: bash
+        run: |
+          bash tools/roadmap-parity_test.sh
+          bash tools/roadmap-parity.sh
+
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
         # code is not the product here — the output is.
@@ -771,6 +779,16 @@ jobs:
           case " $pkgs " in
             *" ./internal/ci "*|*"/internal/ci "*) ;;
             *) pkgs="$pkgs ./internal/ci" ;;
+          esac
+          # internal/docs holds the front page's contract: AGENTS.md must name
+          # every class rule indexed in docs/SPEC-CI.md. It reads the tree as
+          # text too, so a docs-only change can break its class test (#1504)
+          # without naming a dependent. Always append it, same guard as above,
+          # so the red surfaces on the PR and not in an integration batch
+          # (#1364, #1409).
+          case " $pkgs " in
+            *" ./internal/docs "*|*"/internal/docs "*) ;;
+            *) pkgs="$pkgs ./internal/docs" ;;
           esac
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"

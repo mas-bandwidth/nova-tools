@@ -201,7 +201,7 @@ func buildLabFixture() (string, error) {
 		if fail != nil {
 			return
 		}
-		cmd := exec.Command("git", args...)
+		cmd := exec.Command("git", merge.NoBackgroundGit(args...)...)
 		cmd.Dir = at
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@localhost",
@@ -213,6 +213,18 @@ func buildLabFixture() (string, error) {
 	}
 	git(dir, "init", "--bare", "-b", "main", remote)
 	git(dir, "clone", remote, work)
+	// THE SETTINGS GO IN THE REPOSITORIES THEMSELVES, not only on the fixture's own
+	// command lines. A push to a path runs `git receive-pack <path>` in the OTHER
+	// repository, and git clears the -c settings out of the environment before it starts
+	// a git on a repository that is not this one (local_repo_env) -- so the remote's
+	// receive-pack forks its own detached `maintenance run --auto` unless the remote's
+	// own config says not to. Both repositories are copied into each test's t.TempDir,
+	// and they carry this with them (#1607).
+	for _, at := range []string{remote, work} {
+		for _, kv := range quietRepoSettings() {
+			git(at, "config", kv[0], kv[1])
+		}
+	}
 	if fail == nil {
 		fail = os.WriteFile(filepath.Join(work, "README.md"), []byte("the fixture\n"), 0o644)
 	}
@@ -231,9 +243,29 @@ func buildLabFixture() (string, error) {
 	return dir, nil
 }
 
+// quietRepoSettings is merge.NoBackgroundGit's list as key/value pairs, for writing INTO a
+// fixture repository rather than onto one command line.
+//
+// A push to a path runs `git receive-pack <path>` in the OTHER repository, and git clears
+// these settings out of the environment before it starts a git on a repository that is not
+// this one (local_repo_env) -- so a repository this fixture pushes to has to carry them
+// itself, or its receive-pack forks the detached `maintenance run --auto` that #1607 is.
+func quietRepoSettings() [][2]string {
+	var out [][2]string
+	settings := merge.NoBackgroundGit()
+	for i := 0; i+1 < len(settings); i += 2 {
+		key, value, _ := strings.Cut(settings[i+1], "=")
+		out = append(out, [2]string{key, value})
+	}
+	return out
+}
+
+// git runs one git in the fixture, and it runs it THE WAY THE TOOL RUNS GIT: through
+// merge.NoBackgroundGit, so no `git maintenance run --auto --detach` is left writing into
+// a repository that lives in t.TempDir and is about to be removed under it (#1607).
 func (l *lab) git(dir string, args ...string) string {
 	l.t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", merge.NoBackgroundGit(args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@localhost",
