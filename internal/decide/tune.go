@@ -19,10 +19,13 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // DefaultFloors are the confidence floors Tune reports on when none are given.
@@ -53,7 +56,29 @@ type TuneOptions struct {
 	// floor becomes the one that misses fewest rather than the one that
 	// agrees most on the rows it kept.
 	Default string
+	// Observations admits a log whose labeled rows say
+	// `"adjudicated": false`. It is the EXPLICITLY NON-RECOMMENDING mode:
+	// the arithmetic runs and is printed in full, and no floor comes out of
+	// it. Without it, a log carrying even one such row is a refusal -- a
+	// floor set from observations is a floor set from labels nobody
+	// adjudicated, which is what the renamed fixture's own README says it
+	// is not for.
+	//
+	// A row that does not carry the field AT ALL is a log written before
+	// the field existed, and is read exactly as it always was: a historical
+	// format is never silently reinterpreted (Stella, 2026-09-19, r2 of the
+	// #1925 hold).
+	Observations bool
 }
+
+// AdjudicatedField is the row field saying whether a label is adjudicated
+// truth or an observation joined to the row afterwards.
+const AdjudicatedField = "adjudicated"
+
+// ErrNotAdjudicated is the refusal a log of observations earns when a floor
+// was asked of it. It is a sentinel so a caller names it in one word rather
+// than matching on a sentence.
+var ErrNotAdjudicated = errors.New("decide: tune: these labels are observations and not adjudicated truth")
 
 func (o TuneOptions) withDefaults() TuneOptions {
 	if o.Label == "" {
@@ -112,6 +137,13 @@ type TuneResult struct {
 	Labeled   int
 	Floors    []FloorStat
 	BestFloor float64
+	// Observations is the labeled rows that said `"adjudicated": false`.
+	Observations int
+	// Recommends is whether this read may set a floor at all. It is false
+	// exactly when the log carried an observation row, and Render then
+	// prints best_floor=none: the arithmetic is a statement about the log,
+	// and a floor is a statement about the future.
+	Recommends bool
 }
 
 // tuneRow is one labeled row reduced to what a floor needs: the confidence and
@@ -156,6 +188,11 @@ func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 		}
 		choice, _ := scalarField(fields, opts.Choice)
 		res.Labeled++
+		// An explicit false is an observation. An ABSENT field is a log from
+		// before the field existed and is read as it always was.
+		if adjudicated, ok := boolField(fields, AdjudicatedField); ok && !adjudicated {
+			res.Observations++
+		}
 		if dflt != "" && label == dflt {
 			defaultSeen = true
 		}
@@ -164,6 +201,17 @@ func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 	if err := scanner.Err(); err != nil {
 		return TuneResult{}, fmt.Errorf("decide: tune: read log: %w", err)
 	}
+	// THE ADJUDICATION BOUNDARY. A log whose labels are observations joined
+	// afterwards cannot bless a floor: no HOLD is not proof a reader was
+	// unnecessary, because nobody looked. The arithmetic over such a log is
+	// available and is worth having -- under a flag that says out loud it
+	// recommends nothing.
+	if res.Observations > 0 && !opts.Observations {
+		return TuneResult{}, fmt.Errorf(
+			"%w: %d of %d labeled rows carry %s:false, so their labels were joined afterwards and nobody adjudicated them; refusing to recommend a floor from them. Re-run with --observations for the arithmetic, which recommends no floor",
+			ErrNotAdjudicated, res.Observations, res.Labeled, AdjudicatedField)
+	}
+	res.Recommends = res.Observations == 0
 	if dflt != "" && !defaultSeen {
 		return TuneResult{}, fmt.Errorf("decide: tune: no labeled row is %q, so a floor tuned against that default is tuned against nothing; refusing to guess", dflt)
 	}
@@ -215,8 +263,40 @@ func (r TuneResult) Render() string {
 		}
 		b.WriteString("\n")
 	}
+	if !r.Recommends {
+		// Never the OK line, and never a number: the same arithmetic, and the
+		// floor withdrawn where the data cannot carry one.
+		fmt.Fprintf(&b, "TUNE OBSERVATIONS lines=%d labeled=%d observations=%d best_floor=none reason=%s\n",
+			r.Lines, r.Labeled, r.Observations,
+			oneline.Quote("the labels are observations joined afterwards, not adjudicated truth; the rates above are a statement about this log and set no floor"))
+		return b.String()
+	}
 	fmt.Fprintf(&b, "TUNE OK lines=%d labeled=%d best_floor=%g\n", r.Lines, r.Labeled, r.BestFloor)
 	return b.String()
+}
+
+// boolField reads a named field as a bool. ok is false where the field is
+// absent or is not one, which is the difference between a row that says it is
+// an observation and a row written before the field existed.
+func boolField(fields map[string]json.RawMessage, name string) (bool, bool) {
+	raw, ok := fields[name]
+	if !ok || len(raw) == 0 {
+		return false, false
+	}
+	var v bool
+	if err := json.Unmarshal(raw, &v); err == nil {
+		return v, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "true", "yes":
+			return true, true
+		case "false", "no":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // scalarField reads a named field as a string. A string, bool or number is

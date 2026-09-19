@@ -13,7 +13,10 @@ import (
 func TestTuneDefaultFlagPrintsWhatTheDefaultAnsweredDifferently(t *testing.T) {
 	const log = "../../internal/decide/testdata/reader-observations-2026-09-19.jsonl"
 	var out, errb bytes.Buffer
-	if code := run([]string{"tune", "--decisions", log, "--floors", "0.5,0.65,0.8,0.9", "--max-escalation", "0.7"}, &out, &errb); code != 0 {
+	// The fixture is an OBSERVATION log, so every read of it is the explicitly
+	// non-recommending one: --observations is what admits it at all, and it
+	// recommends no floor (Stella, r2 of the #1925 hold).
+	if code := run([]string{"tune", "--decisions", log, "--observations", "--floors", "0.5,0.65,0.8,0.9", "--max-escalation", "0.7"}, &out, &errb); code != 0 {
 		t.Fatalf("tune without a default exited %d: %s", code, errb.String())
 	}
 	if strings.Contains(out.String(), "missed=") {
@@ -22,7 +25,7 @@ func TestTuneDefaultFlagPrintsWhatTheDefaultAnsweredDifferently(t *testing.T) {
 
 	out.Reset()
 	errb.Reset()
-	if code := run([]string{"tune", "--decisions", log, "--floors", "0.5,0.65,0.8,0.9", "--max-escalation", "0.7", "--default", "opus-child"}, &out, &errb); code != 0 {
+	if code := run([]string{"tune", "--decisions", log, "--observations", "--floors", "0.5,0.65,0.8,0.9", "--max-escalation", "0.7", "--default", "opus-child"}, &out, &errb); code != 0 {
 		t.Fatalf("tune --default exited %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -40,7 +43,7 @@ func TestTuneDefaultFlagPrintsWhatTheDefaultAnsweredDifferently(t *testing.T) {
 // the exit code is the verb's bad-decisions 2, never a silent 0.
 func TestTuneDefaultNoRowAnsweredIsRefused(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := run([]string{"tune", "--decisions", "../../internal/decide/testdata/reader-observations-2026-09-19.jsonl", "--default", "a-reader-nobody-named"}, &out, &errb)
+	code := run([]string{"tune", "--decisions", "../../internal/decide/testdata/reader-observations-2026-09-19.jsonl", "--observations", "--default", "a-reader-nobody-named"}, &out, &errb)
 	if code != 2 {
 		t.Fatalf("a default nothing answered exited %d, want 2", code)
 	}

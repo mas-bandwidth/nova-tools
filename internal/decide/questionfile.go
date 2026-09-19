@@ -51,6 +51,13 @@ type QuestionFile struct {
 	Criteria        string
 	StateFields     []StateField
 	Questions       map[string]Question
+	// Machinery is the rules this question is answered UNDER, declared in the
+	// versioned pair rather than matched on a question's name inside a verb.
+	// Empty is the ordinary question: the provider's answer stands as it is.
+	// MachineryWhoReads binds the file to readers.go's rules, which the call
+	// boundary applies -- a settled designation before any client is built, and
+	// a constraint over any advisory answer before it is printed or recorded.
+	Machinery string
 }
 
 // questionFileWire is the envelope's metadata. The questions themselves go
@@ -59,6 +66,7 @@ type questionFileWire struct {
 	CriteriaVersion string       `json:"criteria_version"`
 	CriteriaFile    string       `json:"criteria_file"`
 	StateFields     []StateField `json:"state_fields"`
+	Machinery       string       `json:"machinery"`
 }
 
 // LoadQuestionFile reads a question file and the criteria file it names. A
@@ -83,6 +91,17 @@ func LoadQuestionFile(path string) (QuestionFile, error) {
 		CriteriaPath:    strings.TrimSpace(meta.CriteriaFile),
 		StateFields:     meta.StateFields,
 		Questions:       qs,
+		Machinery:       strings.TrimSpace(meta.Machinery),
+	}
+	switch f.Machinery {
+	case "":
+	case MachineryWhoReads:
+		if _, ok := f.Questions[ReadQuestion]; !ok {
+			return QuestionFile{}, fmt.Errorf("decide: bad questions: %s declares machinery %q and asks no %q question; the machinery constrains that answer and there is none",
+				path, f.Machinery, ReadQuestion)
+		}
+	default:
+		return QuestionFile{}, fmt.Errorf("decide: bad questions: %s declares machinery %q, want %q or none", path, f.Machinery, MachineryWhoReads)
 	}
 	for _, sf := range f.StateFields {
 		if strings.TrimSpace(sf.Name) == "" {

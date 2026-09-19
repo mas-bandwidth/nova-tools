@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ usage:
   nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
                    [--label <field, default label>] [--choice <field, default decision>]
                    [--conf <field, default confidence>] [--max-escalation 0.7]
+                   [--observations]
 
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
@@ -61,7 +63,12 @@ usage:
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
-                      {"questions": {...}} also accepted)
+                      {"questions": {...}} also accepted). The envelope may also
+                      carry criteria_version, criteria_file, state_fields and
+                      machinery: "machinery": "who-reads" answers the question
+                      under internal/decide/readers.go's rules, where a settled
+                      security designation is taken with NO provider call and
+                      the answer is constrained before it is printed or recorded
   --state <file>      state text the decision is about; stdin when absent or "-" (default stdin)
   --floor <f>         confidence floor; answers below it are a suggestion (default 0.9)
   --base-url <url>    Jev endpoint (default https://api.typesafe.ai/v1/systemone)
@@ -81,6 +88,15 @@ usage:
   --choice <field>    field holding the decision (default decision)
   --conf <field>      field holding the confidence (default confidence)
   --max-escalation <f>  escalation-rate cap for the best floor (default 0.7)
+  --observations      read a log whose rows say "adjudicated": false. Their
+                      labels were joined afterwards and nobody adjudicated
+                      them, so a floor tuned from them is tuned from nothing:
+                      without this flag such a log is REFUSED (reason
+                      not-adjudicated), and with it the arithmetic is printed
+                      in full and the closing line is
+                      TUNE OBSERVATIONS ... best_floor=none. A row carrying
+                      no such field is a log from before the field existed and
+                      is read exactly as it always was
 
 route: which mind does this unit of work, over the ladder of minds a registry
 holds. The answer is the LOWEST rung the evidence supports with confidence that
@@ -154,6 +170,11 @@ example:
 // version is empty in every ordinary build and is the one override: a release
 // stamps it with -ldflags "-X main.version=<tag>".
 var version string
+
+// confSettled is the confidence printed beside a decision the MACHINERY made.
+// It is not a measurement and it is not a lever: the rule was settled by the
+// evidence, so the number beside it is certainty and nothing reads it.
+const confSettled = 1.00
 
 // stdin is a var so tests can replace it; production reads the real stdin.
 var stdin io.Reader = os.Stdin
@@ -261,6 +282,32 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	// THE MACHINERY, AT THE CALL BOUNDARY.
+	//
+	// Where the loaded pair DECLARES the who-reads machinery, the rules in
+	// internal/decide/readers.go are the decision and the provider is an
+	// advisor constrained by them. A settled security designation is taken
+	// HERE -- before a client is constructed, before a key is even wanted, at
+	// zero calls and against any confidence -- and every other rule is
+	// installed on the client as a constraint that runs over the answer
+	// before it is recorded or printed, never after a caller has read it.
+	var readState decide.ReadState
+	var readDecision decide.ReadDecision
+	whoReads := qf.Machinery == decide.MachineryWhoReads
+	if whoReads {
+		readState, err = decide.ReadStateOf(state)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		if _, _, settled := decide.MandatoryReader(readState); settled {
+			d, err := decide.ConstrainRead("", 0, readState)
+			if err != nil {
+				return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+			fmt.Fprintln(stdout, decide.ReadLine(*prefix, d, readState, confSettled, *floor))
+			return 0
+		}
+	}
 	client, err := decide.New(*baseURL, *keyEnv)
 	if err != nil {
 		return refuse(stderr, *prefix, "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -274,9 +321,33 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer store.Close()
 		client.UseDecisions(store)
 	}
+	if whoReads {
+		client.Constrain(func(answers map[string]decide.Answer) (map[string]decide.Answer, error) {
+			a := answers[decide.ReadQuestion]
+			d, err := decide.ConstrainRead(decide.Role(a.Choice), a.Confidence, readState)
+			if err != nil {
+				return nil, err
+			}
+			readDecision = d
+			a.Choice = string(d.First)
+			answers[decide.ReadQuestion] = a
+			return answers, nil
+		})
+	}
 	answers, _, err := client.Decide(context.Background(), payload, qs)
 	if err != nil {
 		return refuse(stderr, *prefix, "provider-error", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if whoReads {
+		conf := answers[decide.ReadQuestion].Confidence
+		if readDecision.Source == decide.SourceMachinery {
+			conf = confSettled
+		}
+		fmt.Fprintln(stdout, decide.ReadLine(*prefix, readDecision, readState, conf, *floor))
+		if readDecision.Source == decide.SourceProvider && conf < *floor {
+			return 3
+		}
+		return 0
 	}
 	fmt.Fprintln(stdout, decide.Line(*prefix, answers, *floor))
 	for _, a := range answers {
@@ -301,6 +372,7 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	choice := fs.String("choice", "decision", "field holding the decision")
 	conf := fs.String("conf", "confidence", "field holding the confidence")
 	dflt := fs.String("default", "", "the answer a below-floor row actually gets; with it each floor reports what that default got right and what it MISSED, and the best floor is the one that misses fewest")
+	observations := fs.Bool("observations", false, "read a log whose rows say adjudicated:false: the arithmetic runs and NO floor is recommended from it")
 	maxEscalation := fs.Float64("max-escalation", decide.DefaultMaxEscalation, "escalation-rate cap for the best floor")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
@@ -334,9 +406,16 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 		Floors:        parsedFloors,
 		MaxEscalation: *maxEscalation,
 		Default:       *dflt,
+		Observations:  *observations,
 	})
 	if err != nil {
-		return refuse(stderr, "TUNE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		// A log of observations gets its own one-word reason: it is not a bad
+		// log, it is a log that cannot set a floor.
+		reason := "bad-decisions"
+		if errors.Is(err, decide.ErrNotAdjudicated) {
+			reason = "not-adjudicated"
+		}
+		return refuse(stderr, "TUNE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if res.Labeled < decide.MinLabeled {
 		return refuse(stderr, "TUNE", "too-few-labeled",

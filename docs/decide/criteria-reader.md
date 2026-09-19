@@ -1,12 +1,21 @@
 # Criteria: the who-reads question
 
-version: 2026-09-19.2
+version: 2026-09-19.3
 
 Question file: `questions-reader.json`, which names this file and its version. The pair is loaded
 together and the criteria below are carried INTO the request above the state, so every asker asks
 the same question with the same criteria and a change to either is one versioned edit rather than
 many drifting copies. `internal/decide` refuses the pair when the versions disagree, and refuses a
 state that does not carry a declared typed field, before any provider call is made.
+
+The pair also declares the machinery it is answered UNDER — `"machinery": "who-reads"` — and that
+declaration is what wires the rules below into the verb rather than leaving them as prose beside
+it. A settled security designation is settled before a provider client is built at all: no key is
+wanted, no call is made, and the line says `source=machinery`. Every other rule is installed as a
+constraint that runs over the answer BEFORE it is recorded or printed, so what a caller reads is
+the constrained decision and never the provider's advice. The line carries the whole of it:
+`reader=`, `required=` (every read the evidence obliges, whoever reads first), `holder=`, `hold=`,
+`source=` and `lifts_hold=false` as a field rather than as the absence of a sentence.
 
 **The answer is a role, never a person.** The binding from a role to a reader is local, is not in
 this file, and is never sent. This house's binding, and the day it was trialled, are in

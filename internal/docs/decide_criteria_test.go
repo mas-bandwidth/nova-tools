@@ -24,7 +24,12 @@ import (
 type decideQuestionFile struct {
 	CriteriaVersion string `json:"criteria_version"`
 	CriteriaFile    string `json:"criteria_file"`
-	StateFields     []struct {
+	// Machinery is the rules the question is answered UNDER. It is part of
+	// the versioned pair, so the binding between a question and the
+	// machinery that constrains its answer is a contract and not a name
+	// match inside a verb.
+	Machinery   string `json:"machinery"`
+	StateFields []struct {
 		Name     string `json:"name"`
 		Type     string `json:"type"`
 		Optional bool   `json:"optional"`
@@ -102,6 +107,22 @@ func TestEveryDecideQuestionCarriesItsVersionedCriteria(t *testing.T) {
 		if want := fmt.Sprintf("version: %s", q.CriteriaVersion); !strings.Contains(text, want) {
 			t.Errorf("%s cites criteria_version %s and %s does not carry %q",
 				name, q.CriteriaVersion, q.CriteriaFile, want)
+		}
+		// A question answered under machinery says so IN THE PAIR, and the
+		// criteria file says what the machinery does. The who-reads question
+		// is the one that has it: its rules are enforced at the call boundary
+		// and an unstated binding is a rule nothing calls.
+		switch q.Machinery {
+		case "":
+			if strings.Contains(name, "reader") {
+				t.Errorf("%s asks the who-reads question and declares no machinery; the rules in internal/decide/readers.go would be prose again", name)
+			}
+		case "who-reads":
+			if !strings.Contains(text, "machinery") {
+				t.Errorf("%s declares machinery %q and %s never says what it does", name, q.Machinery, q.CriteriaFile)
+			}
+		default:
+			t.Errorf("%s declares machinery %q, want who-reads or none", name, q.Machinery)
 		}
 		qname := strings.TrimSuffix(strings.TrimPrefix(name, "questions-"), ".json")
 		if !strings.Contains(q.Questions[qname].Instructions, q.CriteriaFile) {

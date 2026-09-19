@@ -92,7 +92,15 @@ type Client struct {
 	http      *http.Client
 	decisions DecisionDriver
 	floor     float64
+	constrain func(map[string]Answer) (map[string]Answer, error)
 }
+
+// Constrain installs the machinery that stands over a provider's answers. It
+// runs after the answers are validated against their own questions and BEFORE
+// anything records or prints them, so a rule the evidence settles is never
+// something a confident answer can be read past. A nil function leaves the
+// client forwarding the provider's answer, which is every ordinary question.
+func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)) { c.constrain = fn }
 
 // New reads the key from the environment variable keyEnv (DefaultKeyEnv when
 // empty, with FallbackKeyEnv also accepted) and refuses with an error naming
@@ -223,6 +231,17 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 	if err := ValidateAnswers(qs, answers); err != nil {
 		return nil, usage, err
 	}
+	// Machinery the caller installed stands OVER the answer, and it stands
+	// here: before the row is recorded and before the caller can print it, so
+	// what is persisted and what is read are the constrained decision and not
+	// the provider's advice (Stella, 2026-09-19, r2 of the #1925 hold).
+	if c.constrain != nil {
+		constrained, err := c.constrain(answers)
+		if err != nil {
+			return nil, usage, err
+		}
+		answers = constrained
+	}
 	c.record(state, qs, answers)
 	return answers, usage, nil
 }
@@ -306,7 +325,7 @@ func ParseQuestions(data []byte) (map[string]Question, error) {
 		// the bare form used to be read as a question.
 		for key := range top {
 			if key != "questions" && !questionEnvelopeKeys[key] {
-				return nil, fmt.Errorf("decide: bad questions: %q stands beside \"questions\" and is not one of comment, criteria_version, criteria_file, state_fields", key)
+				return nil, fmt.Errorf("decide: bad questions: %q stands beside \"questions\" and is not one of comment, criteria_version, criteria_file, state_fields, machinery", key)
 			}
 		}
 		var m map[string]json.RawMessage
@@ -429,4 +448,8 @@ var questionEnvelopeKeys = map[string]bool{
 	"criteria_version": true,
 	"criteria_file":    true,
 	"state_fields":     true,
+	// The rules the question is answered UNDER, so the binding between a
+	// question and its machinery lives in the versioned pair rather than in a
+	// name match inside a verb.
+	"machinery": true,
 }

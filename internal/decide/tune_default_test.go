@@ -1,7 +1,10 @@
 package decide
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -27,8 +30,18 @@ import (
 const readerObservations = "testdata/reader-observations-2026-09-19.jsonl"
 
 func TestTheDefaultArithmeticCountsWhatEscalationAloneCannot(t *testing.T) {
-	opts := TuneOptions{Floors: []float64{0.5, 0.65, 0.8, 0.9}, MaxEscalation: 0.7}
+	// Observations: true is what admits this fixture at all now -- the
+	// adjudication boundary refuses it otherwise -- and what it buys is the
+	// ARITHMETIC. Neither read below recommends a floor: Render prints
+	// best_floor=none for both, and what is compared here is the calculation.
+	opts := TuneOptions{Floors: []float64{0.5, 0.65, 0.8, 0.9}, MaxEscalation: 0.7, Observations: true}
 	plain := tuneFixture(t, opts)
+	if plain.Recommends {
+		t.Error("a log of observations recommended a floor")
+	}
+	if plain.Observations != 47 {
+		t.Errorf("counted %d observation rows, want 47", plain.Observations)
+	}
 	if plain.Labeled != 47 {
 		t.Fatalf("fixture has %d labeled rows, want 47", plain.Labeled)
 	}
@@ -75,9 +88,41 @@ func TestADefaultNoRowEverAnsweredIsARefusal(t *testing.T) {
 		Floors:        []float64{0.5, 0.9},
 		MaxEscalation: 0.7,
 		Default:       "a-reader-nobody-named",
+		Observations:  true,
 	})
 	if err == nil {
 		t.Fatal("a default no labeled row ever names must be refused")
+	}
+}
+
+// And the boundary itself, at the package: this fixture cannot bless a floor
+// without the flag that says out loud no floor comes out of it, and the
+// refusal is the sentinel a caller can name in one word.
+func TestAnObservationLogCannotSetAFloorWithoutSayingSo(t *testing.T) {
+	_, err := Tune(fixtureBytes(t), TuneOptions{Floors: []float64{0.5, 0.9}, MaxEscalation: 0.7})
+	if err == nil {
+		t.Fatal("the observation fixture set a floor")
+	}
+	if !errors.Is(err, ErrNotAdjudicated) {
+		t.Errorf("the refusal is not ErrNotAdjudicated: %v", err)
+	}
+	// Adjudicated truth is untouched, and so is a log from before the field
+	// existed: a historical format is not silently reinterpreted.
+	for _, suffix := range []string{`,"adjudicated":true`, ``} {
+		var b strings.Builder
+		for i := 0; i < MinLabeled+2; i++ {
+			fmt.Fprintf(&b, `{"decision":"a","label":"a","confidence":0.8%s}`+"\n", suffix)
+		}
+		res, err := Tune([]byte(b.String()), TuneOptions{Floors: []float64{0.5, 0.9}, MaxEscalation: 0.7})
+		if err != nil {
+			t.Fatalf("suffix %q: %v", suffix, err)
+		}
+		if !res.Recommends || res.Observations != 0 {
+			t.Errorf("suffix %q: recommends=%v observations=%d", suffix, res.Recommends, res.Observations)
+		}
+		if !strings.Contains(res.Render(), "TUNE OK") {
+			t.Errorf("suffix %q: the OK line is gone:\n%s", suffix, res.Render())
+		}
 	}
 }
 
