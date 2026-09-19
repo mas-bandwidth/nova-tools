@@ -703,23 +703,49 @@ its line 1. A kind is a template **plus** the gate that judges it and the contro
 proves the gate: the first half is text for the worker, the second is code in the tool
 the worker never sees and cannot edit.
 
-1. **Five typed header lines, under the contract line and inside its hash.**
+1. **A seven-line header block, then `STEP 1`; everything below line 1 inside the hash.**
+   The header is the contract line, the role line, and five typed lines, in this order,
+   and `STEP 1` is the line after it:
 
    ```
+   RESULT <label> sha=<sha12>
+   You are a worker. <the role line of docs/spec-pulse/10-the-card-as-cut-writes-it.md>
    KIND: <kind>
    PATHS: <glob>[, <glob>...]
    TEST: <package> <TestName>          (or `TEST: none` where the kind allows it)
    LEGS: <leg>[,<leg>...]
    SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
+   STEP 1. <clone or cd, as the spec-pulse document writes it>
    ```
 
-   Two kinds carry one more: `sweep` a `FILES: <n>` line and `mutation-kill` a `SEED:`
-   block holding its one-edit patch.
-   They are written by `cut` from the pool row, never by a model, and because they sit
-   below line 1 the contract hash covers them: a card whose header was altered after
-   admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing any of
-   them (`CUT REFUSED kind=<kind>: no <LINE>`), and `lint --card` gains the tokens
-   `kind-declared`, `paths-declared`, `paused` (the coordinator paused this kind; the remedy is the `trust --set trial` command) and
+   **Why seven and why `STEP 1` next**: the shipped admission check reads the first
+   fifteen lines for a line beginning `STEP 1` (`internal/swarm/batch.go:1833-1844`,
+   `hasStep1`, for every DeepSeek-family model; `docs/WORKER-CARDS.md` practice 17), and
+   the first card cut in draft 5's shape, with a coordinator's `BASE`, `SPEC`, `ROUTE`,
+   `ACCEPT`, `CERT`, `LANE` and RULES prose above the steps, was refused before any model,
+   bench or provider was reached (`ADMIT REFUSED tools10-c1 card-shape: no 'STEP 1' line
+   in the first 15 lines`, `in=0 out=0 usd=0.0000`; measured 2026-09-19 by the tools10
+   shift, nova-tools#1728). Everything else a card carries — `LANE`, `ACCEPT`, `CERT`,
+   rules prose, the `RESULT` template — sits **below `STEP 1`**, still inside the hash,
+   because the hash is of everything below line 1 and the header lines' order is free.
+   **A card with more than three model steps carries `MODE: explore` and `TURNS: <n>`**,
+   as header lines directly under `SOURCE:` and inside the hash, so the block is nine
+   lines and `STEP 1` is line 10, still inside the fifteen: the shipped pipeline rule
+   admits three model calls with no mode word (`internal/swarm/cardpipeline.go:15`,
+   `pipelineModelSteps = 3`) and refuses a fourth without it, and every gated kind's
+   shape in rule 2 names more than three (a `fix-red` card is eight `STEP` lines). Two
+   kinds carry one more typed line under `SOURCE:` — `sweep` a `FILES: <n>` line — or a
+   block below `STEP 1` — `mutation-kill` a `SEED:` block holding its one-edit patch.
+   The header lines are written by `cut` from the pool row, never by a model, and because
+   they sit below line 1 the contract hash covers them: a card whose header was altered
+   after admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing
+   any of them (`CUT REFUSED kind=<kind>: no <LINE>`) and refuses a rendered card that
+   the shipped admission and pipeline checks would refuse, and a class test,
+   `a-card-cut-renders-is-admitted`, runs `cut`'s output through the admission shape
+   check and the pipeline rule — the test that would have caught #1728 before a card was
+   launched. `lint --card` gains the tokens `kind-declared`, `paths-declared`, `paused`
+   (the coordinator paused this kind; the remedy is the `trust --set trial` command),
+   `mode-declared` (more than three model steps and no `MODE: explore` / `TURNS:`) and
    `test-named`.
 2. **The kinds.** `gate` is the step list of §1 rule 4; `control` is what must be seen
    red before the gate's green counts for this card.
@@ -746,7 +772,8 @@ the worker never sees and cannot edit.
    the pinned head (WORKER-CARDS 3); its `TEST:` either exists at the pinned head
    (`transcript-test`'s target section, `sweep`'s class test) or is a name the card
    fixes in advance; its `LEGS:` are certified on at least one bench (§2 rule 5); and it
-   fits the three-call pipeline or says `MODE: explore` with a `TURNS:` budget. `cut`
+   fits the three-call pipeline or says `MODE: explore` with a `TURNS:` budget, as header
+   lines inside the hash (rule 1). `cut`
    checks the first, third and fourth; the second is the card writer's, by practice 3.
 5. **One card of a new template runs alone before the batch widens.** `launch` refuses
    a batch wider than one for a `(kind, template sha12)` pair with no `ACCEPT OK` on
