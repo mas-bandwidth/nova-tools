@@ -5,7 +5,7 @@
     {"name": "pro", "lineage": "deepseek", "height": 1, "kinds": [], "lanes": [], "availability": "available", "ask": "card"},
     {"name": "opus", "lineage": "rowan", "height": 2, "kinds": [], "lanes": ["rowan-children"], "availability": "available", "ask": "child"},
     {"name": "sol", "lineage": "stella", "height": 2, "kinds": [], "lanes": ["stella-children"], "availability": "available", "ask": "child"},
-    {"name": "emma", "lineage": "emma", "height": 3, "kinds": [], "lanes": ["code"], "availability": "asleep", "ask": "bus"},
+    {"name": "emma", "lineage": "emma", "height": 3, "kinds": [], "lanes": ["code"], "availability": "available", "ask": "bus"},
     {"name": "freddy", "lineage": "freddy", "height": 3, "kinds": [], "lanes": ["opencode"], "availability": "asleep", "ask": "bus"},
     {"name": "johnny", "lineage": "johnny", "height": 3, "kinds": ["guard", "fresh-take"], "lanes": ["security"], "availability": "reserved", "ask": "bus"},
     {"name": "astra", "lineage": "stella", "height": 4, "kinds": [], "lanes": ["coordination"], "availability": "available", "ask": "bus"},
