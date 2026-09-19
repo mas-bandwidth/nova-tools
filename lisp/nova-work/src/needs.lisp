@@ -22,11 +22,11 @@
 ;;;; a NEEDS-VIEW the session hands it: the evidence records a node's standing
 ;;;; done names, the verification session whose cache already holds the raw
 ;;;; facts, each node's current generation, and each node's `responsible`.
-;;;; A view naming no evidence for a node names no evidence event that fails to
-;;;; qualify, and rule 1's quantifier is then vacuous — which is the only
-;;;; reading available while the tree keeps evidence as ids, and is unreachable
-;;;; for a leaf, since validator rule 17 refuses a `:to :done` with no evidence
-;;;; at all (src/kernel.lisp:218).
+;;;; The IDS come from the tree and the PROOF comes from the view: rule 1 is a
+;;;; correspondence, id by id, between the evidence events the standing `:to
+;;;; :done` names and the records the session resolved and verified. A view that
+;;;; is missing, empty, partial, or holding a verified record the standing done
+;;;; never named proves nothing, and the need reads `need-unverified`.
 
 (in-package #:nova-work)
 
@@ -84,18 +84,26 @@ resolver column of rule 2's table."
 ;;; rule 1's verified half                       SPEC-WORK.md:4780-4792
 ;;; ------------------------------------------------------------------
 
+(defparameter *need-default-generation* 1
+  "The generation a node is at before any `correct`. A view naming no generation
+for a node, and an evidence record carrying none, are both read as this, so a
+MISMATCH always refuses rather than a missing field silently passing.")
+
+(defun %need-current-generation (view id)
+  (or (needs-view-node-generation view id) *need-default-generation*))
+
 (defun %need-evidence-qualifies-p (view id evidence)
   "Whether one evidence event of ID qualifies its criterion by a raw fact the
 session's verification cache already holds. No fetch, and no staleness: the
 `:against`-versus-source comparison is the one left out (:4760)."
-  (let ((generation (needs-view-node-generation view id))
+  (let ((generation (%need-current-generation view id))
+        (evidence-generation (or (verify-evidence-generation evidence)
+                                 *need-default-generation*))
         (session (and view (needs-view-session view))))
     (cond
       ;; a `correct` bumped the node's generation: evidence of the older one is
       ;; of the older generation and qualifies nothing (:4835).
-      ((and generation (verify-evidence-generation evidence)
-            (not (eql generation (verify-evidence-generation evidence))))
-       nil)
+      ((not (eql generation evidence-generation)) nil)
       ;; no session means no cache, and a fact no cache holds is not verified.
       ((null session) nil)
       (t
@@ -115,12 +123,56 @@ session's verification cache already holds. No fetch, and no staleness: the
               (verify-qualifies-p evidence)
               t))))))
 
+(defun standing-done-evidence (state id)
+  "The evidence event ids the node's STANDING `:to :done` transition names, and
+whether one stands at all. Answers (values IDS STANDING-P).
+
+The standing one is the newest `:to :done` that no later `:reopen` has undone,
+which is what rule 1 means by \"its standing `:to :done`\" (SPEC-WORK.md:4780).
+The journal is read oldest first, so the last word wins."
+  (let ((ids (list)) (standing nil))
+    (dolist (record (state-history state))
+      (dolist (e (getf record :events))
+        (when (equal id (getf e :node))
+          (case (getf e :kind)
+            (:transition
+             (when (eq :done (getf e :to))
+               (let ((evidence (getf e :evidence)))
+                 (setf ids (if (absentp evidence) (list) evidence)
+                       standing t))))
+            (:reopen (setf ids (list) standing nil))
+            (t nil)))))
+    (values ids standing)))
+
+(defun %need-evidence-record (view id event-id)
+  "The view record for EVENT-ID *bound to node ID*. A record naming another node,
+or an id the standing done never named, is no proof of anything here."
+  (find-if (lambda (r)
+             (and (equal event-id (verify-evidence-event-id r))
+                  (equal id (verify-evidence-node r))))
+           (needs-view-node-evidence view id)))
+
 (defun %need-evidence-verified-p (state id view)
-  "True when every evidence event ID's standing `:to :done` names qualifies.
-A view naming none names none that fails; see THE READ-TIME SEAM above."
-  (declare (ignore state))
-  (let ((records (needs-view-node-evidence view id)))
-    (every (lambda (e) (%need-evidence-qualifies-p view id e)) records)))
+  "True when EVERY evidence event the node's standing `:to :done` names is bound
+to a view record for this node and this generation whose raw fact the cache
+already holds (SPEC-WORK.md:4780).
+
+The ids come from the TREE and the proof comes from the view, so a view that is
+missing, empty, partial, or holding a verified record the standing done never
+named, proves nothing and the need reads `need-unverified`. This is not a
+nonempty check: it is a correspondence, id by id.
+
+A node with no standing `:to :done` at all cannot be proved terminal accepted
+by this route and is unverified; the container clause answers a container
+before this is reached, and rule 2 row 4 answers a node whose disposition is
+cancelled, superseded or removed."
+  (multiple-value-bind (ids standing) (standing-done-evidence state id)
+    (and standing
+         (consp ids)
+         (every (lambda (event-id)
+                  (let ((record (%need-evidence-record view id event-id)))
+                    (and record (%need-evidence-qualifies-p view id record))))
+                ids))))
 
 ;;; ------------------------------------------------------------------
 ;;; the one predicate                            SPEC-WORK.md:4780-4867

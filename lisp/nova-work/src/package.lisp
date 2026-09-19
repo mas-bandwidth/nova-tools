@@ -1936,6 +1936,9 @@
     #:need-met-p
     #:node-needs-status
     #:node-needs-met-p
+    #:standing-done-evidence
+    #:*need-default-generation*
+    #:state-node-ids
     ;; the kernel `decide` protocol and its one in-process fake (SPEC-DECIDE)
     #:decision
     #:make-decision

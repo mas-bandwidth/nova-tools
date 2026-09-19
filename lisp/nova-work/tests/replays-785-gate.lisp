@@ -332,7 +332,9 @@ against, which `verify-qualifies-p` admits only when the two agree."
          (view (make-needs-view :session session
                                 :evidence (list (list "acme/work/n" evidence))
                                 :generations '(("acme/work/n" . 1)))))
-    (gate-done k "acme/work/n")
+    ;; the standing done must NAME the attestation event, or the correspondence
+    ;; rule 1 asks for cannot hold (Stella's HOLD on df714493).
+    (gate-done k "acme/work/n" :evidence (list "ev-att"))
     (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
       (ok (not met) "an attestation whose result pointer is unanswered meets nothing")
       (check-equal :need-unverified reason "it reads need-unverified"))
@@ -353,7 +355,7 @@ against, which `verify-qualifies-p` admits only when the two agree."
          (session (gate-session :resolvers (list (gate-resolver "attest" "attest-reader"))))
          (view (make-needs-view :session session
                                 :evidence (list (list "acme/work/n" evidence)))))
-    (gate-done k "acme/work/n")
+    (gate-done k "acme/work/n" :evidence (list "ev-att"))
     (gate-cache-holds session (verify-evidence-pointer evidence) "acme/work/n"
                       :resolver "attest-reader")
     (ok (need-met-p (kernel-state k) "acme/work/n" :view view)
@@ -388,8 +390,8 @@ against, which `verify-qualifies-p` admits only when the two agree."
          (view (gate-container-view session
                                     (cons "acme/work/f/m1" m1-ev)
                                     (cons "acme/work/f/m2" m2-ev))))
-    (gate-done k "acme/work/f/m1")
-    (gate-done k "acme/work/f/m2")
+    (gate-done k "acme/work/f/m1" :evidence (list "ev-1"))
+    (gate-done k "acme/work/f/m2" :evidence (list "ev-2"))
     (gate-cache-holds session (verify-evidence-pointer m1-ev) "acme/work/f/m1")
     (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/f" :view view)
       (ok (not met) "a done container with a member short of rule 1 is not met")
@@ -455,3 +457,126 @@ against, which `verify-qualifies-p` admits only when the two agree."
           "met again at the new generation")
       (multiple-value-bind (unmet) (node-needs-status (kernel-state k) "acme/work/d" :view view)
         (check-equal 0 unmet "and D reads unmet=0")))))
+
+;;; ------------------------------------------------------------------
+;;; the session-built view, used by every slice above this one
+;;; ------------------------------------------------------------------
+
+(defun session-needs-view (k &key generations)
+  "A needs view built the way a session builds one, and never by hand.
+
+For every node whose standing `:to :done` names evidence, one VERIFY-EVIDENCE
+record PER NAMED ID, bound to that node and its generation, with the raw fact
+already in the cache -- which is what `verify` leaves behind. Nothing is
+invented: the ids come from the tree, by `standing-done-evidence`.
+
+Stella's read of #1584 asks that the admission and restart tests exercise the
+session-built view rather than a complete one supplied by hand, because a view
+supplied by hand is the very thing that hid the defect."
+  (let* ((state (kernel-state k))
+         (session (gate-session))
+         (evidence '()))
+    (dolist (id (state-node-ids state))
+      (multiple-value-bind (ids standing) (standing-done-evidence state id)
+        (when (and standing ids)
+          (let ((records
+                  (loop for event-id in ids
+                        collect (let* ((generation
+                                         (or (cdr (assoc id generations :test #'equal))
+                                             *need-default-generation*))
+                                       (sha (format nil "sha-~A-~A" id event-id))
+                                       (record (make-verify-evidence
+                                                event-id
+                                                :pointer (format nil "run:ci/~A@~A" id sha)
+                                                :criterion :job
+                                                :subject id
+                                                :against sha
+                                                :generation generation
+                                                :node id)))
+                                  (gate-cache-holds session
+                                                    (verify-evidence-pointer record) id)
+                                  record))))
+            (push (cons id records) evidence)))))
+    (make-needs-view :session session :evidence evidence :generations generations)))
+
+;;; ------------------------------------------------------------------
+;;; a-done-need-is-unverified-without-complete-proof
+;;;    Stella's HOLD on #1584 at df714493: `%need-evidence-verified-p` ignored
+;;;    STATE and quantified only over the records the view supplied, so
+;;;    `(every ... NIL)` was vacuously true. Four cases returned met.
+;;;                                              SPEC-WORK.md:4780
+;;; ------------------------------------------------------------------
+
+(deftest "a-done-need-is-unverified-without-complete-proof" "docs/SPEC-WORK.md:4780"
+    "expected=every-id-the-standing-done-names-is-bound-and-verified-or-the-need-is-unverified"
+  ;; N settles naming TWO evidence events.
+  (flet ((settled-n ()
+           (let ((k (gate-kernel)))
+             (gate-done k "acme/work/n" :evidence '("ev-1" "ev-2"))
+             k)))
+    ;; 1. no view at all: nothing is resolved, so nothing is proved
+    (let ((k (settled-n)))
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n")
+        (ok (not met) "a missing view proves nothing")
+        (check-equal :need-unverified reason "and the need reads need-unverified")))
+    ;; 2. an empty view: the same
+    (let ((k (settled-n)))
+      (multiple-value-bind (met reason)
+          (need-met-p (kernel-state k) "acme/work/n" :view (make-needs-view))
+        (ok (not met) "an empty view proves nothing")
+        (check-equal :need-unverified reason "and the need reads need-unverified")))
+    ;; 3. PARTIAL: ev-1 verified, ev-2 named by the done and absent from the view
+    (let* ((k (settled-n))
+           (session (gate-session))
+           (one (gate-job-evidence "acme/work/n" :event-id "ev-1"))
+           (view (make-needs-view :session session
+                                  :evidence (list (list "acme/work/n" one)))))
+      (gate-cache-holds session (verify-evidence-pointer one) "acme/work/n")
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+        (ok (not met) "one verified id of two proves nothing: this is not a nonempty check")
+        (check-equal :need-unverified reason "and the need reads need-unverified")))
+    ;; 4. MISMATCHED: a verified record whose id the standing done never named
+    (let* ((k (settled-n))
+           (session (gate-session))
+           (wrong (gate-job-evidence "acme/work/n" :event-id "not-named-by-done"))
+           (view (make-needs-view :session session
+                                  :evidence (list (list "acme/work/n" wrong)))))
+      (gate-cache-holds session (verify-evidence-pointer wrong) "acme/work/n")
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+        (ok (not met) "a verified id the standing done never named proves nothing")
+        (check-equal :need-unverified reason "and the need reads need-unverified")))
+    ;; 5. a record bound to ANOTHER node, under this node's id
+    (let* ((k (settled-n))
+           (session (gate-session))
+           (other (make-verify-evidence "ev-1"
+                                        :pointer "run:ci/elsewhere@sha-x"
+                                        :criterion :job :subject "acme/work/d"
+                                        :against "sha-x" :generation 1
+                                        :node "acme/work/d"))
+           (view (make-needs-view :session session
+                                  :evidence (list (list "acme/work/n" other)))))
+      (gate-cache-holds session (verify-evidence-pointer other) "acme/work/d")
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+        (ok (not met) "a record bound to another node is no proof for this one")
+        (check-equal :need-unverified reason "and the need reads need-unverified")))
+    ;; 6. COMPLETE, and built the way a session builds it: met
+    (let* ((k (settled-n))
+           (view (session-needs-view k)))
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+        (ok met "every named id bound and verified: the need is met (~A)" reason))
+      (multiple-value-bind (unmet) (node-needs-status (kernel-state k) "acme/work/d" :view view)
+        (check-equal 0 unmet "and its dependent reads unmet=0")))
+    ;; 7. complete, then the node's generation moves: unverified again
+    (let* ((k (settled-n))
+           (view (session-needs-view k)))
+      (ok (need-met-p (kernel-state k) "acme/work/n" :view view) "met at generation 1")
+      (setf (needs-view-generations view) '(("acme/work/n" . 2)))
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+        (ok (not met) "a corrected node's older evidence proves nothing")
+        (check-equal :need-unverified reason "and the need reads need-unverified")))
+    ;; 8. a node with NO standing done cannot be proved by this route
+    (let* ((k (gate-kernel))
+           (view (session-needs-view k)))
+      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+        (ok (not met) "an open node is not met")
+        (check-equal :need-open reason "by rule 2 row 1, before evidence is read at all")))))

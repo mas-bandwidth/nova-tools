@@ -329,6 +329,9 @@ own id would not be the same counting rule one level down. Decision for review."
 (defun state-closed-count (state) (wstate-closed state))
 (defun state-revision (state) (wstate-revision state))
 (defun state-history (state) (reverse (wstate-history state)))
+(defun state-node-ids (state)
+  "Every id the set holds, in seed order. A read."
+  (copy-list (wstate-order state)))
 (defun state-closed-rows (state) (reverse (wstate-rows state)))
 
 ;;; Reads of one node. These do visit.
@@ -423,10 +426,21 @@ members.")
 
 (defun %need-closed-unaccepted-p (state id)
   "True when ID carries one of the three unaccepted dispositions, whichever
-branch this kernel left it in. `event --kind cancel` writes a `:terminal` event
-that sets the disposition and leaves the node in O (src/edit-undo.lisp:248);
-`node remove` settles into C with disposition `removed`. The spec's table says
-both are in C, so the disposition and not the branch is what is read here."
+branch this kernel left it in.
+
+A COMPATIBILITY READING, stated so nobody has to infer it. Rule 2 row 4
+(SPEC-WORK.md:4820) says such a need is \"in C\"; this kernel puts only one of
+the three there. `node remove` settles into C with disposition `removed`
+(src/kernel.lisp:480), while `event --kind cancel` writes a `:terminal` event
+that sets the disposition and leaves the node in O (src/edit-undo.lisp:248-253),
+and `superseded` has no verb at all. So the DISPOSITION and not the branch is
+what is read here, which preserves the safety property :4841 names -- \"never
+met and never becomes met\" -- under both spellings.
+
+This predicate deliberately does NOT change the cancel or undo lifecycle: no
+new settle transition is introduced, no branch is moved, and nothing else in
+this kernel reads a cancelled node differently than it did before. The O/C
+discrepancy itself is tracked as its own issue, on Stella's read of #1584."
   (let ((n (%node-quiet state id)))
     (and n
          (or (member (wnode-state n) *need-unaccepted-dispositions*)
