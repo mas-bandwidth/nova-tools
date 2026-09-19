@@ -147,6 +147,12 @@ func TestReportRunsAnExplicitArgvExactlyAsWritten(t *testing.T) {
 	strict := specScript(t, bin, "strict", `if [ $# -ne 1 ] || [ "$1" != "report" ]; then printf 'argv was %s\n' "$*" >&2; exit 3; fi
 printf '%s\n' 'strict 4.5.6'`)
 	file := manifest(t, row("strict", "tool", strict+" report", "local:"+strict, "none"))
+	// The OS's first-exec toll is paid here and not out of the report's default
+	// five-second --timeout: see seen(). This is the same shape #1554 closed in
+	// TestReportAsksOurOwnToolsTheVerbTheyAnswer above, in the same file, and
+	// this sibling was missed -- a timeout here reads as "the ladder rewrote an
+	// explicit argv", which would be a false and very confusing red.
+	seen(t, strict)
 	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
 	if code != 0 || strings.Contains(stdout, "UNKNOWN") {
 		t.Fatalf("the ladder rewrote an explicit argv: exit %d\n%s\n%s", code, stdout, stderr)
