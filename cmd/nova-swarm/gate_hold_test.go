@@ -36,7 +36,7 @@ func TestDeniedPathWithASpaceStillRefuses(t *testing.T) {
 			if err := os.WriteFile(cardPath, []byte("FAKE-EXEC-REFUSED "+refused+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+			args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 				"--label", "go-card", "--card", cardPath, "--slot", slot, "--root", root,
 				"--deadline", "30s", "--no-wall"}
 			var stdout, stderr bytes.Buffer
@@ -67,7 +67,7 @@ func TestRefusalClaimsNoCauseItCannotProve(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-DENY-AND-RECOVER /opt/out/report.txt\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "redirect-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
@@ -115,7 +115,7 @@ func TestWalledRefusalOffersTheReadRootsAsOnePossibility(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-EXEC-REFUSED /opt/sdk tool/bin/go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "walled-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", nativeSandbox(t)}
 	var stdout, stderr bytes.Buffer

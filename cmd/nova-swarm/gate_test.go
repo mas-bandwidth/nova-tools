@@ -46,7 +46,7 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-EXEC-REFUSED "+refused+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "go-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", nativeSandbox(t)}
 	var stdout, stderr bytes.Buffer
@@ -96,7 +96,7 @@ func TestNativeOrdinaryRunIsStillOK(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-REFUSE 2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "read-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
@@ -135,7 +135,7 @@ func TestNativeWalledRunOpensTheWorkersReadRoots(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("a card line 1\nline 2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--worker", worker,
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--worker", worker,
 		"--label", "staged", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", nativeSandbox(t)}
 	var stdout, stderr bytes.Buffer
