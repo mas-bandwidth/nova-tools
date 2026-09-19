@@ -1317,8 +1317,11 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
+	// closed= COUNTS NOTES, not receipts. Since #1540 one receipt closes every note one
+	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
+	// and would be a different, smaller and quite surprising number here.
 	if *dryRun {
-		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", len(plan.Prepared), plan.Kept)
+		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", plan.Closed, plan.Kept)
 		return 0
 	}
 	if len(plan.Prepared) == 0 {
@@ -1333,14 +1336,30 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
+	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND (#1540). The collision this fix
+	// removes used to stop the loop at its second Save, with the first receipt written into
+	// the working tree, no commit, and the cursor where it started -- so the next run met a
+	// file it had not committed and the lane had to be cleaned by hand. Whatever stops the
+	// loop now, the files this run wrote go back out of the tree before it returns.
+	written := make([]string, 0, len(plan.Prepared))
+	undo := func() {
+		for i := len(written) - 1; i >= 0; i-- {
+			if err := os.Remove(filepath.Join(*busDir, filepath.FromSlash(written[i]))); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(stderr, "CLOSE NOTE %s was written and could not be taken back: %s\n", oneline.Escape(written[i]), oneline.Err(err))
+			}
+		}
+	}
 	paths := make([]string, 0, len(plan.Prepared)+1)
 	for i := range plan.Prepared {
 		p := &plan.Prepared[i]
 		if err := p.Save(*busDir); err != nil {
+			undo()
 			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
+		written = append(written, p.Path)
 		if err := p.AppendIndex(*busDir); err != nil {
+			undo()
 			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
@@ -1367,7 +1386,11 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(sha8) > 8 {
 		sha8 = sha8[:8]
 	}
-	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=%s\n", len(plan.Prepared), plan.Kept, oneline.Field(sha8))
+	// receipts= is new with #1540 and is the one number that changed shape: closed= counts
+	// notes, as it always did and as the dry run above already did, and receipts= says how
+	// many notes it took to close them -- one per sender lane. A reader who wants to know
+	// whether a close collapsed 2964 files into a handful reads it here.
+	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d receipts=%d commit=%s\n", plan.Closed, plan.Kept, len(plan.Prepared), oneline.Field(sha8))
 	return 0
 }
 

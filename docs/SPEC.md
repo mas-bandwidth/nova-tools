@@ -2734,7 +2734,8 @@ RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
-CLOSE OK closed=<n> kept=<n> commit=<sha8|->
+CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->     (receipts= on a writing close; a dry run has none to count)
+CLOSE NOTE <path> was written and could not be taken back: <reason>
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>

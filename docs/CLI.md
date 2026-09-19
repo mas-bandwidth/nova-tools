@@ -428,6 +428,15 @@ It fetches every `--interval` and returns the moment your inbox would list somet
 nova-bus receipt --bus ~/bus --as Ada --note bo-abcdef012345 --remote origin --branch main
 ```
 
+**`close --before <instant>`** is the explicit opt-in bulk cutoff the `INBOX OPEN` large-list line names: every open note addressed to you and dated before the instant is closed, and everything at or after it is left open. `--dry-run` reports the split and writes nothing.
+
+```
+nova-bus close --bus ~/bus --as Ada --before 2026-09-18T12:00:00Z --remote origin --branch main
+CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
+```
+
+**One receipt per sender lane**, carrying a `Re:` line for every note of theirs it closes — `closed=` counts the notes, `receipts=` the files it took. It was one file per closed note until #1540, and that could not finish: every receipt in a run shares the stamp as its subject, so every filename differed only by an id hashed over fields two receipts also shared but for `re`, and two notes sharing a target id produced one filename twice and `file exists` at the second write. One receipt per lane removes that by construction — two receipts differ in `To`, in `Re` and in body — and a target named twice is closed once. A close that cannot finish takes back everything it wrote, so a failed run leaves the lane exactly as it found it.
+
 **`check`** is the gate: every note parses, every header resolves, every note sits in the lane its `From:` names, every id is well formed and unique, every `Re:` and receipt names something that exists, every lane has an owner and holds nothing but notes, its state files and a `README.md`. It reports every finding in one run and asserts nothing about a body. It refuses to guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.
 
 ```
