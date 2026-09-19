@@ -533,6 +533,11 @@
       "op": "undo",
       "event_kind": ":undo",
       "mutating": true,
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "the compensating take",
+        "the compensating state --to doing"
+      ],
       "description": "Apply compensating events to reverse effects of a previous request.",
       "ordered_fields": [
         "session",
@@ -565,6 +570,11 @@
       "op": "redo",
       "event_kind": ":redo",
       "mutating": true,
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "the compensating take",
+        "the compensating state --to doing"
+      ],
       "description": "Reapply events reversed by an earlier undo.",
       "ordered_fields": [
         "session",
@@ -726,6 +736,10 @@
       "op": "goal-update",
       "event_kind": ":transition",
       "mutating": true,
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "--progress"
+      ],
       "description": "Update active goal with progress, evidence, blocker, or request stop edge.",
       "ordered_fields": [
         "session",
@@ -780,6 +794,7 @@
       "op": "offer",
       "event_kind": ":offer",
       "mutating": true,
+      "needs_gate": "refuses",
       "description": "Dispatch a delegated work offer to a worker or swarm.",
       "ordered_fields": [
         "session",
@@ -812,6 +827,10 @@
       "op": "acknowledge",
       "event_kind": ":acknowledge",
       "mutating": true,
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "--stage accepted"
+      ],
       "description": "Acknowledge or accept a dispatched offer with receipt and lease bounds.",
       "ordered_fields": [
         "session",
@@ -945,6 +964,7 @@
       "op": "execution-reconcile",
       "event_kind": ":execution-control",
       "mutating": true,
+      "needs_gate": "withholds",
       "description": "Reconcile execution control state from a durable external manifest.",
       "ordered_fields": [
         "session",
@@ -1443,6 +1463,8 @@
       "op": "responsible",
       "event_kind": ":assignment",
       "mutating": true,
+      "needs_gate": "exempt",
+      "needs_gate_reason": "writes an assignment record and creates no lease, offer, allocation or transition",
       "description": "Assign responsible owner name to a node with subtree inheritance.",
       "ordered_fields": [
         "session",
@@ -1463,6 +1485,7 @@
       "op": "take",
       "event_kind": ":assignment",
       "mutating": true,
+      "needs_gate": "refuses",
       "description": "Acquire execution lease on ready node with duration and default expiry action.",
       "ordered_fields": [
         "session",
@@ -1483,6 +1506,8 @@
       "op": "heartbeat",
       "event_kind": ":assignment",
       "mutating": true,
+      "needs_gate": "exempt",
+      "needs_gate_reason": "records what happened, and a record of what happened is never refused for a dependency (SPEC-WORK.md:4936); it creates no lease, offer, allocation or transition",
       "description": "Extend lease activity timestamp with active execution evidence pointer.",
       "ordered_fields": [
         "session",
@@ -1502,6 +1527,10 @@
       "op": "release",
       "event_kind": ":assignment",
       "mutating": true,
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "--handed"
+      ],
       "description": "Release active lease, optionally handing off to another designated worker.",
       "ordered_fields": [
         "session",
@@ -1544,6 +1573,8 @@
       "op": "attempt",
       "event_kind": ":assignment",
       "mutating": true,
+      "needs_gate": "exempt",
+      "needs_gate_reason": "records what happened, and a record of what happened is never refused for a dependency (SPEC-WORK.md:4936); it creates no lease, offer, allocation or transition",
       "description": "Record execution attempt outcome by worker model, bench, and token usage.",
       "ordered_fields": [
         "session",
@@ -1588,6 +1619,10 @@
       "op": "state",
       "event_kind": ":transition",
       "mutating": true,
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "--to doing"
+      ],
       "description": "Transition node lifecycle state across validated edges with evidence or reason.",
       "ordered_fields": [
         "session",
@@ -1610,6 +1645,8 @@
       "op": "correct",
       "event_kind": ":transition",
       "mutating": true,
+      "needs_gate": "exempt",
+      "needs_gate_reason": "its :transition cannot carry :to :doing, so it is no admission verb by rule 3",
       "description": "Correct completed node by bumping generation and reopening for fresh evidence.",
       "ordered_fields": [
         "session",
