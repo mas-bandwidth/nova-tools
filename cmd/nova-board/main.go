@@ -53,8 +53,7 @@ usage:
   nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
         [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
   nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
-  nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration>
-        (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+  nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
   nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
   nova-board quickstart (--issue ... | --dir ...) --stale <duration>
   nova-board version                 which build this is: <version> <goos>/<goarch> <go version>
