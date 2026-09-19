@@ -247,6 +247,12 @@ func Harvest(in HarvestInput) int {
 	appendStatusIndex(in.Root, indexDirs)
 
 	usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
+	// A launched pulse has no saved swarm packet: launch records pulses/<id>.tsv,
+	// never a .packet. The spend the run just wrote into each job's usage.tsv is
+	// already on disk, so sum it rather than printing a dash.
+	if usd == "-" {
+		usd = sumUsageSpend(indexDirs)
+	}
 
 	grouped := bound(in.Stdout, in.Max)
 	for _, l := range lines {
@@ -647,6 +653,69 @@ func parsePRNumber(s string) int {
 		}
 	}
 	return 0
+}
+
+// sumUsageSpend sums the usd column of the folded jobs' usage.tsv files. Columns
+// are read by header name so column order never matters; a row whose usd cell is
+// a dash or unparseable is not a zero and is skipped. It returns "-" when no
+// measured row is found, so an unmeasured spend stays unknown, never a wrong zero.
+func sumUsageSpend(jobDirs []string) string {
+	seen := map[string]bool{}
+	var total float64
+	var found bool
+	for _, dir := range jobDirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		for _, v := range usageSpendValues(filepath.Join(dir, "usage.tsv")) {
+			total += v
+			found = true
+		}
+	}
+	if !found {
+		return "-"
+	}
+	return strconv.FormatFloat(total, 'f', 4, 64)
+}
+
+// usageSpendValues returns the parseable usd cells of one job's usage.tsv.
+func usageSpendValues(path string) []float64 {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	head := strings.Split(lines[0], "\t")
+	usdIdx := -1
+	for i, name := range head {
+		if strings.TrimSpace(name) == "usd" {
+			usdIdx = i
+			break
+		}
+	}
+	if usdIdx < 0 {
+		return nil
+	}
+	var out []float64
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		values := strings.Split(line, "\t")
+		if usdIdx >= len(values) {
+			continue
+		}
+		if v := strings.TrimSpace(values[usdIdx]); v != "" && v != "-" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
 }
 
 // readUSD parses the usd token from a saved swarm packet's BATCH line, else "-".
