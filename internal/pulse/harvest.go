@@ -128,7 +128,7 @@ func Harvest(in HarvestInput) int {
 		}
 	}
 
-	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
+	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
@@ -206,8 +206,11 @@ func Harvest(in HarvestInput) int {
 			// and anything below the floor leaves today's path exactly as it was.
 			classTail := ""
 			if in.Decide {
-				class := in.decideClass(jobDir, branch, resultLines)
-				classTail = " " + classFields(class, in.Floor)
+				class, res := in.decideHarvest(jobDir, branch, resultLines)
+				classTail = " " + classFields(class, in.Floor) + " " + resultFields(res)
+				if res.result == "unknown" {
+					unread++
+				}
 				switch class.kind {
 				case "no-change", "already-fixed":
 					writeSeen(in.Root, c, "done")
@@ -221,6 +224,19 @@ func Harvest(in HarvestInput) int {
 					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s remedy=%s",
 						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
 					continue
+				}
+				// The result reading advises beside the class: a skip-precondition
+				// never started, so it is marked harvested and re-queued nothing;
+				// a defect is a candidate for a person or a stronger reader, one
+				// line, filed nowhere. Anything else harvests as today.
+				if res.result == "skip-precondition" {
+					writeSeen(in.Root, c, "done")
+					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail))
+					continue
+				}
+				if res.result == "defect" {
+					lines = append(lines, fmt.Sprintf("HARVEST FINDING-CANDIDATE job=%s pointer=%s",
+						field(c.Label), field(jobDir)))
 				}
 			}
 			url := pushURL(repo)
@@ -269,6 +285,12 @@ func Harvest(in HarvestInput) int {
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,
 		in.Now().Sub(started).Round(time.Millisecond), tail)
+
+	// Below the floor the pair is unknown and today's path ran: the job is
+	// listed once here for whoever ran the verb to read themselves.
+	if in.Decide && unread > 0 {
+		fmt.Fprintf(in.Stdout, "HARVEST UNREAD n=%d escalate=caller\n", unread)
+	}
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.
