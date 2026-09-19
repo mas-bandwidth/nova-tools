@@ -22,7 +22,7 @@ this table, is what a bench with a stale clone reads.
 
 | rule token | practice |
 | --- | --- |
-| `result-first` | 1 — line 1 is the `RESULT <label> sha=<sha12>` contract line (one form; SPEC-TOOLWORK §5 rule 7, #1741) |
+| `result-first` | 1 — line 1 is the `RESULT: <label> sha=<sha12>` contract line (one form, with the colon: SPEC-SWARM's; SPEC-TOOLWORK §5 rule 7, #1741) |
 | `result-last` | 1, 25 — the last step writes `RESULT.md`, whose line 1 is that contract line |
 | `no-sandbox` | 2 — a card runs inside the wall and never invokes it |
 | `files-named` | 3 — the work is anchored to a named file or package |
@@ -309,7 +309,7 @@ job.
 
 ## 22. A card's line-1 contract never carries the answer
 
-Line 1 is identity and nothing else — `RESULT <label> sha=<sha12>`, the label and the hash of
+Line 1 is identity and nothing else — `RESULT: <label> sha=<sha12>`, the label and the hash of
 the text below it; the verdict is line 2 and the findings come after. Since `gather` scores a
 `RESULT.md` **done on line 1 alone, whatever the harness exit code** (SPEC-SWARM, **gather**,
 landed in #577, pinned by `done-whatever-the-exit-code`; the rc is recorded on the line), a line 1 that stated the expected verdict, the expected count or the fix

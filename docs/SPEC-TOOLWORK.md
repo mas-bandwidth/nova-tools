@@ -431,7 +431,10 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
 **Red tests this section demands**, each seen red first, fakes for the bench and the
 clock, no network: `accept-runs-before-any-push` (the git fixture's argv log holds no
 push for a rejected card); `accept-never-opens-result-md` (a `RESULT.md` that is a FIFO
-does not hang the gate); `accept-rejects-a-vacuous-test`; `accept-rejects-when-named-test-stays-green`;
+does not hang the gate); `accept-rejects-a-vacuous-test`;
+`a-pre-existing-green-test-is-not-vacuous` (rule 4(d): an untouched test `MUTATE GREEN`
+under the revert on a known-good fix is not charged; PR #1721's
+`TestAcceptDoesNotCallAPreExistingGreenVacuous`); `accept-rejects-when-named-test-stays-green`;
 `accept-never-reruns-a-red`; `accept-abstains-on-a-bench-red` (a `WALL` line is the
 bench's); `selftest-every-seed-is-one-edit` (a two-line seed is refused by count);
 `selftest-wrong-token-is-a-fail`; `ok-without-a-control-on-file-is-refused`;
@@ -503,15 +506,22 @@ leg.**
      probes for the first and falls to the second, and prints which on `toolchain=`. The
      rule's earlier claim that the cargo workaround on #1557 proved the `Developer`-only
      read is withdrawn: it was not measured inside this wall.
-   - `go`: `--read $(go env GOROOT)` and `--read-noexec $(go env GOMODCACHE)`, nothing
-     under `/opt/homebrew`; `dev` already carries this as `swarm.ToolchainRoots`, and
-     `go test ./internal/sandbox/` inside the wall is `ok` on a cold cache with it.
+   - `go`: `--read $(go env GOROOT)` and `--read-noexec $(go env GOMODCACHE)`, and no
+     other root: on this Studio `GOROOT` is `/opt/homebrew/Cellar/go/1.27.1/libexec`
+     (`t18-narrow.log:2`), so what is read under `/opt/homebrew` is `GOROOT` itself, asked
+     of `go env`, and not the Cellar tree. With those two roots `go test
+     ./internal/sandbox/` inside the wall is `ok` on a cold cache (`t18-measure.log`).
+     What `dev` carries today is **wider**: `swarm.ToolchainRoots`
+     (`internal/swarm/toolchain.go:150-165`) grants `~/sdk`, `/opt/homebrew/Cellar/go`,
+     `/opt/homebrew/Cellar/sbcl`, `openjdk`, the JVMs and `dotnet`, all with exec, on
+     every `native` run; T18 (#1662) narrows `native`'s default to the two measured roots.
    - `sbcl`: `--read` on its Cellar prefix alone (`/opt/homebrew/Cellar/sbcl/<version>`;
      `SBCL_HOME` and the core live under it).
    - `sqlite3`: no extra root at all.
-   - `make`: dies with `cc` and lives with it (`xcode-select: error: unable to read data
-     link at '/var/db/xcode_select_link'` inside the wall, #1557); it has no roots of its
-     own beyond `cc`'s.
+   - `make`: **unmeasured under the working roots.** It dies with `cc` under the failing
+     ones (`xcode-select: error: unable to read data link at '/var/db/xcode_select_link'`,
+     `t18-fix.log`, #1557); whether it lives under `cc`'s working roots was not run, so
+     `certify`'s `make` leg starts `absent` until it is.
    A wall widening is a judgment and not a measurement: the `cc` roots above are wider
    than draft 5 promised, and Stella's word on them is owed before T18 writes the flag.
    Each resolved root is printed on the `SANDBOX OK` line's `toolchain=` field so the
@@ -566,7 +576,12 @@ leg.**
 **Red tests:** `certify-runs-every-probe-inside-the-wall` (the sandbox fake's argv log
 holds one wrap per leg); `certify-absent-is-not-failed`; `cert-voids-on-build-change`;
 `accept-abstains-on-an-uncertified-leg`; `route-refuses-a-bench-without-the-leg`;
-`toolchain-cc-sets-developer-dir-and-reads-nothing-wider` (darwin);
+`toolchain-cc-prefers-command-line-tools-and-reads-nothing-wider` (darwin: with
+`/Library/Developer/CommandLineTools` present the wall's argv holds `--read` on it and no
+`.app`; `toolchain=` names it); `toolchain-cc-falls-back-to-the-app-and-prints-which` (darwin:
+with the Command Line Tools absent the argv holds `--read` on the `.app` that `xcode-select
+-p` names, and `toolchain=` says so); `native-reads-goroot-and-gomodcache-and-nothing-else`
+(the argv holds exactly those two roots, neither with exec beyond `GOROOT`);
 `legs-tsv-covers-every-toolchain-ci-installs`; `native-defaults-to-the-go-leg`;
 `an-unknown-leg-is-bad-toolchain` (rule 2); `a-cert-past-until-is-void`,
 `a-toolchain-abstain-voids-the-cert` and `a-changed-go-version-voids-the-cert` (rule 6);
@@ -730,7 +745,7 @@ the worker never sees and cannot edit.
    and `STEP 1` is the line after it:
 
    ```
-   RESULT <label> sha=<sha12>
+   RESULT: <label> sha=<sha12>
    You are a worker. <the role line of docs/spec-pulse/10-the-card-as-cut-writes-it.md>
    KIND: <kind>
    PATHS: <glob>[, <glob>...]
@@ -808,22 +823,31 @@ the worker never sees and cannot edit.
    the gate is chosen by `KIND:` from the tool's table and by nothing the worker wrote.
    A `RESULT.md` that names a different kind, a different test or more paths is not
    read (§1 rule 2), so it changes nothing.
-7. **The contract line has one form, `RESULT <label> sha=<sha12>`, and the lint follows the
-   renderer.** It is the spec-pulse document's form
-   (`docs/spec-pulse/10-the-card-as-cut-writes-it.md:4`), what `cut` writes
-   (`internal/pulse/cut.go:472`) and checks (`:433`), what `cut`'s own test asserts, what
-   `docs/WORKER-CARDS.md:312` says, and what `gather` compares for equality without a
-   prefix of its own. The colon form, `RESULT: <CARD-id> …`, lived in one place, `nova-swarm
-   lint --card`'s `result-first` check and remedy text (`cmd/nova-swarm/lint.go:55,140` at
-   `dev@702b0133`) and the practice table row that quotes it, and it drew a `result-first`
-   drift on every one of the six cards written by hand on 2026-09-19, all six in the
-   renderer's form (nova-tools#1741). The no-colon form wins because it is the shipped
-   majority — renderer, its check, its test, both documents and the comparator — and
-   because changing it changes no card that exists; the lint is the one reader that
-   changes. `result-first` means: line 1 begins `RESULT ` and carries `sha=`. A class test
-   reads the document's example, `cut`'s prefix and the lint's prefix and fails when they
-   are not one string (the stopgap of accepting both, PR #1733, is retired by that test
-   when the lint follows).
+7. **The contract line has one form, `RESULT: <label> sha=<sha12>`, with the colon: it is
+   SPEC-SWARM's, and the writers follow it.** Read on `dev@702b0133`, the two forms and who
+   holds each. **Colon**: `docs/SPEC-SWARM.md:969,976` (the swarm's own law: *"line 1 starts
+   with `RESULT: `"*); `internal/pulse/cutkind.go:189-201` (`cut --kind`, wired at
+   `cmd/nova-pulse/cut_kind.go:48` and `wire.go:502`) and `internal/pulse/manager.go:739`,
+   which write `RESULT: CARD-<n> …`; `nova-swarm lint --card`'s `result-first`
+   (`cmd/nova-swarm/lint.go:55,140`); `internal/worklang/expand.go:227`. **No colon**: the
+   plain `cut` templates (`internal/pulse/cut.go:472` writes, `:433` checks,
+   `cut_test.go:110` asserts) and, before this draft, `docs/spec-pulse/10:4` and
+   `docs/WORKER-CARDS.md:312`. **Both accepted**: `internal/pulse/harvestbench.go:349`,
+   `worklang/expand.go:227`, and `gather`, which compares line 1 for equality with no prefix
+   of its own. Ruled (Rowan, 2026-09-19, on the coordinator's cold read of #1759): **the
+   colon form wins**, because it is SPEC-SWARM's and the majority of writers already write
+   it; the no-colon rule this draft first proposed would have made every `cut --kind` and
+   manager card a `result-first` drift. The one renderer that changes is the plain `cut`
+   template path: **the follow-up card** rewrites `cut.go:472` and `:433`, `cut_test.go:110`,
+   and adds the class test `every-writer-and-reader-agrees-on-the-result-line`, which reads
+   every writer's prefix (`cut.go`, `cutkind.go`, `manager.go`, `expand.go`), every reader's
+   (`lint.go`, `harvestbench.go`, `gather`) and both documents' examples, and fails when they
+   are not one string. This draft fixes the two documents now (`spec-pulse/10:4`,
+   `WORKER-CARDS.md:25,312`). **Until that card lands, readers accept both forms**
+   (`harvestbench.go:349`'s loop is the shape; the lint's accept-both stopgap in PR #1733 is
+   the same shape and is retired by the class test, not before). The six hand-written cards
+   of 2026-09-19 that drew `result-first` (nova-tools#1741) were in the no-colon form and
+   were wrong; the lint was right.
 
 **Red tests:** `cut-refuses-a-gated-kind-without-paths`; `header-lines-are-inside-the-contract-hash`;
 `a-card-cut-renders-is-admitted` (rule 1); `the-contract-line-has-one-form` (rule 7);
