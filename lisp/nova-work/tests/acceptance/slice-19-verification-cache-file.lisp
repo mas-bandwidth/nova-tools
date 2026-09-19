@@ -46,6 +46,19 @@ canonical printer would never make."
       (write-string line out)
       (write-char #\Newline out))))
 
+(defun counting-resolver (scheme command &key (fact :holds)
+                                          (stamp "2026-09-13T18:00:00Z") calls)
+  "A resolver whose configured body establishes FACT at STAMP and counts its
+runs in the one-element list CALLS when given. The shape is slice-13's
+`holding-resolver' under this slice's own name, so both files load into one
+image without redefining each other."
+  (make-verification-resolver
+   scheme command
+   :function (lambda (pointer subject)
+               (declare (ignore pointer subject))
+               (when calls (incf (first calls)))
+               (values fact stamp))))
+
 (defparameter *round-trip-facts*
   '(("test:pkg \"one\"@sha-1" "subject \"one\"" "resolver \"alpha\" one"
      :holds "2026-09-13T18:00:00Z")
@@ -218,5 +231,148 @@ canonical printer would never make."
              (ok (null (session-verification sess))
                  "no :cache means no verification session")
              (check-string= "" (session-cache sess)
-                            "no :cache means no cache path is named")))
+                             "no :cache means no cache path is named")))
+      (remove-cache-file path))))
+
+;;; ------------------------------------------------------------------
+;;; a-session-fetch-survives-stop-and-reopen  SPEC-WORK.md:1294-1325
+;;; ------------------------------------------------------------------
+
+(deftest "a-session-fetch-survives-stop-and-reopen" "docs/SPEC-WORK.md:1294-1325"
+    "expected=fetch-once;persist-without-the-write-helper;reopen-hits;no-second-resolver-call"
+  (let ((path (cache-temp-path))
+        (calls (list 0))
+        (evidence (list (make-verify-evidence
+                         "ev-1" :pointer "test:pkg/x@sha-1"
+                         :criterion :test :subject "pkg/x" :against "sha-1"))))
+    (unwind-protect
+         (let (first-line first-rows second-line second-rows)
+           (let* ((resolver (counting-resolver "test" "cmd-reopen" :calls calls))
+                  (sess (session-start :cache path :resolvers (list resolver))))
+             (multiple-value-bind (line rows exit) (verify (session-verification sess) evidence)
+               (declare (ignore exit))
+               (setf first-line line first-rows rows)))
+           ;; There is no stop verb to call: dropping the first session and
+           ;; starting a second on the same path IS the reopen.
+           (let* ((resolver (counting-resolver "test" "cmd-reopen" :calls calls))
+                  (sess (session-start :cache path :resolvers (list resolver))))
+             (multiple-value-bind (line rows exit) (verify (session-verification sess) evidence)
+               (declare (ignore exit))
+               (setf second-line line second-rows rows)))
+           (check-equal 1 (first calls)
+                        "the resolver ran once across the reopen")
+           (verify-shows first-line "fetched" 1)
+           (ok (probe-file path) "the fetched fact is on disk")
+           (check-equal first-rows second-rows
+                        "the reopened run prints the same rows")
+           (verify-shows second-line "fetched" 0)
+           (verify-shows second-line "cached" 1))
+      (remove-cache-file path))))
+
+;;; ------------------------------------------------------------------
+;;; the-session-cache-names-resolvers-by-command-string  SPEC-WORK.md:1294-1325
+;;; ------------------------------------------------------------------
+
+(deftest "the-session-cache-names-resolvers-by-command-string" "docs/SPEC-WORK.md:1294-1325"
+    "expected=resolvers-are-command-strings;reopened-fact-hits;no-resolver-call"
+  (let ((path (cache-temp-path))
+        (calls (list 0))
+        (evidence (list (make-verify-evidence
+                         "ev-1" :pointer "test:a@sha-1"
+                         :criterion :test :subject "a" :against "sha-1"))))
+    (unwind-protect
+         (progn
+           ;; A fact whose :resolver is the resolver's command string, verbatim.
+           (let ((cache (make-verification-cache)))
+             (verification-cache-store cache "test:a@sha-1" "a" "cmd-ident"
+                                       :holds "2026-09-13T18:00:00Z")
+             (write-verification-cache cache path))
+           (let* ((resolver (counting-resolver "test" "cmd-ident" :calls calls))
+                  (sess (session-start :cache path :resolvers (list resolver)))
+                  (vs (session-verification sess)))
+             (check-equal (list "cmd-ident")
+                          (verification-cache-resolvers (verification-session-cache vs))
+                          "the cache's resolver set holds command strings, not objects")
+             (ok (null (verification-cache-lookup
+                        (read-verification-cache path :resolvers (list resolver))
+                        "test:a@sha-1" "a" "cmd-ident"))
+                 "the same read given resolver objects would not hit")
+             (multiple-value-bind (line rows exit) (verify vs evidence)
+               (declare (ignore rows exit))
+               (verify-shows line "fetched" 0)
+               (verify-shows line "cached" 1)
+               (check-equal 0 (first calls)
+                            "the resolver was never called"))))
+      (remove-cache-file path))))
+
+;;; ------------------------------------------------------------------
+;;; a-cache-that-cannot-be-written-is-reported  SPEC-WORK.md:1294-1325
+;;; ------------------------------------------------------------------
+
+(deftest "a-cache-that-cannot-be-written-is-reported" "docs/SPEC-WORK.md:1294-1325"
+    "expected=unsupported-input-names-the-path;the-failure-is-not-swallowed"
+  (let* ((path (cache-temp-path "-absent/cache"))
+         (calls (list 0))
+         (evidence (list (make-verify-evidence
+                          "ev-1" :pointer "test:pkg/y@sha-1"
+                          :criterion :test :subject "pkg/y" :against "sha-1")))
+         (reported nil)
+         (returned nil))
+    (unwind-protect
+         (handler-case
+             (multiple-value-bind (line rows exit)
+                 (verify (session-verification
+                          (session-start :cache path
+                                         :resolvers (list (counting-resolver
+                                                           "test" "cmd-write"
+                                                           :calls calls))))
+                         evidence)
+               (declare (ignore rows exit))
+               (setf returned line))
+           (unsupported-input (c)
+             (setf reported (princ-to-string c))))
+      (remove-cache-file path))
+    (ok reported "the failed write signals unsupported-input")
+    (ok (and reported (search path reported))
+        "the refusal names the cache path: ~S" reported)
+    (ok (null returned) "verify returned no count line: ~S" returned)))
+
+;;; ------------------------------------------------------------------
+;;; the-cache-file-after-a-session-fetch-holds-the-fetched-fact
+;;; SPEC-WORK.md:1294-1325
+;;; ------------------------------------------------------------------
+
+(deftest "the-cache-file-after-a-session-fetch-holds-the-fetched-fact" "docs/SPEC-WORK.md:1294-1325"
+    "expected=one-line;one-fact;every-field-equal-to-the-resolver-answer"
+  (let ((path (cache-temp-path))
+        (evidence (list (make-verify-evidence
+                         "ev-1" :pointer "test:pkg/z@sha-1"
+                         :criterion :test :subject "pkg/z" :against "sha-1"))))
+    (unwind-protect
+         (progn
+           (let* ((resolver (counting-resolver "test" "cmd-hold"
+                                               :fact :holds
+                                               :stamp "2026-09-13T18:00:00Z"))
+                  (sess (session-start :cache path :resolvers (list resolver))))
+             (verify (session-verification sess) evidence))
+           (let ((text (cache-file-text path)))
+             (ok (plusp (length text)) "the cache file is not empty")
+             (check-equal 1 (count #\Newline text)
+                          "the cache file is exactly one line"))
+           (let ((back (read-verification-cache path)))
+             (check-equal 1 (verification-cache-size back)
+                          "the file holds exactly one fact")
+             (let ((got (verification-cache-lookup back "test:pkg/z@sha-1" "pkg/z"
+                                                    "cmd-hold")))
+               (ok got "the fetched fact comes back")
+               (check-equal "test:pkg/z@sha-1" (verification-fact-pointer got)
+                            "the pointer is the one fetched")
+               (check-equal "pkg/z" (verification-fact-subject got)
+                            "the subject is the one passed")
+               (check-equal "cmd-hold" (verification-fact-resolver got)
+                            "the resolver identity is the command string")
+               (check-equal :holds (verification-fact-fact got)
+                            "the raw fact is the one the resolver answered")
+               (check-equal "2026-09-13T18:00:00Z" (verification-fact-stamp got)
+                            "the stamp is the one the resolver answered"))))
       (remove-cache-file path))))

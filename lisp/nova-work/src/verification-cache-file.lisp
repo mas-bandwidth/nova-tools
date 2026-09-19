@@ -99,10 +99,40 @@ installs nothing: the cache is returned only when every line passed."
                                            (getf form :stamp)))))
     cache))
 
+(defun resolver-identities (resolvers)
+  "The canonical resolver-identity list for RESOLVERS (SPEC-WORK.md:1294-1301):
+the command string of each resolver, verbatim and unnormalized. A string in the
+list passes through unchanged and NIL stays NIL. The resolver identity is the
+command string everywhere, and no resolver object is ever compared for identity."
+  (cond ((null resolvers) nil)
+        ((stringp resolvers) (list resolvers))
+        (t (mapcar (lambda (resolver)
+                     (if (stringp resolver)
+                         resolver
+                         (verification-resolver-command resolver)))
+                   resolvers))))
+
 (defun session-verification-from-cache (cache-path resolvers)
   "The verification session `session start --cache` builds over CACHE-PATH with
 RESOLVERS, or nil when no non-empty cache is named (SPEC-WORK.md:1322-1325)."
   (when (and (stringp cache-path) (plusp (length cache-path)))
     (make-verification-session
-     :cache (read-verification-cache cache-path :resolvers resolvers)
+     :cache (read-verification-cache cache-path
+                                     :resolvers (resolver-identities resolvers))
+     :cache-path cache-path
      :resolvers resolvers)))
+
+(defun persist-verification-cache (session)
+  "Persist SESSION's own cache at the path `session start --cache` named and
+return the count written, or do nothing and return NIL when the session names
+no path. A write that fails signals UNSUPPORTED-INPUT naming the path and the
+underlying error, so the failure is reported and nothing is swallowed
+(SPEC-WORK.md:1294-1325)."
+  (let ((path (verification-session-cache-path session)))
+    (when (and (stringp path) (plusp (length path)))
+      (handler-case
+          (write-verification-cache (verification-session-cache session) path)
+        (error (c)
+          (error 'unsupported-input
+                 :what (format nil "verify: cannot write the verification cache ~A: ~A"
+                               path c)))))))
