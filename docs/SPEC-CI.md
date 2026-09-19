@@ -1282,6 +1282,69 @@ here. Whether a transcript is TRUE is not this test's business — a document th
 disagrees with its tool is a finding and a `fix-red` card
 (`docs/SPEC-TOOLWORK.md` §7 rule 6), never an edit that makes a test pass.
 
+### `platform-leg` — a skipped transcript is still executed somewhere
+
+**The rule.** A `## <tool>` section of `docs/TESTS.md` whose transcript one
+platform cannot reproduce says which in ONE typed line:
+`Platform: <goos>[,<goos>] — <what the other benches print instead>`. It is a
+GOOS list and not a sentence, so a transcript test can skip on it BY NAME and
+this rule can check it: every platform named must be a leg
+`.github/workflows/ci.yml` runs, read off the merge gate's `leg:` matrix rather
+than listed here. A skip is a hole, and a hole is sound only while something
+else fills it.
+**The hurt.** #1509. `nova-sandbox probe` prints `backend=sandbox-exec` and an
+empty `abi=` on macOS and `backend=landlock` with `hosts=`, `gpu=`, `used=` and
+`ancestors=` on Linux — fields the macOS transcript has no slot for — and the
+section said so in prose no test could act on. Windows is the live case for the
+leg half: every `windows-latest` leg was dropped on 2026-09-18 (Glenn: "drop the
+native windows CI runners. WSL only from now on."), so a `Platform: windows`
+line today would name a transcript that is skipped on every bench, which reads
+in a green build exactly like one every bench runs.
+**The test.** `TestPlatformLineMustNameACILeg`
+(`internal/ci/platformleg_class_test.go`); the line itself is parsed by
+`onboarding.SectionPlatforms`, and `onboarding.SectionSkipReason` is the named
+skip a transcript test uses.
+**Its allowlist.** `internal/ci/testdata/platform_line_allowlist.txt`, one
+`<tool>` per line with the issue that owes it, checked in both directions so it
+only shrinks. Today: `nova-swarm`, whose line names a machine state and not a
+platform (#1509).
+**Its remedy line.** ``the `## <tool>` section is recorded for "<goos>" and no
+leg of .github/workflows/ci.yml runs <goos>``.
+**Its narrowings.** Only `docs/TESTS.md`, and only sections with a directory
+under `cmd/`. It reads the line, never the transcript: whether the block under
+it really is platform-specific is `TestFirstRunTranscriptsNameTheirPlatform`'s
+question, and whether it is TRUE is a `fix-red` card's.
+
+### `unexecuted-examples` — every pasteable line is executed or counted
+
+**The rule.** Every `$ ` line in a fenced block of `README.md`,
+`docs/USAGE.md`, `docs/nova-swarm-quickstart.md` and `docs/CLI.md`'s
+`### First run` sections, and every `example:` line of every `help` banner, is
+either executed by a test through `onboarding.CompareTranscript` — the same
+comparator `docs/TESTS.md`'s sections are held to — or listed with the reason it
+is not.
+**The hurt.** #1455 measured the banners a stranger is sent to first: 28 of 61
+`example:` lines exited 2 when pasted. A door that opens onto a wall, and no
+build said so, because the banner's contract stopped at "there is an example
+block". The count is the point: it is not that these lines work, it is that
+somebody has to say out loud when a new one arrives unchecked.
+**The test.** `TestUnexecutedExamplesOnlyShrink`
+(`internal/ci/examples_class_test.go`). It builds each `cmd/` binary and reads
+its `help` banner, because the banner is assembled at run time and what a
+stranger pastes is what the binary said.
+**Its allowlist.** `internal/ci/testdata/unexecuted_examples.txt`, one
+`<line>` TAB `<reason>` per entry, checked in both directions so it only
+shrinks. The separator is a TAB and not the ` #` the other lists use, because
+these keys are shell lines and one of them carries a shell comment of its own.
+Today: 118 lines, none executed.
+**Its remedy line.** ``<line> is pasteable and no test executes it through
+onboarding.CompareTranscript; execute it, or list it in
+testdata/unexecuted_examples.txt with the reason (the list only shrinks)``.
+**Its narrowings.** It does not RUN the lines and does not ask whether they
+work — that is what each listed line's own card is for. A `$ ` outside a fenced
+block is prose (`$N$` in the swarm quickstart is arithmetic), and in
+`docs/CLI.md` only the `### First run` blocks are counted.
+
 ### `version` — every tool prints the one version line
 
 **The rule.** Every `cmd/nova-*` binary answers `version` with exactly one line
