@@ -1084,13 +1084,35 @@ a bad selection refuses `bad selection`. Answers (values OK-P LINE EXIT-CODE)."
                                     :column-axis (or c +absent+)
                                     :fixed (or fx '())))
                   (payload (%roadmap-projection-payload projection)))
+             ;; A lost reply's retry replays its original receipt via the
+             ;; request id; a changed payload under the id is a conflict.
+             (when request
+               (let ((prior (gethash request (kernel-applied kernel))))
+                 (when prior
+                   (if (and (eq (getf prior :verb) :roadmap-projection)
+                            (equal (getf prior :projection) id)
+                            (equal (or (getf prior :payload)
+                                       (getf (getf prior :before) :projection))
+                                   payload))
+                       (return-from roadmap-projection
+                         (values t (getf prior :line) 0))
+                       (return-from roadmap-projection
+                         (values nil
+                                 (format nil "ROADMAP FAIL node=~A: reused with a different payload"
+                                         roadmap)
+                                 1))))))
              (when existing
                (if (equal payload (%roadmap-projection-payload existing))
-                   (return-from roadmap-projection
-                     (values t
-                             (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=0 rev=~D"
-                                     roadmap request (getf view :revision))
-                             0))
+                   (let ((line (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=0 rev=~D"
+                                       roadmap request (getf view :revision))))
+                     (when request
+                       (let ((snap (list :projections (copy-tree (getf view :projections))
+                                         :revision (getf view :revision))))
+                         (setf (gethash request (kernel-applied kernel))
+                               (list :verb :roadmap-projection :roadmap roadmap :projection id
+                                     :op :add :reason (or reason +absent+) :line line
+                                     :payload payload :before snap :after snap :changed 0))))
+                     (return-from roadmap-projection (values t line 0)))
                    (return-from roadmap-projection
                      (values nil (format nil "ROADMAP FAIL node=~A: duplicate projection ~A" roadmap id) 2))))
              (let ((before (list :projections (copy-tree (getf view :projections))

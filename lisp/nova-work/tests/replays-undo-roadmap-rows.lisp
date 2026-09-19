@@ -392,3 +392,91 @@ they can settle and revive a roadmap.")
       (check-equal ids (rm-projection-ids k) "the refused redo moved the view")
       (check-equal revision (roadmap-view-revision (kernel-state k) "rm")
                    "the refused redo moved the revision"))))
+
+;;; ------------------------------------------------------------------
+;;; An identical `roadmap projection` re-add is the accepted no-effect
+;;; receipt: it records a real event id's worth of receipt with changed=0,
+;;; a retry replays the stored receipt, and undo reaches the typed
+;;; compensation instead of refusing `no such request`. SPEC-WORK.md:370-377
+;;; and :3125-3132.
+;;; ------------------------------------------------------------------
+
+(deftest "an-identical-projection-re-add-records-a-real-no-effect-receipt"
+    "docs/SPEC-WORK.md:370-377"
+    "expected=an-accepted-no-op-records-a-durable-receipt-changed=0;nothing-moved"
+  (let ((k (roadmap-rows-kernel)))
+    (rr-add-projection k "p1" "q1")
+    (multiple-value-bind (okp line code)
+        (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                              :repo "acme/work" :path "docs/p1.md"
+                              :start "<!-- S -->" :end "<!-- E -->"
+                              :policy :markdown-table :reason "proj" :request "q-noop")
+      (ok okp "the identical re-add was refused: ~A" line)
+      (ok (search "changed=0" line) "the no-op line does not say changed=0: ~A" line)
+      (check-equal 0 code "the no-op re-add exit code"))
+    (let ((entry (gethash "q-noop" (nova-work::kernel-applied k))))
+      (ok entry "the identical re-add recorded no receipt")
+      (check-equal :roadmap-projection (getf entry :verb) "the receipt's verb")
+      (check-equal 0 (getf entry :changed) "the receipt's changed"))
+    (check-equal '("p1") (rm-projection-ids k) "the no-op moved the projections")))
+
+(deftest "an-identical-projection-re-add-retried-returns-its-original-receipt"
+    "docs/SPEC-WORK.md:370-377"
+    "expected=a-retry-replays-the-stored-receipt;a-different-payload-refuses"
+  (let ((k (roadmap-rows-kernel)))
+    (rr-add-projection k "p1" "q1")
+    (multiple-value-bind (okp line code)
+        (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                              :repo "acme/work" :path "docs/p1.md"
+                              :start "<!-- S -->" :end "<!-- E -->"
+                              :policy :markdown-table :reason "proj" :request "q-noop")
+      (ok okp "the no-op re-add was refused: ~A" line)
+      (check-equal 0 code "the no-op re-add exit code"))
+    (let ((stored (gethash "q-noop" (nova-work::kernel-applied k))))
+      (ok stored "the no-op re-add recorded no receipt")
+      (multiple-value-bind (okp line code)
+          (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                                :repo "acme/work" :path "docs/p1.md"
+                                :start "<!-- S -->" :end "<!-- E -->"
+                                :policy :markdown-table :reason "proj" :request "q-noop")
+        (ok okp "the retry was refused: ~A" line)
+        (check-equal (getf stored :line) line "the retry did not return the stored receipt")
+        (check-equal 0 code "the retry exit code"))
+      (multiple-value-bind (okp line code)
+          (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                                :repo "acme/work" :path "docs/other.md"
+                                :start "<!-- S -->" :end "<!-- E -->"
+                                :policy :markdown-table :reason "proj" :request "q-noop")
+        (ok (not okp) "a different payload under the same request id was accepted: ~A" line)
+        (ok (search "reused with a different payload" line)
+            "the refusal does not name the conflict: ~A" line)
+        (check-equal 1 code "the conflict exit code")))
+    (check-equal '("p1") (rm-projection-ids k) "the retries moved the projections")))
+
+(deftest "undo-of-an-accepted-no-op-projection-reaches-typed-compensation"
+    "docs/SPEC-WORK.md:3125-3132"
+    "expected=the-no-op-undo-plans-nothing-and-applies-UNDO-OK;never-no-such-request"
+  (let ((k (roadmap-rows-kernel)))
+    (rr-add-projection k "p1" "q1")
+    (multiple-value-bind (okp line code)
+        (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                              :repo "acme/work" :path "docs/p1.md"
+                              :start "<!-- S -->" :end "<!-- E -->"
+                              :policy :markdown-table :reason "proj" :request "q-noop")
+      (ok okp "the no-op re-add was refused: ~A" line)
+      (check-equal 0 code "the no-op re-add exit code"))
+    (multiple-value-bind (okp line code plan)
+        (submit k (list :verb :undo-plan :of "q-noop" :by "rowan"
+                        :request "up-noop" :stamp "2026-09-19T01:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok okp "the undo-plan over the accepted no-op was refused: ~A" line)
+      (check-equal 0 code "the undo-plan exit code")
+      (check-equal '() (rr-plan-rows plan) "the no-op plan should move nothing"))
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb :undo :of "q-noop" :by "rowan"
+                        :request "u-noop" :stamp "2026-09-19T01:01:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok okp "the undo of the accepted no-op was refused: ~A" line)
+      (check-equal 0 code "the undo exit code")
+      (ok (search "UNDO OK" line) "the undo line is not UNDO OK: ~A" line))
+    (check-equal '("p1") (rm-projection-ids k) "the undo moved the projections")))
