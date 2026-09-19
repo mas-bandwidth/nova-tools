@@ -302,6 +302,106 @@ func TestFailedIsReachableFromTheDispatch(t *testing.T) {
 	}
 }
 
+// (i) `failed --decide` reads a red into its class and grants at most one licensed rerun.
+// The negative control is first and it is the point: a cancelled leg beside a `--- FAIL`
+// is a named-test, and a named failing test is never licensed however many reruns are
+// left. A rerunnable class is licensed only at zero reruns -- the second red at one sha is
+// a finding -- and a flake row past its expiry matches nothing, so the red falls back to a
+// named-test. These are the mechanical rows of SPEC-DECIDE reading 6, "one licensed rerun,
+// or a finding"; the reading never reruns anything itself.
+func TestFailedDecideClassesTheRedAndLicensesAtMostOneRerun(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	flakes := write("flakes.tsv", "TestFlaky\t#1\t2099-01-01\n")
+	expired := write("expired.tsv", "TestFlaky\t#1\t2026-09-18\n")
+	infra := write("infra.txt", "Set up job\n")
+	flakyLog := "--- FAIL: TestFlaky (0.01s)\n"
+
+	cases := []struct {
+		name  string
+		forge *stubForge
+		args  []string
+		want  string
+	}{
+		{
+			name: "a cancelled leg beside a failing test is a named-test",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{
+					{ID: 2, Name: "test (1/4)", Conclusion: "failure"},
+					{ID: 3, Name: "test (2/4)", Conclusion: "cancelled"},
+				},
+				logs: map[int64]string{2: forgeFixture(t, "windows-sandbox.log"), 3: "cleanup\n"},
+			},
+			args: []string{"--decide"},
+			want: "red=named-test rerun=no finding=yes reruns=0",
+		},
+		{
+			name: "a cancelled-only run licenses one rerun",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled"}},
+				logs: map[int64]string{3: "cleanup\n"},
+			},
+			args: []string{"--decide"},
+			want: "red=cancelled-leg rerun=licensed finding=no reruns=0",
+		},
+		{
+			name: "the second red at one sha is a finding",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled"}},
+				logs: map[int64]string{3: "cleanup\n"},
+			},
+			args: []string{"--decide", "--reruns", "1"},
+			want: "red=cancelled-leg rerun=no finding=yes reruns=1",
+		},
+		{
+			name: "an unexpired flake row licenses the rerun",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 4, Name: "test (3/4)", Conclusion: "failure"}},
+				logs: map[int64]string{4: flakyLog},
+			},
+			args: []string{"--decide", "--flakes", flakes, "--now", "2026-09-19"},
+			want: "red=known-flake rerun=licensed finding=no reruns=0",
+		},
+		{
+			name: "an expired flake row matches nothing",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 4, Name: "test (3/4)", Conclusion: "failure"}},
+				logs: map[int64]string{4: flakyLog},
+			},
+			args: []string{"--decide", "--flakes", expired, "--now", "2026-09-19"},
+			want: "red=named-test rerun=no finding=yes reruns=0",
+		},
+		{
+			name: "an infra step in the table is a rerunnable class",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 5, Name: "test (4/4)", Conclusion: "failure", Steps: []ci.FailedStep{{Name: "Set up job", Conclusion: "failure"}}}},
+				logs: map[int64]string{5: "no test event here\n"},
+			},
+			args: []string{"--decide", "--infra-steps", infra},
+			want: "red=infra rerun=licensed finding=no reruns=0",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			args := append([]string{"--repo", "owner/name", "--run", "1"}, c.args...)
+			code, stdout, stderr := runFailed(t, c.forge, args...)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1; `nova-ci failed --decide` did not classify the red: %s", code, stderr)
+			}
+			if !strings.Contains(lastLine(stdout), c.want) {
+				t.Errorf("closing line = %q, want it to carry %q", lastLine(stdout), c.want)
+			}
+		})
+	}
+}
+
 // lastLine is the last non-empty line of some output.
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")

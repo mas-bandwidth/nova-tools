@@ -3213,6 +3213,22 @@ green report. `--max-lines`
 (default 8) bounds each test's own message lines and counts the rest; `--gh`
 names the executable and `--timeout` (default 2m) budgets one call to it.
 
+`--decide` reads the red rather than only listing it (SPEC-DECIDE.md, *6. The
+CI-red reading*): it classes the failure and appends ` red=<class>
+rerun=<licensed|no> finding=<yes|no> reruns=<n>` to the closing line. Any
+`--- FAIL` name makes the class `named-test`, or `known-flake` when every
+failing name is in the `--flakes <file>` table (a TSV of test, issue and an
+expiry `YYYY-MM-DD`, read against `--now`, default today, where an expired row
+matches nothing). No `--- FAIL` name and every failed job cancelled is
+`cancelled-leg`; no `--- FAIL` name and every failed job either timed out, had a
+`startup_failure` conclusion, or failed in a step named in `--infra-steps
+<file>` is `infra`. A red the table cannot place prints `red=unknown`. The
+licence is the table's alone: `rerun=licensed` needs a rerunnable class
+(`cancelled-leg`, `known-flake` or `infra`) with `--reruns <n>` (the forge's
+attempt count for this job at this sha, less one) at zero, and everything else
+is `finding=yes` — a named failing test is never licensed, and a second red at
+one sha is a finding. The reading never reruns anything.
+
 Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
 at=<file:line>` line with that test's own words indented under it; a cancelled
 step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
