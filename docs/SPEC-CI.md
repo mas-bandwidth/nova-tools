@@ -1202,6 +1202,32 @@ without it.
 **Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
 under `src/` and `tests/`. It reads the component list, not the load: whether the
 system as named *loads* is `make test-lisp`'s business.
+### `asd-closing-line` — no ASDF component shares its closing line
+
+**The rule.** No line in `lisp/nova-work/nova-work.asd` that names a
+`(:file ...)` component also carries the `:components`/system closing parens.
+Each component stands on its own line and the closers stand on lines of their
+own, so appending a component inserts lines before the closers instead of
+rewriting the line that carries them.
+**The hurt.** Each `:components` list carried its closing parens on the last
+component line (`(:file "tests/replays-fleet-stale-tokens")))`, so any two
+branches that each appended a component rewrote the same line. On 2026-09-19,
+`dev@23d9698b`: thirteen open nova-work pull requests all conflicted on
+`lisp/nova-work/nova-work.asd`, nine of the twelve measured on that file and on
+no other file at all. The resolution is always the union of both sides, but git
+cannot know that, so every pair conflicts forever at quadratic cost.
+**The test.** `TestNoAsdComponentSharesTheClosingLine`
+(`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
+on purpose: the shape is what makes concurrent branches merge, and the lisp job
+cannot see a merge conflict.
+**Its allowlist.** None. A shared closing line has no good case: the closers fit
+on a line of their own in every system.
+**Its remedy line.** The finding names the line and says it shares its component
+with the closing parens, so every pair of appending branches rewrites it: put
+each component on its own line and the closing parens on lines of their own.
+**Its narrowings.** Only `lisp/nova-work/nova-work.asd` and only lines naming
+`(:file ...)`. It reads the shape, not the order and not the load: whether the
+order loads is `make test-lisp`'s business.
 ### `one section` — docs/TESTS.md names each tool exactly once
 
 **The rule.** No two `## ` headings in `docs/TESTS.md` carry the same name. A
