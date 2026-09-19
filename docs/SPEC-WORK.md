@@ -2114,7 +2114,7 @@ transition log is not a counting row. Every other ask prints the counting row. A
 | `routes` / `routes --class <card-class>` | the route registry of *Model routes* below: every live `:kind :route` member of the `routes` section of CONFIG with its provider, endpoint, key location as a path or env name, plan, cost per Mtok, capabilities, owner and its dated probe record with `benched-until=`; under `--class`, the projection's ordered route list for that card class, cheapest first, each admitted route carrying its passing probe — **a projection from declared facts and dated probe evidence, never a lease and never a second store** |
 | `reports --since <revision>` / `reports --node X --since <revision>` | **SPEC-AHEAD: #854.** the hand acts reported since that revision, by rule 10 of *The dependency gate and the hand report* below: one row per `:report` event with its act, subject, the verb it reached past and both of its times, and the counts `reports=`, `no-verb=` and `launched-unmet=` — **information, read by no rule, gate or exit** |
 
-**Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted — defined once, in rule 1 of *The dependency gate and the hand report* below, as settled in C with disposition `done` on verified evidence of the need's own acceptance, which is where a team writes *merged and green* — and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent with an unmet need stays in the tree under its id and is refused by every admission verb until its needs are met — *unmet*, *met* and *admission verb* being that section's words — and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading, the revert flag and the refusal of `state --to doing` over an unmet need only, and it reads a need as terminal accepted once it is in C, whatever its disposition and whatever its evidence: the verified reading, the other admission verbs, the reasons a row prints and the edge rules are *The dependency gate and the hand report* below, ahead of their code. It has no roadmap critical-path or width (ready-now versus blocked) view and no cost/estimate rollup along needs — those remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
+**Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted — defined once, in rule 1 of *The dependency gate and the hand report* below, as settled in C with disposition `done` on verified evidence of the need's own acceptance, which is where a team writes *merged and green* — and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent with an unmet need stays in the tree under its id and is refused by every admission verb until its needs are met — *unmet*, *met* and *admission verb* being that section's words — and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading, the revert flag and the refusal of `state --to doing` over an unmet need only (which it labels `rule 10`, a label rule 3 of that section retires), and it reads a need as terminal accepted once it is in C, whatever its disposition and whatever its evidence: the verified reading, the other admission verbs, the reasons a row prints and the edge rules are *The dependency gate and the hand report* below, ahead of their code. It has no roadmap critical-path or width (ready-now versus blocked) view and no cost/estimate rollup along needs — those remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
 
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
@@ -4765,7 +4765,8 @@ a lease, an offer, an allocation or a task packet for a node, hand a lease on, o
 `:doing`, and rule 3 lists the ones this grammar has today. A node is **engaged** when it holds a
 live lease, a pending or accepted offer or a live allocation, when its state is `:doing` or
 `:review`, or when it carries an `:attempt` of its current generation or a report of a launch
-written since its newest `:correct`, the `:report` event rules 8 and 9 define. **Four words are
+written since its newest `:correct` and followed by no report of a stop on that node, the `:report`
+event rules 8 and 9 define. **Four words are
 left alone**: a *hold* is the scheduling hold of `execution pause` and `execution stop`, and
 nothing here is called held; `held-by=` is SPEC-SWARM's name for the batch holding a slot lock,
 and no line here prints it; a *slot* is *Fleet allocation*'s one unit of a machine's declared
@@ -4793,7 +4794,15 @@ of them.
    here names a forge, a branch or a job.** *Merged and green* is what a team writes into the
    need's `:acceptance` — a `:merged` criterion and a `:job` criterion, each qualified only as
    *Evidence is a pointer* says — and the gate demands no particular kind, so a need whose one
-   criterion is `:attested` is met when its attestation verifies. The tool reads no branch: green
+   criterion is `:attested` is met when a `:review-attest` event of its current generation names
+   that criterion and the `:result` pointer it carries is a fact the cache holds. **What an
+   attested-only need protects is said plainly, because it is less than the other kinds**: it
+   refuses a need nobody attested, an attestation of an older generation and one whose result
+   no resolver has established; it does **not** refuse a caller who types a reviewer's name,
+   because `attest` takes `--as`, `--as` is caller text and the tool authenticates nobody. It is
+   the one kind of need a written event can meet, and a team that wants a gate no typed name can
+   open gives the need a `:merged`, `:job` or `:test` criterion, whose fact comes from a resolver
+   and from nobody's word. The tool reads no branch: green
    is a fact about the one revision inside the pointer and never a standing property of a branch.
    Three cases follow and are decided here. **A need that merged while its job failed** is unmet
    either way it can arise: where the cache already held the failed fact, rule 17 refused its
@@ -4804,7 +4813,8 @@ of them.
    `need-open`. **A failed run followed by a successful re-run** is a new `run:` pointer and so a
    new evidence event, and the need is met when the `:to :done` that stands names it: `event
    --kind reopen`, `evidence`, `state --to done`, three recorded acts and no shortcut. Replays
-   `a-done-need-on-unverified-evidence-admits-nothing`, `stale-evidence-does-not-unmeet-a-need`.
+   `a-done-need-on-unverified-evidence-admits-nothing`, `stale-evidence-does-not-unmeet-a-need`,
+   `an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less`.
 
 2. SPEC-AHEAD: #785
    **Every unmet need has exactly one reason, and a row names the first.** The reason is decided
@@ -4815,13 +4825,20 @@ of them.
    | in O, and its closed-index rows hold no `:revive` | `need-open` | the need's live holder, else its `responsible`, else `-` |
    | in O, and its closed-index rows hold a `:revive`: it settled and was reopened | `need-reverted` | the same |
    | in C, and the closed-index page that says how cannot be read | `need-unavailable` | `-` |
-   | in C with disposition `cancelled` or `superseded` | `need-closed-unaccepted` | the **dependent's** `responsible`, else `-` |
+   | in C with disposition `cancelled`, `superseded` or `removed` | `need-closed-unaccepted` | the **dependent's** `responsible`, else `-` |
    | in C with disposition `done`, and short of rule 1 | `need-unverified` | the need's `responsible`, else `-` |
 
-   Disposition `removed` cannot occur, because `node remove` refuses a node another node's
-   `:deps` names. **An unreadable page is never read as met**, for the reason validator rule 2
-   gives: *incomplete* and *invalid* are two answers, and neither is *green*. **A cancelled or
-   superseded need is never met and never becomes met.** The way on is a recorded edit of the
+   **A `removed` need can occur and is a closed need like the other two**: `node remove` refuses
+   a node that an existing edge names, but an edge added afterwards is admitted, because
+   validator rule 2 resolves a name against C's closed index and a removed node's row stays
+   there; so `dep --add <removed-id>` is written, prints `met=false`, and the need reads
+   `need-closed-unaccepted` for good. **A done need that is then `correct`ed is unmet**: the
+   correction bumps its generation, the evidence its `:to :done` names is of the older generation
+   and qualifies nothing, and its reason is `need-unverified` until it is reopened, evidenced and
+   done again at the new generation; its dependents read `needs-broken` by rule 5 where that rule
+   says so. **An unreadable page is never read as met**, for the reason validator rule 2
+   gives: *incomplete* and *invalid* are two answers, and neither is *green*. **A cancelled,
+   superseded or removed need is never met and never becomes met.** The way on is a recorded edit of the
    edge by whoever answers for the dependent, which is why the row names that person: `dep
    --remove` of the closed need, and for a superseded one `dep --add` of its `:superseded-by`
    where the replacement delivers what the dependent needed. The tool never follows a supersede
@@ -4833,7 +4850,10 @@ of them.
    is a container** — a `:work-set`, an `:epic`, a `:feature` or a `:roadmap` — has no evidence of
    its own and is met when it is in C with disposition `done` and every direct required member of
    it is met by this same rule, read from the members' closed-index rows; the cost is one fold
-   over the container's subtree, cached per node under the key *Cost* gives every rollup, and an
+   over the container's subtree, cached per node under the key *Cost* gives every rollup and
+   invalidated as rollups are; it is the fold `remaining` already makes, it reads closed-index
+   rows and fetches nothing, and an uncached first read at the candidate gate is bounded by
+   that subtree under the session's `--max-nodes` and is no scan of O; and an
    empty required set never settles, so an empty container is `need-open` for as long as it is
    empty. A done container with a member short of rule 1 is `need-unverified`. **Where several
    needs are unmet the row names the first in `:deps` order and counts them all**: the `ready`
@@ -4842,31 +4862,61 @@ of them.
    built text `blocked by <id>` gives way to the token with `need=` beside it. A node's `state=`
    is untouched by any of this: an unmet need is no state of the transition table, and
    `:blocked` with its `:blocked-by` stays a person's recorded transition. Replays
-   `every-unmet-need-has-one-reason`, `a-container-need-is-met-with-its-members`.
+   `every-unmet-need-has-one-reason`, `a-container-need-is-met-with-its-members`,
+   `a-removed-or-corrected-need-is-unmet`.
 
 3. SPEC-AHEAD: #785
    **Every admission verb refuses a node that is not needs-met, by one predicate, at exit 1, and
-   no flag buys a way past.** The verbs this grammar has today are `take --node`, `release
-   --handed`, `reassign`, `offer`, `acknowledge --stage accepted`, `take --machine`, `state --to
-   doing` and `task packet`, and a verb added later that creates a lease, an offer, an allocation
-   or a packet for a node, or hands a lease on, is bound by this rule on the day it is added.
-   **One of the eight is built**: the kernel slice refuses `state --to doing` over an unmet need
-   by rule 10 today (`%validate` in `lisp/nova-work/src/kernel.lisp`), and the
-   other seven consult no `:deps`. Each evaluates needs-met for the node it names inside the
-   single writer, at the revision the request is applied at, in the candidate gate with every
-   other precondition, so there is no window between the check and the write, and `--expect`
-   means here what it means everywhere. **The refusal is exit 1** — the verb ran and said no, *a
-   refused take* in the exit table of *Output grammar* — **nothing is written**, no lease, offer,
-   reservation, allocation, W entry, transition or packet file, and the line is the verb's own
-   `FAIL` line with one tail, `unmet need <need-id> <reason>`, the need being the one rule 2
-   names: `LEASE FAIL node=<id> unmet=<n>: unmet need <need-id> <reason>` for `take --node` and
-   `release --handed`; `OFFER FAIL node=<id> offer=<id>: unmet need <need-id> <reason>`;
-   `ACKNOWLEDGE FAIL node=<id> offer=<id> reply=<id>: unmet need <need-id> <reason>`; `ALLOC FAIL
-   machine=<id> slots=<n|-> holder=<name|->: unmet need <need-id> <reason>`; `STATE FAIL
-   node=<id>: rule 10: unmet need <need-id> <reason>`; and `PACKET FAIL node=<id>: unmet need
-   <need-id> <reason>; run: nova-work query --ask ready --branch open --node <id>`, which is exit
-   1 by the exit table although that verb's older refusals print exit 2. `reassign` has no line
-   in *Output grammar* yet and carries the same tail when it gets one. **An acceptance over an
+   no flag buys a way past.** The verbs this grammar has today that have the effect the words
+   above name are these, and the list is meant to be complete: `take --node` in every form,
+   `--for <name>` included; `release --handed`; `reassign`; `offer`; `acknowledge --stage
+   accepted`; `take --machine`; `state --to doing`; `goal update --progress`, which writes that
+   same transition on the goal node; `task packet`; `execution reconcile`, which leaves a held
+   acceptance unconverted rather than refusing; and `undo` and `redo` wherever the compensating
+   envelope they append holds a `take` or a `state --to doing` — the undo of a `release`, the
+   undo of a `state` whose
+   preimage was `:doing`. **A later verb is caught by an instrument and not by a promise**: the
+   one generated schema file of *The engine and its client* names every verb's event kinds, and
+   its coverage test holds the closed list of admitting kinds — `:lease`, `:handoff`,
+   `:reassign`, `:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that can
+   carry `:to :doing` — and fails on any verb able to write one, in its own envelope or in one it
+   derives, whose entry carries neither `needs-gate: refuses` nor `needs-gate: exempt` with its
+   reason. **One of these is built**: the kernel slice refuses `state --to doing` over an unmet
+   need today and the others consult no `:deps`. **The needs check is a precondition of the
+   candidate gate and is no validator rule**: validator rule 10 is a table of edges, needs are no
+   part of it, and the whole walk at load and at every clip reads nothing of `:deps` but rule 2's
+   existence and rule 3's cycle. So a node that went `:doing` while its need was met, and whose
+   need is then reopened, leaves every load and every clip as green as it was, which is what
+   rule 5 requires; and the built slice's label, `rule 10`, on its refusal is a defect against
+   this sentence, because a rule number on the line is what would send the whole walk looking.
+   Each verb evaluates needs-met for the node it names inside the single writer, at the revision
+   the request is applied at, so there is no window between the check and the write, and
+   `--expect` means here what it means everywhere. **The order of refusals is fixed, so every
+   expected line can be written**: an invocation that cannot be read, exit 2; then the fence;
+   then a stale `--expect`; then a node the session does not hold, by that verb's existing line;
+   then a scheduling hold, by the hold's own rule below; then **needs-met**; and only then the
+   verb's other preconditions — a lease already held, no lease for a packet, an unknown or
+   mismatched offer, capacity, a missing edge of the transition table. So `task packet` over a
+   node with an unmet need and no lease prints the unmet need and not *no lease*, and `take
+   --machine` naming an offer that does not exist prints it too. **The refusal is exit 1** — the
+   verb ran and said no, *a refused take* in the exit table of *Output grammar* — **nothing is
+   written**, no lease, offer, reservation, allocation, W entry, transition, compensating
+   envelope or packet file, and the line is the verb's own `FAIL` line with one tail, `unmet
+   need <need-id> <reason>`, the need being the one rule 2 names: `LEASE FAIL node=<id>
+   unmet=<n>: unmet need <need-id> <reason>` for `take --node` and `release --handed`; `OFFER
+   FAIL node=<id> offer=<id>: unmet need <need-id> <reason>`; `ACKNOWLEDGE FAIL node=<id>
+   offer=<id> reply=<id>: unmet need <need-id> <reason>`; `ALLOC FAIL machine=<id> slots=<n|->
+   holder=<name|->: unmet need <need-id> <reason>`; `STATE FAIL node=<id>: unmet need <need-id>
+   <reason>`, with no rule number; `GOAL FAIL scope=<scope> goal=<id>: unmet need <need-id>
+   <reason>`; `UNDO FAIL request-of=<id> node=<id>: unmet need <need-id> <reason>`, and `REDO
+   FAIL` the same; and `PACKET FAIL node=<id>: unmet
+   need <need-id> <reason>; run: nova-work query --ask ready --branch open --node <id>`, which
+   is exit 1 by the exit table although that verb's older refusals print exit 2. `reassign` has
+   no line in *Output grammar* yet and carries the same tail when it gets one. **Refusing
+   `reassign` and `release --handed` has a cost, and it is accepted**: *Presence* sends a
+   coordinator to `reassign` when a holder sleeps, and over a `needs-broken` node that road is
+   shut until the need is met; the sleeper's claim ends at its lease's own deadline, and
+   `execution stop --node` is what reaches its worker. **An acceptance over an
    unmet need is refused and not retained**: `acknowledge --stage accepted` can meet one only
    where a need was reopened, or an edge added, between the offer and the reply; the offer stays
    pending with its reservation, as an unanswered offer does, and the same verified receipt is
@@ -4894,7 +4944,9 @@ of them.
    the three launchers to that sentence — a card that names its node, a launcher that holds the
    node's lease beside its bench slot lease — is an amendment to SPEC-SWARM and is owed there,
    not claimed here. Replays `every-admission-verb-refuses-an-unmet-need`,
-   `ready-true-implies-needs-met-and-not-the-reverse`.
+   `ready-true-implies-needs-met-and-not-the-reverse`,
+   `a-reopened-need-under-a-doing-dependent-leaves-the-set-green`,
+   `a-verb-that-can-admit-declares-its-needs-gate`.
 
 4. SPEC-AHEAD: #785
    **Needs-met is read, never stored, and no event releases a dependent.** Whether a need is met is
@@ -4904,7 +4956,7 @@ of them.
    read after whichever comes last of the three things that can meet a need: the need's settle, the
    `verify` that caches the facts its evidence stands on, and a `dep --remove` of the unmet edge.
    The observable is exact: after that command's `OK` line, **with no further command**, `query
-   --ask ready --branch open --node <dependent>` prints `ready=true`, and the journal holds no
+   --ask ready --branch open --node <dependent>` prints `unmet=0` on its row — and `ready=true` where nothing else `ready` folds stands in the way — and the journal holds no
    event on the dependent. nova-work tells nobody: it *sends nothing and names no transport*, by
    *Presence* above, so a launcher learns a node is needs-met by asking, as rule 3 says. Replay
    `needs-met-is-read-not-released`.
@@ -4938,7 +4990,7 @@ of them.
    `reverting-a-need-flags-an-engaged-dependent-and-kills-nothing`.
 
 6. SPEC-AHEAD: #785
-   **Moving an edge is a recorded act, and removing one is the only override there is.** `dep`
+   **Moving an edge is a recorded act, and every way past a need is a recorded act.** `dep`
    already writes a `:structure` event with an author and a required `--reason`, and this rule
    adds what it decides and what it prints: `DEP OK … change=<add|remove> need=<id>
    met=<true|false> unmet=<n> needs-broken=<true|false>`, the last two read after the change.
@@ -4957,15 +5009,23 @@ of them.
    in C is written, because the dependency is true whether or not it is convenient, the line
    prints `needs-broken=true`, and nothing is stopped or reopened, by rule 5; onto a node that is
    neither it prints `needs-broken=false` and the node is simply not needs-met. **`dep --remove`
-   takes effect at once**, by rule 4, and **it is the override**: the one way to admit a node
-   past a need is to say on the record, with a name and a reason, that it does not need it.
-   There is no `--force` and no second road, and *Presence*'s `--anyway` answers a presence
-   reading and buys nothing past a need. **Remove, admit, add back** is
+   takes effect at once**, by rule 4, and **it is the override of a direct need**: the way to
+   admit a node past a need is to say on the record, with a name and a reason, that it does not
+   need it. **A container need has other recorded roads, and they are named rather than
+   denied**: the container is met when its direct required members are, so `node require --to
+   false` on its one unverified member, a `node move` of that member out of it, and the
+   member's `event --kind cancel` or `--kind supersede` each change what the container requires
+   and can meet the need with no `dep --remove`. Each is a scope event with an author and a
+   reason that moves a denominator in plain sight, by the delta table, which is the same
+   standing `dep --remove` has; none is gated, because gating scope edits for the sake of some
+   dependent would stop a team managing its own scope. **What there is not is an unrecorded
+   road or a flag**: no `--force`, and *Presence*'s `--anyway` answers a presence reading and
+   buys nothing past a need. **Remove, admit, add back** is
    therefore not silent: it is three events with their authors, and from the third the node
    reads `needs-broken=true` on every `ready` row and in every `check` count until the need is
    met. What the tool cannot do is stop a named person removing an edge: `--as` is caller text
    and the tool authenticates nobody, as *The verbs* says of every verb. Replay
-   `an-edge-added-under-work-flags-and-an-edge-removed-is-the-override`.
+   `an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded`.
 
 ### The hand report (#854 item 7)
 
@@ -5065,7 +5125,14 @@ of them.
    of a breach and never an override**: it grants no lease, adds nothing to W, moves no state,
    and the next admission verb for the node still refuses; from that event the node reads
    `needs-broken=true` for as long as a need is unmet, because a node carrying a report of a
-   launch is engaged, by the words above, exactly as one carrying an `:attempt` is. The only
+   launch is engaged, by the words above, exactly as one carrying an `:attempt` is. **How long
+   that lasts, and who can cause it, are intended and are said**: the report engages the node
+   until a `report --act stopped` on the same node or the node's next `:correct`, whichever
+   comes first, and an `:attempt` engages it for the whole of its generation, because work done
+   under this generation stands on whatever gate breaks later, however long ago the worker
+   ended; and any registered friend can write the report about anybody's node, which costs that
+   node one reading and one count while a need is unmet and nothing at all once it is met — no
+   verb reads *engaged* for a needs-met node. The only
    override is rule 6's, and it is an edit of the edge on the record, never a launch. A hand
    launch of a node that **is** needs-met is recorded the same way with `unmet=0 need=-`, and
    what it went round is then the lease and not the gate: `holder=` on the line says whose.
@@ -5082,11 +5149,15 @@ of them.
 
     ```
     QUERY OK ask=reports … [reports=<n> no-verb=<n> launched-unmet=<n>] …
-    QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text>
+    QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text> reason=<text>
     ```
 
     `reports=` is the events in the range, `no-verb=` those whose `:instead-of` is `-`, and
-    `launched-unmet=` the `:launched` reports whose `:unmet` was above zero. **The range is
+    `launched-unmet=` the `:launched` reports whose `:unmet` was above zero. The row prints the
+    why beside the what, `reason=` last, so the one read of reports is not a log without its
+    reasons. It is an ask like any other, under `--session` or `--snapshot`, and **the privacy
+    floor holds**: a report whose subject is a `:private` node prints `what=-` and `reason=-` on
+    every read but the owning session's, and is still counted. **The range is
     counted in revisions, which the session assigns, so a backdated or postdated `--acted-at`
     moves no report into or out of any answer**; `at=` and `clock=` are the event's own, and a
     report written under `--now` prints `clock=given` like every other event. **`no-verb=` is
@@ -5098,7 +5169,8 @@ of them.
     evidence**: `report --act stopped --subject node:<id>` prints the node's `holder=`,
     releases no lease — the lease reads held-not-worked to its deadline, its holder's
     `release` or a `reassign` — reconciles no attempt, and is not the stopped-worker evidence
-    `event --kind cancel` requires. Replays `reports-are-read-in-one-ask`,
+    `event --kind cancel` requires; the one thing it ends is the engagement an earlier report of
+    a launch gave that node, by rule 9. Replays `reports-are-read-in-one-ask`,
     `a-report-of-a-stop-releases-nothing`.
 
 11. SPEC-AHEAD: #854
@@ -5955,12 +6027,12 @@ ALLOC RELEASE OK allocation=<id> machine=<id> slot=<n> freed=<true> rev=<n> push
 ALLOC ROW allocation=<id> machine=<id> slot=<n> holder=<name> node=<id> batch=<id> offer=<offer-id> attempt=<attempt-id> age=<duration>
 PROBE OK machine=<id> slot=<n|-> fact=<observed|absent> at=<stamp> source=<pointer>
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
-LEASE FAIL node=<id> unmet=<n>: unmet need <need-id> <reason>   (SPEC-AHEAD: #785: take --node and release --handed over a node that is not needs-met, exit 1, nothing written; OFFER FAIL, ACKNOWLEDGE FAIL, ALLOC FAIL, STATE FAIL under rule 10 and PACKET FAIL carry the same tail in their own reason place, by rule 3 of *The dependency gate and the hand report*)
+LEASE FAIL node=<id> unmet=<n>: unmet need <need-id> <reason>   (SPEC-AHEAD: #785: take --node and release --handed over a node that is not needs-met, exit 1, nothing written; OFFER FAIL, ACKNOWLEDGE FAIL, ALLOC FAIL, STATE FAIL with no rule number, GOAL FAIL, UNDO FAIL, REDO FAIL and PACKET FAIL carry the same tail in their own reason place, because the needs check is a precondition of the candidate gate and no validator rule, by rule 3 of *The dependency gate and the hand report*)
 DEP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<add|remove> need=<id> met=<true|false> unmet=<n> needs-broken=<true|false> changed=<n> emitted=<bytes>   (SPEC-AHEAD: #785: met= is the named need's; unmet= and needs-broken= are the node's, read after the change)
 REPORT OK id=<event-id> request=<id> subject=<selector> act=<launched|stopped|other> instead-of=<text|-> acted-at=<stamp> lag=<duration> unmet=<n|-> need=<id|-> holder=<name|unowned|-> rev=<n> pushed=<rev|-> emitted=<bytes>   (SPEC-AHEAD: #854: lag= is the event's stamp less acted-at; unmet=, need= and holder= are - unless the subject is a node)
 REPORT FAIL subject=<selector|->: <reason>   (no such <kind>; unknown reporter; acted-at ahead of the clock — each named, exit 1, nothing written; an invocation it cannot read is exit 2 by the exit paragraph below)
 REPORT FAIL subject=<selector> expect=<rev> current=<rev>: stale   (nothing written)
-QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text>   (reports; SPEC-AHEAD: #854)
+QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text> reason=<text>   (reports; SPEC-AHEAD: #854; what= and reason= print - for a :private subject on any read but the owning session's)
 <TOKEN> NOTE <caveat>
 <TOKEN> MORE kind=<rule|row> shown=<n> total=<t> <remedy>
 nova-work <build identity> <goos>/<goarch> <go version>
@@ -6848,21 +6920,46 @@ and no launcher; D is a dependent `:task`, N its one need, and every id is inven
 - **`a-container-need-is-met-with-its-members`** — a need that is a `:feature` of two tasks: one
   done and verified and one open, `need-open`; both done and one on unverified evidence,
   `need-unverified`; both verified, met; and an empty container never met.
-- **`every-admission-verb-refuses-an-unmet-need`** — over D with N open, `take --node`, `offer`,
-  `take --machine`, `state --to doing` and `task packet`, and, over a D leased and offered while
-  N was met whose N was then reopened, `release --handed` and `acknowledge --stage accepted`:
-  each exits 1 with its own `FAIL` line ending `unmet need N <reason>`, and no lease, offer, reservation,
-  allocation, W entry, transition or packet file is written; the same calls under `--dry-run`
-  print the same refusals; with N met, each prints its `OK`; with a scheduling hold over D as
-  well, `offer` prints `held by control <id>` and an acceptance is retained `:accepted-held`,
-  which `execution reconcile` converts to no lease while N is unmet; and a `take --node` of an
-  id the session does not hold prints that verb's no-such-node refusal and no `unmet need`.
+- **`every-admission-verb-refuses-an-unmet-need`** — over D with N open and no lease, offer or
+  allocation on D: `take --node`, `take --node --for <name>`, `offer`, `state --to doing`, `goal
+  update --progress` with D the scope's goal, `take --machine` naming an offer that does not
+  exist, and `task packet`; and over a D that was leased, offered and received while N was met
+  and whose N was then reopened: `release --handed`, `reassign`, `acknowledge --stage accepted`,
+  `take --machine` on the real offer, `task packet`, and `undo` of D's earlier `release`. Each
+  exits 1 with its own `FAIL` line ending `unmet need N <reason>` — `take --machine` and `task
+  packet` in the first group printing that and not *unknown offer* or *no lease*, by rule 3's
+  order — `STATE FAIL` carrying no rule number, and no lease, offer, reservation, allocation, W
+  entry, transition, compensating envelope or packet file written; the same calls under
+  `--dry-run` print the same refusals; with N met, each prints its `OK`; with a scheduling hold
+  over D as well, `offer` prints `held by control <id>` and an acceptance is retained
+  `:accepted-held`, which `execution reconcile` leaves unconverted while N is unmet; and a
+  `take --node` of an id the session does not hold prints that verb's no-such-node refusal and
+  no `unmet need`.
+- **`a-reopened-need-under-a-doing-dependent-leaves-the-set-green`** — D `:doing` on N met; `event
+  --kind reopen` on N; then `check`, a `clip` and a fresh `session start` on that clip: each
+  prints `findings=0` and no `WORK FAIL` line names D or rule 10, `WORK OK` prints
+  `needs-broken=1`, and an unrelated `evidence` on another node is admitted after each.
+- **`a-verb-that-can-admit-declares-its-needs-gate`** — the schema file's coverage test, over a
+  fixture schema: a verb entry whose event kinds include `:lease` and which carries no
+  `needs-gate` fails the test naming the verb; the same entry with `needs-gate: refuses` passes;
+  `needs-gate: exempt` with no reason fails; and the shipped file passes with every verb of rule
+  3's list marked `refuses`.
+- **`a-removed-or-corrected-need-is-unmet`** — R removed by `node remove` while no edge names it,
+  then `dep --add R` on D: admitted, `DEP OK … met=false`, and D's row prints
+  `reason=need-closed-unaccepted need=R`; N met, then `correct --node N`: D's row prints
+  `reason=need-unverified`, and after N's reopen, new evidence, verify and done at the new
+  generation it prints `unmet=0`.
+- **`an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less`** — N with one
+  `:attested` criterion, done on an `attest` whose `--result` pointer the resolver has not
+  answered: `need-unverified`; the pointer verified: met; after a `correct`, unmet again; and the
+  same `attest` typed under another `--as` meets it just the same, which the replay asserts
+  because the spec says so and not because it is wanted.
 - **`ready-true-implies-needs-met-and-not-the-reverse`** — D needs-met and leased by another
   name: its `ready` row prints `ready=false unmet=0` with an ownership reason and `take --node D`
   prints `LEASE FAIL … : held`; across the whole fixture no row prints `ready=true` beside an
   `unmet=` above zero.
 - **`needs-met-is-read-not-released`** — N's evidence verified in the cache, then `state --to
-  done` on N: after that `OK` line and with no further command D's row prints `ready=true`, and
+  done` on N: after that `OK` line and with no further command the row of D, unowned, prints `unmet=0 ready=true`, and
   the journal holds no event whose `:node` is D; the same for a `dep --remove` of D's last unmet
   edge.
 - **`reverting-a-need-flags-an-engaged-dependent-and-kills-nothing`** — D leased, `:doing` and
@@ -6872,13 +6969,15 @@ and no launcher; D is a dependent `:task`, N its one need, and every id is inven
   next `heartbeat` stand, `task packet` for D is refused by rule 3, E stays in C with every count
   of its scope unchanged, and F's row prints `needs-broken=false`; N settled and verified again,
   D and E read `needs-broken=false` with no command naming either.
-- **`an-edge-added-under-work-flags-and-an-edge-removed-is-the-override`** — `dep --add M` of an
+- **`an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded`** — `dep --add M` of an
   open M onto leased D prints `DEP OK … change=add need=M met=false unmet=1 needs-broken=true`
   and stops nothing; onto an unengaged `:todo` node it prints `needs-broken=false`; `dep --remove
   N`, `take --node D`, `dep --add N` with N still open leaves three events with their authors,
   the lease standing and `needs-broken=true`; `dep --add D` on D and an edge closing a two-node
   cycle are each refused `rule 3`, an id naming nothing `rule 2: dangling`, each exit 1 with
-  nothing written; and a need under another repository work set of the same O is admitted.
+  nothing written; a need under another repository work set of the same O is admitted; and over a
+  container need with one unverified member, `node require --to false` on that member prints its
+  `:require` scope event, moves the container's `required=` by one and leaves the dependent `unmet=0`.
 - **`report-records-and-changes-nothing`** — `report --act other --subject machine:<id> --what …
   --acted-at <t> --instead-of - --reason …` under `--now <t + 90s>` prints `REPORT OK …
   subject=machine:<id> act=other instead-of=- acted-at=<t> lag=90s unmet=- need=- holder=- …`;

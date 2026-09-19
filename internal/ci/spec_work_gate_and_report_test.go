@@ -46,7 +46,13 @@ func TestSpecWorkCarriesTheDependencyGateAndTheHandReport(t *testing.T) {
 		"The gate is the tree's answer at its own admission verbs, and a launcher must ask",
 		// (b) every path goes through the one gate, at the exit the table gives it.
 		"Every admission verb refuses a node that is not needs-met, by one predicate, at exit 1",
-		"`take --node`, `release --handed`, `reassign`, `offer`, `acknowledge --stage accepted`, `take --machine`, `state --to doing` and `task packet`",
+		"The needs check is a precondition of the candidate gate and is no validator rule",
+		"The order of refusals is fixed",
+		"A later verb is caught by an instrument and not by a promise",
+		"`goal update --progress`",
+		"A `removed` need can occur",
+		"A done need that is then `correct`ed is unmet",
+		"What an attested-only need protects is said plainly",
 		"unmet need <need-id> <reason>",
 		// (d) verified, never merely recorded, and forge-neutral.
 		"Terminal accepted is the need's own acceptance, verified.",
@@ -55,11 +61,12 @@ func TestSpecWorkCarriesTheDependencyGateAndTheHandReport(t *testing.T) {
 		"Nothing here names a forge, a branch or a job.",
 		// (c) the reasons and the edge cases.
 		"`need-open`", "`need-reverted`", "`need-unavailable`", "`need-closed-unaccepted`", "`need-unverified`",
-		"A cancelled or superseded need is never met and never becomes met.",
+		"superseded or removed need is never met and never becomes met.",
 		"A need that is a container",
 		"a node that needs itself being a cycle of length one",
 		"An edge added under work is admitted and flagged",
-		"removing one is the only override there is",
+		"every way past a need is a recorded act",
+		"A container need has other recorded roads",
 		"A revert reaches the gate as a recorded act and no other way",
 		// needs-met is derived and needs-broken is a reading.
 		"Needs-met is read, never stored, and no event releases a dependent.",
@@ -102,12 +109,16 @@ func TestSpecWorkCarriesTheDependencyGateAndTheHandReport(t *testing.T) {
 		"ready-true-implies-needs-met-and-not-the-reverse",
 		"needs-met-is-read-not-released",
 		"reverting-a-need-flags-an-engaged-dependent-and-kills-nothing",
-		"an-edge-added-under-work-flags-and-an-edge-removed-is-the-override",
+		"an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded",
 		"report-records-and-changes-nothing",
 		"report-refuses-by-name",
 		"a-hand-launch-is-refused-when-asked-and-recorded-when-told",
 		"a-report-of-a-stop-releases-nothing",
 		"reports-are-read-in-one-ask",
+		"a-reopened-need-under-a-doing-dependent-leaves-the-set-green",
+		"a-verb-that-can-admit-declares-its-needs-gate",
+		"a-removed-or-corrected-need-is-unmet",
+		"an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less",
 	} {
 		if got := strings.Count(spec, "`"+replay+"`"); got < 2 {
 			t.Errorf("docs/SPEC-WORK.md names the replay %q %d time(s), want it named by its rule and written out in *Acceptance replays*", replay, got)
@@ -122,6 +133,8 @@ func TestSpecWorkCarriesTheDependencyGateAndTheHandReport(t *testing.T) {
 	for _, banned := range []string{
 		"carries `held-by=<need-id>`",
 		"is refused, exit 2, naming the need",
+		"rule 10: unmet need",
+		"Disposition `removed` cannot occur",
 		"there is no flag for it",
 		"no held-in-tree launch gate",
 		"a finding filed the same hour",
