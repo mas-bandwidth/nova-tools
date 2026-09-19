@@ -508,7 +508,18 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	if fi, err := os.Stat(*out); err != nil || !fi.IsDir() {
+	fi, statErr := os.Stat(*out)
+	switch {
+	case statErr == nil && fi.IsDir():
+		// the ordinary case: the output directory already exists
+	case statErr != nil && os.IsNotExist(statErr):
+		// first run: the output directory is absent, so create it
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			r.add("--out " + *out + ": " + err.Error() + "; it wants " + wantsOut)
+			return r.print(stderr)
+		}
+	default:
+		// an existing path that is not a directory is refused, by name, never overwritten
 		r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
 		return r.print(stderr)
 	}
