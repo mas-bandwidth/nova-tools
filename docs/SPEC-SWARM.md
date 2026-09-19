@@ -3688,7 +3688,7 @@ seats: the seats are capacity, and the directory is ownership.
 **Ownership is a file, and the file is the reaper's word too.** `<job>/.lease`
 carries `pid=`, `host=`, `label=`, `nonce=` and `started=`, its mtime is the
 heartbeat, and `scripts/bench-hygiene.sh` reads it to decide that a job is live
-and must not be swept. Five rules bind it:
+and must not be swept. Six rules bind it:
 
 1. **The take is exclusive.** A launcher takes the lease before the child
    starts. A take that finds a **live** holder is refused, and the launcher
@@ -3698,14 +3698,27 @@ and must not be swept. Five rules bind it:
    beside the lease, flushed, and **linked** into place, so the name `.lease`
    never exists holding a partial record. Creating the name and writing it
    afterwards is not enough: a reader in that window sees an empty record.
-3. **An incomplete record is never evidence of a dead owner.** A lease that
-   cannot be parsed — empty, truncated, half a line — is **held by an unknown
-   owner** and stays held until its heartbeat is older than the stale bound
-   (ten minutes, the reaper's `HYGIENE_LEASE_STALE_MIN`). The same holds for a
-   lease written on another host, whose pid this kernel cannot be asked about.
-   A lease whose pid **can** be asked about is judged by the kernel alone, so a
-   crashed launcher costs the next run of that card nothing.
-4. **Failing to establish ownership is a refusal, never a silent success.** A
+3. **An incomplete record is never evidence of a dead owner, and age never
+   retires a live one.** The two recoveries are separate rules and stay
+   separate. A **proven-dead** owner is a pid this kernel was asked about and
+   answered for: no elapsed time enters that judgement, and a lease whose pid is
+   alive is held however old its heartbeat is — a card in one long model call is
+   exactly that, and is the whole reason the lease exists. An **unknown** owner
+   — a record that cannot be parsed, or one written on a host whose pids this
+   kernel cannot be asked about — is held until its heartbeat is older than the
+   stale bound (ten minutes, the reaper's `HYGIENE_LEASE_STALE_MIN`), and only
+   then recovered. An empty or truncated record is an unknown owner, never a
+   dead one.
+4. **Reclamation is atomic with respect to the record it judged, and nothing is
+   ever unlinked by path after a read.** Atomic publication does not make
+   reclamation safe on its own: two runs can both judge one abandoned record,
+   the first clear it and publish its own live lease, and the second — removing
+   a *path* on the strength of a record that is no longer there — unlink the
+   winner. So a removal **renames** the lease to a unique tombstone, which takes
+   whatever is at the path in one step, and judges afterwards on the file in
+   hand: the same file it judged (by identity) and, for a reclamation, still
+   abandoned, or it goes straight back and nothing was cleared.
+5. **Failing to establish ownership is a refusal, never a silent success.** A
    `.lease` that is not a regular file, a job directory that cannot be written,
    a record that cannot be read, and a claim lost repeatedly to another taker
    are all refusals: the launcher exits 2 with a remedy. A launcher that cannot
@@ -3714,12 +3727,12 @@ and must not be swept. Five rules bind it:
    reaper and is not defensible now that it is the admission to a shared
    directory: under it, `.lease` as a directory let **both** of two launchers
    proceed.)
-5. **The release is fenced and joined.** A run removes the lease only while the
+6. **The release is fenced and joined.** A run removes the lease only while the
    file is still the record it published — pid **and** nonce — and only after
    its heartbeat has stopped, so a tick already in flight cannot write the
-   lease back after the run that owned it has ended. A heartbeat whose lease
-   has gone missing publishes it again, under rule 2, and leaves another run's
-   lease alone if one has arrived.
+   lease back after the run that owned it has ended. It removes by rule 4. A
+   heartbeat whose lease has gone missing publishes it again, under rule 2, and
+   leaves another run's lease alone if one has arrived.
 
 **What this does not change.** The bench slot store (`slots take` / `slots
 release`, above) is capacity accounting and is untouched: a run can hold a seat

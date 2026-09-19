@@ -101,6 +101,10 @@ type JobLease struct {
 	Beat    time.Time
 	Known   bool
 	Path    string
+	// info is the file the record was read from. It is what os.SameFile answers on, and
+	// it is how a reclamation proves that what it took off the path is the same FILE it
+	// judged -- not a newer one another run published in between.
+	info os.FileInfo
 }
 
 // String is the one line a refusal names a holder with.
@@ -121,14 +125,8 @@ func (l JobLease) String() string {
 // clause, and it is here for the same reason the reaper has it: a liveness file whose owner
 // cannot be checked is not thereby a dead owner.
 func (l JobLease) Live(now time.Time) bool {
-	if !l.Known {
-		return now.Sub(l.Beat) < JobLeaseStale
-	}
-	host, _ := os.Hostname()
-	if l.Host != "" && l.Host != host {
-		return now.Sub(l.Beat) < JobLeaseStale
-	}
-	return Alive(l.PID, "")
+	gone, _ := l.reclaimable(now)
+	return !gone
 }
 
 // JobLeaseHeldError is the refusal a take gets when a run already holds the job directory.
@@ -170,7 +168,13 @@ func ReadJobLease(jobDir string) (JobLease, error) {
 	if err != nil {
 		return JobLease{}, err
 	}
-	lease := JobLease{Path: path, Beat: st.ModTime()}
+	return parseJobLease(path, raw, st), nil
+}
+
+// parseJobLease reads the record. A pid line that is not a positive number leaves Known
+// false, and an unknown record is never read as a dead owner (rule 2).
+func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
+	lease := JobLease{Path: path, Beat: st.ModTime(), info: st}
 	for _, line := range strings.Split(string(raw), "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
@@ -191,7 +195,7 @@ func ReadJobLease(jobDir string) (JobLease, error) {
 			lease.Started = value
 		}
 	}
-	return lease, nil
+	return lease
 }
 
 // StartJobLease takes the lease on jobDir for the running child and returns the release.
@@ -213,11 +217,27 @@ func startJobLeaseEvery(jobDir, label string, every time.Duration) (func(), erro
 	return startJobLeaseTicking(jobDir, label, t.C, t.Stop, jobLeaseHooks{})
 }
 
-// jobLeaseHooks are barriers a TEST holds this machinery at, so that a beat and a release
-// can be put in a known order with no duration chosen anywhere. Both are nil in the binary.
+// jobLeaseHooks are barriers a TEST holds this machinery at, so that a beat, a reclamation
+// and a release can be put in a known order with no duration chosen anywhere. Every field
+// is nil in the binary.
 type jobLeaseHooks struct {
 	atBeat      chan<- struct{} // the heartbeat waits here at the START of a beat, before its work
 	afterRemove chan<- struct{} // the release waits here AFTER it has removed the lease
+	// atReclaim and holdReclaim are the competing-takers seam: a reclamation SIGNALS on
+	// atReclaim once it has read and judged the record it means to clear, and then WAITS
+	// on holdReclaim -- so a test can let another run win the path in between, which is
+	// the exact window a read-then-unlink leaves open.
+	atReclaim   chan<- struct{}
+	holdReclaim <-chan struct{}
+}
+
+func (h jobLeaseHooks) pause(at chan<- struct{}, hold <-chan struct{}) {
+	if at != nil {
+		at <- struct{}{}
+	}
+	if hold != nil {
+		<-hold
+	}
 }
 
 // startJobLeaseTicking is the whole of it, with the heartbeat's clock handed in.
@@ -228,7 +248,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 	body := fmt.Sprintf("pid=%d\nhost=%s\nlabel=%s\nnonce=%s\nstarted=%s\n",
 		os.Getpid(), host, label, nonce, time.Now().UTC().Format(time.RFC3339))
 
-	if err := publishJobLease(path, body); err != nil {
+	if err := publishJobLease(path, body, hooks); err != nil {
 		stopTicks()
 		return func() {}, err
 	}
@@ -257,7 +277,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				// nothing, which is how a live job lost its protection in #1585. Publish
 				// the same lease again: if somebody else now holds the path, this is
 				// refused and their lease is left exactly alone.
-				_ = publishJobLease(path, body)
+				_ = publishJobLease(path, body, hooks)
 			}
 		}
 	}()
@@ -270,7 +290,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 			// that owned it had ended, and leave a finished job looking alive.
 			close(done)
 			beating.Wait()
-			releaseJobLeaseIfOurs(path, os.Getpid(), nonce)
+			releaseOwnJobLease(path, os.Getpid(), nonce, hooks)
 			if hooks.afterRemove != nil {
 				hooks.afterRemove <- struct{}{}
 			}
@@ -281,7 +301,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 // publishJobLease puts a COMPLETE lease at path and answers nil only when this call now owns
 // it. A *JobLeaseHeldError means somebody else does; any other error means this process
 // could not establish ownership and the caller must refuse (rule 3).
-func publishJobLease(path, body string) error {
+func publishJobLease(path, body string, hooks jobLeaseHooks) error {
 	dir := filepath.Dir(path)
 	for attempt := 0; attempt < jobLeaseAttempts; attempt++ {
 		tmp, err := writeJobLeaseTemp(dir, body)
@@ -307,14 +327,18 @@ func publishJobLease(path, body string) error {
 			}
 			return fmt.Errorf("the job lease %s is there and cannot be read, so this run cannot tell whether the job directory is held: %w", path, rerr)
 		}
-		if held.Live(time.Now()) {
+		gone, why := held.reclaimable(time.Now())
+		if !gone {
 			return &JobLeaseHeldError{Dir: dir, Holder: held}
 		}
-		// A dead holder's lease is not a lease. Remove exactly it -- the same record this
-		// call just read, by pid and nonce -- and claim the path again.
-		if !releaseJobLeaseIfOurs(path, held.PID, held.Nonce) {
-			return fmt.Errorf("the job lease %s names a holder that is gone (%s) and it could not be cleared, so this run cannot take the job directory", path, held)
-		}
+		// The holder is gone. Clear EXACTLY the record this call judged -- see
+		// takeJobLeaseRecord for why that is a rename and never an unlink by path -- and
+		// claim the path again. A reclamation that took something else puts it back and
+		// says nothing was cleared, which sends this loop round to read the winner.
+		// A reclamation that took something else puts it back and clears nothing; going
+		// round the loop reads whoever won and reports THEM as the holder, by name.
+		_ = why
+		takeJobLeaseRecord(path, held, reclaimStale, hooks)
 	}
 	return fmt.Errorf("the job lease %s could not be taken in %d attempts; another run is claiming and clearing it, and this run will not start without proving it owns its job directory", path, jobLeaseAttempts)
 }
@@ -344,20 +368,140 @@ func writeJobLeaseTemp(dir, body string) (string, error) {
 	return tmp, nil
 }
 
-// releaseJobLeaseIfOurs removes the lease only while the file on disk still names pid and
-// nonce. There is no atomic compare-and-unlink on these systems, so this is a read and then
-// a remove: the window is two system calls wide, and what it buys is that a release arriving
-// after ANOTHER run has taken the path -- the whole of #1585 -- removes nothing. It answers
-// whether the path is now free of that record.
-func releaseJobLeaseIfOurs(path string, pid int, nonce string) bool {
-	held, err := ReadJobLease(filepath.Dir(path))
+// reclaimable says whether this record's owner is gone, and by WHICH of the two rules --
+// the two are kept apart on purpose. A PROVEN-DEAD owner is a pid this kernel was asked
+// about and answered for: nothing about elapsed time enters it, and a live pid is never
+// reclaimed however old its heartbeat. An UNKNOWN owner -- a record that did not parse, or
+// one written on a host whose pids this kernel cannot be asked about -- is recovered only
+// by age, and only after the reaper's own stale bound.
+func (l JobLease) reclaimable(now time.Time) (bool, string) {
+	if !l.Known {
+		if now.Sub(l.Beat) < JobLeaseStale {
+			return false, "held by an unknown owner"
+		}
+		return true, "unreadable and older than the stale bound"
+	}
+	host, _ := os.Hostname()
+	if l.Host != "" && l.Host != host {
+		if now.Sub(l.Beat) < JobLeaseStale {
+			return false, "held on another host"
+		}
+		return true, "written on another host and older than the stale bound"
+	}
+	if Alive(l.PID, "") {
+		return false, "held by a live pid"
+	}
+	return true, "the pid is gone"
+}
+
+// jobLeaseRemoval says which of the two removals is being made. They differ in one place
+// and it matters: a RELEASE is removing a record it knows is its own and alive, while a
+// RECLAMATION is removing a record it judged abandoned and must not remove anything that
+// turned out to be alive after all.
+type jobLeaseRemoval int
+
+const (
+	releaseOurs jobLeaseRemoval = iota
+	reclaimStale
+)
+
+// takeJobLeaseRecord clears EXACTLY the record it was handed, and answers whether the path
+// is now free of it.
+//
+// NEVER AN UNLINK BY PATH AFTER A READ (Stella, #1585). A read, a compare and then
+// `os.Remove(path)` leaves a window that atomic publication does not close: two reclaimers
+// can both judge one stale record, the first clears it and links its own live lease into
+// place, and the second's remove -- aimed at a PATH, decided from a record that is no
+// longer there -- unlinks the winner. So the removal is a RENAME to a tombstone nobody
+// else's name collides with, which takes whatever is at the path in one step, and the
+// record is judged AFTERWARDS, on the file in hand:
+//
+//   - it is the file that was judged (os.SameFile, or the same pid+nonce when a platform
+//     gave no identity) -- clear it, and the path is free;
+//   - it is anything else, or a reclamation finds it ALIVE -- put it straight back with a
+//     link, which fails only if somebody has already published there, and answer that
+//     nothing was cleared.
+//
+// The one residual is a restore that cannot land because another run published in the
+// meantime: then the record this call lifted is genuinely superseded and dropping it is
+// right. If the restore fails for any other reason the owner's own heartbeat publishes its
+// lease again (rule 5), which is what that repair is for.
+func takeJobLeaseRecord(path string, judged JobLease, mode jobLeaseRemoval, hooks jobLeaseHooks) bool {
+	hooks.pause(hooks.atReclaim, hooks.holdReclaim)
+
+	tomb := path + "." + newLeaseNonce() + ".tomb"
+	if err := os.Rename(path, tomb); err != nil {
+		// Nothing is there: somebody else cleared it, and the path is free of the record
+		// this call was handed either way.
+		return errors.Is(err, os.ErrNotExist)
+	}
+	took, rerr := readJobLeaseFile(tomb)
+	putBack := rerr != nil || !sameJobLeaseRecord(took, judged)
+	if !putBack && mode == reclaimStale {
+		// AND IT MUST STILL BE ABANDONED. Elapsed age never steals a claim whose pid this
+		// kernel can see alive, so a record that came back to life between the judgement
+		// and the rename goes back where it was.
+		if gone, _ := took.reclaimable(time.Now()); !gone {
+			putBack = true
+		}
+	}
+	keep := putBack
+	if !keep {
+		_ = os.Remove(tomb)
+		return true
+	}
+	// PUT IT BACK. This is the case the rename exists for.
+	if err := os.Link(tomb, path); err != nil && !errors.Is(err, os.ErrExist) {
+		// The restore could not land and nobody has published: the owner's heartbeat
+		// republishes (rule 5). Nothing here may pretend the path is free.
+		_ = os.Remove(tomb)
+		return false
+	}
+	_ = os.Remove(tomb)
+	return false
+}
+
+// releaseOwnJobLease removes this run's own lease, and only while the file on disk is still
+// the record this run published -- pid AND nonce. It answers whether the path is free of it.
+func releaseOwnJobLease(path string, pid int, nonce string, hooks jobLeaseHooks) bool {
+	mine, err := ReadJobLease(filepath.Dir(path))
 	if err != nil {
 		return errors.Is(err, os.ErrNotExist)
 	}
-	if held.PID != pid || held.Nonce != nonce {
+	if mine.PID != pid || mine.Nonce != nonce {
 		return false
 	}
-	return os.Remove(path) == nil
+	return takeJobLeaseRecord(path, mine, releaseOurs, hooks)
+}
+
+// sameJobLeaseRecord says whether two reads are the same FILE. Identity first, because a
+// newly published lease is always a different inode; the record's own pid and nonce are the
+// fallback for a platform whose FileInfo cannot answer.
+func sameJobLeaseRecord(a, b JobLease) bool {
+	if a.info != nil && b.info != nil {
+		return os.SameFile(a.info, b.info)
+	}
+	return a.PID == b.PID && a.Nonce == b.Nonce && a.Started == b.Started
+}
+
+// readJobLeaseFile reads one lease record from an exact path, which is what a tombstone is.
+func readJobLeaseFile(path string) (JobLease, error) {
+	dir, name := filepath.Split(path)
+	if name == JobLeaseName {
+		return ReadJobLease(strings.TrimSuffix(dir, string(filepath.Separator)))
+	}
+	st, err := os.Lstat(path)
+	if err != nil {
+		return JobLease{}, err
+	}
+	if !st.Mode().IsRegular() {
+		return JobLease{}, fmt.Errorf("%s is not a regular file (mode %s)", path, st.Mode())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return JobLease{}, err
+	}
+	return parseJobLease(path, raw, st), nil
 }
 
 // newLeaseNonce is what tells two runs apart when their pids cannot: the same process
