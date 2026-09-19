@@ -136,17 +136,26 @@ changes nothing, and a different request id is a fresh acknowledgement of the
 operation's final disposition. A cancellation erases no accepted mutation: the
 operation's accept record stays on the journal. An uncertain external effect is
 never claimed cancelled (SPEC-WORK.md:2740-2744)."
-  (let ((recorded (registry-cancellation-of registry request)))
+  ;; Every record under this id is asked, not only the cancels: a request id
+  ;; that collides with another record KIND on the same journal is a conflict,
+  ;; not a free id to write a cancel under (Stella's ruling on #1676).
+  (let ((recorded (accept-record-of (operation-registry-journal registry) request)))
     (when recorded
       (return-from registry-operation-cancel
-        (if (equal id (getf recorded :operation))
+        ;; The identical-body predicate, with its compared fields named: the
+        ;; target operation and the author. A later observation timestamp is
+        ;; not a new payload, so :stamp is deliberately not compared.
+        (if (and (cancel-record-p recorded)
+                 (equal id (getf recorded :operation))
+                 (equal author (getf recorded :author)))
             (values (list :id id :state (getf recorded :disposition) :request request)
                     nil 0 t)
-            ;; The same request id with different arguments. The grammar's
-            ;; general refusal line carries the reason; the reason token here is
-            ;; this file's and is listed in the handoff for review.
+            ;; The same request id with a different semantic payload. The
+            ;; reason is the kernel's own, byte for byte -- the spelling
+            ;; src/node-verbs.lisp:478 and src/fleet.lisp:1210 already use --
+            ;; carried inside the operation grammar's refusal line.
             (values nil
-                    (format nil "OPERATION FAIL id=~A op=- state=-: a request id reused"
+                    (format nil "OPERATION FAIL id=~A op=- state=-: reused with a different payload"
                             id)
                     2 nil)))))
   ;; An id no journal holds has a line of its own, and nothing is written for it
