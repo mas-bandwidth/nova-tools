@@ -941,14 +941,23 @@ Every refusal is exit 2 with **one remedy line** and creates nothing. A missing,
 non-numeric or zero `--pr`, or `--pr` together with `--prune`, is `WORKTREE
 REFUSED reason=bad_pr: --pr wants one pull-request number and one mode`; a
 `--repo` that is missing, relative, or not a git work tree is `reason=bad_repo:
---repo wants an existing repository`; a `--scratch` that is missing or not a
-directory is `reason=bad_scratch: --scratch wants an existing directory and is
-not created`; each of the three carries the remedy `run: nova-sandbox worktree
---repo <dir> --scratch <dir> --pr <id>`. A pull request the forge does not know
-is `reason=no_pr` and an unreachable forge is `reason=no_forge`, each with the
-one remedy naming the flag and saying to retry once the forge answers. The
-mistake it removes is abandoned scratch worktrees and git lock collisions across
-review passes.
+--repo wants an existing repository named by an absolute path`; a `--scratch`
+that is missing or not a directory is `reason=bad_scratch: --scratch wants an
+existing directory and is not created`; a repository whose `origin` remote names
+no owner and name is `reason=bad_origin: --repo wants an origin remote whose path
+names <owner>/<name>`, and the line names the origin it read; each of the four
+carries the remedy `run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr
+<id>`. The owner and name are read out of the remote's PATH and the host is read
+by nobody, so an ssh `Host` alias standing where the forge's own name would is
+one of the shapes that works; `gh` is what resolves the forge. A remote naming a
+place on this machine — a `file://` URL, an absolute path, one beginning with `.`
+or `..`, a windows drive letter — names no owner and name and is `bad_origin`,
+because a bare push target's directories are not an owner and a repository. A pull request the
+forge does not know is `reason=no_pr` and an unreachable forge is
+`reason=no_forge`, each with the one remedy naming the flag and saying to retry
+once the forge answers — `no_forge` is the forge's own silence and never an input
+the forge was not asked about. The mistake it removes is abandoned scratch
+worktrees and git lock collisions across review passes.
 
 **Tests a card writes first.** Each runs in `t.TempDir()` with a fake in place
 of every network, bench and clock, and no real forge or network is touched.
@@ -968,12 +977,25 @@ of every network, bench and clock, and no real forge or network is touched.
    stale tree the fake process probe reports in use is kept with no line.
 6. `--prune` over a fake `git worktree list` holding a hand-made worktree no
    record names leaves it byte-identical and prints `removed=0 kept=<n>`.
-7. No `--repo`, no `--scratch`, `--repo <tmp>/not-a-repo`, `--scratch
-   <tmp>/absent`, `--pr 0`, `--pr abc` and `--pr --prune` are each exit 2 with
-   one remedy line, and the test asserts the absent scratch dir still does not
-   exist.
+7. No `--repo`, no `--scratch`, `--repo <tmp>/not-a-repo`, the relative `--repo
+   .`, `--scratch <tmp>/absent`, `--pr 0`, `--pr abc` and `--pr --prune` are each
+   exit 2 with one remedy line, the relative one in words that say an absolute
+   path is what `--repo` wants, and the test asserts the absent scratch dir still
+   does not exist.
 8. A fake forge token in the environment appears on no line, scanned over every
    byte the verb wrote.
+9. Owner and name are read out of `https://<host>/o/n.git`, the same without
+   `.git`, the scp-like `git@<host>:o/n.git`, `ssh://git@<host>/o/n.git`, the same
+   with a port, an ssh `Host` alias in place of the host, and `o/n` alone; a
+   remote whose path names no owner and name yields nothing, and so does every
+   local-path shape — `file:///tmp/x/o/n.git`, `../o/n.git`, `./o/n`,
+   `/abs/path/o/n.git`, `C:/repos/o/n` and `C:\repos\o\n`.
+10. A pathless `origin`, and a repository with no `origin` at all, are the bad
+    origin failure and not the unreachable one, and the error names the origin
+    read.
+11. The forge seam's three failures refuse in their own words: `bad_origin`
+    carries the plain remedy and says what it wants and what it read, while
+    `no_pr` and `no_forge` carry the retry line.
 
 ## Exit codes
 
