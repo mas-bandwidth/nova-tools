@@ -51,6 +51,13 @@ type FakeHost struct {
 	Failures  map[int][]Failure
 	Changed   map[int][]string
 	Issues    map[int]string
+	// Reads is the verdicts the forge carries for a pull request (#1572): the HOLDs and
+	// APPROVEs its readers posted as comments or reviews. VerdictErr is the read failing.
+	Reads            map[int][]Verdict
+	VerdictErr       error
+	RawComments      map[int]string
+	RawReviews       map[int]string
+	DispositionsTime string
 }
 
 // QueuePRs lists the open pull requests this fake reports to the queue sweep. It is the
@@ -211,4 +218,59 @@ func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
 		c.AddRun(d.Name, d.Conclusion, d.SHA)
 	}
 	f.ChecksBy[oid] = c
+}
+
+// Verdicts is the reads a test says this pull request carries (#1572). A host with no
+// entry for a pull request carries none, which is the ordinary case.
+func (f *FakeHost) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	if f.VerdictErr != nil {
+		return nil, f.VerdictErr
+	}
+	if f.RawComments != nil && f.RawReviews != nil {
+		c := f.RawComments[n]
+		r := f.RawReviews[n]
+		if c != "" || r != "" {
+			var opt VerdictOpts
+			if len(opts) > 0 {
+				opt = opts[0]
+			}
+			return ParseForgeVerdicts(c, r, n, opt.Reviewers, opt.Author, opt.CurrentHead, opt.UntypedComments == "ignore")
+		}
+	}
+	res := append([]Verdict(nil), f.Reads[n]...)
+	if len(opts) > 0 && opts[0].UntypedComments == "ignore" {
+		var filtered []Verdict
+		for _, v := range res {
+			if v.Source != "comment-pending" {
+				filtered = append(filtered, v)
+			}
+		}
+		res = filtered
+	}
+	return res, nil
+}
+
+// SetRawVerdicts sets raw JSON comments and reviews for pull request n.
+func (f *FakeHost) SetRawVerdicts(n int, commentsJSON, reviewsJSON string) {
+	if f.RawComments == nil {
+		f.RawComments = map[int]string{}
+	}
+	if f.RawReviews == nil {
+		f.RawReviews = map[int]string{}
+	}
+	f.RawComments[n] = commentsJSON
+	f.RawReviews[n] = reviewsJSON
+}
+
+// DispositionsStamp returns the fake forge's read stamp.
+func (f *FakeHost) DispositionsStamp() string {
+	return f.DispositionsTime
+}
+
+// SetVerdicts records what the forge says a pull request's readers have said.
+func (f *FakeHost) SetVerdicts(n int, vs ...Verdict) {
+	if f.Reads == nil {
+		f.Reads = map[int][]Verdict{}
+	}
+	f.Reads[n] = append(f.Reads[n], vs...)
 }

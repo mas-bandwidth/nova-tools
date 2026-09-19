@@ -78,6 +78,12 @@ func New(clock Clock, guid GUIDSource, source string) Line {
 // test. The handler is slog's JSON handler; the handler's own time, level and msg keys are
 // replaced by the spec's ts, level and msg fields so the object is the spec's object and
 // not slog's.
+//
+// Every field whose content comes from outside this program -- the ids, the message and
+// the error -- passes through Redact on the way out, so SPEC-LOGS.md Part 2's one hard
+// rule ("a secret VALUE is never logged") is enforced by the emitter and not by review.
+// The fixed vocabulary the program writes itself -- ts, level, source, event, guid -- is
+// never touched, so a redaction can never rename an event out from under a query.
 func (l Line) Write(w io.Writer) error {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -87,21 +93,21 @@ func (l Line) Write(w io.Writer) error {
 			return a
 		},
 	})
-	r := slog.NewRecord(time.Time{}, levelOf(l.Level), oneline.Field(l.Msg), 0)
+	r := slog.NewRecord(time.Time{}, levelOf(l.Level), Redact(oneline.Field(l.Msg)), 0)
 	r.AddAttrs(
 		slog.String("ts", l.TS),
 		slog.String("source", l.Source),
-		slog.String("bench", l.Bench),
+		slog.String("bench", Redact(l.Bench)),
 		slog.String("verb", l.Verb),
-		slog.String("job", l.Job),
-		slog.String("card", l.Card),
+		slog.String("job", Redact(l.Job)),
+		slog.String("card", Redact(l.Card)),
 		slog.Int("pr", l.PR),
-		slog.String("run", l.Run),
-		slog.String("slot", l.Slot),
+		slog.String("run", Redact(l.Run)),
+		slog.String("slot", Redact(l.Slot)),
 		slog.String("guid", l.GUID),
 		slog.String("event", l.Event),
 		slog.Int64("dur_ms", l.DurMS),
-		slog.String("err", oneline.Escape(l.Err)),
+		slog.String("err", Redact(oneline.Escape(l.Err))),
 	)
 	return h.Handle(context.Background(), r)
 }

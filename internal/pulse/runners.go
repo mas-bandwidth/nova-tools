@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // DefaultRunnerIdle is how long a runner may be busy with nothing running before it is
@@ -258,8 +259,17 @@ func (s ServiceRestarter) Restart(name string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	// The restart is local for a service on this box and remote for one on a
+	// bench. Only the second reaches a host, and the guard stands before EITHER
+	// child starts: a guard inside the remote branch would sit after the local
+	// exec in the text, and a rule that reads "before the first child" is worth
+	// more than one that reads "before the right child".
+	remote := svc.Host != "" && svc.Host != "-"
+	if remote {
+		testguard.RefuseHosts("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, command)
+	}
 	var cmd *exec.Cmd
-	if svc.Host == "" || svc.Host == "-" {
+	if !remote {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	} else {
 		cmd = exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, command)

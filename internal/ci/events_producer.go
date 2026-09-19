@@ -36,6 +36,14 @@ type Producer struct {
 	Log      io.Writer
 	Clock    func() time.Time
 
+	// Events is the structured sink of SPEC-LOGS.md Part 2: one JSON line per event
+	// published, written beside the human line and never instead of it. A nil sink
+	// writes nothing. Bench is the fleet name that becomes the bench label, and GUID
+	// is this process run's guid source, which a test injects so it never reads /proc.
+	Events io.Writer
+	Bench  string
+	GUID   func() string
+
 	conclusions map[int]string
 	base        string
 	baseSeen    bool
@@ -84,6 +92,7 @@ func (p *Producer) PublishCardsDone(ctx context.Context) (int, error) {
 			if err := publish(ctx, p.RDB, ChannelCardDone, CardDone{Card: card, Label: label}); err != nil {
 				return published, fmt.Errorf("publish %s: %w", ChannelCardDone, err)
 			}
+			p.emit(ChannelCardDone, fmt.Sprintf("events: card %s finished", card), card, 0)
 			if err := p.RDB.XAck(ctx, StreamCardsDone, GroupEvents, msg.ID).Err(); err != nil {
 				return published, fmt.Errorf("ack %s: %w", msg.ID, err)
 			}
@@ -137,6 +146,9 @@ func (p *Producer) PollOnce(ctx context.Context) (int, error) {
 		}); err != nil {
 			return published, fmt.Errorf("publish %s: %w", ChannelPRChecksDone, err)
 		}
+		p.emit(ChannelPRChecksDone,
+			fmt.Sprintf("events: pr %d checks concluded %s at head %s", pr.Number, pr.Conclusion, pr.Head),
+			"", pr.Number)
 		published++
 	}
 	if snap.Base != "" && (!p.baseSeen || snap.Base != p.base) {
@@ -144,6 +156,7 @@ func (p *Producer) PollOnce(ctx context.Context) (int, error) {
 		if err := publish(ctx, p.RDB, ChannelDevMoved, DevMoved{SHA: snap.Base}); err != nil {
 			return published, fmt.Errorf("publish %s: %w", ChannelDevMoved, err)
 		}
+		p.emit(ChannelDevMoved, fmt.Sprintf("events: the base moved to %s", snap.Base), "", 0)
 		published++
 	}
 	return published, nil

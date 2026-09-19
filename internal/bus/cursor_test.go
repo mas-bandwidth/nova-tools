@@ -67,6 +67,12 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	if err != nil || old.Commit != sha || old.Counted || old.Open != 0 {
 		t.Fatalf("a cursor written before the count: %+v, %v", old, err)
 	}
+	// A cursor with one token (commit-only) is documented valid. It must read without panicking.
+	write(t, root, CursorPath("from-ada"), sha+"\n")
+	commitOnly, err := ReadCursor(root, "from-ada")
+	if err != nil || commitOnly.Commit != sha || commitOnly.Stamp != "" || commitOnly.Counted || commitOnly.Open != 0 {
+		t.Fatalf("a commit-only cursor: %+v, %v", commitOnly, err)
+	}
 	// Two lines is a cursor that has been merged badly, and is a refusal rather than a
 	// guess about which of the two reads is the real one.
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n"+sha+" 2026-09-09T12:35:56Z\n")

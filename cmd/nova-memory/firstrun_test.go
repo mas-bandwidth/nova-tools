@@ -129,54 +129,100 @@ func usageExamples(t *testing.T) []string {
 // ---------------------------------------------------------------------------
 // The README's First run block, checked against the tool
 
-// The transcript in README.md `## nova-memory` is the first thing a stranger
+// The transcript in docs/TESTS.md `## nova-memory` is the first thing a stranger
 // copies, so it is not written by hand and left alone: the commands in it are
-// run here against the fixture corpus, and every transcript line must match a
-// line the tool actually printed — the event prefix and the field names, in
-// order. Scores, counts, paths and snippets are a run's own business and are
-// deliberately NOT compared: the block shows a real corpus's numbers, and
-// pinning those would make the README a fixture instead of a document.
+// run here against the fixture corpus, and each command's block is compared
+// with what that command printed AS A SEQUENCE — the same event lines, in the
+// same order, and the same number of them. Scores, counts, paths and snippets
+// are a run's own business and are deliberately NOT compared: pinning those
+// would make the document a fixture instead of a document.
+//
+// IT USED TO BE A SET, and an abridged transcript satisfied it perfectly. This
+// block claimed `files=1268 chunks=33161` for a fixture corpus that measures
+// `files=6 chunks=23` — it had been recorded against somebody's real corpus —
+// and it dropped the `SEARCH NOTE` line and two of the three `MEMORY HIT` lines
+// and all three `MEMORY NOTE` lines. Every one of those is a line the tool
+// prints and the document did not show, which a set comparison cannot see. The
+// 2026-09-19 two-bench dogfood run compared line for line: one bench read
+// DEFECT on steps 2 and 3 and the other read CLEAN, and the tool was right both
+// times (nova-tools#1547).
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	blocks := readmeFirstRun(t)
 	lines := blocks[len(blocks)-1]
 	draft := writeDraft(t)
 
-	var printed map[string]bool
+	var command string
+	var want, got []string
 	seen := map[string]int{}
+	ran := 0
+	compare := func() {
+		if command == "" {
+			return
+		}
+		ran++
+		for i := 0; i < len(want) || i < len(got); i++ {
+			switch {
+			case i >= len(want):
+				t.Errorf("%q printed a line docs/TESTS.md does not show, at position %d:\n  %s\nThe document abridges what the tool said. Re-run the command and paste ALL of it.", command, i+1, got[i])
+			case i >= len(got):
+				t.Errorf("%q printed only %d lines and docs/TESTS.md shows %d; the document's line %d, %q, was never printed.", command, len(got), len(want), i+1, want[i])
+			case want[i] != got[i]:
+				t.Errorf("docs/TESTS.md line %d under %q has shape\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.", i+1, command, want[i], got[i])
+			}
+		}
+		for _, s := range want {
+			seen[strings.Join(strings.Fields(s)[:2], " ")]++
+		}
+	}
+
 	for _, line := range lines {
 		if cmd, ok := strings.CutPrefix(line, "$ nova-memory "); ok {
+			compare()
 			exit, stdout, stderr := runCLI(t, "", localize(strings.Fields(cmd), draft)...)
 			if exit != 0 {
-				t.Fatalf("the README command %q does not run: exit %d, stderr: %s", line, exit, stderr)
+				t.Fatalf("the transcript command %q does not run: exit %d, stderr: %s", line, exit, stderr)
 			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout, "\n") {
-				if s := shape(out); s != "" {
-					printed[s] = true
-				}
-			}
+			command, want, got = line, nil, shapesOf(stdout)
 			continue
 		}
 		s := shape(line)
 		if s == "" {
 			continue
 		}
-		if printed == nil {
+		if command == "" {
 			t.Fatalf("transcript line before any command: %q", line)
 		}
-		if !printed[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+		want = append(want, s)
 	}
+	compare()
+
+	if ran == 0 {
+		t.Fatal("the block holds no nova-memory command; this test passed by running nothing")
+	}
+	// The counts stay although the walk above is now complete, and they guard a
+	// different thing: deleting a whole `$ ` step from the document deletes BOTH
+	// sides of the comparison, so an ordered walk cannot notice.
 	for prefix, want := range map[string]int{
-		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3,
-		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 1,
+		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3, "SEARCH NOTE": 1,
+		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 3, "MEMORY NOTE": 3,
 	} {
 		if seen[prefix] != want {
-			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+			t.Errorf("the docs/TESTS.md block shows %d %s lines, want %d", seen[prefix], prefix, want)
 		}
 	}
+}
+
+// shapesOf reduces one stream to the shapes of its event lines, in the order the
+// tool printed them. Order is half of what a transcript promises: a reader runs
+// the command and reads down the screen.
+func shapesOf(stream string) []string {
+	var out []string
+	for _, line := range strings.Split(stream, "\n") {
+		if s := shape(line); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // shape reduces an output line to the part the README promises: the two-token

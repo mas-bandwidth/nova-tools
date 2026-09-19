@@ -34,6 +34,25 @@ header is convention only and is never parsed, so alternate
 directory/header conventions survive: the entry files are the source of
 truth and the readable record links to them.
 
+**The store's shape is read, never imposed.** Beside the layout above, a
+store may keep **one markdown file per session directly under it** —
+`<store>/<session>.md`, which is how a friend appending by hand already
+keeps a record. Both verbs read it: `open` on such a record is a no-op, and
+`append` lands a dated `## <stamp> — <entry>` section at the end of the
+file in the file's own shape, one blank line between sections, the words
+byte-for-byte beneath the heading. Nothing appears beside the file — no
+`entries/`, no `log.jsonl`, no index — because the file IS the record; the
+duplicate and conflict rules below read that section instead of an entry
+file, and `index`/`receipt`, which report on stored entries, cover the
+first shape only while the coverage ledger counts the file. The nested
+record wins when a store somehow holds both. The hurt this is written from
+(2026-09-18): an append into a bench store refused `no such session
+"b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
+named remedy would have written a second record and split one session in
+two. **A refusal names the remedy verb whole** — `open first: nova-cairn
+open --store <dir> --session <id> --publish <policy>` — rather than a verb
+the reader must reconstruct.
+
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
 --file <path|->) [--source <ptr>] --publish <policy>` files the friend's
 chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an

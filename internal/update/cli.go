@@ -76,7 +76,7 @@ nova-update help`
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
-const versionVerbs = `nova-version snapshot --bin <dir> --out <file.tsv>
+const versionVerbs = `nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
 nova-version diff --from <a.tsv> --to <b.tsv>
 nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
@@ -91,7 +91,7 @@ func help(name string, w io.Writer) {
 	} else {
 		fmt.Fprintln(w, updateVerbs)
 	}
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n", name)
+	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)
 	note := "Report needs no bus or network. "
 	if name != "nova-version" {
 		note += "Updates require an explicit apply name. "
@@ -139,34 +139,38 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if env.Now == nil {
 		env.Now = time.Now
 	}
+	tool := "UPDATE"
+	if name == "nova-version" {
+		tool = "VERSION"
+	}
 	if len(args) == 0 {
-		return refusal(errs, "UPDATE", fmt.Errorf("a verb is required (run: %s help)", name))
+		return refusal(errs, tool, fmt.Errorf("a verb is required (run: %s help)", name))
 	}
 	verb := args[0]
 	args = args[1:]
 	if verb == "help" || verb == "--help" || verb == "-h" {
 		if len(args) != 0 {
-			return refusal(errs, "UPDATE", fmt.Errorf("help takes no arguments (run %s help)", name))
+			return refusal(errs, tool, fmt.Errorf("help takes no arguments (run %s help)", name))
 		}
 		help(name, out)
 		return 0
 	}
 	if verb == "version" || verb == "--version" {
 		if len(args) != 0 {
-			return refusal(errs, "UPDATE", fmt.Errorf("version takes no arguments (run %s version)", name))
+			return refusal(errs, tool, fmt.Errorf("version takes no arguments (run %s version)", name))
 		}
 		fmt.Fprintln(out, buildinfo.Line(name, stamp))
 		return 0
 	}
 	if verb == "snapshot" {
 		if name != "nova-version" {
-			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 		}
 		return snapshotVerb(name, args, out, errs, env)
 	}
 	if verb == "diff" {
 		if name != "nova-version" {
-			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 		}
 		return diffVerb(name, args, out, errs)
 	}
@@ -180,7 +184,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	// what it should be) asked from the other end. internal/release holds it.
 	if verb == "release" {
 		if name != "nova-update" {
-			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 		}
 		// The stamp goes down with it: `release adopt` compares what THIS
 		// binary is against the release it is fanning out, because the
@@ -189,12 +193,12 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	if verb == "adoption" {
 		if name != "nova-update" {
-			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 		}
 		return adoptionVerb(name, args, stamp, out, errs)
 	}
 	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "apply" && verb != "watch") {
-		return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+		return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 	}
 	if verb == "watch" {
 		return watchMain(name, args, out, errs, env)

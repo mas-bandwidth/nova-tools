@@ -34,6 +34,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // fleetBench is one line of the benches file: name, ssh target, home, and the optional
@@ -69,6 +70,7 @@ func (r fleetSSHRunner) Run(ctx context.Context, target, script string) (string,
 	if program == "" {
 		program = "ssh"
 	}
+	testguard.RefuseHosts(program, target, "bash -s")
 	cmd := exec.CommandContext(ctx, program, target, "bash -s")
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
