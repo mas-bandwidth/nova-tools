@@ -181,6 +181,31 @@ type walWait struct {
 // that first exec, which cost the reader its every retry and recorded `database is locked`
 // for a writer that checkpointed a moment later. So a refusal with a -wal beside it always
 // buys at least one more look, and the window measures the looking.
+//
+// AND EVERY RETRY IS BOUNDED BY WHAT IS LEFT OF THE WINDOW. A retry is a `sqlite3` run,
+// and handing it the tool's whole query timeout made the window a floor instead of a
+// ceiling: two slow queries spent ~40s in one sample. The caller is why that matters --
+// `supervise` calls ReadProviderUsage synchronously in its select loop, so a read that
+// overruns is a stretch of time in which the worker's own deadline and budget cases cannot
+// run. A retry is given exactly the remaining window, and one that has nothing left is not
+// started at all.
+//
+// THE WORST CASE, STATED AND TRUE:
+//
+//	first read     usageTimeout                       20s
+//	  its drain    usageWaitDelay, if it is killed     2s
+//	the waiting    usageSettleWait                     5s   (all retries share it)
+//	  its drain    usageWaitDelay, at most once        2s
+//	                                                  ---
+//	                                                   29s
+//
+// The second drain is paid at most once because a drain spends the window too: `now` is
+// real time, so whatever a retry spends being killed and drained is time the next
+// deadline check sees, and the loop ends as soon as the window is gone. The last retry is
+// therefore the only one that can finish past the deadline, and it can overshoot by at
+// most one usageWaitDelay. That holds however the drain arises -- a child killed at its
+// deadline or one that exited leaving a pipe open -- so the bound does not rest on
+// `sqlite3` spawning no children.
 func (w walWait) read(path string) ([][]string, error) {
 	rows, err := w.query(path, w.first)
 	if err == nil {
@@ -188,11 +213,20 @@ func (w walWait) read(path string) ([][]string, error) {
 	}
 	deadline := w.now().Add(w.settle)
 	for {
-		if !walPending(path) || !w.now().Before(deadline) {
+		if !walPending(path) {
+			return nil, err
+		}
+		if !w.now().Before(deadline) {
 			return nil, err
 		}
 		w.sleep(w.pause)
-		if rows, err = w.query(path, w.first); err == nil {
+		// The pause spent part of the window, so the retry is allowed what is left AFTER
+		// it -- never the figure taken before it, and never a fresh query timeout.
+		remaining := deadline.Sub(w.now())
+		if remaining <= 0 {
+			return nil, err
+		}
+		if rows, err = w.query(path, remaining); err == nil {
 			return rows, nil
 		}
 	}
