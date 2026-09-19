@@ -2,6 +2,7 @@ package ci
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,51 +43,37 @@ var registryReaders = []string{"bus.IsProgress(", "Classify("}
 // A start that DISCARDS both streams is not a consumer of the protocol and is
 // not held to this: internal/pulse sends a note and reads nothing back.
 func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
-	root := repoRoot(t)
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(progressRegistryFile))); err != nil {
+	t.Parallel()
+
+	tree := repoTree(t)
+	if _, err := os.Stat(filepath.Join(tree.Root, filepath.FromSlash(progressRegistryFile))); err != nil {
 		t.Fatalf("%s is the one registry both halves of the rule read: %v", progressRegistryFile, err)
 	}
 
 	var readers, discarders, missing []string
 	for _, dir := range []string{"cmd", "internal"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			rel := filepath.ToSlash(mustRel(t, root, path))
+		for _, f := range tree.GoFilesUnder(false, dir) {
 			// nova-bus itself is the PRODUCER. Its own package test holds its
 			// stdout to the registry; reading it against itself here would be
 			// circular, and it has no reason to drop its own progress.
-			if strings.HasPrefix(rel, "cmd/nova-bus/") || rel == progressRegistryFile {
-				return nil
+			if strings.HasPrefix(f.Rel, "cmd/nova-bus/") || f.Rel == progressRegistryFile {
+				continue
 			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			reads, discards := novaBusStarts(string(raw))
+			reads, discards := novaBusStarts(string(f.Src))
 			if discards {
-				discarders = append(discarders, rel)
+				discarders = append(discarders, f.Rel)
 			}
 			if !reads {
-				return nil
+				continue
 			}
-			readers = append(readers, rel)
+			readers = append(readers, f.Rel)
 			// The file that STARTS nova-bus need not be the file that
 			// classifies its lines -- nova-wake starts it in serve.go and
 			// main.go and classifies in internal/wake -- so the check is per
 			// PACKAGE: somewhere in this package, the registry is reached.
-			if !packageReachesTheRegistry(t, filepath.Dir(path)) {
-				missing = append(missing, rel)
+			if !packageReachesTheRegistry(tree, path.Dir(f.Rel)) {
+				missing = append(missing, f.Rel)
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 
@@ -134,35 +121,18 @@ func novaBusStarts(text string) (reads, discards bool) {
 
 // packageReachesTheRegistry answers whether any non-test file in a package asks
 // internal/bus whether a line is progress, or hands the bytes to the one
-// classifier that asks for it.
-func packageReachesTheRegistry(t *testing.T, dir string) bool {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+// classifier that asks for it. dir is the package's repo-relative, slash
+// separated directory, and the files come from the shared tree.
+func packageReachesTheRegistry(tree *repoTreeIndex, dir string) bool {
+	for _, f := range tree.Files {
+		if !f.Go || f.Test || path.Dir(f.Rel) != dir {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, token := range registryReaders {
-			if strings.Contains(string(raw), token) {
+		for _, marker := range registryReaders {
+			if strings.Contains(string(f.Src), marker) {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-func mustRel(t *testing.T, root, path string) string {
-	t.Helper()
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rel
 }

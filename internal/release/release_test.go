@@ -86,6 +86,21 @@ func (f *fakeForge) TagMessage(_ context.Context, _, tag string) (string, error)
 type fakeToolchain struct {
 	calls []string
 	fail  string // package whose build fails
+	// platforms stands in for `go tool dist list`. A zero fakeToolchain
+	// answers the fleet's three plus the two it could grow into, which is
+	// enough for `--platform plan9-vax` to be the refusal it ought to be.
+	platforms []string
+	failList  error
+}
+
+func (b *fakeToolchain) Platforms(context.Context) ([]string, error) {
+	if b.failList != nil {
+		return nil, b.failList
+	}
+	if len(b.platforms) > 0 {
+		return b.platforms, nil
+	}
+	return []string{"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64"}, nil
 }
 
 func (b *fakeToolchain) Build(_ context.Context, source, pkg, out, goos, goarch string, args []string) (string, error) {

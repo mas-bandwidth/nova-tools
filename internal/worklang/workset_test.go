@@ -20,7 +20,9 @@ func readFixture(t *testing.T, name string) []byte {
 
 func parseFixture(t *testing.T, name string) *WorkSet {
 	t.Helper()
-	ws, err := ParseWorkSet(name, readFixture(t, name), DefaultLimits())
+	// The tolerant door: these fixtures carry the identity defects Check reports
+	// as findings, and the strict door (A2) refuses them before Check ever runs.
+	ws, err := ParseWorkSetTolerant(name, readFixture(t, name), DefaultLimits())
 	if err != nil {
 		t.Fatalf("ParseWorkSet(%s): %v", name, err)
 	}
@@ -52,26 +54,26 @@ func TestParseWorkSetReadsTheRealShape(t *testing.T) {
 	if !ok {
 		t.Fatal("pull:queue was not read")
 	}
-	if pull.Owner != "Stella" || pull.Lane != "work" {
-		t.Errorf("pull:queue owner/lane = %q/%q, want Stella/work", pull.Owner, pull.Lane)
+	if pull.Owner() != "Stella" || pull.Lane() != "work" {
+		t.Errorf("pull:queue owner/lane = %q/%q, want Stella/work", pull.Owner(), pull.Lane())
 	}
-	if pull.Deadline != "2026-09-18T18:00Z" {
-		t.Errorf("pull:queue deadline = %q, want the text as written", pull.Deadline)
+	if pull.Deadline() != "2026-09-18T18:00Z" {
+		t.Errorf("pull:queue deadline = %q, want the text as written", pull.Deadline())
 	}
-	if got := strings.Join(pull.Needs, ","); got != "promote:main" {
+	if got := strings.Join(pull.Needs(), ","); got != "promote:main" {
 		t.Errorf("pull:queue needs = %q, want promote:main", got)
 	}
 	// :status is written both as a string and as a keyword in the real file, and
 	// both say the same thing.
-	if byID["repair:1072"].Status != "closed" {
-		t.Errorf(`repair:1072 :status = %q, want closed`, byID["repair:1072"].Status)
+	if byID["repair:1072"].Status() != "closed" {
+		t.Errorf(`repair:1072 :status = %q, want closed`, byID["repair:1072"].Status())
 	}
-	if byID["docs:readme"].Status != "review" {
-		t.Errorf(`docs:readme :status = %q, want review (a keyword value)`, byID["docs:readme"].Status)
+	if byID["docs:readme"].Status() != "review" {
+		t.Errorf(`docs:readme :status = %q, want review (a keyword value)`, byID["docs:readme"].Status())
 	}
 	// The keys this reader does not know are kept, not dropped: a later slice reads
 	// what this one ignores without a second reader.
-	if got := strings.Join(byID["verb:hygiene"].Keys, ","); !strings.Contains(got, "budget") || !strings.Contains(got, "affinity") {
+	if got := strings.Join(byID["verb:hygiene"].Keys(), ","); !strings.Contains(got, "budget") || !strings.Contains(got, "affinity") {
 		t.Errorf("verb:hygiene keys = %q, want the unknown ones kept", got)
 	}
 }
@@ -309,13 +311,13 @@ func TestReadUnitCarriesBranchAndAcceptance(t *testing.T) {
 		t.Fatalf("got %d units", len(ws.Units))
 	}
 	u := ws.Units[0]
-	if u.Branch != "rowan/lane-friends" {
-		t.Errorf("Branch = %q", u.Branch)
+	if u.Branch() != "rowan/lane-friends" {
+		t.Errorf("Branch = %q", u.Branch())
 	}
-	if len(u.Acceptance) != 2 || u.Acceptance[0] != "a line in notes.md" || u.Acceptance[1] != "a test" {
-		t.Errorf("Acceptance = %#v", u.Acceptance)
+	if got := u.AcceptanceText(); len(got) != 2 || got[0] != "a line in notes.md" || got[1] != "a test" {
+		t.Errorf("Acceptance = %#v", got)
 	}
-	if u.Keys[0] != "branch" || u.Keys[1] != "acceptance" {
-		t.Errorf("every key is still recorded in written order: %#v", u.Keys)
+	if keys := u.Keys(); keys[0] != "branch" || keys[1] != "acceptance" {
+		t.Errorf("every key is still recorded in written order: %#v", keys)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +73,33 @@ func refuseLaneLink(root, full string) error {
 }
 
 func notRegular(full string, mode os.FileMode) error {
-	return fmt.Errorf("%s is not a regular file (%s); a lane's state files are regular files and this tool does not write through a link", full, mode.Type())
+	return fmt.Errorf("%s is not a regular file (%s); a lane's state files are regular files and this tool follows no link and opens no pipe", full, kindOf(mode))
+}
+
+// kindOf names the kind a non-regular path is, in the one word the refusal line carries.
+func kindOf(mode os.FileMode) string {
+	switch {
+	case mode&os.ModeSymlink != 0:
+		return "symlink"
+	case mode&os.ModeNamedPipe != 0:
+		return "fifo"
+	case mode&os.ModeDir != 0:
+		return "directory"
+	default:
+		return mode.Type().String()
+	}
+}
+
+// readLaneFile is io.ReadFile for a lane state file, on openLaneFile's terms: a path that
+// is not a regular file is refused by name -- never followed and never blocked on -- and
+// the open carries O_NOFOLLOW for what slipped past the check.
+func readLaneFile(root, full string) ([]byte, error) {
+	f, err := openLaneFile(root, full, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 // openLaneFile is os.OpenFile for a lane state file: refused when the path is not a regular

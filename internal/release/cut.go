@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -221,38 +222,53 @@ func SumsInAnnotation(message string) string {
 	return m[1]
 }
 
+// errTruncated says that the compare could not be classified at all and that
+// the refusal has ALREADY been printed, in the shape the remedy needs. It is a
+// sentinel rather than an ordinary refusal because this one refusal does not
+// read `CUT REFUSED: <prose>`: it is a field line, so that a person or a script
+// meeting it in a log can tell `reason=compare-truncated` from every other
+// reason a cut can refuse.
+var errTruncated = errors.New("compare-truncated")
+
 // classify is the gate Johnny's decision 1 puts in front of the tag: which of
 // the paths this range touched are on SensitivePaths, and may this cut proceed.
-// It is its own function, and pure apart from the writer, because the decision
+// It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// The ORDER matters. A range with hits is named by its hits; a range too big to
-// classify is named by the ceiling. Both are got past the same way, and neither
-// is got past by trying again.
-func classify(files []string, securityRead string, out, errs io.Writer) error {
-	hits := Sensitive(files)
-	atCeiling := len(files) >= CompareFileCap
+// THE ORDER IS THE WHOLE LESSON OF THE FOURTH DOGFOOD (2026-09-18). That cut's
+// compare answered with exactly 300 files -- the forge's ceiling -- and the
+// verb refused naming 24 sensitive paths out of the 58 the range really
+// touched. It looked like the gate working. It was the gate being lucky: the
+// hits it named were the ones that happened to fall inside the prefix it could
+// see, and a range whose only sensitive file sat past file 300 would have been
+// cut clean. So the truncation is decided FIRST and named FIRST, before
+// anything is said about what was found inside a list that may be short.
+//
+// And --security-read does not get past it. Johnny's read is a read OF A LIST,
+// and a read of a prefix of the truth vouches for a prefix of the truth. The
+// way past a truncated compare is a complete list, which is what --local-diff
+// and --paths-from are for.
+func classify(files []string, complete bool, rangeName, securityRead string, out, errs io.Writer) error {
 	if securityRead != "" {
 		if err := ValidSecurityRead(securityRead); err != nil {
 			return err
 		}
 	}
-	if !atCeiling && len(hits) == 0 {
+	if !complete && len(files) >= CompareFileCap {
+		fmt.Fprintf(errs, "RELEASE CUT REFUSED reason=compare-truncated files=%d range=%s remedy=%q\n",
+			len(files), field(rangeName),
+			fmt.Sprintf("classify from a local `git diff --name-only %s` with --paths-from <file>, produced by `release cut --local-diff <checkout>`", rangeName))
+		return errTruncated
+	}
+	hits := Sensitive(files)
+	if len(hits) == 0 {
 		// The line exists to mark the exception. Printed every time, it is a
 		// line nobody reads, and then it is not a mark at all.
 		return nil
 	}
 	if securityRead == "" {
-		if len(hits) > 0 {
-			return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
-				"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
-		}
-		return refuse("get Johnny's read and name it with --security-read, or cut from a nearer tag so the list fits",
-			"the forge named %d files for this range, which is its ceiling of %d: a list that may be short cannot be classified against the sensitive paths",
-			len(files), CompareFileCap)
-	}
-	if atCeiling {
-		progress(errs, "the file list is at the forge's ceiling of %d, so the count below is of what could be seen", CompareFileCap)
+		return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
+			"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
 	}
 	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
 	// that crossed the sensitive list is a fact somebody reads off the
@@ -260,6 +276,108 @@ func classify(files []string, securityRead string, out, errs io.Writer) error {
 	// find what was actually said.
 	fmt.Fprintf(out, "RELEASE CUT SENSITIVE paths=%d read=%s\n", len(hits), field(securityRead))
 	return nil
+}
+
+// PathsHeaderPrefix is the first line of a path list `release cut --local-diff`
+// wrote, and the whole reason --paths-from can be trusted: the rest of the file
+// is a classification gate's INPUT, and a gate reading a hand-written input is
+// a gate whose answer is whatever somebody remembered. The line also names the
+// RANGE, so a list left over from a different pair of commits is refused rather
+// than quietly classifying a release that is not this one.
+const PathsHeaderPrefix = "# nova-update release cut --local-diff "
+
+// WritePathsFile records the complete list and the range it is the list for.
+func WritePathsFile(path, rangeName string, files []string) error {
+	var b strings.Builder
+	b.WriteString(PathsHeaderPrefix + rangeName + "\n")
+	for _, f := range files {
+		b.WriteString(f + "\n")
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// ReadPathsFile reads one back, and refuses anything this verb did not write.
+func ReadPathsFile(path, rangeName string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read --paths-from %s: %w (produce it with `release cut --local-diff <checkout> --paths-from %s`)", path, err, path)
+	}
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	header := ""
+	if len(lines) > 0 {
+		header = strings.TrimSpace(lines[0])
+	}
+	if !strings.HasPrefix(header, PathsHeaderPrefix) {
+		return nil, refuse(fmt.Sprintf("produce it with `release cut --local-diff <checkout> --paths-from %s`", path),
+			"%s was not written by `release cut --local-diff`: its first line is not %q", path, PathsHeaderPrefix)
+	}
+	if got := strings.TrimSpace(strings.TrimPrefix(header, PathsHeaderPrefix)); got != rangeName {
+		return nil, refuse(fmt.Sprintf("produce the list for this range: `release cut --local-diff <checkout> --paths-from %s`", path),
+			"%s is the path list for %s, and this cut is %s", path, got, rangeName)
+	}
+	var files []string
+	for _, line := range lines[1:] {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		files = append(files, line)
+	}
+	return files, nil
+}
+
+// paths answers the list `cut` classifies, and whether that list is COMPLETE.
+// Three sources, in the order a person reaches for them: the checkout, a list
+// this verb wrote earlier, and the forge -- which is the default and the only
+// one with a ceiling.
+func paths(ctx context.Context, o options, deps Deps, previous, sha string, out, errs io.Writer) ([]string, bool, error) {
+	rangeName := previous + "..." + sha
+	if previous == "" {
+		// No previous tag is no range: the first release of a repository
+		// classifies nothing, and asking git or the forge about `...sha`
+		// would be asking about every commit that has ever existed.
+		if o.localDiff != "" || o.pathsFrom != "" {
+			return nil, true, refuse("cut this one without them; there is no range to diff",
+				"there is no previous tag, so --local-diff and --paths-from have nothing to classify")
+		}
+		return nil, true, nil
+	}
+	switch {
+	case o.localDiff != "":
+		git := deps.Git
+		if git == nil {
+			git = ExecGit{}
+		}
+		progress(errs, "asking git in %s which paths %s touched", o.localDiff, rangeName)
+		files, err := git.DiffNames(ctx, o.localDiff, previous, sha)
+		if err != nil {
+			return nil, false, fmt.Errorf("cannot read %s in %s: %w (name a checkout holding both %s and %s; `git fetch --tags` first)", rangeName, o.localDiff, err, previous, sha)
+		}
+		if o.pathsFrom != "" {
+			if err := WritePathsFile(o.pathsFrom, rangeName, files); err != nil {
+				return nil, false, fmt.Errorf("cannot write --paths-from %s: %w (name a writable path)", o.pathsFrom, err)
+			}
+			progress(errs, "wrote the %d-path list to %s", len(files), o.pathsFrom)
+		}
+		fmt.Fprintf(out, "RELEASE CUT PATHS source=local-diff files=%d range=%s checkout=%s\n", len(files), field(rangeName), field(o.localDiff))
+		return files, true, nil
+	case o.pathsFrom != "":
+		files, err := ReadPathsFile(o.pathsFrom, rangeName)
+		if err != nil {
+			return nil, false, err
+		}
+		fmt.Fprintf(out, "RELEASE CUT PATHS source=paths-from files=%d range=%s file=%s\n", len(files), field(rangeName), field(o.pathsFrom))
+		return files, true, nil
+	}
+	forge := deps.Forge
+	if forge == nil {
+		forge = NewGH(o.timeout)
+	}
+	progress(errs, "reading which paths %s touched", rangeName)
+	files, err := forge.Files(ctx, o.repo, previous, sha)
+	if err != nil {
+		return nil, false, fmt.Errorf("cannot read the files in %s: %w (ask again when the forge answers)", rangeName, err)
+	}
+	return files, false, nil
 }
 
 // prependSection puts the new section above every other section and below the
@@ -333,15 +451,15 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// tag exists (Johnny's decision 1, #1337). Asked BEFORE --dry-run branches
 	// and before anything is written: a dry run exists to find out what would
 	// happen, and what would happen is this refusal.
-	var files []string
-	if previous != "" {
-		progress(errs, "reading which paths %s..%s touched", previous, sha)
-		files, err = forge.Files(ctx, o.repo, previous, sha)
-		if err != nil {
-			return refusal(errs, "CUT", fmt.Errorf("cannot read the files in %s...%s: %w (ask again when the forge answers)", previous, sha, err))
-		}
+	files, complete, err := paths(ctx, o, deps, previous, sha, out, errs)
+	if err != nil {
+		return refusal(errs, "CUT", err)
 	}
-	if err := classify(files, o.securityRead, out, errs); err != nil {
+	if err := classify(files, complete, previous+"..."+sha, o.securityRead, out, errs); err != nil {
+		// A truncated compare has already said so, in its own field line.
+		if errors.Is(err, errTruncated) {
+			return 2
+		}
 		return refusal(errs, "CUT", err)
 	}
 	// --sums names a SHA256SUMS this release's build already wrote; its digest

@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
@@ -293,6 +294,57 @@ func (GoBuild) Build(ctx context.Context, source, pkg, out, goos, goarch string,
 	return string(capture.Bytes()), err
 }
 
+// Platforms is `go tool dist list`: every goos/goarch THIS toolchain can build,
+// asked of the toolchain rather than remembered in a table here, so the answer
+// is right for the Go the release is actually being built with.
+func (GoBuild) Platforms(ctx context.Context) ([]string, error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	capture := bounded.NewCapture(childCap, cancel)
+	cmd := exec.CommandContext(runCtx, "go", "tool", "dist", "list")
+	cmd.Stdout = capture
+	cmd.Stderr = capture
+	cmd.Env = goenv.Clean(os.Environ())
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(capture.Bytes())))
+	}
+	var pairs []string
+	for _, line := range strings.Split(string(capture.Bytes()), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			pairs = append(pairs, line)
+		}
+	}
+	return pairs, nil
+}
+
+// ExecGit is the production checkout reader: one `git -C <dir> diff
+// --name-only <base>...<head>`, which is a READ and the only git this package
+// ever runs. It is here rather than in cut.go for the same reason gh and ssh
+// are: every edge to a subprocess is in this file, where it can be read whole.
+type ExecGit struct{}
+
+// DiffNames lists the paths a range touched, with THREE dots -- what head
+// carries since the merge base, which is the same range the forge's compare
+// answers and therefore the same question, asked where there is no ceiling.
+func (ExecGit) DiffNames(ctx context.Context, dir, base, head string) ([]string, error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	capture := bounded.NewCapture(childCap, cancel)
+	cmd := exec.CommandContext(runCtx, "git", "-C", dir, "diff", "--name-only", base+"..."+head)
+	cmd.Stdout = capture
+	cmd.Stderr = capture
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(capture.Bytes())))
+	}
+	var files []string
+	for _, line := range strings.Split(string(capture.Bytes()), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
+}
+
 // ExecSSH is the production remote. The ssh binary is named by --ssh rather than
 // found on PATH, because "no cwd dependence, every path a flag" applies to the
 // program as much as to the directories: a bench with two ssh binaries should
@@ -332,6 +384,7 @@ var SSHOptions = []string{
 // named them).
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
 	args := append(s.sshArgs(machine), argv...)
+	testguard.RefuseHosts(s.Path, args...)
 	return runCommand(ctx, s.Path, args...)
 }
 
@@ -360,6 +413,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	}()
 	defer pr.Close()
 	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
+	testguard.RefuseHosts(s.Path, args...)
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
 
@@ -370,6 +424,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 // trust adopting a release that lives on the host that has the cores.
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
 	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
+	testguard.RefuseHosts(s.Path, args...)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)

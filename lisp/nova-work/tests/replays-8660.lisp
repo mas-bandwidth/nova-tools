@@ -195,3 +195,53 @@
                  "the cost is the measured spend of the one call that event caused")
     (check-equal '(:clip :beat :projection) (pulse-result-published busy)
                  "publication is still mechanical")))
+
+;;; ------------------------------------------------------------------
+;;; rule 18 reads the LATEST closed-index row     SPEC-WORK.md:1630
+;;; ------------------------------------------------------------------
+;;;
+;;; The replay above proves the COUNTS after a revive. It never asks the rule
+;;; 18 predicate itself, which is what let `cow-load-findings` read *any* row
+;;; naming an id instead of that id's latest one. :1630 is the sentence:
+;;; "the finding is an id whose *latest* state puts it in both branches, never
+;;; the history of an id that has honestly moved and kept its record (replay
+;;; `revive-appends-and-counts-latest`)".
+
+(deftest "rule-18-finds-the-latest-row-not-the-history" "docs/SPEC-WORK.md:1630"
+    "expected=seed-no-finding;settled-id-no-finding;settled-then-revived-id-no-finding;LOAD-OK;a-row-over-a-still-open-node-is-found-and-refused"
+  (let* ((k (fresh))
+         (id "acme/work/f1/t1"))
+    (ok (null (cow-load-findings (kernel-state k))) "the seed has no finding")
+    (ok (cow-partition-holds-p (kernel-state k)) "the seed partitions O and C")
+    (ok (submit k (close-request :request "req-1")) "close refused")
+    (check-equal :c (node-branch (kernel-state k) id) "the id is in C")
+    (ok (null (cow-load-findings (kernel-state k)))
+        "an id in C with its settle row is no finding")
+    (ok (submit k (reopen-request :request "req-2")) "reopen refused")
+    (check-equal :o (node-branch (kernel-state k) id) "the id is open again")
+    ;; C is append-only: the settle row is still there beside the revive.
+    (check-equal 2 (length (state-closed-rows (kernel-state k)))
+                 "the settle row survives the revive")
+    (check-equal :revive (getf (first (wstate-rows (kernel-state k))) :kind)
+                 "and the id's latest row is the revive")
+    (ok (null (cow-load-findings (kernel-state k)))
+        "an id that settled and was honestly revived is no rule 18 finding")
+    (ok (cow-partition-holds-p (kernel-state k))
+        "the partition still holds after the revive")
+    (multiple-value-bind (admitted line code) (cow-candidate-gate (kernel-state k))
+      (ok admitted "the candidate gate admits a revived id")
+      (check-string= "LOAD OK" line "and says so")
+      (check-equal 0 code "at exit 0")))
+  ;; The finding rule 18 is actually for: a closed-index row that settles an id
+  ;; whose node still reads :o, with nothing over it (SPEC-WORK.md:5496).
+  (let* ((k (fresh))
+         (id "acme/work/f1/t2")
+         (state (hand-write-closed-row (kernel-state k) id 7)))
+    (check-equal :o (node-branch state id) "the node still reads :o")
+    (check-equal (list id) (cow-load-findings state) "the double membership is found")
+    (ok (not (cow-partition-holds-p state)) "the partition does not hold")
+    (multiple-value-bind (admitted line code) (cow-candidate-gate state)
+      (ok (not admitted) "the candidate gate refuses it")
+      (check-equal 1 code "at exit 1")
+      (ok (search "rule 18" line) "and the line names rule 18")
+      (ok (search id line) "and the id in both branches"))))

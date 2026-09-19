@@ -233,7 +233,13 @@ func tolerate(c *Config, text, as string) tolerated {
 			out.notices = append(out.notices, fmt.Sprintf("this draft carried a %s line (%q); send writes the date from the clock, so yours is replaced, and says so", KeyDate, truncate(strings.TrimSpace(value), maxQuotedKey)))
 			continue
 		case KeyFrom:
-			from, hasFrom = strings.TrimSpace(value), true
+			// The FIRST From line, exactly as parseLines keeps the first: a draft that
+			// relays another note can carry a second, quoted `From:` under its own, and
+			// the sender it is judged by is the OUTER one. Taking the last here made
+			// send blame the quoted inner author for an --as the outer line agrees with.
+			if !hasFrom {
+				from, hasFrom = strings.TrimSpace(value), true
+			}
 		case KeySubject:
 			hasSubject = strings.TrimSpace(value) != ""
 		}

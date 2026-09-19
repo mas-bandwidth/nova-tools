@@ -32,17 +32,22 @@ const (
 const (
 	StreamCardsDone = "cards:done"
 	GroupEvents     = "events"
-
-	// SetEnqueueSkip names the PRs react must leave alone, and KeyEnqueueHold is a
-	// TTL'd stop for the whole queue. A skipped PR stays skipped across restarts; a
-	// hold lifts on its own without anyone writing a tombstone.
-	SetEnqueueSkip = "enqueue:skip"
-	KeyEnqueueHold = "enqueue:hold"
-
-	// QueueMerge is the set react enqueues into: the merge layer SPOPs it. A set is
-	// the exactly-once shape an approval needs, and a repeated event is a no-op.
-	QueueMerge = "merge:queue"
 )
+
+// THREE NAMES USED TO LIVE HERE AND THEY ARE GONE (edges 17 and 18, 2026-09-18).
+//
+//	merge:queue    the set react enqueued into. NOTHING IN THE TREE EVER READ IT: the
+//	               merge layer's queue is <lane>/queue.json, which `nova-merge queue`
+//	               writes and `nova-merge run` walks, so `REACT enqueue pr=N` at exit 0
+//	               enqueued into a hole. The door is the caller's now, and nova-merge
+//	               react hands the reactor one that writes that file.
+//	enqueue:skip   a SECOND skip set, beside queue.json's `skipped`.
+//	enqueue:hold   a SECOND hold, beside <lane>/hold.
+//
+// Two hold mechanisms and two skip sets wearing the same words are one mechanism nobody
+// can reason about: with `<lane>/hold` standing and the pull request in the lane's skip
+// list, react still printed `REACT enqueue`, and only the redis key stopped it. ONE
+// QUEUE, ONE HOLD, ONE SKIP SET: the reactor reads the lane's, through Gate.
 
 // The check-suite conclusions this vocabulary distinguishes. PENDING and every
 // not-yet-complete state are not events and are never published.

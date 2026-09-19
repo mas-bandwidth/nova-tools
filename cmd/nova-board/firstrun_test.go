@@ -95,6 +95,28 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	}
 }
 
+// The close verb refuses without one of the three ways it was closed -- --how, --landed or
+// --probed -- and the refusal names all three, but the usage banner's close line named none
+// of them: a first run reading the banner for the shape of a close saw `--as --card --stale`
+// and nothing saying HOW, then hit the refusal when it ran. The line the banner prints for
+// close must name all three.
+func TestCloseUsageNamesTheThreeWays(t *testing.T) {
+	var closeLine string
+	for _, line := range strings.Split(usage, "\n") {
+		if strings.HasPrefix(line, "  nova-board close ") {
+			closeLine = line
+		}
+	}
+	if closeLine == "" {
+		t.Fatal("the usage banner has no close line")
+	}
+	for _, way := range []string{"--how", "--landed", "--probed"} {
+		if !strings.Contains(closeLine, way) {
+			t.Errorf("the close usage line names none of --how, --landed or --probed: %q", closeLine)
+		}
+	}
+}
+
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	cases := []struct {
@@ -162,13 +184,35 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 	}
 }
 
-// (c) The transcript in TESTS.md, checked against the tool. The commands in it are RUN
-// against the fixture, and every transcript line must match a line the tool actually
-// printed — the event prefix and the field names, in order. Numbers, paths and tails are a
-// run's own business and are deliberately NOT compared: pinning those would make the
-// document a fixture.
-func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
+// The `### First run` transcript of docs/TESTS.md is EXECUTED: every documented command is
+// run, in order, against one board, and its whole output is compared with the block written
+// under it -- same number of lines, same lines, same order.
+//
+// WHAT THIS REPLACES, AND WHAT IT KEEPS. The walk was already ORDERED and already counted
+// its steps, and both are kept: those were bought by `nova-board list --max 2`, which prints
+// two BOARD CARD lines, two BOARD LINE lines and two BOARD LEG lines while the document
+// showed one of each, so this test was green while the document contradicted its own
+// `BOARD MORE kind=card shown=2` on the very next line (nova-tools#1547). What it did NOT
+// compare was the VALUES: it reduced both sides to onboarding.Shape, so
+// `BOARD OK cards=5 open=4 ...` and `BOARD OK cards=0 open=0 ...` were the same line, and a
+// board that had stopped reading its own cards read as green.
+//
+// NOTHING IS NORMALISED, AND THE CLOCK IS WHY. `age=` and `taken=` are wall-clock arithmetic
+// against the fixture's own `since=`, so under the real clock they change every second and
+// no transcript could ever have pinned them. This binary takes its clock as an argument, so
+// the test hands it the instant the block was recorded at -- `since=2026-09-10T11:00:00Z`
+// plus the `age=208h11m4s` the document shows -- and every value on every line reproduces.
+//
+// The board is typed as written: `./board` is what a reader types and what the tool PRINTS
+// BACK on `source=`, so the fixture is copied to that name in a directory of the test's own
+// rather than the path being rewritten, which is what `localize` did and why the old
+// comparison could not have compared `source=./board` at all.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs(exampleBoard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,41 +220,94 @@ func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
-	seen := map[string]int{}
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-board "); ok {
-			exit, stdout, stderr := runFixture(t, strings.Fields(cmd)...)
-			if exit == 2 {
-				t.Fatalf("the transcript command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
-			continue
-		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
-		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		if !printed[s] {
-			t.Errorf("TESTS.md line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	steps, err := onboarding.Steps("nova-board", lines)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for prefix, want := range map[string]int{
-		"QUICKSTART OK": 1, "BOARD NEXT": 2, "BOARD OK": 2, "CHECK OK": 1, "CHECK HIT": 1, "BOARD LEG": 3,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("the TESTS.md First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-board command; this test would pass by running nothing")
+	}
+	// Deleting a whole `$ ` step deletes BOTH sides of the comparison, so no per-line
+	// walk can notice. The sitting is the three verbs a first run has.
+	verbs := map[string]bool{}
+	for _, s := range steps {
+		verbs[s.Args[0]] = true
+	}
+	for _, verb := range []string{"quickstart", "check", "list"} {
+		if !verbs[verb] {
+			t.Errorf("the `### First run` block never runs `nova-board %s`; the first sitting is all three", verb)
 		}
 	}
+
+	dir := t.TempDir()
+	copyTree(t, fixture, filepath.Join(dir, "board"))
+	t.Chdir(dir)
+	for _, p := range onboarding.Execute(steps, documentedBoard) {
+		t.Error(p)
+	}
+}
+
+// transcriptNow is the instant the `### First run` block was recorded at: the fixture's
+// oldest card is `since=2026-09-10T11:00:00Z` and the document shows `age=208h11m4s`
+// against it. It is spelled here rather than parsed out of the document, because a test
+// that read its own expected value from the file it is checking would agree with anything.
+var transcriptNow = time.Date(2026, 9, 10, 11, 0, 0, 0, time.UTC).Add(208*time.Hour + 11*time.Minute + 4*time.Second)
+
+// documentedBoard runs one line of the transcript on that clock, with the deterministic
+// id source every other test in this package uses.
+func documentedBoard(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
+	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, &out, &errb, transcriptNow, &seq{})
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-board reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}
+
+// copyTree copies the fixture board to where the transcript says it is.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			copyTree(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(from, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// shapesOf reduces one stream to the shapes of its event lines, in the order the
+// tool printed them. Order is half of what a transcript promises: a reader runs
+// the command and reads down the screen.
+func shapesOf(stream string) []string {
+	var out []string
+	for _, line := range strings.Split(stream, "\n") {
+		if s := onboarding.Shape(line); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // The fixture is small enough to read in a sitting and is referenced by nothing outside
@@ -310,17 +407,17 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 //
 // The refusal those verbs print carries the way forward. A refusal names what the
 // flag wants (SPEC-BOARD.md:808-814, BUILD item 6 -- an entry in the build list,
-// not a numbered rule), and here what it wants is a directory that exists.
+// not a numbered rule), and here what it wants is a directory that exists. `add`
+// is the exception since nova-tools #625: a board is an append-only log, an empty
+// directory is a valid empty ledger, and the first `add` makes it
+// (TestAddMakesTheDirectoryOnFirstUse).
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
-	for _, verb := range []string{"list", "check", "add"} {
+	for _, verb := range []string{"list", "check"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
 		switch verb {
 		case "check":
 			args = []string{verb, "--dir", missing, "--words", "anything"}
-		case "add":
-			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
-				"--by", "4h", "--default", "the filer files it as a known gap"}
 		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})

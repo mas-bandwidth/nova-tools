@@ -49,16 +49,25 @@ usage:
     or located rather than extensioned (Makefile, .github/workflows/). The
     --deny-ext flags govern the EXTENSION list only; --allow is the escape
     for the name floor, and names where machinery may live.
-  nova-check floors --core <SEED-CORE.md> --source <SEED.md>
+  nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
                                                      the door's floor set matches the seed's
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
+  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <<email>>"
+        [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+                                                     the four mechanical checks the accept
+                                                     gate runs, on a branch, before you ask
+                                                     a friend for a read: identity,
+                                                     out-of-path, stray-file, secret.
+                                                     --paths is the card's bound; with none
+                                                     the line says paths=- and out-of-path
+                                                     is skipped, never silently passed.
   nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
                                                      one row per verb the command reference
                                                      declares: who has run it, when, and
                                                      whether it did what they needed
-  nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok)
+  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
                             --notes <text> [--issue <n>] --receipts <dir>
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
@@ -78,7 +87,7 @@ exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 example:
   nova-check quickstart --dir ./self
   nova-check attest --home ./self --manifest ./self/MANIFEST
-  nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
+  nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
   nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
   nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 
@@ -181,6 +190,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
+	case "hygiene":
+		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
 		return cmdDogfood(args[1:], stdout, stderr)
 	case "version", "--version":

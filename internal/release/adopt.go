@@ -92,27 +92,83 @@ func Machines(r io.Reader) ([]Machine, error) {
 // path is checked BEFORE any remote command is composed, never after.
 var remotePathShape = regexp.MustCompile(`^(/|~/)[A-Za-z0-9_.@/+-]*$`)
 
+// windowsDrivePathShape is the ONE form a windows bench adds: a DRIVE-ABSOLUTE
+// path, in either slash, because `C:\Users\nova\.local\bin` is how Emma's
+// docs/BENCH-WINDOWS.md writes that bench's own bin directory and it is what a
+// person will type.
+//
+// It is drive-absolute and nothing weaker. `C:Users\nova` is drive-RELATIVE --
+// it resolves against whatever that drive's current directory happens to be,
+// which is the same defect as a bare name resolving against $PATH -- and
+// `\\fileserver\share` is a UNC path naming a machine nobody here chose. Both
+// are refused. The character class is the unix one plus the two separators, so
+// nothing that is shell syntax gets in through the new door.
+var windowsDrivePathShape = regexp.MustCompile(`^[A-Za-z]:[\\/][A-Za-z0-9_.@\\/+-]*$`)
+
 // sha256Hex is the shape of a digest this host was handed out of band.
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// RemotePath is the form a path takes INSIDE a remote command, and the only
+// place that decision is made: every backslash folded to a forward slash.
+//
+// THE FAR SIDE PARSES A POSIX COMMAND LINE, on windows as everywhere else.
+// docs/BENCH-WINDOWS.md names the windows bench's ssh shell as Git Bash
+// (`C:\Program Files\Git\bin\bash.exe`), or native OpenSSH with Bash in
+// sshd_config, and internal/pulse/fleetstandard.go's windows checks are POSIX
+// shell that reach for `powershell.exe -NoProfile -Command '...'` only for the
+// questions only PowerShell can answer. In that shell a backslash is an ESCAPE:
+// `C:\Users\nova` arrives as `C:Usersnova`, silently, and the machine then
+// refuses about a path nobody typed -- which is the worst kind of refusal,
+// because the remedy it suggests is to fix a path that was already right.
+// Windows accepts a forward slash in every API and in every one of its own
+// shells, so the fold costs nothing and removes the whole class.
+//
+// A unix path can carry no backslash -- remotePathShape has never allowed one
+// -- so this changes nothing about any path that is not a windows one.
+func RemotePath(p string) string { return strings.ReplaceAll(p, `\`, "/") }
+
 // ValidRemotePath refuses anything that could be more than a path on the far
+// side, for a far side that is not windows. It is ValidRemotePathOn with no
+// target named, kept because that is what most of this estate wants to say.
+func ValidRemotePath(what, p string) error { return ValidRemotePathOn("", what, p) }
+
+// ValidRemotePathOn refuses anything that could be more than a path on the far
 // side. It also refuses a RELATIVE path, because the binary this verb runs
 // there must be named absolutely: a relative path resolves against whatever
 // directory the remote shell happens to start in, and a bare name would resolve
 // against $PATH -- which is how a machine ends up running a nova-update that is
 // not the one just verified and sent.
-func ValidRemotePath(what, p string) error {
+//
+// goos is the TARGET's, and the only thing it decides is whether the drive form
+// is a path at all. `C:\Users\nova\.local\bin` on a linux bench is not a path
+// that bench has; taking it would compose a remote command whose first token
+// cannot exist, and the machine would answer `command not found` for a mistake
+// made on this side. So the drive form is allowed for the windows target and
+// refused, by name, for every other.
+func ValidRemotePathOn(goos, what, p string) error {
 	remedy := "pass an absolute path, or one rooted at ~/, with no shell metacharacters"
+	if goos == "windows" {
+		remedy = "pass a drive-absolute path (C:\\Users\\nova\\.local\\bin), an absolute one, or one rooted at ~/, with no shell metacharacters"
+	}
 	if strings.TrimSpace(p) == "" {
 		return refuse(remedy, "%s is empty", what)
 	}
-	if !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "~/") {
-		return refuse(remedy, "%s %q is not absolute; the far side would resolve it against a directory or a $PATH nobody here chose", what, p)
+	drive := windowsDrivePathShape.MatchString(p)
+	if drive && goos != "windows" {
+		return refuse(remedy, "%s %q is a windows path and the target is %s, which has no drive letters", what, p, field(goos))
 	}
-	if !remotePathShape.MatchString(p) {
-		return refuse(remedy, "%s %q carries a character the remote shell would read as syntax rather than as a path", what, p)
+	if !drive {
+		if !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "~/") {
+			return refuse(remedy, "%s %q is not absolute; the far side would resolve it against a directory or a $PATH nobody here chose", what, p)
+		}
+		if !remotePathShape.MatchString(p) {
+			return refuse(remedy, "%s %q carries a character the remote shell would read as syntax rather than as a path", what, p)
+		}
 	}
-	for _, seg := range strings.Split(p, "/") {
+	// The .. check runs over the FOLDED path, so that `C:\Users\..\Windows`
+	// is caught by the same clause that catches `/home/nova/../root` rather
+	// than by a second one that could fall out of step with it.
+	for _, seg := range strings.Split(RemotePath(p), "/") {
 		if seg == ".." {
 			return refuse(remedy, "%s %q climbs out of itself with ..", what, p)
 		}
@@ -187,10 +243,34 @@ func inferVersion(root, goos, goarch string, errs io.Writer) (string, error) {
 	}
 }
 
+// olderThan says whether the version this binary is stamped with is BEHIND the
+// release it has been asked to fan out. It answers false for anything it cannot
+// read -- an unstamped dev binary, a string that is not a version -- because a
+// gate that refuses on a value it does not understand is a gate that stops the
+// work it exists to protect.
+func olderThan(self, release string) bool {
+	if ValidVersion(self) != nil || ValidVersion(release) != nil {
+		return false
+	}
+	return lessVersion(versionParts(self), versionParts(release))
+}
+
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	goos, goarch, err := Platform(o.platform)
 	if err != nil {
 		return refusal(errs, "ADOPT", err)
+	}
+	// A DIGEST FILE ON THE FAR SIDE IS NOT A DIGEST. --expect-sums-from names
+	// the DigestFile that THIS host's `release build` wrote; a path with a
+	// machine in front of it would be the machine holding the bits vouching
+	// for them, which is the exact circle Johnny's decision 2 exists to break.
+	// Checked before anything is opened, fetched or composed.
+	if o.expectSumsFrom != "" {
+		if host, _, remote := RemoteFrom(o.expectSumsFrom); remote {
+			return refusal(errs, "ADOPT", refuse(
+				"name the "+DigestFile+" that THIS host's `release build` wrote, or pass --expect-sums <sha256>",
+				"--expect-sums-from %q names the machine %s, and a digest computed where the bits live is that machine vouching for itself", o.expectSumsFrom, host))
+		}
 	}
 	f, err := os.Open(o.machines)
 	if err != nil {
@@ -216,27 +296,55 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		o.version = v
 	}
+	// INSTALL ON THE COORDINATOR FIRST, THEN ADOPT. `adopt` is not a courier:
+	// it is this host's nova-update reading a release, verifying it, and
+	// running THIS RELEASE'S install on every machine. A coordinator behind
+	// the release it is fanning out is a coordinator whose own verb may not
+	// understand what it is holding -- and the fourth dogfood met exactly that
+	// as a Studio that could not adopt the fleet at all, because the `--from`
+	// it needed ships inside the release it had not installed.
+	if deps.Self != nil {
+		if self := deps.Self(); olderThan(self, o.version) {
+			return refusal(errs, "ADOPT", refuse(
+				fmt.Sprintf("install it here first: nova-update release install --from %s --version %s --bin <dir>, then adopt with the new binary", o.from, o.version),
+				"this nova-update is %s and the release being adopted is %s: the install every machine runs is the one this host is holding", self, o.version))
+		}
+	}
 	// EVERY HOST AND PATH IS VALIDATED BEFORE ANY REMOTE COMMAND IS COMPOSED,
 	// not while it is being composed (Johnny, 2026-09-18). The names came from
 	// a file and the paths from flags; both are interpolated into a line the
 	// far side's shell parses, and a check that happens after the string is
 	// built is a check that has already lost.
-	for _, p := range []struct{ what, v string }{{"--bin", o.bin}, {"--dest", o.dest}, {"--retire", o.retire}} {
-		if p.v == "" {
+	//
+	// AND THEN FOLDED ONCE, HERE, into the form that goes into a command --
+	// never at each composition site, where one site would sooner or later be
+	// added without the fold. After this point every path in this verb is
+	// slash-form, whatever the person typed.
+	for _, p := range []struct {
+		what string
+		v    *string
+	}{{"--bin", &o.bin}, {"--dest", &o.dest}, {"--retire", &o.retire}} {
+		if *p.v == "" {
 			continue
 		}
-		if err := ValidRemotePath(p.what, p.v); err != nil {
+		if err := ValidRemotePathOn(goos, p.what, *p.v); err != nil {
 			return refusal(errs, "ADOPT", err)
 		}
+		*p.v = RemotePath(*p.v)
 	}
-	for _, m := range machines {
-		for _, p := range []struct{ what, v string }{{"the bin column", m.Bin}, {"the dest column", m.Dest}} {
-			if p.v == "" {
+	for i := range machines {
+		m := &machines[i]
+		for _, p := range []struct {
+			what string
+			v    *string
+		}{{"the bin column", &m.Bin}, {"the dest column", &m.Dest}} {
+			if *p.v == "" {
 				continue
 			}
-			if err := ValidRemotePath(p.what+" for "+m.Name, p.v); err != nil {
+			if err := ValidRemotePathOn(goos, p.what+" for "+m.Name, *p.v); err != nil {
 				return refusal(errs, "ADOPT", err)
 			}
+			*p.v = RemotePath(*p.v)
 		}
 	}
 	ssh := deps.SSH
@@ -269,6 +377,18 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// the tags were annotated, and WINS when both are given -- a digest a
 		// person typed deliberately is a decision, not a default.
 		expectSums, sumsFrom := o.expectSums, "--expect-sums"
+		// A DEV BUILD HAS NO TAG, so it has no annotation to read and no
+		// CHANGELOG entry to copy from: the digest of the only release that
+		// exists is the one the build wrote beside the artifacts, HERE. That
+		// file is read locally and never hashed remotely.
+		if expectSums == "" && o.expectSumsFrom != "" {
+			digest, err := ReadDigestFile(o.expectSumsFrom)
+			if err != nil {
+				return refusal(errs, "ADOPT", err)
+			}
+			expectSums, sumsFrom = digest, o.expectSumsFrom
+			progress(errs, "%s says this release's %s hashes to %s", o.expectSumsFrom, SumsFile, expectSums)
+		}
 		if expectSums == "" && o.repo != "" {
 			forge := deps.Forge
 			if forge == nil {
@@ -289,12 +409,19 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		if expectSums == "" {
 			return refusal(errs, "ADOPT", refuse(
-				"pass --repo <owner/name> to read the digest off the tag the cut annotated, or --expect-sums <sha256 of SHA256SUMS> to name it outright",
+				"pass --repo <owner/name> to read the digest off the tag the cut annotated, --expect-sums-from <"+DigestFile+"> to read it out of this host's own build, or --expect-sums <sha256 of SHA256SUMS> to name it outright",
 				"--from names the machine %s, and a release fetched from a machine cannot be verified by the checksum file that came with it", fromHost))
 		}
-		if err := ValidRemotePath("--from's directory", fromDir); err != nil {
+		// --from's directory is a path on the BUILD HOST, and that machine's
+		// operating system is its own business: a windows release may be
+		// built on the windows bench and adopted from the Studio, and a
+		// linux one may be built on a windows workstation. So the drive form
+		// is allowed here whatever the TARGET is -- "windows" names the
+		// superset, not the target -- and the fold applies as everywhere.
+		if err := ValidRemotePathOn("windows", "--from's directory", fromDir); err != nil {
 			return refusal(errs, "ADOPT", err)
 		}
+		fromDir = RemotePath(fromDir)
 		if !sha256Hex.MatchString(expectSums) {
 			return refusal(errs, "ADOPT", refuse("pass the 64 hex characters of `sha256sum SHA256SUMS`",
 				"the digest from %s, %q, is not a sha256", sumsFrom, expectSums))
@@ -475,6 +602,25 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s dry-run=%s\n",
 		result, len(machines), adopted, refused, field(o.version), map[bool]string{true: "yes", false: "no"}[o.dryRun])
 	return code
+}
+
+// ReadDigestFile reads a DigestFile: the sha256 of a release's SHA256SUMS, as
+// `release build` wrote it. The first whitespace-separated token is taken, so a
+// file produced by `sha256sum SHA256SUMS` -- which is `<digest>  SHA256SUMS` --
+// reads too, and a person who made one by hand that way is not punished for it.
+// The path is LOCAL: this function opens a file, and nothing in this package
+// ever asks a machine to hash anything.
+func ReadDigestFile(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot read --expect-sums-from %s: %w (name the %s that `release build` wrote beside the artifacts)", path, err, DigestFile)
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 || !sha256Hex.MatchString(fields[0]) {
+		return "", refuse(fmt.Sprintf("name the %s that `release build` wrote, whose first token is the 64 hex characters of `sha256sum %s`", DigestFile, SumsFile),
+			"%s does not start with a sha256", path)
+	}
+	return fields[0], nil
 }
 
 // errNoReceipt gives oneLine something to fold when the remote's failure is that

@@ -88,14 +88,19 @@ func (q *Queue) DropPark(pr int) {
 	q.Parked = out
 }
 
-// ApplyToState removes the queue's settled entries from the walk order and reports the
-// order the pass walks: the queued pull requests in queue order, then every branch. A
-// skipped or parked pull request is in neither list and is not walked. A queue whose
-// queued list is nil (no queue.json) leaves the lane's own order untouched.
+// WalkOrder is the order the pass walks: the queued pull requests in queue order, then
+// every branch. A skipped or parked pull request is in neither list and is not walked.
+//
+// A QUEUE THAT NAMES NOTHING RETURNS AN EMPTY ORDER, NOT NIL. Pass.ordered reads a nil
+// Order as "no queue file, walk the lane's own order", so a lane whose every pull request
+// was skipped came back nil and the pass walked ALL OF THEM -- the same direction as edge
+// 9's corrupt file, reached without corrupting anything. `dry-run` printed the skipped
+// entry at position 1. Only a nil *Queue -- no queue at all -- means the lane's own order.
 func (q *Queue) WalkOrder(s *State) (order []string) {
 	if q == nil {
 		return nil
 	}
+	order = []string{}
 	byID := map[string]*Entry{}
 	for _, e := range s.Entries() {
 		byID[e.ID()] = e

@@ -67,6 +67,17 @@ func fakeBenchBin(t *testing.T, dir string, f benchFake) (sshLog, scpLog string)
 	return sshLog, scpLog
 }
 
+// stepClock is the pull's clock in the tests: Now stands still until Sleep moves it, so a
+// bounded wait reaches its deadline in as many polls as it would in real time and not one
+// wall-clock millisecond. The production clock is realClock.
+type stepClock struct{ now time.Time }
+
+func newStepClock() *stepClock { return &stepClock{now: time.Unix(1_700_000_000, 0)} }
+
+func (c *stepClock) Now() time.Time { return c.now }
+
+func (c *stepClock) Sleep(d time.Duration) { c.now = c.now.Add(d) }
+
 func writeAt(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -85,7 +96,8 @@ func writeAt(t *testing.T, path, body string) {
 func TestPullWaitsForResult(t *testing.T) {
 	windowsIsNotABench(t)
 	dir := t.TempDir()
-	remoteJob := filepath.Join(dir, "bench", "3", "jobs", "a")
+	remoteSlot := filepath.Join(dir, "bench", "3")
+	remoteJob := filepath.Join(remoteSlot, "jobs", "a")
 	localJob := filepath.Join(dir, "root", "b2-3", "jobs", "a")
 	// The result is not on the bench when the slot's shell returns: it appears on the
 	// THIRD ask, so a pull that asks once and copies gets nothing, whatever the machine's
@@ -96,12 +108,12 @@ func TestPullWaitsForResult(t *testing.T) {
 		appearBody:  "RESULT: a\nall green\n",
 	})
 	writeAt(t, filepath.Join(remoteJob, "usage.tsv"), "tokens_in\ttokens_out\tusd\n10\t20\t0.0100\n")
-	writeAt(t, filepath.Join(remoteJob, "native.log"), "the card's own log\n")
+	writeAt(t, filepath.Join(remoteSlot, "native.log"), "the card's own log\n")
 
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
-		host: "b2", remoteJob: remoteJob, localJob: localJob,
-		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes,
+		host: "b2", remoteSlot: remoteSlot, remoteJob: remoteJob, localJob: localJob,
+		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
@@ -154,6 +166,16 @@ func TestPullWaitsForResult(t *testing.T) {
 				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 			}
 		}
+		// Match the FLAG, never a path that merely contains its letters: a
+		// workspace root named `...-root` carries "-r" in the destination.
+		for _, filter := range []string{"--include", "--exclude", "-r"} {
+			if strings.Contains(l, " "+filter) || strings.HasPrefix(l, filter) {
+				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
+			}
+		}
+		if strings.Contains(l, "*") {
+			t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
+		}
 	}
 	for _, want := range []string{"RESULT.md", "usage.tsv", "native.log"} {
 		found := false
@@ -185,7 +207,7 @@ func TestPullCopiesResultUpFromRepo(t *testing.T) {
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
 		host: "b2", remoteJob: remoteJob, localJob: localJob, label: "a",
-		wait: 200 * time.Millisecond, poll: 50 * time.Millisecond, notes: &notes,
+		wait: 200 * time.Millisecond, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
@@ -231,6 +253,7 @@ func TestPullScoresBenchUnreachable(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2",
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 		PullWait: 150 * time.Millisecond, PullPoll: 50 * time.Millisecond,
 		Stdout: &out, Stderr: &errb,
 	})

@@ -2079,3 +2079,14 @@ func TestSupervisorLogAppendsNeverTruncates(t *testing.T) {
 		t.Errorf("the harness's line landed before the bytes that were there first; the log is out of order:\n%s", got)
 	}
 }
+
+// triage accepts --usage and exits 0.
+func TestTriageAcceptsUsageFlag(t *testing.T) {
+	b := newBench(t)
+	usageFile := filepath.Join(t.TempDir(), "usage.tsv")
+	exit, stdout, stderr := b.swarm("triage", "--pool", b.pool, "--usage", usageFile)
+	if exit != 0 {
+		t.Fatalf("triage with --usage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage", stdout, "TRIAGE BATCH ")
+}

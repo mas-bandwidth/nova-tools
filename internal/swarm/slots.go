@@ -185,6 +185,25 @@ func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
 	return out, nil
 }
 
+// SlotHoldings reports how many leases owner holds and the share it holds them
+// within. It is the read `status` prints; it never reaps or grants.
+func SlotHoldings(store, owner string, now time.Time) (held, share int, err error) {
+	_, _, shares, err := loadSlotShares(store)
+	if err != nil {
+		return 0, 0, err
+	}
+	leases, err := ListSlotLeases(store, now)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, l := range leases {
+		if l.Owner == owner {
+			held++
+		}
+	}
+	return held, shares[owner], nil
+}
+
 // MakeSlotLease writes one lease directory by Mkdir (atomic) for tests and
 // for fixtures: the pid and until are the caller's, not the taker's.
 func MakeSlotLease(store, id, owner string, pid int, label string, until time.Time) error {
@@ -277,30 +296,37 @@ func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free
 // within capacity-reserve. Expired leases with a dead pid are reaped first;
 // expired leases with a live pid are DRIFT and stay held. New leases carry
 // the caller's pid and until=now+dur.
-func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (granted, held, share, free int, holders string, ok bool, err error) {
+//
+// IT RETURNS THE IDS IT GRANTED, not a count, and that is deliberate: the
+// count was what let a holder release by owner and label instead of by
+// identity, and give away a seat that was never its own (nova-tools#1546,
+// Stella's hold on PR #1562). len(ids) is the count for anyone who only
+// wanted that; taking a lease without learning which one is now impossible.
+// Hand the ids back to ReleaseSlotLeasesByID.
+func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	if strings.TrimSpace(owner) == "" {
-		return 0, 0, 0, 0, "", false, fmt.Errorf("owner is required")
+		return nil, 0, 0, 0, "", false, fmt.Errorf("owner is required")
 	}
 	if k < 1 {
-		return 0, 0, 0, 0, "", false, fmt.Errorf("n is at least 1, got %d", k)
+		return nil, 0, 0, 0, "", false, fmt.Errorf("n is at least 1, got %d", k)
 	}
 	if dur <= 0 {
-		return 0, 0, 0, 0, "", false, fmt.Errorf("for is a positive duration")
+		return nil, 0, 0, 0, "", false, fmt.Errorf("for is a positive duration")
 	}
 	if pid <= 0 {
-		return 0, 0, 0, 0, "", false, fmt.Errorf("pid is required")
+		return nil, 0, 0, 0, "", false, fmt.Errorf("pid is required")
 	}
 	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") {
-		return 0, 0, 0, 0, "", false, fmt.Errorf("owner and label are one line")
+		return nil, 0, 0, 0, "", false, fmt.Errorf("owner and label are one line")
 	}
 	capacity, reserve, shares, err := loadSlotShares(store)
 	if err != nil {
-		return 0, 0, 0, 0, "", false, err
+		return nil, 0, 0, 0, "", false, err
 	}
 	share = shares[owner]
 	entries, err := os.ReadDir(slotStoreDir(store))
 	if err != nil && !os.IsNotExist(err) {
-		return 0, 0, 0, 0, "", false, err
+		return nil, 0, 0, 0, "", false, err
 	}
 	counts := map[string]int{}
 	total := 0
@@ -326,10 +352,10 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	free = capacity - reserve - total
 	holders = slotHolders(counts)
 	if held+k > share || total+k > capacity-reserve {
-		return 0, held, share, free, holders, false, nil
+		return nil, held, share, free, holders, false, nil
 	}
 	if err := os.MkdirAll(slotStoreDir(store), 0o755); err != nil {
-		return 0, 0, 0, 0, "", false, err
+		return nil, 0, 0, 0, "", false, err
 	}
 	until := now.Add(dur).UTC().Format(time.RFC3339)
 	for i := 0; i < k; i++ {
@@ -339,13 +365,14 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 				if os.IsExist(err) && tries < 20 {
 					continue
 				}
-				return 0, 0, 0, 0, "", false, err
+				return nil, 0, 0, 0, "", false, err
 			}
 			body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n", owner, pid, label, until)
 			if err := os.WriteFile(slotLeaseFile(store, id), []byte(body), 0o644); err != nil {
 				_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), id))
-				return 0, 0, 0, 0, "", false, err
+				return nil, 0, 0, 0, "", false, err
 			}
+			ids = append(ids, id)
 			break
 		}
 	}
@@ -354,7 +381,7 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	free = capacity - reserve - total
 	counts[owner] = held
 	holders = slotHolders(counts)
-	return k, held, share, free, holders, true, nil
+	return ids, held, share, free, holders, true, nil
 }
 
 // ReleaseSlotLeases removes owner's leases: all of them with all=true, or
@@ -393,3 +420,57 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 	}
 	return released, held, nil
 }
+
+// ReleaseSlotLeasesByID removes EXACTLY the leases named, and only while they are still
+// the caller's. It exists because releasing by owner and label is not releasing by
+// identity: an owner is a bench and a label is a card's name, and two runs that share both
+// -- two slots, two benches, a retry -- would each give away the other's seat
+// (nova-tools#1546, Stella's hold on PR #1562). A holder that took leases learns their ids
+// from TakeSlotLeases and hands exactly those back here.
+//
+// The pid is a fence, not bookkeeping. An id whose lease has since been reaped and remade
+// by somebody else must not be removed by a stale list, so each lease is RE-READ and left
+// alone unless its pid is the one given. An id that is simply gone is not an error: a
+// release is allowed to be late, and the caller's job is to stop holding, not to prove
+// nobody tidied up first.
+//
+// `slots release --owner ... --label ...` stays as it is, by owner and label, because a
+// PERSON at a prompt wants exactly that: free whatever this owner is holding for that card.
+// A person can see the store; a deferred cleanup cannot.
+func ReleaseSlotLeasesByID(store string, ids []string, pid int) (released int, err error) {
+	if pid <= 0 {
+		return 0, fmt.Errorf("pid is required")
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		l, rerr := readSlotLease(store, id)
+		if rerr != nil {
+			// Already gone, or never readable: nothing of ours is held under it.
+			continue
+		}
+		if l.Pid != pid {
+			// Not ours any more. Someone reaped it and took the id, or the list is
+			// stale. Either way this is not a seat we may give away.
+			continue
+		}
+		dir := filepath.Join(slotStoreDir(store), id)
+		if rerr := safepath.RemoveUnder(slotStoreDir(store), dir); rerr != nil {
+			return released, rerr
+		}
+		released++
+	}
+	return released, nil
+}
+
+// NoSlotsStoreRefusal is the ONE line printed when a native launch was asked for without a
+// bench slot store or without an owner (nova-tools#1546). It lives here, beside the lease
+// code, because FOUR places must print the same sentence -- `nova-swarm native` itself, the
+// batch that refuses before any card runs, and the two paths that build a native argv --
+// and a remedy that drifts between them is a remedy a reader stops trusting.
+//
+// It names the store, the owner AND the exact command that makes a one-seat store, because
+// "pass --slots-store <dir>" on a bench that has never had one is not a remedy, it is a
+// second question.
+const NoSlotsStoreRefusal = "NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)"

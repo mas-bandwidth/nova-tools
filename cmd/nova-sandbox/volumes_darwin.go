@@ -203,7 +203,13 @@ func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, e
 	mount := field(info, "Mount Point")
 	if mount == "" || !strings.HasPrefix(mount, volumesRoot+"/") {
 		_ = d.Delete(disk)
-		return diskVolume{}, fmt.Errorf("the new volume %s is not mounted under %s (mount point %q), so there is nowhere to work", disk, volumesRoot, mount)
+		// The volume EXISTS at this point, and the mount is what did not happen, so the
+		// error says which of the two it is: a reader told the create failed goes to
+		// diskutil and to the container for a fault in neither. The cause is almost always
+		// the caller's own: a process inside an OS sandbox may not mount a volume, and
+		// every agent run under a harness that sandboxes its shell arrives here.
+		return diskVolume{}, fmt.Errorf("%w: %s came up in %s with no mount point under %s (diskutil reports mount point %q), so there is nowhere to work, and it has been deleted again. %s",
+			errVolumeNotMounted, disk, container, volumesRoot, mount, sandboxedCallerRemedy)
 	}
 	return diskVolume{Name: name, Disk: disk, Mount: mount}, nil
 }

@@ -28,6 +28,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// SourceOutcome marks a row that is not a decision at all: the outcome of a
+// unit a decision routed earlier, appended later by whoever watched the work.
+// The log is append-only -- a row written is never rewritten -- so an outcome
+// is its own row, and the summary folds it into the rung it names without
+// counting it as a second decision.
+const SourceOutcome = "outcome"
+
 // Entry is one row of the escalation log.
 type Entry struct {
 	Time          string  `json:"time"`
@@ -119,6 +126,43 @@ func tokens(has bool, n int) *int {
 	return &v
 }
 
+// OutcomeEntry is the row that records what happened to a unit a decision
+// routed: the rung that ran it and how it ended. It is a row of its own because
+// the log is append-only, and it names the kind and the rung from the decision
+// it answers rather than from a caller's memory of them.
+func OutcomeEntry(unit, kind, rung, outcome string, now time.Time) Entry {
+	e := Entry{
+		Time:      now.UTC().Format(time.RFC3339),
+		Unit:      unit,
+		Kind:      kind,
+		Evidence:  Unit{ID: unit, Kind: kind},
+		RungTried: rung,
+		Source:    SourceOutcome,
+		Outcome:   outcome,
+		Wait:      WaitNone,
+	}
+	if outcome == OutcomeOK {
+		e.RungSucceeded = rung
+	}
+	return e
+}
+
+// LastDecision finds the most recent DECISION row for a unit -- never an
+// outcome row -- so an outcome takes the kind and the rung from the decision it
+// answers. A unit the log does not hold is a refusal: an outcome against a
+// decision nobody made is a row that would regenerate a starting rung from
+// nothing.
+func LastDecision(entries []Entry, unit string) (Entry, bool) {
+	found := Entry{}
+	ok := false
+	for _, e := range entries {
+		if e.Unit == unit && e.Source != SourceOutcome {
+			found, ok = e, true
+		}
+	}
+	return found, ok
+}
+
 // AppendEntry appends one row to the log at path, creating it if it is not
 // there. The file is the tool's own (0600) and is never rewritten.
 func AppendEntry(path string, e Entry) error {
@@ -191,6 +235,14 @@ type KindSummary struct {
 type Summary struct {
 	Entries int
 	Kinds   []KindSummary
+
+	// Decisions and Outcomes are the two halves of rule 8's row, counted as
+	// ROWS across every kind, which is the arithmetic the hurt was measured
+	// with: 141 outcomes for 412 decisions on 2026-09-19. Their ratio is
+	// printed as coverage, because a floor tuned on a third of the rows is
+	// tuned on the rows somebody remembered (SPEC-DECIDE, housekeeping H2).
+	Decisions int
+	Outcomes  int
 }
 
 // Summarize counts the escalations per kind and regenerates the starting rung
@@ -220,9 +272,14 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 			c = &counts{success: map[int]int{}, failure: map[int]int{}}
 			byKind[kind] = c
 		}
-		c.decisions++
-		if e.SteppedUp || len(e.Evidence.Attempts) > 0 {
-			c.escalations++
+		// An outcome row is a fact about a decision already counted, never a
+		// decision of its own: counting it again would report twice the
+		// decisions the moment anyone started recording what happened.
+		if e.Source != SourceOutcome {
+			c.decisions++
+			if e.SteppedUp || len(e.Evidence.Attempts) > 0 {
+				c.escalations++
+			}
 		}
 		for _, a := range e.Evidence.Attempts {
 			if m, ok := reg.ByName(a.Rung); ok && a.Failed() {
@@ -239,6 +296,13 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 		}
 	}
 	sum := Summary{Entries: len(entries)}
+	for _, e := range entries {
+		if e.Source == SourceOutcome {
+			sum.Outcomes++
+			continue
+		}
+		sum.Decisions++
+	}
 	kinds := make([]string, 0, len(byKind))
 	for kind := range byKind {
 		kinds = append(kinds, kind)
@@ -284,6 +348,7 @@ func (s Summary) Render() string {
 			oneline.Field(k.Kind), k.Decisions, k.Escalations, k.Successes, k.Failures,
 			oneline.Field(k.StartRung), k.StartHeight, oneline.Field(k.DefaultRung), k.Regenerated)
 	}
-	fmt.Fprintf(&b, "LOG OK rows=%d kinds=%d escalations=%d\n", s.Entries, len(s.Kinds), escalations)
+	fmt.Fprintf(&b, "LOG OK rows=%d kinds=%d escalations=%d coverage=%d/%d\n",
+		s.Entries, len(s.Kinds), escalations, s.Outcomes, s.Decisions)
 	return b.String()
 }

@@ -117,9 +117,10 @@ nova-secrets version
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
-nova-secrets gate   --store <dir> --base <git ref> --head <git ref>
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
+nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
 nova-secrets help
 ```
 
@@ -127,10 +128,11 @@ nova-secrets help
 no flags or arguments. It opens no store or key and starts no sops, age or network program,
 so an installed-tool inventory can ask it on a bench with no credential setup.
 
-No verb writes into the store **except `seal`**, which folds one pasted value into one seat
-file and carries that change through a branch and a review; every other store edit is `sops`
-and `git` in a person's hands. `keygen` writes exactly one file, outside it; and no verb but
-`seal` reads the store and writes into it in one call.
+Two verbs write into the store: **`seal`**, which folds one pasted value into one seat file
+and carries that change through a branch and a review, and **`seat add`**, which creates a
+new seat's file and its rule in the working copy and stops there, for a person to commit and
+a reviewer to read. Every other store edit is `sops` and `git` in a person's hands. `keygen`
+writes exactly one file, outside it.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
 this tool does no network. A working copy in the strong sense — invariant 8 reads `.git` as
@@ -339,8 +341,8 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ### `gate`
 
 ```
-nova-secrets gate --store <dir> --base <git ref> --head <git ref>
-GATE APPROVE files=<n>
+nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+GATE APPROVE files=<n> machines=<registry|->
 GATE REFUSE rule=<n> file=<f>: <why>
 ```
 
@@ -360,20 +362,60 @@ does not begin `ENC[` and is not permitted in the clear by the rule's `unencrypt
 number is what `rule=<n>` prints; a changed file outside the three kinds names no rule and
 prints `rule=0`. The `file=` field names the file the refusal is about; a plain value is
 named by its key and **never quoted**, exactly as `check` invariant 3. On success it prints
-`GATE APPROVE files=<n>`, `files=` counting every changed path. The gate measures a **diff
-before review** and `check` measures the **working copy after**; each is the other's witness,
-and neither substitutes for the other.
+`GATE APPROVE files=<n> machines=<registry|->`, `files=` counting every changed path. The gate
+measures a **diff before review** and `check` measures the **working copy after**; each is the
+other's witness, and neither substitutes for the other.
+
+**It also refuses, at exit 2, when a seat file in the store at `--base` is gone at `--head`.**
+Removing a seat is how a seat loses its credentials inside a pull request whose subject says
+it is adding one, and it is never part of adding a seat. Keep what exists.
+
+**`--machines <registry>`: the fleet stands in for the reviewer who is no longer there.**
+Glenn's ruling of 2026-09-18 is that a secrets seat is set up **automatically** when he asks —
+no second human approval on `mas-bandwidth/secrets`, the mechanical gate is the required
+check. So the question a reviewer used to ask — *whose key is this, and does that machine
+exist?* — has to become a machine's question, and the fleet's machines registry
+(`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes`, `queue/control/machines.tsv`)
+is the one place that already answers it. **With `--machines` given, a recipient key this
+diff introduces — one no creation rule named at `--base`, the recovery key aside — is
+permitted only when some machine's `seat` column holds this rule's seat, where the seat is
+the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row whose seat is
+`-` carries no seat and vouches for nothing. The refusal names the **seat**, never the key,
+because the seat is what a reader goes and checks:
+
+```
+GATE REFUSE rule=1 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
+```
+
+The registry is read **first and whole**, before any judgement leans on it — an unreadable or
+malformed one is a refusal, exactly as `internal/fleet` demands, because the half of a
+registry that parses is the half that lets a recipient through. **Without `--machines` the
+rule is dormant, not satisfied**, and the approval line says `machines=-` so that no APPROVE
+is ever read as the fleet having vouched.
 
 ### `keygen`
 
 ```
 nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
-SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
 SECRETS RULE   creation_rules:
 SECRETS RULE     - path_regex: ^rowan\.yaml$
 SECRETS RULE       age: age1…,<recovery key>
 SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled
+SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
+SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
 ```
+
+**The order is the contract, and the OK line is LAST.** Glenn ran this on the Air on
+2026-09-18 and read a successful run as a failure (nova-tools#1393): the verdict was printed
+first and the placeholder note — "`<recovery key>` stands unfilled" — was the last line on the
+screen, and the last line of a command's output is the line a reader takes for the answer.
+Nothing was wrong; the tool had left its verdict at the top and its homework at the bottom. So
+the rule block comes first, the `NEXT:` line after it, and `SECRETS KEYGEN OK` last. The
+`NEXT:` line is phrased as a **next step, not a state of the world** — "add these two lines"
+rather than "stands unfilled" — because only one of those two reads as an instruction at the
+end of a green run. `TestKeygenPrintsTheOKLineLast` and `TestKeygenNextStepSaysItIsANextStep`
+pin the order and the wording; the placeholder note keeps its place above them, because a
+`--store`-less block that fails invariant 1 until it is filled must still say so.
 
 **What it asserts.** That a new age private key exists at `--key`, created with `O_EXCL` and
 mode `0600` in a directory that already existed at `0700`, and that its public half is the one
@@ -490,6 +532,49 @@ a `gh` pull request, waits up to two minutes for the seat-rule gate's `reviewDec
 merges with `--squash`, pulls, and runs `check` on the seat. `--no-pr` stops after the commit
 and makes no `gh` call. The OK line is `merged`, or `open (gate not yet approved)` when the
 wait expired with the request still open.
+
+### `seat add`
+
+```
+nova-secrets seat add --store ~/secrets --as air --pub age1… --from rowan \
+  --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+SECRETS SEAT ADD NEXT: commit .sops.yaml and air.yaml on a branch and open the pull request the store's gate reviews
+SECRETS SEAT ADD OK as=air from=rowan keys=2 file=air.yaml rule=2
+```
+
+**The circle it breaks.** `seal` cannot give a NEW seat its first value, and no flag makes it
+able to. To fold a value into `<seat>.yaml` it must first **decrypt** that file — sops rewrites
+the whole document, so the entries already in it have to be read back — and the only key that
+opens a seat's file is that seat's own. A bench that has just run `keygen` holds exactly one
+thing, its own key, and there is no file for that key to open; the moment a file exists, only
+that bench can open it, and that bench is the one with nothing to seal from. Measured on the
+Air, 2026-09-18: the store's pull request #15 broke the circle **by hand**, with a sops pipe
+out of a seat the operator's machine could open into the new seat's file. This verb is that
+pipe, with the refusals the hand pipe had to remember.
+
+**What it does, in order.** Reads `<store>/<from>.yaml` through a `sops -d` pipe with `--key`;
+takes the `--only` entries out of that plaintext and **no others**; writes the new seat's rule
+into `.sops.yaml` — `path_regex: ^<seat>\.yaml$`, `age: <pub>,<recovery key>`, the shape
+invariant 1 demands and the one `keygen` prints; and re-encrypts the selected entries **from
+stdin**, with `--filename-override <seat>.yaml` and the store as the child's working directory,
+so that rule's recipients are the ones sops finds. The rule goes in **before** the encrypt, or
+the file is encrypted to nobody. Values travel on stdin only: never argv, never a file in the
+clear, never an output line, never a progress line. `--pub` is the new seat's **public** half,
+which arrives from its own `keygen` receipt; a private key never leaves the bench that made it.
+
+**What it refuses, at exit 2, before anything is written.** A `--from` this machine cannot
+open, naming the seat and the key — the case the verb exists for, and the one a lenient run
+would answer by writing a file nobody can read. A `<seat>.yaml` that already exists, because a
+rewrite of a seat file drops every value it holds. A `.sops.yaml` that already carries a rule
+matching that file, because the rule is the grant and a grant is changed in a reviewed pull
+request and nowhere else. An `--only` name the source does not carry, naming the key and never
+a value. A `--from` equal to `--as`, a `--pub` that is not an age public key, a `--pub` that is
+the store's own recovery key. **A failure after the rule is written puts `.sops.yaml` back
+exactly as it was**: a refused run leaves the store byte-for-byte unchanged.
+
+**What it deliberately does not do.** Commit, push, or open a pull request. It leaves two
+changed files in the working copy and names them, and the store's own gate (`nova-secrets
+gate`) reads the diff before the review, as it does for every other recipient change.
 
 ### Refused, by name, with where it lives
 
@@ -706,7 +791,16 @@ SECRETS CHECK  FAIL <file>: <why>
 SECRETS CHECK  FAIL as=<name> files=<n> failed=<n> shown=<n>
 SECRETS KEYGEN OK   as=<name> key=<path> mode=0600 pub=<age1…>
 SECRETS RULE        <one line of .sops.yaml to paste>
+SECRETS RULE   NEXT: <the next step, never a state of the world>
+SECRETS SEAT ADD NEXT: <the next step>
+SECRETS SEAT ADD OK as=<seat> from=<seat> keys=<n> file=<path> rule=<n>
+SECRETS SEAT ADD FAIL <why>
 ```
+
+**Where a verb prints more than one line, the `OK` line is LAST.** `keygen` and `seat add`
+both end on their verdict and put what is left to do above it, because the last line on the
+screen is the one a reader takes for the answer (nova-tools#1393). A `NEXT:` line is an
+instruction and is written as one.
 
 **No value, no fragment of a value, and no value's length ever appears on any line, in any
 refusal, or in any error passed through from sops** — a length is a value's shape, and the
@@ -949,6 +1043,28 @@ red test that carries it. They extend **The model** and **Rotation**; they do no
     `*.env`) anywhere under `HOME`, because a plaintext key on the bench is the boundary this page
     is about, already crossed. Red test demanded: `TestPlaintextKeyFilesFailLoudly`.
 
+## Additions from the Air seat (2026-09-18)
+
+Two rules, both measured the day a new bench was given its first credentials by hand.
+
+11. **A multi-line receipt ends on its verdict.** The `OK` line is the LAST line a verb prints,
+    and whatever is left to do is a `NEXT:` line above it, phrased as an instruction rather than
+    as a state of the world. A green `keygen` whose last line said a placeholder "stands
+    unfilled" was read as an error by the person who ran it (nova-tools#1393). Red tests:
+    `TestKeygenPrintsTheOKLineLast`, `TestKeygenNextStepSaysItIsANextStep`.
+12. **A new seat is given its first values by `seat add`, never by `seal`.** `seal` decrypts
+    before it writes, and only the new seat's own key opens the new seat's file, so the first
+    value must be re-sealed out of a seat the operator's machine CAN open — with the new seat's
+    rule written first, so the encrypt has recipients to find. The hand version of this is the
+    store's pull request #15. Red tests: `TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile`,
+    `TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen`,
+    `TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere`,
+    `TestSeatAddRefusesAnExistingTargetFile`, `TestSeatAddRefusesAnExistingRule`,
+    `TestSeatAddGivesANewSeatItsFirstValues` (against the real sops and age), and
+    `TestTheFakeSopsRefusesWhatRealSopsRefuses` — **the fake in the test refuses what the real
+    tool refuses**: a missing recipient, a file in the clear, an encrypt with no file argument.
+    A lenient fake shipped a broken `seal` here once already.
+
 ## Owed, and where the rest lives
 
 The full work list is in this pull request's body, and new ideas are issues. Owed before this
@@ -987,3 +1103,18 @@ accepted*).
 *Rowan, 2026-09-12. No credential value was read, written, printed or named anywhere in this
 work; the real store was read only through its `.sops.yaml`, its README, its ruleset and its
 collaborator permissions, and no `sops` or `age` command was run against it.*
+
+## Future additions from the first adoption (2026-09-16, Glenn and Stella dogfooding; nova-tools #881)
+
+The first real adoption ran on the studio seat, then Stella's, then four bench seats, by hand. Glenn's verdict: "It should be a single step then 'yes'." Each item below is a hurt from that night and the verb or rule that removes it; each lands with its red test.
+
+1. **`adopt` is one verb.** `nova-secrets adopt --as <seat> [--store <url>] [--bench <ssh host>]` installs sops and age if absent, generates the deploy key and the age identity in place, registers the deploy key by API, clones the store, opens the rule PR (seat key + recovery.pub), waits for the seat-rule gate, merges, pulls, re-seals the calling seat's swarm values into the new file through a pipe when the seat is a swarm seat, proves the seat (`check` OK, `exec` by length) and prints `ADOPT OK seat=<name> store=<sha>`. A human gives "yes" once; a person's value is entered once by `set`. A partial adoption rolls back; every refusal is one remedy line.
+2. **`set` and `rotate`.** `nova-secrets set --as <seat> --name NAME` reads the value from a prompt or stdin, seals it through a pipe (never argv, disk or history), commits and pushes a PR. `rotate` is `set` plus the note that revocation at the provider is the human's step. Ingest is rotate: every value enters fresh.
+3. **The recovery key is generated off-bench, enforced.** `keygen --recovery` refuses on a bench that holds any seat key, or prints the off-bench instruction and stops.
+4. **A seat's `check` and `exec` fail only on the seat's own files.** Other files are reported as foreign, never fatal (a stale rule on one file blocked every seat).
+5. **Remedy lines name the seat that can act,** never a command the caller cannot run (`sops updatekeys` on a bench that cannot decrypt).
+6. **The seat-rule gate is the second pair of eyes** for the one shape a seat PR has (two recipients with recovery.pub second; ciphertext only; no other file); it lives in the store (`.github/seat-rule-gate.sh`) and approves; anything else a human reads.
+7. **A worker description names its secret,** `secret: NAME`, delivered by `exec` into the environment; `key_file` is the legacy shape; `nova-swarm native` never copies an auth file into a job and refuses a `--model` other than the description's (a key may be authorized for one model).
+8. **Harness configs hold `{env:NAME}`, never a literal;** `fleet survey` reports a literal key or a key-shaped file on a bench as DRIFT.
+9. **One seat per OS user.** Two lines on one user share the key ("wouldn't", not "can't"); the survey reports it.
+10. **Keys are for swarms, not people.** A swarm seat holds model keys; a person's own keys are that line's seat, entered by that line.

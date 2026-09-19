@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -201,6 +202,43 @@ func TestRunReportsALeakAndPaysForItWithTheExitCode(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "freed=0") {
 		t.Fatalf("a leaked volume freed nothing and the receipt should say so:\n%s", errOut)
+	}
+}
+
+// A volume that was made and not mounted is not a volume that could not be made, and the
+// printed line has to be the one the caller can act on: the verb's own prefix would tell a
+// reader the create failed, which sends them to diskutil and to the container for a fault
+// in neither. The words come from the manager, which is the half that knows which of the
+// two happened.
+func TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed(t *testing.T) {
+	b := newRunBench(t, 0)
+	b.vols.createErr = fmt.Errorf("%w: the volume disk3s7 was created in disk3 and is not mounted under /Volumes", errVolumeNotMounted)
+	code, errOut := runOnce(t, b, runFlagsFor(t)...)
+	if code != 125 || !strings.Contains(errOut, "reason=volume_failed") {
+		t.Fatalf("a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
+	}
+	if strings.Contains(errOut, "could not be created") {
+		t.Fatalf("the refusal says the volume could not be created, over an error that says it was:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "was created in disk3 and is not mounted under /Volumes") {
+		t.Fatalf("the refusal drops what the manager said happened:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, runRemedy) {
+		t.Fatalf("the refusal carries no remedy line:\n%s", errOut)
+	}
+}
+
+// Every other create failure keeps the verb's own prefix: the container is where the
+// volume would have been made, and a reader of that line needs to know which one.
+func TestRunNamesTheContainerWhenTheCreateItselfFails(t *testing.T) {
+	b := newRunBench(t, 0)
+	b.vols.createErr = errors.New("diskutil apfs addVolume: exit status 1: quota too small")
+	code, errOut := runOnce(t, b, runFlagsFor(t)...)
+	if code != 125 || !strings.Contains(errOut, "reason=volume_failed") {
+		t.Fatalf("a create that failed is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "the disposable volume could not be created in disk3") {
+		t.Fatalf("the refusal does not name the container the volume would have been made in:\n%s", errOut)
 	}
 }
 

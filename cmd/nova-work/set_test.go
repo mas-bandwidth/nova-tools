@@ -211,3 +211,54 @@ func TestSetCheckKeepsTheReadersBounds(t *testing.T) {
 		t.Errorf("a dispatch macro: exit %d, stderr %q", code, stderr)
 	}
 }
+
+// --ready over the REAL work set of 2026-09-18, pinned. The file is
+// work/pitstop-2026-09-18-units.lisp as the coordinator wrote it, copied into
+// testdata verbatim, and this is the whole point of the slice: the ready set is
+// computed THROUGH admission (internal/jobs), so what comes back is a set of
+// units that may run TOGETHER rather than a list each of which could run if the
+// others did not.
+//
+// Twenty units. Eleven have their needs closed. Eight of those eleven may go:
+// the other three are held by A6, one live unit per lane, and the line names
+// the lane and the unit holding it. A reader who wants to know why a bench is
+// only running eight cards reads that here instead of guessing at ps output.
+func TestSetCheckReadyAdmitsTheRealSetOf20260918(t *testing.T) {
+	path := setFixture(t, "pitstop-2026-09-18-units.lisp")
+	code, stdout, stderr := runCLI(t, "set", "check", "--file", path, "--ready")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	want := []string{
+		"SET READY unit=certify:verb owner=rowan-child lane=pulse deadline=- admit=go on=- by=-",
+		"SET READY unit=wall:toolchain-roots owner=Johnny lane=swarm deadline=- admit=go on=- by=-",
+		"SET READY unit=darwin:measured-shards owner=rowan-child lane=merge deadline=- admit=go on=- by=-",
+		"SET READY unit=review:sharedtemp-class owner=rowan-child lane=ci deadline=- admit=go on=- by=-",
+		"SET READY unit=merge:dogfood-fixes owner=rowan-child lane=merge deadline=- admit=held on=lane:merge by=darwin:measured-shards",
+		"SET READY unit=harvest:bench owner=rowan-child lane=pulse deadline=- admit=held on=lane:pulse by=certify:verb",
+		"SET READY unit=sandbox:lock-reap owner=rowan-child lane=sandbox deadline=- admit=go on=- by=-",
+		"SET READY unit=decide:validate-stepup owner=rowan-child lane=decide deadline=- admit=go on=- by=-",
+		"SET READY unit=gate:unmatched owner=rowan-child lane=ci deadline=- admit=held on=lane:ci by=review:sharedtemp-class",
+		"SET READY unit=lisp:collision owner=Stella lane=work deadline=- admit=go on=- by=-",
+		"SET READY unit=air:bud-setup owner=rowan-child lane=docs deadline=- admit=go on=- by=-",
+		"SET OK units=20 ready=11 blocked=9 owned=20",
+	}
+	if got := strings.Split(strings.TrimSpace(stdout), "\n"); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the real set's ready line moved.\ngot:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))
+	}
+	// A9, on the real file: the units AFTER a held one still go. merge:dogfood
+	// -fixes is held and sandbox:lock-reap, two lines below it, is not -- there
+	// is no round, no wave and no head-of-line block in the pass.
+	held := strings.Index(stdout, "unit=merge:dogfood-fixes")
+	goes := strings.Index(stdout, "unit=sandbox:lock-reap")
+	if held < 0 || goes < 0 || goes < held {
+		t.Fatalf("the pass order moved:\n%s", stdout)
+	}
+	if !strings.Contains(stdout[goes:], "admit=go") {
+		t.Error("a unit after a held one did not go: the pass has a barrier in it")
+	}
+	// Every unit of this set owns a mind, and the arithmetic closes.
+	if !strings.Contains(stdout, "SET OK units=20 ready=11 blocked=9 owned=20") {
+		t.Errorf("the summary moved:\n%s", stdout)
+	}
+}

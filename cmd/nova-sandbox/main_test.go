@@ -1753,3 +1753,69 @@ func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.
 		t.Fatalf("a secret outside both lists was exit %d: %s", code, errOut)
 	}
 }
+
+// --read-noexec IS A FLAG, and the reason it exists is the reason it is separate: a
+// `--read` root carries EXECUTE on both bodies -- landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally -- so a
+// cache or a data tree the job's own user can write to could be RUN from. Johnny's
+// security read of #1364 stopped `~/go/pkg/mod` being granted that way, and until this
+// flag existed `Policy.ReadsNoExec` and both wall bodies were unreachable from the argv:
+// the grant was implemented and could not be asked for.
+//
+// This test is the argv contract and runs on every platform, because a refusal is a
+// refusal everywhere: the flag is repeatable, it is on the banner, it takes a value, and
+// rule 5 refuses a path that is not there exactly as `--read` does.
+func TestReadNoExecIsAFlagOfTheBareForm(t *testing.T) {
+	j := newJob(t)
+	// The banner names it, or a caller cannot find it (ONBOARDING.md point 2).
+	if _, out, _ := j.tool(t, j.env(), "help"); !strings.Contains(out, "--read-noexec") {
+		t.Errorf("the banner does not name --read-noexec:\n%s", out)
+	}
+	// Rule 5: a path that is not there is a refusal, named by flag, and NOT created.
+	missing := filepath.Join(j.base, "no-such-cache")
+	code, _, errOut := j.tool(t, j.env(), "--read-noexec", missing, "--write", j.write, "--", "/bin/sh", "-c", "true")
+	if code != 125 || !strings.Contains(errOut, "reason=bad_read") || !strings.Contains(errOut, "--read-noexec") {
+		t.Fatalf("a --read-noexec that is not there was exit %d: %s", code, errOut)
+	}
+	if _, err := os.Stat(missing); err == nil {
+		t.Error("the tool CREATED the --read-noexec path; every path is yours and none is guessed")
+	}
+	// A flag with no value names itself and the form it wants (rule 16).
+	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--read-noexec"); code == 0 ||
+		!strings.Contains(errOut, "--read-noexec wants a value") {
+		t.Fatalf("a bare --read-noexec was exit %d: %s", code, errOut)
+	}
+}
+
+// The wall's two read sets, end to end on darwin: a script under --read-noexec is
+// READABLE and NOT EXECUTABLE, while the same script under --read runs. The OK line
+// carries the count as its own field, so a log says which kind of grant a run had.
+func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	cache := filepath.Join(j.base, "cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(cache, "x.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--read", j.read, "--read-noexec", cache, "--write", j.write, "--", "/bin/sh", "-c"}
+	code, out, errOut := j.tool(t, j.env(), append(args, "cat "+script)...)
+	if code != 0 || !strings.Contains(out, "echo ran") {
+		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "read-noexec=1") {
+		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	}
+	if code, _, _ := j.tool(t, j.env(), append(args, script)...); code == 0 {
+		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	}
+	// The control: the same file under --read runs, so the denial above is the no-exec
+	// grant and not a broken script.
+	ctl := []string{"--read", cache, "--write", j.write, "--", "/bin/sh", "-c", script}
+	if code, _, errOut := j.tool(t, j.env(), ctl...); code != 0 {
+		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
+	}
+}

@@ -184,6 +184,29 @@ in one set after it left the others. **The score is a hard bound, not the deadli
 call is not reaped the moment its deadline lapses. `nova-swarm caps` prints the counts; reservation
 is the script, not a spreadsheet.
 
+### In-flight caps — one atomic admission script per provider/model/key
+
+The per-key in-flight counter is a sorted set scored by each call's own deadline,
+`swarm:cap:<provider>:<model>`, but admission is **one atomic Lua script — a Lua INCR-with-limit
+that returns admitted or refused — never a `ZCARD` read followed by a separate `ZADD` write**:
+
+```text
+-- admit: KEYS[1] the cap set, ARGV = cap, deadline, call-id, now
+ZREMRANGEBYSCORE KEYS[1] -inf (now)                 -- a lapsed call frees its seat
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
+  return 0                                          -- refused
+end
+redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[3])
+return 1                                            -- admitted
+```
+
+The script runs single-threaded inside Redis, so no two admissions interleave between the count and
+the add: the 41st in-flight Muse call is refused **inside** the script, and a check-then-add split
+across two round trips cannot admit it. **The score is the expiry**, so a call whose worker dies
+drops out on the next admission with no reap pass; the same script serves the per provider cap and
+the per key cap by naming them. `nova-swarm caps` prints the counts; admission is the script, not a
+spreadsheet.
+
 ### An expired remote call is `outcome=unknown`, never failed or succeeded
 
 A model call can outlive its own lease or deadline while the provider has not answered. That call
@@ -266,6 +289,29 @@ same moment it gathers the `RESULT.md`.
 `nova-pulse`** on the timer's behalf (`nova-pulse beat`), so a bench writes through the tool's one
 writer and never opens a connection of its own.
 
+## The record: card results
+
+Card results were scraped from job directories on the benches by a harvest loop over ssh; it
+re-harvested old jobs and could force-push stale commits (review #1263 F09, F11). They are now a
+durable table, written from the `cards:done` stream of Part 2 and read by a verb rather than a walk
+over the `job*` directories.
+
+**`card_results` — one row per result.** `card_results(stream_id, label, bench, exit,
+result_line, job_path, commit, branch, pr, pushed_at, done_at, recorded_at)`. `stream_id` is the
+Redis stream entry id and the primary key, so a redelivered or replayed result is an `ON CONFLICT
+(stream_id) DO NOTHING` no-op and never a second row; `pr`, `pushed_at` and `done_at` are the
+"when known" columns and are SQL `NULL` when the result did not carry them. **Writer: `nova-work
+record`.**
+
+`nova-work record --migrate` applies `internal/record/schema.sql` — plain SQL, versioned by a
+`schema_version` table, idempotent — and exits. `nova-work record --redis <addr> --postgres <dsn>
+[--once] [--deadline 1h]` reads `cards:done` with `XREADGROUP` in the `record` group, commits each
+row, and `XACK`s only after the commit, so a crash between the two leaves the entry pending for
+the next start to repair. `nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed]
+[--max 20]` prints one line per row, newest first, with a `MORE` line naming the rest. The store
+is an interface: the unit tests run against a fake over the same contract with miniredis standing
+in for Redis, and the real Postgres path is the soak behind `RECORD_TEST_PG`.
+
 ## Part 4 — the verbs that change
 
 - **`nova-pulse watch`** subscribes to `nova:events:*` instead of polling the queue, the bus and
@@ -275,11 +321,13 @@ writer and never opens a connection of its own.
 - **`nova-merge queue`** writes CI and PR verdicts into `ci_pr_outcomes` as it decides them.
 - **`nova-tokens report`** is a query over `token_ledger`; the fold still writes the day TSVs.
 - **`nova-swarm caps`** reads the in-flight sorted sets across provider, model and key;
-  reservation is the one atomic script, not a note.
+  reservation is the one atomic script and the admission is the counter, not a note.
 - **the pull worker** reads `nova:queue:*` with `XREADGROUP` and `XACK`s on clip, replacing the
   directory scan and the `taken/` rename.
+- **`nova-work record` and `results`** write and read `card_results` from the `cards:done`
+  stream, replacing the harvest loop over `job*` directories and its stale force-pushes.
 
-## Part 5 — migration in three slices, and the red tests
+## Part 5 — migration in four slices, and the red tests
 
 Each slice shadows the last and is measured, so the old path is restorable until the number moves.
 
@@ -291,7 +339,10 @@ Each slice shadows the last and is measured, so the old path is restorable until
 2. **Postgres beside the files, on one bench.** Write the projection, the ledger, the inventory
    and the outcomes to Postgres while the files in git stay the record. Measure **hand steps
    removed**: the inventory spreadsheet and the per-question `gh` calls stop being a bench's job.
-3. **Cut the verbs over.** `watch` subscribes, `status --fleet` queries, the puller reads the
+3. **Redis beside the directory queue, on space.** Run the streams, leases, counters, presence and
+   channels beside `queue/` and the slot files; the fallback is the proof. Measure **polling turns
+   per hour**, which should fall toward zero on a quiet bench.
+4. **Cut the verbs over.** `watch` subscribes, `status --fleet` queries, the puller reads the
    stream, caps read the counters, `report` queries. Measure **seconds to answer "how wide are
    we"**, from a `gh`-and-files sweep to one `status` line.
 
@@ -300,8 +351,9 @@ Each slice shadows the last and is measured, so the old path is restorable until
 - `a-stream-consumer-that-dies-mid-card-has-its-card-reclaimed` — kill a puller mid-card;
   `XAUTOCLAIM` hands the card to the next puller, its partial `RESULT.md` kept as evidence.
 - `a-cap-counter-refuses-the-41st-in-flight-muse-call` — the 40th Muse call admits, the 41st is
-  refused, and a call past its **hard bound** frees its seat with no reap pass (a lapsed deadline
-  alone does not; see the unknown-outcome test).
+  refused; in the slice-1 script a lapsed call frees its seat with no reap pass, and a call past
+  its **hard bound** frees its seat with no reap pass too (a lapsed deadline alone does not; see
+  the unknown-outcome test).
 - `a-watch-subscriber-wakes-on-a-job-done-event-within-a-second` — publish `nova:events:job` after
   a `RESULT.md` lands; the subscriber returns once, inside a second, and re-reads the file.
 - `the-monthly-token-report-from-postgres-equals-the-folded-tsv-to-the-token` — `report` over
@@ -314,7 +366,8 @@ Each slice shadows the last and is measured, so the old path is restorable until
   the file mode never touches the Redis key (nor the reverse), so one slot never has two modes.
 - `a-cap-admission-is-one-atomic-script-that-refuses-the-41st` — concurrent admissions run through
   the single three-set script; exactly 40 hold provider, model and key together, no partial
-  reservation is ever visible, and no `ZCARD`-then-`ZADD` interleaving lets a 41st in.
+  reservation is ever visible, and no `ZCARD`-then-`ZADD` interleaving lets a 41st in; the same
+  single script holds the key, and exactly 40 hold the key.
 - `a-paused-old-worker-cannot-write-after-its-lease-lapsed` — take a lease, let it lapse, give the
   slot to a new token, then run the old worker's clip, `XACK`, `RESULT` publish and harvest push
   through their fenced Lua; every one returns 0 and no clip, ack, event or timeline row lands,

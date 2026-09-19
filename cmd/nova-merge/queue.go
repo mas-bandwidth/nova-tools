@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -100,19 +102,26 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 		timeout = time.Duration(n) * time.Second
 	}
 	if len(pos) == 0 {
-		return queueRefuse(stderr, "queue wants one of hold, release, skip, unskip, front, sweep, classify, audit: "+
-			`nova-merge queue --lane <dir> hold "<reason>" | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration> | classify --run <id> --verdict <verdict>`)
+		return queueRefuse(stderr, "queue wants one of status, hold, release, skip, unskip, front, sweep, classify, audit: "+
+			`nova-merge queue --lane <dir> status | hold "<reason>" --who <name> | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration> | classify --run <id> --verdict <verdict> | audit --repo <owner>/<name>`)
 	}
 	sub, rest := pos[0], pos[1:]
 	switch sub {
+	case "status":
+		return cmdQueueStatus(lane, st, opts, stdout, stderr)
 	case "hold":
 		reason := strings.TrimSpace(strings.Join(rest, " "))
 		if reason == "" {
-			return queueRefuse(stderr, `a hold wants a reason; a hold nobody can read is not a hold: nova-merge queue hold "<reason>"`)
+			return queueRefuse(stderr, `a hold wants a reason; a hold nobody can read is not a hold: nova-merge queue hold "<reason>" --who <name>`)
 		}
-		by := opts["who"]
+		// EDGE 11: --who was undocumented and optional, and a hold written without it
+		// said `by=unknown` -- a hold whose owner nobody can ask is a hold nobody dares
+		// release. It is required, like every other fact this tool refuses to guess
+		// (rule 20); this package reads no environment variable, so `$USER` is the
+		// caller's to pass and never this tool's to assume.
+		by := strings.TrimSpace(opts["who"])
 		if by == "" {
-			by = "unknown"
+			return queueRefuse(stderr, `--who is required and is the person this hold belongs to; refusing to guess: nova-merge queue hold "<reason>" --who <name>`)
 		}
 		release, err := merge.Lock(filepath.Join(lane, merge.StateLock), timeout)
 		if err != nil {
@@ -196,20 +205,14 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 		if st.Find(id) == nil {
 			return queueRefuse(stderr, fmt.Sprintf("pull request %d is not in this lane: nova-merge add --lane %s --pr %d", pr, oneline.Field(lane), pr))
 		}
-		host := deps.NewHost(st.Repo, timeout)
-		if data, err := host.PR(pr); err != nil {
-			return queueRefuse(stderr, fmt.Sprintf("pull request %d could not be read: %s", pr, oneline.Err(err)))
-		} else if data.Merged || data.Closed {
-			return queueRefuse(stderr, fmt.Sprintf("pull request %d is not open; front moves an open pull request: nova-merge add --lane %s --pr %d", pr, oneline.Field(lane), pr))
-		} else {
-			checks, err := host.Checks(data.HeadOID)
-			if err != nil {
-				return queueRefuse(stderr, fmt.Sprintf("pull request %d's checks could not be read: %s", pr, oneline.Err(err)))
-			}
-			if checks.Red > 0 || checks.Pending > 0 || checks.Total() == 0 {
-				return queueRefuse(stderr, fmt.Sprintf("pull request %d is not green (%s); front moves a green pull request", pr, oneline.Field(checks.Field())))
-			}
-		}
+		// EDGE 10: `front` REORDERS NUMBERS IN A FILE. It used to read the pull request
+		// and its checks from the forge first and refuse one that was not open and green,
+		// which made the one local verb in this family need a network, a gh and a token --
+		// and refuse on a bench that had none, over a judgement `run` makes again anyway.
+		// The order is not a verdict: `run` re-reads the host every pass and will not
+		// land a red or a closed entry whatever position it sits in. So this is local,
+		// exactly like skip and unskip, and the one thing it still checks is the one thing
+		// it can know by itself -- that the entry is in this lane.
 		var displaced int
 		q, err := merge.UpdateQueue(lane, st, timeout, func(q *merge.Queue) error {
 			displaced = len(q.Queued)
@@ -234,7 +237,68 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	case "sweep":
 		return cmdQueueSweep(lane, opts, st, timeout, stdout, stderr, deps)
 	}
-	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of hold, release, skip, unskip, front, sweep, classify, audit", sub))
+	return queueRefuse(stderr, fmt.Sprintf("queue subverb %q is not one of status, hold, release, skip, unskip, front, sweep, classify, audit", sub))
+}
+
+// cmdQueueStatus is the queue's own report, and it READS NOTHING BUT THE LANE'S FILES.
+//
+// EDGE 7, 2026-09-18: there was no way to see the queue at all. `nova-merge status` walks
+// the entries and names neither the hold nor the skip set, so a lane that was standing
+// still because somebody held it looked exactly like a lane with nothing to do, and a
+// pull request that was skipped looked exactly like one nobody had queued. Both facts are
+// one line here now: `hold=<reason|->` and `skipped=<n>`.
+//
+// It takes no host, no clone and no lock: queue.json and hold are two files under --lane,
+// and a report that cannot be read on a bench with no gh is a report nobody runs.
+func cmdQueueStatus(lane string, st *merge.State, opts map[string]string, stdout, stderr io.Writer) int {
+	max := bounded.Default
+	if raw, ok := opts["max"]; ok {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return queueRefuse(stderr, fmt.Sprintf("--max is a ceiling on a listing: 0 means all and a negative one is a typo with two readings, got %q", raw))
+		}
+		max = n
+	}
+	q, err := merge.LoadQueue(lane, st)
+	if err != nil {
+		return queueRefuse(stderr, fmt.Sprintf("%s: %s; repair or remove it -- a queue this tool cannot read is an order it must not guess at", oneline.Field(filepath.Join(lane, merge.QueueName)), oneline.Err(err)))
+	}
+	h, held, err := merge.ReadHold(lane)
+	if err != nil {
+		return queueRefuse(stderr, oneline.Err(err))
+	}
+	reason, by := "-", "-"
+	if held {
+		reason, by = h.Reason, h.By
+		if strings.TrimSpace(by) == "" {
+			by = "-"
+		}
+	}
+	list := bounded.Capped(stdout, max, "QUEUE", "entry",
+		fmt.Sprintf("nova-merge queue --lane %s status --max 0", oneline.Field(lane)))
+	for i, pr := range q.Queued {
+		list.Line(fmt.Sprintf("QUEUE ENTRY pos=%d entry=%d state=queued", i+1, pr))
+	}
+	for _, pr := range sortedIDsOf(q.Skipped) {
+		if q.IsParked(pr) {
+			list.Line(fmt.Sprintf("QUEUE ENTRY pos=- entry=%d state=parked", pr))
+			continue
+		}
+		list.Line(fmt.Sprintf("QUEUE ENTRY pos=- entry=%d state=skipped", pr))
+	}
+	list.More()
+	fmt.Fprintf(stdout, "QUEUE STATUS lane=%s queued=%d skipped=%d parked=%d hold=%s by=%s\n",
+		oneline.Field(lane), len(q.Queued), len(q.Skipped), len(q.Parked),
+		oneline.Field(reason), oneline.Field(by))
+	return 0
+}
+
+// sortedIDsOf is the skipped set in a deterministic order, so two runs of `queue status`
+// over one file print the same lines.
+func sortedIDsOf(list []int) []int {
+	out := append([]int(nil), list...)
+	sort.Ints(out)
+	return out
 }
 
 func parsePRs(args []string) ([]int, error) {
@@ -337,6 +401,13 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 					if hasInt(q.Queued, pr.Number) {
 						already++
 					} else {
+						laneVs, err := merge.LoadLaneVerdicts(lane, pr.Number)
+						if err != nil {
+							return fmt.Errorf("lane read records for pull request %d could not be read: %w", pr.Number, err)
+						}
+						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, pr.Author, nil)) > 0 {
+							continue
+						}
 						green++
 						q.Queued = append(q.Queued, pr.Number)
 						queued++
@@ -344,6 +415,13 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 				case hasStaleRed(checks, pr.HeadOID):
 					staleRed++
 					if len(q.Queued) <= 5 {
+						laneVs, err := merge.LoadLaneVerdicts(lane, pr.Number)
+						if err != nil {
+							return fmt.Errorf("lane read records for pull request %d could not be read: %w", pr.Number, err)
+						}
+						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, pr.Author, nil)) > 0 {
+							continue
+						}
 						q.Queued = append(q.Queued, pr.Number)
 						queued++
 						rerun++
