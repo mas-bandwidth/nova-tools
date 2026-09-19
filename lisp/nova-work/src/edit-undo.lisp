@@ -330,7 +330,7 @@ EXIT-CODE)."
                                    (string-downcase (symbol-name (or (getf entry :state) :known)))
                                    (getf entry :handle))
                        1 nil))
-                ((member verb '(:node-remove :event-cancel))
+                ((member verb (quote (:node-remove :event-cancel :report)))
                  (list nil (format nil "UNDO FAIL request-of=~A: not reversible here (~A is terminal)"
                                    of (string-downcase (symbol-name verb)))
                        1 nil))

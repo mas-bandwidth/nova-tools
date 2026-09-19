@@ -57,7 +57,13 @@
     ;; (SPEC-WORK.md:4993). It is an EVENT so the edge is journaled, replayed
     ;; and deduplicated like every other mutation -- Stella's [P1] on 5d1f9dfa,
     ;; where the edge lived only in memory and a restart erased it.
-    (:dep        :change :need :reason))
+    (:dep        :change :need :reason)
+    ;; The hand report (SPEC-WORK.md:5052-5112, nova-tools #854 item 7). Its six
+    ;; payload fields, in the order the payload digest serializes them. `:node`
+    ;; is `(:absent)` on every `:report`, as it is on a `:machine` event: its
+    ;; subject is a hand act and not a node, and the selector carries the
+    ;; identity.
+    (:report     :act :subject :what :acted-at :instead-of :reason))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")
@@ -68,6 +74,25 @@ nova-tools #362 so a `goal update` writes a kind of its own field list.")
       (error 'unsupported-input :what (format nil "event kind ~A outside slice 1"
                                               (string-downcase (symbol-name kind)))))
     (rest row)))
+
+;;; ------------------------------------------------------------------
+;;; the session's own half of a kind (SPEC-WORK.md:5071)
+;;; ------------------------------------------------------------------
+
+(defparameter *kind-session-field-order*
+  '((:report :unmet :need))
+  "Fields an event of this kind carries in its durable record but NOT in its
+payload digest: the session's own half, outside the payload digest as a
+`:settle` is (SPEC-WORK.md:5071). A `:settle` puts a whole event outside the
+digest; a `:report` puts two of its own fields outside it, so two serializers
+digest one report to one value however the session filled them.")
+
+(defun kind-session-fields (kind)
+  (rest (assoc kind *kind-session-field-order*)))
+
+(defun %ordered-session-fields (event)
+  (loop for field in (kind-session-fields (work-event-kind event))
+        append (list field (getf (work-event-fields event) field +absent+))))
 
 (defun %ordered-fields (event)
   (loop for field in (kind-fields (work-event-kind event))
@@ -91,7 +116,8 @@ nova-tools #362 so a `goal update` writes a kind of its own field list.")
                 :request (work-event-request event)
                 :generation-owner (work-event-generation-owner event)
                 :rev (work-event-rev event))
-          (%ordered-fields event)))
+          (%ordered-fields event)
+          (%ordered-session-fields event)))
 
 (defun record-form->event (form &key session-written-p)
   (let ((kind (getf form :kind)))
@@ -99,8 +125,10 @@ nova-tools #362 so a `goal update` writes a kind of its own field list.")
      :kind kind
      :node (getf form :node)
      :by (getf form :by)
-     :fields (loop for field in (kind-fields kind)
-                   append (list field (getf form field +absent+)))
+     :fields (append (loop for field in (kind-fields kind)
+                           append (list field (getf form field +absent+)))
+                     (loop for field in (kind-session-fields kind)
+                           append (list field (getf form field +absent+))))
      :stamp (getf form :stamp)
      :clock (getf form :clock)
      :request (getf form :request)
