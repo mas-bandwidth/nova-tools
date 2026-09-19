@@ -95,6 +95,28 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	}
 }
 
+// The close verb refuses without one of the three ways it was closed -- --how, --landed or
+// --probed -- and the refusal names all three, but the usage banner's close line named none
+// of them: a first run reading the banner for the shape of a close saw `--as --card --stale`
+// and nothing saying HOW, then hit the refusal when it ran. The line the banner prints for
+// close must name all three.
+func TestCloseUsageNamesTheThreeWays(t *testing.T) {
+	var closeLine string
+	for _, line := range strings.Split(usage, "\n") {
+		if strings.HasPrefix(line, "  nova-board close ") {
+			closeLine = line
+		}
+	}
+	if closeLine == "" {
+		t.Fatal("the usage banner has no close line")
+	}
+	for _, way := range []string{"--how", "--landed", "--probed"} {
+		if !strings.Contains(closeLine, way) {
+			t.Errorf("the close usage line names none of --how, --landed or --probed: %q", closeLine)
+		}
+	}
+}
+
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	cases := []struct {
