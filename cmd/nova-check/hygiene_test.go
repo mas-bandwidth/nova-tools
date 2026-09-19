@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
 // The verb's own surface: the one HYGIENE line, the cap-and-count listing, and the
@@ -124,6 +126,74 @@ func TestHygieneUsageNamesTheVerb(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "nova-check hygiene --repo <dir> --base <ref> --head <ref>") {
 		t.Fatalf("the help does not carry the hygiene line:\n%s", out.String())
+	}
+}
+
+// #1805. The help and the command reference both spelled the flag
+// `--identity "<Name> <<email>>"`. A reader who followed that help handed the
+// parser a doubled address: cmdHygiene cuts at the first `<`, so the stored
+// email kept its inner brackets, matched no git author, and a clean commit read
+// as an identity finding. docs/SPEC.md:1396 spells it `"<Name> <email>"`; the
+// help, the reference, and the check that has to match the author must agree.
+func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
+	exit, help, errText := runCheck(t, "help")
+	if exit != 0 {
+		t.Fatalf("`nova-check help` exits %d, want 0; stderr: %s", exit, errText)
+	}
+	const (
+		malformed = `--identity "<Name> <<email>>"`
+		want      = `--identity "<Name> <email>"`
+	)
+	if strings.Contains(help, malformed) {
+		t.Fatalf("the help still spells %s: the doubled brackets are read as part of the email, so a commit authored under that address is reported as an identity finding; SPEC.md:1396 says %s", malformed, want)
+	}
+	if !strings.Contains(help, want) {
+		t.Errorf("the help does not spell the identity as %s", want)
+	}
+	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cli), malformed) {
+		t.Fatalf("docs/CLI.md still spells %s: the doubled brackets are read as part of the email and break the author match; SPEC.md:1396 says %s", malformed, want)
+	}
+	if !strings.Contains(string(cli), want) {
+		t.Errorf("docs/CLI.md does not spell the identity as %s", want)
+	}
+
+	// The documented form is the one the check matches: a clean branch authored
+	// under that address is no identity finding.
+	dir := hygLab(t)
+	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
+	hygGit(t, dir, "add", "-A")
+	hygGit(t, dir, "commit", "-q", "-m", "clean")
+	var out, errb bytes.Buffer
+	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("the documented identity form did not match the author: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "findings=0") {
+		t.Fatalf("stdout = %q, want findings=0", out.String())
+	}
+
+	// The `### hygiene` transcript docs/TESTS.md promises is EXECUTED, not only read.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.Transcript(string(raw), "nova-check", "hygiene")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-check", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### hygiene` block holds no nova-check command; this test would pass by running nothing")
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented) {
+		t.Error(p)
 	}
 }
 

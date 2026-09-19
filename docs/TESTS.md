@@ -185,6 +185,19 @@ $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
+### hygiene
+
+The four mechanical checks the accept gate runs on a branch before a friend reads
+it. `--identity` is the author the range must carry, spelled `Name <email>` — one
+pair of angle brackets around the address. A missing address is refused before
+anything is read, and the refusal says what the flag wants. `./repo` is a
+checkout of yours.
+
+```
+$ nova-check hygiene --repo ./repo --base main --head HEAD --identity "Rowan"
+nova-check hygiene: --identity "Rowan": want `Name <email>`; run: nova-check help
+```
+
 ## nova-self-talk
 
 Fixture: `cmd/nova-self-talk/testdata/example-pages`.

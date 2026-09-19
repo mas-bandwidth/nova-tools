@@ -32,7 +32,7 @@ nova-check nocode --dir <dir>                      # no code, executables, scrip
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <<email>>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
@@ -151,6 +151,39 @@ renamed, so two benches recording at once never interleave. `record` refuses a
 does, so a receipt is stranded at the moment it is written rather than found
 months later in a count. Keep the directory in a repository: it is the record,
 and it should outlive the bench.
+
+### hygiene
+
+`hygiene` is the hand's door to the four mechanical checks the accept gate runs
+on a branch before a friend reads it: every commit is the pool's own and none is
+a merge (`identity`), every changed path matches one of the card's declared
+globs (`out-of-path`), nothing was added that does not belong in a repository
+(`stray-file`), and no added line has the SHAPE of a key (`secret`). It is one
+implementation, `internal/hygiene.Check`, and three callers — `nova-pulse
+accept` at harvest, `nova-merge batch` on every member, and this — so the lane
+and the harvest cannot disagree about what clean means.
+
+```
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+```
+
+**What the flags want.** `--repo`, `--base` and `--head` are the checkout and
+the two refs. `--identity` is required and repeatable with commas, each one
+`Name <email>` — one pair of angle brackets around the address — and it is the
+BOTH author and committer a commit in the range must carry; there is no default
+and no falling back to the repository's own config, because a range checked
+against nobody would admit anybody. `--paths` is the card's `PATHS:` bound; with
+none the line says `paths=-` and `out-of-path` is skipped, never silently passed.
+`--kind` names the card's `KIND:` for a stray-file exception. `--max` (default
+20, `0` for all) bounds the finding lines, and `--timeout` (default 120) is the
+budget one git subprocess gets, in seconds.
+
+**Reading it.** Each finding is one line, `HYGIENE FINDING
+reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>:
+<why>`, on stdout, capped and counted like every listing. `HYGIENE OK` goes to
+stdout and exits 0; `HYGIENE NO` goes to stderr and exits 1. The secret check
+never prints the matched text, only the shape's name, because a finding travels
+into a gate's stdout, a PR body and whatever a coordinator pastes into a chat.
 
 ## nova-self-talk
 
