@@ -70,6 +70,7 @@ const OutcomeSkipped = "skipped"
 // Where a route answer came from.
 const (
 	SourceRules = "rules"
+	SourceRule  = "rule"
 	SourceJev   = "jev"
 )
 
@@ -532,6 +533,19 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 		return res, nil
 	}
 
+	// A committed rule answers its kind without a call. It is a person's
+	// constant, so anything that makes the unit not that constant -- a prior
+	// attempt, a security touch, a fresh take or a size above the smallest
+	// bucket -- steps it aside and the ladder answers as today (H1).
+	if m, rule, ok := ruled(reg, u); ok {
+		res.Rung = m
+		res.Confidence = confDesignated
+		res.Source = SourceRule
+		res.RulesRung = m.Name
+		res.Reason = fmt.Sprintf("a committed rule: %s is always %s here, by %s, so no call is made", u.Kind, m.Name, rule.By)
+		return res, nil
+	}
+
 	height, reasons := supportedHeight(reg, u, burned)
 	m, err := pick(reg, u, height, tried, failedAt)
 	if err != nil {
@@ -716,6 +730,30 @@ func freshTake(reg *Registry, u Unit) (bool, string) {
 		return true, fmt.Sprintf("the rungs below failed in %d lineages (%s)", len(names), strings.Join(names, ", "))
 	}
 	return false, ""
+}
+
+// ruled returns the rung a committed rule answers this unit with, and whether
+// a rule answers it at all. The rule is a constant answer for a KIND, so it
+// steps aside for anything that makes the unit not that constant: a prior
+// attempt (a confirmed failure included), a security touch, a fresh take, or a
+// size above the smallest bucket. A kind the registry does not rule has no
+// answer here, and the ladder answers as it always did.
+func ruled(reg *Registry, u Unit) (Mind, Rule, bool) {
+	rule, ok := reg.RuleFor(u.Kind)
+	if !ok {
+		return Mind{}, Rule{}, false
+	}
+	if len(u.Attempts) > 0 || u.Security() || u.FreshTake {
+		return Mind{}, Rule{}, false
+	}
+	if u.Files > 3 || u.Packages > 3 || u.Lanes > 3 {
+		return Mind{}, Rule{}, false
+	}
+	m, ok := reg.ByName(rule.Rung)
+	if !ok {
+		return Mind{}, Rule{}, false
+	}
+	return m, rule, true
 }
 
 // supportedHeight is the lowest rung the evidence supports: the kind's starting
@@ -908,7 +946,7 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		// already populated, and it carries the refusal.
 		return rules, err
 	}
-	if d == nil || rules.Designated || rules.AwaitingTermination() || u.Security() {
+	if d == nil || rules.Designated || rules.AwaitingTermination() || u.Security() || rules.Source == SourceRule {
 		return rules, nil
 	}
 	_, tried, failedAt := burnedHeight(reg, u)
