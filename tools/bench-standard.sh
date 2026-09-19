@@ -275,8 +275,47 @@ if [ -d "$HOME_DIR/.config/opencode" ]; then
   done
 fi
 
+# (7) DISK HEADROOM, and where the space went (issue #1048, item 3).
+#
+# A Go card costs 5-7 GB of module cache, build cache and scratch in its own slot, against
+# 330 MB for a Lisp card. hulk and vision filled to 100% under 120 cards and their runners
+# died; one bench reached 0 free with 53 GB of slot data homes and had to be reaped by hand.
+# BOTH LAUNCHERS REFUSE A BENCH UNDER 25 GB FREE -- it is a term of the capacity formula,
+# `allowed = min(cores*1.5 - load - 8, (free_gb - 25)/2, memfree_gb/2)` at
+# cmd/nova-pulse/fill.go -- so a bench below the floor is a bench nothing will be launched
+# onto, which is not a conforming bench however clean the rest of this script finds it.
+#
+# AND IT NAMES THE THREE LARGEST DIRECTORIES, because "out of disk" is otherwise a sentence
+# somebody has to go and investigate by hand at whatever hour it is. The `du` runs only on
+# the failing path: a walk of a whole bench home is not something a green run should pay.
+# The floor and the probe are `nova-pulse fleet standard`'s, not a second spelling of them:
+# --min-free defaults to 25 there (cmd/nova-pulse/fleet_verbs.go) and its `disk-free` check
+# reads exactly this line (internal/pulse/fleetstandard.go). `df -Pk` is POSIX and answers
+# the same on a GNU and a BSD userland, where `df -BG` is GNU-only and a BSD refuses it
+# outright -- which matters because the bench is Linux and this check's test runs wherever
+# the developer is. The remote witness and the on-host one must agree, and the only way to
+# be sure of that is for them to be one line.
+NOVA_MIN_FREE_G="${NOVA_MIN_FREE_G:-25}"
+free_g="$(df -Pk "$HOME_DIR" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')"
+case "${free_g:-}" in
+  ''|*[!0-9]*) free_g="" ;;
+esac
+if [ -z "$free_g" ]; then
+  drift "disk free unknown: df answered nothing readable for $HOME_DIR; a bench whose space cannot be read is not known to be conforming"
+elif [ "$free_g" -lt "$NOVA_MIN_FREE_G" ]; then
+  largest="$(du -sk "$HOME_DIR"/* 2>/dev/null | sort -rn | head -3 | awk '{
+      k = $1; $1 = ""; sub(/^[ \t]+/, "", $0)
+      v = k; unit = "K"
+      if (k >= 1048576) { v = int(k / 1048576); unit = "G" }
+      else if (k >= 1024) { v = int(k / 1024); unit = "M" }
+      printf "%s%s %d%s", sep, $0, v, unit; sep = "; "
+    }')"
+  [ -n "$largest" ] || largest="nothing readable under $HOME_DIR"
+  drift "disk free=${free_g}G want>=${NOVA_MIN_FREE_G}G (both launchers refuse below it); largest under $HOME_DIR: $largest"
+fi
+
 if [ "$DRIFTS" = "0" ]; then
-  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1"
+  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G"
   exit 0
 fi
 echo "STANDARD DRIFT (see lines above)"
