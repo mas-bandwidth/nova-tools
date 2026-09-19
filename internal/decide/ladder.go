@@ -60,6 +60,13 @@ const (
 	OutcomeAbandoned = "abandoned"
 )
 
+// OutcomeSkipped is the fourth ROUTE-OUTCOME word, and it is deliberately not
+// one of the four above: an attempt has an outcome because it RAN, and a unit
+// skipped for an unmet precondition was never asked to run. It is an outcome
+// row all the same -- coverage counts it -- but it is no rung's success and no
+// rung's failure, so it moves no floor in either direction (SPEC-DECIDE H2).
+const OutcomeSkipped = "skipped"
+
 // Where a route answer came from.
 const (
 	SourceRules = "rules"

@@ -217,14 +217,21 @@ ways on the strength of it. The number
 moves again when the rows move: it is re-tuned from the log, never from a feeling about the model.
 
 **The outcome is written by the verb that watched the work.** `nova-decide outcome --log <path>
---unit-id <id> --result green|red|blocked` appends the other half of rule 8's row: what happened to
-a unit a decision routed. It is a row of its own, because the log is append-only and a row written
-is never rewritten; it carries `source: outcome`, so the summary folds it into the rung it names
-without counting a second decision. The kind and the rung are read from the last DECISION row for
+--unit-id <id> --result green|red|blocked|skipped` appends the other half of rule 8's row: what
+happened to a unit a decision routed. It is a row of its own, because the log is append-only and a
+row written is never rewritten; it carries `source: outcome`, so the summary folds it into the rung
+it names without counting a second decision. **A later judgment appends a SECOND row keyed to the
+same unit and replaces nothing** — a HOLD on a pull request that was accepted green appends a
+`red` beside the `green`, and both stand, because the arithmetic that costs a bad route its floor
+is the one a replacement would erase. The kind and the rung are read from the last DECISION row for
 that unit rather than retyped by the caller, and an outcome for a unit no decision routed is a
-refusal. The hurt: on 2026-09-18 the log held 78 rows and 73 escalations and zero successes,
-because nothing wrote the second half, so `log --summary` regenerated no starting rung from any of
-them.
+refusal. `green` is `ok`, `red` is `failed`, `blocked` is `abandoned`, and `skipped` is a unit a
+precondition stopped before it ran: no rung's success and no rung's failure, so it moves no floor
+in either direction, but a row all the same so that coverage can see it. `log --summary` closes
+with `coverage=<outcomes>/<decisions>`, rows against rows. The hurt: on 2026-09-18 the log held 78
+rows and 73 escalations and zero successes, because nothing wrote the second half, so `log
+--summary` regenerated no starting rung from any of them; on 2026-09-19 it held 141 outcomes for
+412 decisions, and a floor tuned on a third of the rows is tuned on the rows somebody remembered.
 
 **The public-data boundary is explicit, and it is an allowlist.** What the provider sees is
 typed and enumerated: a `Public()` projection of the unit and nothing else — a kind, size
