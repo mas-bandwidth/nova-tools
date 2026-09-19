@@ -3156,8 +3156,8 @@ payload, `show` displays those saved bytes, and `send` checks the approval recei
 before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
 
 ```sh
-nova-post draft --channel email --target team --file ./message.md \
-  --drafts ./drafts --allowlist ./targets.tsv
+mkdir -p ./drafts && printf 'email\tteam\n' > ./targets.tsv && printf 'a first post for the first run.\n' > ./message.md
+nova-post draft --channel email --target team --file ./message.md --drafts ./drafts --allowlist ./targets.tsv
 nova-post show --draft <hash-from-draft> --drafts ./drafts
 ```
 
