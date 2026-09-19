@@ -387,3 +387,53 @@ func TestGoBuildCoversTheMachineAndNotTheVersionWord(t *testing.T) {
 		t.Errorf("GoBuild swallowed the version word too: %v", problems)
 	}
 }
+
+// --- Fable's cold read of #1632 (medium): the repaired `version` line is not
+// --- what the shipped verb prints, and GoBuild was an unanchored ReplaceAll.
+
+// A `version` line has TWO declared parts and they have different owners: the
+// build triple is the machine, the word before it is the build. GoBuild must
+// not reach past its own two tokens, and must not match from the middle of a
+// longer one -- it was a plain ReplaceAll over every line of every step.
+func TestGoBuildCoversTwoWholeTokensAndNothingElse(t *testing.T) {
+	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK dir=/srv/linux/amd64 go1.26.5-cache"}}
+	res := Result{Stdout: "WHERE OK dir=/srv/darwin/arm64 go1.27.1-cache\n"}
+	if problems := Compare(step, res, []Norm{GoBuild()}); len(problems) != 1 {
+		t.Errorf("Compare found %d problems, want 1: GoBuild matched inside a path token", len(problems))
+	}
+	// Its own two tokens, standing alone, are still normalised.
+	step = Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
+	if problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 0 {
+		t.Errorf("a declared build triple was not normalised: %v", problems)
+	}
+}
+
+// Version covers the word a build stamps itself with, so that the document can
+// show what a READER sees -- `go build ./cmd/nova-review && ./nova-review
+// version` prints `v0.16.0-dev.<base>.0.<date>-<sha>` -- while the test, whose
+// binary is not stamped, prints `devel` and still agrees.
+
+// Version covers the word a build stamps itself with, so that the document can
+// show what a READER sees -- `go build ./cmd/nova-review && ./nova-review
+// version` prints `v0.16.0-dev.<base>.0.<date>-<sha>` -- while the test, whose
+// binary is not stamped, prints `devel` and still agrees. RED FIRST at
+// `705dd1c9` in the only way it can be: `Version` did not exist there, so the
+// package did not build.
+func TestVersionNormCoversTheStampAndDevelAndNothingElse(t *testing.T) {
+	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1"}}
+	res := Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}
+	if problems := Compare(step, res, []Norm{Version(), GoBuild()}); len(problems) != 0 {
+		t.Errorf("the document's stamp and the test binary's `devel` disagreed: %v", problems)
+	}
+	// The tool's NAME is not the version word, and a tool that answered
+	// something that is neither a stamp nor `devel` is still a finding.
+	res.Stdout = "nova-alpha unknown darwin/arm64 go1.27.1\n"
+	if problems := Compare(step, res, []Norm{Version(), GoBuild()}); len(problems) != 1 {
+		t.Errorf("Compare found %d problems, want 1: a version word that is neither a stamp nor `devel` was normalised", len(problems))
+	}
+	// And it does not reach inside a longer token.
+	step = Step{Line: "$ nova-alpha list", Want: []string{"LIST OK tag=v1.2.3-rc1 name=alpha"}}
+	if problems := Compare(step, Result{Stdout: "LIST OK tag=v9.9.9-rc1 name=alpha\n"}, []Norm{Version()}); len(problems) != 1 {
+		t.Errorf("Compare found %d problems, want 1: Version matched inside `tag=`", len(problems))
+	}
+}
