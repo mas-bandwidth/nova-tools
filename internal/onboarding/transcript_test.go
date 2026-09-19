@@ -537,3 +537,79 @@ func TestAMarkedBlockComparesEachStreamOnItsOwnTerms(t *testing.T) {
 		t.Error("two documented standard-error lines passed in the wrong order")
 	}
 }
+
+// Shape must see through the stream marker. #1570 names this as owed by the
+// first section swept to the convention: without it Shape returns "" for a
+// marked line -- `!` is not an event token -- so marking a line would silently
+// reduce its coverage to NOTHING in every caller that compares shapes, which is
+// the opposite of what marking it is for.
+func TestShapeSeesThroughTheStreamMarker(t *testing.T) {
+	const line = "SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work."
+	want := Shape(line)
+	if want == "" {
+		t.Fatalf("Shape(%q) is empty; this test cannot say anything", line)
+	}
+	if got := Shape(StderrMarker + line); got != want {
+		t.Errorf("Shape of the marked line = %q, want %q", got, want)
+	}
+}
+
+// `# Stderr: whole` is the other half of the stream convention, and the reason
+// it had to exist. #1570 compares standard error only for the lines SHOWN,
+// which is right for a tool that narrates there and wrong for one whose
+// findings live there: under the asymmetry alone, deleting every finding from
+// nova-self-talk's transcript is green, and that deletion is issue #1639.
+func TestStderrWholeMakesADroppedFindingRed(t *testing.T) {
+	lines := []string{
+		"$ nova-alpha check ./pages/journal.md",
+		"! ALPHA FAIL ./pages/journal.md: STANDING",
+		"! ALPHA FAIL ./pages/journal.md:10: RANKING",
+		"ALPHA DATED n=1 files=1",
+	}
+	res := Result{
+		Code:   1,
+		Stdout: "ALPHA DATED n=1 files=1\n",
+		Stderr: "ALPHA FAIL ./pages/journal.md: STANDING\nALPHA FAIL ./pages/journal.md:10: RANKING\n",
+	}
+
+	shown, err := Steps("nova-alpha", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := Compare(shown[0], res, nil); len(problems) != 0 {
+		t.Errorf("the whole block disagreed: %v", problems)
+	}
+
+	// Drop the second finding from the document. Without the declaration this
+	// is green, because stderr may carry more than is shown.
+	abridged := append([]string(nil), lines[:2]...)
+	abridged = append(abridged, lines[3])
+	loose, err := Steps("nova-alpha", abridged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(Compare(loose[0], res, nil)) != 0 {
+		t.Error("the unqualified convention already caught a dropped standard-error line; this test is now saying nothing")
+	}
+
+	// With it, the same abridgement is red.
+	abridged[0] += "   # Stderr: whole"
+	strict, err := Steps("nova-alpha", abridged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strict[0].StderrWhole {
+		t.Fatal("`# Stderr: whole` was not read off the command line")
+	}
+	problems := Compare(strict[0], res, nil)
+	if len(problems) != 1 {
+		t.Fatalf("Compare found %d problems, want 1: %v", len(problems), problems)
+	}
+	if !strings.Contains(problems[0].Message, "on standard error") {
+		t.Errorf("the failure does not say which stream it is about:\n%s", problems[0].Message)
+	}
+	// And the only thing a step may say about that stream is `whole`.
+	if _, err := Steps("nova-alpha", []string{"$ nova-alpha check   # Stderr: quiet", "ALPHA OK"}); err == nil {
+		t.Error("Steps accepted a `Stderr:` value it does not understand")
+	}
+}

@@ -52,6 +52,17 @@ type Step struct {
 	// at all, from a trailing `# Requires: JEV_API_KEY`. A credential, another
 	// tool's binary, a network service. Empty means the step needs nothing.
 	Requires []string
+	// StderrWhole says the marked lines are ALL this command writes to standard
+	// error, from a trailing `# Stderr: whole`, and that they are to be compared
+	// the way standard output is: same number, same lines, same order.
+	//
+	// It exists because #1570's asymmetry -- stderr compared only for the lines
+	// shown -- is right for a tool that NARRATES on standard error and wrong for
+	// one whose findings live there. nova-self-talk prints every finding it has
+	// to standard error; under the asymmetry alone, dropping all three from its
+	// transcript is green, which is exactly the abridgement of issue #1639. A
+	// section says which kind it is, per step, rather than the harness guessing.
+	StderrWhole bool
 }
 
 // StderrMarker opens a documented line the tool writes to standard error. It is
@@ -104,7 +115,7 @@ func Steps(tool string, lines []string) ([]Step, error) {
 			last.Want = append(last.Want, line)
 			continue
 		}
-		cmd, platforms, requires, err := cutDeclaration(cmd)
+		cmd, decl, err := cutDeclaration(cmd)
 		if err != nil {
 			return nil, fmt.Errorf("the transcript line %q: %w", line, err)
 		}
@@ -119,7 +130,10 @@ func Steps(tool string, lines []string) ([]Step, error) {
 		if len(args) == 0 || args[0] != tool {
 			return nil, fmt.Errorf("the transcript line %q is not a %s command", line, tool)
 		}
-		steps = append(steps, Step{Line: line, Args: args[1:], Stdin: stdin, Platforms: platforms, Requires: requires})
+		steps = append(steps, Step{
+			Line: line, Args: args[1:], Stdin: stdin,
+			Platforms: decl.platforms, Requires: decl.requires, StderrWhole: decl.stderrWhole,
+		})
 	}
 	// The document leaves a blank line between commands; it belongs to neither.
 	for i := range steps {
@@ -177,28 +191,40 @@ func cutRedirect(cmd string) (string, string, error) {
 //
 // Only a comment whose first word is `Platform:` or `Requires:` is taken as one:
 // a `#` anywhere else in the line is an argument, and is left alone.
-func cutDeclaration(cmd string) (string, []string, []string, error) {
-	rest, decl, found := lastComment(cmd)
+func cutDeclaration(cmd string) (string, declaration, error) {
+	var decl declaration
+	rest, text, found := lastComment(cmd)
 	if !found {
-		return cmd, nil, nil, nil
+		return cmd, decl, nil
 	}
-	var platforms, requires []string
-	for _, clause := range strings.Split(decl, ";") {
+	for _, clause := range strings.Split(text, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(clause), ":")
 		value = strings.TrimSpace(value)
 		if !ok || value == "" {
-			return "", nil, nil, fmt.Errorf("has the comment %q, which states neither `Platform: <goos>` nor `Requires: <what>`", clause)
+			return "", decl, fmt.Errorf("has the comment %q, which states none of `Platform: <goos>`, `Requires: <what>` or `Stderr: whole`", clause)
 		}
 		switch strings.TrimSpace(key) {
 		case "Platform":
-			platforms = append(platforms, splitList(value)...)
+			decl.platforms = append(decl.platforms, splitList(value)...)
 		case "Requires":
-			requires = append(requires, splitList(value)...)
+			decl.requires = append(decl.requires, splitList(value)...)
+		case "Stderr":
+			if value != "whole" {
+				return "", decl, fmt.Errorf("has the comment %q; the only thing a step says about standard error is `Stderr: whole`", clause)
+			}
+			decl.stderrWhole = true
 		default:
-			return "", nil, nil, fmt.Errorf("has the comment %q; a stated precondition is `Platform: <goos>` or `Requires: <what>`", clause)
+			return "", decl, fmt.Errorf("has the comment %q; a stated precondition is `Platform: <goos>`, `Requires: <what>` or `Stderr: whole`", clause)
 		}
 	}
-	return strings.TrimSpace(rest), platforms, requires, nil
+	return strings.TrimSpace(rest), decl, nil
+}
+
+// declaration is what one `#` comment on a command line said.
+type declaration struct {
+	platforms   []string
+	requires    []string
+	stderrWhole bool
 }
 
 // lastComment finds the ` #` that opens a declaration, outside any quotes, and
@@ -211,7 +237,7 @@ func lastComment(cmd string) (string, string, bool) {
 			quoted = !quoted
 		case r == '#' && !quoted && i > 0 && (cmd[i-1] == ' ' || cmd[i-1] == '\t'):
 			decl := strings.TrimSpace(cmd[i+1:])
-			for _, key := range []string{"Platform:", "Requires:"} {
+			for _, key := range []string{"Platform:", "Requires:", "Stderr:"} {
 				if strings.HasPrefix(decl, key) {
 					return cmd[:i], decl, true
 				}
@@ -570,6 +596,14 @@ func compareByStream(s Step, res Result, norms []Norm) []Problem {
 	problems := Compare(Step{Line: s.Line, Want: wantOut}, Result{Code: res.Code, Stdout: res.Stdout}, norms)
 
 	gotErr := splitOutput(res.Stderr)
+	if s.StderrWhole {
+		// The document says these are ALL this command writes to standard
+		// error, so they are compared the way standard output is.
+		for _, p := range Compare(Step{Line: s.Line, Want: wantErr}, Result{Code: res.Code, Stdout: res.Stderr}, norms) {
+			problems = append(problems, Problem{Step: s, Message: "on standard error, " + p.Message})
+		}
+		return problems
+	}
 	// `at` moves forward only when a documented line is FOUND, so one line the
 	// tool stopped printing is one complaint rather than a cascade down the
 	// rest of the block. A line printed out of order is still one complaint,
