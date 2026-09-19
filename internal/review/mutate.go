@@ -586,13 +586,13 @@ func runUnits(ctx context.Context, execFn func(context.Context, string, string, 
 		}
 	}
 	text := string(out)
-	// A package that fails to compile prints no per-test result at all. Every unit in
-	// it is red: the test file cannot even build with the change reverted.
+	// A package that fails to compile prints no per-test result at all, and that is not
+	// a kill: a test that merely CALLS the fix's new symbol breaks the build when the
+	// symbol goes away while asserting nothing about it (#1807). Compilation coupling is
+	// not an assertion, so the units are judged by nobody and the file is skipped with
+	// the reason that says why.
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
-		for _, u := range units {
-			failed[u.name] = true
-		}
-		return failed, ""
+		return nil, SkipRevertNoCompile + ": the package did not compile with the change reverted, so the tests in it assert nothing that the revert could disprove"
 	}
 	results := 0
 	sc := bufio.NewScanner(strings.NewReader(text))
@@ -688,3 +688,17 @@ func countHunks(ctx context.Context, repo, base, head string, others []change) (
 	}
 	return n, nil
 }
+
+// SkipRevertNoCompile is the reason token on a Skip whose package would not COMPILE with
+// the change reverted (#1807, the red team of T03 at 98e3f3a9).
+//
+// It used to be the strongest red there was: "the tests cannot even compile without the
+// change". It is not evidence at all. A test that only CALLS the fix's new symbol --
+// `_ = Mul(2, 3)`, asserting nothing -- breaks the build when the symbol goes away, and
+// that build failure was read as the kill the control was looking for, so the most common
+// vacuous shape there is walked straight through the negative control.
+//
+// A build failure on the reverted side is never a kill. It is named here so the caller
+// can say what it means for the card: the accept gate rejects it as `vacuous-test`,
+// because compilation coupling is not an assertion.
+const SkipRevertNoCompile = "revert-did-not-compile"

@@ -59,6 +59,7 @@ func ReadCardHeader(path string) (CardHeader, error) {
 	var h CardHeader
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	seen := map[string]bool{}
 	first := true
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
@@ -75,6 +76,17 @@ func ReadCardHeader(path string) (CardHeader, error) {
 			break
 		}
 		key, val := m[1], strings.TrimSpace(m[2])
+		// A repeated key is refused. It used to be last-wins for KIND:, TEST:, LEGS: and
+		// SOURCE: and accumulating for PATHS:, which is a header a card writer can aim
+		// at one reader and hide from the other -- the gate and `lint --card` would each
+		// pick one (the red team of 98e3f3a9, item 7). TEST-EDIT: repeats because the
+		// spec says it repeats.
+		if key != "TEST-EDIT" {
+			if seen[key] {
+				return h, fmt.Errorf("card %s: %s: appears more than once; one line each, so the gate and lint --card cannot read the header two ways", path, key)
+			}
+			seen[key] = true
+		}
 		switch key {
 		case "KIND":
 			h.Kind = val
