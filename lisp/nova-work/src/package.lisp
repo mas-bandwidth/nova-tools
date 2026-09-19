@@ -2075,7 +2075,21 @@
     #:target-disposition
     #:target-observed
     #:target-observed-at
-    #:target-usage))
+    #:target-usage
+    ;; the durable long-operation record, its status, its cancellation and the
+    ;; recovery reconciliation (SPEC-WORK.md:2725-2760); see
+    ;; src/operation-records.lisp
+    #:kernel-operation-accept
+    #:kernel-operation-status
+    #:kernel-operation-list
+    #:kernel-operation-complete
+    #:kernel-operation-cancel
+    #:kernel-operation-reconcile
+    #:kernel-operation-interrupted
+    #:kernel-operation-records
+    #:kernel-operation-record
+    #:kernel-operation-ids
+    #:kernel-operation-result))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
