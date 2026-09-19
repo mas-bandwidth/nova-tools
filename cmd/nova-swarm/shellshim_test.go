@@ -23,9 +23,9 @@ func TestTheCardsShellNeverSeesASecret(t *testing.T) {
 		t.Skip("the shim is a /bin/sh script; windows writes none")
 	}
 	slot := t.TempDir()
-	dir, shell, reason := writeNativeShellShims(slot)
-	if reason != "" {
-		t.Fatalf("the shims could not be written: %s", reason)
+	dir, shell, err := writeNativeShellShims(slot)
+	if err != nil {
+		t.Fatalf("the shims could not be written: %v", err)
 	}
 	if dir != nativeShellShimDir(slot) {
 		t.Fatalf("shim dir = %q, want %q", dir, nativeShellShimDir(slot))
@@ -75,9 +75,9 @@ func TestTheShimNeverPrintsAValue(t *testing.T) {
 		t.Skip("the shim is a /bin/sh script; windows writes none")
 	}
 	slot := t.TempDir()
-	dir, _, reason := writeNativeShellShims(slot)
-	if reason != "" {
-		t.Fatalf("the shims could not be written: %s", reason)
+	dir, _, err := writeNativeShellShims(slot)
+	if err != nil {
+		t.Fatalf("the shims could not be written: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "sh"))
 	if err != nil {

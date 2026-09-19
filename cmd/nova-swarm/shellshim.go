@@ -6,7 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE CARD'S SHELL NEVER SEES A SECRET (issue #1814).
@@ -49,6 +52,14 @@ import (
 // windows no shim is written, nothing is prepended to PATH, and the child's environment is
 // exactly what it was; the gap is named in docs/SPEC-SWARM.md.
 
+//
+// NOTHING ON PATH TO WRAP IS NOT A REFUSAL. The child's PATH is the one the harness
+// resolves its shell through, so a PATH carrying no shell is a child that reaches no shell
+// by name either: there is nothing to wrap and nothing to scrub through. (A unit test of
+// the argv builder runs with an empty PATH and must still run.) A shell reached by an
+// ABSOLUTE path is the acknowledged gap above, and the harvest scan is what stands behind
+// it.
+
 // shellShimDirName is the directory under the slot that holds the wrappers.
 const shellShimDirName = "shim"
 
@@ -62,84 +73,92 @@ func nativeShellShimDir(slotDir string) string {
 	return filepath.Join(slotDir, shellShimDirName)
 }
 
-// shellShimScript is the wrapper's whole text. It reads the NAMES of the environment
-// through awk and unsets each one that carries a secret; no value is read, printed or
-// copied, and awk prints names only. A bench with no awk is refused rather than run with
-// the key still in the shell: the shim fails closed, exit 127, and says why.
+// shellShimBody is the wrapper's whole text bar its last line. It reads the NAMES of the
+// environment through awk and unsets each one that carries a secret; no value is read,
+// printed or copied, and awk prints names only. A bench with no awk cannot list the names,
+// so the wrapper FAILS CLOSED -- exit 127, and it says why -- rather than handing the model
+// a shell that still carries the provider key.
+const shellShimBody = `#!/bin/sh
+# nova-swarm shell shim (nova-tools #1814): the harness keeps the provider key for its
+# API calls; the shell it hands the model does not. Every environment NAME carrying KEY,
+# TOKEN or SECRET is unset here before the real shell is exec'd. No value is ever read,
+# printed or copied: awk prints names, never values.
+if ! command -v awk >/dev/null 2>&1; then
+	echo 'nova-swarm shell shim: awk is on no PATH entry, so the environment cannot be listed by name; refusing to start a shell that would still carry the provider key' >&2
+	exit 127
+fi
+for __nova_secret_name in $(env 2>/dev/null | awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/{n=$1;u=toupper(n);if(index(u,"KEY")||index(u,"TOKEN")||index(u,"SECRET"))print n}'); do
+	unset "$__nova_secret_name" 2>/dev/null
+done
+unset __nova_secret_name
+`
+
+// shellShimScript is the wrapper for one real shell. It is built by concatenation rather
+// than by a formatter: the real shell's path goes into the script EXACTLY as the
+// filesystem spells it, and a path an escaper had rewritten would name nothing.
 func shellShimScript(real string) string {
-	var b strings.Builder
-	b.WriteString("#!/bin/sh\n")
-	b.WriteString("# nova-swarm shell shim (nova-tools #1814): the harness keeps the provider key for its\n")
-	b.WriteString("# API calls; the shell it hands the model does not. Every environment NAME carrying KEY,\n")
-	b.WriteString("# TOKEN or SECRET is unset here before the real shell is exec'd. No value is ever read,\n")
-	b.WriteString("# printed or copied: awk prints names, never values.\n")
-	b.WriteString("if ! command -v awk >/dev/null 2>&1; then\n")
-	b.WriteString("\techo 'nova-swarm shell shim: awk is on no PATH entry, so the secret names cannot be listed; refusing to start a shell that would still carry the provider key' >&2\n")
-	b.WriteString("\texit 127\n")
-	b.WriteString("fi\n")
-	b.WriteString("for __nova_secret_name in $(env 2>/dev/null | awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/{n=$1;u=toupper(n);if(index(u,\"KEY\")||index(u,\"TOKEN\")||index(u,\"SECRET\"))print n}'); do\n")
-	b.WriteString("\tunset \"$__nova_secret_name\" 2>/dev/null\n")
-	b.WriteString("done\n")
-	b.WriteString("unset __nova_secret_name\n")
-	b.WriteString("exec '" + real + "' \"$@\"\n")
-	return b.String()
+	return shellShimBody + "exec '" + real + "' \"$@\"\n"
 }
 
 // writeNativeShellShims writes one wrapper per shell name the bench actually has into
-// <slot>/shim and returns the directory and the wrapper SHELL should name. It returns a
-// reason when the shims cannot be written, and the caller refuses the run: a native run
-// whose shell still carries the key is the defect this closes, not a degraded mode
-// (SPEC-SANDBOX rule 1's shape -- never silently degraded).
+// <slot>/shim and returns the directory and the wrapper SHELL should name. An error is a
+// refusal for the caller: a native run whose shell still carries the key is the defect
+// this closes, not a degraded mode (SPEC-SANDBOX rule 1's shape -- never silently
+// degraded).
 //
-// On windows it returns "", "", "" -- no shim, no refusal, no change.
+// It returns "", "", nil -- no shim, no refusal -- on windows, and when the child's PATH
+// carries no shell to wrap at all.
 //
 // Each wrapper is written to a unique temporary name and renamed into place, so two runs
 // sharing one slot never read a half-written file.
-func writeNativeShellShims(slotDir string) (dir, shell, reason string) {
+func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 	if runtime.GOOS == "windows" {
-		return "", "", ""
+		return "", "", nil
 	}
-	dir = nativeShellShimDir(slotDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", "", fmt.Sprintf("the shell shim directory %s could not be made: %s", dir, err.Error())
-	}
-	if _, err := exec.LookPath("awk"); err != nil {
-		return "", "", fmt.Sprintf("awk is on no PATH entry, so the shell shim cannot list the environment's secret names: %s", err.Error())
-	}
-	written := map[string]string{}
+	var found []string
 	for _, name := range nativeShellShimNames {
-		real, err := exec.LookPath(name)
-		if err != nil {
+		real, lookErr := exec.LookPath(name)
+		if lookErr != nil {
 			continue
 		}
-		if abs, err := filepath.Abs(real); err == nil {
+		if abs, absErr := filepath.Abs(real); absErr == nil {
 			real = abs
 		}
+		found = append(found, name, real)
+	}
+	if len(found) == 0 {
+		return "", "", nil
+	}
+	dir = nativeShellShimDir(slotDir)
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		return "", "", fmt.Errorf("the shell shim directory %s could not be made: %w", oneline.Field(dir), mkErr)
+	}
+	written := map[string]string{}
+	for i := 0; i < len(found); i += 2 {
+		name, real := found[i], found[i+1]
 		if within(dir, real) {
-			return "", "", fmt.Sprintf("the real %s resolved inside the shim directory %s, which would make the wrapper exec itself", name, dir)
+			return "", "", fmt.Errorf("the real %s resolved inside the shim directory %s, which would make the wrapper exec itself",
+				oneline.Field(name), oneline.Field(dir))
 		}
 		if strings.ContainsAny(real, "'\n") {
-			return "", "", fmt.Sprintf("the path of %s holds a quote or a newline, which no wrapper can spell safely", name)
+			return "", "", fmt.Errorf("the path of %s holds a quote or a newline, which no wrapper can spell safely", oneline.Field(name))
 		}
 		path := filepath.Join(dir, name)
-		tmp := path + ".tmp" + fmt.Sprint(os.Getpid())
-		if err := os.WriteFile(tmp, []byte(shellShimScript(real)), 0o755); err != nil {
-			return "", "", fmt.Sprintf("the shell shim %s could not be written: %s", path, err.Error())
+		tmp := path + ".tmp" + strconv.Itoa(os.Getpid())
+		if writeErr := os.WriteFile(tmp, []byte(shellShimScript(real)), 0o755); writeErr != nil {
+			return "", "", fmt.Errorf("the shell shim %s could not be written: %w", oneline.Field(path), writeErr)
 		}
-		if err := os.Rename(tmp, path); err != nil {
+		if renameErr := os.Rename(tmp, path); renameErr != nil {
 			_ = os.Remove(tmp)
-			return "", "", fmt.Sprintf("the shell shim %s could not be put in place: %s", path, err.Error())
+			return "", "", fmt.Errorf("the shell shim %s could not be put in place: %w", oneline.Field(path), renameErr)
 		}
 		written[name] = path
-	}
-	if len(written) == 0 {
-		return "", "", fmt.Sprintf("no shell was found on PATH to wrap (%s), so the card's shell cannot be scrubbed of the provider key", strings.Join(nativeShellShimNames, ", "))
 	}
 	shell = written["bash"]
 	if shell == "" {
 		shell = written["sh"]
 	}
-	return dir, shell, ""
+	return dir, shell, nil
 }
 
 // pathWithShimFirst is one environment with shimDir prepended to its PATH -- the child

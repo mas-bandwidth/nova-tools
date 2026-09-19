@@ -18,7 +18,7 @@ func secretFixture() string { return "ghp_" + strings.Repeat("B", 30) }
 func TestHarvestRefusesToPushAKeyShape(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 
 	addCard(t, root, "clean", "1", "flash", "RESULT clean sha=aaa",
 		"RESULT clean sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
@@ -53,7 +53,7 @@ func TestHarvestRefusesToPushAKeyShape(t *testing.T) {
 func TestASecretQuarantinesAndNeverDeletes(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
 		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
@@ -84,7 +84,7 @@ func TestASecretQuarantinesAndNeverDeletes(t *testing.T) {
 func TestASecretWritesOneHumanLine(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
 		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
 
@@ -117,7 +117,7 @@ func TestTheSeatsOwnKeyIsCaughtWithoutAShape(t *testing.T) {
 	t.Setenv("SEAT_PROVIDER_KEY", value)
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
 		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+value+"\n")
 

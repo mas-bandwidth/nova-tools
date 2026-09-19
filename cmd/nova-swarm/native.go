@@ -287,10 +287,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// set, and each unsets every KEY/TOKEN/SECRET name before exec'ing the real shell
 	// (shellshim.go). A run whose shim cannot be written REFUSES: a card's shell carrying
 	// the seat's key is the defect this closes, not a mode to fall back to.
-	shimDir, shimShell, shimReason := writeNativeShellShims(cfg.slotDir)
-	if shimReason != "" {
+	shimDir, shimShell, shimErr := writeNativeShellShims(cfg.slotDir)
+	if shimErr != nil {
 		refuseNative(errOut, fmt.Sprintf("%s the card's shell cannot be scrubbed of the provider key: %s",
-			oneline.Field(cfg.label), oneline.Escape(shimReason)))
+			oneline.Field(cfg.label), oneline.Err(shimErr)))
 		return nativeRunResult{}, 2
 	}
 
