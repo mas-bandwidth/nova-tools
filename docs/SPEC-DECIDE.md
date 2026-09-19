@@ -1037,21 +1037,32 @@ that was current when it was posted. There is **no time filter**: a filter that 
 before the last push lets a push lift a hold, and on this repository holds ARE forge comments,
 which is #1572 by one push.
 
-**What the decider may do, which is add.** The mechanical baseline (S4) of a scanned comment that
-the rule table cannot type is that it is not a hold: that is today's behaviour, and the only
-behaviour available with no provider. For each such comment, newer than its `who`'s latest release
-(or, for `who=unknown`, newer than the last release that named it), `verdict/v1` is asked, and the
-answer can move the fold one way: a `hold` answer **at any confidence**, a tampered comment, and
-an answer below the floor whose raw member is `hold` (D2's stopping member), each add a hold with
-`source=comment-decided`. Every other answer, and `unknown` for any other reason, leaves the
-baseline where it was. So a provider that obeys an injected "answer none" returns the fold to
-exactly what it is with no provider, and never to anything looser. The honest consequence is
-stated, not hidden: **the guarantee for a reviewer is the word, not the classifier.** A hold the
-rule table types is mechanical and no text beside it can unsay it; a hold in other words is caught
-by the decider when the decider is right, and that net is worth having, and it is a net. A lane
-that wants the strict reading passes `--strict-comments`: every scanned comment the rule table
-cannot type, newer than its `who`'s latest release, is `source=comment-unread` and stops the
-member, no decider is asked about it, and only a release by the paragraph below clears it.
+**An untyped comment is pending, and pending stops.** The mechanical baseline (S4) of a scanned
+comment from a login that maps to a `may-hold` reader, carrying neither a typed `DISPOSITION` line
+nor the word HOLD, is **pending**: it neither approves nor releases, it is `source=comment-pending`
+with `who=unknown`, and a member with a pending comment is not landable until a `may-hold` reader
+types or releases (the paragraph below). This is the strict reading and it is the **default**
+(Rowan and Stella, 2026-09-19: the house default is fail-closed; a guard that cannot decide
+refuses, and a HOLD never expires into an approval; the cost falls on the reviewer typing one
+line, which is the behaviour this reading wants anyway). The one opt-out is per run, printed and
+reasoned: `--untyped-comments=ignore --reason <text>` makes the baseline of an untyped comment
+*not a hold* (today's behaviour) for that run alone, and every `BATCH` and `LAND` line under it
+carries `untyped=ignored reason="<text>"`, so the door announces itself on the record. There is no
+opt-in strict flag, because strict is what happens when nobody passes anything.
+
+**What the decider may do, which is add.** For each pending comment (or, under
+`--untyped-comments=ignore`, each untyped comment), newer than the last release that named it,
+`verdict/v1` is asked, and the answer can move the fold one way: a `hold` answer **at any
+confidence**, a tampered comment, and an answer below the floor whose raw member is `hold` (D2's
+stopping member), each turn it into a hold with `source=comment-decided`, which carries and is
+released like any other hold. Every other answer, and `unknown` for any other reason, leaves the
+baseline where it was: pending stays pending, and under the opt-out not-a-hold stays not a hold.
+So a provider that obeys an injected "answer none" returns the fold to exactly what it is with no
+provider, and never to anything looser. The honest consequence is stated, not hidden: **the
+guarantee for a reviewer is the word, not the classifier.** A hold the rule table types is
+mechanical and no text beside it can unsay it; a hold in other words is caught by the pending
+stop by default and by the decider under the opt-out, and that net is worth having, and it is a
+net.
 
 **What releases a hold: only its holder, only by the verb, only at the current head, and only
 the holds it names.** A hold with a named `who` is released only by **that** `who` recording
@@ -1064,7 +1075,14 @@ reviewer who held the parser and later approved the documentation has not releas
 and the fold does not guess that they meant to. A `who=unknown` hold is released when a
 `may-hold` reader who is not the entry's author records, at the current head and later than the
 comment, either a HOLD of their own (the hold is now theirs, with its name) or an APPROVE whose
-`--releases` names it by `comment:<id>`. That is the whole list. **A forge `APPROVED` review
+`--releases` names it by `comment:<id>`. A **pending** comment is cleared two ways, and by a
+`may-hold` reader who is not the entry's author in both: by a later comment from a login that maps
+to that reader carrying a typed line naming it, `DISPOSITION who=<name> head=<sha40>
+verdict=<HOLD|APPROVE|ABSTAIN|NOTE> re=comment:<id>`, where `HOLD` turns the pending comment into
+a hold under that name and any other verdict clears it and does nothing else (a typed APPROVE
+comment still approves nothing and releases no hold); or by that reader's verb at the current head,
+an APPROVE with `--releases comment:<id>` or a HOLD of their own. That is the whole list. **A
+forge `APPROVED` review
 counts for nothing and releases nothing**: on a shared login it names no reader, and a read is
 recorded by the reader with the verb (SPEC-MERGE.md:286-304, rule 19). **The forge's dismissal of a
 review releases nothing**: a dismissal is an administrator's act and not the holder's. **A
@@ -1095,7 +1113,7 @@ refused, at the exit code SPEC-MERGE's *Exit codes* gives a landing that did not
 
 ```
 BATCH DROP #<n> reason="head <sha12> carries an unreleased HOLD" who=<name|unknown> hold=<id> source=<record|review|comment-rule|comment-decided> held_at=<sha12> carried=<yes|no> at=<stamp> conf=<x|->
-BATCH DROP #<n> reason="head <sha12> has an unread comment" who=<name|unknown> hold=comment:<id> source=comment-unread at=<stamp>
+BATCH DROP #<n> reason="head <sha12> has a pending comment" who=unknown hold=comment:<id> source=comment-pending at=<stamp>
 LAND REFUSED reason=held member=#<n> ...the same fields...
 ```
 
@@ -1213,7 +1231,7 @@ nothing**: it lifts no hold (only the verb does, 3), it satisfies no read condit
 nothing. It requires ALL of: `verdict=approve` with `source=comment-rule`; a named `who` with
 `may-hold` in the reviewer file that is not the pull request's author (S6; `who=unknown` is
 `why=who-unknown`); `current=true` with a sha the comment itself names; `scope=whole`; the fold
-of (3) holds no unreleased hold and no unread stop for this pull request; and `ci-ok` green at
+of (3) holds no unreleased hold and no pending comment for this pull request; and `ci-ok` green at
 that exact sha, read from the forge in the same run. A decider's `approve`, at any confidence,
 readies nothing: it prints `ready=no candidate=yes why=untyped-approve`, which tells a coordinator
 that a reviewer seems to have approved in prose and could be asked to type it, and to record it
@@ -1407,7 +1425,9 @@ Security and the decider:
   `blocked-toolchain`/`bench` with exit status 1 and no harness-error line; the failure IS
   appended as a confirmed failure. `hold`: a reviewer's untyped comment and the fake says `none`;
   the fold equals the fold with `--decider rules`, a recorded hold beside it still stops the
-  member, and under `--strict-comments` the member is dropped with zero calls. `backlog`: two
+  member, and with no flag the untyped comment is `comment-pending` and drops the member whatever
+  the fake says; under `--untyped-comments=ignore --reason x` the fold equals `--decider rules`.
+  `backlog`: two
   items, a rule-table `security` item and a security-shaped item the phrase table misses, and the
   fake says `chore` `s4-cosmetic` at 0.99 for both; the first reads `class=security`, and BOTH
   read `escalate=<reader>`. `verdict`: the fake says `approve`; `ready=no candidate=yes
@@ -1501,7 +1521,17 @@ The readings; each also has `<q>-fixtures-answer-as-labelled` and `<q>-negative-
   `a-push-releases-nothing`: a typed line, a `CHANGES_REQUESTED` review and an untyped HOLD
   comment each posted at head A, then a push to B, with NO lane record at all; each still held,
   `carried=yes`. 3 `a-decided-hold-at-any-confidence-holds`. 3
-  `strict-comments-stops-on-every-untyped-comment-and-asks-nobody`. 3
+  `an-untyped-comment-from-a-may-hold-login-is-pending`: a comment with neither a typed line
+  nor the word HOLD from a login mapped to a `may-hold` reader; `BATCH DROP … source=comment-pending
+  who=unknown`, zero calls with `--decider rules`; a comment from a login mapped to no `may-hold`
+  reader is not pending. 3 `a-pending-comment-is-cleared-by-a-typed-line-or-a-release`: a later
+  `DISPOSITION … verdict=NOTE re=comment:<id>` from a mapped login clears it; `verdict=HOLD
+  re=comment:<id>` makes it a hold under that name; a `nova-merge read` APPROVE with `--releases
+  comment:<id>` clears it; a typed APPROVE line naming it clears it and releases no other hold.
+  3 `untyped-comments-ignore-is-per-run-printed-and-carries-a-reason`: with
+  `--untyped-comments=ignore --reason x` the same comment drops nothing, every `BATCH` and `LAND`
+  line carries `untyped=ignored reason="x"`, the flag without `--reason` is exit 2, and the next
+  run without the flag drops the member again. 3
   `an-untyped-hold-from-the-shared-login-fails-closed`: the author and the readers on ONE login,
   a bold `**HOLD:**` in a comment with no typed line; held, `who=unknown source=comment-rule`. 3
   `the-authors-note-line-is-not-scanned-and-the-authors-login-skips-nothing`. 3
