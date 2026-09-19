@@ -1541,6 +1541,26 @@ A braked bench is **not** a failed bench -- the tick carries on and the exit is 
 and the brake never shrinks a bench below the leases it already holds: the live cards
 are running, and the one thing a capacity number may never do is ask for them back.
 A machine whose load is made by something other than its own leases wants `0` here.
+`--max-load-per-core` must be a **finite** number: `NaN` and `Inf` compare false
+against every bench, so a threshold nothing can exceed is a brake that is silently
+off, and both are refusals (exit 2) naming the flag. With the brake on, a bench that
+cannot count its cores is refused rather than filled unbraked.
+
+**A capacity nobody read is a refusal, not an empty bench.** Three things the probe
+can hit are refusals — the bench is dealt nothing, the tick says why in a `FILL NOTE`,
+and a tick where every bench was refused exits 1:
+
+| what happened | why it is not zero-free |
+|---|---|
+| `slots list` could not run, or exited non-zero | a full bench would read `held=0` and be dealt its whole share |
+| `slots list` printed something that is not leases | noise is not the same fact as an empty store |
+| `shares.tsv` is there and cannot be read, or its share is not a whole number | the store exists and its answer is unknown |
+| the probe's line does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice | a reading nobody can read one way is not a reading to act on |
+
+An **empty** lease list is not one of them: a store whose owner holds nothing is a
+bench with its whole share free, and it fills. The one documented fall-through to the
+load formula is a bench with **no store row** — no `shares.tsv`, or no row for this
+owner.
 
 **`--local-bench <name>` is a bench that is this machine.** Its store is read by this
 machine's own shell and no `ssh` is opened: there is no `ssh` from the Studio to the

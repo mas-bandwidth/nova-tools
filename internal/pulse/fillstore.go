@@ -23,6 +23,7 @@ package pulse
 import (
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -73,14 +74,23 @@ func (a CapacityAnswer) Braked(maxPerCore float64) bool {
 	return a.PerCore() > maxPerCore
 }
 
-// ParseCapacityAnswer reads the one line a capacity probe prints. Two shapes, and nothing
+// ParseCapacityAnswer reads the one line a capacity probe prints. Three shapes, and nothing
 // else is guessed:
 //
 //	store share=<n> held=<n> cores=<n> load1=<f>
 //	formula capacity=<n> cores=<n> load1=<f>
+//	unreadable reason=<why> ...
 //
-// A line in neither shape is a refusal naming what the bench said. A guessed free count puts
-// a card on a full machine.
+// A line in none of those shapes is a refusal naming what the bench said. A guessed free
+// count puts a card on a full machine.
+//
+// EVERY FIELD IS VALIDATED (Stella, #1945). A malformed reading used to be taken as a valid
+// one: `held=-10` made a share of 64 answer 74; a `cores=` that would not parse became 0,
+// which is a bench that can never be braked; and a `load1=NaN` compared false against every
+// threshold, so the brake the caller asked for was silently off. Counts are whole numbers
+// and never negative, the load is finite and never negative, cores and load are REQUIRED
+// rather than optional, and a field said twice is a refusal -- a line nobody can read one
+// way is not a line to act on.
 func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
 	fields := strings.Fields(strings.TrimSpace(out))
 	if len(fields) == 0 {
@@ -89,12 +99,22 @@ func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
 	kind, rest := fields[0], fields[1:]
 	seen := map[string]string{}
 	for _, f := range rest {
-		if k, v, ok := strings.Cut(f, "="); ok {
-			seen[k] = v
+		k, v, ok := strings.Cut(f, "=")
+		if !ok {
+			continue
 		}
+		if _, twice := seen[k]; twice {
+			return CapacityAnswer{}, fmt.Errorf(
+				"the capacity probe answered %q, which says %s= twice; refusing a reading nobody can read one way",
+				oneLineAnswer(out), k)
+		}
+		seen[k] = v
 	}
 	a := CapacityAnswer{}
-	num := func(key string) (int, error) {
+	// count reads a required whole number that may never be negative: a share, a lease
+	// count and a capacity are all counts of things, and a negative count is a reading
+	// that went wrong, not a smaller number.
+	count := func(key string) (int, error) {
 		raw, ok := seen[key]
 		if !ok {
 			return 0, fmt.Errorf("the capacity probe answered %q, with no %s=", oneLineAnswer(out), key)
@@ -103,35 +123,57 @@ func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
 		if err != nil {
 			return 0, fmt.Errorf("the capacity probe answered %s=%q, which is not a whole number", key, raw)
 		}
+		if n < 0 {
+			return 0, fmt.Errorf("the capacity probe answered %s=%d, and a count is never negative", key, n)
+		}
 		return n, nil
 	}
 	var err error
 	switch kind {
+	case "unreadable":
+		return CapacityAnswer{}, fmt.Errorf(
+			"the bench could not read its slot store (%s); refusing a capacity nobody read, rather than calling a full bench empty",
+			oneLineAnswer(strings.Join(rest, " ")))
 	case "store":
 		a.FromStore = true
-		if a.Share, err = num("share"); err != nil {
+		if a.Share, err = count("share"); err != nil {
 			return CapacityAnswer{}, err
 		}
-		if a.Held, err = num("held"); err != nil {
+		if a.Held, err = count("held"); err != nil {
 			return CapacityAnswer{}, err
 		}
 	case "formula":
-		if a.Formula, err = num("capacity"); err != nil {
+		if a.Formula, err = count("capacity"); err != nil {
 			return CapacityAnswer{}, err
 		}
 	default:
 		return CapacityAnswer{}, fmt.Errorf(
-			"the capacity probe answered %q; wanted `store share=<n> held=<n> cores=<n> load1=<f>` or `formula capacity=<n> cores=<n> load1=<f>`",
+			"the capacity probe answered %q; wanted `store share=<n> held=<n> cores=<n> load1=<f>`, `formula capacity=<n> cores=<n> load1=<f>` or `unreadable reason=<why>`",
 			oneLineAnswer(out))
 	}
-	// Cores and load are the brake's, not the capacity's: a bench that could not measure
-	// them still answers a capacity, it just cannot be braked.
-	if a.Cores, err = num("cores"); err != nil {
-		a.Cores = 0
+	// Cores and load are the brake's readings, and they are required: a bench that cannot
+	// say what its load is cannot be braked, and running it unbraked is the brake turning
+	// itself off. Whether that is fatal is the caller's -- a caller with the brake off
+	// (--max-load-per-core 0) does not need them -- but they must at least be READABLE.
+	if a.Cores, err = count("cores"); err != nil {
+		return CapacityAnswer{}, err
 	}
-	if raw, ok := seen["load1"]; ok {
-		a.Load1, _ = strconv.ParseFloat(raw, 64)
+	raw, ok := seen["load1"]
+	if !ok {
+		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered %q, with no load1=", oneLineAnswer(out))
 	}
+	load, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered load1=%q, which is not a number", raw)
+	}
+	if math.IsNaN(load) || math.IsInf(load, 0) {
+		return CapacityAnswer{}, fmt.Errorf(
+			"the capacity probe answered load1=%q, which is not a finite number; a load that compares false against every threshold is a brake that is silently off", raw)
+	}
+	if load < 0 {
+		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered load1=%q, and a load is never negative", raw)
+	}
+	a.Load1 = load
 	return a, nil
 }
 
@@ -159,6 +201,14 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 	if c.Probe == nil {
 		return 0, fmt.Errorf("no capacity probe; refusing to guess a free count")
 	}
+	// The threshold is checked here as well as at the flag, because this type is the
+	// library seam and a NaN threshold compares false against every bench: the brake would
+	// be off and nothing would say so.
+	if math.IsNaN(c.MaxLoadPerCore) || math.IsInf(c.MaxLoadPerCore, 0) || c.MaxLoadPerCore < 0 {
+		return 0, fmt.Errorf(
+			"the load brake is %v, which is not a finite number of load units per core, 0 or more; a threshold nothing can exceed is a brake that is silently off",
+			c.MaxLoadPerCore)
+	}
 	out, err := c.Probe(bench)
 	if err != nil {
 		return 0, err
@@ -166,6 +216,14 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 	a, err := ParseCapacityAnswer(out)
 	if err != nil {
 		return 0, err
+	}
+	// The brake is ON and the bench could not count its cores: it cannot be braked at all,
+	// and a bench that runs unbraked because its own reading failed is exactly the silence
+	// this guard exists to break.
+	if c.MaxLoadPerCore > 0 && a.Cores <= 0 {
+		return 0, fmt.Errorf(
+			"the load brake is on (%.2f per core) and the bench answered cores=%d; refusing to fill a bench nobody can brake (measure its cores, or say --max-load-per-core 0 to run it unbraked on purpose)",
+			c.MaxLoadPerCore, a.Cores)
 	}
 	if a.Braked(c.MaxLoadPerCore) {
 		// A braked bench is NOT a failed bench: it answers zero and the tick carries on.

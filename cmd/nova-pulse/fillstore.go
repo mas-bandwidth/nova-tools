@@ -101,18 +101,34 @@ func runProbe(cmd *exec.Cmd) (string, error) {
 	return out.String(), nil
 }
 
-// storeScript is the one line the bench runs. It prints exactly one of
+// storeScript is what the bench runs. It prints exactly one of
 //
 //	store share=<n> held=<n> cores=<n> load1=<f>
 //	formula capacity=<n> cores=<n> load1=<f>
+//	unreadable reason=<why> ...
 //
 // and nothing else, so the caller parses an answer rather than a shell transcript. `nproc`
 // and /proc are Linux; the fallbacks are darwin's `sysctl` (`vm.loadavg` prints
 // `{ 3.20 3.40 3.60 }`), because a bench is whatever the registry says is a bench.
+//
+// THE LEASE READ'S STATUS IS KEPT (Stella, #1945). It used to be
+// `h=$("$B" slots list ... | grep -c ...)`, whose status is grep's: a missing or failing
+// nova-swarm printed nothing, grep counted 0, the script succeeded, and a bench with every
+// slot leased answered `held=0` -- its whole share dealt to a machine with nothing free.
+// The output is captured first and its exit status checked, and the lines are checked
+// against `slots list`'s own contract (one `SLOT ... owner=<o> ... state=<s>` per lease,
+// and nothing else) so noise is not silently read as an empty store. An EMPTY list, which
+// is a bench with its whole share free, stays an empty list.
+//
+// The ONE fallthrough to the formula is the documented no-store-row case: no shares.tsv, or
+// a shares.tsv with no row for this owner. A shares.tsv that is there and cannot be read,
+// and a share that is not a whole number, are refusals -- not a quiet reversion to the
+// number this change exists to stop using.
 func storeScript(store, owner, slotsBin, root string) string {
 	if strings.TrimSpace(slotsBin) == "" {
 		slotsBin = defaultSlotsBin
 	}
+	formula := legacyFormula(root) + `; echo "formula capacity=$a cores=$c load1=$l"; exit 0`
 	return strings.Join([]string{
 		`S="` + shellDoubleQuoted(store) + `"`,
 		`O="` + shellDoubleQuoted(owner) + `"`,
@@ -121,13 +137,22 @@ func storeScript(store, owner, slotsBin, root string) string {
 		`[ -n "$c" ] || c=0`,
 		`l=$(cut -d" " -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')`,
 		`[ -n "$l" ] || l=0`,
+		// No store at all: the documented fallback, and the only one.
+		`if [ ! -f "$S/shares.tsv" ]; then ` + formula + `; fi`,
+		`if [ ! -r "$S/shares.tsv" ]; then echo "unreadable reason=shares-unreadable"; exit 0; fi`,
 		`sh=$(awk -F'\t' -v o="$O" '$1==o{print $2}' "$S/shares.tsv" 2>/dev/null)`,
-		`if [ -n "$sh" ]; then ` +
-			`h=$("$B" slots list --store "$S" 2>/dev/null | grep -c "owner=$O .*state=live"); ` +
-			`[ -n "$h" ] || h=0; ` +
-			`echo "store share=$sh held=$h cores=$c load1=$l"; ` +
-			`else ` + legacyFormula(root) + `; ` +
-			`echo "formula capacity=$a cores=$c load1=$l"; fi`,
+		// No row for this owner: the same documented fallback.
+		`if [ -z "$sh" ]; then ` + formula + `; fi`,
+		`case "$sh" in ''|*[!0-9]*) echo "unreadable reason=share-not-a-whole-number"; exit 0;; esac`,
+		// THE LEASE READ. Its status is the read's, never a pipeline's.
+		`o=$("$B" slots list --store "$S" 2>/dev/null); rc=$?`,
+		`if [ "$rc" -ne 0 ]; then echo "unreadable reason=slots-list-exit rc=$rc"; exit 0; fi`,
+		`n=$(printf '%s\n' "$o" | grep -c '[^[:space:]]')`,
+		`k=$(printf '%s\n' "$o" | grep -c '^SLOT .*owner=.*state=')`,
+		`if [ "$n" -ne "$k" ]; then echo "unreadable reason=slots-list-malformed lines=$n leases=$k"; exit 0; fi`,
+		`h=$(printf '%s\n' "$o" | grep -c "^SLOT .*owner=$O .*state=live")`,
+		`[ -n "$h" ] || h=0`,
+		`echo "store share=$sh held=$h cores=$c load1=$l"`,
 	}, "; ")
 }
 

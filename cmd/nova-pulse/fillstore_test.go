@@ -78,6 +78,10 @@ func TestALocalBenchIsProbedWithoutSSH(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
 	fakeTool(t, specs, "ssh", fakeSpec{Log: log, Default: fakeRule{Stdout: "store share=99 held=0 cores=8 load1=0\n"}})
+	// A REAL lease read that answers an empty list: the store is readable, the owner holds
+	// nothing, and the whole share is free. A slots binary that cannot run is a refusal
+	// (Stella, #1945) and is covered by TestFillRefusesABenchWhoseSlotsBinaryIsMissing.
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
 	store := filepath.Join(dir, "slots")
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
@@ -87,7 +91,7 @@ func TestALocalBenchIsProbedWithoutSSH(t *testing.T) {
 	}
 	n, err := storeProbeCapacity(storeProbeConfig{
 		Store: store, Owner: "rowan", Local: map[string]bool{"studio": true},
-		SlotsBin: filepath.Join(dir, "no-such-nova-swarm"),
+		SlotsBin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
 	}).Capacity("studio")
 	if err != nil {
 		t.Fatalf("the local probe answered an error: %v", err)

@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -90,8 +91,13 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err != nil {
 		f.add(err.Error())
 	}
-	if *maxLoad < 0 {
-		f.add(fmt.Sprintf("--max-load-per-core is the load brake in load units per core, 0 or more (0 is no brake), got %v", *maxLoad))
+	// NaN is not less than zero, so `< 0` alone let `--max-load-per-core NaN` through, and a
+	// NaN threshold compares false against every bench: the brake the caller asked for was
+	// off and nothing said so. Infinity is the same silence, spelled differently.
+	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
+		f.add(fmt.Sprintf(
+			"--max-load-per-core is a finite number of load units per core, 0 or more (0 is the documented no-brake opt-out), got %v; a threshold nothing can exceed is a brake that is silently off",
+			*maxLoad))
 	}
 	if *deadline <= 0 {
 		f.add(fmt.Sprintf("--deadline is the card's deadline in whole seconds, 1 or more, got %d", *deadline))
