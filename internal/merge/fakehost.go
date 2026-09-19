@@ -53,8 +53,11 @@ type FakeHost struct {
 	Issues    map[int]string
 	// Reads is the verdicts the forge carries for a pull request (#1572): the HOLDs and
 	// APPROVEs its readers posted as comments or reviews. VerdictErr is the read failing.
-	Reads            map[int][]Verdict
-	VerdictErr       error
+	Reads      map[int][]Verdict
+	VerdictErr error
+	// OnVerdicts and VerdictCalls are the per-call seam: see Verdicts.
+	OnVerdicts       func(n, call int) ([]Verdict, bool)
+	VerdictCalls     map[int]int
 	RawComments      map[int]string
 	RawReviews       map[int]string
 	DispositionsTime string
@@ -225,6 +228,19 @@ func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
 func (f *FakeHost) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
 	if f.VerdictErr != nil {
 		return nil, f.VerdictErr
+	}
+	// OnVerdicts answers PER CALL, so a test can script a forge that says nothing at
+	// admission and carries a HOLD at the door -- which is #1572's own timeline and the
+	// whole reason a landing reads twice. It receives the pull request and the 1-based
+	// call count for that pull request; ok=false falls through to Reads.
+	if f.OnVerdicts != nil {
+		if f.VerdictCalls == nil {
+			f.VerdictCalls = map[int]int{}
+		}
+		f.VerdictCalls[n]++
+		if vs, ok := f.OnVerdicts(n, f.VerdictCalls[n]); ok {
+			return vs, nil
+		}
 	}
 	if f.RawComments != nil && f.RawReviews != nil {
 		c := f.RawComments[n]
