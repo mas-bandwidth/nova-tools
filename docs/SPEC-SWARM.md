@@ -2474,8 +2474,8 @@ file instead — the tool has no list of blessed task shapes.
 
 **Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §5 (draft, 2026-09-19):** a template stays text. A card
 **kind** is a template plus a gate and a negative control declared in the tool, chosen by the
-card's `KIND:` line and by nothing a worker writes; and the pit-stop rule there names the paths
-no swarm card changes, this tool among them.
+card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
+card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
 
 ## The `RESULT.md` template
 

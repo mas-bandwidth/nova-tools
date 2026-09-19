@@ -1,4 +1,4 @@
-# Mechanical tool work — specification (draft 1, 2026-09-19)
+# Mechanical tool work — specification (draft 2, 2026-09-19)
 
 Glenn, 2026-09-19: *"I want to upgrade our tools so we can push more work to swarms
 mechanically."*
@@ -41,45 +41,180 @@ exactly as written, and §6 makes the lane hold them harder, not softer.
 | a held head reached `dev` through a green gate at 2026-09-19T02:43Z (#1572) | §6 |
 | 8 of 22 `docs/TESTS.md` transcripts were executed by no test at the triage (7 after #1602); 9 more are compared as a set of shapes, so an abridged or reordered block passes; nova-post's quickstart documents a channel the tool refuses | §7 |
 
-## The pit-stop rule: what a swarm never modifies
+## The eligibility rule: what a swarm may be handed
 
-**A swarm card never changes the machinery that contains, judges, records or lands swarm
-work.** Those paths are changed only by an Opus child of the coordinator, red test
-first, and land only with a friend's read at the exact head. The protected set, by path,
-at `dev@31e35195`:
+Glenn, 2026-09-19, ruling on draft 1's first open question: *"Code swarms can touch any
+code we want, as long as we are confident they are ready to do this, and the classifier
+(Jev) says its work they can handle."*
 
-| what | paths |
-|---|---|
-| the kernel and its journal | `lisp/nova-work/**`, `internal/workclient/**`, `cmd/nova-work/**` |
-| leases | `internal/swarm/lease*.go`, `internal/swarm/slot*.go`, every file that calls `TakeSlotLeases`, `StartJobLease` or their release halves |
-| secrets | `cmd/nova-secrets/**`, `internal/secrets/**` |
-| the sandbox | `cmd/nova-sandbox/**`, `internal/sandbox/**`, `profiles/**` |
-| the merge queue and the landing lane | `cmd/nova-merge/**`, `internal/merge/**` |
-| nova-swarm itself | `cmd/nova-swarm/**`, `internal/swarm/**` |
-| the specs | `docs/SPEC*.md`, `docs/spec-pulse/**`, `AGENTS.md`, `docs/WORKER-CARDS.md`, this file |
-| CI and the class tests | `.github/**`, `internal/ci/**` |
-| **the gate that judges the swarm** *(an addition to Glenn's list; open question Q1)* | the `accept` verb and its fixtures (§1), `cmd/nova-review/mutate*.go`, the hygiene checks of §3, the certification verb of §2 |
+**No path is forbidden to a swarm as such.** Draft 1 of this document carried a fixed
+never-touch list (the kernel, leases, secrets, the sandbox, the merge queue, the specs,
+nova-swarm, the gate). It is withdrawn. A fixed list says *never* about code a swarm may
+be ready for next month, and says nothing at all about code outside it that a swarm is
+not ready for today. What replaces it is a rule with two conditions **before** the work
+and the mechanical law that already holds **after** it.
 
-1. **The set is data, in one file, and shrink-proof.** `internal/ci/testdata/pitstop_paths.txt`
-   holds the globs above, one per line. A class test asserts every glob matches at least
-   one file (a rule over nothing passes by checking nothing) and that a line leaves the
-   file only in the change that removes every file it matched.
-2. **Admission refuses, before any worker starts.** A card whose `PATHS:` line (§5)
-   intersects the set is refused by `cut` and by `nova-swarm lint --card` with the rule
-   token `pit-stop` and the remedy *"this path is changed by an Opus child with a
-   friend's read; see docs/SPEC-TOOLWORK.md, the pit-stop rule"*.
-3. **The gate rejects, after.** A card's diff that touches the set is `reason=pit-stop`
-   at §3's bounded-diff check, whatever its `PATHS:` said. Admission is the cheap
-   refusal; the gate is the one that cannot be talked past.
-4. **Reading is never refused.** A swarm may read, probe and report on every protected
-   path; the kinds whose gate is `none` (§5: `read`, `probe`) are admitted over it.
-   What it finds is an issue, and the fix is somebody else's card.
+**A card is swarm-eligible when both hold:**
 
-**The name.** [PIT-STOP.md](PIT-STOP.md) already names the coordinator's decision to
-stop widening and fix the faults every card pays for. This rule is that page's other
-half — *what the crew does not hand to the cars* — and it takes the name on Glenn's
-word. If the collision costs a reader anything, the rename is one line (open question
-Q7).
+- **(a) our confidence, recorded** — a readiness row for the card's kind and area is in
+  force (rules 1-4);
+- **(b) the classifier says the work is within a swarm's reach** — the `nova-decide
+  route` answer for the card is a rung a swarm runs, at or above its tuned floor, logged
+  (rules 5-7).
+
+1. **Readiness is a record in the repository, written by a commit, never by a tool.**
+   `docs/READINESS.tsv`, one row per line: `kind`, `area` (a repo-relative glob),
+   `state` (`ready` | `withdrawn`), `evidence`, `by`, `at`. It is append-only: a
+   withdrawal is a new row, and per `(kind, area)` the newest `at` wins, a tie folding
+   **withdrawn-last**, the way a hold folds last (`docs/SPEC-MERGE.md:820-827`). Its
+   author is a person or the coordinator, and it reaches `dev` the way any change does
+   — a pull request, a read, a batch. No verb in these tools writes the file: a class
+   test asserts no non-test Go file names its path for writing, and §3's hygiene rejects
+   any card's diff that touches it (`readiness-self`), so a swarm cannot grant itself a
+   row or lift a withdrawal.
+2. **A row cites its evidence, and `cut` checks that the citation resolves.** The
+   `evidence` field is a `;`-separated list of typed pointers, and a `ready` row for a
+   kind that changes code must carry all three:
+   - `gate=<control id>` — the accept gate exists for that kind, with its negative
+     control: a passing `ACCEPT SELFTEST` whose seeds include that kind's (§1 rules 6-8,
+     §5 rule 2);
+   - `trial=<path or PR>` or `mutation=<path>` — what this area has shown: a pilot
+     batch's `OUTCOME` rows for this `(kind, area)` with their accept and later-read
+     results, or a mutation pass over the area with its score (mutants killed of mutants
+     seeded, each seed one edit). The file is in the repository or on the PR the row
+     names; a number typed into the row with nothing behind it is refused as `untuned`
+     is refused (`docs/SPEC-DECIDE.md:581`);
+   - `cert=<bench>` — at least one bench certified for the legs that area's gate needs
+     (§2 rule 4).
+
+   A kind whose gate is `none` — it changes nothing — needs only `trial=`. `cut` refuses
+   to cut a card under a row whose `gate=` has no control on file, whose `trial=` or
+   `mutation=` path does not exist, or whose `cert=` bench holds no live record:
+   `CUT REFUSED readiness kind=<kind> area=<glob>: evidence <pointer> does not resolve`.
+3. **The table starts empty except for what evidence already supports**, which at
+   `dev@31e35195` is one row:
+
+   | kind | area | state | evidence | by |
+   |---|---|---|---|---|
+   | `read`, `probe` | `**` | `ready` | `trial=` 504 read cards in one day, 2026-09-17 (`docs/SPEC-REVIEW.md:644`); 326 cards in the practice-17 shape, 2026-09-15 (`docs/WORKER-CARDS.md:317-319`). These kinds change nothing, so no gate is owed. | Rowan, to be confirmed by the read of this PR |
+
+   **No code-changing kind has a row, for any area, because no accept gate exists yet**
+   (work items T1-T6). That is the whole reason the gate is built by a **builder** with a friend's read — a
+   builder being the role, held as data in the route registry and never a model's name
+   in this text, of a coordinator's own child working red test first
+   (`docs/SPEC-DECIDE.md:126-131`, the child rungs) — not that the paths are forbidden, but that condition (a) cannot be met
+   by anything until the thing (a) cites exists.
+4. **How an area earns its row, and how it loses it.** (i) The kind's gate and its
+   seeds are on `dev` and `ACCEPT SELFTEST` passes on a certified bench. (ii) A pilot:
+   cards of that kind in that area, cut **under a `pilot` row** — `state=ready` with
+   `evidence=pilot:<n>`, which admits at most `<n>` cards, one at a time (§5 rule 5),
+   every one of them read by a friend whatever the gate said. (iii) The pilot's
+   `OUTCOME` rows and the reads' dispositions go into a trial file; where the area's
+   tests are the question, a mutation pass gives the score. (iv) A person or the
+   coordinator writes the `ready` row citing them, by commit. There is no threshold in
+   this spec: the row is a judgment, and the evidence is there so the judgment can be
+   read. **Withdrawal** is one appended row by the same hands, for any reason, and is in
+   force from the commit that lands it; `harvest` re-reads the table, so a card launched
+   before a withdrawal and harvested after it is `ACCEPT ABSTAIN reason=not-ready` and
+   pushes nothing. A HOLD on an accepted swarm PR whose finding the gate should have
+   caught is the expected trigger, and `nova-pulse status` counts, per `(kind, area)`,
+   accepted PRs later held, so the trigger is a number.
+5. **The classifier's half is the route, not a new question.** `nova-decide route`
+   already answers one unit of work with the lowest rung the evidence supports
+   (`docs/SPEC-DECIDE.md:126-134`), and the swarm's fill path already asks it per card
+   before dispatch (`docs/SPEC-DECIDE.md:342-366`). Condition (b) is: the card's
+   `ROUTE` line reads `jev=<rung>` with `why=-`, and that rung is one a swarm **runs**
+   (its registry row carries a `model`). `why=below-floor`, `refused`,
+   `rung-is-asked-not-run`, `card-names-no-kind` or `no-ladder` is **not eligible**: the
+   card is not dispatched to a swarm, and its line is the record of work owed to a child
+   or a friend. The floor is the route's tuned floor, a row in the floors file with its
+   trial behind it, and a floor with no rows is refused as untuned
+   (`docs/SPEC-DECIDE.md:581`).
+6. **With no provider, the rule table decides, or the answer is "not eligible", said
+   plainly.** `why=no-key` or `why=no-accounting`: the route is asked `--no-jev`, *"by
+   the rules alone, with no key and no network"* (`docs/SPEC-DECIDE.md:254-255`). If the
+   rule table names a rung a swarm runs for the card's kind, condition (b) holds and the
+   line says `eligible=rules`. If the table is silent, the line says
+   `eligible=no why=no-provider-and-no-rule`, and the card waits. **This differs from
+   the fill path's fallback on purpose**: there, a missing answer keeps today's model
+   (`docs/SPEC-DECIDE.md:357-363`); here, a missing answer keeps today's **hands**.
+   Falling back to "dispatch anyway" would make the second condition optional whenever
+   the provider is down.
+7. **The outcome is written at harvest, so the floor stays honest.** For every card
+   the route made eligible, `harvest` runs `nova-decide outcome --log <path> --unit-id
+   <id> --result green|red|blocked` (`docs/SPEC-DECIDE.md:219-226`) from the card's
+   `OUTCOME` line (§4): `accept=ok` is `green`, `accept=reject` is `red`, anything else
+   `blocked`. A later HOLD on the accepted PR appends a second outcome row, `red`, keyed
+   to the same unit. `nova-decide tune` then moves the floor from rows. A route that
+   says yes to work the gate keeps rejecting loses its floor by arithmetic, with nobody
+   deciding to distrust it.
+8. **The classifier's yes never suffices alone, and that is #1627's law kept, not
+   bent.** The SPEC-DECIDE amendment in #1627 holds that *"an answer only ever
+   tightens; whatever loosens rests on a mechanical fact"* (S4), and that where a
+   reading does loosen something *"the answer appears in that list only as one more
+   condition that can fail"*; its own summary is that a permitting answer is never
+   sufficient. Eligibility loosens — it hands work to a swarm — so it is stated as that
+   list. **Before:** a readiness row in force, written by a commit (mechanical); its
+   evidence resolving (mechanical); a certified bench (mechanical); **and** the route's
+   answer, one more condition that can fail. Take the provider away and the list still
+   stands and is simply stricter (rule 6). **After:** the accept gate with its negative
+   control (§1), hygiene (§3), and the read condition and the hold fold (§6) — none of
+   which any answer, at any confidence, can satisfy, skip or lift
+   (`docs/SPEC-DECIDE.md:66-71`, rule 6: *confidence never authorizes*). The route's
+   state is built from the card's typed header and the issue's public text inside
+   #1627's untrusted-text frame; nothing in an issue body can make a card eligible,
+   because a row and a gate stand on either side of the answer.
+
+**What stays law, and is not a never-touch list.** These are mechanical, they hold for
+every card whatever its area, and the ruling does not loosen them:
+
+9. **The gate decides accept or reject after the fact** (§1), for every code-changing
+   kind, in every area, however ready and however confident.
+10. **A card cannot edit its own judge.** `accept`, `mutate`, the hygiene checks,
+    `certify` and the transcript comparator run from the **installed** binary whose
+    build identity is inside `control=<id>` (§1 rule 8), never from the card's tree, so
+    a card that edits them is judged by the version it did not write. When a card's
+    diff touches the gate's own sources, seeds or fixtures, `accept` additionally runs
+    the **base's** selftest seeds against the **head's** gate code: any seed that no
+    longer draws its token is `REJECT reason=gate-weakened`. `docs/READINESS.tsv` and
+    the floors file are `readiness-self` (rule 1).
+11. **A card cannot edit its tests to pass.** Every `Test` function present at the base
+    in a package the card touched must still be present at head and must have gained no
+    skip; and for every test file that exists at the base and that the card changed,
+    `accept` overlays the base's copy onto the head and runs it. Absent, skipped or red
+    is `REJECT reason=test-weakened at=<test>` (§1 rule 4, step b2). A card whose purpose
+    is to change an existing test carries `TEST-EDIT: <file>` in its header — written
+    by the card writer, inside the contract hash (§5 rule 1) — and only the named file
+    is excused. A deleted test file is never excused.
+12. **HOLDs still block** (§6), and nothing here lifts one.
+13. **Security-kind units still route to Johnny for the READ, by machinery.** A card
+    whose `PATHS:` or diff touches a guard, secrets, the sandbox, sudo, deploy keys or
+    the network is a security kind, *"a kind and not a height"*, resolved *"to the
+    designated rung on EVERY path: with the provider on or off, at any floor"*
+    (`docs/SPEC-DECIDE.md:136-148`). **That governs who reviews, not who may write.** A
+    swarm may write such a card when (a) and (b) hold; `harvest`'s read card for its PR
+    goes to the designated mind and to nobody else, the read condition for that PR is
+    satisfied only by that mind's APPROVE at the current head, and where the designated
+    mind is asleep the PR **waits** — it is never re-routed to a reader who is awake.
+14. **Reading is never gated on readiness for an area.** `read` and `probe` change
+    nothing and rule 3's row covers `**`.
+
+**Red tests for this rule**, the provider a fake and the repository a fixture:
+`no-path-is-refused-as-such` (a `fix-red` card over `internal/swarm/**` with a ready
+row and a run-rung answer is cut); `no-readiness-row-is-not-eligible`;
+`withdrawn-last-wins-a-tie`; `a-withdrawal-after-launch-abstains-at-harvest`;
+`readiness-evidence-must-resolve` (a `gate=` with no control on file refuses the cut);
+`no-tool-writes-the-readiness-file` (class test); `a-card-that-edits-readiness-is-rejected`;
+`route-below-floor-is-not-eligible`; `asked-not-run-rung-is-not-eligible`;
+`no-provider-falls-back-to-the-rule-table`; `no-provider-and-no-rule-says-not-eligible`
+(the line carries `eligible=no why=no-provider-and-no-rule`, and the fill fake sees no
+dispatch); `a-yes-at-0.99-with-no-row-cuts-nothing` (#1627 S5's obeyed-provider shape);
+`an-injected-issue-body-changes-no-eligibility`; `harvest-writes-the-route-outcome`;
+`a-later-hold-appends-a-red-outcome`; `a-card-that-weakens-the-gate-is-rejected`;
+`base-tests-overlaid-on-head-must-pass`; `test-edit-excuses-only-the-named-file`;
+`security-kind-read-goes-to-the-designated-mind-only`;
+`security-kind-pr-waits-when-the-designated-mind-is-asleep`;
+`pilot-row-admits-n-cards-and-no-more`.
 
 ## 1. The accept gate — mechanical accept or reject, with a negative control
 
@@ -148,12 +283,18 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    able to turn a test green. `--cert` names the bench's certification record (§2); a
    missing, stale or failing record is `ACCEPT ABSTAIN reason=bench-uncertified`.
 4. **The order, and the first failure decides.** (a) §3's hygiene checks: `identity`,
-   `stray-file`, `secret`, `out-of-path`, `pit-stop`. (b) The kind's shape check: the
-   named test exists at head (`named-test-missing`); a code-changing kind changed at
-   least one test file (`no-test`). (c) Positive: build, vet, and the packages of every
+   `stray-file`, `secret`, `out-of-path`, `readiness-self`. (b) The kind's shape check,
+   where the kind declares one (§5): the named test exists at head
+   (`named-test-missing`); the kind changed at least one test file (`no-test`). (b2)
+   **The base's tests survive** (the eligibility rule, 11): every `Test` function present
+   at the base in a package the card touched is still present at head and has gained no
+   skip, and the base's copy of every pre-existing test file the card changed, overlaid
+   on the head, passes — else `test-weakened at=<test>`. A pre-existing test body the
+   card modified under `TEST-EDIT:` is listed on the PR for the reader, by name, because
+   that is judgment the gate does not have. (c) Positive: build, vet, and the packages of every
    changed file test green at head (`build`, `vet`, `red-at-head`, each with the first
-   failing line that is not a notice). (d) **Negative control for the card**:
-   `nova-review mutate --repo <tree> --base <base> --head <head>` must print `PASS`.
+   failing line that is not a notice). (d) **Negative control for the card**, for the kinds that declare the range form
+   (§5): `nova-review mutate --repo <tree> --base <base> --head <head>` must print `PASS`.
    A `MUTATE GREEN` line is `reason=vacuous-test at=<test>`: a test that is green
    without the change it claims to cover proves nothing
    (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection and not a reader's
@@ -173,8 +314,11 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
 6. **The gate's own negative control: it must be seen red before its green counts.**
    `accept --selftest` runs the gate over a fixture repository shipped in
    `cmd/nova-pulse/testdata/accept/`: one known-good fix commit, which must be
-   `ACCEPT OK`, and one seeded defect per reject token, each of which must be
-   `ACCEPT REJECT` **with that token and no other**:
+   `ACCEPT OK`, and one seeded defect per reject token of the common gate, each of which must be
+   `ACCEPT REJECT` **with that token and no other** (thirteen tokens, thirteen seeds; the
+   kind-specific tokens of §5 add their seeds with their kind; **`gate-weakened` is the
+   one token the selftest does not prove** — it needs a second gate to weaken — and its
+   own red test, `a-card-that-weakens-the-gate-is-rejected`, is what holds it):
 
    | seed | the one edit | want |
    |---|---|---|
@@ -185,7 +329,12 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    | `stray` | one untracked-then-added file outside `PATHS:` | `stray-file` |
    | `wide` | one line changed in a file outside `PATHS:` | `out-of-path` |
    | `secret` | one line carrying a key-shaped fixture string | `secret` |
-   | `protected` | one line changed under a pit-stop path | `pit-stop` |
+   | `self-ready` | one line added to `docs/READINESS.tsv` | `readiness-self` |
+   | `broken` | one line of the fix made a syntax error | `build` |
+   | `vetted` | one format verb in the fix made wrong for its argument | `vet` |
+   | `renamed` | the named test's `func` line renamed | `named-test-missing` |
+   | `wrong-name` | the fixture card's `TEST:` line pointed at a test that passes without the fix | `named-test-not-red` |
+   | `skipped` | one `t.Skip()` line added to a test that exists at the base | `test-weakened` |
 
    `ACCEPT SELFTEST … PASS` requires every row right. One wrong row is `FAIL`, exit 1,
    with its `ACCEPT SEED … WRONG` line.
@@ -237,7 +386,12 @@ does not hang the gate); `accept-rejects-a-vacuous-test`; `accept-rejects-when-n
 bench's); `selftest-every-seed-is-one-edit` (a two-line seed is refused by count);
 `selftest-wrong-token-is-a-fail`; `ok-without-a-control-on-file-is-refused`;
 `control-id-changes-with-the-build`; `mutate-seed-refuses-two-edits`;
-`mutate-prints-reverted-count`; `harvest-row-says-gate-none-for-a-read`.
+`mutate-prints-reverted-count`; `harvest-row-says-gate-none-for-a-read`;
+`an-untracked-file-in-the-workers-copy-cannot-turn-the-gate-green` (rule 3);
+`a-red-the-card-did-not-touch-is-run-once-at-base` and `base-red-is-an-abstain` (rule 5);
+`accept-makes-no-network-call` (rule 10: the run is wrapped with the network denied and
+still passes); `a-deleted-base-test-is-test-weakened`; `a-skip-added-to-a-base-test-is-test-weakened`;
+`a-test-edit-body-is-listed-for-the-reader`.
 
 ## 2. A wall that can build this repository, and a bench that is certified to
 
@@ -290,8 +444,8 @@ leg.**
    proves; for `sbcl`, `SBCL_HOME` and the core; for `sqlite3`, nothing but the binary.
    Each resolved root is printed on the `SANDBOX OK` line's `toolchain=` field so the
    wall a card ran behind is a fact on its record. An unknown leg is `SANDBOX REFUSED
-   reason=bad_toolchain`. This is a sandbox change: pit-stop rule, Opus child, a
-   friend's read.
+   reason=bad_toolchain`. This is a sandbox change, a security kind: whoever writes it, its read is the designated
+   mind's (the eligibility rule, 13).
 3. **`native` and `accept` pass the card's legs to the wall.** A card's `LEGS:` line
    (§5) names what its gate needs; the dispatcher turns it into `--toolchain`, and the
    harness fence is given the same roots (#1463) so the two walls agree. A card with no
@@ -341,7 +495,10 @@ leg.**
 holds one wrap per leg); `certify-absent-is-not-failed`; `cert-voids-on-build-change`;
 `accept-abstains-on-an-uncertified-leg`; `route-refuses-a-bench-without-the-leg`;
 `toolchain-cc-sets-developer-dir-and-reads-nothing-wider` (darwin);
-`legs-tsv-covers-every-toolchain-ci-installs`; `native-defaults-to-the-go-leg`.
+`legs-tsv-covers-every-toolchain-ci-installs`; `native-defaults-to-the-go-leg`;
+`an-unknown-leg-is-bad-toolchain` (rule 2); `a-cert-past-until-is-void`,
+`a-toolchain-abstain-voids-the-cert` and `a-changed-go-version-voids-the-cert` (rule 6);
+`wall-none-is-uncertified-for-a-code-card` (rule 7).
 
 ## 3. Identity and hygiene, at staging and at harvest
 
@@ -377,8 +534,8 @@ mechanical, and the harvest half never trusts that the staging half ran.
 4. **`out-of-path`: the diff is bounded to the card's declared paths.** The card's
    `PATHS:` line (§5) is a list of repo-relative globs, validated at `cut`: no `..`, no
    absolute path, no bare `**`, at most 8 entries. Every path in `git diff --name-only
-   <base>..<head>` matches one. A rename counts on both sides. A path under the
-   pit-stop set is `pit-stop` first.
+   <base>..<head>` matches one. A rename counts on both sides. `docs/READINESS.tsv` and the
+   floors file are `readiness-self` first (the eligibility rule, 1).
 5. **`stray-file`.** No added file matches the stray list — `RESULT.md`, `PROMPT.md`,
    `scratch/**`, `*.log`, `*.orig`, `*.rej`, `*.test`, `*.out`, `.DS_Store`, editor
    swap files, anything over 1 MiB, any file whose mode is not `100644` or `100755`,
@@ -413,13 +570,16 @@ mechanical, and the harvest half never trusts that the staging half ran.
 `hygiene-rejects-a-foreign-committer`; `hygiene-rejects-a-merge-commit`;
 `hygiene-counts-a-rename-on-both-sides`; `hygiene-rejects-result-md-in-the-diff`;
 `hygiene-never-prints-the-secret` (the output is searched for the fixture string);
-`secret-quarantines-and-never-deletes`; `paths-line-refuses-dotdot-and-bare-doublestar`.
+`secret-quarantines-and-never-deletes`; `paths-line-refuses-dotdot-and-bare-doublestar`;
+`hygiene-rejects-a-conflict-marker`, `hygiene-rejects-mode-100600`,
+`hygiene-rejects-a-file-over-one-mebibyte`, `hygiene-rejects-a-symlink-and-a-submodule`
+(rule 5).
 
 ## 4. Typed results, and Jev's harvest classification
 
 **Builds on.** Line 2 is one of `DONE`, `ABSTAIN <why>`, `BLOCKED <why>`
 (`docs/spec-pulse/10-the-card-as-cut-writes-it.md:8`); every abstain names one reason
-token so the packet is the whole read (`docs/SPEC-SWARM.md:1480-1503`); the working
+token so the packet is the whole read (`docs/SPEC-SWARM.md:1481-1503`); the working
 layout's five harvest classes are *"the typed decision behind the floor"*
 (`docs/SPEC-PULSE.md:2045`); SPEC-DECIDE's **nova-pulse harvest class** asks one
 `choice` over {fixed, already-fixed, no-change, failed, off-branch} over bounded public
@@ -441,7 +601,12 @@ is handed.
    `gather=` is SPEC-SWARM's token, `accept=`/`reason=` are §1's, `class=`/`conf=` are
    rule 3's. The worker writes none of it.
 2. **What the gate decides is never asked of a model.** `accept=ok` is `class=fixed`
-   and `accept=reject` is `class=failed`, with `conf=-`, and no decision call is made:
+   and `accept=reject` is the new class **`rejected`**, with `conf=-`, and no decision call is
+   made. It is not `failed`: that word already means *"the push or the read could not
+   complete"* (`docs/SPEC-PULSE.md:2045`) and SPEC-DECIDE says `fixed` and `failed` *"push as
+   today"* (`docs/SPEC-DECIDE.md:413`); a rejected card pushes nothing, and an implementer
+   reading either sentence must not be able to conclude otherwise. The Jev lane's amendment
+   adds `rejected` to the class set as a member no provider is ever asked for:
    a typed judgment over evidence a verb already settled is a paid coin-flip over a
    known answer. `no-change`, `already-fixed` and `off-branch` stay the mechanical git
    reads they are in the working layout (`docs/SPEC-PULSE.md:2045-2049`).
@@ -467,7 +632,9 @@ is handed.
 **Red tests:** `outcome-is-written-by-harvest-and-never-by-the-card` (a job that ships
 its own `OUTCOME` is `stray-file`); `no-decide-call-when-accept-decided` (the provider
 fake sees zero requests); `decide-state-is-built-from-outcome-only`;
-`a-harvest-class-never-pushes-a-rejected-card`; `below-floor-is-unknown-and-requeues-once`.
+`a-harvest-class-never-pushes-a-rejected-card`; `below-floor-is-unknown-and-requeues-once`;
+`accept-reject-is-class-rejected-never-failed`; `every-outcome-is-one-appended-jsonl-row`
+(rule 5).
 
 ## 5. Card kinds for tool work, each with its declared gate and control
 
@@ -503,7 +670,8 @@ the worker never sees and cannot edit.
    below line 1 the contract hash covers them: a card whose header was altered after
    admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing any of
    them (`CUT REFUSED kind=<kind>: no <LINE>`), and `lint --card` gains the tokens
-   `kind-declared`, `paths-declared`, `pit-stop` (the pit-stop rule, 2) and
+   `kind-declared`, `paths-declared`, `not-ready` (no readiness row in force for this kind
+   over these paths; the remedy names the eligibility rule, 4: how an area earns its row) and
    `test-named`.
 2. **The kinds.** `gate` is the step list of §1 rule 4; `control` is what must be seen
    red before the gate's green counts for this card.
@@ -511,9 +679,9 @@ the worker never sees and cannot edit.
    | kind | the card does | `PATHS:` may hold | gate | control (seeded defect, `edits=1`) | kind-specific reject tokens |
    |---|---|---|---|---|---|
    | `fix-red` | fixes one defect, red test first (WORKER-CARDS 4 and 23; SPEC-SWARM P7) | the named source and test files | hygiene, shape, positive, mutate | the change reverted: `nova-review mutate` range form `PASS`, and `TEST:` is among the tests that went red | `no-test`, `vacuous-test`, `named-test-not-red` |
-   | `transcript-test` | makes one `docs/TESTS.md` section executed line for line (§7) | `cmd/<tool>/firstrun_test.go`, `cmd/<tool>/testdata/**` — **never `docs/TESTS.md`** | hygiene, shape, positive | three seeds applied to a **copy** of the tool's section, each one edit: one line dropped, one value altered, one line moved; the new test goes red on each | `doc-edited`, `transcript-not-read` (a seed stayed green: the test does not read the document) |
-   | `rebase` | replays one of our own open PRs onto the base, changing nothing | the PR's own changed files, computed by `cut` from the PR at its pinned head | hygiene, positive, and **range equality**: `git range-diff` pairs every commit, and each pair's patch-id is equal except in files git reported conflicted during the replay | one line changed in a file that did **not** conflict: the gate rejects `rebase-drift` | `rebase-drift`, `commit-dropped`, `commit-added` |
-   | `sweep` | applies one mechanical class fix at every site the class test names | up to 8 globs, plus `FILES: <n>`, the most files the diff may touch | hygiene, shape, positive, mutate | **two** seeds, each one edit: the first and the last changed site (path order) reverted alone; the class test in `TEST:` goes red **naming that site** — a class test that samples is found out | `site-not-seen`, `over-files` |
+   | `transcript-test` | makes one `docs/TESTS.md` section executed line for line (§7) | `cmd/<tool>/firstrun_test.go`, `cmd/<tool>/testdata/firstrun/**` — **never `docs/TESTS.md`**, and never the rest of `testdata/` (for nova-pulse that holds the gate's own fixtures, `testdata/accept/`) | hygiene, shape, positive | three seeds applied to a **copy** of the tool's section, each one edit: one line dropped, one value altered, one line moved; the new test goes red on each | `doc-edited`, `transcript-not-read` (a seed stayed green: the test does not read the document) |
+   | `rebase` | replays one of our own open PRs onto the base, changing nothing | the PR's own changed files, computed by `cut` from the PR at its pinned head | hygiene, positive, and **range equality**: `git range-diff` pairs every commit, and each pair's patch-id is equal except in files git reported conflicted during the replay; those files are exempt from equality, so they are **listed by name on the read card** and are what the reader reads | one line changed in a file that did **not** conflict: the gate rejects `rebase-drift` | `rebase-drift`, `commit-dropped`, `commit-added` |
+   | `sweep` | applies one mechanical class fix at every site the class test names | up to 8 globs, plus `FILES: <n>`, the most files the diff may touch | hygiene, positive, and the seed form **only**: the class test landed first and the sweep changes no test file, so the shape check would say `no-test` and range `mutate` would exit 2 `no-tests-changed` — neither is declared for this kind | **two** seeds, each one edit: the first and the last changed site (path order) reverted alone; the class test in `TEST:` goes red **naming that site** — a class test that samples is found out | `site-not-seen`, `over-files` |
    | `mutation-kill` | writes the test that kills one surviving mutant | test files only | hygiene, shape, positive, and the diff is test-only | the card's own `SEED:` patch (the mutant, written by the card writer into the card, `edits=1` asserted at `cut`) applied with `mutate --seed`: the new test is red with it and green without | `mutant-survives`, `non-test-change` |
    | `read`, `probe`, `text`, `tone` | read and report | none: `PATHS: none` | `none` | none; the `HARVEST` row says `gate=none` | — |
 
@@ -522,8 +690,8 @@ the worker never sees and cannot edit.
    prints it, one line per kind, and a class test asserts this section's table and
    that output name the same kinds, steps and tokens. A kind the table does not hold is
    refused by `cut` and abstained by `accept`; there is no default kind.
-4. **What makes a card of a kind eligible for a swarm.** All of: its `PATHS:` miss the
-   pit-stop set; its `SOURCE:` names an issue or a `file:line` the card writer opened at
+4. **What makes a card of a kind eligible for a swarm.** All of: both conditions of the
+   eligibility rule hold for its kind over its `PATHS:`; its `SOURCE:` names an issue or a `file:line` the card writer opened at
    the pinned head (WORKER-CARDS 3); its `TEST:` either exists at the pinned head
    (`transcript-test`'s target section, `sweep`'s class test) or is a name the card
    fixes in advance; its `LEGS:` are certified on at least one bench (§2 rule 5); and it
@@ -569,39 +737,55 @@ everything it was specified to check. Three more were one command from the same 
 the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head) and
 #1479 (green, MERGEABLE, approved, and does not compile on `dev`).
 
-1. **One fold of dispositions, from two sources, keyed by reviewer and head.** The fold
-   takes (a) the lane's records — `nova-merge read` and `nova-review verdict` — and (b)
-   the forge's reviews and comments on the pull request. Its key is `(who, head)`; per
-   key the newest `at` wins and a tie folds **hold-last**, exactly as
-   `docs/SPEC-MERGE.md:820-827` already folds records. `who` is a name in the lane's
-   `reviewers.tsv` (`who`, `logins`, `may-hold`), never a bare login: several friends
-   write through one login, and a login is evidence about an account.
-2. **A forge comment is a disposition when it says so on a typed line.**
+1. **One fold, two sources, and the forge source is one-way: it can only ADD a hold.**
+   The fold takes (a) the lane's records — `nova-merge read` and `nova-review verdict`,
+   each written by the reader's own verb on the reader's own machine and pushed to the
+   lane branch (`docs/SPEC-MERGE.md:286-304`) — and (b) the forge's reviews and comments
+   on the pull request. **Only (a) can approve, and only (a) can lift.** A forge comment
+   that says APPROVE, in prose or on a typed line, counts for nothing: on this
+   repository several friends write through one shared login, so a pasted
+   `verdict=APPROVE` naming Stella is indistinguishable from Stella's, and a read is
+   *"recorded by the reader, with the verb … never by writing a note the coordinator
+   then reads and transcribes"* (SPEC-MERGE rule 19), while *"an APPROVE names what it
+   compared"* (`docs/SPEC-REVIEW.md:236`). The key is `(who, head)`; per key the newest
+   `at` wins and a tie folds **hold-last** (`docs/SPEC-MERGE.md:820-827`). `who` is a
+   name in the lane's `reviewers.tsv` (`who`, `logins`, `may-hold`) and is never
+   inferred from a login: a login is evidence about an account.
+2. **What on the forge adds a hold.** From any login listed in `reviewers.tsv`, posted
+   after the current head was pushed: a review in state `CHANGES_REQUESTED` (bound to
+   its `commit_id`); a comment carrying the typed line
 
    ```
-   DISPOSITION who=<name> head=<sha40> verdict=<HOLD|APPROVE|ABSTAIN> [scope="<text>"]
+   DISPOSITION who=<name> head=<sha40> verdict=HOLD [scope="<text>"]
    ```
 
-   one whole line, anywhere in the comment, from a login listed for that `who`. A forge
-   review counts by its state and its `commit_id`: `CHANGES_REQUESTED` is a HOLD,
-   `APPROVED` an APPROVE. `nova-review verdict` and `nova-merge read` print the typed
-   line for the reader to paste, so the record and the comment are one act.
-3. **Fail closed on a comment that might be a hold.** A comment with no typed line,
-   from a reviewer login that is **not** the pull request's author login, posted after
-   the current head was pushed, whose text holds the word `HOLD` as a heading word or
-   inside bold, is `hold-unparsed`: the member is dropped and the line names the
-   comment's URL. The author's own comments are never scanned — this lane quotes the
-   word while reporting on holds, and a substring match over all comments would have
-   dropped several innocent members on the night of #1572. A false drop costs one
-   typed line from the reviewer; a false admit costs a held head on `dev`.
-4. **What blocks.** A member is **held** when, for any reviewer with `may-hold`: that
-   reviewer's newest disposition **at the current head** is HOLD; **or** that reviewer
-   has no disposition at the current head and their newest disposition at any earlier
-   head is HOLD (`hold-carried`: a push does not lift a hold, only its holder does — the
-   mirror of *a stale approve authorizes nothing*); **or** rule 3. A HOLD is lifted only
-   by the same `who` recording APPROVE at the current head — a scoped APPROVE counts, a
-   prose *"clear"* does not — and by nothing the author or the lane can type. There is
-   no `--ignore-hold` in this draft (open question Q3).
+   which `nova-merge read` and `nova-review verdict` print beside their record for the
+   reader to paste; **or** a comment with no typed line whose text holds the word
+   `HOLD` as a heading word or inside bold — `hold-unparsed`, attributed to
+   `who=unknown`. The login is **not** used to excuse a comment: draft 1 skipped the
+   pull request's author login, and where the friends and the author share one login
+   that skips every comment there is and fails open — #1572 again. The one exclusion is
+   by `who`: a comment carrying `DISPOSITION who=<the entry's author> verdict=NOTE` is
+   the author's own status note and is not scanned, because this lane quotes the word
+   while reporting on holds. A comment from a login not in `reviewers.tsv` adds nothing
+   and is counted (`foreign=<n>`), so a stranger on a public repository cannot stop the
+   lane and cannot be missed either.
+3. **What blocks.** A member is **held** when, for any `who` with `may-hold` or for
+   `who=unknown`: the newest disposition at the current head is HOLD; **or** there is
+   none at the current head and the newest at any earlier head is HOLD (`hold-carried`:
+   a push does not lift a hold, SPEC-REVIEW rule 7, *"a HOLD never expires"*,
+   `docs/SPEC-REVIEW.md:269`). A false drop costs one verb from the reviewer; a false
+   admit costs a held head on `dev`.
+4. **What lifts, and it is always the verb.** A HOLD attributed to a named `who` is
+   lifted only by **that** `who` recording APPROVE at the current head with `nova-merge
+   read` or `nova-review verdict` — a scoped APPROVE counts, a prose *"clear"* and a
+   pasted line do not. A `who=unknown` hold is lifted when a `may-hold` reviewer who is
+   not the entry's author records, with the verb, at the current head and later than
+   the comment, either a HOLD of their own (the hold is now theirs) or an APPROVE whose
+   `--note` names the comment's id. Nothing the author, the lane or a forge comment can
+   type lifts anything. There is no `--ignore-hold`: the escape for a holder who cannot
+   be woken is Glenn removing that name's `may-hold` in `reviewers.tsv` by commit,
+   which is a record with an author and a date.
 5. **Read twice: at admission and again at the door.** `batch` folds each member's
    dispositions at the point it reads that member's `ci-ok`, from the wire, and drops a
    held member before the merge:
@@ -636,12 +820,20 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
 7. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
    condition; `needs_read` stands for every swarm PR that changes code, and the reader
    *"judges spec fit and nothing else"* (`docs/SPEC-REVIEW.md:659-660`) because the
-   gate already did the rest.
+   gate already did the rest. What the gate cannot judge it hands over by name: a
+   pre-existing test body changed under `TEST-EDIT:`, and a rebase's conflicted files.
+   And for a security-kind member the read that counts is the designated mind's and
+   nobody else's (the eligibility rule, 13).
 
 **Red tests**, the forge a fake in every one: `batch-drops-a-member-held-at-its-head`;
 `batch-drops-a-carried-hold-after-a-push`; `a-newer-approve-by-the-same-who-lifts-it`;
-`another-reviewers-approve-lifts-nothing`; `the-authors-quoted-hold-drops-nothing`;
-`an-untyped-hold-from-a-reviewer-fails-closed`; `two-names-one-login-fold-separately`;
+`another-reviewers-approve-lifts-nothing`; `a-pasted-approve-line-lifts-nothing` (the
+shared login types `verdict=APPROVE who=<holder>`; the member stays held);
+`a-forge-approved-review-counts-for-nothing`; `changes-requested-is-a-hold-bound-to-its-commit-id`;
+`an-untyped-hold-from-the-shared-login-fails-closed` (author and reviewers on ONE login,
+the fixture draft 1 failed open on); `the-authors-note-line-drops-nothing`;
+`an-unknown-hold-is-lifted-only-by-a-reviewers-verb`; `a-foreign-login-adds-nothing-and-is-counted`;
+`removing-may-hold-by-commit-releases-the-lane`; `two-names-one-login-fold-separately`;
 `land-refuses-a-hold-posted-after-batch-ok` (the fake forge grows a comment between the
 two reads; the receipt is #1572's timeline); `sweep-never-enqueues-a-held-pr`;
 `batch-names-the-member-that-breaks-the-build`; `swarm-member-without-accept-ok-is-dropped`.
@@ -650,7 +842,7 @@ two reads; the receipt is #1572's timeline); `sweep-never-enqueues-a-held-pr`;
 
 **Builds on.** Every command carries a `### First run` transcript in its `## <tool>`
 section of `docs/TESTS.md`, asserted for every directory under `cmd/`
-(`docs/SPEC-CI.md:1138-1163`); each `docs/TESTS.md` heading is written once, because
+(`docs/SPEC-CI.md:1139-1163`); each `docs/TESTS.md` heading is written once, because
 only the first is read (`docs/SPEC-CI.md:1200-1227`); `docs/TESTS.md:1-3` says every `$`
 line *"is run by a test … and what the tool prints is compared with what is written
 here by SHAPE"*; `onboarding.FirstRun`, `Transcript` and `Shape`
@@ -719,83 +911,95 @@ nine); `platform-line-must-name-a-ci-leg`; `unexecuted-examples-only-shrink`.
 
 ## The work list
 
-Ordered. **T1-T6 are the gate, and until they land no swarm card changes this
-repository's code.** T7 onward is ordered so that the first things a swarm is handed
-are the narrowest, most mechanical kinds with the strongest controls. Each item is one
-card's worth; `S` is SWARM-ELIGIBLE (once T1-T6 are on `dev`), `O` is OPUS+FRIENDS
-(an Opus child, red first, a friend's read at the exact head — the pit-stop rule).
+Ordered. Each item is one card's worth. The **initial readiness** column is where each
+item starts, not where it stays: `swarm` means the item is cut as swarm cards as soon
+as its kind and area hold a readiness row and the route says yes (the eligibility
+rule); `builder` means it starts with a builder and a friend's read, because at
+`dev@31e35195` no gate exists for any code-changing kind and so no row can cite one.
+Nothing in this column is a prohibition, and any `builder` item becomes swarm work the
+day its `(kind, area)` earns a row. **T1-T6 are the gate; until they land, condition
+(a) cannot be met for any card that changes code.** T8 onward is ordered so that the
+first things a swarm is handed are the narrowest, most mechanical kinds with the
+strongest controls.
 
-| # | who | item | section |
+| # | initial readiness | item | section |
 |---|---|---|---|
-| T1 (#1646) | O | `nova-review mutate`: `reverted=<n>` on the verdict line, and the `--seed` form with `edits=1` asserted | §1 rule 9 |
-| T2 (#1647) | O | `internal/hygiene.Check` and its data files (stray list, key shapes), plus `nova-check hygiene` | §3 rules 3-7 |
-| T3 (#1648) | O | `nova-pulse accept`: the worktree, the step order, the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
-| T4 (#1649) | O | `accept --selftest`: the fixture repository, the eight one-edit seeds, `control=<id>`, and OK refused without a control on file | §1 rules 6-8 |
-| T5 (#1650) | O | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line; no decide call where the gate decided | §1 rule 1, §4 rules 1-2 |
-| T6 (#1651) | O | the five header lines in `cut`, the `lint --card` tokens, `pitstop_paths.txt` with its class test, admission refusal, the kinds table with `fix-red` and `transcript-test`, the pilot rule | pit-stop rule, §5 rules 1-5 |
-| T7 (#1652) | O | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
-| T8 (#1653) | S | `transcript-test`, one card per tool, the sections no test executes whose tool is outside the pit-stop set: nova-ci, nova-decide, nova-pulse, nova-review, and nova-post after Q5 | §7 rule 1 |
-| T9 (#1654) | S | `transcript-test`, one card per tool, the set-of-shapes tests outside the pit-stop set moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
-| T10 (#1655) | S | `fix-red` cards over the triage's defects whose paths miss the pit-stop set (the first: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
-| T11 (#1656) | S | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool outside the pit-stop set, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
-| T12 (#1657) | O | the transcript tests of the four protected tools — nova-sandbox and nova-secrets (unexecuted), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, pit-stop rule |
-| T13 (#1658) | O | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
-| T14 (#1659) | S | `rebase`: the conflicting open PRs that are ours and miss the pit-stop set, oldest first, one per card (54 conflicted at the triage) | §5 `rebase` |
-| T15 (#1660) | S | `mutation-kill`: one card per surviving mutant in the Go tools outside the pit-stop set, from a mutation pass an Opus child runs and files (Q8) | §5 `mutation-kill` |
-| T16 (#1572) | O | #1572: the disposition fold, the typed `DISPOSITION` line printed by `read` and `verdict`, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
-| T17 (#1661) | O | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build | §6 rule 6 |
-| T18 (#1662) | O | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
-| T19 (#1663) | O | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
-| T20 (#1664) | O | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
-| T21 (#1665) | O | staging: the pool's `identity.tsv`, the clone's local git config, no symlink out of the job root | §3 rules 1-2 |
-| T22 (#1666) | O | the Jev boundary: the state built from `OUTCOME`, `class=`/`conf=` written back, `outcomes.jsonl` — with the Jev lane's SPEC-DECIDE amendment, not before it | §4 rules 3-5 |
-| T23 (#1667) | O | `Platform:` lines and their class test (#1509); the unexecuted-examples count and its shrink-only list | §7 rules 5, 7 |
-| T24 (#1668) | O | move each section's normative text home into its own spec and leave this file as the index | preamble |
+| T1 (#1646) | builder | `nova-review mutate`: `reverted=<n>` on the verdict line, and the `--seed` form with `edits=1` asserted | §1 rule 9 |
+| T2 (#1647) | builder | `internal/hygiene.Check` and its data files (stray list, key shapes), `readiness-self`, plus `nova-check hygiene` | §3 rules 3-7 |
+| T3 (#1648) | builder | `nova-pulse accept`: the worktree, the step order, the base's tests surviving (`test-weakened`), the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
+| T4 (#1649) | builder | `accept --selftest`: the fixture repository, the thirteen one-edit seeds, `control=<id>`, OK refused without a control on file, and `gate-weakened` with its own red test | §1 rules 6-8, eligibility rule 10 |
+| T5 (#1650) | builder | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line with `class=rejected`; no decide call where the gate decided; the route outcome written | §1 rule 1, §4 rules 1-2, eligibility rule 7 |
+| T6 (#1651) | builder | the header lines in `cut`, the `lint --card` tokens, `docs/READINESS.tsv` with its fold and its class test (no tool writes it), eligibility checked at `cut` and at dispatch — row in force, evidence resolving, route answer or rule table or `eligible=no` — the kinds table with `fix-red` and `transcript-test`, the pilot row | the eligibility rule 1-8, §5 rules 1-5 |
+| T7 (#1652) | builder | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
+| T8 (#1653) | swarm | `transcript-test`, one card per tool, the sections no test executes: nova-ci, nova-decide, nova-pulse (`PATHS:` never reaching `testdata/accept/`), nova-review, and nova-post after its block is re-cut (Q5) | §7 rule 1 |
+| T9 (#1654) | swarm | `transcript-test`, one card per tool, the set-of-shapes tests moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
+| T10 (#1655) | swarm | `fix-red` cards over the triage's defects, area by area as each earns its row (the first pool: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
+| T11 (#1656) | swarm | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
+| T12 (#1657) | builder | the transcript tests of the four tools whose areas will earn a row last — nova-sandbox and nova-secrets (unexecuted; security kinds, so the read is the designated mind's), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, eligibility rule 13 |
+| T13 (#1658) | builder | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
+| T14 (#1659) | swarm | `rebase`: the conflicting open PRs that are ours, oldest first, one per card (54 conflicted at the triage); the read card lists the files that conflicted | §5 `rebase` |
+| T15 (#1660) | swarm | `mutation-kill`: one card per surviving mutant, from a mutation pass a builder runs with hand-written one-edit seeds and files (Q8) — the same pass is an area's `mutation=` evidence | §5 `mutation-kill`, eligibility rule 2 |
+| T16 (#1572) | builder | #1572: the disposition fold, the forge adding holds only and the verb alone lifting, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
+| T17 (#1661) | builder | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build; a security-kind member needs the designated mind's APPROVE | §6 rule 6, eligibility rule 13 |
+| T18 (#1662) | builder | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
+| T19 (#1663) | builder | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
+| T20 (#1664) | builder | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
+| T21 (#1665) | builder | staging: the pool's `identity.tsv`, the clone's local git config, no symlink out of the job root | §3 rules 1-2 |
+| T22 (#1666) | builder | the Jev boundary: the state built from `OUTCOME`, `class=`/`conf=` written back, `rejected` in the class set, `outcomes.jsonl` — with the Jev lane's SPEC-DECIDE amendment (#1627), not before it | §4 rules 3-5 |
+| T23 (#1667) | builder | `Platform:` lines and their class test (#1509); the unexecuted-examples count and its shrink-only list | §7 rules 5, 7 |
+| T24 (#1668) | builder | move each section's normative text home into its own spec and leave this file as the index | preamble |
 
-T7 is `O` although `internal/onboarding` is outside the pit-stop set: it is the
-comparator every T8 and T9 card is judged against, and the thing that judges a swarm's
-work is not written by one. T16 does not wait for the gate — it closes a road to `dev`
-that is open today — and is listed where it is only because the list is ordered for
-swarm hand-off; it may start first, and so may T18. Two things outside this list gate T8 onward as
-well: PR #1478 (#1463, #1464, #1465), without which a Go card cannot run its own test
-inside the wall on any bench — `accept` names the Go roots itself, the way `--go` does
-(`docs/SPEC-SANDBOX.md:597-612`), so the gate is sound before it lands, but every card would
-come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 cards are `LEGS: go`
-and run only where a person has measured that leg inside the wall.
+T7 starts with a builder because it is the comparator every T8 and T9 card is judged
+against, and a card is never judged by what it wrote (the eligibility rule, 10). T16
+does not wait for the gate — it closes a road to `dev` that is open today — and is
+listed where it is only because the list is ordered for swarm hand-off; it may start
+first, and so may T18. Two things outside this list gate T8 onward as well: PR #1478
+(#1463, #1464, #1465), without which a Go card cannot run its own test inside the wall
+on any bench — `accept` names the Go roots itself, the way `--go` does
+(`docs/SPEC-SANDBOX.md:597-612`), so the gate is sound before it lands, but every card
+would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 cards are
+`LEGS: go` and run only where a person has measured that leg inside the wall.
 
-## Open questions, each with the default this draft stands on
+## Questions, and where each stands
 
-- **Q1. Is the gate itself inside the pit-stop set?** Glenn's list is kernel, journal,
-  leases, secrets, sandbox, merge queue, specs, nova-swarm. Default here: **yes** — a
-  swarm never edits `accept`, `mutate`, `hygiene`, `certify`, `internal/ci` or the
-  comparator, because a worker that can change its judge can pass it. This makes all of
-  `nova-pulse`'s harvest path Opus work. Glenn's call.
-- **Q2. Whose HOLD counts.** Default: every name in the lane's `reviewers.tsv` with
-  `may-hold`, seeded with Glenn and every friend who reads for this repository. #1572
-  asks the same question. Stella's or Glenn's call.
-- **Q3. What lifts a HOLD, and is there an escape.** Default: only the holder's own
-  APPROVE at the current head; a hold carries across a push; no `--ignore-hold`. The
-  cost is a reviewer who is asleep (Emma was unwakeable on both seats, #1519) holding a
-  lane. A friend's judgment, then Glenn's.
-- **Q4. Will friends write the typed `DISPOSITION` line?** The fold fails closed on an
-  untyped hold, so nothing unsafe happens if they do not, but every untyped hold is then
-  a dropped member somebody has to clear by hand. It needs each friend's yes.
+- **Q1. Is the gate itself inside a never-touch set? — ANSWERED, Glenn, 2026-09-19:**
+  *"Code swarms can touch any code we want, as long as we are confident they are ready
+  to do this, and the classifier (Jev) says its work they can handle."* There is no
+  never-touch set. The eligibility rule replaces it, and the invariant that survives is
+  mechanical: a card never edits what judges it (rules 10-11).
+- **Q2. Whose HOLD counts.** Default, taken from the cold read of draft 1: every name in
+  the lane's `reviewers.tsv` with `may-hold`, keyed by `who` and never by login, seeded
+  with Glenn and every friend who reads for this repository; plus `who=unknown` for an
+  untyped hold, which fails closed.
+- **Q3. What lifts a HOLD, and the escape.** Default: only the holder's own APPROVE at
+  the current head, by the verb; a hold carries across a push; no `--ignore-hold`. The
+  escape for a holder who cannot be woken (#1519) is Glenn removing that name's
+  `may-hold` by commit, which is a record.
+- **Q4. Will friends write the typed `DISPOSITION` line?** No longer load-bearing: the
+  forge only adds holds and fails closed on an untyped one, and only the verb lifts or
+  approves, so the typed line buys attribution and nothing else.
 - **Q5. nova-post's quickstart documents `--channel fake`, which the tool refuses.**
-  Ship the channel, or re-cut the block? Until decided, nova-post's T8 card is blocked.
-- **Q6. Certification lifetime.** Default 24 hours and void on any tool or toolchain
-  change. A shorter life costs a certify run per bench per day (eight probes, each under
-  the two-minute law).
-- **Q7. The name.** "Pit-stop rule" collides with [PIT-STOP.md](PIT-STOP.md)'s pit
-  stop. Default: keep Glenn's word and cross-link.
-- **Q8. `mutation-kill` needs a mutant source.** `nova-review mutate` reverts a change;
-  it does not generate mutants. Default: an Opus child runs the pass by hand-written
-  one-line seeds, as the nova-work hardening lane did on 2026-09-19, and files one issue
-  per survivor. A generator is not specified here.
+  Default: re-cut the block; a fake channel does not ship. nova-post's T8 card waits on
+  that re-cut.
+- **Q6. Certification lifetime.** Default stands: 24 hours, and void on any tool or
+  toolchain change.
+- **Q7. The name. — MOOT.** The "pit-stop rule" is withdrawn with the list it named, and
+  [PIT-STOP.md](PIT-STOP.md) keeps its word to itself.
+- **Q8. `mutation-kill` needs a mutant source.** Default stands: hand-written one-edit
+  seeds by a builder, as the nova-work hardening lane did on 2026-09-19; no generator is
+  specified here.
+- **Q9 (new). Who may write a readiness row?** The ruling says *we* are confident. This
+  draft reads that as a person or the coordinator, by commit, read like any change —
+  and sets no numeric threshold for a row (the eligibility rule, 4). If Glenn wants a
+  floor under the judgment (a minimum pilot size, a minimum mutation score), it is one
+  sentence there.
 
 ## What this draft does not do
 
-It lands no code. It does not let a swarm land anything, lift a hold, skip a read or
-touch the merge queue. It does not change the read condition. It does not specify Jev's
+It lands no code. It forbids no path to a swarm. It does not let a swarm land anything,
+lift a hold, skip a read, enqueue anything, write its own readiness or edit what judges
+it. It does not change the read condition, except to name whose read counts for a
+security kind. It lets no classifier answer suffice for anything. It does not specify Jev's
 question, options, state or floor — that is the Jev lane's SPEC-DECIDE amendment. It
 does not widen the wall: §2 names narrower roots per leg and refuses an unknown one. It
 does not make a mutant generator (Q8). It does not certify any Linux bench for a walled
