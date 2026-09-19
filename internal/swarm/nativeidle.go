@@ -36,6 +36,27 @@ const DefaultNativeIdle = 300 * time.Second
 // beside a duration reads like an oversight, and this one is a choice a caller can type.
 const NoIdleWindow = time.Duration(0)
 
+// nativeBusyShare is the divisor of the sample interval a tree must spend to count as
+// WORKING: one tenth of it, measured rather than chosen.
+//
+// batch asks for one hundredth (issue #916), on the reasoning that "a tree that is working
+// spends a large fraction of the interval; one percent separates the two by orders of
+// magnitude". Measured on hulk on 2026-09-19 against the harness the cards actually run
+// (`opencode` v1.18.20, deepseek-flash), that is no longer true: a harness SITTING STILL --
+// blocked on a tool call that never returns, and by the same token on a model turn that
+// never answers -- charged 103 clock ticks in 95 seconds, a steady 1.03% of one core,
+// FOREVER. Its own event loop is the floor, and one percent sits exactly on it.
+//
+// A tree that is really working pins at least one core, which is 100% of the interval. One
+// tenth is ten times the measured idle floor and ten times below a single busy core, so it
+// separates them with a decade of room on both sides -- which is what the one-percent rule
+// claimed and no longer has.
+//
+// The same floor is under `batch --idle`, which this does NOT touch: that path is not the
+// one break 6 ran through, and a constant shared between two verbs is changed with both of
+// them measured, not with one.
+const nativeBusyShare = 10
+
 // nativeIdlePoll is how often the log's size is re-read, batch's idlePollInterval by the
 // same reasoning: short enough that the end lands near the window rather than a tick past
 // it, and cheap because it is one stat of one file.
@@ -141,7 +162,7 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 							cpu, haveCPU = got, true
 							// A tree that LOST a process did work: the process was alive,
 							// it was charged, and its departure is not stillness.
-							if shrank || (grew && got-prev >= uint64(span)/100) {
+							if shrank || (grew && got-prev >= uint64(span)/nativeBusyShare) {
 								lastGrow = at
 								continue
 							}

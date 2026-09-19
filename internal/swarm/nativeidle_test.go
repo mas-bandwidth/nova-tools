@@ -185,3 +185,41 @@ func TestCardIdleLineIsNotAWallLine(t *testing.T) {
 		t.Fatalf("want %q, got %q", want, line)
 	}
 }
+
+// TestWatchIdleEndsAHarnessSpendingOnlyItsOwnEventLoop: the measurement that set
+// nativeBusyShare. Measured on hulk 2026-09-19, `opencode` v1.18.20 sitting still -- blocked
+// on a tool call that never returned -- charged 103 clock ticks in 95 seconds, a steady
+// 1.03% of one core, forever. batch's one-percent share (issue #916) sits exactly on that
+// floor, so the harness never looked idle and the watch never fired on a real card.
+// RED WITHOUT THE FIX: at one percent this card is kept alive for the whole run.
+func TestWatchIdleEndsAHarnessSpendingOnlyItsOwnEventLoop(t *testing.T) {
+	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+	b.snap.ok = true
+	var end IdleEnd
+	var ended bool
+	for at := time.Second; at <= 30*time.Second && !ended; at += 3 * time.Second {
+		// 1.03% of the interval: the harness's own event loop and nothing else.
+		b.snap.cpu += uint64(3*time.Second) * 103 / 10000
+		end, ended = b.tick(t, at)
+	}
+	if !ended {
+		t.Fatal("a harness spending only its own event loop is still, however long it does it for")
+	}
+	if end.Idle < 10*time.Second {
+		t.Fatalf("the end names how long the card was still, got %v", end.Idle)
+	}
+}
+
+// TestWatchIdleKeepsACardSpendingARealShareOfACore: the other side of the same threshold,
+// and issue #593's case. A `go test` prints nothing and pins a core; nothing about raising
+// the share may make that card look dead.
+func TestWatchIdleKeepsACardSpendingARealShareOfACore(t *testing.T) {
+	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+	b.snap.ok = true
+	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
+		b.snap.cpu += uint64(3 * time.Second) // one core, pinned
+		if end, ended := b.tick(t, at); ended {
+			t.Fatalf("a card pinning a core is working, not idle: %+v at %v", end, at)
+		}
+	}
+}
