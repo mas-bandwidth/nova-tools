@@ -421,6 +421,24 @@ func (m *manager) openPR(card, job string, lines []string) {
 	dir := filepath.Join(job, "repo")
 	m.called = true
 	switch {
+	case strings.TrimSpace(job) == "":
+		// JOHNNY'S HOLD OF #1885 at 3fa6a99b. The remote read this commit's parent
+		// added harvests a job that exists only on a bench and has NO local job
+		// directory, and handed it straight to this function -- where `job` is ""
+		// and `dir` is therefore the relative string "repo", a path that is either
+		// missing or, worse, some other card's clone in whatever directory the
+		// shift happens to be running in.
+		//
+		// There is nothing here to publish FROM and nothing to check the
+		// destination AGAINST: the repository, the branch and the diff would all
+		// come from the bench's own RESULT.md, which SPEC-SWARM:40-44 says is data
+		// and never an instruction. `harvest --bench` publishes a bench job by
+		// fetching its branch into a real local clone over ssh first, and that is
+		// the verb that may open this PR. This tier reads, counts and stops.
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: no-clone -- this job is only on the bench and has no local clone to push from or to check its REPO line against (publish it with: nova-pulse harvest --bench <name> --root <the bench's swarm root> --clone <owner>/<name>=<dir>)",
+			oneline.Field(card), oneline.Field(branch))
+		return
 	case branch == "" || branch == "main" || branch == "master":
 		m.move(card, "failed")
 		m.event("MANAGER REFUSED card=%s branch=%s: a card never pushes a base branch (name a working branch on the BRANCH line)", oneline.Field(card), oneline.Field(branch))
