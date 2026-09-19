@@ -1680,6 +1680,19 @@
     #:write-dedup-root
     #:read-dedup-root
     #:dedup-root-holds-p
+    ;; the stable logical journal identity and the real journal rotation
+    ;; (src/journal-identity.lisp, src/journal-rotate.lisp, SPEC-WORK.md:471-482,
+    ;; :7176-7182)
+    #:mint-journal-identity
+    #:header-journal-identity
+    #:journal-header-line
+    #:journal-root-header-sha
+    #:journal-logical-identity
+    #:journal-file-identities
+    #:header-covers-cut-p
+    #:journal-chain-covers-cut-p
+    #:rotate-file-journal
+    #:journal-rotation-locator
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite
