@@ -814,11 +814,15 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    hold ids it names with `--releases`, so a reviewer who held the parser and approved the
    documentation has not released the parser. A forge `APPROVED` review, the forge's dismissal
    of a review, a comment typed or untyped, a decider's answer and a push each release nothing.
-   A `who=unknown` hold is released only by a `may-hold` reader's verb naming it.
+   A `who=unknown` hold, and a pending comment, are released only by a `may-hold` reader's verb
+   naming them with `--releases`, or taken over by that reader's own recorded HOLD. A scoped
+   APPROVE record satisfies nothing in the read condition (`docs/SPEC-MERGE.md:808-816`); only an
+   unscoped one does.
 5. **What no flag does** is reading 3, *No flag ignores a hold* and *An untyped comment is
    pending, and pending stops*: there is no `--ignore-hold`. An untyped comment from a
-   `may-hold` reviewer's login is **pending** by default and stops the member until that reader
-   types a line or releases (Q10). Two per-run waivers exist, each printed on every line with its
+   `may-hold` reviewer's login is **pending** by default and stops the member until a `may-hold`
+   reader releases it with the verb; no comment, typed or not, clears it (Q10). Two per-run
+   waivers exist, each printed on every line with its
    reason and neither touching the lane's records: `--no-require-holds --reason <text>` waives
    the forge sources whole, XOR `--reviewers`; `--untyped-comments=ignore --reason <text>` makes
    untyped comments not a hold for that run. The escape for a holder who
@@ -869,7 +873,8 @@ login naming the current head; still held); `a-forge-approved-review-releases-no
 `a-dismissal-releases-nothing`; `only-the-holder-releases`;
 `an-unknown-hold-is-released-only-by-a-readers-verb-naming-it`; `two-names-one-login-fold-separately`;
 `there-is-no-flag-that-ignores-one-hold`; `an-untyped-comment-from-a-may-hold-login-is-pending`;
-`a-pending-comment-is-cleared-by-a-typed-line-or-a-release`;
+`a-pending-comment-is-cleared-only-by-a-readers-verb`;
+`a-scoped-approve-record-does-not-satisfy-needs-read`;
 `untyped-comments-ignore-is-per-run-printed-and-carries-a-reason`;
 `no-require-holds-waives-the-forge-sources-only-and-is-printed`;
 `reviewers-xor-no-require-holds`; `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
@@ -1030,7 +1035,9 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
   2026-09-19, in reading 3, *An untyped comment is pending, and pending stops*:** a scanned
   comment carrying neither a typed `DISPOSITION` line nor the word HOLD is **pending** by
   default; it neither approves nor releases, and the member is not landable until a
-  `may-hold` reader types a line naming it or releases it with the verb. The opt-out is per
+  `may-hold` reader releases it with the verb (an APPROVE naming it with `--releases`, or a
+  HOLD of their own that takes it over); no comment, typed or not, clears it, because on a
+  shared login a typed line is the same door as a pasted approve. The opt-out is per
   run, printed and reasoned: `--untyped-comments=ignore --reason <text>`, the same shape as
   `--no-require-holds --reason`, so Johnny's unread door announces itself on the record.
   There is no opt-in strict flag. Reason for the record: the house default is fail-closed
