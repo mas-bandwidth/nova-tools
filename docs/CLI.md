@@ -1772,7 +1772,10 @@ whole title at most 110 bytes.
 HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
 HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
 HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
+HARVEST ROOT-INCOMPLETE bench=<name> root=<path> (<why>)
 HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
+HARVEST DRAIN-FAIL card=<card-<n>.md> lane=<name> bench=<name> reason=<destination-exists|marker-move|card-move|rollback> <detail>
+HARVEST LEFT reason=<running|unharvested|no-session|other-session|other-bench|probe-present|probe-unknown|unprobed|unproven|incomplete-listing|max> cards=<n>
 HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> left=<n> took=<d>
 ```
 
@@ -1788,14 +1791,29 @@ failed for a job, 2 on a refusal.
 SPEC-PULSE "Harvest, from a bench" rule 9). One `harvest --bench vision --max 1` emptied a
 live 151-card queue in 733 ms — `jobs=0 ... drained=151` — and deleted every `.launched`
 marker, five of them another lane's. A card is drained only when its own launch record says
-it is the caller's (`--session` against the marker's `session`), names the bench this
-harvest looked at (`--bench` against the marker's `bench`), and its job either finished and
-was folded here to a durable end or is provably gone — a listing that found nothing proves
-nothing and drains nothing. `--max` bounds what is consumed, not only what is printed. The
-`.launched` marker **moves with its card** and is never deleted: it is the only record of
-which bench the job is on. `drained=<n> left=<n>` says what was taken and how many launched
-cards were left exactly as found. A `--root` that does not resolve on the bench is
-`HARVEST REFUSED` before anything moves — a quoted `'~/…'` is not expanded by this verb.
+it is the caller's, it names the bench this harvest looked at, and its job either finished
+and was folded here to a durable end or is PROVEN gone. `--max` bounds what is consumed,
+not only what is printed.
+
+- **`--session` is required for any drain.** With no `--session`, `--launched` drains
+  nothing at all and says so (`HARVEST LEFT reason=no-session cards=<n>`): an omitted
+  session is not a wildcard over a shared queue, and it is not inferred from the job's
+  `RESULT.md` or from anything else. With one, the marker's `session` must match it exactly.
+- **Absence is proven, never inferred.** The listing answers `ROOT <path> ok|missing|
+  incomplete`, holding every root, slot and `jobs` directory against `-r` and `-x` — an
+  unreadable directory is not an empty one, and one `incomplete` root costs the run its
+  absence claims but not its harvest. Each remaining candidate card is then probed BY NAME
+  (`PROBE <label> present|absent|unknown`), and only `absent` means `job-dir-gone`: a
+  sibling job being listed says nothing about this card.
+- **The card and its marker move as a pair or not at all.** The `.launched` marker is the
+  only record of which bench the job is on. The destination is checked for a collision
+  first, the marker moves first, and a failed card move rolls it back; a drain that cannot
+  complete is never counted, prints `HARVEST DRAIN-FAIL reason=<…>` and exits 1.
+
+`drained=<n> left=<n>` says what was taken and how many launched cards were left exactly as
+found, with one `HARVEST LEFT reason=<r> cards=<n>` line per reason. A `--root` that does
+not resolve on the bench is `HARVEST REFUSED` before anything moves — a quoted `'~/…'` is
+not expanded by this verb.
 
 ### fleet add
 

@@ -2148,38 +2148,60 @@ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<
    lanes drop cards into one `ready/` and the resident fill loops move them into one
    `launched/`, so a verb that empties that directory for everybody is a fleet-wide
    foot-gun. Four clauses, each read from the card's own launch record:
-   - **(a) the record must be the caller's.** With `--session <id>`, only a card whose
-     marker names that session; a marker naming none is not provably the caller's either.
+   - **(a) the record must be the caller's, and the caller must SAY who that is.**
+     `--session <id>` is **required for any drain**: with no `--session` nothing is
+     drained at all — every card is left, counted `no-session`, with the remedy on stderr
+     (Johnny, #1984: *"`--launched` without `--session` must not drain"*). The session is
+     never inferred — not from the job's `RESULT.md`, not from the lane, not from the
+     bench. With one, only a card whose marker names exactly that session; a marker naming
+     none is not provably the caller's either.
    - **(b) it must match `--bench`.** A card whose marker names another bench is left where
      it is — the drain printed `bench=captainamerica` under `--bench vision` and moved the
      card anyway. Without `--bench` (the local form) only a marker naming no bench qualifies.
-   - **(c) it must be finished, or provably dead.** `done` is a job THIS run folded to a
+   - **(c) it must be finished, or PROVEN dead.** `done` is a job THIS run folded to a
      durable end — a PR, a `NO-COMMIT`, or an earlier `.harvested`. A job whose fetch, push
      or forge call failed, or which a filter passed over, keeps its card: **a launch record
-     is removed only after its result has been harvested.** `job-dir-gone` requires a
-     listing that actually covered this card's own bench and returned something; an empty
-     listing proves nothing and drains nothing.
+     is removed only after its result has been harvested.** `job-dir-gone` is a verdict on
+     EVIDENCE, and a sibling job being listed is not evidence about this card:
+     - the traversal must be **complete per root**. The listing answers
+       `ROOT <path> ok|missing|incomplete`, holding every root, every slot and every `jobs`
+       directory against `-r` and `-x`, because a glob is silent about the difference
+       between *nothing is here* and *I was not allowed to look*: a live job under a `jobs`
+       directory at mode 000 makes the script print nothing and exit 0. One `incomplete`
+       root costs the whole run its absence claims (never its harvest), and the cards it
+       cannot judge are left and counted `incomplete-listing`.
+     - the card's OWN job directory must be **probed by name**: one bounded
+       `PROBE <label> present|absent|unknown` call for every candidate, where `present`
+       beats `unknown` beats `absent`, so no permission failure is ever read as a dead job.
+       Only `absent` is absence. An empty listing proves nothing either.
    - **(d) `--max` bounds what is CONSUMED, not just what is printed.** `--max 1` printed
      one line and drained 151.
    A drained card's `.launched` marker **moves with it** into `--done` or `--failed` and is
    never deleted: it is the only record of which bench the job is on, and a card without it
-   cannot be harvested by anyone. `drained=<n> left=<m>` on the summary is the whole
-   receipt — what this harvest took, and how many launched cards it deliberately left
-   byte-identical. And a `--root` that does not resolve **on the bench** is
-   `HARVEST REFUSED` before any state changes, never a silent `jobs=0`: the listing answers
-   `ROOT <path> ok|missing` per root, and a quoted `'~/...'` is not expanded by this verb.
+   cannot be harvested by anyone. The two move as a **PAIR or not at all**: the destination
+   is checked for a collision first (this verb overwrites no evidence it did not write), the
+   MARKER moves first, and a card move that fails rolls the marker back. A drain that cannot
+   complete is **never counted in `drained`**, prints `HARVEST DRAIN-FAIL` with its reason —
+   `destination-exists`, `marker-move`, `card-move`, `rollback` — and makes the verb exit 1.
+   `drained=<n> left=<m>` on the summary is the whole receipt, with one bounded
+   `HARVEST LEFT reason=<r> cards=<n>` line per reason and never one per card. And a
+   `--root` that does not resolve on the bench is `HARVEST REFUSED` before any state
+   changes, never a silent `jobs=0`; a quoted `'~/...'` is not expanded by this verb.
 
 ```
 HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
 HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
 HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
+HARVEST ROOT-INCOMPLETE bench=<name> root=<path> (<why>)
 HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
+HARVEST DRAIN-FAIL card=<card-<n>.md> lane=<name> bench=<name> reason=<destination-exists|marker-move|card-move|rollback> <detail>
+HARVEST LEFT reason=<running|unharvested|no-session|other-session|other-bench|probe-present|probe-unknown|unprobed|unproven|incomplete-listing|max> cards=<n>
 HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> left=<n> took=<d>
 HARVEST REFUSED: --root <path> does not exist on <bench> (<remedy>)
 ```
 
-Exit 0, 1 when a fetch, a push or the forge failed for any job, 2 on a refusal that never
-started. Red tests, one per edge, each against the fake shell, the fake forge and the fake
+Exit 0, 1 when a fetch, a push or the forge failed for any job or a drain could not
+complete, 2 on a refusal that never started. Red tests, one per edge, each against the fake shell, the fake forge and the fake
 git on PATH — no test opens a connection:
 
 1. `TestHarvestBenchReadsResultsOverTheShellSeamAndOpensThePR` — rules 1, 3 and 4.
@@ -2199,3 +2221,17 @@ git on PATH — no test opens a connection:
    receipt; `TestHarvestLeavesACardWhoseJobFailedToFetch` — rule 9(c), durability;
    `TestHarvestRefusesARootThatDoesNotResolveOnTheBench` and
    `TestBenchListScriptAsksWhetherEachRootIsThere` — the root refusal.
+10. The pair, the session and the proof, one witness each (#1984):
+    `TestHarvestNeverSplitsACardFromItsMarkerWhenTheMarkerCannotMove`,
+    `TestHarvestRollsTheMarkerBackWhenTheCardCannotMove` and
+    `TestHarvestRefusesToDrainOntoExistingEvidence` — the paired move, each with an
+    injected failing rename and a sha256 listing showing no split pair anywhere;
+    `TestHarvestWithNoSessionDrainsNothing` and
+    `TestHarvestWithASessionStillRefusesAMismatchedOrUnstampedMarker` — clause (a);
+    `TestHarvestInfersNoAbsenceFromARootItCouldNotReadWhole` and
+    `TestBenchListScriptReportsAnUnreadableRootAsIncomplete` — per-root completeness, the
+    generated script run under `/bin/sh` against a two-root fixture whose second `jobs`
+    directory is mode 000 (skipped as root, which mode 000 does not refuse);
+    `TestHarvestProvesJobDirGonePerLabelAndNeverFromASibling`,
+    `TestHarvestLeavesACardTheProbeCouldNotAnswerFor` and
+    `TestBenchProbeScriptAsksAboutEachLabelByName` — the per-label probe.
