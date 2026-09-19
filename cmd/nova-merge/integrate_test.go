@@ -402,11 +402,11 @@ func TestAHoldRecordedBetweenTheGateAndTheDoorRefusesTheLanding(t *testing.T) {
 	reads := 0
 	il.host.OnVerdicts = func(n, call int) ([]merge.Verdict, bool) {
 		if n != 4 {
-			return nil, true
+			return nil, false
 		}
 		reads++
 		if reads < 3 {
-			return nil, true
+			return nil, false
 		}
 		return []merge.Verdict{{
 			ID: "comment:5743805198", Who: "alice", Word: "hold", Head: il.heads[4],
