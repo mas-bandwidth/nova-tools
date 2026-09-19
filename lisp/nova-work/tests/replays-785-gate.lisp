@@ -580,3 +580,13 @@ supplied by hand is the very thing that hid the defect."
       (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
         (ok (not met) "an open node is not met")
         (check-equal :need-open reason "by rule 2 row 1, before evidence is read at all")))))
+
+(defun refresh-needs-view (k &key generations)
+  "Install a freshly session-built view on the kernel and answer it.
+
+The kernel's view is what `%submit` reads INSIDE the writer, so a fixture that
+settles a need and then expects an admission installs the view the same way a
+session would: from the tree, after the settle."
+  (let ((view (session-needs-view k :generations generations)))
+    (setf (kernel-needs-view k) view)
+    view))

@@ -1382,7 +1382,34 @@ take is admitted once the reduced capacity is declared (SPEC-WORK.md:3722)."
 
 (defun fleet-take-submit (kernel request)
   "The `take` verb (SPEC-WORK.md:3646-3675). One ACTIVE allocation, all or
-none, over the kernel's one allocator for the machine."
+none, over the kernel's one allocator for the machine.
+
+GATED. Rule 3 of *The dependency gate and the hand report* names the allocation
+among the admission verbs (SPEC-WORK.md:4871), and an allocation for a node
+that is not needs-met is refused at exit 1 with nothing written:
+
+    ALLOC FAIL machine=<id> slots=<n|-> holder=<name|->: unmet need <need-id> <reason>
+
+STELLA'S [P1b] ON 7333349f: this path wrote the allocation with no needs read.
+Over D with an open need her fixture got `ALLOC OK ... node=acme/work/d ...
+changed=1`, exit 0. It runs on the command thread already, so the gate here is
+read inside the single writer like every other, at the applied revision.
+
+A request naming no node allocates against no node and is not an admission."
+  (let ((node (getf request :node)))
+    (when (and node (%node-quiet (kernel-state kernel) node))
+      (multiple-value-bind (tail unmet)
+          (needs-gate-refusal (kernel-state kernel) node
+                              :view (or (getf request :view) (kernel-needs-view kernel)))
+        (declare (ignore unmet))
+        (when tail
+          (return-from fleet-take-submit
+            (values nil (format nil "ALLOC FAIL machine=~A slots=~A holder=~A: ~A"
+                                (or (getf request :machine) "-")
+                                (or (getf request :slots) 1)
+                                (or (getf request :holder) (getf request :by) "-")
+                                tail)
+                    1 nil))))))
   (multiple-value-bind (ok line code)
       (fleet-take (kernel-allocations kernel)
                   :machine (getf request :machine)

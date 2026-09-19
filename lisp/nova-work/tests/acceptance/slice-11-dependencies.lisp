@@ -71,15 +71,15 @@
 (deftest "ready-needs-every-dependency-settled" "docs/SPEC-WORK.md:2110-2114"
     "expected=not-ready-until-every-need-is-terminal-accepted"
   (let ((k (dependency-kernel *dependency-two-seed*)))
-    (ok (not (member "root/a" (ready-nodes (kernel-state k)) :test #'string=))
+    (ok (not (member "root/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=))
         "a with two open needs is not ready")
     (multiple-value-bind (okp line) (submit k (close-request :node "root/n1" :request "dep-n1"))
       (ok okp "the first need closes: ~A" line))
-    (ok (not (member "root/a" (ready-nodes (kernel-state k)) :test #'string=))
+    (ok (not (member "root/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=))
         "one settled need of two does not make a ready")
     (multiple-value-bind (okp line) (submit k (close-request :node "root/n2" :request "dep-n2"))
       (ok okp "the second need closes: ~A" line))
-    (ok (member "root/a" (ready-nodes (kernel-state k)) :test #'string=)
+    (ok (member "root/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=)
         "a is ready once every need is terminal accepted")))
 
 ;;; ------------------------------------------------------------------
@@ -98,6 +98,10 @@
                  "a did not move and O is unchanged")
     (multiple-value-bind (okp line) (submit k (close-request :node "root/b" :request "dep-b"))
       (ok okp "the need settles: ~A" line))
+    ;; Rule 1 asks for the need's own evidence to be VERIFIED, not merely
+    ;; recorded, so the session installs the view it built from the settle
+    ;; (nova-tools #785; Stella's HOLD on df714493).
+    (refresh-needs-view k)
     (multiple-value-bind (okp line)
         (submit k (doing-request :node "root/a" :request "dep-start-a"))
       (ok okp "a starts once its need is settled: ~A" line)

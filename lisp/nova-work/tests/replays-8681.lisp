@@ -45,7 +45,7 @@ deadlock nobody can finish.")
 (deftest "ready-excludes-a-dependent-whose-need-is-open" "docs/SPEC-WORK.md:2110"
     "expected=open-need-not-ready"
   (let ((k (needs-kernel)))
-    (ok (not (member "acme/work/a" (ready-nodes (kernel-state k)) :test #'string=))
+    (ok (not (member "acme/work/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=))
         "a whose need is an open PR is not ready")))
 
 ;;; ------------------------------------------------------------------
@@ -59,7 +59,7 @@ deadlock nobody can finish.")
     (multiple-value-bind (ok line)
         (submit k (need-done-request "acme/work/pr-1" "req-pr-1" "2026-09-16T12:00:00Z"))
       (ok ok "the need closes: ~A" line))
-    (ok (member "acme/work/a" (ready-nodes (kernel-state k)) :test #'string=)
+    (ok (member "acme/work/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=)
         "a is ready once its need is merged and green")))
 
 ;;; ------------------------------------------------------------------
@@ -82,12 +82,12 @@ deadlock nobody can finish.")
     (multiple-value-bind (ok line)
         (submit k (need-done-request "acme/work/pr-1" "req-pr-1" "2026-09-16T12:00:00Z"))
       (ok ok "the need closes: ~A" line))
-    (ok (member "acme/work/a" (ready-nodes (kernel-state k)) :test #'string=)
+    (ok (member "acme/work/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=)
         "a is ready after the need merges")
     (multiple-value-bind (ok line)
         (submit k (need-reopen-request "acme/work/pr-1" "req-pr-2" "2026-09-16T13:00:00Z"))
       (ok ok "the need reopens: ~A" line))
     (ok (node-needs-broken (kernel-state k) "acme/work/a")
         "a is flagged needs-broken after its need is reverted")
-    (ok (not (member "acme/work/a" (ready-nodes (kernel-state k)) :test #'string=))
+    (ok (not (member "acme/work/a" (ready-nodes (kernel-state k) :view (session-needs-view k)) :test #'string=))
         "a needs-broken dependent is not ready")))
