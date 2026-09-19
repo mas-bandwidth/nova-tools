@@ -1296,6 +1296,39 @@ build-level half of the same class on the bench, in seconds, with no second mach
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
 
+### land
+
+```
+nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>]
+```
+
+`land` is the ONE caller of the one door that admits anything to a merge queue. `batch`
+builds the integration branch, tests it the way CI tests, prints `BATCH OK` and **pushes
+nothing**; a person pushes that branch and opens the pull request, because that is the step
+that needs somebody who knows this is the batch they wanted. `land` is everything after: it
+reads the pull request back from the forge, refuses it unless its head is a batch's — or
+unless a `BATCH OK` receipt given with `--receipt` or `--receipt-file` says this very commit
+is one — refuses it unless the pull request's **own** checks are green, and enqueues it at
+the front unless `--no-jump`.
+
+**Two green-nesses are two questions and both are asked.** The gate's green is a bench's:
+this tree builds, vets, tests and runs the lisp suite. CI's green is the forge's, on the
+commit the queue will take. `integration-4` went green on a bench under a plain
+`go test ./...` and three CI legs then failed; a lander that trusted the receipt alone
+would have queued it.
+
+The hold flags are `batch`'s, with the same meanings and the same refusals: exactly one of
+`--reviewers <file>` and `--no-require-holds --reason <text>` is required, `--lane <dir>` is
+required under `--reviewers` and may not be the literal `none`, and
+`--untyped-comments ignore` demands its own `--reason`. `--receipt` and `--receipt-file` are
+two spellings of one receipt and giving both is exit 2.
+
+```
+LAND OK      pr=<n> head=<sha> branch=<ref> checks=<required|waived> members=<list> jump=<true|false>
+LAND REFUSED reason=held member=#<n> who=<name> hold=<id> source=<source> held_at=<stamp> carried=<yes|no> at=<stamp> conf=<n>
+LAND REFUSED: <what was wrong>
+```
+
 ## nova-pulse
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
