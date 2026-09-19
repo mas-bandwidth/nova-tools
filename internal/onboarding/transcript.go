@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // This file is the harness that EXECUTES a transcript rather than reading it.
@@ -113,43 +114,98 @@ func cutRedirect(cmd string) (string, string, error) {
 }
 
 // SplitShell splits a documented command line the way the shell a reader is
-// typing into would: whitespace separates arguments, a double-quoted run is ONE
-// argument with its quotes removed, and a backslash inside quotes escapes the
-// next character. Some transcripts' arguments are sentences -- a passage, a
+// typing into would. Some transcripts' arguments are sentences -- a passage, a
 // note, a reason -- so strings.Fields would hand the tool more arguments than
-// the reader typed. An unterminated quote is the document's own bug.
+// the reader typed.
+//
+// The grammar is a NARROW subset of the shell's, and the part it does not read
+// it REFUSES by name rather than guessing at: an argv that is not the reader's
+// argv is a green that means nothing, and it is invisible in the failure
+// message because the line printed there is still the document's.
+//
+//   - whitespace separates arguments;
+//   - a single-quoted run is ONE argument, taken literally: inside it a
+//     backslash, a double quote and a `$` are the argument's own characters,
+//     exactly as the shell has it;
+//   - a double-quoted run is ONE argument, and inside it a backslash escapes
+//     only `"`, `\`, `$` and a backquote -- before any other character the
+//     backslash is a character of the argument, which is again the shell's
+//     rule and was the difference Stella's witness found;
+//   - a backslash OUTSIDE quotes, a backquote anywhere, and an unterminated
+//     quote of either kind are refused.
+//
+// NOTHING IS EXPANDED. `$PWD` reaches the Runner as the six characters the
+// document writes, because only the caller's package knows what its transcript
+// means by them -- cmd/nova-merge's test declares a Path norm for exactly that
+// spelling. A transcript that needs a value expanded says so to its Runner; it
+// does not get one from here.
 func SplitShell(cmd string) ([]string, error) {
+	const (
+		bare = iota
+		inSingle
+		inDouble
+	)
 	var fields []string
 	var cur strings.Builder
-	quoted, escaped, started := false, false, false
-	for _, r := range cmd {
-		switch {
-		case escaped:
-			cur.WriteRune(r)
-			escaped = false
-		case r == '\\' && quoted:
-			escaped = true
-		case r == '"':
-			quoted = !quoted
-			started = true
-		case (r == ' ' || r == '\t') && !quoted:
-			if started {
-				fields = append(fields, cur.String())
-				cur.Reset()
-				started = false
+	state, started := bare, false
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		switch state {
+		case inSingle:
+			if c == '\'' {
+				state = bare
+				continue
+			}
+			cur.WriteByte(c)
+		case inDouble:
+			switch {
+			case c == '"':
+				state = bare
+			case c == '`':
+				return nil, fmt.Errorf("holds a backquote, which is a command substitution this harness does not run")
+			case c == '\\' && i+1 < len(cmd) && isDoubleQuoteEscapable(cmd[i+1]):
+				i++
+				cur.WriteByte(cmd[i])
+			default:
+				cur.WriteByte(c)
 			}
 		default:
-			cur.WriteRune(r)
-			started = true
+			switch c {
+			case '\'':
+				state, started = inSingle, true
+			case '"':
+				state, started = inDouble, true
+			case '\\':
+				return nil, fmt.Errorf("holds a backslash outside quotes; this harness does not read shell escapes, so quote the argument instead")
+			case '`':
+				return nil, fmt.Errorf("holds a backquote, which is a command substitution this harness does not run")
+			case ' ', '\t':
+				if started {
+					fields = append(fields, cur.String())
+					cur.Reset()
+					started = false
+				}
+			default:
+				cur.WriteByte(c)
+				started = true
+			}
 		}
 	}
-	if quoted || escaped {
+	if state != bare {
 		return nil, fmt.Errorf("unterminated quote")
 	}
 	if started {
 		fields = append(fields, cur.String())
 	}
 	return fields, nil
+}
+
+// isDoubleQuoteEscapable is the shell's list: these four are the only
+// characters a backslash escapes inside double quotes. Before anything else the
+// backslash stands for itself, and eating it -- which is what this harness did
+// -- silently changes the argument.
+func isDoubleQuoteEscapable(c byte) bool {
+	return c == '"' || c == '\\' || c == '$' || c == '`'
 }
 
 // Norm is one DECLARED normalisation: a value that belongs to the run rather
@@ -161,13 +217,63 @@ type Norm struct {
 	// Name is read in a failure message, so it is a noun phrase.
 	Name string
 	// Re matches the whole value INCLUDING its field name, so that a norm
-	// declared for one field cannot quietly swallow another's value.
+	// declared for one field cannot quietly swallow another's value. For a norm
+	// built by Instant or HexID it is anchored and matched against ONE token of
+	// the line at a time -- see field below.
 	Re *regexp.Regexp
 	// As is what a match becomes on both sides of the comparison.
 	As string
+
+	// field is the name Instant and HexID were given. When it is set, this norm
+	// is applied token by token and may replace only a COMPLETE
+	// `field=value` token of the output grammar. An unanchored pattern is what
+	// let `HexID("id", 8)` normalise `parent_id=` and `Instant("created")`
+	// normalise `last_created=`: the comparison then found no problem on a line
+	// whose undeclared field had changed, which is the opposite of what this
+	// type promises. Go's regexp has no look-behind, so the boundary is drawn
+	// here rather than in the pattern.
+	field string
+	// valid, when set, is asked whether the matched text is really a value of
+	// the kind the constructor named -- not merely its shape. A value it
+	// refuses is LEFT ON THE LINE, so the comparison shows it: a tool printing
+	// `created=2026-99-99T99:99:99Z` is a finding, not a run-owned value.
+	valid func(value string) bool
 }
 
-func (n Norm) apply(line string) string { return n.Re.ReplaceAllString(line, n.As) }
+func (n Norm) apply(line string) string {
+	if n.field == "" {
+		return n.Re.ReplaceAllString(line, n.As)
+	}
+	var out strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] == ' ' || line[i] == '\t' {
+			out.WriteByte(line[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(line) && line[j] != ' ' && line[j] != '\t' {
+			j++
+		}
+		out.WriteString(n.replaceToken(line[i:j]))
+		i = j
+	}
+	return out.String()
+}
+
+// replaceToken normalises one whitespace-delimited token of a line, or hands it
+// back exactly as it stood. Every neighbouring character of the line is kept:
+// the only thing that can change is a token this norm names in full.
+func (n Norm) replaceToken(token string) string {
+	value, named := strings.CutPrefix(token, n.field+"=")
+	if !named || !n.Re.MatchString(token) {
+		return token
+	}
+	if n.valid != nil && !n.valid(value) {
+		return token
+	}
+	return n.As
+}
 
 // Normalize applies every declared norm to a line, in the order declared.
 func Normalize(line string, norms []Norm) string {
@@ -178,23 +284,38 @@ func Normalize(line string, norms []Norm) string {
 }
 
 // Instant declares that the named field's value is an RFC3339 instant in UTC --
-// the format these binaries print -- and belongs to the run.
+// the format these binaries print -- and belongs to the run. The value is
+// PARSED, not merely shaped: what the tool printed has to be a real instant
+// before this norm will agree that it is the run's, because a normalisation
+// that erases an impossible date erases the finding with it.
 func Instant(field string) Norm {
 	return Norm{
-		Name: field + "= (the instant of this run)",
-		Re:   regexp.MustCompile(regexp.QuoteMeta(field) + `=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z`),
-		As:   field + "=<the instant of this run>",
+		Name:  field + "= (the instant of this run)",
+		Re:    regexp.MustCompile(`^` + regexp.QuoteMeta(field) + `=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$`),
+		As:    field + "=<the instant of this run>",
+		field: field,
+		valid: isInstant,
 	}
+}
+
+// isInstant answers whether v is an instant and not only the shape of one.
+// `2026-99-99T99:99:99Z` has the shape; no month is 99.
+func isInstant(v string) bool {
+	_, err := time.Parse(time.RFC3339, v)
+	return err == nil
 }
 
 // HexID declares that the named field's value is n lower-case hex digits and
 // belongs to the run. An id a tool derives from its content reproduces exactly
 // and should NOT be declared here: it is part of what the document promises.
+// EXACTLY n digits: an id of another length is the tool disagreeing with the
+// document, and it stays on the line to be compared.
 func HexID(field string, n int) Norm {
 	return Norm{
-		Name: fmt.Sprintf("%s= (an id of this run, %d hex digits)", field, n),
-		Re:   regexp.MustCompile(fmt.Sprintf(`%s=[0-9a-f]{%d}`, regexp.QuoteMeta(field), n)),
-		As:   field + "=<an id of this run>",
+		Name:  fmt.Sprintf("%s= (an id of this run, %d hex digits)", field, n),
+		Re:    regexp.MustCompile(fmt.Sprintf(`^%s=[0-9a-f]{%d}$`, regexp.QuoteMeta(field), n)),
+		As:    field + "=<an id of this run>",
+		field: field,
 	}
 }
 

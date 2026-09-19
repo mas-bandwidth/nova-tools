@@ -226,3 +226,151 @@ type notInvokable struct{}
 func (notInvokable) Error() string { return "no such file or directory" }
 
 var errNotInvokable = notInvokable{}
+
+// --- Stella's HOLD on #1629 at 1b22de16: three ways a declared normalisation
+// --- hid a difference it had promised to leave visible. Each test below fails
+// --- on that head; the comment on each names the one edit that reverts its fix.
+
+// ROW 1. A norm declared for one field must not match a DIFFERENT field whose
+// name merely ends in the declared one. `HexID("id", 8)` matched inside
+// `parent_id=`, and `Instant("created")` inside `last_created=`, so a changed
+// value on a field nobody declared was erased and the comparison found nothing.
+// Reverting fix: drop `field:` from the Norm that Instant and HexID build (one
+// edit each) and apply falls back to the unanchored ReplaceAllString.
+func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		want string
+		got  string
+		norm Norm
+	}{
+		{
+			what: "an id field whose name ends in the declared one",
+			want: "OK parent_id=aaaaaaaa",
+			got:  "OK parent_id=bbbbbbbb",
+			norm: HexID("id", 8),
+		},
+		{
+			what: "an instant field whose name ends in the declared one",
+			want: "OK last_created=2026-09-19T01:00:00Z",
+			got:  "OK last_created=2026-09-19T11:02:41Z",
+			norm: Instant("created"),
+		},
+	} {
+		step := Step{Line: "$ nova-alpha put", Want: []string{c.want}}
+		problems := Compare(step, Result{Stdout: c.got + "\n"}, []Norm{c.norm})
+		if len(problems) != 1 {
+			t.Errorf("%s: Compare found %d problems, want 1; the declared norm swallowed a field it does not name.\nwant: %s\ngot:  %s", c.what, len(problems), c.want, c.got)
+		}
+	}
+	// And the declared field itself is still normalised, so the fix is a
+	// boundary and not a norm that stopped working.
+	step := Step{Line: "$ nova-alpha put", Want: []string{"OK parent_id=aaaaaaaa id=0f1e2d3c"}}
+	if problems := Compare(step, Result{Stdout: "OK parent_id=aaaaaaaa id=9b8a7c6d\n"}, []Norm{HexID("id", 8)}); len(problems) != 0 {
+		t.Errorf("the declared id= was not normalised: %v", problems)
+	}
+}
+
+// ROW 1, the value's own boundary. `HexID(field, n)` promises EXACTLY n hex
+// digits, so an id longer than that is a tool disagreeing with the document and
+// not a value the norm declared. THIS ONE WAS ALREADY GREEN at 1b22de16 -- the
+// unanchored pattern normalised the first n digits and the remainder still
+// disagreed, so nothing was masked -- and it is written down because the fix
+// for the rows above REPLACES that pattern: a boundary that covered too much
+// must not become one that covers too little.
+func TestAHexIDNormCoversExactlyTheDigitsItDeclares(t *testing.T) {
+	step := Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaa"}}
+	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaabbbb\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
+		t.Errorf("Compare found %d problems, want 1: an id longer than the %d digits declared was normalised anyway", len(problems), 8)
+	}
+	step = Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaabbbb"}}
+	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaa\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
+		t.Errorf("Compare found %d problems, want 1: a document showing more digits than the norm declares was accepted", len(problems))
+	}
+}
+
+// ROW 2. `Instant` says the value is an RFC3339 instant in UTC. A pattern that
+// checks only the SHAPE of the digits accepts `2026-99-99T99:99:99Z`, so a tool
+// printing an impossible date was normalised away instead of being shown. A
+// value the constructor did not promise is left where the comparison sees it.
+// Reverting fix: drop `valid: isInstant` from Instant (one edit).
+func TestAnInstantNormLeavesAnImpossibleInstantVisible(t *testing.T) {
+	for _, got := range []string{
+		"OK created=2026-99-99T99:99:99Z",
+		"OK created=2026-09-19T25:00:00Z",
+		"OK created=2026-02-29T01:00:00Z", // 2026 is not a leap year
+		"OK created=2026-13-01T01:00:00Z",
+	} {
+		step := Step{Line: "$ nova-alpha put", Want: []string{"OK created=2026-09-19T01:00:00Z"}}
+		if problems := Compare(step, Result{Stdout: got + "\n"}, []Norm{Instant("created")}); len(problems) != 1 {
+			t.Errorf("Compare found %d problems, want 1: %q is not an instant and was normalised as one", len(problems), got)
+		}
+	}
+	// A real instant, with and without a fraction, is still the run's.
+	step := Step{Line: "$ nova-alpha put", Want: []string{"OK created=2026-09-19T01:00:00Z"}}
+	if problems := Compare(step, Result{Stdout: "OK created=2026-02-28T23:59:59.5Z\n"}, []Norm{Instant("created")}); len(problems) != 0 {
+		t.Errorf("a real instant of this run was not normalised: %v", problems)
+	}
+}
+
+// ROW 3. `SplitShell` handed the runner an argv that is not the command the
+// reader typed: a single-quoted sentence split on its spaces into two fields
+// carrying the quotes. A quoting form this harness does not read is refused by
+// name; it is never guessed at.
+// Reverting fix: delete the single-quote arm of SplitShell's bare state (one
+// edit) and the sentence splits again.
+func TestSplitShellKeepsASingleQuotedSentenceWhole(t *testing.T) {
+	got, err := SplitShell(`nova-alpha say --body 'hello world' --to Emma`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"nova-alpha", "say", "--body", "hello world", "--to", "Emma"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("SplitShell gave %q, want %q", got, want)
+	}
+	// Inside single quotes nothing is special, as in the shell the reader types
+	// into: the backslash and the double quote are the argument's own.
+	got, err = SplitShell(`nova-alpha say --body 'a "brass" fitting\n'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := got[len(got)-1]; last != `a "brass" fitting\n` {
+		t.Errorf("the single-quoted argument = %q, want %q", last, `a "brass" fitting\n`)
+	}
+	// A shell keeps a backslash that stands before an ordinary character inside
+	// double quotes; the old logic ate every one of them.
+	got, err = SplitShell(`nova-alpha say --body "a\tab and a \"quote\""`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := got[len(got)-1]; last != `a\tab and a "quote"` {
+		t.Errorf("the double-quoted argument = %q, want %q", last, `a\tab and a "quote"`)
+	}
+}
+
+// ROW 3's refusals. Each of these is a line whose argv this harness cannot know,
+// so it says so rather than handing the runner something else.
+// Reverting fix: delete the two `return nil, fmt.Errorf` arms for `\` and "`"
+// in SplitShell's bare state (one edit) and the altered argv comes back.
+func TestSplitShellRefusesQuotingItCannotRead(t *testing.T) {
+	for _, cmd := range []string{
+		`nova-alpha say --body 'hello`,
+		`nova-alpha say --body "hello`,
+		`nova-alpha say --body hello\ world`,
+		"nova-alpha say --body `hostname`",
+	} {
+		if got, err := SplitShell(cmd); err == nil {
+			t.Errorf("SplitShell accepted %q and returned %q; it cannot know that argv", cmd, got)
+		}
+	}
+	// What it DOES pass through untouched, and says so: no expansion happens
+	// here. `$PWD` reaches the runner as the document writes it, which is the
+	// contract the callers' Path norms are declared against.
+	got, err := SplitShell(`nova-alpha add --remote "$PWD/rehearsal.git"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := got[len(got)-1]; last != "$PWD/rehearsal.git" {
+		t.Errorf("the documented remote = %q, want %q; SplitShell expands nothing", last, "$PWD/rehearsal.git")
+	}
+}
