@@ -47,6 +47,10 @@ usage:
                     (below the floor, re-ask the same question with that rung
                      excluded; every step is a logged decision)
 
+  nova-decide route ... [--paste]
+                    (one more line, for a coordinator to act on:
+                     ROUTE <unit> -> <mind> (<model id>) conf=<x>)
+
   nova-decide help --state <json file|inline json>
   nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
                    [--self-inflicted n] [--class-recurring] [--landing-moved]
