@@ -132,9 +132,11 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 // reader must not be invited to run a binary no bench has (#1510). An entry
 // added here names issues that are genuinely open, and it comes off the list
 // the day the tool ships.
-var notYetInTheFleetBuild = map[string]string{
-	"nova-play": "#221/#222/#223",
-}
+//
+// It is EMPTY today, and an empty list is the honest state rather than an
+// oversight: nova-play was the last entry and it ships (#1510). The mechanism
+// stays because the next tool with open design work will want it.
+var notYetInTheFleetBuild = map[string]string{}
 
 // shipsInNoFleetBuild is the note a not-yet-shipped tool's docs/TESTS.md
 // section must carry beside its transcript.
