@@ -240,15 +240,42 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 			oneline.Field(r.base12), took)}
 	}
 
+	// THE KEY-SHAPE SCAN COMES FIRST OF THE THREE (#1814): this path pushes the branch and
+	// builds its PR body out of the same RESULT.md lines, so it passes the one guard every
+	// publishing path passes. A hit refuses, quarantines the job beside its own jobs/
+	// directory, writes the HUMAN line, and pushes nothing. It runs BEFORE the destination
+	// is resolved on purpose: a job that leaks a key AND names a destination nobody
+	// dispatched must still be quarantined, and a refusal that returned first would have
+	// left the key where it was.
+	findings, scanErr := secretFindings(j.dir, clone, r.base12+"..HEAD", lines)
+	if scanErr != nil {
+		fmt.Fprintln(r.in.Stderr, secretScanRefusalLine("harvest-working", j.label, scanErr))
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
+	if len(findings) > 0 {
+		secretRefusal{Site: "harvest-working", Label: j.label, JobDir: j.dir,
+			HumanDir: filepath.Dir(filepath.Dir(j.dir)), Out: r.in.Stderr}.refuse(findings)
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
+
 	// WHERE this force-pushes, and which repo its pull request is opened on, is the
-	// resolver's answer and not the RESULT's claim. The line this replaced --
-	// `url := "https://github.com/" + repo + ".git"` -- built the destination out of the
-	// worker's own bytes, which is Johnny's HOLD of #1809 exactly. The working layout
-	// carries no launch record (the job is all there is), so the clone's own origin must
-	// answer or nothing does, and nothing does is a refusal. Resolved HERE, at the first
-	// call that reaches the remote: a job already classified no-change or already-fixed
-	// publishes nothing and needs no destination.
-	dest, err := resolveDestination(j.label, clone, "", repo)
+	// resolver's answer and not the RESULT's claim -- and not the job clone's `origin`
+	// either. Two lines have stood here: first
+	// `url := "https://github.com/" + repo + ".git"`, which built the destination out of
+	// the worker's own bytes, and then the clone's origin, which the worker can rewrite
+	// with one `git remote set-url` (Johnny's HOLDs of #1809 at 8bfa4020 and 7f692ef6).
+	// The working layout carries no launch record to this verb, so the answer is the
+	// COORDINATOR's `--clone`: a repository the operator typed on this machine's own
+	// command line. With none, the destination is unknown and the job is refused rather
+	// than published somewhere a worker chose. Resolved HERE, at the first call that
+	// reaches the remote: a job already classified no-change or already-fixed publishes
+	// nothing and needs no destination.
+	d, err := theOneCoordinatorDispatch(r.in.Clones)
+	if err != nil {
+		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED repo-unknown card=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
+	dest, err := resolveDestination(j.label, d, clone, repo)
 	if err != nil {
 		fmt.Fprintln(r.in.Stderr, err)
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
@@ -271,20 +298,6 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	// `harvest --working` pushes with --force-with-lease, which makes the branch rule
 	// MORE important here, not less: this is the path that can move a remote ref.
 	if err := mustBranchPrefix(branch); err != nil {
-		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
-	}
-	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814): this path pushes the branch and
-	// builds its PR body out of the same RESULT.md lines, so it passes the one guard every
-	// publishing path passes. A hit refuses, quarantines the job beside its own jobs/
-	// directory, writes the HUMAN line, and pushes nothing.
-	findings, scanErr := secretFindings(j.dir, clone, r.base12+"..HEAD", lines)
-	if scanErr != nil {
-		fmt.Fprintln(r.in.Stderr, secretScanRefusalLine("harvest-working", j.label, scanErr))
-		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
-	}
-	if len(findings) > 0 {
-		secretRefusal{Site: "harvest-working", Label: j.label, JobDir: j.dir,
-			HumanDir: filepath.Dir(filepath.Dir(j.dir)), Out: r.in.Stderr}.refuse(findings)
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
 	if _, err := runChild(clone, nil, "git", "push", url, "refs/heads/"+branch,

@@ -258,9 +258,23 @@ func harvestBench(in HarvestInput) int {
 		// and the CreatePR further down -- a refusal skips both. `repo` off the
 		// RESULT.md only ever chose the clone and was then handed straight to
 		// `CreatePR(repo, ...)`, so a bench card named the repository its own pull
-		// request opened on (Johnny's HOLD of #1809). A bench job carries no launch
-		// record to this verb, so the clone's own origin must answer or nothing does.
-		dest, err := resolveDestination(label, clone, "", repo)
+		// request opened on (Johnny's HOLD of #1809).
+		//
+		// A bench job carries no launch record to this verb, and its own clone is on
+		// the BENCH -- the worker's machine -- and is never read here: the branch
+		// arrives as a fetched ref. The answer is the COORDINATOR's `--clone`, which
+		// this verb already requires: the `<owner>/<name>` the operator typed, or the
+		// origin of a directory on THIS machine that no worker has been handed.
+		d, derr := dispatchFromCoordinatorClone(in.Clones, clone)
+		if derr != nil {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST REFUSED repo-unknown card=%s: %s", field(label), oneline.Err(derr)))
+			continue
+		}
+		// The worker clone is "" on purpose: no clone HERE was touched by the worker,
+		// and the bench's own copy of `origin` is exactly the claim Johnny's HOLD at
+		// 7f692ef6 is about. The RESULT's `repo` claim is still checked.
+		dest, err := resolveDestination(label, d, "", repo)
 		if err != nil {
 			failed++
 			lines.Line(err.Error())

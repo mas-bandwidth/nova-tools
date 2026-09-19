@@ -483,6 +483,11 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if f.refused(stderr) {
 			return 2
 		}
+		// --clone is where a --working harvest's DESTINATION comes from, and the only
+		// place it can come from: every job under --working was written by a worker,
+		// and a worker owns its own clone's `origin` (Johnny's HOLD of #1809 at
+		// 7f692ef6). Without it a job that would publish is refused repo-unknown by
+		// name; the fold itself still runs and still classifies.
 		return pulse.HarvestWorking(pulse.HarvestInput{
 			Working:    *working,
 			Roots:      *roots,
@@ -490,6 +495,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 			SinceStamp: *since,
 			Timer:      *timer,
 			Max:        *max,
+			Clones:     []string(clones),
 			Stdout:     stdout,
 			Stderr:     stderr,
 			Now:        func() time.Time { return now },

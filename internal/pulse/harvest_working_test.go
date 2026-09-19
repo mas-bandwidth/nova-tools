@@ -72,6 +72,14 @@ func wkRun(t *testing.T, in HarvestInput) (out, errs string, code int) {
 	if in.Now == nil {
 		in.Now = func() time.Time { return time.Unix(0, 0).UTC() }
 	}
+	// THE COORDINATOR NAMES THE DESTINATION on this path (Johnny's HOLD of #1809 at
+	// 7f692ef6): the working layout carries no launch record, and the job's own clone is
+	// the worker's, `origin` and all. `--clone <owner>/<name>=<dir>` is where it comes
+	// from, and every fixture here is for o/r. A test that wants the refusal passes a
+	// non-nil empty list on purpose and says so.
+	if in.Clones == nil {
+		in.Clones = []string{"o/r=" + filepath.Join(t.TempDir(), "coordinator-clone")}
+	}
 	code = HarvestWorking(in)
 	return o.String(), e.String(), code
 }
@@ -396,8 +404,10 @@ func TestHarvestWorkingOutputIsBounded(t *testing.T) {
 }
 
 // JOHNNY'S HOLD, the repo destination on `harvest --working`: a RESULT.md REPO line is a
-// worker's claim, never an instruction, and a claim that is not the job's own clone origin
-// must force-push nothing (issue #1824's receipt, on the --working path).
+// worker's claim, never an instruction, and so is the job clone's own `origin` -- a worker
+// rewrites that with one `git remote set-url` (HOLD at 7f692ef6). Here BOTH of the worker's
+// statements say attacker/exfil and the coordinator's --clone says o/r: nothing is
+// force-pushed (issue #1824's receipt, on the --working path).
 func TestHarvestWorkingRefusesARepoMismatchAndForcePushesNothing(t *testing.T) {
 	working := t.TempDir()
 	specs := fakePATH(t)
@@ -405,7 +415,7 @@ func TestHarvestWorkingRefusesARepoMismatchAndForcePushesNothing(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/rowan/w"},
-		{Arg: 3, Equals: "remote", Stdout: "https://example.com/real/repo.git"},
+		originRule("attacker/exfil"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
@@ -419,7 +429,7 @@ func TestHarvestWorkingRefusesARepoMismatchAndForcePushesNothing(t *testing.T) {
 			t.Fatalf("--working force-pushed a repo the worker's RESULT claimed: %s", l)
 		}
 	}
-	wkHasLine(t, errs, "HARVEST REFUSED repo-mismatch card=w origin=real/repo")
+	wkHasLine(t, errs, "HARVEST REFUSED repo-mismatch card=w dispatched=o/r origin=attacker/exfil")
 }
 
 func itoa(n int) string {

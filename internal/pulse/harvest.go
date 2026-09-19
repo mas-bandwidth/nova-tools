@@ -249,14 +249,24 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
-			// WHERE this pushes is resolveDestination's answer, not the RESULT's
-			// claim. The line this replaced built the push URL out of the RESULT's
-			// own REPO field, so every guard beside it was only ever an opinion
-			// about a destination the worker had already chosen (Johnny's HOLD of
-			// #1809). Resolved here so the refusal is counted and named; push and
-			// openPR resolve it again for themselves, because a leaf handed a URL
-			// is a leaf with no rule.
-			if _, err := resolveDestination(c.Label, jobDir, c.Card, repo); err != nil {
+			// WHERE this pushes is resolveDestination's answer, and the answer is the
+			// LAUNCH RECORD -- c.Card, the card file the pulse cut before this worker
+			// existed -- or, for a bare swarm root that has no card, the `--clone` the
+			// operator typed. The RESULT's REPO line and the job clone's own `origin`
+			// are both things the worker writes, and both are only ever compared
+			// against it (Johnny's HOLDs of #1809 at 8bfa4020 and at 7f692ef6).
+			// Resolved here so the refusal is counted and named; push and openPR
+			// resolve it again for themselves, because a leaf handed a URL is a leaf
+			// with no rule.
+			d, derr := managerDispatch(c.Card, in.Clones)
+			if derr != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED repo-unknown card=%s: %s\n", field(c.Label), oneline.Err(derr))
+				continue
+			}
+			dest, err := resolveDestination(c.Label, d, jobDir, repo)
+			if err != nil {
 				refused++
 				writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
@@ -273,9 +283,12 @@ func Harvest(in HarvestInput) int {
 				continue
 			}
 			prs++
+			// The line and the next-card record name the RESOLVED repository, never
+			// the RESULT's claim: an operator reading HARVEST PR is reading where the
+			// branch actually went.
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
-				field(repo), pr, field(c.Label), field(branch), classTail))
-			appendNext(in.Root, repo, pr, c.Label)
+				field(dest.repo), pr, field(c.Label), field(branch), classTail))
+			appendNext(in.Root, dest.repo, pr, c.Label)
 		}
 	}
 
@@ -616,17 +629,22 @@ func lastRefusal(logPath string) string {
 // push runs git push <resolved url> <branch>:<branch> from the job's clone; never a bare
 // git push, and never a URL its caller formed.
 //
-// `record` is the launch record (the card file the pulse cut) and `claimed` the RESULT.md's
-// own REPO line: the two are the resolver's inputs, not the destination. The leaf resolves
-// rather than taking a URL, so that the rule holds whichever caller reaches it (Johnny's
-// HOLD of #1809: a rule implemented once per caller is as many rules as there are callers).
+// `record` is the launch record (the card file the pulse cut) and it ANSWERS; `dir` is the
+// job's own clone and `claimed` the RESULT.md's REPO line, and those two are the worker's,
+// so they are compared and never read. The leaf resolves rather than taking a URL, so that
+// the rule holds whichever caller reaches it (Johnny's HOLD of #1809: a rule implemented
+// once per caller is as many rules as there are callers).
 func push(in HarvestInput, dir, record, claimed, branch, label string) error {
 	// The branch rule, at the push itself and not only at the caller that decided to
 	// push (Johnny's hold on #1809). One implementation, every path.
 	if err := mustBranchPrefix(branch); err != nil {
 		return err
 	}
-	dest, err := resolveDestination(label, dir, record, claimed)
+	d, derr := managerDispatch(record, in.Clones)
+	if derr != nil {
+		return derr
+	}
+	dest, err := resolveDestination(label, d, dir, claimed)
 	if err != nil {
 		return err
 	}
@@ -647,10 +665,15 @@ func openPR(in HarvestInput, dir, record, claimed, label, branch string, resultL
 	if err := mustBranchPrefix(branch); err != nil {
 		return 0, err
 	}
-	// The repository the pull request is opened on is the resolver's answer, named
-	// explicitly with -R rather than left to whatever remote gh infers from the working
-	// directory: the destination is decided in one place and then said out loud.
-	dest, err := resolveDestination(label, dir, record, claimed)
+	// The repository the pull request is opened on is the resolver's answer -- the launch
+	// record's, not the job clone's and not the RESULT's -- named explicitly with -R
+	// rather than left to whatever remote gh infers from the working directory, which on
+	// this path IS the worker's clone.
+	d, derr := managerDispatch(record, in.Clones)
+	if derr != nil {
+		return 0, derr
+	}
+	dest, err := resolveDestination(label, d, dir, claimed)
 	if err != nil {
 		return 0, err
 	}

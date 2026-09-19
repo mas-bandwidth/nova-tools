@@ -136,6 +136,35 @@ func fakePATH(t *testing.T) string {
 	return specs
 }
 
+// fakePATHFor puts ONLY the named fakes in front of PATH, so every other tool this package
+// starts is the REAL one. It exists for the destination tests, which need a real git: the
+// thing under test is what a worker can do to a real clone (`git remote set-url origin`),
+// and a fake git cannot be made to do it. Everything else still wants fakePATH.
+func fakePATHFor(t *testing.T, names ...string) string {
+	t.Helper()
+	src := fakeBins(t)
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	specs := filepath.Join(home, "fakes")
+	for _, d := range []string{bin, specs} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(src, name+exeSuffix()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, name+exeSuffix()), raw, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("NOVA_PULSE_FAKE_DIR", specs)
+	return specs
+}
+
 // fakeTool teaches the fake called `name` what to answer in this test.
 func fakeTool(t *testing.T, specs, name string, s fakeSpec) {
 	t.Helper()

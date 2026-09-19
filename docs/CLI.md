@@ -1693,7 +1693,7 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 ```
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
-nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
+nova-pulse harvest --working <dir> [--roots <dirs>] [--clone <o/n>=<dir>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 ```
 
 The first form folds **the pulse `launch` admitted**: `<root>/cards/<id>/cards.tsv`,
@@ -1735,6 +1735,18 @@ nova-pulse harvest --bench hulk --root '~/rowan-swarm-root' --clone ~/rowan-work
 pushed from there by explicit refspec — a bench holds no forge credential and never will.
 `--clone <dir>` is the clone for any repo and `--clone <owner>/<name>=<dir>` binds one,
 which is the two-repo table the script hardcoded. `--clone` is required with `--bench`.
+
+**Where a harvest pushes comes from what the manager recorded before the worker ran**
+(nova-tools #1824; Johnny's holds on #1809). That is the LAUNCH RECORD — the card file `cut`
+wrote, or the manager queue's `launched/<card>` — and failing that the `--clone` an operator
+typed here. The `RESULT.md`'s `REPO` line is a claim, and so is `git remote get-url origin`
+in the job's own clone: a worker owns that directory and rewrites its origin with one
+`git remote set-url`. Both are compared against the record and neither is ever read as it. A
+disagreement is `HARVEST REFUSED repo-mismatch card=<label> dispatched=<x> origin|claimed=<y>`
+and nothing is pushed; nothing naming a repository at all is `HARVEST REFUSED repo-unknown`.
+So `harvest --working` and a bare swarm root — neither of which carries a launch record —
+want `--clone <owner>/<name>=<dir>`, and on `--working` exactly one, because choosing between
+several would mean reading the worker's own report.
 
 **`--machines` holds `--bench` against the machines registry before the first ssh.**
 A harvest opens a connection to the machine it names, and runner hosts are CI-only, so the

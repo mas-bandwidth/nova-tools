@@ -123,10 +123,20 @@ func cardRepo(cardPath string) string {
 	return ""
 }
 
-// cloneOrigin is the origin remote of the job's own clone, which git recorded when the card
-// cloned. The job directory itself is tried first, then its `repo` subdirectory, which is
-// where the native runner puts the clone.
+// cloneOrigin is the origin remote git records in a clone. The directory itself is tried
+// first, then its `repo` subdirectory, which is where the native runner puts a job's clone.
+//
+// IT IS NOT A DESTINATION. On a JOB's clone it is a worker's claim -- the worker owns that
+// directory and `git remote set-url origin <elsewhere>` costs it one line (SPEC-SANDBOX
+// 27b; Johnny's HOLD of #1809 at 7f692ef6) -- so resolveDestination only ever COMPARES it
+// against the manager's dispatch record. On a directory the OPERATOR named on the
+// coordinator's own command line it is a manager-side statement, which is the one place it
+// answers rather than disagrees (dispatchFromCoordinatorClone). Both callers are in
+// harvestdest.go, and TestCloneOriginIsOnlyEverComparedNeverRead keeps it that way.
 func cloneOrigin(jobDir string) string {
+	if strings.TrimSpace(jobDir) == "" {
+		return ""
+	}
 	for _, dir := range []string{filepath.Join(jobDir, "repo"), jobDir} {
 		ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 		cmd := exec.CommandContext(ctx, "git", "-C", dir, "remote", "get-url", "origin")

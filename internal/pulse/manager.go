@@ -419,21 +419,12 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Err(err))
 		return
 	}
-	// THE DESTINATION, resolved once and used by both the force-push and the PR-open
-	// below. The old `pushURL` of `repo`, and `gh pr create -R repo`, took the destination off
-	// the worker's RESULT.md, which is what Johnny held #1809 for -- and #1885 at
-	// 3fa6a99b is the same family on this same function. The manager's job directory is
-	// the card's own, so the card file is the launch record when git cannot answer.
-	dest, err := resolveDestination(card, dir, filepath.Join(m.in.Queue, "launched", card), repo)
-	if err != nil {
-		m.move(card, "failed")
-		m.event("%s", err)
-		return
-	}
-	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). The manager tier pushes the branch
+	// THE KEY-SHAPE SCAN COMES FIRST OF THE TWO (#1814). The manager tier pushes the branch
 	// and copies the same RESULT.md lines into the PR body, so it passes the one guard
 	// every publishing path passes. A hit refuses, quarantines the job beside its own
-	// jobs/ directory, writes the HUMAN line into the queue, and fails the card.
+	// jobs/ directory, writes the HUMAN line into the queue, and fails the card. It runs
+	// BEFORE the destination is resolved on purpose: a card that leaks a key AND names a
+	// destination nobody dispatched must still be quarantined.
 	findings, scanErr := secretFindings(job, dir, "", lines)
 	if scanErr != nil {
 		m.move(card, "failed")
@@ -447,6 +438,18 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.move(card, "failed")
 		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch),
 			oneline.Cap(strings.TrimSpace(note.String()), 300))
+		return
+	}
+	// THE DESTINATION, resolved once and used by both the force-push and the PR-open
+	// below. The old `pushURL` of `repo`, and `gh pr create -R repo`, took the destination
+	// off the worker's RESULT.md, which is what Johnny held #1809 for -- and #1885 at
+	// 3fa6a99b is the same family on this same function. The manager's OWN QUEUE holds the
+	// launched record for this card, and that is what answers; the job's clone is the
+	// worker's, `origin` and all, and is only ever compared against it (HOLD at 7f692ef6).
+	dest, err := resolveDestination(card, dispatchFromLaunchRecord(filepath.Join(m.in.Queue, "launched", card)), dir, repo)
+	if err != nil {
+		m.move(card, "failed")
+		m.event("%s", err)
 		return
 	}
 	if out, err := m.sh(dir, 120*time.Second, "git", "push", dest.url, "+"+branch+":"+branch); err != nil {

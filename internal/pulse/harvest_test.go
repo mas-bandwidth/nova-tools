@@ -126,10 +126,19 @@ func addCard(t *testing.T, root, label, slot, model, contract, result string) {
 
 func runHarvest(t *testing.T, root string) (string, string) {
 	t.Helper()
+	return runHarvestWithClones(t, root, nil)
+}
+
+// runHarvestWithClones is runHarvest with the COORDINATOR's own `--clone`, which is where
+// the destination comes from when the root has no cards.tsv and so no launch record at all
+// -- a bare swarm root (Johnny's HOLD of #1809 at 7f692ef6). A root whose cards name their
+// REPO needs none of it.
+func runHarvestWithClones(t *testing.T, root string, clones []string) (string, string) {
+	t.Helper()
 	var out, errs bytes.Buffer
 	code := Harvest(HarvestInput{
 		ID: "p1", Root: root, Sources: filepath.Join(root, "sources.tsv"),
-		Templates: root, MaxBodyBytes: 4096, Max: 20,
+		Templates: root, MaxBodyBytes: 4096, Max: 20, Clones: clones,
 		Stdout: &out, Stderr: &errs,
 	})
 	_ = code

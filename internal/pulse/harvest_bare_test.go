@@ -18,8 +18,10 @@ func TestHarvestFoldsBareSwarmRoot(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/628")
 
 	// A bare swarm root: no cards.tsv, one card a batch left in its job dir, with the
-	// clone it made -- whose `origin` is the only thing here that names a repository
-	// without a worker having written it (resolveDestination; Johnny's HOLD of #1809).
+	// clone it made. NOTHING under this root was written by anyone but the worker -- the
+	// clone's own `origin` included, since one `git remote set-url` rewrites it (Johnny's
+	// HOLD of #1809 at 7f692ef6) -- so the destination comes from the coordinator's own
+	// `--clone`, passed below, and the clone's origin is only checked against it.
 	job := filepath.Join(root, "1", "jobs", "card-880")
 	if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
 		t.Fatal(err)
@@ -29,7 +31,7 @@ func TestHarvestFoldsBareSwarmRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errs := runHarvest(t, root)
+	out, errs := runHarvestWithClones(t, root, []string{"owner/repo=" + filepath.Join(root, "coordinator-clone")})
 	if strings.Contains(errs, "HARVEST REFUSED") {
 		t.Fatalf("a bare swarm root must be folded, not refused:\n%s", errs)
 	}

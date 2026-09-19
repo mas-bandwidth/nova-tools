@@ -365,13 +365,15 @@ func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 	b2.fake(t, "git", fakeSpec{Rules: []fakeRule{
 		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
 		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager_test.go"},
-		// The clone's own origin: where the manager pushes and opens its PR is
-		// resolveDestination's answer now, never the RESULT.md's REPO line.
+		// The clone's own origin, which must AGREE with the launched card: it is a
+		// worker-writable claim and is only ever compared (Johnny's HOLD at 7f692ef6).
 		originRule("mas-bandwidth/nova-tools"),
 	}})
 	b2.fakeGH(t, "{}", "[]")
 	rootA2 := strings.Split(b2.roots, ",")[0]
-	b2.job(t, rootA2, "1", "card-1", "RESULT: CARD-1 fix the slot lock\n", result)
+	// THE LAUNCHED CARD IS THE MANAGER'S DISPATCH RECORD, so it names the repository --
+	// exactly as `cut` writes it -- and that name is where the branch goes.
+	b2.job(t, rootA2, "1", "card-1", "RESULT: CARD-1 fix the slot lock\nREPO mas-bandwidth/nova-tools\n", result)
 	p2 := b2.policy(t, "floor=0\n")
 	out2, _, _ := b2.run(t, p2, 0)
 	if !strings.Contains(out2, "MANAGER PR repo=mas-bandwidth/nova-tools pr=7") {
@@ -389,27 +391,52 @@ func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 }
 
 // JOHNNY'S HOLD, the repo destination on the manager: a RESULT.md REPO line that is not the
-// job's own clone origin must force-push nothing and open no PR (issue #1824's receipt, on
-// the manager path). The branch is in-prefix and the diff names a test file, so neither of
-// the manager's earlier refusals is what stops it.
+// repository the launched card dispatched this job for must force-push nothing and open no
+// PR (issue #1824's receipt, on the manager path). The branch is in-prefix and the diff
+// names a test file, so neither of the manager's earlier refusals is what stops it.
 func TestManagerRefusesARepoMismatchAndPushesNothing(t *testing.T) {
 	b := setupManager(t)
 	b.fake(t, "git", fakeSpec{Rules: []fakeRule{
 		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
 		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager_test.go"},
-		{Arg: 3, Equals: "remote", Stdout: "https://example.com/real/repo.git"},
+		originRule("mas-bandwidth/nova-tools"),
 	}})
 	b.fakeGH(t, "{}", "[]")
 	rootA := strings.Split(b.roots, ",")[0]
 	result := "RESULT: CARD-1 fix the slot lock\nBRANCH: rowan/fix-slot-lock\nREPO: attacker/exfil\n"
-	b.job(t, rootA, "1", "card-1", "RESULT: CARD-1 fix the slot lock\n", result)
+	b.job(t, rootA, "1", "card-1", "RESULT: CARD-1 fix the slot lock\nREPO mas-bandwidth/nova-tools\n", result)
 	p := b.policy(t, "floor=0\n")
 	out, _, _ := b.run(t, p, 0)
 	if strings.Contains(b.argv(t), "git push") || strings.Contains(b.argv(t), "gh pr create") {
 		t.Fatalf("a repo the worker's RESULT claimed was pushed: %q", b.argv(t))
 	}
-	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1.md origin=real/repo") {
+	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1.md dispatched=mas-bandwidth/nova-tools claimed=attacker/exfil") {
 		t.Fatalf("the repo-mismatch refusal is absent: %q", out)
+	}
+}
+
+// AND THE SAME REFUSAL WITH AN HONEST RESULT (Johnny's HOLD of #1809 at 7f692ef6). The
+// worker's report names the right repository and its CLONE does not: one
+// `git remote set-url origin` inside the wall used to be enough to choose the destination,
+// because the resolver read the answer from there. The launched card wins and nothing moves.
+func TestManagerRefusesAJobWhoseCloneWasPointedElsewhere(t *testing.T) {
+	b := setupManager(t)
+	b.fake(t, "git", fakeSpec{Rules: []fakeRule{
+		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
+		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager_test.go"},
+		originRule("attacker/exfil"), // the worker rewrote its own origin
+	}})
+	b.fakeGH(t, "{}", "[]")
+	rootA := strings.Split(b.roots, ",")[0]
+	result := "RESULT: CARD-1 fix the slot lock\nBRANCH: rowan/fix-slot-lock\nREPO: mas-bandwidth/nova-tools\n"
+	b.job(t, rootA, "1", "card-1", "RESULT: CARD-1 fix the slot lock\nREPO mas-bandwidth/nova-tools\n", result)
+	p := b.policy(t, "floor=0\n")
+	out, _, _ := b.run(t, p, 0)
+	if strings.Contains(b.argv(t), "git push") || strings.Contains(b.argv(t), "gh pr create") {
+		t.Fatalf("a rewritten origin reached a forge: %q", b.argv(t))
+	}
+	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1.md dispatched=mas-bandwidth/nova-tools origin=attacker/exfil") {
+		t.Fatalf("the origin-mismatch refusal is absent: %q", out)
 	}
 }
 

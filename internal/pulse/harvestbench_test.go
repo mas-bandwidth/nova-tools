@@ -483,13 +483,17 @@ func TestHarvestBenchHarvestsABenchInTheRegistry(t *testing.T) {
 }
 
 // JOHNNY'S HOLD, the repo destination on `harvest --bench`: a RESULT.md REPO line that is
-// not the job's own clone origin must push nothing and open no PR (issue #1824's receipt,
-// on the --bench path). The branch is in-prefix, so the branch rule is not what stops it.
+// not the repository the COORDINATOR's `--clone` names must push nothing and open no PR
+// (issue #1824's receipt, on the --bench path). The branch is in-prefix, so the branch rule
+// is not what stops it.
 func TestHarvestBenchRefusesARepoMismatchAndOpensNoPR(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 3, Equals: "rev-list", Stdout: "3"},
 		{Arg: 3, Equals: "rev-parse", Stdout: "abc1234"},
+		// The COORDINATOR's own clone, on the coordinator's own disk: `--clone` is
+		// required on this verb, so THIS is the manager-side record, and the bench
+		// job's own origin is never read here at all.
 		{Arg: 3, Equals: "remote", Stdout: "https://example.com/real/repo.git"},
 	}})
 	mine := "/home/gaffer/rowan-swarm-root/0/jobs/card-1"
@@ -514,7 +518,7 @@ func TestHarvestBenchRefusesARepoMismatchAndOpensNoPR(t *testing.T) {
 			t.Fatalf("--bench pushed a repo the worker's RESULT claimed: %s", l)
 		}
 	}
-	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1 origin=real/repo") {
+	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1 dispatched=real/repo claimed=attacker/exfil") {
 		t.Fatalf("the repo-mismatch refusal line is absent:\n%s", out)
 	}
 }
