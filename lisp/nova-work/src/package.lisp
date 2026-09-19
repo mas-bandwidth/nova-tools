@@ -747,6 +747,13 @@
    #:reconcile-operation-registry
    #:open-durable-operation-registry
    #:close-durable-operation-registry
+   ;; the cancellation as a request of its own on the same journal
+   ;; (SPEC-WORK.md:2717-2720, :2740-2744)
+   #:cancel-record-p
+   #:make-cancel-record
+   #:registry-apply-cancel-record
+   #:registry-cancellation-of
+   #:registry-operation-cancel
    #:session-operation-list
    #:registry-operation-list
    #:work-session-cancellations

@@ -81,4 +81,5 @@
                 (:file "tests/replays-8682")
                 (:file "tests/replays-notes")
                 (:file "tests/replays-785-gate")
-                (:file "tests/replays-e02-operations")))
+                (:file "tests/replays-e02-operations")
+                (:file "tests/replays-e02-cancel")))
