@@ -28,6 +28,13 @@
 # The bench may set HYGIENE_MIN_FREE_G (default 25), HYGIENE_MAX_CACHE_G (20) and
 # HYGIENE_LEASE_STALE_MIN (10, how old a heartbeat may be before the lease stops counting).
 set -u; set -o pipefail
+# #1282: every path this reaper may remove is the join of a root under $HOME, so a HOME
+# that is empty, is not absolute, or has fewer than two components is refused before LOG,
+# ROOT1 and ROOT2 are built. The coordinator's own copy carries this line verbatim.
+case "${HOME:-}" in
+  /*/*) ;;
+  *) printf 'REFUSE: HOME is not an absolute path with at least two components\n' >&2; exit 2 ;;
+esac
 LOG=$HOME/hygiene.log; DRY=0; case "${2:-}${3:-}${4:-}" in *--dry-run*) DRY=1;; esac; [ "${1:-}" = run ] && [ "${2:-}" = --dry-run ] && DRY=1
 ROOT1=$HOME/rowan-swarm-root; ROOT2=$HOME/rowan-working/tmp
 name_ok() { case "$1" in ''|.|..|*/*|-*) return 1;; esac; printf %s "$1" | grep -qE '^[A-Za-z0-9._-]+$'; }
