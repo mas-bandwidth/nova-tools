@@ -1,8 +1,8 @@
 {
-  "comment": "The ladder of minds (Glenn 2026-09-18). Height is the rung; two minds at one height are the same rung in two lineages, and sideways comes before up. kinds is the by-KIND designation, never a height: security and a fresh take are Johnny's. lanes are the lanes that mind owns. availability is available | asleep | reserved; a reserved mind is off the height ladder and reached only by a designation.",
+  "comment": "The ladder of minds (Glenn 2026-09-18). model is the model id a card dispatched to that mind RUNS with, and only the rungs asked as a card carry one: a friend, a child and Glenn are asked, not run, so a caller that can only dispatch a model keeps today's model and says so on the card's receipt line. Height is the rung; two minds at one height are the same rung in two lineages, and sideways comes before up. kinds is the by-KIND designation, never a height: security and a fresh take are Johnny's. lanes are the lanes that mind owns. availability is available | asleep | reserved; a reserved mind is off the height ladder and reached only by a designation.",
   "minds": [
-    {"name": "flash", "lineage": "deepseek", "height": 0, "kinds": [], "lanes": [], "availability": "available", "ask": "card"},
-    {"name": "pro", "lineage": "deepseek", "height": 1, "kinds": [], "lanes": [], "availability": "available", "ask": "card"},
+    {"name": "flash", "lineage": "deepseek", "height": 0, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "opencode/deepseek-v4-flash"},
+    {"name": "pro", "lineage": "deepseek", "height": 1, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "deepseek/deepseek-v4-pro"},
     {"name": "opus", "lineage": "rowan", "height": 2, "kinds": [], "lanes": ["rowan-children"], "availability": "available", "ask": "child"},
     {"name": "sol", "lineage": "stella", "height": 2, "kinds": [], "lanes": ["stella-children"], "availability": "available", "ask": "child"},
     {"name": "emma", "lineage": "emma", "height": 3, "kinds": [], "lanes": ["code"], "availability": "available", "ask": "bus"},

@@ -282,6 +282,51 @@ synthetic private markers, checked over the state AND the questions),
 `every-step-is-a-logged-decision` and `a-sub-verb-refuses-an-unknown-flag-by-name`,
 all against a fake decider, with no network and no key on disk.
 
+### the swarm fill/launch path — the route IS the mechanism
+
+Glenn, 2026-09-19: "Are we all using Jev yet when selecting which model to send work to?
+Because that is important." The route verb is not a report about a choice somebody else
+makes; it is the choice. `nova-swarm batch --route` asks one route decision per admitted
+card, in process through `internal/decide`, BEFORE that card is assigned a model, and
+dispatches it with the model id the answer's rung carries in the registry.
+
+The model id is REGISTRY DATA, like every other fact about a rung: a `model` member on the
+row, present only on the rungs that are a model at all. A mind asked on the bus or as a
+child is a person or a coordinator, not a model, and carries none — so a card the ladder
+routes to one of them cannot be dispatched to it, keeps today's model, and says so. That
+line is the point: it is the record of work the ladder says is owed to a friend or a child
+and that the batch could only run mechanically.
+
+The fallback is today's behaviour exactly (rule 5): the model the fill script already wrote
+in the cards TSV. It stands where no key is set (no call at all), where `--route-log` or
+`--route-usage` is missing (accounting is not optional, so the call is not made), where the
+provider refused or named a rung nobody offered, where the confidence is under the floor,
+where the rung is asked rather than run, and where the card names no kind the ladder knows
+— and the card's receipt line names which of them it was, in one enumerated token:
+
+```
+ROUTE jev=<rung|fallback> conf=<x> rung=<name> model=<id> why=<-|no-key|no-accounting|below-floor|refused|rung-is-asked-not-run|card-names-no-kind|no-ladder>
+```
+
+The evidence is the card's own text and nothing else — a `KIND:`/`FILES:`/`PACKAGES:`/
+`LANES:`/`LANE:`/`PLATFORM:`/`TOUCHES:` line it states, else the kind read from its contract
+line by a deterministic table with the security phrases first — and what the provider sees
+is the bucketed public projection of it (rule 4) and never the card. The decision is logged
+and the call accounted for through the same appenders the CLI uses (rule 8).
+
+**A card that fails its gate re-enters one rung up.** The ladder is the retry policy: the
+gate failure is appended to the unit as a CONFIRMED failure, so the rung that failed and its
+lineage at that height leave the eligible set and the answer is another lineage on the same
+rung where there is one, the rung above where there is not — never a retry on the rung that
+just failed. Red tests: `the-model-chosen-follows-the-answer`,
+`below-the-floor-keeps-todays-model`, `no-key-keeps-todays-model`,
+`a-provider-refusal-keeps-todays-model-and-still-accounts-for-the-call`,
+`a-rung-that-is-asked-and-not-run-keeps-todays-model` and
+`after-a-gate-failure-the-answer-is-never-the-same-rung` (a table over the provider taking
+the lowest rung offered, the highest, and not being asked at all), all against an httptest
+fake that speaks the rule 2 shape and answers a malformed question with 400, with no network
+and no key on disk.
+
 ### manager abstain / needs_human
 
 A manager judgment that abstains below its floor instead of guessing.
