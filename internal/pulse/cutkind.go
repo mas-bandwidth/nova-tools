@@ -47,10 +47,19 @@ type CutKindInput struct {
 	Prior     string // fix: what a prior attempt did, so the worker never repeats it
 	Names     string // replay: the replay names, comma separated
 	SpecLines string // replay: the spec lines the replays are named at
-	Out       string // the directory the card is written into
-	Queue     string // the queue directory holding the state file and its lock
-	Stdout    io.Writer
-	Stderr    io.Writer
+	// The typed header (SPEC-TOOLWORK §5 rule 1): the gate KIND this card is judged
+	// by, its PATHS: globs, its TEST: `<package> <TestName>` (or `none`) and its LEGS:.
+	// They come from the pool row, never from a model, and they sit under the contract
+	// line so the hash covers them. An empty CardKind writes no header: the card is
+	// ungated and the HARVEST row says gate=none.
+	CardKind string
+	Paths    string
+	Test     string
+	Legs     string
+	Out      string // the directory the card is written into
+	Queue    string // the queue directory holding the state file and its lock
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -129,6 +138,9 @@ func cutKindProblem(in CutKindInput) string {
 	case strings.TrimSpace(in.Out) == "":
 		return "--out is required (pass the directory the card is written into, usually <queue>/pending)"
 	}
+	if p := cutKindHeaderProblem(in); p != "" {
+		return p
+	}
 	switch in.Kind {
 	case "read":
 		switch {
@@ -187,20 +199,23 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	switch in.Kind {
 	case "read":
 		fmt.Fprintf(&b, "RESULT: CARD-%d read of %s PR%d at %s (%s)\n", n, repo, in.PR, oneline.Field(in.Head), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
+		b.WriteString(cardHeaderLines(in, fmt.Sprintf("%s#%d", in.Repo, in.PR)))
 	case "fix":
+		// The `sha=<sha12>` placeholder is #1969's, on dev: a fix card's line 1 is hashed
+		// over the bytes below it, and finishCard fills the digest in once those bytes --
+		// the typed header this card adds among them -- are written.
 		fmt.Fprintf(&b, "RESULT: CARD-%d sha=<sha12> %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.Issue)
+		b.WriteString(cardHeaderLines(in, fmt.Sprintf("%s#%d", in.Repo, in.Issue)))
 	case "replay":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s replays %s named at spec lines %s, red first\n", n, repo, oneline.Field(in.Names), oneline.Field(in.SpecLines))
-		fmt.Fprintf(&b, "SOURCE: %s %s\n", in.Repo, oneline.Field(in.Names))
+		b.WriteString(cardHeaderLines(in, fmt.Sprintf("%s %s", in.Repo, oneline.Field(in.Names))))
 	case "spec":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s spec: %s\n", n, repo, oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s spec\n", in.Repo)
+		b.WriteString(cardHeaderLines(in, in.Repo+" spec"))
 	case "rebase":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s PR #%d rebased onto %s with its conflicts resolved and its tests green: %s\n",
 			n, repo, in.PR, oneline.Field(in.Base), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
+		b.WriteString(cardHeaderLines(in, fmt.Sprintf("%s#%d", in.Repo, in.PR)))
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
@@ -286,3 +301,56 @@ STEP 3. If Go files changed: test -z "$(gofmt -l .)" && go vet ./... 2>&1 | tail
 STEP 4. git log --oneline origin/%s..HEAD | cat && git status --short | head -5
 STEP 5. Write RESULT.md (cd back to your working directory first): line 1 the RESULT line above; BRANCH: %s at <sha> in ./repo; REBASED: onto <%s sha>; conflicts: <files>; green: <the test tail, one line>. Nothing else.
 `
+
+// cardHeaderLines is SPEC-TOOLWORK §5 rule 1's typed header, written by `cut` from the
+// pool row and never by a model. It sits directly under the contract line and above every
+// line of prose, because ReadCardHeader stops at the first line that is not `KEY: value`:
+// one sentence above them and the gate sees no header at all.
+//
+// A card nobody asked to gate carries no KIND: line, and its HARVEST row says gate=none.
+// Its SOURCE: is still written, because that line is the card writer's receipt for a
+// reader whether a gate runs or not.
+func cardHeaderLines(in CutKindInput, source string) string {
+	var b strings.Builder
+	if k := strings.TrimSpace(in.CardKind); k != "" {
+		fmt.Fprintf(&b, "KIND: %s\n", k)
+		fmt.Fprintf(&b, "PATHS: %s\n", cardHeaderValue(in.Paths, "none"))
+		fmt.Fprintf(&b, "TEST: %s\n", cardHeaderValue(in.Test, "none"))
+		fmt.Fprintf(&b, "LEGS: %s\n", cardHeaderValue(in.Legs, "go"))
+	}
+	fmt.Fprintf(&b, "SOURCE: %s\n", source)
+	return b.String()
+}
+
+// cardHeaderValue is one header value, or the line's own default when it was not given.
+func cardHeaderValue(v, def string) string {
+	if v = strings.TrimSpace(v); v != "" {
+		return v
+	}
+	return def
+}
+
+// cutKindHeaderProblem is §5 rule 1's refusal: `cut` refuses a gated kind missing any of
+// the lines the gate reads, and refuses a kind the table does not hold at all -- there is
+// no default kind (§5 rule 3). An ungated card kind (read, probe, text, tone) wants
+// neither PATHS nor TEST, so it is not asked for them.
+func cutKindHeaderProblem(in CutKindInput) string {
+	name := strings.TrimSpace(in.CardKind)
+	if name == "" {
+		return ""
+	}
+	k, ok := KindNamed(name)
+	if !ok {
+		return fmt.Sprintf("kind=%s: the kinds table does not hold it, and there is no default kind (run `nova-pulse accept --kinds` for the table)", oneline.Field(name))
+	}
+	if !k.Gated() {
+		return ""
+	}
+	if strings.TrimSpace(in.Paths) == "" {
+		return fmt.Sprintf("kind=%s: no PATHS (pass --paths <glob>[,<glob>...]; the gate bounds the diff to them)", oneline.Field(name))
+	}
+	if strings.TrimSpace(in.Test) == "" {
+		return fmt.Sprintf("kind=%s: no TEST (pass --test \"<package> <TestName>\"; the gate runs it and the control must see it go red)", oneline.Field(name))
+	}
+	return ""
+}

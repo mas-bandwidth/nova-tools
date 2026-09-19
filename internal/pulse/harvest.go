@@ -665,7 +665,11 @@ func poolTaskLabel(pool, state, id string) string {
 // contractLabel is the label on a card's RESULT contract line: the word after RESULT.
 func contractLabel(line string) string {
 	f := strings.Fields(strings.TrimSpace(line))
-	if len(f) >= 2 && f[0] == "RESULT" {
+	// Both spellings are read: `cut --kind` writes `RESULT: CARD-<n> ...` and a hand-cut
+	// card writes `RESULT <label> ...`. A gate that knew only the second keyed every line
+	// it printed on an empty label for every card of a real pulse (T06a, #1651). The colon
+	// is the separator, not part of the token.
+	if len(f) >= 2 && (f[0] == "RESULT" || f[0] == "RESULT:") {
 		return f[1]
 	}
 	return ""
