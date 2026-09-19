@@ -1126,6 +1126,41 @@ per-binary and live in each command's own `firstrun_test.go`, where the example
 lines are EXECUTED, the refusal sentences asserted and the transcript compared
 against real output.
 
+### `kernel-components` — no kernel source is compiled by nobody
+
+**The rule.** Every `.lisp` file under `lisp/nova-work/src/` and
+`lisp/nova-work/tests/` is named by a `:components` list in
+`lisp/nova-work/nova-work.asd`, or is named in the `notCompiled` ledger with the
+issue that owes its removal. The system names no file that is gone, and an entry
+whose file is gone or has become a component fails too, so the ledger only
+shrinks.
+**The hurt.** ASDF loads a file because the system names it, never because it is
+in the directory, so an unnamed file is not slow-to-load — SBCL never reads it.
+On 2026-09-19, `dev@47d81e9c`: **28 of the 60 files in `src/` were in no system**
+— all 17 `replays-86NN.lisp` and 11 feature-named `replays-*.lisp`, roughly 700
+defuns and defstructs that nothing compiled — while `run-tests.sh` reported
+`total=327 pass=327 fail=0`. `#1102` read that as a naming problem and called the
+fold mechanical. It is not: appending all 28 to the system and running the suite
+dies with `attempt to redefine the STRUCTURE-OBJECT class SAVEPOINT incompatibly
+with the current definition` loading `src/replays-8641.fasl`, exit 1, the 327
+cases never reached. A card told to move that file into `src/savepoint.lisp`
+would have landed a kernel that does not load — or dropped the colliding form to
+get green, with nobody able to say which of the 700 forms went.
+**The test.** `TestEveryKernelSourceIsACompiledComponent`
+(`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
+on purpose: the lisp job runs only when `lisp/**` or `docs/SPEC-WORK.md` moved,
+and a file nothing compiles is exactly what a green lisp run cannot see.
+**Its allowlist.** `notCompiled` in the test file: 28 entries, every one owed to
+`#1102`. It is the point of the test rather than a hole in it — a silent file is
+invisible, a listed one is a debt with an issue number that cannot grow without
+this test saying so.
+**Its remedy line.** The finding names the file and says SBCL never reads it: it
+compiles nothing, no acceptance case covers it, and `run-tests.sh` is green
+without it.
+**Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
+under `src/` and `tests/`. It reads the component list, not the load: whether the
+system as named *loads* is `make test-lisp`'s business.
+
 ### `version` — every tool prints the one version line
 
 **The rule.** Every `cmd/nova-*` binary answers `version` with exactly one line
