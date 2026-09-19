@@ -1,14 +1,21 @@
 # nova-work next: the spec's promises the kernel does not yet keep
 
-`scratch/next.tsv` audits every verb, view and subsystem `docs/SPEC-WORK.md`
-promises against what `lisp/nova-work/` actually exports and does, read at
-commit `cf9c9986` (`origin/dev`, branch `rowan/nova-work-next`); a row is
-`exported and real`, `exported but a stub that only satisfies its replay`, or
-`absent`, with the spec lines and the replays that touch it. Every replay the
-spec names already exists as a real `deftest` (#362 closed), so a stub is a
-pure model driven directly by its own replay while the resident session, CLI,
-socket, provider or store the verb actually needs is still out; the `real`
-rows are the slice-1 kernel plus the pure books that carry their replays whole.
+An audit read at commit `cf9c9986` (`origin/dev`, branch
+`rowan/nova-work-next`) weighed every verb, view and subsystem
+`docs/SPEC-WORK.md` promises against what `lisp/nova-work/` actually exports
+and does; a row is `exported and real`, `exported but a stub that only
+satisfies its replay`, or `absent`, with the spec lines and the replays that
+touch it. The audit's table itself was written under scratch/, which this
+repository ignores in `.gitignore` and `make clean` deletes, so it is not in
+the tree and cannot be recovered from it. The epics below let a reader check
+their spec line ranges, replay names and row counts against
+`docs/SPEC-WORK.md` and `lisp/nova-work/`, but each row's own
+`real`/`stub`/`absent` verdict is the audit's word, to be re-derived rather
+than trusted where it matters. Every replay the spec names already exists as a
+real `deftest` (#362 closed), so a stub is a pure model driven directly by its
+own replay while the resident session, CLI, socket, provider or store the verb
+actually needs is still out; the `real` rows are the slice-1 kernel plus the
+pure books that carry their replays whole.
 
 The epics below regroup the `stub` and `absent` rows only (`real` rows stay in
 the table as the base the epics build on), one subsystem per epic, ordered by
