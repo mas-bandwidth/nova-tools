@@ -218,7 +218,10 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			// so it reads its own capture, and only when no result exists: a card that
 			// published despite the line is done, never an abstain. The report line names the
 			// path, the last STEP the card reached and the commits it left behind.
-			if wr, ok := wallRefusedInLog(filepath.Join(jobDir, "harness.log")); ok {
+			// AND IT IS THE REFUSAL THE CARD NEVER MOVED PAST (the wall-hang lane, 2026-09-19):
+			// a refusal with another tool call after it is one the model routed around, and
+			// naming it the death sent a whole shift looking at the wall for a provider stall.
+			if wr, ok := wallStoppedInLog(filepath.Join(jobDir, "harness.log")); ok {
 				if _, published := FindCardResult(jobDir); !published {
 					branch, commits, _ := WallCommits(filepath.Join(jobDir, "repo"))
 					line := WallLine(in.Task, wr, branch, commits)

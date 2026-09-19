@@ -39,6 +39,7 @@ type nativeRunConfig struct {
 	root     string        // the configured root the slot directory must sit under
 	authFile string        // optional: an auth file to copy one entry out of
 	deadline time.Duration // the wall bound that kills the child
+	idle     time.Duration // the idle bound: neither log nor process tree moving this long ends the card (0 = no watch)
 	repos    []string      // repositories a card may clone (owner/name): network to
 	// github.com only, expressed as a wall host rule
 	recipients []string // bus lanes a card may address; default none, and a bus
@@ -83,6 +84,9 @@ type nativeRunResult struct {
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
+	idled        bool              // the idle watch ended the run, not the deadline and not the child
+	blockedPath  string            // the report the run wrote FOR a card that published none, "" when it wrote none
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -436,7 +440,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// calls on the child's output with no timestamps of its own; this recorder stamps each
 	// report as it arrives, so the card's minutes can be read per phase afterwards.
 	timeline := swarm.NewTimeline()
-	capture := io.MultiWriter(log, harnessOut, timeline)
+	// THE CARD READ WHILE IT IS STILL TALKING (the wall-hang lane, 2026-09-19). Every wall
+	// question below this point is asked of a FILE once the child is gone; this reader is in
+	// the capture chain, so a refusal is named on errOut the moment the child prints it
+	// rather than at the reap, and the idle watch has a verdict to carry without re-reading
+	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
+	// publish is done, and this line having been printed takes nothing away from it.
+	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
+	capture := io.MultiWriter(log, harnessOut, timeline, reader)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -489,6 +500,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		deadline := time.NewTimer(cfg.deadline)
+		// THE IDLE WATCH (the wall-hang lane, 2026-09-19). `batch` has watched its cards
+		// for idleness since issue #593 -- log growth AND the process tree's CPU, so a
+		// `go test` that prints nothing for minutes is not mistaken for a dead card --
+		// and `native`, the verb every card on every bench actually runs through, never
+		// had it. A card that stopped making progress cost its WHOLE deadline before
+		// anybody looked: `js-under-20-bytes` held a slot for eighteen silent minutes and
+		// returned nothing.
+		stopWatch := make(chan struct{})
+		idleC := swarm.WatchIdle(swarm.IdleWatch{
+			Log: outLog, Job: jobDir, Pid: pgid, Idle: cfg.idle, Reader: reader,
+		}, stopWatch)
 		select {
 		case runErr := <-done:
 			deadline.Stop()
@@ -504,6 +526,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			swarm.KillGroup(pgid, started)
 			<-done
 			res.rc = -1
+		case end := <-idleC:
+			// The card is still and its tree is spending nothing. It is ended HERE, with
+			// what the watch saw, instead of at the deadline with nothing at all.
+			deadline.Stop()
+			swarm.KillGroup(pgid, started)
+			<-done
+			res.rc = -1
+			res.idled, res.idleEnd = true, end
 		case <-termCh:
 			deadline.Stop()
 			swarm.Reap(pgid, started, swarm.TerminateGrace)
@@ -511,6 +541,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			res.rc = -1
 			res.terminated = true
 		}
+		close(stopWatch)
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
 		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
@@ -569,9 +600,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// with either and no result ends `wall`, and the usage row and the report line say so.
 	// ONLY WITHOUT A RESULT. A card that published despite the line is done, and naming it
 	// walled would take a finished report away from the harvester (wall_batch_test.go).
+	//
+	// AND IT IS THE REFUSAL THE CARD NEVER MOVED PAST, not the first one in the file
+	// (WallStopped, not WallRefused). `js-under-20-bytes` took a refusal in the harness's
+	// own STARTUP BANNER -- line 5, before STEP 1 -- ran sixteen more model steps, and died
+	// twenty minutes later inside a provider turn that never answered; the post-mortem scan
+	// reported `WALL task=js-under-20-bytes path=/var/db/xcode_select_link step=-` and a
+	// whole shift went looking at the wall for a provider stall.
 	if _, published := swarm.FindCardResult(jobDir); !published {
 		if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
-			if wr, ok := swarm.WallRefused(raw); ok {
+			if wr, ok := swarm.WallStopped(raw); ok {
 				res.wallRefusal = wr
 			}
 		}
@@ -582,6 +620,24 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	if (res.wallRefusal != swarm.WallRefusal{}) {
 		res.end = swarm.EndWall
+	}
+	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
+	// `no-result` -- the token for a MODEL that chose to publish nothing -- and a card the
+	// machinery stopped never had the chance. One is written for it, naming what the watch
+	// saw, and it carries no findings head, so it can never be counted as work done.
+	if res.idled {
+		res.end = swarm.EndWall
+		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", res.idleEnd.Idle.Seconds())
+		if res.idleEnd.Refused {
+			res.wallRefusal = swarm.WallRefusal{Path: res.idleEnd.Path, Step: res.idleEnd.Step}
+			reason = fmt.Sprintf("the wall refused %s %s and the card wrote nothing for %.0fs after it",
+				oneline.Field(res.idleEnd.Kind), oneline.Field(res.idleEnd.Path), res.idleEnd.Idle.Seconds())
+		}
+		if path, wrote, err := swarm.WriteBlockedResult(jobDir, cfg.label, res.idleEnd.Kind, res.idleEnd.Path, res.idleEnd.Step, reason); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the blocked report could not be written: %s\n", oneline.Escape(err.Error()))
+		} else if wrote {
+			res.blockedPath = path
+		}
 	}
 
 	if wall != "" {

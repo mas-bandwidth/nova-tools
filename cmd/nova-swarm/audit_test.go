@@ -31,6 +31,7 @@ var swarmAudit = audit.Config{
 		"main.go|slotWord|sc.Slot":                    "an int from the sidecar; fmt.Sprint of an int cannot hold a control character",
 		"main.go|cmdTemplate|body":                    "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"main.go|cmdFinalize|line":                    "the other verbatim site, `finalize`'s line: swarm.FinalizeByHand BUILDS the whole sentence and passes every caller-supplied value through oneline.Field or oneline.Err, so the one-line guarantee is already made over the finished line. Escaping it a second time here would fold that line into one unreadable \\x0a form. Both print sites in this function share this entry; TestADispatcherRunsAJobEndToEnd exercises the path.",
+		"native.go|nativeRun|line":                    "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleEndsAStillCardLongBeforeItsDeadline asserts the line this site prints byte for byte.",
 		"main.go|cmdNative|swarm.NoSlotsStoreRefusal": "a compile-time constant in package swarm (internal/swarm/slots.go): the ONE remedy line a native launch with no bench slot store prints, held in one place so that native, batch and the two native-argv builders cannot drift apart. It holds no caller-supplied value at all -- there is nothing in it to escape, and escaping a constant would only hide that fact. TestNativeWithoutASlotsStoreRefuses compares it byte for byte and asserts it is one line.",
 		"route.go|cmdRoute|belowWord":                 "built in this function from oneline.Field-escaped answer names joined with a literal comma, so it is already one safe token; the ROUTE print site's other caller-supplied values go through oneline.Field or a numeric verb on the same line. TestRouteBelowFloorExits3 is the behavioural test for this site.",
 	},
@@ -57,6 +58,14 @@ var swarmAudit = audit.Config{
 		// oneline.Field inside itself. The path and step come from the card's own log and
 		// the branch from the clone, so nothing but escaped fields can come back.
 		"swarm.WallLine",
+		// swarm.WallRefusedLine (the wall-hang lane) builds `WALL REFUSED <what> <path>
+		// task=<id> step=<n>` and puts every field through oneline.Field inside itself. The
+		// kind, the path and the step all come from the card's own output -- a stream a card
+		// writes -- so nothing but escaped fields can come back.
+		"swarm.WallRefusedLine",
+		// swarm.CardIdleLine is the same line for a card that named no refusal at all, and it
+		// escapes the task and the step the same way; its idle seconds are a float verb.
+		"swarm.CardIdleLine",
 		// termSuffix (main.go, issue #779) renders the one token a manager's TERM carries,
 		// ` reason=terminated`, and puts the reason through oneline.Field inside itself, so
 		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
