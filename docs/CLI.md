@@ -2778,6 +2778,8 @@ run gets wrong.
 
 ### First run
 
+The `probe` and wrapped-command blocks below are multi-line shell commands; paste each whole block, not one line of it.
+
 Ask the machine what it can enforce, then prove the wall before the first job:
 
 ```
@@ -2842,8 +2844,7 @@ The flags above give a command a **wall** around a directory you own and keep.
 `nova-sandbox run` gives it a **place** instead, and then takes the place away:
 
 ```
-$ nova-sandbox run --name j1 --size 8g --timeout 30m \
-               --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
+$ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
 SANDBOX STEP name=create state=start
 SANDBOX STEP name=create state=done ms=2395
 SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Volumes/nova-j1/work ...
@@ -2872,8 +2873,7 @@ same `SANDBOX LEAK` and the same exit codes. What differs is the place and a
 handful of flags ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), rules W1–W12):
 
 ```
-$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 \
-               -- cmd.exe /c "go build ./..."
+$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
 ```
 
 - **The place is a Job Object plus `<scratch>\nova-<n>`, and the two are one
