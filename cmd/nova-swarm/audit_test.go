@@ -97,6 +97,15 @@ var swarmAudit = audit.Config{
 		// this package renders through oneline.Err, and the Lua scripts run inside Redis
 		// and write only that instance's own keys.
 		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
+		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
+		// request and returns typed answers; it holds no writer of this
+		// package's stream, and the one value this binary takes from it -- the
+		// chosen id -- is put through oneline.Field before it is printed.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// lanes (pull, SPEC-JOBS section 5) reads queue/lanes/ and writes the
+		// card files it places; it never writes to a stream, and every id it
+		// returns is put through oneline.Field before this package prints it.
+		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
