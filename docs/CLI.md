@@ -797,6 +797,8 @@ Point it at a directory holding `RESULT.md` files and give it a state file of
 its own. `quickstart` passes `--baseline`, so the first run lists the world once
 instead of recording it quietly:
 
+  cp -R cmd/nova-wake/testdata/example-reports ./reports
+
 ```
 $ nova-wake quickstart --state ./wake.state --reports ./reports
 WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
