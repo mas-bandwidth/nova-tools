@@ -70,7 +70,11 @@ hold, ends the scan and marks the tail torn."
                         :request (getf record :request)
                         :payload-sha256 (getf record :digest)
                         :reply (getf record :line)
-                        :rev (getf record :rev))
+                        :rev (getf record :rev)
+                        ;; the envelope itself, so a restore can replay only
+                        ;; the records strictly after a cut (SPEC-WORK.md:7166)
+                        :digest (getf record :digest)
+                        :events (getf record :events))
                   records)))))
     (%make-journal-scan (nreverse records) torn)))
 

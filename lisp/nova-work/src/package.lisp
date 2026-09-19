@@ -1118,6 +1118,29 @@
     #:savepoint-manifest-path
     #:read-savepoint-manifest
     #:savepoint-create
+    ;; `savepoint list`, `verify` and the isolated read-only `restore`
+    ;; (src/savepoint-restore.lisp, SPEC-WORK.md:2275-2278, :7165-7171)
+    #:savepoint-report
+    #:savepoint-report-manifest
+    #:savepoint-report-revision
+    #:savepoint-report-cut
+    #:savepoint-report-gap
+    #:savepoint-published-ids
+    #:savepoint-published-p
+    #:savepoint-age-seconds
+    #:savepoint-verify-published
+    #:savepoint-list-published
+    #:savepoint-restore-published
+    #:restored-savepoint
+    #:restored-savepoint-p
+    #:restored-savepoint-id
+    #:restored-savepoint-state
+    #:restored-savepoint-revision
+    #:restored-savepoint-replayed
+    #:restored-savepoint-replies
+    #:restored-savepoint-ownership-taken-p
+    #:restored-savepoint-dispatched-p
+    #:restored-savepoint-messages-replayed
     #:admitted-receipts
     #:admitted-receipt
     #:session-written-field
