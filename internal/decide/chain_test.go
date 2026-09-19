@@ -2,6 +2,7 @@ package decide
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -256,5 +257,70 @@ func TestTheEvidenceTextIsNeverLogged(t *testing.T) {
 		context.Background(), q, publicEvidence("a different card entirely"), 0.65)
 	if got.Hash == other.Hash {
 		t.Errorf("negative control: two evidences hashed the same: %q", got.Hash)
+	}
+}
+
+// A FAILED PROVIDER ATTEMPT IS A FACT ABOUT THE WALK, AND IT SURVIVES ON BOTH
+// RECEIPTS. The chain already knows which deciders it could not get an answer
+// out of -- it keeps them in `Skipped` as bounded typed pairs,
+// `<decider>=<why token>`. But a receipt that drops that field tells a reader
+// two different stories in the same words: a chain with no provider configured
+// and a chain whose provider was configured and failed both print
+// `decider=none why=no-decider`, and the second one is an outage nobody can
+// see. The same loss hides behind a later success: an answer from `local`
+// reads as a clean first-try walk when `jev` failed ahead of it.
+//
+// Neither receipt carries the provider's own error text. The token is the
+// evidence; the sentence is the provider's, and it is not ours to keep.
+func TestAFailedProviderAttemptSurvivesInTheLineAndTheRow(t *testing.T) {
+	q := harvestQ(t)
+	want := DeciderJev + "=" + WhyProviderError
+
+	// The error-only walk: the unknown fallback is preserved exactly, and the
+	// failed attempt is on the line and in the row.
+	broken := &fake{name: DeciderJev, sees: SeesPublic, err: errors.New("dial tcp 10.0.0.1:443: connection refused")}
+	only := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), broken}}.Classify(
+		context.Background(), q, publicEvidence("ordinary output"), 0.65)
+	if broken.calls != 1 {
+		t.Fatalf("the provider was meant to be asked once and fail, calls=%d", broken.calls)
+	}
+	if only.Answer != questions.Unknown || only.Decider != DeciderNone || only.Why != WhyNoDecider || only.Exit() != 3 {
+		t.Fatalf("the unknown fallback must be preserved unchanged, got %+v exit=%d", only, only.Exit())
+	}
+	if line := only.Line("card-1"); !strings.Contains(line, want) {
+		t.Errorf("the line lost the failed attempt %q: %s", want, line)
+	}
+	if row := only.Row("card-1"); !strings.Contains(row, want) {
+		t.Errorf("the row lost the failed attempt %q: %s", want, row)
+	}
+	for _, s := range []string{only.Line("card-1"), only.Row("card-1")} {
+		if strings.Contains(s, "connection refused") || strings.Contains(s, "10.0.0.1") {
+			t.Errorf("a provider's own error text reached a receipt: %s", s)
+		}
+	}
+
+	// The error-THEN-success walk: the later answer stands on its own merits,
+	// and the earlier failure is still on both receipts.
+	broken2 := &fake{name: DeciderJev, sees: SeesPublic, err: errors.New("503 from upstream")}
+	local := &fake{name: DeciderLocal, sees: SeesPrivate, answer: "clean", conf: 0.90}
+	later := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), broken2, local}}.Classify(
+		context.Background(), q, publicEvidence("ordinary output"), 0.65)
+	if later.Answer != "clean" || later.Decider != DeciderLocal || later.Why != WhyNone || later.Exit() != 0 {
+		t.Fatalf("a legitimate later success must stand, got %+v exit=%d", later, later.Exit())
+	}
+	if line, row := later.Line("card-2"), later.Row("card-2"); !strings.Contains(line, want) || !strings.Contains(row, want) {
+		t.Errorf("the failed jev attempt vanished behind a later success:\nline=%s\nrow=%s", line, row)
+	}
+
+	// NEGATIVE CONTROL: a walk where nothing failed says so with `-`, so the
+	// field is a receipt of what happened and not a constant.
+	quiet := &fake{name: DeciderLocal, sees: SeesPrivate, answer: "clean", conf: 0.90}
+	ok := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), quiet}}.Classify(
+		context.Background(), q, publicEvidence("ordinary output"), 0.65)
+	if line := ok.Line("card-3"); !strings.Contains(line, "skipped=-") {
+		t.Errorf("negative control: a walk with no failed attempt must say so: %s", line)
+	}
+	if row := ok.Row("card-3"); strings.Contains(row, WhyProviderError) {
+		t.Errorf("negative control: a clean walk's row named a provider error: %s", row)
 	}
 }

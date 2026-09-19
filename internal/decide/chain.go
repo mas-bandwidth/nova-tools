@@ -300,6 +300,25 @@ func (c Chain) rulesFirst() []ChainDecider {
 	return append(rules, rest...)
 }
 
+// AttemptsSkipped is the bounded typed record of every decider the walk could
+// not get an answer out of: `<decider>=<why token>` pairs, comma separated, or
+// `-` where nothing was skipped. It goes on BOTH receipts, and the reason is
+// that without it two different walks print the same words. A chain with no
+// provider configured and a chain whose provider was configured and failed both
+// end `decider=none why=no-decider`; an answer from `local` after `jev`
+// failed ahead of it reads as a clean first-try walk. The outage is invisible
+// in exactly the records anybody would go to to find it.
+//
+// What is NOT here is the provider's own sentence. The token says a call was
+// made and did not return an answer, which is the fact; the error text is the
+// provider's prose, it is unbounded, and it has no business in a durable row.
+func (r Result) AttemptsSkipped() string {
+	if strings.TrimSpace(r.Skipped) == "" {
+		return "-"
+	}
+	return r.Skipped
+}
+
 // Line is D3's one CLASSIFY line.
 func (r Result) Line(pointer string) string {
 	conf := "-"
@@ -314,9 +333,9 @@ func (r Result) Line(pointer string) string {
 	if escalate == "" {
 		escalate = "-"
 	}
-	return fmt.Sprintf("CLASSIFY question=%s/v%d answer=%s conf=%s floor=%.2f decider=%s stop=%s below=%s tamper=%s why=%s escalate=%s pointer=%s bytes=%d",
+	return fmt.Sprintf("CLASSIFY question=%s/v%d answer=%s conf=%s floor=%.2f decider=%s stop=%s below=%s tamper=%s why=%s skipped=%s escalate=%s pointer=%s bytes=%d",
 		r.Question, r.Version, r.Answer, conf, r.Floor, r.Decider,
-		yesNoWord(r.Stop), below, yesNoWord(r.Tamper), r.Why, escalate, pointer, r.Bytes)
+		yesNoWord(r.Stop), below, yesNoWord(r.Tamper), r.Why, r.AttemptsSkipped(), escalate, pointer, r.Bytes)
 }
 
 // Row is the classify log's decision row. THE EVIDENCE TEXT IS NEVER IN IT:
@@ -335,6 +354,7 @@ func (r Result) Row(pointer string) string {
 		"stop":     r.Stop,
 		"tamper":   r.Tamper,
 		"why":      r.Why,
+		"skipped":  r.AttemptsSkipped(),
 		"hash":     r.Hash,
 		"bytes":    r.Bytes,
 	}

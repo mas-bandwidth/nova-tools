@@ -791,7 +791,7 @@ D3. SPEC-AHEAD: #1616
    sha, a job conclusion); a key the question does not declare is refused by name.
 
    ```
-   CLASSIFY question=<q>/v<v> answer=<member|unknown> conf=<0.00-1.00|-> floor=<f> decider=<rules|jev|local|none> stop=<yes|no> below=<member|-> tamper=<yes|no> why=<-|below-floor|tamper|no-decider|no-key|no-accounting|private-evidence|untuned|provider-error> escalate=<reader|-> audit=<yes|no> <question fields> pointer=<id> bytes=<n> ms=<n|-> tokens=<in|->/<out|-> id=<decision id>
+   CLASSIFY question=<q>/v<v> answer=<member|unknown> conf=<0.00-1.00|-> floor=<f> decider=<rules|jev|local|none> stop=<yes|no> below=<member|-> tamper=<yes|no> why=<-|below-floor|tamper|no-decider|no-key|no-accounting|private-evidence|untuned|provider-error> skipped=<<decider>=<reason>,...|-> escalate=<reader|-> audit=<yes|no> <question fields> pointer=<id> bytes=<n> ms=<n|-> tokens=<in|->/<out|-> id=<decision id>
    ```
 
 D4. SPEC-AHEAD: #1616
