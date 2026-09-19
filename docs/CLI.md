@@ -3357,6 +3357,35 @@ green report. `--max-lines`
 (default 8) bounds each test's own message lines and counts the rest; `--gh`
 names the executable and `--timeout` (default 2m) budgets one call to it.
 
+`--decide` reads the red rather than only listing it (SPEC-DECIDE.md, *6. The
+CI-red reading*): it classes the failure and appends ` red=<class>
+rerun=<licensed|no> finding=<yes|no> reruns=<n> attempt=<n|->` to the closing
+line. Any
+`--- FAIL` name makes the class `named-test`, or `known-flake` when every
+failing name is in the `--flakes <file>` table (a TSV of test, issue and an
+expiry `YYYY-MM-DD`, read against `--now`, default today, where an expired row
+matches nothing). No `--- FAIL` name and every failed job cancelled is
+`cancelled-leg`; no `--- FAIL` name and every failed job either timed out, had a
+`startup_failure` conclusion, or failed in a step named in `--infra-steps
+<file>` is `infra`. A red the table cannot place prints `red=unknown`. The
+licence is the table's alone: `rerun=licensed` needs a rerunnable class
+(`cancelled-leg`, `known-flake` or `infra`) with no rerun yet spent, and
+everything else is `finding=yes` — a named failing test is never licensed, and a
+second red at one sha is a finding. The reading never reruns anything.
+
+The spent count is the **forge's**, read from the same job listing the verb
+already fetches: the `run_attempt` of the red jobs at this `head_sha`, less one,
+printed as `attempt=<n>` beside `reruns=<n>`. It is not the caller's to set. A
+red job the forge gave no attempt or no sha for, and red jobs that disagree with
+each other about either, are a refusal on stderr at exit 2 and no licence at all,
+because a verb that cannot tell a first red from a second must not guess the
+first. `--reruns <n>` remains only as a FLOOR for a caller who knows of a rerun
+the forge cannot see: the reading takes the greater of it and the forge's count,
+so it can withhold a licence and can never grant one. Re-reading the same
+attempt is not a second red — the answer is advisory and identical each time —
+and the caller's own rerun is what makes the forge report attempt 2, which is
+where the licence stops.
+
 Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
 at=<file:line>` line with that test's own words indented under it; a cancelled
 step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
@@ -3371,8 +3400,9 @@ count, so one missing log never sinks the other jobs' reds. The closing
 `FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n>` always prints,
 and its word is `OK` only when the run said nothing red. It is
 a reader, so exit 1 means the run said something red, exit 0 means it said
-nothing, and exit 2 is a refusal — a bad flag, no such run, or a `gh` that could
-not answer. It runs `gh` for reading only and never merges, enqueues or comments.
+nothing, and exit 2 is a refusal — a bad flag, no such run, a `gh` that could
+not answer, or, under `--decide`, an attempt count the forge would not give.
+It runs `gh` for reading only and never merges, enqueues or comments.
 See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work
