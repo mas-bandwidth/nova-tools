@@ -688,7 +688,7 @@ nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-nova-swarm lint      --card <file> [--max <n>]
+nova-swarm lint      --card <file> [--max <n>] | --rules
 nova-swarm quickstart --pool <dir>
 nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -796,8 +796,23 @@ because the wall refuses a path above the job; it never invokes `nova-sandbox`;
 its final step writes `RESULT.md` with the `RESULT: ` line first; and the card
 is under 12000 bytes. A card that satisfies all of them prints one line,
 `LINT OK card=<name> checks=<n>`, and exits 0; a card that drifts prints
-`LINT DRIFT card=<name> <check>: <line>: <excerpt>` for each finding and exits
-2, so a caller can refuse to admit it. `--max`, default 20 and 0 for all, bounds
+`LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what the rule wants>`
+for each finding and exits 2, so a caller can refuse to admit it.
+
+**Every drift carries its remedy, and the binary prints the whole table** (issue
+#1464). A rule token and a quoted line are not an instruction: three of the five
+drifts on one hand-written card pointed at line 1, which is the contract line
+practice 1 says line 1 must be, and the writer could not tell what any of them
+wanted. `nova-swarm help` promises of every listing "one MORE line naming the
+remedy", so each drift names one. And because the rule tokens are in no document
+a bench can reach — its clone of this repository is months behind the binary
+installed on it — `nova-swarm lint --rules` prints `LINT RULE <check>
+remedy=<what it wants>` for every check and exits 0, taking no card, since the
+question is asked before there is one. The DRIFT line and the listing read the
+same table, and the count in it is `checks=<n>`: a check added without a remedy
+is a red test.
+
+`--max`, default 20 and 0 for all, bounds
 the printed findings and adds one `LINT MORE` line naming the remedy; it never
 changes the verdict. The verb is the practice-17/18/23/25 shape made mechanical:
 it is a check, not a judgment, and a card that passes it is admitted to the wall
