@@ -2458,6 +2458,29 @@ directions, against `tools/bench-standard.sh` and `nova-pulse fleet standard`'s
 own `toolchain-*` checks by a test, so provisioning and the wall cannot drift
 apart.
 
+**A denial in the capture that nobody read is refused, never `NATIVE OK`** — and
+the refusal says what it measured and what it did not:
+
+```
+NATIVE REFUSED: go-card a denial the card's shell reported went unread, so this
+run's disposition is refused rather than OK: step=3 rc=0 wall=landlock
+denied_path=/opt/sdk tool/bin/go operation=unverified job=<job>
+line="/usr/bin/bash: line 1: /opt/sdk tool/bin/go: Permission denied". The shell
+names a path and a refusal and NOT an operation: a denied exec, a redirection to
+a path the card may not write, and a cd into a directory it may not read all
+print these words, and a card can carry on from any of them, so what failed here
+is not established by this line. Remedy: re-run the card's own gate against the
+commit under <job> and read its stderr -- that is the measurement this refusal is
+standing in for. One candidate among the others, if that path was one the child
+had to read or execute: it is under no root this wall was handed, and
+"/opt/sdk tool/bin" would be the read_roots entries for it. That is a candidate
+and not the diagnosis
+```
+
+The exit is 2 and the job directory is named, so the result and the usage row the
+child did write are still there to harvest. A run typed `--no-wall` had no
+sandbox, is told so, and is offered no read set.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS

@@ -81,6 +81,7 @@ type nativeRunResult struct {
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
+	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 }
@@ -448,7 +449,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		tmp:          tmpDir,
 	}
 	if cfg.noWall {
-		res.wall = "none-by-flag"
+		res.wall = swarm.SandboxNoneByFlag
 	}
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
@@ -576,11 +577,25 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
+	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
+	// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
+	// published despite a refusal routed around it and finished. This one does not, and that
+	// is the whole point: the card of #1465 published an honest RESULT.md saying its
+	// `go test` could not be built or run, the child exited 0, and the run said
+	// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
+	//
+	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
+	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
+	if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
+		if sd, ok := swarm.ShellDenied(raw); ok {
+			res.shellDenial = sd
+		}
+	}
 	res.end = swarm.EndDone
 	if res.rc != 0 {
 		res.end = swarm.EndFailed
 	}
-	if (res.wallRefusal != swarm.WallRefusal{}) {
+	if (res.wallRefusal != swarm.WallRefusal{}) || (res.shellDenial != swarm.ShellDenial{}) {
 		res.end = swarm.EndWall
 	}
 
