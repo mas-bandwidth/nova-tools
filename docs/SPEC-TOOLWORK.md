@@ -1,4 +1,4 @@
-# Mechanical tool work — specification (draft 5, 2026-09-19)
+# Mechanical tool work — specification (draft 6, 2026-09-19: five corrections the day measured)
 
 Glenn, 2026-09-19: *"I want to upgrade our tools so we can push more work to swarms
 mechanically."*
@@ -286,7 +286,7 @@ nova-pulse accept --selftest --fixtures <dir> --bench <name> --cert <path> [--ti
 ```
 ACCEPT OK      label=<label> kind=<kind> head=<sha12> base=<sha12> tests=<n> red_without=<n> edits=<n|-> control=<id> bench=<name> cert=<id> took=<d>
 ACCEPT REJECT  label=<label> kind=<kind> head=<sha12|-> reason=<token> at=<path[:line]|test|-> control=<id> bench=<name> cert=<id> took=<d>
-ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|paused|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
+ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|paused|unknown-kind|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
 ACCEPT SELFTEST control=<id> accepted=<n>/<n> rejected=<n>/<n> edits=1 build=<build identity> fixtures=<sha12> bench=<name> <PASS|FAIL>
 ACCEPT SEED    name=<seed> edits=<n> want=<token> got=<token|ACCEPT> <ok|WRONG>
 ACCEPT REFUSED: <reason> (<remedy>)
@@ -340,10 +340,16 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    changed file test green at head (`build`, `vet`, `red-at-head`, each with the first
    failing line that is not a notice). (d) **Negative control for the card**, for the kinds that declare the range form
    (§5): `nova-review mutate --repo <tree> --base <base> --head <head>` must print `PASS`.
-   A `MUTATE GREEN` line is `reason=vacuous-test at=<test>`: a test that is green
-   without the change it claims to cover proves nothing
-   (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection and not a reader's
-   finding. The card's named `TEST:` must be among the tests that went red
+   A `MUTATE GREEN` line **for a test the card wrote or changed** is
+   `reason=vacuous-test at=<test>`: a test that is green without the change it claims
+   to cover proves nothing (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection
+   and not a reader's finding. A pre-existing test the card did not touch is not
+   charged: `mutate` runs every `Test` in a changed file, so such a test is `MUTATE
+   GREEN` under the revert on every ordinary fix card, and the letter of draft 5
+   ("a `MUTATE GREEN` line is `vacuous-test`") rejected the known-good fix (measured
+   2026-09-19, gate lane PR #1721, negative control B: `vacuous-test at=TestSign` on the
+   fixture's untouched test; `TestAcceptDoesNotCallAPreExistingGreenVacuous` pins the
+   intent). The card's named `TEST:` must be among the tests that went red
    (`named-test-not-red`). (e) The kind's own control, where mutate's revert is not the
    right defect (§5: `transcript-test`, `mutation-kill`, `sweep`).
 5. **A red test is a finding, never a rerun.** `accept` runs each command once. A test
@@ -425,7 +431,10 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
 **Red tests this section demands**, each seen red first, fakes for the bench and the
 clock, no network: `accept-runs-before-any-push` (the git fixture's argv log holds no
 push for a rejected card); `accept-never-opens-result-md` (a `RESULT.md` that is a FIFO
-does not hang the gate); `accept-rejects-a-vacuous-test`; `accept-rejects-when-named-test-stays-green`;
+does not hang the gate); `accept-rejects-a-vacuous-test`;
+`a-pre-existing-green-test-is-not-vacuous` (rule 4(d): an untouched test `MUTATE GREEN`
+under the revert on a known-good fix is not charged; PR #1721's
+`TestAcceptDoesNotCallAPreExistingGreenVacuous`); `accept-rejects-when-named-test-stays-green`;
 `accept-never-reruns-a-red`; `accept-abstains-on-a-bench-red` (a `WALL` line is the
 bench's); `selftest-every-seed-is-one-edit` (a two-line seed is refused by count);
 `selftest-wrong-token-is-a-fail`; `ok-without-a-control-on-file-is-refused`;
@@ -482,10 +491,39 @@ leg.**
 2. **`nova-sandbox` grows a named toolchain set, not a wider wall.** `--toolchain
    <leg>[,<leg>...]` adds, per leg and per platform, the narrowest roots that leg was
    measured to need, asked of the toolchain the way `--go` asks `go env` and never
-   guessed: for `cc` on darwin, `DEVELOPER_DIR` set for the child to what
-   `xcode-select -p` prints **outside** the wall, plus read on that directory — the
-   narrower of #1557's two fixes, and the one the cargo workaround on that issue already
-   proves; for `sbcl`, `SBCL_HOME` and the core; for `sqlite3`, nothing but the binary.
+   guessed. **The roots, as measured** (2026-09-19, the wall lane, on this Studio: macOS
+   26.6.2, `go1.27.1 darwin/arm64`, `backend=sandbox-exec`; logs `t18-measure.log`,
+   `t18-legs.log`, `t18-fix.log`, `t18-fix2.log`, `t18-narrow.log` in that lane's
+   scratchpad, summarised in its HANDOFF):
+   - `cc` on darwin: **draft 5's fix was not sufficient.** `DEVELOPER_DIR` set from
+     `xcode-select -p` plus read on that directory still dies: `cc` fails on `couldn't
+     stat Xcode's Info.plist (errno=Operation not permitted)` and dyld refuses
+     `DVTSystemPrerequisites.framework … (blocked by sandbox)`, both **above** `Developer`
+     in the `.app`'s `Contents/`; `cc_rc=71`. The narrowest roots that work are, in this
+     order: `DEVELOPER_DIR=/Library/Developer/CommandLineTools` with `--read` on it, when
+     the Command Line Tools are installed (silent, and far narrower than an `.app`); else
+     `--read` on the whole `.app` that `xcode-select -p` names (noisy). `--toolchain cc`
+     probes for the first and falls to the second, and prints which on `toolchain=`. The
+     rule's earlier claim that the cargo workaround on #1557 proved the `Developer`-only
+     read is withdrawn: it was not measured inside this wall.
+   - `go`: `--read $(go env GOROOT)` and `--read-noexec $(go env GOMODCACHE)`, and no
+     other root: on this Studio `GOROOT` is `/opt/homebrew/Cellar/go/1.27.1/libexec`
+     (`t18-narrow.log:2`), so what is read under `/opt/homebrew` is `GOROOT` itself, asked
+     of `go env`, and not the Cellar tree. With those two roots `go test
+     ./internal/sandbox/` inside the wall is `ok` on a cold cache (`t18-measure.log`).
+     What `dev` carries today is **wider**: `swarm.ToolchainRoots`
+     (`internal/swarm/toolchain.go:150-165`) grants `~/sdk`, `/opt/homebrew/Cellar/go`,
+     `/opt/homebrew/Cellar/sbcl`, `openjdk`, the JVMs and `dotnet`, all with exec, on
+     every `native` run; T18 (#1662) narrows `native`'s default to the two measured roots.
+   - `sbcl`: `--read` on its Cellar prefix alone (`/opt/homebrew/Cellar/sbcl/<version>`;
+     `SBCL_HOME` and the core live under it).
+   - `sqlite3`: no extra root at all.
+   - `make`: **unmeasured under the working roots.** It dies with `cc` under the failing
+     ones (`xcode-select: error: unable to read data link at '/var/db/xcode_select_link'`,
+     `t18-fix.log`, #1557); whether it lives under `cc`'s working roots was not run, so
+     `certify`'s `make` leg starts `absent` until it is.
+   A wall widening is a judgment and not a measurement: the `cc` roots above are wider
+   than draft 5 promised, and Stella's word on them is owed before T18 writes the flag.
    Each resolved root is printed on the `SANDBOX OK` line's `toolchain=` field so the
    wall a card ran behind is a fact on its record. An unknown leg is `SANDBOX REFUSED
    reason=bad_toolchain`. This is a sandbox change, a security kind: the unit and its read are the designated
@@ -538,7 +576,12 @@ leg.**
 **Red tests:** `certify-runs-every-probe-inside-the-wall` (the sandbox fake's argv log
 holds one wrap per leg); `certify-absent-is-not-failed`; `cert-voids-on-build-change`;
 `accept-abstains-on-an-uncertified-leg`; `route-refuses-a-bench-without-the-leg`;
-`toolchain-cc-sets-developer-dir-and-reads-nothing-wider` (darwin);
+`toolchain-cc-prefers-command-line-tools-and-reads-nothing-wider` (darwin: with
+`/Library/Developer/CommandLineTools` present the wall's argv holds `--read` on it and no
+`.app`; `toolchain=` names it); `toolchain-cc-falls-back-to-the-app-and-prints-which` (darwin:
+with the Command Line Tools absent the argv holds `--read` on the `.app` that `xcode-select
+-p` names, and `toolchain=` says so); `native-reads-goroot-and-gomodcache-and-nothing-else`
+(the argv holds exactly those two roots, neither with exec beyond `GOROOT`);
 `legs-tsv-covers-every-toolchain-ci-installs`; `native-defaults-to-the-go-leg`;
 `an-unknown-leg-is-bad-toolchain` (rule 2); `a-cert-past-until-is-void`,
 `a-toolchain-abstain-voids-the-cert` and `a-changed-go-version-voids-the-cert` (rule 6);
@@ -697,23 +740,49 @@ its line 1. A kind is a template **plus** the gate that judges it and the contro
 proves the gate: the first half is text for the worker, the second is code in the tool
 the worker never sees and cannot edit.
 
-1. **Five typed header lines, under the contract line and inside its hash.**
+1. **A seven-line header block, then `STEP 1`; everything below line 1 inside the hash.**
+   The header is the contract line, the role line, and five typed lines, in this order,
+   and `STEP 1` is the line after it:
 
    ```
+   RESULT: <label> sha=<sha12>
+   You are a worker. <the role line of docs/spec-pulse/10-the-card-as-cut-writes-it.md>
    KIND: <kind>
    PATHS: <glob>[, <glob>...]
    TEST: <package> <TestName>          (or `TEST: none` where the kind allows it)
    LEGS: <leg>[,<leg>...]
    SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
+   STEP 1. <clone or cd, as the spec-pulse document writes it>
    ```
 
-   Two kinds carry one more: `sweep` a `FILES: <n>` line and `mutation-kill` a `SEED:`
-   block holding its one-edit patch.
-   They are written by `cut` from the pool row, never by a model, and because they sit
-   below line 1 the contract hash covers them: a card whose header was altered after
-   admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing any of
-   them (`CUT REFUSED kind=<kind>: no <LINE>`), and `lint --card` gains the tokens
-   `kind-declared`, `paths-declared`, `paused` (the coordinator paused this kind; the remedy is the `trust --set trial` command) and
+   **Why seven and why `STEP 1` next**: the shipped admission check reads the first
+   fifteen lines for a line beginning `STEP 1` (`internal/swarm/batch.go:1833-1844`,
+   `hasStep1`, for every DeepSeek-family model; `docs/WORKER-CARDS.md` practice 17), and
+   the first card cut in draft 5's shape, with a coordinator's `BASE`, `SPEC`, `ROUTE`,
+   `ACCEPT`, `CERT`, `LANE` and RULES prose above the steps, was refused before any model,
+   bench or provider was reached (`ADMIT REFUSED tools10-c1 card-shape: no 'STEP 1' line
+   in the first 15 lines`, `in=0 out=0 usd=0.0000`; measured 2026-09-19 by the tools10
+   shift, nova-tools#1728). Everything else a card carries — `LANE`, `ACCEPT`, `CERT`,
+   rules prose, the `RESULT` template — sits **below `STEP 1`**, still inside the hash,
+   because the hash is of everything below line 1 and the header lines' order is free.
+   **A card with more than three model steps carries `MODE: explore` and `TURNS: <n>`**,
+   as header lines directly under `SOURCE:` and inside the hash, so the block is nine
+   lines and `STEP 1` is line 10, still inside the fifteen: the shipped pipeline rule
+   admits three model calls with no mode word (`internal/swarm/cardpipeline.go:15`,
+   `pipelineModelSteps = 3`) and refuses a fourth without it, and every gated kind's
+   shape in rule 2 names more than three (a `fix-red` card is eight `STEP` lines). Two
+   kinds carry one more typed line under `SOURCE:` — `sweep` a `FILES: <n>` line — or a
+   block below `STEP 1` — `mutation-kill` a `SEED:` block holding its one-edit patch.
+   The header lines are written by `cut` from the pool row, never by a model, and because
+   they sit below line 1 the contract hash covers them: a card whose header was altered
+   after admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing
+   any of them (`CUT REFUSED kind=<kind>: no <LINE>`) and refuses a rendered card that
+   the shipped admission and pipeline checks would refuse, and a class test,
+   `a-card-cut-renders-is-admitted`, runs `cut`'s output through the admission shape
+   check and the pipeline rule — the test that would have caught #1728 before a card was
+   launched. `lint --card` gains the tokens `kind-declared`, `paths-declared`, `paused`
+   (the coordinator paused this kind; the remedy is the `trust --set trial` command),
+   `mode-declared` (more than three model steps and no `MODE: explore` / `TURNS:`) and
    `test-named`.
 2. **The kinds.** `gate` is the step list of §1 rule 4; `control` is what must be seen
    red before the gate's green counts for this card.
@@ -731,13 +800,17 @@ the worker never sees and cannot edit.
    `internal/pulse/kinds.go` holds the table above as data; `nova-pulse accept --kinds`
    prints it, one line per kind, and a class test asserts this section's table and
    that output name the same kinds, steps and tokens. A kind the table does not hold is
-   refused by `cut` and abstained by `accept`; there is no default kind.
+   refused by `cut` and abstained by `accept` with `reason=unknown-kind` (the token the
+   gate lane found the §1 grammar had no name for, PR #1721 departure 5; like `paused`
+   it is nobody's bench's fault, writes no `bench.tsv` row, requeues nothing and counts
+   for the track record as neither); there is no default kind.
 4. **What makes a card of a kind eligible for a swarm.** All of: both conditions of the
    eligibility rule hold for its kind over its `PATHS:`; its `SOURCE:` names an issue or a `file:line` the card writer opened at
    the pinned head (WORKER-CARDS 3); its `TEST:` either exists at the pinned head
    (`transcript-test`'s target section, `sweep`'s class test) or is a name the card
    fixes in advance; its `LEGS:` are certified on at least one bench (§2 rule 5); and it
-   fits the three-call pipeline or says `MODE: explore` with a `TURNS:` budget. `cut`
+   fits the three-call pipeline or says `MODE: explore` with a `TURNS:` budget, as header
+   lines inside the hash (rule 1). `cut`
    checks the first, third and fourth; the second is the card writer's, by practice 3.
 5. **One card of a new template runs alone before the batch widens.** `launch` refuses
    a batch wider than one for a `(kind, template sha12)` pair with no `ACCEPT OK` on
@@ -750,8 +823,34 @@ the worker never sees and cannot edit.
    the gate is chosen by `KIND:` from the tool's table and by nothing the worker wrote.
    A `RESULT.md` that names a different kind, a different test or more paths is not
    read (§1 rule 2), so it changes nothing.
+7. **The contract line has one form, `RESULT: <label> sha=<sha12>`, with the colon: it is
+   SPEC-SWARM's, and the writers follow it.** Read on `dev@702b0133`, the two forms and who
+   holds each. **Colon**: `docs/SPEC-SWARM.md:969,976` (the swarm's own law: *"line 1 starts
+   with `RESULT: `"*); `internal/pulse/cutkind.go:189-201` (`cut --kind`, wired at
+   `cmd/nova-pulse/cut_kind.go:48` and `wire.go:502`) and `internal/pulse/manager.go:739`,
+   which write `RESULT: CARD-<n> …`; `nova-swarm lint --card`'s `result-first`
+   (`cmd/nova-swarm/lint.go:55,140`); `internal/worklang/expand.go:227`. **No colon**: the
+   plain `cut` templates (`internal/pulse/cut.go:472` writes, `:433` checks,
+   `cut_test.go:110` asserts) and, before this draft, `docs/spec-pulse/10:4` and
+   `docs/WORKER-CARDS.md:312`. **Both accepted**: `internal/pulse/harvestbench.go:349`,
+   `worklang/expand.go:227`, and `gather`, which compares line 1 for equality with no prefix
+   of its own. Ruled (Rowan, 2026-09-19, on the coordinator's cold read of #1759): **the
+   colon form wins**, because it is SPEC-SWARM's and the majority of writers already write
+   it; the no-colon rule this draft first proposed would have made every `cut --kind` and
+   manager card a `result-first` drift. The one renderer that changes is the plain `cut`
+   template path: **the follow-up card** rewrites `cut.go:472` and `:433`, `cut_test.go:110`,
+   and adds the class test `every-writer-and-reader-agrees-on-the-result-line`, which reads
+   every writer's prefix (`cut.go`, `cutkind.go`, `manager.go`, `expand.go`), every reader's
+   (`lint.go`, `harvestbench.go`, `gather`) and both documents' examples, and fails when they
+   are not one string. This draft fixes the two documents now (`spec-pulse/10:4`,
+   `WORKER-CARDS.md:25,312`). **Until that card lands, readers accept both forms**
+   (`harvestbench.go:349`'s loop is the shape; the lint's accept-both stopgap in PR #1733 is
+   the same shape and is retired by the class test, not before). The six hand-written cards
+   of 2026-09-19 that drew `result-first` (nova-tools#1741) were in the no-colon form and
+   were wrong; the lint was right.
 
 **Red tests:** `cut-refuses-a-gated-kind-without-paths`; `header-lines-are-inside-the-contract-hash`;
+`a-card-cut-renders-is-admitted` (rule 1); `the-contract-line-has-one-form` (rule 7);
 `kinds-table-matches-the-spec`; `transcript-test-rejects-an-edit-to-the-document`;
 `rebase-rejects-one-changed-line-outside-a-conflict`; `sweep-control-names-the-reverted-site`;
 `mutation-kill-rejects-a-test-the-mutant-survives`; `launch-refuses-a-wide-batch-with-no-accepted-first-card`;
