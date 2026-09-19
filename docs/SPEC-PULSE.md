@@ -2140,12 +2140,42 @@ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<
    `<card>.launched` marker `fill` writes beside the card — `lane`, `bench`, `label`,
    `session`, `at` — so the release is by lane name and never by parsing the card again.
 
+9. **The launched directory is SHARED, and the drain touches only what is the caller's,
+   finished, and within `--max`.** #1950: one `harvest --bench vision --max 1` emptied a
+   live 151-card queue in 733 ms — `jobs=0 ... drained=151` on one line — marked every card
+   `failed`, deleted every `.launched` marker and took five cards of other lanes whose jobs
+   were running on other benches; 149 markers had to be rebuilt by hand. Seven manager
+   lanes drop cards into one `ready/` and the resident fill loops move them into one
+   `launched/`, so a verb that empties that directory for everybody is a fleet-wide
+   foot-gun. Four clauses, each read from the card's own launch record:
+   - **(a) the record must be the caller's.** With `--session <id>`, only a card whose
+     marker names that session; a marker naming none is not provably the caller's either.
+   - **(b) it must match `--bench`.** A card whose marker names another bench is left where
+     it is — the drain printed `bench=captainamerica` under `--bench vision` and moved the
+     card anyway. Without `--bench` (the local form) only a marker naming no bench qualifies.
+   - **(c) it must be finished, or provably dead.** `done` is a job THIS run folded to a
+     durable end — a PR, a `NO-COMMIT`, or an earlier `.harvested`. A job whose fetch, push
+     or forge call failed, or which a filter passed over, keeps its card: **a launch record
+     is removed only after its result has been harvested.** `job-dir-gone` requires a
+     listing that actually covered this card's own bench and returned something; an empty
+     listing proves nothing and drains nothing.
+   - **(d) `--max` bounds what is CONSUMED, not just what is printed.** `--max 1` printed
+     one line and drained 151.
+   A drained card's `.launched` marker **moves with it** into `--done` or `--failed` and is
+   never deleted: it is the only record of which bench the job is on, and a card without it
+   cannot be harvested by anyone. `drained=<n> left=<m>` on the summary is the whole
+   receipt — what this harvest took, and how many launched cards it deliberately left
+   byte-identical. And a `--root` that does not resolve **on the bench** is
+   `HARVEST REFUSED` before any state changes, never a silent `jobs=0`: the listing answers
+   `ROOT <path> ok|missing` per root, and a quoted `'~/...'` is not expanded by this verb.
+
 ```
 HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
 HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
 HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
 HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
-HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> left=<n> took=<d>
+HARVEST REFUSED: --root <path> does not exist on <bench> (<remedy>)
 ```
 
 Exit 0, 1 when a fetch, a push or the forge failed for any job, 2 on a refusal that never
@@ -2163,3 +2193,9 @@ git on PATH — no test opens a connection:
 8. `TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession`,
    `TestFillReadsTheLiveLaneFromTheMarkerNotTheCard` and
    `TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails` — rule 8's marker.
+9. `TestHarvestConsumesOnlyItsOwnFinishedCardOnASharedQueue` — rule 9, all four clauses in
+   one run, asserted on a before/after listing of the shared directory with a sha256 per
+   file; `TestHarvestDrainsNothingWhenTheBenchListedNoJobs` — rule 9(c), the 733 ms
+   receipt; `TestHarvestLeavesACardWhoseJobFailedToFetch` — rule 9(c), durability;
+   `TestHarvestRefusesARootThatDoesNotResolveOnTheBench` and
+   `TestBenchListScriptAsksWhetherEachRootIsThere` — the root refusal.

@@ -1773,7 +1773,7 @@ HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=
 HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
 HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
 HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
-HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> left=<n> took=<d>
 ```
 
 **`--launched <dir>` drains the queue, in either form.** Nothing but `manager` drained it,
@@ -1783,6 +1783,19 @@ directory is gone moves to `--failed`, each with a marker naming the lane, the b
 why; one still running is left where it is. A harvested job is marked `.harvested` on the
 bench, so a second run opens no second PR. Exit is 0, 1 when a fetch, a push or the forge
 failed for a job, 2 on a refusal.
+
+**The launched directory is shared, so the drain takes only what is the caller's** (#1950,
+SPEC-PULSE "Harvest, from a bench" rule 9). One `harvest --bench vision --max 1` emptied a
+live 151-card queue in 733 ms — `jobs=0 ... drained=151` — and deleted every `.launched`
+marker, five of them another lane's. A card is drained only when its own launch record says
+it is the caller's (`--session` against the marker's `session`), names the bench this
+harvest looked at (`--bench` against the marker's `bench`), and its job either finished and
+was folded here to a durable end or is provably gone — a listing that found nothing proves
+nothing and drains nothing. `--max` bounds what is consumed, not only what is printed. The
+`.launched` marker **moves with its card** and is never deleted: it is the only record of
+which bench the job is on. `drained=<n> left=<n>` says what was taken and how many launched
+cards were left exactly as found. A `--root` that does not resolve on the bench is
+`HARVEST REFUSED` before anything moves — a quoted `'~/…'` is not expanded by this verb.
 
 ### fleet add
 
