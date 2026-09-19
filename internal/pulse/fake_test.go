@@ -38,7 +38,9 @@ type fakeRule struct {
 	// Exec runs the command after `--` (testdata/fakebin): the fake nova-sandbox the
 	// accept gate's tests put in front of PATH, so the real go build, vet and test run
 	// while the argv is still logged.
-	Exec bool `json:"exec,omitempty"`
+	// CwdContains matches on the fake's working directory (testdata/fakebin).
+	CwdContains string `json:"cwdContains,omitempty"`
+	Exec        bool   `json:"exec,omitempty"`
 }
 
 // fakeSpec is one fake program: where it records its argv, the arms it answers, and the

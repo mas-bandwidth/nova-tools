@@ -34,8 +34,8 @@ func TestAcceptUnderTheRealWallDarwin(t *testing.T) {
 		Identities: []hyg.Identity{{Name: "Rowan", Email: "rowan@example.com"}},
 		Sandbox:    real, Timeout: 5 * time.Minute, Max: 0, Stdout: &out, Stderr: &errb, Now: time.Now,
 	})
-	if code != 0 || !strings.Contains(out.String(), "ACCEPT OK ") {
-		t.Fatalf("under the real wall: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	if code != 0 || !strings.Contains(out.String(), "ACCEPT OK ") || !strings.Contains(out.String(), " red_without=1 ") {
+		t.Fatalf("under the real wall: exit %d, want ACCEPT OK with red_without=1 (the mutate phase ran there and TestSignZero went red)\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
 	// The worker's copy is unreachable through the real wall.
 	acceptWrite(t, l.job, "sign/sign_test.go", strings.Replace(baseTest, "import \"testing\"", "import (\n\t\"os\"\n\t\"path/filepath\"\n\t\"testing\"\n)", 1)+"\nfunc TestSignZero(t *testing.T) {\n\tif _, err := os.ReadFile(filepath.Join(\"..\", \"..\", \"..\", \"..\", \"jobs\", \"CARD-7\", \"sign\", \"testdata\", \"answer.txt\")); err != nil {\n\t\tt.Fatal(err)\n\t}\n\tif Sign(0) != 0 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n")
@@ -51,7 +51,24 @@ func TestAcceptUnderTheRealWallDarwin(t *testing.T) {
 	if code != 1 || !strings.Contains(out.String(), " reason=red-at-head at=TestSignZero ") {
 		t.Fatalf("the real wall admitted the worker's copy: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
-	if entries, _ := os.ReadDir(filepath.Join(l.slot, "accept")); len(entries) > 1 {
-		t.Fatalf("the accept directory holds more than the gate's cache after the run: %d entries", len(entries))
+	if entries, _ := os.ReadDir(filepath.Join(l.slot, "accept")); len(entries) != 0 {
+		t.Fatalf("the accept directory is not empty after the run: %d entries", len(entries))
+	}
+	// And a vacuous card is REJECTED under the real wall: the mutate phase runs there.
+	// Cold read 2 of d9528173 found it dying on home_outside (the operator's HOME) and
+	// the death scored as a kill: ACCEPT OK red_without=2 for a test that proves nothing.
+	acceptGit(t, l.job, nil, "reset", "-q", "--hard", "main")
+	acceptWrite(t, l.job, "sign/sign.go", fixtureFix)
+	acceptWrite(t, l.job, "sign/sign_test.go", vacuousTest)
+	l.commit(t, "a fix and a test that would pass anyway")
+	out.Reset()
+	errb.Reset()
+	code = Accept(AcceptInput{
+		Job: l.job, Card: card, Base: acceptGit(t, l.job, nil, "rev-parse", "main"), Bench: "lab", Cert: l.cert,
+		Identities: []hyg.Identity{{Name: "Rowan", Email: "rowan@example.com"}},
+		Sandbox:    real, Timeout: 5 * time.Minute, Max: 0, Stdout: &out, Stderr: &errb, Now: time.Now,
+	})
+	if code != 1 || !strings.Contains(out.String(), " reason=vacuous-test at=TestSignZero ") {
+		t.Fatalf("the real wall let a vacuous card through: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
 }

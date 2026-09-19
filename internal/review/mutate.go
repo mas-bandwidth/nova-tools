@@ -565,13 +565,24 @@ func runUnits(ctx context.Context, execFn func(context.Context, string, string, 
 	// The verdict is a property of the range, never of the environment mutate was
 	// started in. A caller's GOFLAGS=-json -- which is what CI's `make test`
 	// exports -- would make this run answer in JSON, no `--- PASS:` line would
-	// match below, and the unit that stayed green would be counted red.
-	cmd.Env = goenv.Clean(os.Environ())
+	// match below, and the unit that stayed green would be counted red. But an Env
+	// the seam SET is the seam's -- the accept gate's HOME and GOCACHE inside its wall
+	// -- and is kept: replacing it ran the card's tests with the operator's HOME, which
+	// the real wall refused (cold read 2 of #1721, CRITICAL).
+	if cmd.Env == nil {
+		cmd.Env = goenv.Clean(os.Environ())
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
 			return nil, fmt.Sprintf("go test could not be run: %v", err)
+		}
+		switch ee.ExitCode() {
+		case 125, 126, 127:
+			// nova-sandbox's own exits: refused, not executed, not found. The suite
+			// never ran; nothing here is a verdict on the range.
+			return nil, fmt.Sprintf("the suite could not be run: the wall answered exit %d: %s", ee.ExitCode(), firstLine(string(out)))
 		}
 	}
 	text := string(out)
@@ -583,6 +594,7 @@ func runUnits(ctx context.Context, execFn func(context.Context, string, string, 
 		}
 		return failed, ""
 	}
+	results := 0
 	sc := bufio.NewScanner(strings.NewReader(text))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -590,16 +602,25 @@ func runUnits(ctx context.Context, execFn func(context.Context, string, string, 
 		if m == nil {
 			continue
 		}
+		results++
 		if m[1] == "FAIL" {
 			failed[m[2]] = true
 		}
 	}
-	// A run that exited non-zero with no FAIL line at all (a panic before any result,
-	// a timeout inside the binary) is evidence the package's tests do not pass, and
-	// every unit it was asked for counts red rather than silently green.
+	// A non-zero exit is a kill only when the run SAID so: a FAIL unit above, a
+	// package-level FAIL line, or a panic. A run that exited non-zero having printed
+	// no result at all proved nothing -- a wall that refused, a binary that could not
+	// start -- and scoring it as every unit red made a dead control look like a kill
+	// (cold read 2 of #1721: a vacuous card was ACCEPT OK red_without=2).
 	if err != nil && len(failed) == 0 {
-		for _, u := range units {
-			failed[u.name] = true
+		if strings.Contains(text, "panic:") || strings.Contains(text, "\nFAIL\t") || strings.HasPrefix(text, "FAIL\t") {
+			for _, u := range units {
+				failed[u.name] = true
+			}
+			return failed, ""
+		}
+		if results == 0 {
+			return nil, "the suite could not be run: the run exited non-zero with no test result: " + firstLine(text)
 		}
 	}
 	return failed, ""

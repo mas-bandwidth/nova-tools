@@ -44,6 +44,10 @@ type rule struct {
 	Stderr     string `json:"stderr,omitempty"`
 	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
+	// CwdContains matches when the fake's working directory holds this substring: how
+	// a fake nova-sandbox refuses only the commands run in one kind of tree (the mutate
+	// worktrees) while passing every other through.
+	CwdContains string `json:"cwdContains,omitempty"`
 	// Exec runs whatever follows the first `--` in this fake's own argv, with the
 	// caller's stdio and environment, honouring a `--cwd <dir>` before the `--`, and
 	// exits with the child's code. It is how a fake nova-sandbox lets the accept gate's
@@ -94,8 +98,16 @@ func main() {
 		appendLine(s.Log, strings.TrimRight(name+" "+strings.Join(args, " "), " "))
 	}
 
+	cwd, _ := os.Getwd()
 	r := s.Default
 	for _, cand := range s.Rules {
+		if cand.CwdContains != "" {
+			if strings.Contains(cwd, cand.CwdContains) {
+				r = cand
+				break
+			}
+			continue
+		}
 		if cand.Arg <= 0 || (cand.Arg < len(os.Args) && os.Args[cand.Arg] == cand.Equals) {
 			r = cand
 			break
