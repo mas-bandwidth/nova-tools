@@ -72,6 +72,14 @@ func wkRun(t *testing.T, in HarvestInput) (out, errs string, code int) {
 	if in.Now == nil {
 		in.Now = func() time.Time { return time.Unix(0, 0).UTC() }
 	}
+	// THE COORDINATOR NAMES THE DESTINATION on this path (Johnny's HOLD of #1809 at
+	// 7f692ef6): the working layout carries no launch record, and the job's own clone is
+	// the worker's, `origin` and all. `--clone <owner>/<name>=<dir>` is where it comes
+	// from, and every fixture here is for o/r. A test that wants the refusal passes a
+	// non-nil empty list on purpose and says so.
+	if in.Clones == nil {
+		in.Clones = []string{"o/r=" + filepath.Join(t.TempDir(), "coordinator-clone")}
+	}
 	code = HarvestWorking(in)
 	return o.String(), e.String(), code
 }
@@ -96,6 +104,7 @@ func TestHarvestWorkingReadsTheGuidLayout(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "0123456789abcdef0123456789abcdef01234567 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "0123456789abcdef0123456789abcdef01234567\trefs/heads/rowan/a"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
@@ -161,6 +170,7 @@ func TestHarvestWorkingLeaseComesFromLsRemote(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/rowan/y"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[{"number":9,"headRefName":"rowan/x","headRefOid":"9999","state":"OPEN","title":"t"}]`},
@@ -208,6 +218,7 @@ func TestHarvestWorkingOffBranchAndBeforeSession(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "cccc000000000000000000000000000000000000 2026-09-01T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "cccc000000000000000000000000000000000000\trefs/heads/rowan/s"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 2, Equals: "list", Stdout: "[]"}}})
 	wkJob(t, working, "g-f", "f", wkResult("f", "feature/x", "o/r"))
@@ -258,6 +269,7 @@ func TestHarvestWorkingMarksHarvested(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "ffff000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "ffff000000000000000000000000000000000000\trefs/heads/rowan/h"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: "[]"},
@@ -287,6 +299,7 @@ func TestHarvestWorkingClassesAreTheFive(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "abcd000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "abcd000000000000000000000000000000000000\trefs/heads/rowan/f"},
+		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[
@@ -388,6 +401,35 @@ func TestHarvestWorkingOutputIsBounded(t *testing.T) {
 			t.Fatalf("a value held whitespace: %q", l)
 		}
 	}
+}
+
+// JOHNNY'S HOLD, the repo destination on `harvest --working`: a RESULT.md REPO line is a
+// worker's claim, never an instruction, and so is the job clone's own `origin` -- a worker
+// rewrites that with one `git remote set-url` (HOLD at 7f692ef6). Here BOTH of the worker's
+// statements say attacker/exfil and the coordinator's --clone says o/r: nothing is
+// force-pushed (issue #1824's receipt, on the --working path).
+func TestHarvestWorkingRefusesARepoMismatchAndForcePushesNothing(t *testing.T) {
+	working := t.TempDir()
+	specs := fakePATH(t)
+	arglog := filepath.Join(working, "argv.log")
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
+		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/rowan/w"},
+		originRule("attacker/exfil"),
+	}})
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 2, Equals: "list", Stdout: "[]"},
+		{Arg: 2, Equals: "create", Stdout: "https://forge.invalid/attacker/exfil/pull/23"},
+	}})
+	wkJob(t, working, "g-w", "w", wkResult("w", "rowan/w", "attacker/exfil"))
+
+	_, errs, _ := wkRun(t, HarvestInput{Working: working, Base: "0123456789ab", Max: 20})
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") && strings.Contains(l, "exfil") {
+			t.Fatalf("--working force-pushed a repo the worker's RESULT claimed: %s", l)
+		}
+	}
+	wkHasLine(t, errs, "HARVEST REFUSED repo-mismatch card=w dispatched=o/r origin=attacker/exfil")
 }
 
 func itoa(n int) string {

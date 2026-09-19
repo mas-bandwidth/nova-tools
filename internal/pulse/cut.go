@@ -505,8 +505,12 @@ func turnBudget(kind string) int {
 	return 20
 }
 
+// branchOf is where a card's branch NAME comes from, and DefaultBranchPrefix is the one
+// spelling of the prefix -- the same constant harvest refuses a push outside of (Stella's
+// ruling on #1824) and a bench harvest filters by. It was a second literal "rowan/" here,
+// which is exactly how a generator and its gate drift apart.
 func branchOf(row PoolRow) string {
-	return "rowan/" + strings.ReplaceAll(row.ID, " ", "-")
+	return DefaultBranchPrefix + strings.ReplaceAll(row.ID, " ", "-")
 }
 
 func writeCardsTSV(path string, cards []CardRow) error {

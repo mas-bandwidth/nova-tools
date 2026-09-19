@@ -452,10 +452,19 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: a fix without its reproducing test is not admitted (add the red: line or a test file to the diff)", oneline.Field(card), oneline.Field(branch))
 		return
 	}
-	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). The manager tier pushes the branch
+	// The manager pushes with a LEADING PLUS -- a forced update -- so it gets the same
+	// branch rule as every other push path (Johnny's hold on #1809).
+	if err := mustBranchPrefix(branch); err != nil {
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Err(err))
+		return
+	}
+	// THE KEY-SHAPE SCAN COMES FIRST OF THE TWO (#1814). The manager tier pushes the branch
 	// and copies the same RESULT.md lines into the PR body, so it passes the one guard
 	// every publishing path passes. A hit refuses, quarantines the job beside its own
-	// jobs/ directory, writes the HUMAN line into the queue, and fails the card.
+	// jobs/ directory, writes the HUMAN line into the queue, and fails the card. It runs
+	// BEFORE the destination is resolved on purpose: a card that leaks a key AND names a
+	// destination nobody dispatched must still be quarantined.
 	findings, scanErr := secretFindings(job, dir, "", lines)
 	if scanErr != nil {
 		m.move(card, "failed")
@@ -471,18 +480,30 @@ func (m *manager) openPR(card, job string, lines []string) {
 			oneline.Cap(strings.TrimSpace(note.String()), 300))
 		return
 	}
-	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
+	// THE DESTINATION, resolved once and used by both the force-push and the PR-open
+	// below. The old `pushURL` of `repo`, and `gh pr create -R repo`, took the destination
+	// off the worker's RESULT.md, which is what Johnny held #1809 for -- and #1885 at
+	// 3fa6a99b is the same family on this same function. The manager's OWN QUEUE holds the
+	// launched record for this card, and that is what answers; the job's clone is the
+	// worker's, `origin` and all, and is only ever compared against it (HOLD at 7f692ef6).
+	dest, err := resolveDestination(card, dispatchFromLaunchRecord(filepath.Join(m.in.Queue, "launched", card)), dir, repo)
+	if err != nil {
+		m.move(card, "failed")
+		m.event("%s", err)
+		return
+	}
+	if out, err := m.sh(dir, 120*time.Second, "git", "push", dest.url, "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return
 	}
-	pr := m.prNumber(repo, branch)
+	pr := m.prNumber(dest.repo, branch)
 	if pr == 0 {
 		title := oneline.Cap(strings.TrimSpace(firstNonEmpty(lines)), 110)
 		body := strings.Join(lines, "\n")
 		if len(body) > 4096 {
 			body = body[:4096]
 		}
-		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
+		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", dest.repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
 		if err != nil {
 			m.event("MANAGER NOTE pr failed card=%s: %s", oneline.Field(card), oneline.Cap(strings.TrimSpace(out), 120))
 			return
@@ -492,8 +513,8 @@ func (m *manager) openPR(card, job string, lines []string) {
 	m.move(card, "done")
 	m.prs++
 	m.decisions++
-	m.event("MANAGER PR repo=%s pr=%d card=%s branch=%s", oneline.Field(repo), pr, oneline.Field(card), oneline.Field(branch))
-	m.cutCard(Candidate{Source: repo, ID: fmt.Sprintf("%s#%d", repo, pr), Kind: "read", Title: fmt.Sprintf("read of %s PR%d and post the verdict line PR%d: APPROVE|HOLD head=<sha>", repo, pr, pr), Template: "read"}, 0)
+	m.event("MANAGER PR repo=%s pr=%d card=%s branch=%s", oneline.Field(dest.repo), pr, oneline.Field(card), oneline.Field(branch))
+	m.cutCard(Candidate{Source: dest.repo, ID: fmt.Sprintf("%s#%d", dest.repo, pr), Kind: "read", Title: fmt.Sprintf("read of %s PR%d and post the verdict line PR%d: APPROVE|HOLD head=<sha>", dest.repo, pr, pr), Template: "read"}, 0)
 }
 
 func (m *manager) prNumber(repo, branch string) int {

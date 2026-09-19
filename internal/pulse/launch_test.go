@@ -280,8 +280,10 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	if !strings.Contains(lines[0], "--root "+root) {
 		t.Fatalf("argv lacks --root %s: %q", root, lines[0])
 	}
-	if !strings.Contains(lines[0], "--then nova-pulse harvest --id "+id+" --root "+root) {
-		t.Fatalf("argv lacks --then harvest: %q", lines[0])
+	// The --then value is shell text: nova-swarm runs it with sh -c, so launch quotes
+	// every field it interpolates (issue #1825).
+	if !strings.Contains(lines[0], "--then nova-pulse harvest --id '"+id+"' --root '"+root+"'") {
+		t.Fatalf("argv lacks the quoted --then harvest: %q", lines[0])
 	}
 	cardsTSV := ""
 	for i, a := range argv {
