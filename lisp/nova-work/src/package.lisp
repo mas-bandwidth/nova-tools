@@ -65,6 +65,11 @@
    #:state-closed-rows
    ;; indexes: the write-maintained counters and indexes and their reconstruction
    #:reconstruct-state-index
+   #:cow-load-findings
+   #:cow-candidate-gate
+   #:cow-partition-holds-p
+   #:hand-write-closed-row
+   #:wstate-rows
    #:state-holder-index
    #:state-index-mismatches
    #:node-open-count
