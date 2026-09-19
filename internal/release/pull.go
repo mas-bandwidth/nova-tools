@@ -197,16 +197,22 @@ func pull(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if err != nil {
 			return refusal(errs, "PULL", err)
 		}
-		if err := ValidRemotePath("--dest", o.dest); err != nil {
+		// The same gate and the same fold `adopt` applies, for the same
+		// reasons: a withdrawal that cannot name the files on a windows bench
+		// is a withdrawal that leaves them there.
+		if err := ValidRemotePathOn(goos, "--dest", o.dest); err != nil {
 			return refusal(errs, "PULL", err)
 		}
-		for _, m := range machines {
+		o.dest = RemotePath(o.dest)
+		for i := range machines {
+			m := &machines[i]
 			if m.Dest == "" {
 				continue
 			}
-			if err := ValidRemotePath("the dest column for "+m.Name, m.Dest); err != nil {
+			if err := ValidRemotePathOn(goos, "the dest column for "+m.Name, m.Dest); err != nil {
 				return refusal(errs, "PULL", err)
 			}
+			m.Dest = RemotePath(m.Dest)
 		}
 	}
 	ssh := deps.SSH

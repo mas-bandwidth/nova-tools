@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -48,6 +47,16 @@ type nativeRunConfig struct {
 	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
 	configFile     string // optional: an opencode.json provider config copied beside the auth copy
+	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
+	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
+	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
+	// argv has to be assertable without the machine's real toolchain under it.
+	benchHome string
+	// benchOS is the operating system whose toolchain list the wall is built from -- this
+	// bench's own, because the wall contains a card on THIS machine. Empty is the ordinary
+	// case and means runtime.GOOS; a test names one, so the linux list is assertable from a
+	// Mac and the darwin list from a linux runner.
+	benchOS string
 	// WORKER (issue #881): the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
@@ -74,6 +83,7 @@ type nativeRunResult struct {
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -98,6 +108,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 	cfg.root = absroot
+
+	// THE PUBLIC-CLASS GATE (CARD-8390): a public-class worker never sees a
+	// card that clones an unlisted repo. The card is refused with CARD REFUSED
+	// before any directory is made and before any child starts.
+	if cfg.worker != nil && cfg.worker.IsPublic() {
+		if repo, refused := swarm.CheckPublicCard(*cfg.worker, string(cfg.card), cfg.root); refused {
+			fmt.Fprintln(errOut, swarm.PublicRefusalLine(repo, cfg.worker.Name))
+			return nativeRunResult{}, 1
+		}
+	}
 
 	// (1) THE BINARY. Resolved once, on PATH when the name has no separator, then
 	// checked for existence and the execute bit. A missing binary and an
@@ -180,6 +200,41 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the job directory %s could not be made: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// THE LEASE (issue #1499). The bench's hygiene pass reaps job directories, and it used
+	// to decide a card was dead because its capture had been quiet for fifteen minutes --
+	// which is what one long model call looks like. The launcher knows better and says so:
+	// <job>/.lease carries this process's pid and a heartbeat for as long as the child runs,
+	// and the reaper never touches a leased job or the slot's data/ and tmp/ around it. It
+	// is released, and the file removed, when this run returns by any path.
+	//
+	// AND IT IS THE JOB DIRECTORY'S OWNERSHIP (issue #1585). Two `native` runs were given
+	// one physical <slot>/jobs/<label>: the bench store gave each its own seat, but the job
+	// directory, the data home, the temp directory and the logs under it were ONE set of
+	// paths, and the first run to exit removed the other's lease. SPEC-SWARM settles
+	// whether that is lawful before any repair is designed: under **Slots** a worker has
+	// "its own data home" and "its own job directory" and "a slot is held by exactly one
+	// worker", and under **the races, taken out** two workers on one data home is the
+	// 2026-09-10 `database is locked` failure, closed on purpose. So the second run is
+	// REFUSED rather than made safe, and it is refused HERE -- the take is the first thing
+	// this verb does to the job directory that was not already there, and nothing of the
+	// holder's is touched on the way out.
+	releaseLease, err := swarm.StartJobLease(jobDir, cfg.label)
+	if err != nil {
+		if held, ok := swarm.HeldJobLease(err); ok {
+			refuseNative(errOut, fmt.Sprintf("the job directory %s is held by a live run: pid=%d host=%s label=%s started=%s; two runs in one job directory share one data home, one temp directory and one set of logs, and the first of them to end removes the other's lease -- give the second run a job directory of its own",
+				oneline.Field(jobDir), held.PID, oneline.Field(held.Host),
+				oneline.Field(held.Label), oneline.Field(held.Started)))
+			return nativeRunResult{}, 2
+		}
+		// RULE 3 (#1585, Stella's second P1): a take that establishes nothing used to hand
+		// back a do-nothing release and the launch went on -- with `.lease` an owned
+		// directory, BOTH of two runs were told they held the place. A run that cannot
+		// prove it owns its job directory does not start.
+		refuseNative(errOut, fmt.Sprintf("the job lease on %s could not be taken, so this run cannot prove it owns its job directory and will not start: %s; clear or repair %s and run it again",
+			oneline.Field(jobDir), oneline.Escape(err.Error()), oneline.Field(filepath.Join(jobDir, swarm.JobLeaseName))))
+		return nativeRunResult{}, 2
+	}
+	defer releaseLease()
 	dataHome := filepath.Join(cfg.slotDir, "data")
 	if err := os.MkdirAll(dataHome, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
@@ -265,20 +320,23 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// provider config keeps its own bytes and its own rules beside them (internal/swarm/fence.go).
 	// On a walled bench the wall owns what the child may read, so only a --no-wall run takes
 	// the card's `READ:` paths: with no OS wall there is nothing else to open them.
-	// ISSUE #1463: AND THE READ ROOTS THE DESK NAMED, ON A WALLED RUN AS MUCH AS AN
-	// UNWALLED ONE. `read_roots` is the worker description's own declaration of what every
-	// job of this worker may READ -- a bench-local mirror, a corpus, the toolchain its Go
-	// cache flags are for. `worker check` accepted it and neither fence was told: the OS
-	// wall's read set was built without it (below), and this block took the card's `READ:`
-	// paths on a --no-wall run only, so the harness auto-rejected every read of a staged
-	// path the desk had granted and the card came back with the whole row owed.
+	//
+	// (4d) AND THE DESCRIPTION'S OWN READ ROOTS, ON A WALLED RUN AS MUCH AS AN UNWALLED ONE
+	// (issue #1463). `read_roots` is the worker description's declaration of what every job
+	// of this worker may READ -- a bench-local mirror, a corpus, a toolchain under a user
+	// directory. `worker check` accepted it, `LoadWorker` validated it, and NEITHER fence
+	// was ever told: the wall's read set was built without it (nativeSandboxArgv) and the
+	// block above took paths on a --no-wall run only. So the harness auto-rejected every
+	// read of a staged path the desk had granted, the card came back with the whole row
+	// owed, and the run still printed `NATIVE OK ... rc=0 harness=ok`.
 	//
 	// THE WALL IS STILL THE REAL BOUNDARY (SPEC-SANDBOX rule 1). The harness's fence is a
 	// second, weaker one, and a second fence that denies what the first one grants can only
-	// cost cards. What it is handed here is exactly what the wall is handed below and never
-	// more: the DESCRIPTION's roots, which a person wrote at the desk. The card's own
-	// `READ:` paths stay a --no-wall affair -- a card is the model's text, and a fence rule
-	// a card can widen for itself is no fence.
+	// cost cards. What it is handed here is EXACTLY what the wall is handed below and never
+	// more: the DESCRIPTION's roots, which a person wrote at the desk.
+	//
+	// THE CARD'S OWN `READ:` PATHS ARE NOT IN THIS. A card is the MODEL's text, and a fence
+	// rule a card can widen for itself is no fence; they stay the --no-wall affair they were.
 	var reads []string
 	if cfg.noWall {
 		reads = swarm.CardReadPaths(cfg.card)
@@ -393,39 +451,69 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.noWall {
 		res.wall = swarm.SandboxNoneByFlag
 	}
-
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
 	// answered before the request began, and the slot was spent on nothing. The SAME card
 	// is retried -- 5-20s jittered, then 30-60s -- and each launch writes its own usage row
 	// (attempt=1,2,3). A failure past the grace is a real run that failed and is not
 	// retried.
+	//
+	// EACH LAUNCH OWNS ITS PROCESS GROUP (issue #779). The child is the leader of a group
+	// of its own, so the deadline -- and a TERM from outside -- kill the WHOLE tree the card
+	// started, not merely the leader while its grandchildren keep running past the wall. A
+	// TERM from outside is the same cleanup as the deadline: reap the group, fold the usage
+	// row, and mark the run terminated so the NATIVE OK line carries `reason=terminated`.
 	grace := swarm.DefaultLaunchGrace
 	if cfg.worker != nil {
 		grace = swarm.LaunchGrace(*cfg.worker)
 	}
+	termCh := nativeTermCh()
+	defer stopNativeTerm(termCh)
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
-		cmd := exec.CommandContext(ctx, runPath, runArgv...)
+		cmd := exec.Command(runPath, runArgv...)
+		ownChildGroup(cmd)
 		cmd.Env = childEnv
 		cmd.Dir = jobDir
 		cmd.Stdin = devNull
 		cmd.Stdout = capture
 		cmd.Stderr = io.MultiWriter(capture, &wallOut)
 		attemptStart := time.Now()
-		runErr := cmd.Run()
-		elapsed := time.Since(attemptStart)
-		cancel()
-		res.wallSeconds += elapsed.Seconds()
-		switch ee := runErr.(type) {
-		case nil:
-			res.rc = 0
-		case *exec.ExitError:
-			res.rc = ee.ExitCode()
-		default:
-			res.rc = -1
+		if err := cmd.Start(); err != nil {
+			log.Close()
+			harnessOut.Close()
+			refuseNative(errOut, fmt.Sprintf("the child could not be started: %s", oneline.Escape(err.Error())))
+			return nativeRunResult{}, 2
 		}
+		pgid := cmd.Process.Pid
+		started := swarm.StartStamp(pgid)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		deadline := time.NewTimer(cfg.deadline)
+		select {
+		case runErr := <-done:
+			deadline.Stop()
+			switch ee := runErr.(type) {
+			case nil:
+				res.rc = 0
+			case *exec.ExitError:
+				res.rc = ee.ExitCode()
+			default:
+				res.rc = -1
+			}
+		case <-deadline.C:
+			swarm.KillGroup(pgid, started)
+			<-done
+			res.rc = -1
+		case <-termCh:
+			deadline.Stop()
+			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			<-done
+			res.rc = -1
+			res.terminated = true
+		}
+		elapsed := time.Since(attemptStart)
+		res.wallSeconds += elapsed.Seconds()
 		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
 		// block below refines it to `wall` when the machinery, not the model, stopped the
 		// card (issue #644's follow-up).
@@ -436,6 +524,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
+		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
+		// the terminated reason is carried out on the OK line.
+		if res.terminated {
+			break
+		}
 		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
@@ -692,11 +785,36 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
+	// THE BENCH TOOLCHAIN (internal/swarm/toolchain.go is the one source of these names).
+	// This is the implicit worker description's `read_roots`: the provisioning standard puts
+	// Go and sbcl in a user directory, and without the roots the wall denied EXECUTION of
+	// the bench's own `go` and left the card the distribution's 1.22.2, which `go.mod`
+	// refuses under GOTOOLCHAIN=local. Read-only, skipped if absent, and nothing else under
+	// HOME is named.
+	//
+	// ONE LIST, TWO KINDS, and the kind comes from the list rather than from here: `--read`
+	// for the sdk tree, whose `go` the card must RUN, and `--read-noexec` for the module
+	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
+	// so the cache under that flag would put every dependency's own files one exec away from
+	// running inside the wall (Johnny's security read of #1364).
+	//
+	// AND THE LIST IS PER GOOS, because a Mac bench's toolchains are INSTALLED rather than
+	// unpacked into a home and each one resolves its runtime from the directory of the
+	// launcher that ran it -- `/opt/homebrew/bin/go` is a symlink into the Cellar, and
+	// without the Cellar tree the wall left the M2 Air `go: cannot find GOROOT directory:
+	// 'go' binary is trimmed`, `java: Unable to locate a Java Runtime` and `dotnet: Failed to
+	// resolve full path of the current executable []` (measured 2026-09-18).
+	for _, root := range swarm.ToolchainRoots(benchOS(cfg), benchHome(cfg)) {
+		flag := "--read-noexec"
+		if root.Exec {
+			flag = "--read"
+		}
+		argv = append(argv, flag, root.Path)
+	}
 	// The worker description's own read roots (issue #1463): the directories a person at the
-	// desk declared every job of this worker may read. A toolchain under a user directory is
-	// exactly this -- and the run that wrote issue #1465 died because the wall was never
-	// handed one. They are --read and never --write: a root the desk names is a reference,
-	// not a workspace.
+	// desk declared every job of this worker may read. They are --read and never --write and
+	// never --read-noexec -- a root the desk names is a reference, not a workspace, and the
+	// execute question is the toolchain list's above, which decides its own kinds.
 	for _, r := range nativeReadRoots(cfg) {
 		argv = append(argv, "--read", r)
 	}
@@ -706,6 +824,31 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	argv = append(argv, "--")
 	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
 	return argv
+}
+
+// benchHome is the home the toolchain roots are found under: the one a caller named, and
+// otherwise this process's own. An OS that will not say is the empty string, which names no
+// root at all -- a wall with no toolchain root is the behaviour of every run before the
+// roots existed, and it is never a guess at a directory.
+func benchHome(cfg nativeRunConfig) string {
+	if cfg.benchHome != "" {
+		return cfg.benchHome
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// benchOS is the operating system whose toolchain list the roots come from: the one a caller
+// named, and otherwise this process's own. The list is per GOOS because a linux bench's
+// toolchain is unpacked under HOME and a Mac bench's is installed on the machine.
+func benchOS(cfg nativeRunConfig) string {
+	if cfg.benchOS != "" {
+		return cfg.benchOS
+	}
+	return swarm.ThisOS()
 }
 
 // nativeChildEnv is the child's whole environment, built rather than inherited: a short
@@ -778,8 +921,9 @@ func nativeCacheDir(cfg nativeRunConfig) string {
 // nativeReadRoots is what the worker description declared every job of this worker may READ
 // (issue #1463): absolute directories a person named at the desk -- a bench-local mirror, a
 // corpus, a toolchain under a user directory. `swarm.LoadWorker` has already refused a
-// relative entry, an empty one, one that does not exist and one that is not a directory, so
-// nothing is checked again here. A run with no description names none.
+// relative entry, an empty one, one that does not exist, one that is not a directory and one
+// that would hold the key file (internal/swarm/worker.go:227-268), so nothing is re-checked
+// here and nothing is invented: a run with no description names none.
 func nativeReadRoots(cfg nativeRunConfig) []string {
 	if cfg.worker == nil {
 		return nil

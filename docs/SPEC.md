@@ -2631,6 +2631,7 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -2734,7 +2735,8 @@ RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
-CLOSE OK closed=<n> kept=<n> commit=<sha8|->
+CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->     (receipts= on a writing close; a dry run has none to count)
+CLOSE NOTE <path> was written and could not be taken back: <reason>
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
@@ -3046,6 +3048,17 @@ browser actually writes, both enumerated here and pinned by tests:
    person opens to;
 2. **bullets** on the header lines — `- From:`, `- To:`. A leading `- ` is
    dropped before the key is read.
+
+**A relayed note is attributed by its OUTER `From:` line, and a `From:` line in
+a body is data.** A note that forwards or echoes another may carry the original
+inside it, and that original can itself open with `From:` lines. The sender is
+the **first** `From:` line of the header — the relayer — and every later `From:`
+line, inside the header region or after the blank line, is prose that routes
+nothing: the covenant rule stated above applies here as everywhere. So the
+listing's `from=`, the open list's `from` field, a receipt's `To:`, and the
+`--as` a send is judged by all name that outer sender, never a quoted author
+inside the body. A second `From:` line *inside the header* is still a header
+problem and is refused; it is not a second attribution.
 
 A note whose first line is prose still fails, and should: there is no honest way
 to tell a `From` line from a sentence that happens to hold a colon. The refusal
@@ -4378,6 +4391,7 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus

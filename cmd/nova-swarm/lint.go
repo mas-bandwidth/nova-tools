@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A card is the one artefact whose defects are paid for in tokens before a test runs: a
@@ -23,8 +25,65 @@ import (
 const cardMaxBytes = 12000
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
-// LINT OK line so a reader knows how much of the card was actually checked.
+// LINT OK line so a reader knows how much of the card was actually checked, and it is the
+// size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 const cardLintChecks = 12
+
+// EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
+//
+// A card written by hand on 2026-09-18 came back with five drifts, three of them pointing at
+// line 1 -- which is the contract line practice 1 says line 1 must be -- and the writer could
+// not tell what any of them wanted:
+//
+//	LINT DRIFT result-first: 1: fixed: row 5 writer_bound_count on go
+//	LINT DRIFT scratch-absolute: 24: write; everything you clone, scratch and report goes under that absolute path.
+//
+// `nova-swarm help` says of every listing that it carries "one MORE line naming the remedy".
+// This one named the rule, quoted the line and stopped.
+//
+// AND THE RULE TOKENS WERE WRITTEN DOWN NOWHERE THE BENCH COULD READ. docs/WORKER-CARDS.md
+// carries the practices in prose and names none of these tokens, and a bench's clone of this
+// repository is months behind the binary installed on it -- `grep -rn result-first` over the
+// clone on vision found nothing at all. So the remedies live HERE, in the tool, beside the
+// checks they belong to: `nova-swarm lint --rules` prints every one of them, which a bench
+// with a stale clone can still run, and the doc names the tokens beside their practices.
+//
+// ONE TABLE, TWO READERS. The DRIFT line and the `--rules` listing are the same map, so a
+// remedy cannot drift from the rule it explains, and a check added without one is caught by
+// the count above before it ships.
+var cardLintRemedies = map[string]string{
+	"result-first":     "line 1 IS the contract and begins `RESULT: ` -- `RESULT: <CARD-id> <one line of what done looks like>`. A title, a heading or a `#` comment on line 1 is this drift, however right the words are (WORKER-CARDS.md practice 1)",
+	"clone-step":       "STEP 1 enters the repository from the working directory: `git clone -q <url> repo && cd repo`, or a `cd` into a checkout that may already be there (practices 17, 25)",
+	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift (practice 17)",
+	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words (practice 23)",
+	"test-command":     "write the gate verbatim, exactly as the card is to run it (`go test ./internal/x/ -run TestY -count=1`), or say in words that there are no tests (practice 5)",
+	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes` (practice 17)",
+	"files-named":      "name the file or the package the work lives in, so the change has a home to start from (practice 3)",
+	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one (practice 25)",
+	"no-parent-path":   "the wall refuses every path above the job: put the worktree, the scratch and the notes under the working directory instead of reaching through `../` (practice 25)",
+	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
+	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
+	"size":             "cut the card under the ceiling so a model reads it in one window: point at a file instead of pasting it, and drop quoted source",
+}
+
+// cardLintRuleNames is every rule token in one order, so the listing is byte-stable.
+func cardLintRuleNames() []string {
+	names := make([]string, 0, len(cardLintRemedies))
+	for name := range cardLintRemedies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// cardLintRemedy is what one rule wants, in one line. A rule with no entry is a defect this
+// package's own tests refuse, and the fallback says so rather than printing an empty field.
+func cardLintRemedy(check string) string {
+	if r, ok := cardLintRemedies[check]; ok {
+		return r
+	}
+	return "this rule carries no remedy line, which is itself a defect in nova-swarm; run `nova-swarm lint --rules` for the rules that do"
+}
 
 // cardFinding is one mechanical defect: the check's name, the 1-based line it sits on, and
 // the line's own text, escaped and capped before it reaches an event line.
@@ -196,15 +255,37 @@ func stepIndex(steps []cardStep, n int) int {
 	return 0
 }
 
+// matchingTemplate returns the name of the shipped template whose verbatim text is exactly
+// raw, or "" when raw is not one of the templates this tool prints. It is what lets
+// `nova-swarm template --name <t>` piped into `lint --card` be answered by name.
+func matchingTemplate(raw []byte) string {
+	for _, name := range swarm.TemplateNames() {
+		if body, err := swarm.Template(name); err == nil && string(raw) == body {
+			return name
+		}
+	}
+	return ""
+}
+
 func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "")
+	rules := f.fs.Bool("rules", false, "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	// `--rules` IS THE DOCUMENT A BENCH CAN READ (issue #1464). A card writer on a bench has
+	// the binary and a clone months behind it, so the rules are asked of the binary. It takes
+	// no card, because the question is asked before there is one.
+	if *rules {
+		for _, name := range cardLintRuleNames() {
+			fmt.Fprintf(stdout, "LINT RULE %s remedy=%s\n", oneline.Field(name), oneline.Escape(cardLintRemedies[name]))
+		}
+		return 0
+	}
 	f.wantMax(*max)
-	f.want(*card, "card", "the path to the card file whose shape is checked before any spend")
+	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; --rules prints every rule and what it wants instead")
 	if f.refused(stderr) {
 		return 2
 	}
@@ -214,6 +295,20 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := filepath.Base(*card)
+	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
+	// <t>` piped into `lint --card` used to report result-first drift on the template's first
+	// line (issue #1471). The card templates pass, and a template that is not a card answers
+	// by name rather than as a drift.
+	if tmpl := matchingTemplate(raw); tmpl != "" {
+		if swarm.IsCardTemplate(tmpl) {
+			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
+			return 0
+		}
+		fmt.Fprintf(stdout, "LINT NOT-A-CARD card=%s template=%s remedy=%s\n",
+			oneline.Field(name), oneline.Field(tmpl),
+			oneline.Escape("not a card; lint --card wants a card, and the card templates are read-pr, probe-row, fix-card"))
+		return 1
+	}
 	findings := lintCard(raw)
 	if len(findings) == 0 {
 		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
@@ -225,9 +320,13 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		printed, more = findings[:*max], true
 	}
 	for _, fd := range printed {
-		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s\n",
+		// THE REMEDY RIDES ON THE SAME LINE (issue #1464). `nova-swarm help` promises one
+		// more line naming the remedy of every listing; a rule token and a quoted line
+		// without it cost a card writer a guess per drift.
+		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s remedy=%s\n",
 			oneline.Field(name), oneline.Field(fd.check), fd.line,
-			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)))
+			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+			oneline.Escape(cardLintRemedy(fd.check)))
 	}
 	if more {
 		fmt.Fprintf(stdout, "LINT MORE card=%s findings=%d remedy=nova-swarm lint --card %s --max 0\n",

@@ -9,7 +9,9 @@ only when `uname` is Linux), that each unit file carries `Environment=PATH`
 with `go/bin` and `.local/bin`, `KillMode=control-group` and
 `TimeoutStopSec=30s`, that `go version` equals `$NOVA_GO` (default
 `go1.26.5`) with `sbcl` on `PATH` and the harness at
-`$HOME/nova-bench/harness-<ver>/opencode`, that the 16 nova bins in
+`$HOME/nova-bench/harness-<ver>/opencode`, that the toolchain roots the
+sandbox wall grants a card are all present (`$HOME/sdk` — one list, `internal/swarm/toolchain.go`, checked against
+this script by a test so the standard and the wall cannot drift apart), that the 16 nova bins in
 `$HOME/.local/bin` each report `$NOVA_WANT`, that exactly one `*.key` sits
 under `$HOME/.config/nova-secrets` with `nova-secrets check` passing for it,
 and that no plaintext key file (`$HOME/.local/share/opencode/auth.json`,

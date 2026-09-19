@@ -398,6 +398,28 @@ func TestDogfoodIsInTheUsageBanner(t *testing.T) {
 	}
 }
 
+func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
+	code, stdout, _ := dogfoodRun(t, "help")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	line := ""
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.Contains(l, "dogfood record") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("the banner has no dogfood record line")
+	}
+	for _, want := range []string{"--cli", "--tools"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the dogfood record usage line does not name %s, so a reader pastes a line the verb refuses:\n%s", want, line)
+		}
+	}
+}
+
 // The --repo path end to end, against a git repository built here. Local only:
 // this binary's tests never touch the network.
 func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {

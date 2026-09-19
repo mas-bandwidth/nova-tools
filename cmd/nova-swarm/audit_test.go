@@ -21,17 +21,18 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":        "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|want|name":           "a required flag's name, a literal at every call site in this file",
-		"main.go|want|wants":          "the guidance that flag wants, a literal at every call site in this file",
-		"main.go|wantCount|name":      "a required count flag's name, a literal at every call site in this file",
-		"main.go|wantCount|wants":     "the guidance that count flag wants, a literal at every call site in this file",
-		"main.go|refused|f.verb":      "the verb's own name, the value newFlags stored from that literal",
-		"main.go|openPool|verb":       "the verb's own name, a literal at every call site in this file",
-		"main.go|slotWord|sc.Slot":    "an int from the sidecar; fmt.Sprint of an int cannot hold a control character",
-		"main.go|cmdTemplate|body":    "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
-		"main.go|cmdFinalize|line":    "the other verbatim site, `finalize`'s line: swarm.FinalizeByHand BUILDS the whole sentence and passes every caller-supplied value through oneline.Field or oneline.Err, so the one-line guarantee is already made over the finished line. Escaping it a second time here would fold that line into one unreadable \\x0a form. Both print sites in this function share this entry; TestADispatcherRunsAJobEndToEnd exercises the path.",
-		"route.go|cmdRoute|belowWord": "built in this function from oneline.Field-escaped answer names joined with a literal comma, so it is already one safe token; the ROUTE print site's other caller-supplied values go through oneline.Field or a numeric verb on the same line. TestRouteBelowFloorExits3 is the behavioural test for this site.",
+		"main.go|parse|f.verb":                        "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|want|name":                           "a required flag's name, a literal at every call site in this file",
+		"main.go|want|wants":                          "the guidance that flag wants, a literal at every call site in this file",
+		"main.go|wantCount|name":                      "a required count flag's name, a literal at every call site in this file",
+		"main.go|wantCount|wants":                     "the guidance that count flag wants, a literal at every call site in this file",
+		"main.go|refused|f.verb":                      "the verb's own name, the value newFlags stored from that literal",
+		"main.go|openPool|verb":                       "the verb's own name, a literal at every call site in this file",
+		"main.go|slotWord|sc.Slot":                    "an int from the sidecar; fmt.Sprint of an int cannot hold a control character",
+		"main.go|cmdTemplate|body":                    "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
+		"main.go|cmdFinalize|line":                    "the other verbatim site, `finalize`'s line: swarm.FinalizeByHand BUILDS the whole sentence and passes every caller-supplied value through oneline.Field or oneline.Err, so the one-line guarantee is already made over the finished line. Escaping it a second time here would fold that line into one unreadable \\x0a form. Both print sites in this function share this entry; TestADispatcherRunsAJobEndToEnd exercises the path.",
+		"main.go|cmdNative|swarm.NoSlotsStoreRefusal": "a compile-time constant in package swarm (internal/swarm/slots.go): the ONE remedy line a native launch with no bench slot store prints, held in one place so that native, batch and the two native-argv builders cannot drift apart. It holds no caller-supplied value at all -- there is nothing in it to escape, and escaping a constant would only hide that fact. TestNativeWithoutASlotsStoreRefuses compares it byte for byte and asserts it is one line.",
+		"route.go|cmdRoute|belowWord":                 "built in this function from oneline.Field-escaped answer names joined with a literal comma, so it is already one safe token; the ROUTE print site's other caller-supplied values go through oneline.Field or a numeric verb on the same line. TestRouteBelowFloorExits3 is the behavioural test for this site.",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -56,6 +57,18 @@ var swarmAudit = audit.Config{
 		// oneline.Field inside itself. The path and step come from the card's own log and
 		// the branch from the clone, so nothing but escaped fields can come back.
 		"swarm.WallLine",
+		// termSuffix (main.go, issue #779) renders the one token a manager's TERM carries,
+		// ` reason=terminated`, and puts the reason through oneline.Field inside itself, so
+		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
+		// escaped literal can come back.
+		"termSuffix",
+		// swarm.PublicRefusalLine (CARD-8390) renders the whole CARD REFUSED line and
+		// puts the repo and the worker name through oneline.Field inside
+		// internal/swarm before returning, so the line it returns is already one
+		// safe token. The repo comes from the card's own text -- a file a card
+		// author writes -- and the worker name from the description, so nothing
+		// but Field-escaped fields can come back.
+		"swarm.PublicRefusalLine",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -69,6 +82,11 @@ var swarmAudit = audit.Config{
 		// stream except through the fmt calls the classifier walks; os/exec starts children
 		// whose own output is the harness's, not this binary's line.
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"path/filepath"`, `"strings"`, `"time"`,
+		// native_proc_unix.go (issue #779) needs these two and neither writes a stream.
+		// os/signal only routes the manager's SIGTERM into a channel the run selects on;
+		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
+		// the whole tree -- and holds no writer of its own.
+		`"os/signal"`, `"syscall"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts
@@ -87,8 +105,17 @@ var swarmAudit = audit.Config{
 		// this package renders through oneline.Err, and the Lua scripts run inside Redis
 		// and write only that instance's own keys.
 		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
-		// native.go (issue #296) needs these five and none of them writes a stream, so
-		// none can write past the escape. context only gives CommandContext its deadline
+		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
+		// request and returns typed answers; it holds no writer of this
+		// package's stream, and the one value this binary takes from it -- the
+		// chosen id -- is put through oneline.Field before it is printed.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// lanes (pull, SPEC-JOBS section 5) reads queue/lanes/ and writes the
+		// card files it places; it never writes to a stream, and every id it
+		// returns is put through oneline.Field before this package prints it.
+		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
+		// native.go (issue #296) needs these and none of them writes a stream, so
+		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
 		// two recorded hashes (bytes in, a string out); encoding/base64 decodes the wall's
 		// cwdb64 receipt and holds no writer, and the cwd it yields is put through
@@ -126,6 +153,12 @@ var swarmAudit = audit.Config{
 		// the key travelling only on the Authorization header and never printed.
 		`"math"`, `"sort"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
+		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every
+		// production run. It holds no writer and writes no stream. Its one output is a
+		// PANIC under the test guard, which the runtime writes, in a test process, on a
+		// path this binary never takes in production.
+		`"github.com/mas-bandwidth/nova-tools/internal/testguard"`,
 	},
 	MinClassified: 40,
 }

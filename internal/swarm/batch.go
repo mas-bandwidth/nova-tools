@@ -24,6 +24,7 @@ package swarm
 // once, out loud.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -54,22 +56,59 @@ type BatchInput struct {
 	Idle     time.Duration // per-card idle timeout: a card's log not growing this long is killed
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
-	Runner   string        // the command, one process per card
+	Runner   string        // the command, one process per card; "" runs `nova-swarm native` in this binary
+	// Harness and Auth are the native path's own configuration, read only when Runner is
+	// empty: with no runner script a local card runs through this binary's own `native`
+	// verb (issue #636), the way a bench row's card already does.
+	Harness string
+	Auth    string
+	// Self is the nova-swarm binary a runnerless batch runs `native` from. Empty resolves
+	// this process's own executable, and then "nova-swarm" on PATH: a test driving Batch
+	// directly is not nova-swarm, and a batch that ran the test binary ran nothing.
+	Self string
 	// Slots is the slot range this batch allocates from: "<lo>-<hi>", or "<n>" for 1-<n>.
 	// Empty keeps the old behaviour -- allocation from 1 with no ceiling. The cards.tsv
 	// slot column is optional in either case; a hand slot outside the range is that card's
 	// own admission refusal (issue #618).
 	Slots string
+	// Worker is the worker description whose class gates admission: when its
+	// class is public, a card cloning an unlisted repo is refused with
+	// `CARD REFUSED reason=private-source ...` and never starts. The zero
+	// Worker is paid and gates nothing, so callers without a description keep
+	// today's behaviour byte for byte.
+	Worker Worker
 	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
 	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
 	PullWait time.Duration
 	PullPoll time.Duration
-	Benches  string // path to the benches table; empty means no table is read
-	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
-	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
-	Stdout   io.Writer
-	Stderr   io.Writer
+	// SlotsStore and SlotOwner are the bench slot store a card's `nova-swarm native` takes
+	// its one lease from, and the owner whose share it counts against (nova-tools#1546).
+	// They are REQUIRED of any batch that launches native -- which is every batch without
+	// a --runner of its own -- and the refusal is NoSlotsStoreRefusal, said once before a
+	// card runs rather than once per card.
+	//
+	// THE PATH IS ON THE MACHINE THAT RUNS THE CARD. For a local card that is this
+	// machine; for a bench row it is the bench, reached over ssh, and the path must exist
+	// THERE. One batch spanning local and remote benches therefore wants a store path that
+	// means the same thing on each, which today means naming the same absolute path on
+	// every bench. Said plainly here because it is the seam a reader will meet.
+	SlotsStore string
+	SlotOwner  string
+	Benches    string // path to the benches table; empty means no table is read
+	Bench      string // comma-separated bench names to allocate the cards across; empty means local only
+	Then       string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
+	// it is set, the model a card is dispatched with is the ladder's answer --
+	// which MIND does this unit of work -- and not the string the fill script
+	// wrote in the TSV. The TSV's model becomes the FALLBACK, which is exactly
+	// today's behaviour (rule 5): it stands where there is no key, where the
+	// provider refused, where the confidence is under the floor and where the
+	// rung is a mind a card cannot be dispatched to. Every card carries one
+	// receipt line saying which happened. nil leaves the TSV's model alone.
+	Route  *RouteInput
+	Stdout io.Writer
+	Stderr io.Writer
 	// clock is the batch's time source. nil means the real clock; a test injects a
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
@@ -112,6 +151,15 @@ type batchCard struct {
 	cardPath string
 	contract string // line 1 of the card's text, the line by which it was admitted
 	admitWhy string // non-empty when this card alone was refused at admission; the reason
+	// unit is the card's own typed evidence for the ladder, read from the card
+	// text by CardUnit; routable is false where the card names no kind the
+	// ladder knows, and such a card is never routed.
+	unit     decide.Unit
+	routable bool
+	// receipt is the one ROUTE line this card carries once the route has
+	// answered: which rung, at what confidence, on which model, and -- where
+	// today's model stands -- why.
+	receipt string
 }
 
 // maxHoldLines is the HOLD ceiling. A packet is BATCH + n card lines + HOLD lines, and the
@@ -148,14 +196,50 @@ func Batch(in BatchInput) int {
 		fmt.Fprintf(in.Stderr, "BATCH REFUSED: %s holds no card; a batch of no cards is a typo\n", oneline.Field(in.Cards))
 		return 1
 	}
+	// #636: a local card with no --runner runs through this binary's own `native` verb, so
+	// a caller needs a runner script only for a runner of its own. The harness is the one
+	// thing native cannot derive: it comes from --harness, else from the benches table's
+	// `local` row.
 	if in.Runner == "" && in.Bench == "" && !anyCardNamesBench(cards) {
-		fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner is required; it wants the command one process per card runs")
+		if in.Harness == "" {
+			in.Harness = localHarness(in.Benches, &in.Auth)
+		}
+		if in.Harness == "" {
+			fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner or --harness is required; with --harness <path> each card runs through this binary's own `nova-swarm native`, and a `local` row in --benches names one too; refusing to guess")
+			return 2
+		}
+		if _, err := os.Stat(in.Harness); err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: --harness %s: %s\n", oneline.Field(in.Harness), oneline.Err(err))
+			return 2
+		}
+	}
+	// A LAUNCH WITHOUT A LEASE IS REFUSED (nova-tools#1546). Every path out of this
+	// function that starts a card starts it through `nova-swarm native` -- selfNative
+	// locally, remoteRun on a bench -- and native now refuses without a slot store. The
+	// batch says so ONCE, here, before a single card runs, rather than letting every card
+	// fail one at a time with the same sentence. The remedy is the one native prints, word
+	// for word: a caller who greps for it finds the same string wherever it came from.
+	//
+	// A batch with its own --runner launches no native and is not held to this: the runner
+	// is somebody else's program and the bench cannot speak for what it takes.
+	if in.Runner == "" && (in.SlotsStore == "" || in.SlotOwner == "") {
+		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
 		return 2
 	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
+	// THE PUBLIC-CLASS GATE (CARD-8390) runs here too, after the shape and repo
+	// checks readCards already applied: a public-class worker's card cloning an
+	// unlisted repo carries a private-source refusal and is said as CARD REFUSED.
+	if in.Worker.IsPublic() {
+		applyPublicGate(cards, in.Worker, in.Root)
+	}
 	for _, c := range cards {
 		if c.admitWhy != "" {
+			if IsPublicRefusal(c.admitWhy) {
+				fmt.Fprintln(in.Stderr, "CARD REFUSED "+c.admitWhy)
+				continue
+			}
 			fmt.Fprintln(in.Stderr, admitRefusalLine(c.label, c.admitWhy))
 		}
 	}
@@ -188,6 +272,12 @@ func Batch(in BatchInput) int {
 	}
 	defer releaseSlots(in.Root, taken)
 
+	// THE ROUTE, BEFORE A CARD IS ASSIGNED A MODEL. One decision per admitted
+	// card, in process through internal/decide: which mind does this unit of
+	// work. The answer names the model; today's model in the TSV is the
+	// fallback; the receipt line says which of the two the card runs on.
+	routeCards(in, cards)
+
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
@@ -207,8 +297,52 @@ func Batch(in BatchInput) int {
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
 		rc         int    // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
+		// pgid and started are the card's OWN process group and the identity retained for
+		// it at launch (issue #640). They are read at `cmd.Start()` and never again from
+		// the process, because a kill that asks a dying child for its group asks too late.
+		pgid    int
+		started string
+		// killed is how many processes the reap of this card's group ended. It is set once,
+		// after the reap, and it is what the ABSTAIN row prints; guarded by doneMu.
+		killed int
 	}
 	var doneMu sync.Mutex
+	// reapCardGroups ends the WHOLE PROCESS TREE of every card named and records how many
+	// processes each reap took with it (issue #640).
+	//
+	// THE OLD KILL WAS `cmd.Process.Kill()`, which is SIGKILL to ONE PROCESS. A card is not
+	// one process: it is the runner, the wall it opened, the harness inside it and whatever
+	// the harness started, and none of those are the pid the batch was holding. So the batch
+	// printed its line and left the tree running -- two nova-sandbox wrappers at 12:30
+	// elapsed and five test binaries burning CPU, five to twelve minutes after
+	// `BATCH TP1 n=6 done=0 abstain=6`, killed by hand.
+	//
+	// `Reap` is the house's own end-a-group: terminate, wait the grace, kill, and confirm.
+	// The TERMINATE FIRST is load-bearing rather than polite -- the child of a runnerless
+	// batch is `nova-swarm native`, which answers a TERM by reaping its own tree and folding
+	// its usage before it goes (cmd/nova-swarm/native.go, nativeTermCh). A SIGKILL alone
+	// would lose that fold.
+	//
+	// THE CARDS ARE REAPED CONCURRENTLY. Serially, the grace would be paid once per card and
+	// a six-card batch would sit through six of them after its deadline had already fired.
+	reapCardGroups := func(victims []*proc) {
+		if len(victims) == 0 {
+			return
+		}
+		var reapWG sync.WaitGroup
+		for _, p := range victims {
+			reapWG.Add(1)
+			go func(p *proc) {
+				defer reapWG.Done()
+				n := groupSize(p.pgid, p.started)
+				Reap(p.pgid, p.started, TerminateGrace)
+				doneMu.Lock()
+				p.killed = n
+				doneMu.Unlock()
+			}(p)
+		}
+		reapWG.Wait()
+	}
 	procs := make([]proc, len(cards))
 	for i, c := range cards {
 		// A card refused at admission never starts: it is already its own ABSTAIN row.
@@ -223,6 +357,10 @@ func Batch(in BatchInput) int {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
 		}
+		// The card's ROUTE line travels with the job rather than living only in the
+		// dispatcher's stderr: which rung the ladder answered, on which model, and --
+		// where today's model stands -- why.
+		writeRouteReceipt(job, c.receipt)
 		// A card's log is the runner's own stdout pinned to a regular file under the job, the
 		// way the spec records a job: harness.log. Idle means this file stopped growing.
 		//
@@ -243,7 +381,15 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, logFile)
+			if err != nil {
+				_ = logFile.Close()
+				fmt.Fprintln(in.Stderr, err)
+				return 2
+			}
+		} else if in.Runner == "" {
+			// #636: no runner script, so this binary runs the card through its own `native`.
+			cmd, err = selfNative(c, in, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -255,6 +401,13 @@ func Batch(in BatchInput) int {
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
 		}
+		// EVERY CARD'S CHILD IS A GROUP LEADER (issue #640), on all three launch shapes and
+		// not just the two that already asked for it. `selfNative` and `remoteRun` set this
+		// themselves; a `--runner <cmd>` child did not, so the batch had nothing to signal
+		// but one pid -- and one pid is not a card. It is set HERE, at the one place every
+		// shape passes through, so the kill below has one invariant to rely on rather than
+		// three constructors to trust.
+		ownGroup(cmd)
 		if err := cmd.Start(); err != nil {
 			_ = logFile.Close()
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: runner %s could not start for %s: %s\n",
@@ -262,7 +415,20 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
+		// The group and its identity are RETAINED at launch, the way the supervisor retains
+		// its harness's (`jobPgid := cmd.Process.Pid`, supervise.go:159) and `native` its
+		// child's (native.go:469). The group id is the CHILD'S OWN PID and is never read
+		// back with Getpgid: `ownGroup` makes the child the LEADER, so its group id is its
+		// pid by construction, and a Getpgid in the parent can win the race against the
+		// child's own setpgid and answer THIS PROCESS'S group -- which the reap below would
+		// then terminate. Reading it later would also mean asking a process that may already
+		// be a corpse, and on a platform that re-issues pids, signalling a stranger.
+		pgid, started := 0, ""
+		if cmd.Process != nil {
+			pgid, started = cmd.Process.Pid, StartStamp(cmd.Process.Pid)
+		}
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label,
+			lastGrow: clk.Now(), pgid: pgid, started: started}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -316,6 +482,7 @@ func Batch(in BatchInput) int {
 				case now := <-tickC:
 					// The process table is read once per activity poll, outside the lock, and
 					// every card is asked of that one snapshot (issue #593).
+					var toReap []*proc
 					var snap activitySnapshot
 					var sampleSpan time.Duration
 					if now.Sub(lastSample) >= activityInterval(in.Idle) {
@@ -387,12 +554,16 @@ func Batch(in BatchInput) int {
 							}
 							procs[i].idleKilled = true
 							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
-							if procs[i].cmd.Process != nil {
-								_ = procs[i].cmd.Process.Kill()
-							}
+							toReap = append(toReap, &procs[i])
 						}
 					}
 					doneMu.Unlock()
+					// THE REAP IS OUTSIDE THE LOCK, and that is not a tidiness: a reap waits
+					// for the kernel to agree the group is gone, and the goroutine that
+					// would mark this card done takes doneMu to do it. Reaping under the
+					// lock would hold it for the whole grace and report every group as a
+					// survivor.
+					reapCardGroups(toReap)
 				}
 			}
 		}()
@@ -401,17 +572,18 @@ func Batch(in BatchInput) int {
 	select {
 	case <-allDone:
 	case <-clk.After(in.Deadline):
+		var toReap []*proc
 		doneMu.Lock()
 		for i := range procs {
 			if procs[i].done || procs[i].cmd == nil {
 				continue
 			}
 			procs[i].deadKilled = true
-			if procs[i].cmd.Process != nil {
-				_ = procs[i].cmd.Process.Kill()
-			}
+			toReap = append(toReap, &procs[i])
 		}
 		doneMu.Unlock()
+		// Outside the lock, for the reason given at the idle kill above.
+		reapCardGroups(toReap)
 	}
 	close(stopMonitor)
 	monitorWG.Wait()
@@ -432,13 +604,14 @@ func Batch(in BatchInput) int {
 		}
 		b := benches[c.bench]
 		err := pullFromBench(benchPull{
-			host:      b.Host,
-			remoteJob: b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
-			localJob:  filepath.Join(in.Root, scratchName(c), "jobs", c.label),
-			label:     c.label,
-			wait:      in.PullWait,
-			poll:      in.PullPoll,
-			notes:     in.Stderr,
+			host:       b.Host,
+			remoteSlot: b.Root + "/" + strconv.Itoa(c.slot),
+			remoteJob:  b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
+			localJob:   filepath.Join(in.Root, scratchName(c), "jobs", c.label),
+			label:      c.label,
+			wait:       in.PullWait,
+			poll:       in.PullPoll,
+			notes:      in.Stderr,
 		})
 		if err != nil {
 			unreachable[i] = isUnreachable(err)
@@ -469,11 +642,23 @@ func Batch(in BatchInput) int {
 		reason   string // the abstain's one reason token, with its own fields
 		tail     string // one bounded field after log=<n>: the file watched, or the job directory
 		logLines int
+		// killed is issue #640's field: how many processes the batch ended in this card's
+		// own group, and -1 for a card the batch never killed, whose row says nothing about
+		// a kill. A count of 0 is a real answer -- the group was already gone -- and is
+		// printed.
+		killed int
 	}
 	rows := make([]row, len(cards))
+	for i := range rows {
+		// A row says nothing about a kill until the batch has made one (issue #640).
+		rows[i].killed = -1
+	}
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
+		if procs[i].idleKilled || procs[i].deadKilled {
+			rows[i].killed = procs[i].killed
+		}
 		// A card refused at admission never ran: no slot to read, and its reason is the
 		// refusal itself.
 		if c.admitWhy != "" {
@@ -585,6 +770,13 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		line := fmt.Sprintf("%s slot=%d: ABSTAIN reason=%s log=%d", oneline.Field(r.label), r.slot, r.reason, r.logLines)
+		// HOW MANY PROCESSES THE KILL ENDED (issue #640). It is on the rows of cards the
+		// batch killed and on no others, because a field that appears on every row is a
+		// field nobody reads -- and the fault this closes is precisely a coordinator
+		// believing a BATCH line that was not true of the machine.
+		if r.killed >= 0 {
+			line += " killed=" + strconv.Itoa(r.killed)
+		}
 		if r.tail != "" {
 			line += " " + r.tail
 		}
@@ -741,8 +933,14 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
-	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	raw, err := readFileSteady(filepath.Join(job, "RESULT.md"))
 	if err != nil {
+		// A RESULT.md that is a symlink or a FIFO is refused by name, in the one line the
+		// probe asserts (issue #233): it is not a result at all, and the refusal names the
+		// path and the kind rather than being folded into the missing-result class.
+		if errors.Is(err, errNotRegular) {
+			return "abstain", "refused", err.Error(), ""
+		}
 		if idleKilled {
 			watched := idleLog
 			if watched == "" {
@@ -845,6 +1043,25 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	return "done", "", "", two
 }
 
+// applyPublicGate refuses every card a public-class worker must never see: a
+// card whose clone URLs are not all listed in <root>/public-repos.txt carries
+// a private-source refusal and never starts. Cards already refused keep their
+// first refusal; the gate never rewrites one.
+func applyPublicGate(cards []batchCard, w Worker, root string) {
+	for i := range cards {
+		if cards[i].admitWhy != "" {
+			continue
+		}
+		raw, err := os.ReadFile(cards[i].cardPath)
+		if err != nil {
+			continue
+		}
+		if repo, refused := CheckPublicCard(w, string(raw), root); refused {
+			cards[i].admitWhy = PublicRefusalWhy(repo, w.Name)
+		}
+	}
+}
+
 // readCards reads the TSV and admits every card or none: one line that does not parse
 // queues nothing at all, because a batch is all of its cards or none.
 func readCards(path string) ([]batchCard, error) {
@@ -903,6 +1120,7 @@ func readCards(path string) ([]batchCard, error) {
 			}
 			why = ar.why
 		}
+		unit, routable := CardUnit(parts[0], contract, string(cardRaw))
 		cards = append(cards, batchCard{
 			label:    parts[0],
 			slot:     slot,
@@ -911,6 +1129,8 @@ func readCards(path string) ([]batchCard, error) {
 			cardPath: cardPath,
 			contract: contract,
 			admitWhy: why,
+			unit:     unit,
+			routable: routable,
 		})
 	}
 	return cards, nil
@@ -1263,6 +1483,81 @@ func ParseSlotRange(s string) (lo, hi int, err error) {
 	return 1, n, nil
 }
 
+// localHarness reads the benches table's `local` row for the harness (and, when the caller
+// named none, the auth) a runnerless batch runs native with. It returns "" when there is no
+// table or no local row: the caller's refusal says so.
+func localHarness(benchesPath string, auth *string) string {
+	if strings.TrimSpace(benchesPath) == "" {
+		return ""
+	}
+	table, err := LoadBenchTable(benchesPath)
+	if err != nil {
+		return ""
+	}
+	for _, b := range table {
+		if b.Name != "local" {
+			continue
+		}
+		if auth != nil && *auth == "" {
+			*auth = b.Auth
+		}
+		return b.Harness
+	}
+	return ""
+}
+
+// swarmSelf resolves the nova-swarm binary a runnerless batch runs native from: the caller's
+// own choice, else this process when it is nova-swarm itself, else nova-swarm on PATH.
+func swarmSelf(named string) (string, error) {
+	if strings.TrimSpace(named) != "" {
+		return named, nil
+	}
+	if exe, err := os.Executable(); err == nil && strings.HasPrefix(filepath.Base(exe), "nova-swarm") && !strings.HasSuffix(exe, ".test") {
+		return exe, nil
+	}
+	if path, err := exec.LookPath("nova-swarm"); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf("nova-swarm batch: no nova-swarm binary to run `native` from; pass --runner <cmd>, or put nova-swarm on PATH")
+}
+
+// selfNative builds the command a local card runs when the caller named no runner: this
+// binary's own `native` verb, with the same arguments bin/nova-native-runner.sh passed by
+// hand (issue #636). The slot argument is the SLOT directory, not the job directory: native
+// makes <slot>/jobs/<label> itself.
+func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error) {
+	self, err := swarmSelf(in.Self)
+	if err != nil {
+		return nil, err
+	}
+	// The bench slot lease travels with the launch (nova-tools#1546): native refuses
+	// without it, and Batch has already refused the whole batch if it is not here, so a
+	// missing store at THIS point would be a plumbing bug and not a caller error.
+	if in.SlotsStore == "" || in.SlotOwner == "" {
+		return nil, fmt.Errorf("%s", NoSlotsStoreRefusal)
+	}
+	argv := []string{"native",
+		"--harness", in.Harness,
+		"--model", c.model,
+		"--label", c.label,
+		"--card", c.cardPath,
+		"--slot", filepath.Join(in.Root, strconv.Itoa(c.slot)),
+		"--root", in.Root,
+		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
+		"--slots-store", in.SlotsStore,
+		"--owner", in.SlotOwner,
+	}
+	if in.Auth != "" {
+		argv = append(argv, "--auth", in.Auth)
+	}
+	cmd := exec.Command(self, argv...)
+	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	ownGroup(cmd)
+	return cmd, nil
+}
+
 // batchLockPath is the lock a batch writes on a slot it takes: <root>/<slot>/BATCH, one line
 // `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at slot end. The batch
 // name travels in the lock so a later batch can say who held the slot it is refusing.
@@ -1564,4 +1859,79 @@ func mentionsLauncher(lines []string) bool {
 		}
 	}
 	return false
+}
+
+// routeCards is the ladder on the fill/launch path: one decision per admitted
+// card, before that card is assigned a model.
+//
+// It is the whole of what Glenn asked for on 2026-09-19 -- "Are we all using
+// Jev yet when selecting which model to send work to?" -- and it is written so
+// the answer to that question is mechanical rather than a habit: with a route
+// input set, NO card on this path gets its model from a person's hand without
+// the ladder having been asked and the answer written down.
+//
+// Every card's receipt line is said once on stderr, in TSV order, and written
+// into the card's own job directory as route.txt so it travels with the job.
+// A card the ladder cannot type -- one whose text names no kind it knows -- is
+// not routed at all, and its line says so rather than inventing evidence.
+func routeCards(in BatchInput, cards []batchCard) {
+	if in.Route == nil {
+		return
+	}
+	if ok, why := in.Route.Accountable(); !ok {
+		fmt.Fprintf(in.Stderr, "BATCH NOTE route: %s\n", why)
+	}
+	for i := range cards {
+		c := &cards[i]
+		if c.admitWhy != "" {
+			continue // a card refused at admission never runs, so it is never routed
+		}
+		if !c.routable {
+			c.receipt = fmt.Sprintf("ROUTE jev=fallback conf=0.00 rung=- model=%s why=%s",
+				oneline.Field(c.model), oneline.Field("card-names-no-kind"))
+			fmt.Fprintf(in.Stderr, "ROUTE %s %s\n", oneline.Field(c.label), c.receipt)
+			continue
+		}
+		res := RouteCard(context.Background(), *in.Route, c.unit, c.model)
+		c.model = res.Model
+		c.receipt = res.Receipt
+		fmt.Fprintf(in.Stderr, "ROUTE %s %s\n", oneline.Field(c.label), c.receipt)
+	}
+}
+
+// writeRouteReceipt puts a card's ROUTE line in its job directory, beside the
+// log the run writes, so the decision travels with the job rather than living
+// only in the dispatcher's stderr. A receipt that cannot be written is not a
+// reason not to run the card: the line has already been said out loud.
+func writeRouteReceipt(jobDir, receipt string) {
+	if strings.TrimSpace(receipt) == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(jobDir, "route.txt"), []byte(receipt+"\n"), 0o644)
+}
+
+// groupSize is how many processes are in a card's group at the instant BEFORE it is ended,
+// and it is the `killed=<n>` the ABSTAIN row prints (issue #640). It is read before the reap
+// because after one there is, by construction, nothing left to count.
+//
+// WHAT THE NUMBER IS ON EACH PLATFORM, said here rather than implied. On linux the group is
+// enumerated from /proc and the count is exact (proc_linux.go). On darwin and the BSDs it
+// cannot be enumerated at all, so a group that is alive counts as ONE -- the leader, which
+// is the only member this platform can prove -- and that is a FLOOR and never a guess at a
+// tree's size. A group that is already gone counts as none, which is the honest answer for a
+// deadline that fired on a card that had just finished.
+//
+// `self` is excluded by GroupMembers, and the batch is never in a card's group anyway: the
+// child is the leader of its own.
+func groupSize(pgid int, started string) int {
+	if pgid <= 0 {
+		return 0
+	}
+	if n, ok := GroupMembers(pgid, os.Getpid()); ok {
+		return n
+	}
+	if GroupAlive(pgid, started) {
+		return 1
+	}
+	return 0
 }

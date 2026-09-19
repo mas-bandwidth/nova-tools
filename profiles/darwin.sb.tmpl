@@ -28,6 +28,14 @@
 ;;                  `git clone` by absolute path die at /private or /Users.
 ;;                  file-read-metadata is stat only: LISTING an ancestor stays denied.
 ;;   @@READS@@      one (allow file-read* (subpath (param "READn"))) per --read, n from 0.
+;;   @@READSNOEXEC@@ one (allow file-read* (subpath (param "NOEXECn"))) AND one
+;;                  (deny process-exec* (subpath (param "NOEXECn"))) per --read-noexec,
+;;                  n from 0. The deny is the whole point of the flag: this profile
+;;                  grants (allow process-exec* process-fork) once, globally, so on
+;;                  darwin a directory that is readable is executable unless something
+;;                  takes the exec back. SBPL's LAST matching rule wins, so this marker
+;;                  sits AFTER that grant and after @@READS@@; moving it above either
+;;                  silently turns --read-noexec back into --read.
 ;;   @@WRITES@@     one (allow file-read* file-write* (subpath (param "WRITEn"))) AND one
 ;;                  (allow network-outbound (subpath (param "WRITEn"))) per --write, n from 0.
 ;;                  The second line is the ONLY unix-domain socket reach this policy
@@ -105,6 +113,10 @@
 @@ANCESTORS@@
 
 @@READS@@
+
+;; --read-noexec: readable, and NOT executable. The deny lines are last-wins over the
+;; global (allow process-exec* process-fork) above.
+@@READSNOEXEC@@
 
 @@WRITES@@
 ;; rule 9: HOME is inside a --write and is passed for the record.

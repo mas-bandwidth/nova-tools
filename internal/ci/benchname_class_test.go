@@ -56,13 +56,15 @@ var benchNameResolvers = map[string]bool{
 // them, and the Mac power verbs, which exist FOR the runner hosts and so are the one place
 // a runner host is the right answer.
 func TestEveryBenchNameIsResolvedThroughTheRegistry(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	allow := readBenchNameAllowlist(t)
 	seen := map[string]bool{}
 	var violations []string
 
 	for _, dir := range benchNamePackages {
-		base := filepath.Join(root, filepath.FromSlash(dir))
+		base := filepath.Join(tree.Root, filepath.FromSlash(dir))
 		entries, err := os.ReadDir(base)
 		if err != nil {
 			t.Fatal(err)
@@ -73,16 +75,14 @@ func TestEveryBenchNameIsResolvedThroughTheRegistry(t *testing.T) {
 				continue
 			}
 			rel := dir + "/" + name
-			path := filepath.Join(base, name)
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
+			src := tree.ByRel(rel)
+			if src == nil {
+				t.Fatalf("%s is in the package directory and not in the shared tree", rel)
 			}
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, path, raw, 0)
-			if err != nil {
-				t.Fatal(err)
+			if src.ParseErr != nil {
+				t.Fatal(src.ParseErr)
 			}
+			fset, file := tree.FSet, src.AST
 			for _, decl := range file.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok || fn.Body == nil || !takesABenchName(fn) {

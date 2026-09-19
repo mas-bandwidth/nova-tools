@@ -74,8 +74,23 @@ func TestFleetStandardRefusesAnUnknownOS(t *testing.T) {
 		&out, &errb, time.Now().UTC()); code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), "--os is linux or darwin") {
+	if !strings.Contains(errb.String(), "--os or --platform is linux, darwin, or windows") {
 		t.Fatalf("refusal does not say what --os takes:\n%s", errb.String())
+	}
+}
+
+// --platform windows is accepted as an alias for --os windows.
+func TestFleetStandardAcceptsPlatformWindows(t *testing.T) {
+	benches, home := fleetVerbsEnv(t)
+	writeBenchExe(t, filepath.Join(home, ".local", "bin", "nova-swarm"), "#!/bin/sh\necho 'nova-swarm abc123'\n")
+	var out, errb bytes.Buffer
+	code := run([]string{"fleet", "standard", "--benches", benches, "--bench", "bench1",
+		"--platform", "windows", "--want", "abc123", "--min-free", "0"}, &out, &errb, time.Now().UTC())
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (bare temp home drifts on windows checks)\n%s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "STANDARD bench1 nova-stamp OK ") {
+		t.Errorf("stamp check did not run:\n%s", out.String())
 	}
 }
 

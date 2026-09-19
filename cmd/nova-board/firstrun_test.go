@@ -95,6 +95,28 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	}
 }
 
+// The close verb refuses without one of the three ways it was closed -- --how, --landed or
+// --probed -- and the refusal names all three, but the usage banner's close line named none
+// of them: a first run reading the banner for the shape of a close saw `--as --card --stale`
+// and nothing saying HOW, then hit the refusal when it ran. The line the banner prints for
+// close must name all three.
+func TestCloseUsageNamesTheThreeWays(t *testing.T) {
+	var closeLine string
+	for _, line := range strings.Split(usage, "\n") {
+		if strings.HasPrefix(line, "  nova-board close ") {
+			closeLine = line
+		}
+	}
+	if closeLine == "" {
+		t.Fatal("the usage banner has no close line")
+	}
+	for _, way := range []string{"--how", "--landed", "--probed"} {
+		if !strings.Contains(closeLine, way) {
+			t.Errorf("the close usage line names none of --how, --landed or --probed: %q", closeLine)
+		}
+	}
+}
+
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	cases := []struct {
@@ -163,10 +185,20 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 }
 
 // (c) The transcript in TESTS.md, checked against the tool. The commands in it are RUN
-// against the fixture, and every transcript line must match a line the tool actually
-// printed — the event prefix and the field names, in order. Numbers, paths and tails are a
-// run's own business and are deliberately NOT compared: pinning those would make the
-// document a fixture.
+// against the fixture, and each command's block is compared with what that command printed
+// AS A SEQUENCE: the same event lines, in the same order, and the same number of them.
+// Numbers, paths and tails are a run's own business and are deliberately NOT compared:
+// pinning those would make the document a fixture.
+//
+// IT USED TO BE A SET, and that is why this comment is long. Every transcript line had to
+// be a shape the tool printed SOMEWHERE in that command's output — a weaker promise than it
+// reads as, and one an ABRIDGED transcript satisfies perfectly. `list --max 2` prints two
+// BOARD CARD lines, two BOARD LINE lines and two BOARD LEG lines; the document showed one
+// of each; this test was green while the document contradicted its own
+// `BOARD MORE kind=card shown=2` on the very next line. The two-bench dogfood run of
+// 2026-09-19 compared line for line, read it as a tool defect on one bench, and missed it
+// on the other (nova-tools#1547). A reader runs the command and reads DOWN THE SCREEN, so
+// order and completeness are half of what a transcript promises.
 func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
@@ -176,41 +208,79 @@ func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
+
+	var command string
+	var want, got []string
 	seen := map[string]int{}
+	ran := 0
+	compare := func() {
+		if command == "" {
+			return
+		}
+		ran++
+		for i := 0; i < len(want) || i < len(got); i++ {
+			switch {
+			case i >= len(want):
+				t.Errorf("%q printed a line docs/TESTS.md does not show, at position %d:\n  %s\nThe document abridges what the tool said. Re-run the command and paste ALL of it.", command, i+1, got[i])
+			case i >= len(got):
+				t.Errorf("%q printed only %d lines and docs/TESTS.md shows %d; the document's line %d, %q, was never printed.", command, len(got), len(want), i+1, want[i])
+			case want[i] != got[i]:
+				t.Errorf("docs/TESTS.md line %d under %q has shape\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.", i+1, command, want[i], got[i])
+			}
+		}
+		for _, s := range want {
+			seen[strings.Join(strings.Fields(s)[:2], " ")]++
+		}
+	}
+
 	for _, line := range lines {
 		if cmd, ok := strings.CutPrefix(line, "$ nova-board "); ok {
+			compare()
 			exit, stdout, stderr := runFixture(t, strings.Fields(cmd)...)
 			if exit == 2 {
 				t.Fatalf("the transcript command %q does not run: exit 2, stderr: %s", line, stderr)
 			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
+			command, want, got = line, nil, shapesOf(stdout)
 			continue
 		}
 		s := onboarding.Shape(line)
 		if s == "" {
 			continue
 		}
-		if printed == nil {
+		if command == "" {
 			t.Fatalf("transcript line before any command: %q", line)
 		}
-		if !printed[s] {
-			t.Errorf("TESTS.md line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+		want = append(want, s)
 	}
+	compare()
+
+	if ran == 0 {
+		t.Fatal("the `### First run` block holds no nova-board command; this test passed by running nothing")
+	}
+	// The counts stay although the walk above is now complete, and they guard a
+	// different thing: deleting a whole `$ ` step from the document deletes BOTH
+	// sides of the comparison, so an ordered walk cannot notice. These numbers can
+	// only be satisfied by the steps being there.
 	for prefix, want := range map[string]int{
-		"QUICKSTART OK": 1, "BOARD NEXT": 2, "BOARD OK": 2, "CHECK OK": 1, "CHECK HIT": 1, "BOARD LEG": 3,
+		"QUICKSTART OK": 1, "BOARD NEXT": 2, "BOARD OK": 2, "CHECK OK": 1, "CHECK HIT": 1, "BOARD LEG": 4,
 	} {
 		if seen[prefix] != want {
 			t.Errorf("the TESTS.md First run shows %d %s lines, want %d", seen[prefix], prefix, want)
 		}
 	}
+}
+
+// shapesOf reduces one stream to the shapes of its event lines, in the order the
+// tool printed them. Order is half of what a transcript promises: a reader runs
+// the command and reads down the screen.
+func shapesOf(stream string) []string {
+	var out []string
+	for _, line := range strings.Split(stream, "\n") {
+		if s := onboarding.Shape(line); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // The fixture is small enough to read in a sitting and is referenced by nothing outside
@@ -310,17 +380,17 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 //
 // The refusal those verbs print carries the way forward. A refusal names what the
 // flag wants (SPEC-BOARD.md:808-814, BUILD item 6 -- an entry in the build list,
-// not a numbered rule), and here what it wants is a directory that exists.
+// not a numbered rule), and here what it wants is a directory that exists. `add`
+// is the exception since nova-tools #625: a board is an append-only log, an empty
+// directory is a valid empty ledger, and the first `add` makes it
+// (TestAddMakesTheDirectoryOnFirstUse).
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
-	for _, verb := range []string{"list", "check", "add"} {
+	for _, verb := range []string{"list", "check"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
 		switch verb {
 		case "check":
 			args = []string{verb, "--dir", missing, "--words", "anything"}
-		case "add":
-			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
-				"--by", "4h", "--default", "the filer files it as a known gap"}
 		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})

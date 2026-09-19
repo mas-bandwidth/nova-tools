@@ -39,10 +39,12 @@ usage:
 output (a job name is quoted, because it is what you paste back into --job):
   FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
       <the test's own message lines, indented as it printed them>
+  NOTEST job="<name>" step="<name>" tests=none
+      <the lines the runner marked as errors; a make step red with no test in it>
   CANCELLED job="<name>" step="<name>" after=<d>
   TIMEOUT job="<name>" pkg=<pkg> running=<tests, three then a count>
   NOLOG job="<name>" reason="<a log the forge would not give; the run still reports>"
-  FAILED OK jobs=<n> tests=<n> [unread=<n>]
+  FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n> [unread=<n>]
 
 exit codes: 0 nothing red in the run, 1 the run said something red,
             2 the invocation could not run (bad flag, no run, gh could not answer).

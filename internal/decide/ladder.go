@@ -42,6 +42,8 @@ const (
 	KindStack           = "stack"
 	KindFixtureRetarget = "fixture-retarget"
 	KindFleetChore      = "fleet-chore"
+	KindDogfood         = "dogfood"
+	KindRowTest         = "row-test"
 	KindFixWithRedTest  = "fix-with-red-test"
 	KindNewVerb         = "new-verb"
 	KindSpec            = "spec"
@@ -74,12 +76,17 @@ var errNoRungQuestion = errors.New("decide: the rung decision carries no rung qu
 // startHeights is the starting rung per kind, the table the log regenerates.
 // The mechanical kinds start at the bottom; everything else starts at the child
 // rungs, because friends come first and DeepSeek takes mechanical work only; a
-// spec or a design starts at the top pair, where the writing lives.
+// spec or a design starts at the top pair, where the writing lives. A row test
+// is the exception that measurement bought: its shape is a proven card and its
+// size is one file, so the cheapest rung looks right and is not -- it starts at
+// pro (2026-09-18, the schema campaign's row cards).
 var startHeights = map[string]int{
 	KindRebase:          0,
 	KindStack:           0,
 	KindFixtureRetarget: 0,
 	KindFleetChore:      0,
+	KindDogfood:         0,
+	KindRowTest:         1,
 	KindFixWithRedTest:  2,
 	KindNewVerb:         2,
 	KindCauseToFind:     2,
@@ -88,6 +95,11 @@ var startHeights = map[string]int{
 	KindDesign:          4,
 }
 
+// LineageDeepSeek is the lineage of the two card rungs. It is named here
+// because two rules turn on it: friends first, and a mechanical kind that
+// failed on one of them is not mechanical after all.
+const LineageDeepSeek = "deepseek"
+
 // mechanicalKinds are the kinds a DeepSeek rung may take: the ones whose answer
 // is a procedure, not a judgment.
 var mechanicalKinds = map[string]bool{
@@ -95,6 +107,8 @@ var mechanicalKinds = map[string]bool{
 	KindStack:           true,
 	KindFixtureRetarget: true,
 	KindFleetChore:      true,
+	KindDogfood:         true,
+	KindRowTest:         true,
 }
 
 // ordinaryPlatforms are the platforms the benches run all day. A need outside
@@ -116,8 +130,8 @@ var ordinaryPlatforms = map[string]bool{
 
 // Kinds is every kind a unit may name, in the order the spec names them.
 var Kinds = []string{
-	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindFixWithRedTest,
-	KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
+	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindRowTest,
+	KindFixWithRedTest, KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
 }
 
 // KnownKind reports whether the kind is one of the ten.
@@ -523,6 +537,14 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 		conf = confEscalated
 	case u.thin():
 		conf = confThin
+		// Say it on the line. Thin evidence is below every usable floor, so it
+		// steps the answer up BEFORE the provider is offered anything -- and
+		// the rung the evidence would have supported is then not in the offer
+		// set at all, so no provider answer can recover it. A caller who simply
+		// forgot --files reads "below the floor" and looks for a floor problem;
+		// what they have is a unit with no size on it (2026-09-18: a manager's
+		// fix-with-red-test units answered astra for exactly this reason).
+		reasons = append(reasons, "the unit carries no size evidence (no files, packages, lanes or attempts), which no floor can support for a first attempt")
 	}
 	res.Rung, res.Confidence = m, conf
 	if conf < floor {
@@ -720,19 +742,41 @@ func supportedHeight(reg *Registry, u Unit, burned int) (int, []string) {
 
 // eligible reports whether a mind may take this unit at all: it must be on the
 // ladder, it must not be a DeepSeek rung on a kind that is not mechanical
-// (friends first), it must not have been tried, and its lineage must not be one
-// that already failed at this height (sideways means ANOTHER lineage).
+// (friends first), it must not be a DeepSeek rung on a unit a DeepSeek rung has
+// already CONFIRMED-failed, it must not have been tried, and its lineage must
+// not be one that already failed at this height (sideways means ANOTHER
+// lineage).
+//
+// The second of those is the one the failures taught. A mechanical kind is one
+// whose answer is a procedure rather than a judgement; an attempt that failed is
+// the evidence that the procedure was not given after all, so the work is not
+// mechanical and the other card rung is not a retry, it is the same mistake one
+// height up. The per-height rule above cannot catch it, because flash and pro
+// are the only two minds of one lineage sitting at two DIFFERENT heights: every
+// other lineage puts its two minds far enough apart that this never arose.
 func eligible(m Mind, u Unit, tried map[string]bool, failedAt map[int]map[string]bool) bool {
 	if !m.Usable() || tried[m.Name] {
 		return false
 	}
-	if m.Lineage == "deepseek" && !Mechanical(u.Kind) {
+	if m.Lineage == LineageDeepSeek && (!Mechanical(u.Kind) || lineageFailed(failedAt, LineageDeepSeek)) {
 		return false
 	}
 	if failed := failedAt[m.Height]; failed != nil && failed[m.Lineage] {
 		return false
 	}
 	return true
+}
+
+// lineageFailed reports whether any CONFIRMED failure on this unit was a mind
+// of this lineage, at any height. burnedHeight has already keyed the failures by
+// height and lineage, so this reads them rather than walking the attempts again.
+func lineageFailed(failedAt map[int]map[string]bool, lineage string) bool {
+	for _, at := range failedAt {
+		if at[lineage] {
+			return true
+		}
+	}
+	return false
 }
 
 // pick takes the lowest rung at or above height that holds an eligible mind,

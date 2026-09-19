@@ -64,6 +64,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
 	maxSteps := fs.Int("max-steps", decide.DefaultMaxSteps, "how many decisions --step-up makes before it stops")
+	paste := fs.Bool("paste", false, "print one more line the coordinator pastes: ROUTE <unit> -> <mind> (<model id>) conf=<x>")
 	useJev := fs.Bool("jev", true, "ask Jev among the eligible rungs")
 	noJev := fs.Bool("no-jev", false, "answer by the rules alone: no key, no network, deterministic")
 	baseURL := fs.String("base-url", decide.DefaultBaseURL, "Jev endpoint")
@@ -196,6 +197,15 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "ROUTE", "bad-record", oneline.Cap(persisted.Error(), oneline.TailBytes))
 	}
 	fmt.Fprintln(stdout, res.Line())
+	// THE COORDINATOR'S LINE (Glenn 2026-09-19). The decision line above is
+	// the machine's, with every field a gate needs on it. This one is for a
+	// person -- or for the coordinator about to spawn a child -- and it says
+	// the one thing they act on: who does this, and on what model. The model
+	// id comes from the registry, never from here, and a rung that is ASKED
+	// rather than run says so in place of an id it does not have.
+	if *paste {
+		fmt.Fprintln(stdout, pasteLine(reg, res))
+	}
 	switch {
 	case !res.Dispatchable():
 		// The verb ran and said NOT YET. Only exit 0 is permission (SPEC.md),
@@ -286,6 +296,20 @@ func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
 // usageProvider is who the tokens were spent with, in the usage file's own
 // vocabulary: the Jev endpoint is TypeSafe's.
 const usageProvider = "typesafe"
+
+// pasteLine is the one line a coordinator pastes: the unit, the mind that
+// answers it, the model id that mind runs on where the registry gives one, and
+// the confidence the floor was applied to. A mind with no model id is a mind
+// that is ASKED -- a friend, a child, Glenn -- and the line says how, because
+// "ask on the bus" is the action, not a model to launch.
+func pasteLine(reg *decide.Registry, res decide.RouteResult) string {
+	how := "ask-" + res.Rung.Ask
+	if model, ok := reg.ModelFor(res.Rung.Name); ok {
+		how = model
+	}
+	return fmt.Sprintf("ROUTE %s -> %s (%s) conf=%.2f",
+		oneline.Field(res.Unit), oneline.Field(res.Rung.Name), oneline.Field(how), res.Confidence)
+}
 
 // remedyFor is the line a person can paste: the missing accounting flags with a
 // path each, rather than the name of a flag they then have to look up.

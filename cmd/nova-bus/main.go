@@ -41,12 +41,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +56,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -71,6 +74,7 @@ usage:
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
         [--diagnostics]
+        [--decide [--floor <f>] [--key-env <name>] [--base-url <url>] [--allow-private]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--until <instant>] [--idle-exit <n>]
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
@@ -78,6 +82,7 @@ usage:
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
         [--quiet-beats]
+        [--max-commits <n>]
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -1313,8 +1318,11 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
+	// closed= COUNTS NOTES, not receipts. Since #1540 one receipt closes every note one
+	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
+	// and would be a different, smaller and quite surprising number here.
 	if *dryRun {
-		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", len(plan.Prepared), plan.Kept)
+		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", plan.Closed, plan.Kept)
 		return 0
 	}
 	if len(plan.Prepared) == 0 {
@@ -1329,14 +1337,30 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
+	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND (#1540). The collision this fix
+	// removes used to stop the loop at its second Save, with the first receipt written into
+	// the working tree, no commit, and the cursor where it started -- so the next run met a
+	// file it had not committed and the lane had to be cleaned by hand. Whatever stops the
+	// loop now, the files this run wrote go back out of the tree before it returns.
+	written := make([]string, 0, len(plan.Prepared))
+	undo := func() {
+		for i := len(written) - 1; i >= 0; i-- {
+			if err := os.Remove(filepath.Join(*busDir, filepath.FromSlash(written[i]))); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(stderr, "CLOSE NOTE %s was written and could not be taken back: %s\n", oneline.Escape(written[i]), oneline.Err(err))
+			}
+		}
+	}
 	paths := make([]string, 0, len(plan.Prepared)+1)
 	for i := range plan.Prepared {
 		p := &plan.Prepared[i]
 		if err := p.Save(*busDir); err != nil {
+			undo()
 			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
+		written = append(written, p.Path)
 		if err := p.AppendIndex(*busDir); err != nil {
+			undo()
 			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
@@ -1363,7 +1387,11 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(sha8) > 8 {
 		sha8 = sha8[:8]
 	}
-	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=%s\n", len(plan.Prepared), plan.Kept, oneline.Field(sha8))
+	// receipts= is new with #1540 and is the one number that changed shape: closed= counts
+	// notes, as it always did and as the dry run above already did, and receipts= says how
+	// many notes it took to close them -- one per sender lane. A reader who wants to know
+	// whether a close collapsed 2964 files into a handful reads it here.
+	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d receipts=%d commit=%s\n", plan.Closed, plan.Kept, len(plan.Prepared), oneline.Field(sha8))
 	return 0
 }
 
@@ -1391,6 +1419,11 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyNow := f.fs.Bool("legacy-now", false, "draw the switch-day line at THIS run's UTC instant: exactly --legacy-before <now>, so everything already on the bus is history and everything after this moment is news")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
+	askDecide := f.fs.Bool("decide", false, "ask the provider for a typed kind, needs_reply and blocked on every INBOX NOTE line")
+	decideFloor := f.fs.Float64("floor", 0.9, "with --decide, the confidence floor below which a decision is only a suggestion")
+	decideKeyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "with --decide, the environment variable holding the provider key")
+	decideBaseURL := f.fs.String("base-url", decide.DefaultBaseURL, "with --decide, the provider endpoint")
+	allowPrivate := f.fs.Bool("allow-private", false, "with --decide, send note text from a bus whose clone has no .public marker")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
@@ -1468,6 +1501,22 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 	}
+	if *askDecide && (*decideFloor < 0 || *decideFloor > 1) {
+		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess\n", *decideFloor)
+		return 2
+	}
+	// A bus with no .public marker is a private one, and --decide would hand its note
+	// text to a provider that may train on what it receives. The marker is the clone's
+	// own statement that the bus is public; without it the run refuses by name, and
+	// --allow-private is the one explicit way to mean it anyway.
+	if *askDecide && !*allowPrivate {
+		marker := filepath.Join(*busDir, publicMarker)
+		if _, err := os.Stat(marker); err != nil {
+			fmt.Fprintf(stderr, "INBOX REFUSED: --decide sends note text to a provider that may train on it, and %s has no %s marker; pass --allow-private to mean it anyway, or leave that clone private\n",
+				oneline.Quote(*busDir), publicMarker)
+			return 2
+		}
+	}
 	o := inboxOpts{
 		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
@@ -1476,6 +1525,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 		maxCommits: *maxCommits, walkProgress: true,
 		diagnostics: *diagnostics,
+		decide:      *askDecide, floor: *decideFloor, keyEnv: *decideKeyEnv, baseURL: *decideBaseURL,
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -1541,6 +1591,15 @@ type inboxOpts struct {
 	// way; only the narration is a verb's choice.
 	walkProgress bool
 	diagnostics  bool
+	// decide turns the semantic pass on: every INBOX NOTE line is sent to the
+	// provider as one typed decision, and the line carries the answer. floor is the
+	// confidence floor below which the answer is only a suggestion, keyEnv names the
+	// environment variable holding the key, and baseURL is the provider endpoint.
+	// All four are `inbox`'s only; `wait` leaves decide false.
+	decide  bool
+	floor   float64
+	keyEnv  string
+	baseURL string
 	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
 	// that is only beats and cursors never wakes a wait, so the flag is accepted and
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
@@ -1603,6 +1662,12 @@ type inboxReading struct {
 // because `wait` holds it across a poll's fetch as well as its listing.
 func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, inboxReading) {
 	var r inboxReading
+	// When --decide is on, this judges the notes it prints. It is lazy, so a listing
+	// with no notes builds no client and calls no provider.
+	var d *noteDecider
+	if o.decide {
+		d = newNoteDecider(o)
+	}
 	c, err := bus.LoadConfig(o.busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
@@ -1933,7 +1998,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
 				return 2, r
 			}
-			if err := printBodyPage(stdout, page, o.maxBytes); err != nil {
+			if err := printBodyPage(stdout, page, o.maxBytes, d); err != nil {
+				if o.decide {
+					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
+					return 2, r
+				}
 				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, r
 			}
@@ -1967,7 +2036,14 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 1, inboxReading{}
 			}
 		} else {
-			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+			if _, err := printOpenEntries(stdout, res.Fresh, len(res.Fresh), d); err != nil {
+				if o.decide {
+					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
+					return 2, r
+				}
+				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				return 1, r
+			}
 		}
 	}
 	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
@@ -2003,7 +2079,15 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// the listing says how many were left and which flag widens it.
 	if listCarried {
 		rows := bus.SortForListing(res.Open)
-		shown := printOpenEntries(stdout, rows, o.openMax)
+		shown, err := printOpenEntries(stdout, rows, o.openMax, d)
+		if err != nil {
+			if o.decide {
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
+				return 2, r
+			}
+			fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+			return 1, r
+		}
 		if more := countListable(rows) - shown; more > 0 {
 			fmt.Fprintf(stdout, "INBOX OPEN listed=%d and %d more (--open-max to widen)\n", shown, more)
 		}
@@ -2027,6 +2111,13 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// BOTH, under the same names, beside the decomposition that makes them add up.
 	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
 		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
+	// AND, LAST, WHAT --decide FOUND. n is the notes it judged, needs_reply how many of
+	// them at or above 0.5, and below_floor how many kinds the provider was less sure of
+	// than the floor -- those are suggestions, and the caller keeps today's behaviour.
+	if d != nil {
+		fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d\n",
+			d.counts.n, d.counts.needsReply, d.counts.belowFloor)
+	}
 	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
 	r.Changed, r.NoteChanges = scope.Changed, res.NoteChanges
 	if !o.bodies {
@@ -2306,6 +2397,160 @@ func (p *walkProgress) abort() {
 	p.stopped.Wait()
 }
 
+// publicMarker is the file a bus clone carries to say it is public. --decide refuses a
+// clone without it, because a provider may train on what it is sent, and the marker is the
+// clone's own statement that the text may leave.
+const publicMarker = ".public"
+
+// noteJudgment is one note's typed decision, rendered as the suffix on its INBOX NOTE
+// line. kind is the choice, needsReply and blocked are the provider's noul probabilities,
+// and conf is how sure it was of the kind.
+type noteJudgment struct {
+	kind       string
+	needsReply float64
+	blocked    float64
+	conf       float64
+}
+
+// inboxDecider is the one method --decide needs from the provider client, so a test can
+// stand in a fake without a socket or a key.
+type inboxDecider interface {
+	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
+}
+
+// noteDecider makes one typed decision per printed INBOX NOTE line. It is LAZY: the
+// client is built and the provider is called on the first note that actually prints, so a
+// listing with no notes makes zero provider calls whatever the flags say. STOP:/HOLD:
+// subjects are structured signals and bypass the provider entirely.
+type noteDecider struct {
+	o      inboxOpts
+	client inboxDecider
+	qs     map[string]decide.Question
+	cache  map[string]noteJudgment
+	counts decideCounts
+}
+
+// decideCounts is the running tally behind the final INBOX DECIDED line.
+type decideCounts struct {
+	n          int
+	needsReply int
+	belowFloor int
+}
+
+func newNoteDecider(o inboxOpts) *noteDecider {
+	return &noteDecider{o: o, qs: inboxQuestions(), cache: map[string]noteJudgment{}}
+}
+
+// inboxQuestions is the one question set --decide asks about every note.
+func inboxQuestions() map[string]decide.Question {
+	return map[string]decide.Question{
+		"kind": {
+			Instructions: "Classify this note. start asks to begin work; done reports finished work; question asks and needs an answer; edge carries a structured signal that bypasses semantic filtering; refusal declines or forbids; receipt only acknowledges.",
+			Choice: map[string]string{
+				"start":    "asks to begin work",
+				"done":     "reports finished work",
+				"question": "asks a question that needs an answer",
+				"edge":     "a structured signal that bypasses semantic filtering",
+				"refusal":  "declines or forbids",
+				"receipt":  "only acknowledges",
+			},
+		},
+		"needs_reply": {Instructions: "The probability, from 0 to 1, that this note needs a reply from its reader.", Noul: true},
+		"blocked":     {Instructions: "The probability, from 0 to 1, that this note blocks the reader's work until it is answered.", Noul: true},
+	}
+}
+
+// judge returns the decision for one note, reading its file for the body and cacheing by
+// path. A STOP: or HOLD: subject is never sent: it is marked edge with needs_reply=1.00 by
+// rule, because a structured signal is not something a model filters.
+func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
+	if j, ok := d.cache[e.Path]; ok {
+		return j, nil
+	}
+	subject, body := e.Subject, ""
+	if raw, err := os.ReadFile(filepath.Join(d.o.busDir, filepath.FromSlash(e.Path))); err == nil {
+		if n, perr := bus.ParseNote(e.Path, string(raw)); perr == nil {
+			if subject == "" {
+				subject = n.Header.Subject
+			}
+			body = n.Body
+		}
+	}
+	var j noteJudgment
+	if structuredSubject(subject) {
+		j = noteJudgment{kind: "edge", needsReply: 1, conf: 1}
+	} else {
+		if d.client == nil {
+			c, err := decide.New(d.o.baseURL, d.o.keyEnv)
+			if err != nil {
+				return noteJudgment{}, err
+			}
+			d.client = c
+		}
+		answers, _, err := d.client.Decide(context.Background(), decideState(subject, body), d.qs)
+		if err != nil {
+			return noteJudgment{}, err
+		}
+		kind := answers["kind"]
+		j = noteJudgment{
+			kind:       kind.Choice,
+			needsReply: answers["needs_reply"].Noul,
+			blocked:    answers["blocked"].Noul,
+			conf:       kind.Confidence,
+		}
+	}
+	d.cache[e.Path] = j
+	d.counts.n++
+	if j.needsReply >= 0.5 {
+		d.counts.needsReply++
+	}
+	if j.conf < d.o.floor {
+		d.counts.belowFloor++
+	}
+	return j, nil
+}
+
+// structuredSubject reports the subjects a model must never be asked to filter: the
+// STOP: and HOLD: prefixes are structured signals, and Stella's rule is that they bypass
+// semantic judgement.
+func structuredSubject(subject string) bool {
+	return strings.HasPrefix(subject, "STOP:") || strings.HasPrefix(subject, "HOLD:")
+}
+
+// decideState is what a note sends to the provider: its subject and the first 600
+// characters of its body, with any sk- key redacted.
+func decideState(subject, body string) string {
+	return subject + "\n\n" + redactSK(firstChars(body, decideStateChars))
+}
+
+// decideStateChars is how much of a note's body --decide sends.
+const decideStateChars = 600
+
+// firstChars returns at most n characters of s, cut on a rune boundary so a multi-byte
+// character is never split.
+func firstChars(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
+// skPattern is an sk- key: the prefix and the token that follows it.
+var skPattern = regexp.MustCompile(`sk-[A-Za-z0-9_-]+`)
+
+// redactSK replaces every sk- key in s with a placeholder, so a key pasted into a note
+// cannot leave on the wire.
+func redactSK(s string) string {
+	return skPattern.ReplaceAllString(s, "sk-[redacted]")
+}
+
 // printOpenEntries prints an open list in the order it is listed in -- the notes that carry
 // something, then what has been heard and still owes an answer, then the bare
 // acknowledgements -- and stops after max of them. It returns how many it printed.
@@ -2314,12 +2559,12 @@ func (p *walkProgress) abort() {
 // receipts is the reason they are separated rather than interleaved by clock. HEARD is
 // between them because a note I have already said "heard" to is still owed an answer, and
 // the receipt that says so must not make it disappear. Every field comes from the open
-// list, so nothing here opens a note.
+// list, so nothing here opens a note unless --decide asked for a judgement.
 //
 // The cap counts PRINTED entries and not entries considered, so a capped listing is the
 // first max of the same order a full one would have printed: the notes first, and the bare
 // acknowledgements last, which is the right end to lose.
-func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
+func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d *noteDecider) (int, error) {
 	shown := 0
 	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
 		for _, e := range entries {
@@ -2337,7 +2582,19 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 				continue
 			}
 			if shown >= max {
-				return shown
+				return shown, nil
+			}
+			if token == "NOTE" && d != nil {
+				j, err := d.judge(e)
+				if err != nil {
+					return shown, err
+				}
+				fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s kind=%s needs_reply=%.2f blocked=%.2f conf=%.2f\n",
+					token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
+					oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject),
+					oneline.Field(j.kind), j.needsReply, j.blocked, j.conf)
+				shown++
+				continue
 			}
 			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
 				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
@@ -2345,7 +2602,7 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 			shown++
 		}
 	}
-	return shown
+	return shown, nil
 }
 
 // bodyLimit checks one of the two --bodies budgets. Zero is not "unlimited" and
@@ -2390,7 +2647,7 @@ const (
 	maxBodiesBytesCeiling int64 = 1048576
 )
 
-func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64) error {
+func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64, d *noteDecider) error {
 	// Selection, continuation identities, and safe-frontier accounting stay in canonical
 	// snapshot order. Display follows the inbox's established NOTE, HEARD, RECEIPT groups;
 	// an earlier receipt must not push a later note below the summary groups on this page.
@@ -2405,7 +2662,7 @@ func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64) error {
 			if bodyDisplayGroup(*emission.Item) != group {
 				continue
 			}
-			if err := printBodyItem(stdout, *emission.Item); err != nil {
+			if err := printBodyItem(stdout, *emission.Item, d); err != nil {
 				return err
 			}
 		}
@@ -2436,7 +2693,7 @@ func bodyDisplayGroup(item bus.BodyItem) string {
 	return "NOTE"
 }
 
-func printBodyItem(stdout io.Writer, item bus.BodyItem) error {
+func printBodyItem(stdout io.Writer, item bus.BodyItem, d *noteDecider) error {
 	e := item.Entry
 	kind := bodyDisplayGroup(item)
 	if kind != "NOTE" {
@@ -2446,7 +2703,15 @@ func printBodyItem(stdout io.Writer, item bus.BodyItem) error {
 		return nil
 	}
 	bodyBytes := item.Body
-	if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+	if d != nil {
+		j, err := d.judge(e)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s kind=%s needs_reply=%.2f blocked=%.2f conf=%.2f\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject), oneline.Field(j.kind), j.needsReply, j.blocked, j.conf); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
@@ -2572,6 +2837,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
+	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
+	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a
+	// wait has always been bounded -- it simply had no way to say a bigger number. Johnny's
+	// loop ran for days behind a cursor the bus had left far behind, printing the bounded
+	// line's `remedy="raise --max-commits"` at a verb that refused the flag.
+	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
@@ -2592,6 +2863,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.count("open-max", *openMax, stderr) {
+		return 2
+	}
+	if !f.count("max-commits", *maxCommits, stderr) {
 		return 2
 	}
 	if !f.atLeastZero("open-warn", *openWarn, stderr) {
@@ -2712,11 +2986,33 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
+		maxCommits:  *maxCommits,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
 	// inbox already refuses it in.
 	held, _ := bus.ReadCursor(*busDir, me.Lane)
+	// A WAIT THAT CANNOT SEE THE BUS IS NOT A WAIT, AND IT SAYS SO BEFORE IT BLOCKS (#1518).
+	//
+	// The distance from a cursor to HEAD only GROWS while a wait runs -- the cursor moves
+	// on --advance, at the end, and never during -- so a walk that is over the bound now is
+	// over it on every poll this call will make. Every one of those polls reads nothing,
+	// and the call then prints the same WAIT TIMEOUT as a wait over a quiet bus. Johnny's
+	// loop did exactly that, once a minute, for hours, at exit 0:
+	//
+	//	INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
+	//	WAIT TIMEOUT after=1m2.926s polls=2 cursor=8cd06f5a...
+	//
+	// So it is asked ONCE, here, before anything blocks, and it is a REFUSAL rather than a
+	// note: a loop that is green and deaf is worse than one that stops, because nobody goes
+	// to look at the one that is green. The bounded walk's own remedy is carried word for
+	// word, and --max-commits above is now one of the two things it names.
+	if over, err := waitWalkOverBound(*busDir, held.Commit, *maxCommits); err == nil && over {
+		fmt.Fprintf(stderr, "WAIT BLIND commits=%d %s\n", *maxCommits, boundedWalkRemedy)
+		fmt.Fprintf(stderr, "WAIT REFUSED: as=%s cursor=%s is further behind than this walk may cross, so every poll of this wait would read nothing and it would end saying `nothing yet`; raise the bound or close the backlog, then wait again\n",
+			oneline.Field(me.Name), oneline.Field(dash(held.Commit)))
+		return 2
+	}
 	// One line at the start, before anything is waited on, so that a transcript shows the
 	// call began and what it was told to do. A tool call that prints nothing for twenty
 	// minutes and then prints everything is, while it runs, indistinguishable from one
@@ -2748,6 +3044,26 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// same one argument after a paste, not split in two.
 	next := rearmCommand(args)
 	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now)
+}
+
+// waitWalkOverBound answers whether this lane's cursor is further behind HEAD than the
+// walk's bound, which is the one condition under which a wait can see nothing whatever
+// happens (#1518).
+//
+// IT FAILS OPEN, in both directions that matter. A lane with no cursor at all is not over
+// any bound -- it reads from the beginning of the switch-day line, which is what a first
+// wait does -- and an error asking git is NOT a refusal: a wait that cannot measure the
+// distance is a wait whose first poll's listing will refuse in inbox's own sentence, and
+// this check exists to name a silence, never to invent a new way to fail.
+func waitWalkOverBound(busDir, cursor string, limit int) (bool, error) {
+	if cursor == "" || limit <= 0 {
+		return false, nil
+	}
+	_, over, err := bus.CommitsSinceBounded(busDir, cursor, limit)
+	if err != nil {
+		return false, err
+	}
+	return over, nil
 }
 
 // maxIdleExit is the highest code --idle-exit will take. 126 and 127 are the shell's own --

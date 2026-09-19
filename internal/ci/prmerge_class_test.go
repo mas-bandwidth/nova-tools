@@ -3,10 +3,8 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,33 +43,22 @@ const prMergeAllowlistPath = "testdata/prmerge_allowlist.txt"
 // that happens to mention the spelling is one literal and is not an argument list, which is
 // why the walk looks for the two adjacent words rather than for the phrase.
 func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	allow := readAllowlist(t, prMergeAllowlistPath)
 	seen := map[string]bool{}
 	var violations []string
 	files := 0
 
 	for _, dir := range []string{"cmd", "internal"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
+		for _, f := range tree.GoFilesUnder(false, dir) {
+			rel := f.Rel
 			files++
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, path, nil, 0)
-			if err != nil {
-				return err
+			if f.ParseErr != nil {
+				t.Fatal(f.ParseErr)
 			}
-			words := stringLiterals(file, fset)
+			words := stringLiterals(f.AST, tree.FSet)
 			for i, w := range words {
 				key := rel + ":" + w.fn
 				switch {
@@ -91,10 +78,6 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 					}
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 	if files == 0 {
@@ -119,27 +102,16 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 // scripts, which is where the revert-on-red loop used to enable auto-merge on its own
 // revert pull request. A comment may still SAY auto-merge -- the rule is about what runs.
 func TestNoGhPrMergeSpellingUnderDotGithub(t *testing.T) {
-	root := repoRoot(t)
-	base := filepath.Join(root, ".github")
+	t.Parallel()
+
 	files := 0
 	var violations []string
-	err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
+	for _, f := range repoTree(t).Files {
+		if !f.InDir(".github") {
+			continue
 		}
 		files++
-		for i, line := range strings.Split(string(raw), "\n") {
+		for i, line := range strings.Split(string(f.Src), "\n") {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 				continue
@@ -147,22 +119,18 @@ func TestNoGhPrMergeSpellingUnderDotGithub(t *testing.T) {
 			if strings.Contains(line, "gh pr merge") {
 				violations = append(violations, fmt.Sprintf(
 					"%s:%d runs `gh pr merge`: %s\nCI lands nothing on its own; a batch does, through nova-merge land",
-					filepath.ToSlash(rel), i+1, trimmed))
+					f.Rel, i+1, trimmed))
 				continue
 			}
 			for _, field := range strings.Fields(line) {
 				if field == "--auto" || strings.HasPrefix(field, "--auto=") {
 					violations = append(violations, fmt.Sprintf(
 						"%s:%d carries --auto: %s\nauto-merge is a standing instruction nobody is in the room for",
-						filepath.ToSlash(rel), i+1, trimmed))
+						f.Rel, i+1, trimmed))
 					break
 				}
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	if files == 0 {
 		t.Fatal("no files found under .github; this walk was looking in the wrong place")

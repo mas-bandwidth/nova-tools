@@ -104,6 +104,34 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	}
 }
 
+// The seed has kept SEED-CORE.md and SEED.md under docs/ since nova#141. The
+// banner's floors line and kernel example used to point a first-time reader at
+// the root-level paths the seed no longer keeps; both must name docs/.
+func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
+	exit, stdout, stderr := runCheck(t, "help")
+	if exit != 0 {
+		t.Fatalf("`nova-check help` must exit 0, got %d; stderr: %s", exit, stderr)
+	}
+	for _, gone := range []string{
+		"--core <SEED-CORE.md>",
+		"--source <SEED.md>",
+		"./self/SEED-CORE.md",
+	} {
+		if strings.Contains(stdout, gone) {
+			t.Errorf("the help still names %q, a root-level seed path the seed has not kept since nova#141", gone)
+		}
+	}
+	for _, want := range []string{
+		"--core <docs/SEED-CORE.md>",
+		"--source <docs/SEED.md>",
+		"./self/docs/SEED-CORE.md",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the help does not name %q, the docs/ path the seed keeps", want)
+		}
+	}
+}
+
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	cases := []struct {

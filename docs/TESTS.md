@@ -100,6 +100,8 @@ Ada's first line above is the refusal worth meeting here rather than on a live b
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
 
+Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and `hosts=`, `gpu=`, `used=` and `ancestors=` fields this transcript has no slot for.
+
 `read_root` reads the probe's own executable, `os.Executable()`, because the root it
 exercises is "the directory of the resolved command" and the probe's child is this
 binary; a transcript that named a shell there would be measuring `/bin`, which the
@@ -177,7 +179,7 @@ LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor\x20list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
-$ nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
+$ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
@@ -261,17 +263,23 @@ QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults:
 
 ```
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-SEARCH OK query=lantern\x20glazing\x20brass hits=3 k=3 channels=bm25 files=1268 chunks=33161
+SEARCH OK query=lantern\x20glazing\x20brass hits=3 k=3 channels=bm25 files=6 chunks=23
 SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=11.02 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
-SEARCH HIT rank=2 score=7.41 score-channel=bm25 fused=0.01639 class=notes name=- type=- root=./corpus: notes/index-notes.md:1 "- lantern-care — the glazing, the brass, and the two cloths…"
-SEARCH HIT rank=3 score=4.40 score-channel=bm25 fused=0.01613 class=log name=- type=- root=./corpus: log/1974-03-11.md:1 "washed the glazing at first light before the wind got up again…"
+SEARCH HIT rank=1 score=5.25 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
+SEARCH HIT rank=2 score=4.95 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind, and the haze is not visible from inside the lightroom at…"
+SEARCH HIT rank=3 score=3.00 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
+SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 
 $ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
-MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=1268 chunks=33161
+MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=6 chunks=23
 MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
-MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass…"
-MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
+MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the …"
+MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
+MEMORY HIT cand=1 rank=2 score=11.97 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind, and the haze is not visible from inside the lightroom at…"
+MEMORY HIT cand=1 rank=3 score=7.89 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
+MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
+MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
+MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
 ```
 
 ## nova-wake
@@ -467,11 +475,14 @@ CHECK HIT id=5a64568ee513a2544d6eb17cb445d4fc state=OPEN owner=bo: the Windows r
 CHECK OK matched=1 cards=4 scanned=OPEN words=1
 
 $ nova-board list --dir ./board --stale 10m --list --max 2
-BOARD CARD id=283e2dd1e5c5424d7637d28488365e98 state=OPEN owner=emma since=2026-09-10T11:00:00Z by=2026-09-11T09:00:00Z age=31h52m45s taken=- stale=true overdue=true conflicts=0 conflict=false quarantined=0 default=emma\x20writes\x20the\x20rows\x20by\x20hand\x20and\x20says\x20so thing=- leg=- evidence=-: the token ledger has no September rows yet
+BOARD CARD id=283e2dd1e5c5424d7637d28488365e98 state=OPEN owner=emma since=2026-09-10T11:00:00Z by=2026-09-11T09:00:00Z age=208h11m4s taken=- stale=true overdue=true conflicts=0 conflict=false quarantined=0 default=emma\x20writes\x20the\x20rows\x20by\x20hand\x20and\x20says\x20so thing=- leg=- evidence=-: the token ledger has no September rows yet
+BOARD CARD id=5a64568ee513a2544d6eb17cb445d4fc state=OPEN owner=bo since=2026-09-10T11:00:00Z by=2126-01-01T00:00:00Z age=208h11m4s taken=208h11m4s stale=true overdue=false conflicts=0 conflict=false quarantined=0 default=rowan\x20files\x20it\x20on\x20the\x20schema\x20board\x20as\x20a\x20known\x20gap thing=- leg=- evidence=-: the Windows runner skips three steps
 BOARD MORE kind=card shown=2 total=5 and 3 more; --max 0 shows all, or --owner <name> for one line's own batch
 BOARD LINE name=emma open=1 overdue=1 stale=1
+BOARD LINE name=bo open=1 overdue=0 stale=1
 BOARD MORE kind=line shown=2 total=4 and 2 more; --max 0 shows all
 BOARD LEG leg=cpp owed=1 probed=0
+BOARD LEG leg=go owed=0 probed=1
 BOARD NEXT the oldest OVERDUE card 283e2dd1e5c5424d7637d28488365e98, owed by emma, due 2026-09-11T09:00:00Z -- the token ledger has no September rows yet
 BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 quarantined=0 shown=10 backend=dir source=./board
 ```
@@ -485,6 +496,8 @@ already holds your words, so it can guard an `add` in one line of shell. Exit 0 
 Fixture: a pool this tool makes in `t.TempDir()`, `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider, and the WALL every job runs inside: `nova-sandbox` itself, built from this repository into the same directory, with `cmd/nova-swarm/testdata/fakesandbox` beside it for the seam tests that must run on a platform whose sandbox body is not built.
 
 Every contract test in `cmd/nova-swarm` runs its jobs **inside the real wall** on darwin (`--sandbox <the built binary>`) and takes this tool's one loud workaround (`--no-sandbox`, SPEC-SWARM; `nova-sandbox` has no such flag) where no body is built, which is the argv a reader sees in the test's own output.
+
+Platform: recorded on a machine whose wall probe fails (containment broken) — the `RUN REFUSED` and `RUN UNSANDBOXED` runs below are that machine's, and it is the last machine a friend should be reading a quickstart on; a bench whose wall proves itself (Linux landlock, say) prints `RUN POOL`, `RUN OK` and `RUN NOTE` instead.
 
 ### The wall at the launch seam
 
@@ -550,6 +563,36 @@ SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_r
 SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
 SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
 SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
+```
+
+
+## nova-play
+
+Fixture: `story.txt`, three lines of prose holding the documented passage once,
+written into `t.TempDir()` by `cmd/nova-play/firstrun_test.go`, which runs the
+sitting below there. The notes live beside the source, in `story.txt.notes`;
+every path is a flag, and nothing here leaves that directory.
+
+This block is compared LINE BY LINE AND IN ORDER, which most of the transcripts
+in this document are not: a run that prints one line fewer or one line more than
+is written here is red. The ids are content addresses and reproduce exactly, so
+they are compared as written; the `created=` instant is the one value belonging
+to the run rather than to the document, and is matched as an instant.
+
+### First run
+
+```text
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-19T06:29:53Z
+
+$ nova-play read --source story.txt
+READ OK source=story.txt notes=1
+NOTE id=f24beb35f0df author=Emma created=2026-09-19T06:29:53Z
+  PASSAGE The lantern room held a brass fitting.
+  BODY I wonder what alloy this is.
+
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+REPLY OK id=727fe2158637 author=Stella created=2026-09-19T06:29:53Z
 ```
 
 
@@ -711,28 +754,68 @@ exit 2 before anything is written.
 ### Refusals
 
 ```text
+$ nova-work
+WORK REFUSED: a verb is required; run: nova-work help
+
 $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
 ```
 
-## nova-work
+Both exit 2 and print one line on stderr, and the two spellings are deliberate
+rather than a drift: `WORK REFUSED:` is what the client spec gives an invocation
+that could not run at all, and `nova-work <verb>:` is what a verb that ran and read
+its input says about the input. `cmd/nova-work/firstrun_test.go` executes this
+block as well as the one above; until 2026-09-19 it executed neither refusal, and
+what that cost is written below.
 
-`nova-work` is the work layer's event bridge. Its one shipped verb, `events`, publishes
-the pub/sub messages `nova-merge react` subscribes to (docs/SPEC-JOBS.md, "Events, not
-ticks"). It makes no model call and writes no record: the bus is a signal, git is the
-record. The relay needs a local Redis — `--redis <addr>` — and the gh fallback is off
-unless `--repo` names the repository, so a test drives a miniredis and a fake forge and
-reaches no network.
+### The card-result record
 
-### First run
+`nova-work record` consumes the `cards:done` Redis stream and writes one row per result
+into the `card_results` table, idempotent on the stream id, acking only after the commit;
+`nova-work results` lists and filters those rows.
+
+These lines are a `###` subsection of this one `## nova-work` section rather than a second
+section of their own: `onboarding.Section` reads the first match of a name, so a second
+`## nova-work` is read by nobody and drifts unwatched. They are also not under
+`### First run`, because that block is executed with the tool's production seams and these
+two verbs would reach a real Postgres and a real Redis. `cmd/nova-work/firstrun_test.go`
+runs each `$` line below through `run` with a fake store and a one-message consumer behind
+the seam, and the same store answers every line, so the `results` call lists the row the
+`record` call wrote.
 
 ```text
-$ nova-work
-nova-work: no verb given; run: nova-work help
+$ nova-work record --migrate --postgres postgres://space/nova
+MIGRATE OK schema=1
 
-$ nova-work events --redis 127.0.0.1:6379 --repo mas-bandwidth/nova-tools --once
-EVENTS OK once=true card-done=0 published=1
+$ nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+RECORD id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results inserted=true result=RESULT: CARD-9347 card results in Postgres
+RECORD OK seen=1 inserted=1 duplicate=0 malformed=0
+
+$ nova-work results --postgres postgres://space/nova --bench space --failed
+RESULT id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results pr=- done=2026-09-18T12:00:00Z result=RESULT: CARD-9347 card results in Postgres
 ```
+
+### The event bridge
+
+`nova-work events` publishes the pub/sub messages `nova-merge react` subscribes to
+(docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call and writes no
+record: the bus is a signal, git is the record.
+
+It has no `$` line above because it cannot have one. The relay needs a local Redis
+(`--redis <addr>`), and naming the repository with `--repo` switches ON a
+`gh pr list` fallback that reaches the forge — without `--repo` only the stream is
+bridged. `cmd/nova-work/events_log_test.go` drives it against a miniredis and a
+fake forge, and the usage banner's `example:` block runs it without `--repo`. That
+is where a line needing a running service belongs: every `$` line in this file is
+one a stranger can type on a fresh bench.
+
+This description used to head a SECOND `## nova-work` section further down this
+file. Because `onboarding.Section` reads the first match of a name, no test ever
+executed it, and it drifted into a refusal sentence the binary had stopped printing
+(`nova-work: no verb given`) and an `events` line carrying `--repo`. Both
+reproduced as DEFECT on space and on hulk in the 2026-09-18 two-bench run while
+every test in this repository was green. `internal/ci/onboarding_test.go` now
+refuses a repeated `## ` heading here.
 
 ## nova-ci
 

@@ -290,6 +290,8 @@ func TestNetVerbLineMatchesTheSpec(t *testing.T) {
 // ones the allowlist already names. The count is the truth about the CI path
 // whether or not the lines printed.
 func TestNoRealNetworkHostsOnTheCIPath(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := filepath.Join(root, "internal", "ci", "testdata", "net-allowlist.txt")
 	res, err := CheckNet(root, allow)

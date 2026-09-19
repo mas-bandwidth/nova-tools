@@ -96,7 +96,8 @@ func writeAt(t *testing.T, path, body string) {
 func TestPullWaitsForResult(t *testing.T) {
 	windowsIsNotABench(t)
 	dir := t.TempDir()
-	remoteJob := filepath.Join(dir, "bench", "3", "jobs", "a")
+	remoteSlot := filepath.Join(dir, "bench", "3")
+	remoteJob := filepath.Join(remoteSlot, "jobs", "a")
 	localJob := filepath.Join(dir, "root", "b2-3", "jobs", "a")
 	// The result is not on the bench when the slot's shell returns: it appears on the
 	// THIRD ask, so a pull that asks once and copies gets nothing, whatever the machine's
@@ -107,11 +108,11 @@ func TestPullWaitsForResult(t *testing.T) {
 		appearBody:  "RESULT: a\nall green\n",
 	})
 	writeAt(t, filepath.Join(remoteJob, "usage.tsv"), "tokens_in\ttokens_out\tusd\n10\t20\t0.0100\n")
-	writeAt(t, filepath.Join(remoteJob, "native.log"), "the card's own log\n")
+	writeAt(t, filepath.Join(remoteSlot, "native.log"), "the card's own log\n")
 
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
-		host: "b2", remoteJob: remoteJob, localJob: localJob,
+		host: "b2", remoteSlot: remoteSlot, remoteJob: remoteJob, localJob: localJob,
 		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
@@ -164,6 +165,16 @@ func TestPullWaitsForResult(t *testing.T) {
 				strings.HasPrefix(arg, "--include=") || strings.HasPrefix(arg, "--exclude=") {
 				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 			}
+		}
+		// Match the FLAG, never a path that merely contains its letters: a
+		// workspace root named `...-root` carries "-r" in the destination.
+		for _, filter := range []string{"--include", "--exclude", "-r"} {
+			if strings.Contains(l, " "+filter) || strings.HasPrefix(l, filter) {
+				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
+			}
+		}
+		if strings.Contains(l, "*") {
+			t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 		}
 	}
 	for _, want := range []string{"RESULT.md", "usage.tsv", "native.log"} {
@@ -242,6 +253,7 @@ func TestPullScoresBenchUnreachable(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2",
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 		PullWait: 150 * time.Millisecond, PullPoll: 50 * time.Millisecond,
 		Stdout: &out, Stderr: &errb,
 	})

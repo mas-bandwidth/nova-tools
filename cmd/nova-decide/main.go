@@ -54,6 +54,10 @@ usage:
 
   nova-decide log --log <path> --summary [--registry <path>]
 
+  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked
+                     (what HAPPENED to a unit a decision routed; the kind and
+                      the rung are read from that decision, never retyped)
+
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
@@ -194,6 +198,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runRoute(args[1:], stdout, stderr)
 		case "log":
 			return runLog(args[1:], stdout, stderr)
+		case "outcome":
+			return runOutcome(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("nova-decide", flag.ContinueOnError)

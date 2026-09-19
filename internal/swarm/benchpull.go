@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // pullResultWait is how long the pull waits for RESULT.md to appear on the bench after the
@@ -61,17 +62,18 @@ type pullClock interface {
 	Sleep(time.Duration)
 }
 
-// benchPull is one card's pull: the bench it ran on, the job directory there, and the job
-// directory here.
+// benchPull is one card's pull: the bench it ran on, the slot directory there, the job
+// directory there, and the job directory here.
 type benchPull struct {
-	host      string        // the ssh alias
-	remoteJob string        // <root>/<n>/jobs/<label> on the bench
-	localJob  string        // <root>/<bench>-<n>/jobs/<label> here
-	label     string        // the card's label, named on the copied-up note
-	wait      time.Duration // how long to wait for RESULT.md to exist remotely
-	poll      time.Duration // how often to ask
-	notes     io.Writer     // where BATCH NOTE lines go
-	clock     pullClock     // nil means the real clock
+	host       string        // the ssh alias
+	remoteSlot string        // <root>/<n> on the bench, the slot native wrote <slot>/native.log under
+	remoteJob  string        // <root>/<n>/jobs/<label> on the bench
+	localJob   string        // <root>/<bench>-<n>/jobs/<label> here
+	label      string        // the card's label, named on the copied-up note
+	wait       time.Duration // how long to wait for RESULT.md to exist remotely
+	poll       time.Duration // how often to ask
+	notes      io.Writer     // where BATCH NOTE lines go
+	clock      pullClock     // nil means the real clock
 }
 
 // pullFromBench waits for the card's RESULT.md, copies the three files back by one explicit
@@ -123,7 +125,9 @@ func pullFromBench(p benchPull) error {
 	}
 	_ = scpFile(p.host, p.remoteJob+"/usage.tsv", filepath.Join(p.localJob, "usage.tsv"))
 	log := filepath.Join(p.localJob, "native.log")
-	if err := scpFile(p.host, p.remoteJob+"/native.log", log); err == nil {
+	// native writes its own log to <slot>/native.log, so the third file comes back from
+	// the slot directory, not the job (#656).
+	if err := scpFile(p.host, p.remoteSlot+"/native.log", log); err == nil {
 		if err := truncateToTail(log, pullLogTail); err != nil {
 			return err
 		}
@@ -184,6 +188,7 @@ func findResultUnderRepo(host, job string) (string, error) {
 // scpFile copies one remote file to one local path. One file, named on both sides: no
 // recursion, no include filter, nothing that can succeed while copying nothing.
 func scpFile(host, remote, local string) error {
+	testguard.RefuseHosts("scp", host+":"+remote, local)
 	cmd := exec.Command("scp", host+":"+remote, local)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("scp %s: %s", remote, strings.TrimSpace(string(out)))
@@ -192,6 +197,7 @@ func scpFile(host, remote, local string) error {
 }
 
 func sshRun(host string, args ...string) error {
+	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
 	cmd := exec.Command("ssh", append([]string{host}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
@@ -200,6 +206,7 @@ func sshRun(host string, args ...string) error {
 }
 
 func sshOutput(host string, args ...string) (string, error) {
+	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
 	cmd := exec.Command("ssh", append([]string{host}, args...)...)
 	out, err := cmd.Output()
 	if err != nil {

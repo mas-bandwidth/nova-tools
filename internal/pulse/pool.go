@@ -118,6 +118,7 @@ func readSources(path string) ([]source, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unreadable: %w", err)
 	}
+	dir := filepath.Dir(path)
 	var srcs []source
 	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -128,7 +129,11 @@ func readSources(path string) ([]source, error) {
 		if len(parts) < 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 			return nil, fmt.Errorf("line %d is not kind<TAB>locator<TAB>template", i+1)
 		}
-		srcs = append(srcs, source{kind: parts[0], locator: parts[1], template: parts[2]})
+		kind, locator, template := parts[0], parts[1], parts[2]
+		if kind == "roadmap" && !filepath.IsAbs(locator) {
+			locator = filepath.Join(dir, locator)
+		}
+		srcs = append(srcs, source{kind: kind, locator: locator, template: template})
 	}
 	return srcs, nil
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // Bench is one row of the benches table: a machine that runs slots.
@@ -269,7 +270,12 @@ func scratchName(c batchCard) string {
 // remoteRun copies the card to the bench -- the card only, nothing else -- then builds the
 // ssh command that runs native there: ssh <host> [taskset -c <core>] <root>/bin/nova-swarm
 // native ..., with the ssh child in a process group of its own.
-func remoteRun(c batchCard, b Bench, localRoot string, deadline int, logFile *os.File) (*exec.Cmd, error) {
+func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore, slotOwner string, logFile *os.File) (*exec.Cmd, error) {
+	// The bench slot lease travels with the launch (nova-tools#1546). The store path is
+	// resolved ON THE BENCH, not here: this argv is what ssh runs there.
+	if slotsStore == "" || slotOwner == "" {
+		return nil, fmt.Errorf("%s", NoSlotsStoreRefusal)
+	}
 	cardDest := filepath.Join(b.Root, "cards", c.label+".md")
 	if err := copyCardToBench(c.cardPath, b, cardDest); err != nil {
 		return nil, fmt.Errorf("nova-swarm batch: card %s could not be copied to bench %s: %s",
@@ -289,10 +295,13 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, logFile *os
 		"--model", c.model,
 		"--label", c.label,
 		"--card", cardDest,
-		"--slot", filepath.Join(b.Root, strconv.Itoa(c.slot), "jobs", c.label),
+		"--slot", filepath.Join(b.Root, strconv.Itoa(c.slot)),
 		"--root", b.Root,
 		"--deadline", strconv.Itoa(deadline),
+		"--slots-store", slotsStore,
+		"--owner", slotOwner,
 	)
+	testguard.RefuseHosts(argv[0], argv[1:]...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+localRoot)
 	cmd.Stdout = logFile
@@ -304,6 +313,7 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, logFile *os
 // copyCardToBench runs rsync to move the card to the bench's cards directory, the one file
 // that crosses before the run.
 func copyCardToBench(local string, b Bench, dest string) error {
+	testguard.RefuseHosts("rsync", local, b.Host+":"+dest)
 	cmd := exec.Command("rsync", local, b.Host+":"+dest)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

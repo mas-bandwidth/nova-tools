@@ -43,6 +43,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // requireBench holds a bench NAME against the machines registry before the verb opens an
@@ -555,6 +556,7 @@ func (s sshShell) Run(bench, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
+	testguard.RefuseHosts(prog, "-n", "-o", "BatchMode=yes", bench, script)
 	cmd := exec.CommandContext(ctx, prog, "-n", "-o", "BatchMode=yes", bench, script)
 	var out bytes.Buffer
 	said := &benchTail{}

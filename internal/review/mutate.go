@@ -186,7 +186,7 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 		return nil, err
 	}
 
-	units, skips := plan(repo, tests)
+	units, skips := plan(wt, tests)
 	res := &MutateResult{Head: head, Skips: skips}
 	redFiles := map[string]bool{}
 	skipped := map[string]bool{}
@@ -303,11 +303,13 @@ func revert(ctx context.Context, repo, wt, base string, others []change) error {
 
 var goTestFunc = regexp.MustCompile(`(?m)^func (Test[A-Z_0-9][A-Za-z_0-9]*)\(`)
 
-// plan turns changed test files into runnable units. A Go test file contributes every test
-// function it declares AT THE HEAD (the tree the worktree started from, which is the tree
-// the test files still hold after the revert); a Lisp test file contributes its project's
+// plan turns changed test files into runnable units, reading them in the WORKTREE and never
+// in the caller's working copy: the worktree is the head, and the caller may sit on any
+// commit at all -- on the base, a test file the head adds is not there to read. A Go test
+// file contributes every test function it declares there (the revert leaves the test hunks
+// alone, so that is the head's text); a Lisp test file contributes its project's
 // run-tests.sh. A file that is neither is skipped with its reason named.
-func plan(repo string, tests []change) ([]unit, []Skip) {
+func plan(wt string, tests []change) ([]unit, []Skip) {
 	var units []unit
 	var skips []Skip
 	for _, t := range tests {
@@ -317,7 +319,7 @@ func plan(repo string, tests []change) ([]unit, []Skip) {
 		}
 		switch {
 		case strings.HasSuffix(t.path, "_test.go"):
-			src, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(t.path)))
+			src, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(t.path)))
 			if err != nil {
 				skips = append(skips, Skip{File: t.path, Reason: "could not read the test file at the head"})
 				continue
@@ -338,7 +340,7 @@ func plan(repo string, tests []change) ([]unit, []Skip) {
 				continue
 			}
 			script := path.Join(proj, "run-tests.sh")
-			if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(script))); err != nil {
+			if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(script))); err != nil {
 				skips = append(skips, Skip{File: t.path, Reason: "the lisp project has no run-tests.sh"})
 				continue
 			}

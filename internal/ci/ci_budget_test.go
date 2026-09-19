@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -162,7 +161,19 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	if len(certNames) == 0 {
 		t.Fatal("no jobs parsed from certification.yml; the parser is looking in the wrong place")
 	}
+	inventory := toSet(splitMovedJobs)
+	for name, reason := range droppedByRuling {
+		if !inventory[name] {
+			t.Errorf("droppedByRuling names %q, which is not in splitMovedJobs; an exception to a list must be an entry of that list", name)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("the exception for %q carries no reason; an exception must say why it exists", name)
+		}
+	}
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !certNames[name] {
 			t.Errorf("job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
 		}
@@ -170,6 +181,9 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 
 	needs := certificationOKNeeds(cert)
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !needs[name] {
 			t.Errorf("certification-ok does not list %q in its needs; every certification job must be aggregated", name)
 		}
@@ -258,7 +272,9 @@ func jobBody(src, name string) string {
 // holding a reason, and the check reads the code before any comment on the
 // line, so prose about the rule cannot trip it.
 func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	sub10Re := regexp.MustCompile(`(^|[^0-9])([1-9])\s*[\*]\s*time[.]Second\b`)
 	anySecRe := regexp.MustCompile(`time[.]Second\b`)
 	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
@@ -276,20 +292,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	// reason (issue #916).
 	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
 	for _, dir := range []string{"internal", "cmd"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Errorf("cannot read %s: %v", path, err)
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
+		for _, f := range tree.GoFilesUnder(true, dir) {
+			raw := f.Src
+			rel := f.Rel
 			// The batch-deadline shape is scoped to the files that drive the batch:
 			// only there does a short deadline/idle literal reach a real process.
 			// A file drives the batch when it builds a BatchInput -- through the
@@ -319,10 +324,6 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				// A bare duration with no multiplier on the line is one second.
 				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -569,6 +570,27 @@ var splitMovedJobs = []string{
 	"smoke",
 	"release-dry-run",
 	"perf",
+}
+
+// droppedByRuling is the dated, quoted exception to "the split must delete
+// nothing": the jobs that DID leave ci.yml in the 2026-09-12 split but that
+// certification.yml no longer has to carry, because a later ruling retired them
+// outright rather than moving them. The class rule is untouched — every other
+// job in splitMovedJobs must still be present and still be aggregated by
+// certification-ok. Only the names listed here are skipped, and each one carries
+// the ruling that struck it.
+//
+// Glenn, 2026-09-18: "We will not support windows without WSL2. It is not worth
+// it." / "let's drop the native windows CI runners. WSL only from now on."
+// #1449 removed these three from ci.yml on that ruling but left them in
+// certification.yml, so certification-ok was red on every dev sha and
+// `nova-update release cut` refused every tip (CUT REFUSED
+// certification-ok=failure). The Windows guard that remains is the cross-vet,
+// `GOOS=windows go vet`, which needs no Windows machine.
+var droppedByRuling = map[string]string{
+	"build-windows":    `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"windows-packages": `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"test-windows":     `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
 }
 
 // certificationOKNeeds returns the set of job names listed in certification-ok's

@@ -163,7 +163,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
      admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
      is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card
      ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
-     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
+     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued. `launch` takes
+     an optional `--routes <routes.tsv>`: with it, every card's worker is a typed decision —
+     the shared core behind `nova-swarm route`, [SPEC-DECIDE.md](SPEC-DECIDE.md) rule 8 —
+     over the four questions, with `--floor` (default 0.9), `--key-env` (default
+     `JEV_API_KEY`) and `--base-url`, and one batch runs per chosen worker description. Below
+     the floor the card keeps its own model column as the default worker, and the line says
+     so. Every decision appends one `ROUTE` line to `<queue>/ROUTES.log` beside the card's
+     label and the time, so the floor is re-tuned from rows and never from a feeling. With no
+     `--routes` the cards group by their model column exactly as before, and no `ROUTES.log`
+     is written.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
 10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
     `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s
@@ -232,7 +241,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
     rewritten, the row's `seen.tsv` state becomes `retry`, and only then does `pool` pick
     the item up again (rule 2). An abstain is a prompt defect
-    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
+    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*). When
+    `nova-pulse run` is given `--decide`, each harvest makes one typed decision per newly
+    finished task before it disposes of it: a task whose `needs_human` is at or above
+    `--floor` is appended to `<queue>/HUMAN` as one line
+    `HUMAN task=<id> reason=<r> conf=<c> card=<label>` and is not auto-retried, so a person
+    reads the inbox instead of the loop retrying a task that needs them; a
+    `provider_error` above the floor is requeued once by rule 14's own path; below the
+    floor nothing changes and the pool's own class stands. The decision is the core of
+    `nova-swarm triage --decide` (`internal/swarm.DecideFinished`), and the loop makes no
+    model call of its own.
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
     and `launch` in that order, with `queue.tsv` rows first, then `next.tsv`, then
     the sources, and prints the next `PULSE` line as its own last line. When the pool and the
@@ -389,6 +407,15 @@ builds `nova-sandbox` from the checkout and runs the network fetch inside it,
 failing unless the fetch answers 200, so a bench enters the loop only after the
 SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
 one passed while every sandboxed card died.
+
+The sandbox network probe is Linux only and runs after the toolchain checks: it
+makes a temp dir under `$HOME/nova-bench`, then runs `$HOME/.local/bin/nova-sandbox
+--read $HOME/nova-bench --write <tmp> --cwd <tmp> -- curl -s -o /dev/null -w
+'%{http_code}' https://models.opencode.ai/api.json` with `HOME=<tmp>/home`,
+expecting `200`; any other code, including an empty reply, is `DRIFT
+sandbox-network: curl inside nova-sandbox got http=<code> (want 200)`.
+`NOVA_PROBE_URL` overrides the URL, so the test fakes the sandbox and the `curl`
+behind it and no test touches the network.
 
 The hurts, one line each: tonight's 97 ssh turns in the window is the cost
 this section exists to remove; the bins drift Stella found is what `fleet
@@ -599,6 +626,26 @@ six hours; an empty slot goes; runner `_work/_temp` entries older than a day go;
 build cache is dropped when disk free is below 25 GB or the cache itself is above 20 GB. A
 live job is never reaped, however old its neighbours are.
 
+**The shell reaper deletes on a lease and an age, never on a shape** (issue #1499, after it
+ate a certify tree, corpus and all, on two benches mid-pass). `scripts/bench-hygiene.sh` --
+the script the benches run today, and the one `--install` writes -- asks three questions the
+rules above did not. **Is it a slot?** A slot is the shape the launcher makes, `<slot>/jobs`;
+a directory under either root without one is somebody's work and is skipped whole, at any
+age. **Is it leased?** `nova-swarm native` writes `<job>/.lease` before the child starts,
+carrying its pid and a heartbeat it bumps every 30 s while the child runs, and removes it
+when the run ends; a job whose lease names a live pid or whose heartbeat is under ten minutes
+old is live and is never touched, and neither are the slot's `data` (the card's HOME) and
+`tmp` (its TMPDIR) around it. `pgrep` and a process cwd stay as a second reason to KEEP; no
+silence is ever a reason to delete, because one long model call and one long compile are both
+silent. **Is it old?** An unleased job goes when it is harvested, or when nothing in it has
+changed for six hours; an emptied slot goes only once it too has been quiet six hours, read
+before the pass deletes anything under it. The build cache is never dropped while any lease
+is live (`cache=kept-lease`). Replay: `scripts/bench-hygiene_test.sh`.
+
+The Go verb above has not inherited these three rules yet: it still reads a fifteen-minute
+silence as death and deletes any empty directory under a root at any age. It must take the
+shape, the lease and the age before it replaces the script on a bench.
+
 **The runner `_diag` prune is two rules, and one of them is a size cap.** Each
 `$HOME/runner-*/_diag` is bounded by an age window, `--diag-days` (**two** days by default),
 and then by a per-runner-directory cap, `--diag-max-bytes` (**2 GiB** by default), which
@@ -681,7 +728,7 @@ runner name and the run id on the line.
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
