@@ -410,6 +410,13 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: a fix without its reproducing test is not admitted (add the red: line or a test file to the diff)", oneline.Field(card), oneline.Field(branch))
 		return
 	}
+	// The manager pushes with a LEADING PLUS -- a forced update -- so it gets the same
+	// branch rule as every other push path (Johnny's hold on #1809).
+	if err := mustBranchPrefix(branch); err != nil {
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Err(err))
+		return
+	}
 	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return

@@ -17,12 +17,16 @@ package pulse
 // recorded. A RESULT that names a third thing is refused by name, and the card is counted
 // `refused` exactly like a fix card with no red line -- a state the operator already reads.
 //
-// WHAT THIS DELIBERATELY DOES NOT DO. #1824 also asks for the branch to be under the card's
-// prefix and for #1650's `accept` gate to run between verify and push. Neither is here: this
-// repo's own harvest tests push branches with no prefix at all, so a prefix policy is a
-// behaviour change for every existing deployment and a ruling rather than a fix, and the
-// accept gate is #1650's lane. What is closed here is the hole that let the destination
-// itself be chosen by the worker.
+// THE BRANCH, ON STELLA'S RULING (2026-09-19, on #1824). The repo's own harvest tests used
+// to push branches with no prefix at all, so refusing one is a behaviour change rather than
+// a bug fix, and it needed a ruling. The ruling is yes: an unprefixed or off-prefix branch
+// is refused, the prefix is the existing `rowan/` -- the one `cut` already generates and a
+// bench harvest already filters by -- and there is no new prefix and no configuration
+// escape. Those tests moved to the prefix in the same change; that is the authorised
+// behaviour change, and it is listed in the PR rather than buried in a fixture.
+//
+// WHAT THIS STILL DOES NOT DO: #1650's `accept` gate between verify and push. That is
+// #1650's lane (toolwork T05), and Stella holds the adoption word on it.
 
 import (
 	"context"
@@ -32,6 +36,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // pulseCardsPath is where `launch` writes the cards it admitted: <root>/cards/<id>/cards.tsv
@@ -52,7 +58,16 @@ func allowedPush(in HarvestInput, jobDir string, c CardRow, repo, branch string)
 		return fmt.Errorf("the RESULT.md names no repository to push to; a REPO line is required before a push")
 	}
 	if branch == "" || branch == "main" || branch == "master" {
-		return fmt.Errorf("the RESULT.md names branch %q; harvest never pushes a trunk", branch)
+		return fmt.Errorf("the RESULT.md names branch %s; harvest never pushes a trunk", oneline.Quote(branch))
+	}
+	// THE PREFIX (Stella's ruling on #1824, 2026-09-19). The branch is the other half of
+	// the destination the worker chose, and an off-prefix branch is refused the same way
+	// an off-repo remote is. The prefix is THIS LINE'S OWN, the one `cut` already
+	// generates (cut.go, branchOf) and the one a bench harvest already filters by: there
+	// is no new prefix and no flag to relax it, because a guard with a configuration
+	// escape is a guard the next caller turns off.
+	if err := mustBranchPrefix(branch); err != nil {
+		return err
 	}
 
 	if want := cardRepo(c.Card); want != "" {
@@ -134,4 +149,31 @@ func cloneOrigin(jobDir string) string {
 		}
 	}
 	return ""
+}
+
+// mustBranchPrefix is THE branch rule, in one place, for every push path there is.
+//
+// Stella ruled on #1824 that an unprefixed or off-prefix branch is refused; the prefix is
+// the existing `rowan/`, with no new prefix and no configuration escape. Johnny then held
+// the first cut because the rule lived on the local Harvest() path alone while
+// `harvest --working`, `harvest --bench` and the manager pushed past it. A rule with one
+// implementation and four call sites is a rule; a rule implemented once per caller is four
+// rules that will disagree.
+//
+// Every function in this package that runs `git push` or opens a pull request calls this
+// first, and TestEveryPushPathChecksTheBranchPrefix enumerates those functions from the
+// package's own source so a fifth push site cannot be added without one.
+func mustBranchPrefix(branch string) error {
+	b := strings.TrimSpace(branch)
+	if b == "" {
+		return fmt.Errorf("no branch to push: a RESULT.md that asks for a push names its branch on a BRANCH line")
+	}
+	if b == "main" || b == "master" {
+		return fmt.Errorf("branch %s is a trunk; harvest never pushes one", oneline.Quote(b))
+	}
+	if !strings.HasPrefix(b, DefaultBranchPrefix) {
+		return fmt.Errorf("branch %s is not under %s -- every branch this line pushes is, and the prefix is not configurable (Stella's ruling on #1824); nothing was pushed",
+			oneline.Quote(b), field(DefaultBranchPrefix))
+	}
+	return nil
 }

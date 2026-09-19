@@ -195,7 +195,7 @@ func TestHarvestScoresLine1ByPrefixLikeTheGather(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/8")
 
 	addCard(t, root, "cardp", "1", "flash", "RESULT cardp sha=bbb",
-		"RESULT cardp sha=bbb extra from worker\nDONE\nBRANCH bp\nREPO owner/repo\n")
+		"RESULT cardp sha=bbb extra from worker\nDONE\nBRANCH rowan/bp\nREPO owner/repo\n")
 
 	out, errb := runHarvest(t, root)
 	if !strings.Contains(out, "done=1") || !strings.Contains(out, "pushed=1") {
@@ -214,7 +214,7 @@ func TestHarvestStillRefusesAWrongLine1(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/9")
 
 	addCard(t, root, "cardq", "1", "flash", "RESULT cardq sha=bbb",
-		"RESULT cardq sha=ccc\nDONE\nBRANCH bq\nREPO owner/repo\n")
+		"RESULT cardq sha=ccc\nDONE\nBRANCH rowan/bq\nREPO owner/repo\n")
 
 	out, _ := runHarvest(t, root)
 	if !strings.Contains(out, "mismatch=1") || !strings.Contains(out, "pushed=0") {
@@ -337,7 +337,7 @@ func TestRelaunchPassesTheWidthAndDeadlineThePulseRanWith(t *testing.T) {
 		Stdout: "PULSE OK id=p2 n=1 free-before=1 queued=0 batches=1 deadline=300",
 	}})
 	writePulseTable(t, root, "p1", 1, 6, "900")
-	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd", "RESULT done sha=ddd\nDONE\nBRANCH bd\nREPO owner/repo\n")
+	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd", "RESULT done sha=ddd\nDONE\nBRANCH rowan/bd\nREPO owner/repo\n")
 	queueCard(t, root, "q1")
 
 	out, errb := runHarvest(t, root)
@@ -372,7 +372,7 @@ func TestRelaunchSaysSoWhenThePulseShapeIsUnrecorded(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "pulses", "p1.tsv"), []byte("pulse-p1\t1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd", "RESULT done sha=ddd\nDONE\nBRANCH bd\nREPO owner/repo\n")
+	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd", "RESULT done sha=ddd\nDONE\nBRANCH rowan/bd\nREPO owner/repo\n")
 	queueCard(t, root, "q1")
 
 	_, errb := runHarvest(t, root)
@@ -396,7 +396,7 @@ func TestRelaunchAdmitsTheQueueLaunchActuallyWrote(t *testing.T) {
 	fakeTool(t, specs, "nova-pulse", fakeSpec{Log: arglog, Default: fakeRule{
 		Stdout: "PULSE OK id=p2 n=1 free-before=1 queued=0 batches=1 deadline=300",
 	}})
-	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd", "RESULT done sha=ddd\nDONE\nBRANCH bd\nREPO owner/repo\n")
+	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd", "RESULT done sha=ddd\nDONE\nBRANCH rowan/bd\nREPO owner/repo\n")
 	card := queueCard(t, root, "g2")
 
 	out, errb := runHarvest(t, root)
@@ -467,5 +467,172 @@ func TestHarvestIDChecksThePulseTablesOwnContract(t *testing.T) {
 
 	if !strings.Contains(out.String(), "mismatch=1") || !strings.Contains(out.String(), "pushed=0") {
 		t.Fatalf("the card's own contract, from the pulse table, was not the one checked:\n%s\n%s", out.String(), errb.String())
+	}
+}
+
+// ============================================================================
+// #1824, STELLA'S RULING AND JOHNNY'S HOLD: the branch prefix, on EVERY push path.
+//
+// Stella (2026-09-19): harvest refuses an unprefixed or off-prefix branch; the prefix is
+// the existing `rowan/`; no new prefix and no configuration escape. She asked for a
+// local-harvest no-push negative control and a generated-branch positive control.
+//
+// Johnny then held PR #1809 because the rule lived on the local Harvest() path alone:
+// `harvest --working` and `harvest --bench` still pushed past it. The class test
+// TestEveryPushPathChecksTheBranchPrefix enumerates the push sites; these are the
+// behaviours, per path.
+// ============================================================================
+
+// STELLA'S NEGATIVE CONTROL, local harvest: an off-prefix branch is refused and NOTHING
+// reaches a remote -- no push, no PR, not even an attempt.
+func TestHarvestRefusesAnOffPrefixBranchAndPushesNothing(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/20")
+
+	addCard(t, root, "offp", "1", "flash", "RESULT offp sha=aaa",
+		"RESULT offp sha=aaa\nDONE\nBRANCH feature/mine\nREPO owner/repo\n")
+
+	out, errb := runHarvest(t, root)
+	if !strings.Contains(out, "refused=1") || !strings.Contains(out, "pushed=0") || !strings.Contains(out, "prs=0") {
+		t.Fatalf("an off-prefix branch must be refused with nothing pushed:\n%s\n%s", out, errb)
+	}
+	if !strings.Contains(errb, "feature/mine") || !strings.Contains(errb, DefaultBranchPrefix) {
+		t.Fatalf("the refusal must name the branch and the prefix: %q", errb)
+	}
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") || strings.Contains(l, "pr create") {
+			t.Fatalf("nothing may reach a remote: %s", l)
+		}
+	}
+}
+
+// STELLA'S POSITIVE CONTROL: a branch GENERATED the way this line generates them -- by
+// cut's own branchOf -- passes, so the rule accepts the branches the system itself makes.
+func TestHarvestPushesTheBranchCutItselfGenerates(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/21")
+
+	generated := branchOf(PoolRow{ID: "owner/repo#4242"})
+	if !strings.HasPrefix(generated, DefaultBranchPrefix) {
+		t.Fatalf("cut generates %q, which is not under %q: the generator and the gate have drifted", generated, DefaultBranchPrefix)
+	}
+	addCard(t, root, "gen", "1", "flash", "RESULT gen sha=aaa",
+		"RESULT gen sha=aaa\nDONE\nBRANCH "+generated+"\nREPO owner/repo\n")
+
+	out, errb := runHarvest(t, root)
+	if !strings.Contains(out, "pushed=1") || !strings.Contains(out, "prs=1") {
+		t.Fatalf("a branch this line's own cut generated must push:\n%s\n%s", out, errb)
+	}
+	if !strings.Contains(out, "branch="+generated) {
+		t.Fatalf("the PR line must name the generated branch:\n%s", out)
+	}
+}
+
+// JOHNNY'S HOLD, path 2: `harvest --working`. MEASURED, AND SAID PRECISELY: this path was
+// NOT pushing off-prefix branches -- it carried its own `strings.HasPrefix(branch,
+// "rowan/")` literal and classified them off-branch. What it had was a SECOND
+// implementation of the rule, which is the half of Johnny's hold that is real here: two
+// spellings agree until one is edited. It now calls the one guard, the classification is
+// unchanged, and this test pins both the refusal and that the path still works. It matters
+// more here than anywhere: this is the path that pushes with --force-with-lease.
+func TestHarvestWorkingRefusesAnOffPrefixBranch(t *testing.T) {
+	working := t.TempDir()
+	specs := fakePATH(t)
+	arglog := filepath.Join(working, "argv.log")
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
+		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/stella/z"},
+	}})
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 2, Equals: "list", Stdout: `[]`},
+		{Arg: 2, Equals: "create", Stdout: "https://forge.invalid/o/r/pull/22"},
+	}})
+	// One job on someone else's prefix, one on this line's own.
+	wkJob(t, working, "g-z", "z", wkResult("z", "stella/z", "o/r"))
+	wkJob(t, working, "g-w", "w", wkResult("w", "rowan/w", "o/r"))
+
+	out, _, _ := wkRun(t, HarvestInput{Working: working, Base: "0123456789ab", Max: 20})
+
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") && strings.Contains(l, "stella/z") {
+			t.Fatalf("--working force-pushed an off-prefix branch: %s", l)
+		}
+	}
+	if !strings.Contains(out, "label=z class=off-branch") || !strings.Contains(out, "reason=not-rowan") {
+		t.Fatalf("the off-prefix job must be classed off-branch and pushed nowhere:\n%s", out)
+	}
+	// And the path still works for a branch that IS this line's.
+	pushedMine := false
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") && strings.Contains(l, "rowan/w") {
+			pushedMine = true
+		}
+	}
+	if !pushedMine {
+		t.Fatalf("--working must still push this line's own branch:\n%s", strings.Join(arglogLines(t, arglog), "\n"))
+	}
+}
+
+// JOHNNY'S HOLD, path 3: `harvest --bench`. --branch-prefix SELECTS jobs; it is not the
+// guard, and a caller who widens it must not thereby push someone else's branch.
+func TestHarvestBenchRefusesAnOffPrefixBranchEvenWhenTheFilterAllowsIt(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	benchGit(t, specs, arglog, nil)
+	mine := "/home/gaffer/rowan-swarm-root/0/jobs/card-1"
+	theirs := "/home/gaffer/rowan-swarm-root/1/jobs/card-2"
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		if strings.Contains(script, "touch") {
+			return "", nil
+		}
+		return benchJobListing(mine, []string{
+			"RESULT card-1 sha=abc", "DONE",
+			"BRANCH rowan/card-1", "REPO mas-bandwidth/nova-tools",
+		}) + benchJobListing(theirs, []string{
+			"RESULT card-2 sha=abc", "DONE",
+			"BRANCH stella/card-2", "REPO mas-bandwidth/nova-tools",
+		}), nil
+	}}
+	forge := &fakeForge{}
+	in := benchHarvestInput(t, root, shell, forge)
+	// The filter is widened to everything: without the guard this admits stella/card-2.
+	in.BranchPrefix = DefaultBranchPrefix
+	code, out, errb := runBenchHarvest(t, in)
+	if code != 0 {
+		t.Fatalf("exit=%d\n%s\n%s", code, out, errb)
+	}
+	for _, p := range forge.opened {
+		if !strings.HasPrefix(p.branch, DefaultBranchPrefix) {
+			t.Fatalf("--bench opened a PR on an off-prefix branch: %+v", p)
+		}
+	}
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") && strings.Contains(l, "stella/card-2") {
+			t.Fatalf("--bench pushed an off-prefix branch: %s", l)
+		}
+	}
+	if len(forge.opened) != 1 || forge.opened[0].branch != "rowan/card-1" {
+		t.Fatalf("this line's own branch must still be opened, got %+v", forge.opened)
+	}
+}
+
+// And the escape itself: --branch-prefix may narrow, never widen. A prefix that is not
+// under this line's own is refused before a single job is listed.
+func TestHarvestBenchRefusesABranchPrefixThatEscapes(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	benchGit(t, specs, arglog, nil)
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		t.Fatalf("the refusal must come before any bench call, got script %q", script)
+		return "", nil
+	}}
+	in := benchHarvestInput(t, root, shell, &fakeForge{})
+	in.BranchPrefix = "stella/"
+	code, _, errb := runBenchHarvest(t, in)
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2; stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "stella/") || !strings.Contains(errb, DefaultBranchPrefix) {
+		t.Fatalf("the refusal must name both prefixes: %q", errb)
 	}
 }

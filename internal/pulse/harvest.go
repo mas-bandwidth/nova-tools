@@ -591,6 +591,11 @@ func pushURL(repo string) string {
 
 // push runs git push <url> <branch>:<branch> from the job's clone; never a bare git push.
 func push(in HarvestInput, dir, url, branch string) error {
+	// The branch rule, at the push itself and not only at the caller that decided to
+	// push (Johnny's hold on #1809). One implementation, every path.
+	if err := mustBranchPrefix(branch); err != nil {
+		return err
+	}
 	if url == "" {
 		return fmt.Errorf("no REPO line in RESULT.md")
 	}
@@ -608,6 +613,9 @@ func push(in HarvestInput, dir, url, branch string) error {
 // openPR opens a draft PR (or updates an existing one) whose body is the RESULT.md lines,
 // capped at MaxBodyBytes. It returns the PR number.
 func openPR(in HarvestInput, dir, url, label, branch string, resultLines []string) (int, error) {
+	if err := mustBranchPrefix(branch); err != nil {
+		return 0, err
+	}
 	body := strings.Join(resultLines, "\n")
 	if len(body) > in.MaxBodyBytes {
 		body = body[:in.MaxBodyBytes]

@@ -23,7 +23,7 @@ func TestHarvestFoldsBareSwarmRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(job, "RESULT.md"),
-		[]byte("RESULT card-880 sha=aaa\nDONE\nBRANCH br-880\nREPO owner/repo\n"), 0o644); err != nil {
+		[]byte("RESULT card-880 sha=aaa\nDONE\nBRANCH rowan/br-880\nREPO owner/repo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -31,7 +31,7 @@ func TestHarvestFoldsBareSwarmRoot(t *testing.T) {
 	if strings.Contains(errs, "HARVEST REFUSED") {
 		t.Fatalf("a bare swarm root must be folded, not refused:\n%s", errs)
 	}
-	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=628 label=card-880 branch=br-880") {
+	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=628 label=card-880 branch=rowan/br-880") {
 		t.Fatalf("want the bare root's job dir folded and pushed, got:\n%s", out)
 	}
 	if !strings.Contains(out, "pushed=1") || !strings.Contains(out, "prs=1") {

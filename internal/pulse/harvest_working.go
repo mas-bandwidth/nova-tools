@@ -206,7 +206,12 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	if len(fields) > 1 {
 		commitAt, _ = time.Parse(time.RFC3339, fields[1])
 	}
-	if !strings.HasPrefix(branch, "rowan/") {
+	// THE SAME RULE, THE SAME IMPLEMENTATION. This was a SECOND spelling of it -- a bare
+	// `strings.HasPrefix(branch, "rowan/")` literal -- which happened to agree with the
+	// local path's rule today and would have stopped agreeing the moment either was
+	// edited. Johnny's hold on #1809 is about exactly that: one rule, one implementation,
+	// every path. The classification an off-prefix job gets here is unchanged.
+	if err := mustBranchPrefix(branch); err != nil {
 		return workingOutcome{class: classOffBranch, line: fmt.Sprintf(
 			"HARVEST JOB label=%s class=off-branch branch=%s reason=not-rowan",
 			oneline.Field(j.label), oneline.Field(dash(branch)))}
@@ -248,6 +253,11 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	// records -- is failed, not pushed.
 	if found && remote != "" && pr.HeadOID != "" && remote != pr.HeadOID {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, strconv.Itoa(pr.Number), commit)}
+	}
+	// `harvest --working` pushes with --force-with-lease, which makes the branch rule
+	// MORE important here, not less: this is the path that can move a remote ref.
+	if err := mustBranchPrefix(branch); err != nil {
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
 	if _, err := runChild(clone, nil, "git", "push", url, "refs/heads/"+branch,
 		"--force-with-lease=refs/heads/"+branch+":"+remote); err != nil {

@@ -144,9 +144,9 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
 
 	addCard(t, root, "a", "1", "flash", "RESULT a sha=aaa",
-		"RESULT a sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+		"RESULT a sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\n")
 	addCard(t, root, "b", "1", "flash", "RESULT b sha=bbb",
-		"RESULT b sha=bbc\nDONE\nBRANCH br2\nREPO owner/repo\n")
+		"RESULT b sha=bbc\nDONE\nBRANCH rowan/br2\nREPO owner/repo\n")
 	addCard(t, root, "c", "1", "flash", "RESULT c sha=ccc",
 		"RESULT c sha=ccc\nDONE\nBRANCH main\nREPO owner/repo\n")
 
@@ -166,7 +166,7 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	for _, l := range alls {
 		if strings.HasPrefix(l, "git push ") {
 			pushes++
-			if !strings.Contains(l, "br1:br1") {
+			if !strings.Contains(l, "rowan/br1:rowan/br1") {
 				t.Fatalf("push must name the branch by explicit refspec, got: %s", l)
 			}
 			if !strings.Contains(l, "https://") {
@@ -201,7 +201,7 @@ func TestHarvestAbstainGoesToRetry(t *testing.T) {
 
 	// One ABSTAIN with a refusal in the harness log, one card with no RESULT.md at all.
 	addCard(t, root, "x", "1", "flash", "RESULT x sha=xxx",
-		"RESULT x sha=xxx\nABSTAIN -- idle 300s\nBRANCH bx\nREPO owner/repo\n")
+		"RESULT x sha=xxx\nABSTAIN -- idle 300s\nBRANCH rowan/bx\nREPO owner/repo\n")
 	job := filepath.Join(root, "1", "jobs", "x")
 	os.WriteFile(filepath.Join(job, "harness.log"), []byte("running\npermission denied: /etc\n"), 0o644)
 
@@ -245,7 +245,7 @@ func TestHarvestRelaunchesQueueFirst(t *testing.T) {
 
 	// One done card to fold, then a queue of three, a read card, and two source items.
 	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd",
-		"RESULT done sha=ddd\nDONE\nBRANCH bd\nREPO owner/repo\n")
+		"RESULT done sha=ddd\nDONE\nBRANCH rowan/bd\nREPO owner/repo\n")
 
 	// The queue is what `launch --queue` actually writes: three-field card rows, not
 	// the five-field candidate table this test used to plant (issue #1820).
@@ -305,9 +305,9 @@ func TestThenGatedOnVerdict(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/5")
 
 	addCard(t, root, "m", "1", "flash", "RESULT m sha=mmm",
-		"RESULT m sha=mmm\nDONE\nBRANCH bm\nREPO owner/repo\n")
+		"RESULT m sha=mmm\nDONE\nBRANCH rowan/bm\nREPO owner/repo\n")
 	addCard(t, root, "n", "1", "flash", "RESULT n sha=nnn",
-		"RESULT n sha=nnn\nBLOCKED head=abc123\nBRANCH bn\nREPO owner/repo\n")
+		"RESULT n sha=nnn\nBLOCKED head=abc123\nBRANCH rowan/bn\nREPO owner/repo\n")
 
 	out, _ := runHarvest(t, root)
 	if !strings.Contains(out, "pushed=1") || !strings.Contains(out, "prs=1") {
@@ -347,7 +347,7 @@ func TestHarvestCutsReadCardPerPR(t *testing.T) {
 		})
 
 		addCard(t, root, label, "1", "flash", "RESULT "+label+" sha=aaa",
-			"RESULT "+label+" sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+			"RESULT "+label+" sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\n")
 
 		out, _ = runHarvest(t, root)
 		if !strings.Contains(out, "prs=1") {

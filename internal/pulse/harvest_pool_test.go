@@ -56,18 +56,18 @@ func TestHarvestReadsPoolLayout(t *testing.T) {
 
 	addPoolCard(t, root, "X", "done", "20260917T010500Z-x-aaaaaa",
 		"RESULT X sha=xxx",
-		"RESULT X sha=xxx\nDONE\nBRANCH bx\nREPO owner/repo\n")
+		"RESULT X sha=xxx\nDONE\nBRANCH rowan/bx\nREPO owner/repo\n")
 	// A task in failed/ whose RESULT.md exists with a first line equal to the
 	// card's RESULT line is harvested as a result, not a failure.
 	addPoolCard(t, root, "Y", "failed", "20260917T010600Z-y-bbbbbb",
 		"RESULT Y sha=yyy",
-		"RESULT Y sha=yyy\nDONE\nBRANCH by\nREPO owner/repo\n")
+		"RESULT Y sha=yyy\nDONE\nBRANCH rowan/by\nREPO owner/repo\n")
 
 	out, _ := runHarvest(t, root)
-	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=X branch=bx") {
+	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=X branch=rowan/bx") {
 		t.Fatalf("pool card X must be harvested from pool/reports, got:\n%s", out)
 	}
-	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=Y branch=by") {
+	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=Y branch=rowan/by") {
 		t.Fatalf("pool card Y in failed/ with a RESULT must be harvested as a result, got:\n%s", out)
 	}
 	if !strings.Contains(out, "pushed=2") {
