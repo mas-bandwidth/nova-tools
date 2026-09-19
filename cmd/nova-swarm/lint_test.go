@@ -207,7 +207,7 @@ func TestLintNoParentPathSkipsAFencedBlock(t *testing.T) {
 	body := strings.Join([]string{
 		"RESULT: CARD-3333 do the thing",
 		"You are a Go engineer. Work in $(pwd).",
-		"STEP 1. pwd && { [ -d repo ] || git clone -q https://github.com/mas-bandwidth/nova-tools.git repo; } && cd repo && git log --oneline -1",
+		"STEP 1. pwd && { [ -d repo ] || git clone -q https://example.invalid/mas-bandwidth/nova-tools.git repo; } && cd repo && git log --oneline -1",
 		"STEP 2. Read docs/SPEC-SWARM.md first.",
 		"STEP 3. Write a red test named TestCardLintPasses, run go test ./internal/swarm/, and record the failing output in <working directory>/scratch/red.txt using that absolute path.",
 		"STEP 4. The card quotes the harness line the probe must reproduce:",
