@@ -472,6 +472,7 @@ func Batch(in BatchInput) int {
 			tickC, stopTicker := clk.NewTicker(idlePollInterval)
 			defer stopTicker()
 			lastSize := make([]int64, len(procs))
+			lastStore := make([]string, len(procs))
 			var lastSample time.Time
 			for {
 				select {
@@ -504,6 +505,29 @@ func Batch(in BatchInput) int {
 							lastSize[i] = size
 							procs[i].lastGrow = now
 							continue
+						}
+						// A SILENT LOG AND A STILL TREE ARE NOT A STILL CARD EITHER, when the
+						// card is waiting on the provider. A `MODE: explore` card spends most
+						// of its window blocked on an HTTP response: it writes no byte to its
+						// log, and a process blocked on the network spends none of the CPU the
+						// check below is looking for. On the Studio, 2026-09-19 14:58Z, that
+						// cost a healthy card that had cloned, branched and was walking a
+						// source file -- `ABSTAIN reason=idle=300 log=1730`, no RESULT.md, and
+						// its spend reported as zero.
+						//
+						// The provider's answers land in the harness's OWN STORE, under the
+						// card's data home -- the same database `native` samples its usage
+						// from (#1712). A store that GREW since the last poll is a turn that
+						// came back, which is progress this monitor can measure where the
+						// provider actually leaves it. It is read for its growth exactly as
+						// the log is: a store written once at startup and still ever since
+						// certifies nothing, and the card is on the clock like any other.
+						if stamp := cardStoreStamp(in.Root, procs[i].scratch); stamp != "" {
+							if stamp != lastStore[i] {
+								lastStore[i] = stamp
+								procs[i].lastGrow = now
+								continue
+							}
 						}
 						// A silent log is not a silent card: a harness inside a `go test` that
 						// prints nothing for minutes is working, and its work is CPU its process
@@ -1145,6 +1169,37 @@ func logSize(path string) int64 {
 		return 0
 	}
 	return fi.Size()
+}
+
+// cardStoreStamp is the growth signal of a card's own harness store: the database the
+// harness writes every turn into the card's data home, at the standard locations
+// `OpenCodeStoreLocations` already names for the usage reader.
+//
+// THE STAMP IS SIZES, NEVER MODIFICATION TIMES. This package's own class test
+// in `revision_test.go` admits a modification-time read in two files and this
+// is not one of them, and sizes answer the question anyway: the sqlite sidecars are in the
+// stamp because a database in WAL mode takes a turn without the main file changing size at
+// all -- the write lands in `<db>-wal` and the index in `<db>-shm` -- and a checkpoint that
+// folds the WAL back grows the `.db` as it shrinks the `-wal`. Either way a byte moves, and
+// a stamp that read only the `.db` would call a working harness still.
+//
+// An empty stamp means NO STORE AT EITHER LOCATION, which is not a signal in either
+// direction: a card whose harness has not written one yet, and every runner that is not this
+// harness, keep exactly the log-and-CPU behaviour they have today. Nothing here is read for
+// its CONTENT: a stat is cheap enough for a hundred-millisecond poll, and the question is
+// whether the harness moved, never what it said.
+func cardStoreStamp(root, scratch string) string {
+	var b strings.Builder
+	for _, db := range OpenCodeStoreLocations(filepath.Join(root, scratch, "data")) {
+		for _, path := range []string{db, db + "-wal", db + "-shm"} {
+			fi, err := os.Stat(path)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			fmt.Fprintf(&b, "%s:%d;", path, fi.Size())
+		}
+	}
+	return b.String()
 }
 
 // cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,

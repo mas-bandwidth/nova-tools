@@ -1431,7 +1431,26 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   `idle` seconds. On **2026-09-15** cards 664-670 were killed `idle 300s`
   inside a `go test` that prints nothing for minutes, and the loop raised
   `--idle` to 900 s, which only delays the same kill (issue #593): a busy
-  silent harness is working, and a sleeping one is not. Idle is measured
+  silent harness is working, and a sleeping one is not.
+
+  **And the harness's own store is the third signal, because a card waiting on
+  the provider moves neither of the first two.** The harness records each turn
+  into its database under the card's data home — the same store `native`
+  samples its usage from — so the batch also reads that file's size and
+  modification time, the sqlite `-wal` and `-shm` sidecars included, because a
+  database in WAL mode takes a turn without the `.db` changing size at all. A
+  store that **grew** since the last poll is an answer that came back. On
+  **2026-09-19 14:58Z** a healthy `MODE: explore` card that had cloned,
+  branched and was walking a source file was killed `ABSTAIN reason=idle=300
+  log=1730` with no `RESULT.md`: an explore card reads for longer than the
+  window between writes by design, and it spends that window blocked on an
+  HTTP response, which is no byte of log and no percent of a core. The store is
+  read for its **growth**, exactly as the log is — a database written once at
+  startup certifies nothing and its card is on the clock like any other — and a
+  card with no store at either location keeps the log-and-CPU behaviour it has
+  today.
+
+  Idle is measured
   against that card alone: the batch returns on its **slowest still-working
   card**, not on the deadline, because a dead card is removed from the wait as
   soon as it stops moving. The tree is read once per poll for the whole batch,
