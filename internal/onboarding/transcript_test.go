@@ -1,6 +1,7 @@
 package onboarding
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -585,5 +586,134 @@ func TestVersionNormCoversTheStampAndDevelAndNothingElse(t *testing.T) {
 	step = Step{Line: "$ nova-alpha list", Want: []string{"LIST OK tag=v1.2.3-rc1 name=alpha"}}
 	if problems := Compare(step, Result{Stdout: "LIST OK tag=v9.9.9-rc1 name=alpha\n"}, []Norm{Version()}); len(problems) != 1 {
 		t.Errorf("Compare found %d problems, want 1: Version matched inside `tag=`", len(problems))
+	}
+}
+
+// --- Fable's cold read of #1674 (HIGH): Execute skipped every step that stated
+// --- a precondition, and threw the skips away.
+
+// THE HIGH ONE. `Execute` called `ExecuteWith` with an empty `Conditions` and
+// DISCARDED the skips it came back with. An empty GOOS matches no platform and a
+// nil Have meets no requirement, so every step that stated a precondition -- the
+// whole point of #1674 -- was skipped, and a block could turn its test green
+// having run nothing at all. Nothing printed, nothing counted.
+//
+// A caller that wants to tolerate a skip calls ExecuteWith and decides. Execute
+// is the simple entry point, and the simple entry point must never be green on
+// a promise it did not check.
+func TestExecuteRunsAStepThatStatesAPreconditionThisBenchMeets(t *testing.T) {
+	steps, err := Steps("nova-alpha", []string{
+		"$ nova-alpha list   # Platform: " + runtime.GOOS,
+		"LIST OK n=1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := 0
+	problems := Execute(steps, func(Step) (Result, error) {
+		ran++
+		return Result{Stdout: "LIST OK n=1\n"}, nil
+	})
+	if ran != 1 {
+		t.Errorf("Execute ran %d of 1 steps; a step recorded for THIS platform must run here", ran)
+	}
+	if len(problems) != 0 {
+		t.Errorf("Execute reported %d problems on a step it should have run and agreed with: %v", len(problems), problems)
+	}
+}
+
+// AN ALL-SKIPPED BLOCK IS RED, IN THE HARNESS. #1677's caller checks this for
+// itself; every other caller did not, and a caller cannot be asked to remember.
+// A sitting that ran nothing proved nothing, and it is the harness that knows.
+func TestExecuteRefusesABlockItSkippedEntirely(t *testing.T) {
+	steps, err := Steps("nova-alpha", []string{
+		"$ nova-alpha list   # Requires: NOPE",
+		"LIST OK n=1",
+		"",
+		"$ nova-alpha count   # Requires: NOPE",
+		"COUNT OK n=0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := 0
+	problems := Execute(steps, func(Step) (Result, error) {
+		ran++
+		return Result{Stdout: "LIST OK n=1\n"}, nil
+	})
+	if ran != 0 {
+		t.Fatalf("Execute ran %d steps whose requirement this bench does not have", ran)
+	}
+	if len(problems) == 0 {
+		t.Fatal("Execute found NO problem in a block it skipped from end to end; that is a green that proved nothing")
+	}
+	whole := problems[0].Message
+	for _, want := range []string{"skipped", "NOPE", "nova-alpha list", "nova-alpha count"} {
+		if !strings.Contains(whole, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, whole)
+		}
+	}
+}
+
+// A skip that is NOT the whole block is still counted and printed rather than
+// swallowed: the block ran less than the document promises, and the caller is
+// told which step and in the document's own words.
+func TestExecuteReportsASkipItDidNotRun(t *testing.T) {
+	steps, err := Steps("nova-alpha", []string{
+		"$ nova-alpha list",
+		"LIST OK n=1",
+		"",
+		"$ nova-alpha count   # Requires: NOPE",
+		"COUNT OK n=0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	problems := Execute(steps, func(Step) (Result, error) {
+		return Result{Stdout: "LIST OK n=1\n"}, nil
+	})
+	if len(problems) != 1 {
+		t.Fatalf("Execute reported %d problems, want 1 (the skipped step): %v", len(problems), problems)
+	}
+	if !strings.Contains(problems[0].Message, "NOPE") {
+		t.Errorf("the skip does not carry the document's own reason:\n%s", problems[0].Message)
+	}
+}
+
+// `# Platform:` inside SINGLE quotes is part of the argument, not a declaration.
+// lastComment tracked only the double quote, so this line was cut in half and
+// then failed as an unterminated quote -- a defect reported as the wrong defect.
+func TestAHashInsideSingleQuotesIsNotADeclaration(t *testing.T) {
+	steps, err := Steps("nova-alpha", []string{"$ nova-alpha say --body 'a # Platform: darwin thing'", "SAY OK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps[0].Platforms) != 0 {
+		t.Errorf("a `# Platform:` inside single quotes was read as a declaration: %v", steps[0].Platforms)
+	}
+	if got, want := steps[0].Args[len(steps[0].Args)-1], "a # Platform: darwin thing"; got != want {
+		t.Errorf("the quoted argument = %q, want %q", got, want)
+	}
+}
+
+// A `# Platform:` value that is not a GOOS is a step that skips on every bench
+// for ever and is never seen again. `macOS` is the one a person writes.
+func TestAPlatformDeclarationMustNameAGOOS(t *testing.T) {
+	for _, line := range []string{
+		"$ nova-alpha list   # Platform: macOS",
+		"$ nova-alpha list   # Platform: mac",
+		"$ nova-alpha list   # Platform: darwin,Linux",
+	} {
+		if _, err := Steps("nova-alpha", []string{line, "LIST OK n=1"}); err == nil {
+			t.Errorf("Steps accepted %q; that value is no GOOS and the step would skip everywhere for ever", line)
+		}
+	}
+	for _, line := range []string{
+		"$ nova-alpha list   # Platform: darwin",
+		"$ nova-alpha list   # Platform: darwin,linux",
+	} {
+		if _, err := Steps("nova-alpha", []string{line, "LIST OK n=1"}); err != nil {
+			t.Errorf("Steps refused %q, which names real platforms: %v", line, err)
+		}
 	}
 }
