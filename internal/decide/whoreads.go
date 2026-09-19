@@ -84,10 +84,28 @@ func ReadStateOf(state string) (ReadState, error) {
 	return s, nil
 }
 
+// Receipts a who-reads line may carry: where the decision's durable row went,
+// or why there is none. A decision printed with no word about its row is a
+// decision whose receipt a reader has to assume (Stella, 2026-09-19, expanded
+// Go read of #1925).
+const (
+	// ReceiptRecorded: the configured decisions table took the row.
+	ReceiptRecorded = "recorded"
+	// ReceiptNotConfigured: no table was configured, so there is no row and
+	// the line says so rather than saying nothing.
+	ReceiptNotConfigured = "not-configured"
+)
+
 // ReadLine renders one constrained who-reads decision. Every field a caller
 // would otherwise have to read out of prose is a field: the required set, the
-// holder, whether its hold is open, and that nothing lifted it.
-func ReadLine(prefix string, d ReadDecision, s ReadState, confidence, floor float64) string {
+// holder, whether its hold is open, that nothing lifted it, and where the row
+// went.
+//
+// hasConfidence is false for a decision the MACHINERY settled. The provider
+// was never asked, so there is no confidence to print and the column is a
+// dash: a display constant printed there becomes, one copy later, calibration
+// evidence about a call nobody made.
+func ReadLine(prefix string, d ReadDecision, s ReadState, confidence float64, hasConfidence bool, floor float64, receipt string) string {
 	required := "-"
 	if len(d.Required) > 0 {
 		names := make([]string, 0, len(d.Required))
@@ -105,14 +123,21 @@ func ReadLine(prefix string, d ReadDecision, s ReadState, confidence, floor floa
 		hold = "open"
 	}
 	below := "-"
-	if d.Source == SourceProvider && confidence < floor {
+	if hasConfidence && d.Source == SourceProvider && confidence < floor {
 		below = ReadQuestion
 	}
-	return fmt.Sprintf("%s reader=%s conf=%.2f floor=%.2f below=%s source=%s required=%s holder=%s hold=%s lifts_hold=%t reason=%s",
-		oneline.Field(prefix), oneline.Field(string(d.First)), confidence, floor,
+	conf := noProviderConfidence
+	if hasConfidence {
+		conf = fmt.Sprintf("%.2f", confidence)
+	}
+	if strings.TrimSpace(receipt) == "" {
+		receipt = ReceiptNotConfigured
+	}
+	return fmt.Sprintf("%s reader=%s conf=%s floor=%.2f below=%s source=%s required=%s holder=%s hold=%s lifts_hold=%t receipt=%s reason=%s",
+		oneline.Field(prefix), oneline.Field(string(d.First)), conf, floor,
 		oneline.Field(below), oneline.Field(d.Source), oneline.Field(required),
 		oneline.Field(holder), oneline.Field(hold), d.LiftsHold,
-		oneline.Quote(oneline.Escape(d.Reason)))
+		oneline.Field(receipt), oneline.Quote(oneline.Escape(d.Reason)))
 }
 
 // stateBool reads a state field's own spelling of a bool. Payload has already

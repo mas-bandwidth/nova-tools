@@ -23,6 +23,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -86,6 +87,12 @@ type Usage struct {
 func (u Usage) Known() bool { return u.HasInput || u.HasOutput }
 
 // Client talks to one Jev endpoint with one key the caller named.
+//
+// One client's Decide is handed around as a decideFunc and called from several
+// goroutines at once (internal/swarm's task decider does exactly that), so the
+// per-call bookkeeping the receipt needs -- the row source and what the
+// decisions table did with the row -- is guarded. The fields set once before
+// any call, and read-only during them, are not.
 type Client struct {
 	baseURL   string
 	key       string
@@ -93,6 +100,12 @@ type Client struct {
 	decisions DecisionDriver
 	floor     float64
 	constrain func(map[string]Answer) (map[string]Answer, error)
+
+	mu               sync.Mutex
+	rowSource        string
+	rowHasConfidence bool
+	recorded         int
+	recordErr        error
 }
 
 // Constrain installs the machinery that stands over a provider's answers. It

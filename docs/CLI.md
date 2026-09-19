@@ -725,30 +725,51 @@ manufacture any of that. The example below runs over
 nothing: 47 answers from one day, labelled by later HOLDs, asked with a previous question version,
 sparse in every stopping class but one.
 
+**That boundary is executable, not advice.** Every labeled row is read for an `adjudicated`
+marker, and there are three answers, not two:
+
+| the row says | what it is | what `tune` does |
+| --- | --- | --- |
+| nothing at all | a log from before the field existed | reads it exactly as it always did |
+| `"adjudicated": true` | adjudicated truth | tunes, and prints a floor |
+| `"adjudicated": false` | an observation, joined afterwards | `TUNE REFUSED reason=not-adjudicated` unless `--observations` |
+| anything else — `null`, `"maybe"`, `1`, `{}` | a status nobody can read | `TUNE REFUSED reason=adjudicated-malformed`, naming the line; **no flag admits it** |
+
+An absent marker and an unreadable one are different faults: the first is a log that never
+claimed a status, the second is a row that claims one illegibly, and reading the second as the
+first is how an observation log tunes by accident. `--observations` admits a log that SAYS it is
+observations; it does not admit one that says nothing legible.
+
 ```
 $ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
     --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7 --default opus-child
+TUNE REFUSED reason=not-adjudicated … 47 of 47 labeled rows carry adjudicated:false … Re-run with --observations …
+
+$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
+    --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7 --default opus-child --observations
 TUNE floor=0.5 decided=40 agree=27 agree_rate=0.68 escalated=7 escalation_rate=0.15 defaulted=7 default_agree=7 missed=0
 TUNE floor=0.65 decided=35 agree=24 agree_rate=0.69 escalated=12 escalation_rate=0.26 defaulted=12 default_agree=11 missed=1
 TUNE floor=0.8 decided=29 agree=23 agree_rate=0.79 escalated=18 escalation_rate=0.38 defaulted=18 default_agree=15 missed=3
 TUNE floor=0.9 decided=22 agree=19 agree_rate=0.86 escalated=25 escalation_rate=0.53 defaulted=25 default_agree=21 missed=4
+TUNE OBSERVATIONS lines=47 labeled=47 observations=47 best_floor=none reason="…"
 ```
 
-Without `--default` the same rows answer `best_floor=0.9`; with it they answer `0.5`. **Neither is
-a tuned floor for the who-reads reading** — that reading is untuned until its own contract
-evidence exists. What the two runs show is that the second arithmetic is expressible at all, and
-that the first is silent about the cost the fallback carries.
+The closing line is `TUNE OBSERVATIONS … best_floor=none`, never the `TUNE OK` line and never a
+number. **Neither reading is a tuned floor for the who-reads question** — that reading is untuned
+until its own adjudicated evidence exists. What the arithmetic shows is that the miss count is
+expressible at all, and that escalation alone is silent about the cost the fallback carries.
 
 ### the question and its criteria are one pair
 
 `nova-decide --questions <file>` loads the question file AND the criteria file it names. A
-question file may carry `criteria_version`, `criteria_file` and typed `state_fields` beside its
-`questions`; any other key beside them is a refusal that names it.
+question file may carry `criteria_version`, `criteria_file`, typed `state_fields` and `machinery`
+beside its `questions`; any other key beside them is a refusal that names it.
 
 ```json
 {
-  "criteria_version": "2026-09-19.2",
+  "criteria_version": "2026-09-19.3",
   "criteria_file": "criteria-reader.md",
+  "machinery": "who-reads",
   "state_fields": [
     {"name": "security_shaped_package", "type": "bool"},
     {"name": "design_defaults_taken", "type": "int"},
@@ -769,6 +790,31 @@ file and post it to a provider.
 
 The pairs this repository ships are in `docs/decide/`. They name configured ROLES and no roster;
 one house's role binding and its trial rows are in `docs/decide/examples/`.
+
+`"machinery": "who-reads"` says the question is answered UNDER the rules in
+`internal/decide/readers.go` rather than by the provider alone, and the verb enforces them at the
+call boundary. A settled security designation is taken **before a client is built** — no key is
+wanted, **no call is made**, at any confidence — and every other rule constrains the answer before
+it is recorded or printed. The line carries the whole decision:
+
+```
+DECIDE reader=security-designate conf=- floor=0.65 below=- source=machinery \
+       required=design-authority,security-designate holder=design-authority hold=open \
+       lifts_hold=false receipt=recorded reason="…"
+```
+
+`conf=-` is not a missing number: a decision the machinery settled had no provider answer, so
+there is no confidence to print and none is invented — a display constant here becomes, one copy
+later, calibration evidence about a call nobody made. `source=` says which of the two decided, and
+`receipt=` says where the durable row went: `recorded` when the configured `--dsn` took it,
+`not-configured` when no table was configured. A configured table that REFUSES the row is
+`DECIDE REFUSED reason=decisions-write-failed` at exit 2, on the settled path and the answered one
+alike: a caller told the decision succeeded while nothing was written has no receipt at all.
+
+The decisions table carries both facts. Its TSV fallback gained a seventh column, `source`, after
+the other six; a file written before it exists is six columns wide and is still read, with its
+source unknown rather than guessed. `provider_confidence` is a dash — NULL in Postgres — for a row
+no provider answered.
 
 `tune --kind <kind>` reads the decisions TABLE rather than a JSONL log and prints the rows behind
 one kind; a kind with no rows is a refusal, because a floor with no rows behind it is untuned. It

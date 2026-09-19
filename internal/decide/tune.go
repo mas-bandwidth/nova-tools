@@ -80,6 +80,12 @@ const AdjudicatedField = "adjudicated"
 // than matching on a sentence.
 var ErrNotAdjudicated = errors.New("decide: tune: these labels are observations and not adjudicated truth")
 
+// ErrAdjudicatedMalformed is the refusal a row earns by carrying an
+// adjudication marker nobody can read. It is a different fault from
+// ErrNotAdjudicated and gets a different one-word reason: a legible false is a
+// log that says what it is, and this is a log that says something unreadable.
+var ErrAdjudicatedMalformed = errors.New("decide: tune: an adjudication marker is present and is not a boolean")
+
 func (o TuneOptions) withDefaults() TuneOptions {
 	if o.Label == "" {
 		o.Label = "label"
@@ -189,9 +195,17 @@ func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 		choice, _ := scalarField(fields, opts.Choice)
 		res.Labeled++
 		// An explicit false is an observation. An ABSENT field is a log from
-		// before the field existed and is read as it always was.
-		if adjudicated, ok := boolField(fields, AdjudicatedField); ok && !adjudicated {
+		// before the field existed and is read as it always was. A PRESENT
+		// field that is not a JSON boolean is a row nobody can read the
+		// status of, and it stops the read here, naming the line -- no flag
+		// admits it, because --observations admits a log that SAYS it is
+		// observations, not one that says nothing legible at all.
+		switch adjudicationMarker(fields, AdjudicatedField) {
+		case markerFalse:
 			res.Observations++
+		case markerInvalid:
+			return TuneResult{}, fmt.Errorf("%w: line %d has %s=%s, which is neither true nor false; an absent marker is a log from before the field existed, and an unreadable one is a row whose adjudication nobody can read",
+				ErrAdjudicatedMalformed, res.Lines, AdjudicatedField, oneline.Cap(strings.TrimSpace(string(fields[AdjudicatedField])), 64))
 		}
 		if dflt != "" && label == dflt {
 			defaultSeen = true
@@ -275,28 +289,46 @@ func (r TuneResult) Render() string {
 	return b.String()
 }
 
-// boolField reads a named field as a bool. ok is false where the field is
-// absent or is not one, which is the difference between a row that says it is
-// an observation and a row written before the field existed.
-func boolField(fields map[string]json.RawMessage, name string) (bool, bool) {
+// markerState is what a row says about one marker field. ABSENT and INVALID
+// are not the same thing and the difference is the whole of Stella's second
+// finding: the first version answered (false, false) for both, so a row
+// carrying `"adjudicated": "maybe"` was read as a log from before the field
+// existed and tuned.
+type markerState int
+
+const (
+	// markerAbsent: the row never claimed a status. A log written before
+	// the field existed, read exactly as it always was.
+	markerAbsent markerState = iota
+	// markerTrue, markerFalse: a legible JSON boolean.
+	markerTrue
+	markerFalse
+	// markerInvalid: the field is PRESENT and is not a JSON boolean --
+	// null, a string, a number, an object, a list. Nobody can read this
+	// row's adjudication status, which is not the same as a row that never
+	// claimed one, so it is a refusal naming the line and the field.
+	markerInvalid
+)
+
+// adjudicationMarker reads one row's marker field. Only a JSON `true` or
+// `false` is legible; JSON null is PRESENT and unreadable, not absent, which
+// is why it is not decoded into a bool (encoding/json decodes null into a bool
+// as a no-op, leaving false, and that is exactly how a null became a claim).
+func adjudicationMarker(fields map[string]json.RawMessage, name string) markerState {
 	raw, ok := fields[name]
-	if !ok || len(raw) == 0 {
-		return false, false
+	if !ok {
+		return markerAbsent
 	}
-	var v bool
-	if err := json.Unmarshal(raw, &v); err == nil {
-		return v, true
+	switch strings.TrimSpace(string(raw)) {
+	case "":
+		return markerAbsent
+	case "true":
+		return markerTrue
+	case "false":
+		return markerFalse
+	default:
+		return markerInvalid
 	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		switch strings.ToLower(strings.TrimSpace(s)) {
-		case "true", "yes":
-			return true, true
-		case "false", "no":
-			return false, true
-		}
-	}
-	return false, false
 }
 
 // scalarField reads a named field as a string. A string, bool or number is

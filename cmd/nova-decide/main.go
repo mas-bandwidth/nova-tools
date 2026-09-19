@@ -171,11 +171,6 @@ example:
 // stamps it with -ldflags "-X main.version=<tag>".
 var version string
 
-// confSettled is the confidence printed beside a decision the MACHINERY made.
-// It is not a measurement and it is not a lever: the rule was settled by the
-// evidence, so the number beside it is certainty and nothing reads it.
-const confSettled = 1.00
-
 // stdin is a var so tests can replace it; production reads the real stdin.
 var stdin io.Reader = os.Stdin
 
@@ -299,12 +294,48 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
+	}
+	// THE CONFIGURED TABLE IS OPENED BEFORE ANY DECISION IS MADE.
+	//
+	// It used to be opened after the settled path had already returned, so a
+	// decision that cost no call also left no row: the real CLI with a fresh
+	// TSV --dsn, a settled state, no key and a dead endpoint printed success
+	// and created nothing. A decision the MACHINERY made is the one nobody can
+	// reconstruct from a provider's log, so it is exactly the one that is owed
+	// a durable row.
+	var store decide.DecisionDriver
+	if strings.TrimSpace(*dsn) != "" {
+		store, err = decisionsOpener(*dsn)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		defer store.Close()
+	}
+	if whoReads {
 		if _, _, settled := decide.MandatoryReader(readState); settled {
 			d, err := decide.ConstrainRead("", 0, readState)
 			if err != nil {
 				return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
 			}
-			fmt.Fprintln(stdout, decide.ReadLine(*prefix, d, readState, confSettled, *floor))
+			// The receipt, and NO fabricated confidence: the provider was not
+			// asked, so the row's confidence column is a dash and its source
+			// says the machinery decided.
+			receipt := decide.ReceiptNotConfigured
+			if store != nil {
+				q := qs[decide.ReadQuestion]
+				if err := store.Append(decide.DecisionRow{
+					QuestionHash: decide.QuestionHash(payload, decide.ReadQuestion, q),
+					Kind:         q.Kind(),
+					Answer:       string(d.First),
+					Floor:        *floor,
+					Source:       decide.SourceMachinery,
+				}); err != nil {
+					return refuse(stderr, *prefix, "decisions-write-failed",
+						fmt.Sprintf("the decision was settled and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+				}
+				receipt = decide.ReceiptRecorded
+			}
+			fmt.Fprintln(stdout, decide.ReadLine(*prefix, d, readState, 0, false, *floor, receipt))
 			return 0
 		}
 	}
@@ -313,12 +344,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, *prefix, "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	client.SetFloor(*floor)
-	if strings.TrimSpace(*dsn) != "" {
-		store, err := decisionsOpener(*dsn)
-		if err != nil {
-			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
-		}
-		defer store.Close()
+	if store != nil {
 		client.UseDecisions(store)
 	}
 	if whoReads {
@@ -331,6 +357,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			readDecision = d
 			a.Choice = string(d.First)
 			answers[decide.ReadQuestion] = a
+			// A rule that overrode the answer settled the decision, so the row
+			// carries the machinery's source and no provider confidence even
+			// though a call was made: the number that came back is not
+			// evidence about the answer that stands.
+			client.SetRowSource(d.Source, d.Source == decide.SourceProvider)
 			return answers, nil
 		})
 	}
@@ -338,13 +369,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, *prefix, "provider-error", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	// A configured table that refused the row is reported, never swallowed: a
+	// caller told the decision succeeded while nothing was written has no
+	// receipt at all.
+	if err := client.RecordErr(); err != nil {
+		return refuse(stderr, *prefix, "decisions-write-failed",
+			fmt.Sprintf("the answer stands and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+	}
 	if whoReads {
+		hasConfidence := readDecision.Source == decide.SourceProvider
 		conf := answers[decide.ReadQuestion].Confidence
-		if readDecision.Source == decide.SourceMachinery {
-			conf = confSettled
+		receipt := decide.ReceiptNotConfigured
+		if store != nil {
+			receipt = decide.ReceiptRecorded
 		}
-		fmt.Fprintln(stdout, decide.ReadLine(*prefix, readDecision, readState, conf, *floor))
-		if readDecision.Source == decide.SourceProvider && conf < *floor {
+		fmt.Fprintln(stdout, decide.ReadLine(*prefix, readDecision, readState, conf, hasConfidence, *floor, receipt))
+		if hasConfidence && conf < *floor {
 			return 3
 		}
 		return 0
@@ -412,7 +452,12 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 		// A log of observations gets its own one-word reason: it is not a bad
 		// log, it is a log that cannot set a floor.
 		reason := "bad-decisions"
-		if errors.Is(err, decide.ErrNotAdjudicated) {
+		switch {
+		case errors.Is(err, decide.ErrAdjudicatedMalformed):
+			// A marker nobody can read is its own fault, and no flag admits
+			// it: --observations takes a log that says it is observations.
+			reason = "adjudicated-malformed"
+		case errors.Is(err, decide.ErrNotAdjudicated):
 			reason = "not-adjudicated"
 		}
 		return refuse(stderr, "TUNE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
@@ -449,8 +494,15 @@ func runTuneTable(kind, dsn, decisions string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "TUNE kind=%s rows=%d\n", oneline.Field(kind), len(rows))
 	for _, row := range rows {
-		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%.2f floor=%.2f outcome=%s\n",
-			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), row.ProviderConfidence, row.Floor, orDash(row.Outcome))
+		// A row no provider answered carries a DASH, never a number: the
+		// machinery settled it, and a zero printed here would read as a
+		// measured confidence of zero.
+		confidence := "-"
+		if row.HasProviderConfidence {
+			confidence = fmt.Sprintf("%.2f", row.ProviderConfidence)
+		}
+		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%s floor=%.2f outcome=%s source=%s\n",
+			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), confidence, row.Floor, orDash(row.Outcome), orDash(row.Source))
 	}
 	fmt.Fprintf(stdout, "TUNE OK kind=%s rows=%d\n", oneline.Field(kind), len(rows))
 	return 0
