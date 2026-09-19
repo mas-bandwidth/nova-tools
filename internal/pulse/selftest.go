@@ -400,7 +400,9 @@ func copyTree(fsys fs.FS, from, to string) error {
 // git runs one git command in the fixture repository with the fixture identity and no
 // bench config; env adds to or overrides that identity (the wrong-author seed).
 func (s *selftest) git(env []string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	// Hook-off and monitor-off, as every git call the gate makes (cold read HIGH 1); this
+	// repository is the selftest's own, but the rule has no exceptions.
+	cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = s.job
 	cmd.Env = append(append(os.Environ(),
 		"GIT_AUTHOR_NAME="+s.identity.Name, "GIT_AUTHOR_EMAIL="+s.identity.Email,

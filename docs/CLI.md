@@ -1942,11 +1942,42 @@ never forms an opinion about code and never merges anything.
 
 ```
 nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
+nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
 nova-review version
 nova-review help
 ```
 
-The verbs are `packet`, `version` and `help`. `packet` is the one that works:
+`mutate` is the mechanical half of a read, taken off the reader, and it has two
+forms. The **range** form reverts every non-test hunk in a throwaway worktree at
+`--head` and runs the tests the change touched: they must fail, or the change has
+no red test of its own. Its verdict line says how much it put back —
+
+```
+MUTATE <head8> reverted=<n> red=<n> green=<n> <PASS|FAIL>
+```
+
+— so "every non-test hunk" is a number a caller can gate on, and a `PASS` with
+`reverted=0` is visibly a control that never ran. The **seed** form is the other
+half, and the one every negative control in the accept gate is built from: one
+deliberate defect goes INTO the head and the named suites must kill it.
+
+```
+MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>
+```
+
+`seed=` is the first 8 hex of the patch's SHA-256, so a report names which control
+ran. The edit count is asserted, not reported: exactly one, counted from the
+worktree after `git apply` and never from the patch's own `@@` header, else
+`MUTATE REFUSED` and exit 2 before the seeded run. Four more things refuse rather
+than answer, because each of them kills every seed and would print a `PASS` that
+is not about the seed: a patch that does not apply, a `--tests` package `go list`
+does not resolve at that head, a named suite already red at the unseeded head, and
+a `--timeout` deadline that killed the run mid-flight. Neither form writes anything
+into the repo it is pointed at, on any path. Full grammar in
+[docs/SPEC-REVIEW.md](SPEC-REVIEW.md).
+
+The other verbs are `packet`, `version` and `help`. `packet` is the one that works:
 it reads one entry on a lane at one head and writes one bounded file, capped at
 `--max-bytes` (default 131072), past which the packet holds the hunk list and
 the command that prints the rest; `--max` (default 20) caps the prior-verdicts

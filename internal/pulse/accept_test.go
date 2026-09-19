@@ -34,6 +34,7 @@ type acceptLab struct {
 	root, slot, job, cards, cert string
 	noControl                    bool  // leave no control on file
 	fixtures                     fs.FS // hand the gate fixtures to run a selftest with
+	timeout                      time.Duration
 }
 
 func acceptGit(t *testing.T, dir string, env []string, args ...string) string {
@@ -73,7 +74,7 @@ func newAcceptLab(t *testing.T) *acceptLab {
 		t.Fatal(err)
 	}
 	acceptGit(t, l.job, nil, "init", "-q", "-b", "main")
-	acceptWrite(t, l.job, "go.mod", "module fixture\n\ngo 1.26\n")
+	acceptWrite(t, l.job, "go.mod", "module fixture\n\ngo 1.21\n")
 	acceptWrite(t, l.job, "sign/sign.go", fixtureBug)
 	acceptWrite(t, l.job, "sign/sign_test.go", baseTest)
 	acceptWrite(t, l.job, "other/other.go", "package other\n\nfunc Other() int { return 2 }\n")
@@ -118,13 +119,29 @@ type acceptRun struct {
 
 // run drives Accept over the lab with the fake wall in front of PATH. `sandbox` is the
 // fake's spec; nil means "log everything and run the command after --".
+// run judges the job's HEAD against the base sha main names NOW, as the harvest that
+// cut the card would have recorded it.
 func (l *acceptLab) run(t *testing.T, card string, sandbox *fakeSpec) acceptRun {
 	t.Helper()
+	return l.runBase(t, card, acceptGit(t, l.job, nil, "rev-parse", "main"), sandbox)
+}
+
+func (l *acceptLab) runBase(t *testing.T, card, base string, sandbox ...*fakeSpec) acceptRun {
+	t.Helper()
+	var sb *fakeSpec
+	if len(sandbox) > 0 {
+		sb = sandbox[0]
+	}
+	sandbox = nil
+	timeout := l.timeout
+	if timeout == 0 {
+		timeout = 3 * time.Minute
+	}
 	specs := fakeSandboxOnly(t)
 	log := filepath.Join(l.root, "wall.log")
 	spec := fakeSpec{Log: log, Default: fakeRule{Exec: true}}
-	if sandbox != nil {
-		spec = *sandbox
+	if sb != nil {
+		spec = *sb
 		spec.Log = log
 	}
 	fakeTool(t, specs, "nova-sandbox", spec)
@@ -135,9 +152,9 @@ func (l *acceptLab) run(t *testing.T, card string, sandbox *fakeSpec) acceptRun 
 	}
 	var out, errb bytes.Buffer
 	code := Accept(AcceptInput{
-		Job: l.job, Card: card, Base: "main", Bench: "lab", Cert: l.cert, Fixtures: l.fixtures, Root: l.root,
+		Job: l.job, Card: card, Base: base, Bench: "lab", Cert: l.cert, Fixtures: l.fixtures, Root: l.root,
 		Identities: []hyg.Identity{{Name: "Rowan", Email: "rowan@example.com"}},
-		Timeout:    3 * time.Minute, Max: 20, Stdout: &out, Stderr: &errb, Now: time.Now,
+		Timeout:    timeout, Max: 20, Stdout: &out, Stderr: &errb, Now: time.Now,
 	})
 	raw, _ := os.ReadFile(log)
 	return acceptRun{code: code, stdout: out.String(), stderr: errb.String(), wall: string(raw)}
@@ -457,9 +474,13 @@ func TestAcceptRemovesItsWorktreeOnEveryPath(t *testing.T) {
 	if list := acceptGit(t, l.job, nil, "worktree", "list"); strings.Count(list, "\n") != 0 {
 		t.Fatalf("a worktree was left behind:\n%s", list)
 	}
+	// The gate's build cache is the one thing that outlives a run; every run directory
+	// is gone.
 	entries, _ := os.ReadDir(filepath.Join(l.slot, "accept"))
-	if len(entries) != 0 {
-		t.Fatalf("the accept directory is not empty after the run: %d entries", len(entries))
+	for _, e := range entries {
+		if e.Name() != "gocache" {
+			t.Fatalf("the accept directory holds %s after the run; only the gate's build cache may stay", e.Name())
+		}
 	}
 	if after := acceptGit(t, l.job, nil, "status", "--porcelain"); after != before {
 		t.Fatalf("the job's clone changed: before %q after %q", before, after)
@@ -599,4 +620,183 @@ func writeControlFile(t *testing.T, root, id string) {
 	if err := os.WriteFile(filepath.Join(dir, id), []byte("ACCEPT SELFTEST control="+id+" PASS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// ---- the cold read of f927bccc (coldread-t03/REPORT.md), each escape reproduced here first ----
+
+// HIGH 1: the gate never runs git in the worker's clone with the worker's hooks live. The
+// job clone is given hooks that leave a marker on every checkout, ref update and index
+// change, and a core.fsmonitor that does the same on every status or diff; after a full
+// run, no marker exists.
+func TestAcceptNeverRunsTheJobClonesHooks(t *testing.T) {
+	l := newAcceptLab(t)
+	l.goodFix(t)
+	marker := filepath.Join(l.root, "HOOK-RAN")
+	hook := "#!/bin/sh\necho \"$0 $*\" >> " + marker + "\nexit 0\n"
+	hooks := filepath.Join(l.job, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"post-checkout", "reference-transaction", "post-index-change", "pre-auto-gc", "post-merge"} {
+		if err := os.WriteFile(filepath.Join(hooks, name), []byte(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fsmon := filepath.Join(l.root, "fsmonitor.sh")
+	if err := os.WriteFile(fsmon, []byte("#!/bin/sh\necho fsmonitor >> "+marker+"\nprintf '/'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	acceptGit(t, l.job, nil, "config", "core.fsmonitor", fsmon)
+	r := l.run(t, l.card(t, fixRedHeader), nil)
+	wantVerdict(t, r, 0, "ACCEPT OK ")
+	if raw, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("the worker's hooks ran under the gate:\n%s", raw)
+	}
+}
+
+// HIGH 2: --base is a full sha, never a ref the worker's clone can move. The worker
+// points main at a commit of its own making; a gate that resolved the name would judge
+// evil..head and let a foreign, out-of-path commit through under it.
+func TestAcceptRefusesABaseRefTheWorkerCanMove(t *testing.T) {
+	l := newAcceptLab(t)
+	realBase := acceptGit(t, l.job, nil, "rev-parse", "main")
+	// A stranger's commit outside PATHS:, then the good fix on top of it.
+	acceptWrite(t, l.job, "other/other.go", "package other\n\nfunc Other() int { return 3 }\n")
+	l.commit(t, "a hidden change", "GIT_AUTHOR_NAME=Stranger", "GIT_AUTHOR_EMAIL=stranger@elsewhere.example", "GIT_COMMITTER_NAME=Stranger", "GIT_COMMITTER_EMAIL=stranger@elsewhere.example")
+	evil := acceptGit(t, l.job, nil, "rev-parse", "HEAD")
+	l.goodFix(t)
+	acceptGit(t, l.job, nil, "branch", "-f", "main", evil)
+	card := l.card(t, fixRedHeader)
+	// By name: refused outright for BEING a name, whatever it now points at. (The
+	// first cut of this assertion matched any --base refusal and passed on "names no
+	// commit reachable" with the sha check off; negative control B found it.)
+	r := l.runBase(t, card, "main")
+	wantVerdict(t, r, 2, "ACCEPT REFUSED: --base main is not a full commit sha")
+	// By the real sha: the hidden commit is in the range and is rejected.
+	r = l.runBase(t, card, realBase)
+	wantVerdict(t, r, 1, " reason=identity ")
+}
+
+// HIGH 3: the wall's lists never admit the worker's copy, and no two trees share a write
+// root. Every wrap reads only the Go roots, writes the one tree it works in (plus the
+// gate's own cache and home), denies the network, and builds without VCS stamping.
+//
+// This test reads the LISTS off the fake wall's argv log; the fake admits everything,
+// so the verdict is not asserted here. The effect -- the worker's copy unreachable, the
+// test red -- is asserted under the real wall in accept_realwall_darwin_test.go.
+func TestAcceptWallListsExcludeTheWorkersCopy(t *testing.T) {
+	l := newAcceptLab(t)
+	// A test that reads the worker's copy through the slot: green only if the wall
+	// admits it.
+	acceptWrite(t, l.job, "sign/sign.go", fixtureFix)
+	acceptWrite(t, l.job, "sign/sign_test.go", strings.Replace(baseTest, "import \"testing\"", "import (\n\t\"os\"\n\t\"path/filepath\"\n\t\"testing\"\n)", 1)+"\nfunc TestSignZero(t *testing.T) {\n\tif _, err := os.ReadFile(filepath.Join(\"..\", \"..\", \"..\", \"..\", \"jobs\", \"CARD-7\", \"sign\", \"testdata\", \"answer.txt\")); err != nil {\n\t\tt.Fatal(err)\n\t}\n\tif Sign(0) != 0 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n")
+	l.commit(t, "a test that reaches for the worker's copy")
+	acceptWrite(t, l.job, "sign/testdata/answer.txt", "42\n")
+	r := l.run(t, l.card(t, fixRedHeader), nil)
+	r.verdict(t)
+	lines := 0
+	for _, line := range strings.Split(strings.TrimSpace(r.wall), "\n") {
+		if !strings.Contains(line, " -- go ") {
+			continue
+		}
+		lines++
+		f := strings.Fields(line)
+		var reads, writes []string
+		cwd := ""
+		for i := 0; i+1 < len(f); i++ {
+			switch f[i] {
+			case "--read":
+				reads = append(reads, f[i+1])
+			case "--write":
+				writes = append(writes, f[i+1])
+			case "--cwd":
+				cwd = f[i+1]
+			}
+		}
+		for _, rd := range reads {
+			if strings.HasPrefix(rd, l.slot) || strings.HasPrefix(rd, l.root) {
+				t.Fatalf("a --read under the swarm root admits the worker's copy: %q", line)
+			}
+		}
+		trees := 0
+		for _, w := range writes {
+			switch {
+			case strings.HasPrefix(w, l.job):
+				t.Fatalf("a --write covers the worker's copy: %q", line)
+			case w == cwd:
+				trees++
+			case strings.HasSuffix(w, string(filepath.Separator)+"gocache"), strings.HasSuffix(w, string(filepath.Separator)+"home"):
+			default:
+				t.Fatalf("a --write that is neither this wrap's tree nor the gate's cache or home: %s in %q", w, line)
+			}
+		}
+		if trees != 1 || cwd == "" {
+			t.Fatalf("want exactly one tree written, the cwd: %q", line)
+		}
+		if !strings.Contains(line, " --net-deny ") {
+			t.Fatalf("no --net-deny (SPEC-TOOLWORK §1 rule 10): %q", line)
+		}
+		if (strings.Contains(line, " -- go build ") || strings.Contains(line, " -- go test ")) && !strings.Contains(line, " -buildvcs=false ") {
+			t.Fatalf("a build without -buildvcs=false reaches for .git: %q", line)
+		}
+	}
+	if lines == 0 {
+		t.Fatal("no go command ran inside the wall")
+	}
+}
+
+// MEDIUM 4: a red test that PRINTS a wall-shaped line is still the card's red. Only the
+// wall's own exit and the lines before the first test result speak for the bench.
+func TestAcceptATestThatPrintsAWallLineIsStillRed(t *testing.T) {
+	l := newAcceptLab(t)
+	acceptWrite(t, l.job, "sign/sign.go", fixtureFix)
+	acceptWrite(t, l.job, "sign/sign_test.go", baseTest+"\nfunc TestSignZero(t *testing.T) {\n\tt.Log(\"SANDBOX REFUSED reason=fake: Operation not permitted\")\n\tif Sign(0) != 1 {\n\t\tt.Fatal(\"WALL\")\n\t}\n}\n")
+	l.commit(t, "a red test that talks like the wall")
+	r := l.run(t, l.card(t, fixRedHeader), nil)
+	wantVerdict(t, r, 1, " reason=red-at-head at=TestSignZero ")
+}
+
+// MEDIUM 5: a step that overruns --timeout is ABSTAIN timeout, not a red charged to the
+// card -- and the gate answers when ITS deadline passes, not when the killed wall's
+// grandchild finally exits. The event, not the clock: the sleeping fixture test writes a
+// marker when it wakes; the gate has returned while the marker is still absent.
+func TestAcceptAbstainsTimeoutWhenAStepOverruns(t *testing.T) {
+	l := newAcceptLab(t)
+	marker := filepath.ToSlash(filepath.Join(l.root, "grandchild-woke"))
+	acceptWrite(t, l.job, "sign/sign.go", fixtureFix)
+	acceptWrite(t, l.job, "sign/sign_test.go", strings.Replace(baseTest, "import \"testing\"", "import (\n\t\"os\"\n\t\"testing\"\n\t\"time\"\n)", 1)+"\nfunc TestSignZero(t *testing.T) {\n\ttime.Sleep(30 * time.Second)\n\t_ = os.WriteFile(\""+marker+"\", []byte(\"woke\\n\"), 0o644)\n\tif Sign(0) != 0 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n")
+	l.commit(t, "a test that outlives the gate's budget")
+	l.timeout = 8 * time.Second
+	r := l.run(t, l.card(t, fixRedHeader), nil)
+	wantVerdict(t, r, 2, "ACCEPT ABSTAIN ", " reason=timeout ")
+	if _, err := os.Stat(filepath.FromSlash(marker)); err == nil {
+		t.Fatal("the gate waited for the killed wall's grandchild to wake before answering")
+	}
+}
+
+// LOW 9: the build and vet tokens, each seen.
+func TestAcceptRejectsBuildAndVet(t *testing.T) {
+	l := newAcceptLab(t)
+	acceptWrite(t, l.job, "sign/sign.go", "package sign\n\nfunc Sign(n int) int {\n\tif n == 0 {\n\t\treturn 0\n\t}\n\treturn 1 +\n}\n")
+	acceptWrite(t, l.job, "sign/sign_test.go", fixTest)
+	l.commit(t, "broken")
+	wantVerdict(t, l.run(t, l.card(t, fixRedHeader), nil), 1, " reason=build at=")
+	acceptGit(t, l.job, nil, "reset", "-q", "--hard", "main")
+	acceptWrite(t, l.job, "sign/sign.go", "package sign\n\nimport \"fmt\"\n\n// Describe names n.\nfunc Describe(n int) string { return fmt.Sprintf(\"sign(%s)\", n) }\n\nfunc Sign(n int) int {\n\tif n == 0 {\n\t\treturn 0\n\t}\n\treturn 1\n}\n")
+	acceptWrite(t, l.job, "sign/sign_test.go", fixTest)
+	l.commit(t, "vetted")
+	wantVerdict(t, l.run(t, l.card(t, fixRedHeader), nil), 1, " reason=vet at=")
+}
+
+// LOW 8: `written` is keyed per package, so a same-named test in another package is not
+// mistaken for one the card wrote.
+func TestAcceptWrittenTestsAreKeyedPerPackage(t *testing.T) {
+	l := newAcceptLab(t)
+	// other/ already has TestOther at the base. The card adds a TestOther to sign/ that
+	// is vacuous, and the fix. mutate: sign's TestOther green -> vacuous (the card wrote
+	// it); other's TestOther is not the card's.
+	acceptWrite(t, l.job, "sign/sign.go", fixtureFix)
+	acceptWrite(t, l.job, "sign/sign_test.go", fixTest+"\nfunc TestOther(t *testing.T) {\n\tif Sign(2) != 1 {\n\t\tt.Fatal(\"two\")\n\t}\n}\n")
+	l.commit(t, "a fix and a vacuous TestOther of its own")
+	wantVerdict(t, l.run(t, l.card(t, fixRedHeader), nil), 1, " reason=vacuous-test at=TestOther ")
 }

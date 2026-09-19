@@ -9,10 +9,25 @@ package pulse
 // and it NEVER opens RESULT.md: a worker cannot name its own gate, widen its own paths
 // or supply its own seed, because nothing it wrote is read here.
 //
-// It runs in its own throwaway worktree of the job's head, under the job's slot, so an
-// untracked file the worker left in its clone cannot turn a test green; every command
-// runs through nova-sandbox; the tree is removed on every path. The steps, in order,
-// and the first failure decides:
+// It runs in its own tree, from its own clone, inside the wall, on a certified bench:
+//
+//   - the job's .git is read ONCE, by `git clone` and one fetch of its remote refs, into
+//     a clone the gate owns under the job's slot; the worker's hooks and its
+//     core.fsmonitor live in the worker's .git and config, which a clone does not copy,
+//     and the clone has no template, so no hook exists on the gate's side either; every
+//     git call the gate, hygiene and mutate make runs in that clone, with
+//     core.hooksPath=/dev/null and core.fsmonitor=false besides;
+//   - the base is a full sha and never a ref, because a ref resolves through a clone the
+//     worker can rewrite (`git branch -f main <evil>` would make the judged range
+//     evil..head);
+//   - every go command runs through nova-sandbox with the narrowest lists a build needs:
+//     the Go roots read, the one tree it works in written (plus the gate's own build
+//     cache and home), the network denied, -buildvcs=false; nothing under the swarm
+//     root is readable, so an untracked file the worker left in its copy cannot turn a
+//     test green;
+//   - the tree is removed on every path.
+//
+// The steps, in order, and the first failure decides:
 //
 //	(a)  hygiene       identity, stray-file, secret, out-of-path   (internal/hygiene)
 //	(b)  shape         the named test exists at head; the kind changed a test file
@@ -28,14 +43,15 @@ package pulse
 // compile would say test-weakened about a build error, and the token must name the
 // fault. Each command runs ONCE. A red is a finding, never a rerun, because a gate that
 // reruns until green accepts every flaky fix. A red the card neither changed nor named
-// is run once at the BASE, and red there is the base's (ABSTAIN base-red). A red whose
-// first non-notice line is the wall's or a missing toolchain's is the bench's (ABSTAIN
-// toolchain).
+// is run once at the BASE, and red there is the base's (ABSTAIN base-red). The bench
+// speaks only through the wall's own exit codes and the lines before the first test
+// result (ABSTAIN toolchain); a step that overruns the deadline is ABSTAIN timeout.
 //
 // What this version does not yet carry, each owed to a later task and said on the line:
-// control=- until --selftest (T04) puts a passing selftest on file; cert=hand until
-// nova-pulse certify (T19) writes a record; the identity set comes from --identity until
-// staging writes identity.tsv (T21).
+// cert=hand until nova-pulse certify (T19) writes a record, and rule 5's staling of that record on a
+// toolchain abstain waits for the same; the identity set comes from --identity until
+// staging writes identity.tsv (T21); rule 9's reverted= and --seed are nova-review's
+// (T01) and are not read here.
 
 import (
 	"context"
@@ -59,13 +75,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/review"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
 // AcceptInput is everything `nova-pulse accept` takes, held apart from flag parsing.
 type AcceptInput struct {
 	Job   string // the job directory: the worker's clone, whose HEAD is the card's commit
 	Card  string // the card file cut wrote
-	Base  string // the ref the range is judged against
+	Base  string // the full sha of the base the range is judged against
 	Bench string // the bench this gate runs on
 	Cert  string // the bench's certification record
 	// Identities is the set a commit's author and committer must be in: the pool's one
@@ -114,17 +131,18 @@ type acceptGate struct {
 	kind  Kind
 	label string
 
-	job, slot, runDir, wt, baseWt string
-	head, base                    string
-	certID                        string
-	control                       string
-	root                          string
-	sandbox                       string
-	reads, writes                 []string
+	job, slot, root, runDir string
+	repo, home, gocache     string // the gate-owned clone of the job, and the wall's home and build cache
+	wt, baseWt              string
+	head, base              string
+	certID                  string
+	control                 string
+	sandbox                 string
+	reads                   []string
 
 	changed []acceptChange
 	dirs    []string        // touched package directories, sorted
-	written map[string]bool // Test functions the card added or changed
+	written map[string]bool // "<pkg>:<Test>" the card added or changed
 	notes   []string
 	tests   int
 	red     int
@@ -135,7 +153,12 @@ var (
 	acceptSkipCall = regexp.MustCompile(`\bt\.(Skip|SkipNow|Skipf)\(`)
 	acceptResult   = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): ([A-Za-z_0-9]+)`)
 	acceptWallMark = regexp.MustCompile(`SANDBOX REFUSED|SANDBOX DENIED|\bWALL\b|Operation not permitted|[Nn]o space left on device|executable file not found|command not found|cannot find GOROOT|toolchain not available`)
+	acceptFullSHA  = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
+
+// errTimedOut is the wall answering after the gate's deadline: the command was killed,
+// and whatever it printed is not a verdict on the card.
+var errTimedOut = errors.New("the gate's deadline passed")
 
 // Accept runs the gate and prints one ACCEPT line. Exit 0 is OK, 1 is REJECT, 2 is
 // ABSTAIN or REFUSED.
@@ -222,22 +245,11 @@ func (g *acceptGate) run() int {
 		return g.refused(fmt.Sprintf("--job %s is not a git working copy", g.in.Job), "the job directory is the worker's clone, whose HEAD is the card's commit")
 	}
 	g.job = job
-	head, err := g.git(job, "rev-parse", "HEAD^{commit}")
-	if err != nil {
-		return g.refused("the job's clone has no HEAD commit", "a card ends at a commit; a job with none has nothing to accept")
-	}
-	base, err := g.git(job, "rev-parse", g.in.Base+"^{commit}")
-	if err != nil {
-		if base, err = g.git(job, "rev-parse", "origin/"+g.in.Base+"^{commit}"); err != nil {
-			return g.refused(fmt.Sprintf("--base %s names no commit in the job's clone", g.in.Base), "pass the ref the card was cut against; the clone must hold it")
-		}
-	}
-	if mb, err := g.git(job, "merge-base", base, head); err == nil && mb != "" {
-		base = mb
-	}
-	g.head, g.base = head, base
-	if head == base {
-		return g.reject("no-test", "-")
+	// The base is a full sha and nothing else. A ref resolves through the worker's clone,
+	// and `git branch -f main <evil>` there would make the judged range evil..head and
+	// let a hidden commit through under the card (cold read of f927bccc, HIGH 2).
+	if !acceptFullSHA.MatchString(g.in.Base) {
+		return g.refused(fmt.Sprintf("--base %s is not a full commit sha", oneline.Field(g.in.Base)), "the base is the forty-hex sha the card was cut against; a ref is a name the worker's clone can move")
 	}
 
 	if stop := g.bench(); stop != nil {
@@ -248,6 +260,27 @@ func (g *acceptGate) run() int {
 		return g.abstain("toolchain")
 	}
 	defer g.cleanup()
+
+	// The range is read from the gate's own clone, never from the worker's.
+	head, err := g.git(g.repo, "rev-parse", "HEAD^{commit}")
+	if err != nil {
+		return g.refused("the job's clone has no HEAD commit", "a card ends at a commit; a job with none has nothing to accept")
+	}
+	base, err := g.git(g.repo, "rev-parse", g.in.Base+"^{commit}")
+	if err != nil {
+		return g.refused(fmt.Sprintf("--base %s names no commit reachable in the job's clone", sha12(g.in.Base)), "the clone must hold the base the card was cut against")
+	}
+	if mb, err := g.git(g.repo, "merge-base", base, head); err == nil && mb != "" {
+		base = mb
+	}
+	g.head, g.base = head, base
+	if head == base {
+		return g.reject("no-test", "-")
+	}
+	if err := g.addWorktree(); err != nil {
+		g.note(err.Error())
+		return g.abstain("toolchain")
+	}
 
 	for _, step := range []func() *acceptStop{g.hygiene, g.survey, g.shape, g.buildVet, g.weakened, g.headTests, g.gateWeakened, g.mutate} {
 		if g.ctx.Err() != nil {
@@ -275,8 +308,9 @@ func (g *acceptGate) bench() *acceptStop {
 	g.sandbox = found
 	// The Go roots are asked of the toolchain, the way `nova-sandbox run --go` asks
 	// them, never guessed (SPEC-SANDBOX, `--go`): the bare wrap has no --go, so accept
-	// names them itself with --read and --write.
-	cmd := exec.CommandContext(g.ctx, "go", "env", "GOROOT", "GOMODCACHE", "GOCACHE")
+	// names them itself with --read. The toolchain's own build cache is not used; the
+	// gate's is under its root.
+	cmd := exec.CommandContext(g.ctx, "go", "env", "GOROOT", "GOMODCACHE")
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
@@ -284,26 +318,26 @@ func (g *acceptGate) bench() *acceptStop {
 		return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
 	}
 	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(out), "\r\n", "\n")), "\n")
-	if len(lines) != 3 {
-		g.note("go env answered with other than three roots")
+	if len(lines) != 2 {
+		g.note("go env answered with other than two roots")
 		return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
 	}
-	for _, r := range lines[:2] {
+	for _, r := range lines {
 		if r = strings.TrimSpace(r); r != "" {
 			if _, err := os.Stat(r); err == nil {
 				g.reads = append(g.reads, r)
 			}
 		}
 	}
-	if cache := strings.TrimSpace(lines[2]); cache != "" {
-		_ = os.MkdirAll(cache, 0o755)
-		g.writes = append(g.writes, cache)
-	}
 	return nil
 }
 
-// makeRun makes the gate's own directory under the job's slot and the worktree of the
-// head inside it. Nothing here touches the worker's copy.
+// makeRun makes the gate's own directory under the job's slot and, inside it, a clone of
+// the job that the gate OWNS: the worker's .git is read once, by `git clone` and one
+// `fetch` of its remote refs, and never operated in again. The worker's hooks and its
+// core.fsmonitor live in its .git and its config, which a clone does not copy, and the
+// clone is made with no template so it has no hooks of its own (cold read of f927bccc,
+// HIGH 1). Every later git call, hygiene's and mutate's included, runs in this clone.
 func (g *acceptGate) makeRun() error {
 	g.slot = filepath.Dir(g.job)
 	if filepath.Base(g.slot) == "jobs" {
@@ -322,8 +356,31 @@ func (g *acceptGate) makeRun() error {
 		return fmt.Errorf("could not make the gate's directory under %s: %v", acceptDir, err)
 	}
 	g.runDir = run
-	wt := filepath.Join(run, "head")
-	if _, err := g.git(g.job, "worktree", "add", "--detach", wt, g.head); err != nil {
+	g.repo = filepath.Join(run, "repo")
+	if _, err := acceptGitOut(g.ctx, run, "clone", "-q", "--no-hardlinks", "--template=", g.job, g.repo); err != nil {
+		return fmt.Errorf("could not clone the job: %v", err)
+	}
+	// The worker's remote refs come too, so a base on the integration branch is
+	// reachable; a clone with none of them is still whole for a head that descends
+	// from its base, so a fetch that finds nothing is not an error.
+	_, _ = acceptGitOut(g.ctx, g.repo, "fetch", "-q", g.job, "+refs/remotes/*:refs/remotes/*")
+	g.home = filepath.Join(run, "home")
+	if err := os.MkdirAll(g.home, 0o755); err != nil {
+		return err
+	}
+	// One build cache for every gate run under this slot, and for nothing else: not the
+	// workers' shared <root>/cache, which every job may write.
+	g.gocache = filepath.Join(acceptDir, "gocache")
+	if err := os.MkdirAll(g.gocache, 0o755); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addWorktree is the head's tree, from the gate's own clone.
+func (g *acceptGate) addWorktree() error {
+	wt := filepath.Join(g.runDir, "head")
+	if _, err := g.git(g.repo, "worktree", "add", "--detach", wt, g.head); err != nil {
 		return fmt.Errorf("could not add a worktree of %s: %v", sha12(g.head), err)
 	}
 	g.wt = wt
@@ -345,22 +402,24 @@ func sanitizeLabel(s string) string {
 
 func (g *acceptGate) cleanup() {
 	ctx := context.WithoutCancel(g.ctx)
-	for _, wt := range []string{g.wt, g.baseWt} {
-		if wt != "" {
-			_, _ = acceptGitOut(ctx, g.job, "worktree", "remove", "--force", wt)
+	if g.repo != "" {
+		for _, wt := range []string{g.wt, g.baseWt} {
+			if wt != "" {
+				_, _ = acceptGitOut(ctx, g.repo, "worktree", "remove", "--force", wt)
+			}
 		}
+		_, _ = acceptGitOut(ctx, g.repo, "worktree", "prune")
 	}
 	if g.runDir != "" {
 		_ = safepath.RemoveUnder(filepath.Join(g.slot, "accept"), g.runDir)
 	}
-	_, _ = acceptGitOut(ctx, g.job, "worktree", "prune")
 }
 
 // (a) hygiene: the four checks, one package, and the first token in the spec's order
-// decides.
+// decides. It reads the gate's clone, never the worker's.
 func (g *acceptGate) hygiene() *acceptStop {
 	fs, err := hyg.Check(g.ctx, hyg.Options{
-		Repo: g.job, Base: g.base, Head: g.head, Paths: g.h.Paths,
+		Repo: g.repo, Base: g.base, Head: g.head, Paths: g.h.Paths,
 		Identities: g.in.Identities, Kind: g.kind.Name,
 	})
 	if err != nil {
@@ -379,9 +438,10 @@ func (g *acceptGate) hygiene() *acceptStop {
 }
 
 // survey reads the range once: what changed, which packages, and which Test functions
-// the card wrote or changed (their body at head differs from the base, or they are new).
+// the card wrote or changed (their body at head differs from the base, or they are new),
+// keyed by package and name so a same-named test elsewhere is not this one.
 func (g *acceptGate) survey() *acceptStop {
-	out, err := g.git(g.job, "diff", "--no-ext-diff", "--no-renames", "--name-status", g.base, g.head)
+	out, err := g.git(g.repo, "diff", "--no-ext-diff", "--no-renames", "--name-status", g.base, g.head)
 	if err != nil {
 		g.note("could not read the change: " + err.Error())
 		return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
@@ -414,7 +474,7 @@ func (g *acceptGate) survey() *acceptStop {
 		}
 		for name, body := range headBodies {
 			if bb, ok := baseBodies[name]; !ok || bb != body {
-				g.written[name] = true
+				g.written[d+":"+name] = true
 			}
 		}
 	}
@@ -455,6 +515,9 @@ func (g *acceptGate) buildVet() *acceptStop {
 	}
 	for _, step := range [][]string{{"build", "./..."}, {"vet", "./..."}} {
 		out, err := g.wall(g.wt, "go", step...)
+		if stop := g.timedOut(err); stop != nil {
+			return stop
+		}
 		if err == nil {
 			continue
 		}
@@ -522,7 +585,7 @@ func (g *acceptGate) weakened() *acceptStop {
 		}
 		var run []string
 		for _, f := range overlay {
-			src, err := g.git(g.job, "show", g.base+":"+f)
+			src, err := g.git(g.repo, "show", g.base+":"+f)
 			if err != nil {
 				return g.toolchain(fmt.Errorf("could not read %s at the base: %v", f, err))
 			}
@@ -537,8 +600,15 @@ func (g *acceptGate) weakened() *acceptStop {
 		}
 		sort.Strings(run)
 		out, err := g.testRun(g.wt, d, run)
+		if stop := g.timedOut(err); stop != nil {
+			return stop
+		}
 		for _, f := range overlay {
-			_, _ = g.git(g.wt, "checkout", "--", f)
+			// The head's copy put back before the head's own suite runs; a restore that
+			// failed would have (c2) judge the base's file (cold read, LOW 7).
+			if _, cerr := g.git(g.wt, "checkout", "--", f); cerr != nil {
+				return g.toolchain(fmt.Errorf("could not restore %s after the overlay: %v", f, cerr))
+			}
 		}
 		if err == nil {
 			continue
@@ -569,6 +639,9 @@ func (g *acceptGate) headTests() *acceptStop {
 	}
 	for _, d := range g.dirs {
 		out, err := g.testRun(g.wt, d, nil)
+		if stop := g.timedOut(err); stop != nil {
+			return stop
+		}
 		g.tests += acceptCountResults(out)
 		if err == nil {
 			continue
@@ -583,7 +656,7 @@ func (g *acceptGate) headTests() *acceptStop {
 		}
 		var untouched []string
 		for _, n := range failing {
-			if !g.written[n] && n != g.h.TestName {
+			if !g.written[d+":"+n] && n != g.h.TestName {
 				untouched = append(untouched, n)
 			}
 		}
@@ -602,12 +675,15 @@ func (g *acceptGate) headTests() *acceptStop {
 func (g *acceptGate) redAtBase(d string, names []string) *acceptStop {
 	if g.baseWt == "" {
 		wt := filepath.Join(g.runDir, "base")
-		if _, err := g.git(g.job, "worktree", "add", "--detach", wt, g.base); err != nil {
+		if _, err := g.git(g.repo, "worktree", "add", "--detach", wt, g.base); err != nil {
 			return g.toolchain(fmt.Errorf("could not add a worktree of the base %s: %v", sha12(g.base), err))
 		}
 		g.baseWt = wt
 	}
 	out, err := g.testRun(g.baseWt, d, names)
+	if stop := g.timedOut(err); stop != nil {
+		return stop
+	}
 	if err == nil {
 		return nil
 	}
@@ -624,14 +700,18 @@ func (g *acceptGate) redAtBase(d string, names []string) *acceptStop {
 }
 
 // (d) the card's negative control: the change reverted, the tests kept, and they must go
-// red. The suites run through the same wall, in a worktree under the gate's directory.
+// red. The suites run through the same wall, in worktrees under the gate's directory,
+// from the gate's own clone.
 func (g *acceptGate) mutate() *acceptStop {
 	if !g.kind.Step(StepMutate) {
 		return nil
 	}
 	res, err := review.Mutate(g.ctx, review.MutateOptions{
-		Repo: g.job, Base: g.base, Head: g.head, TempRoot: g.runDir, Exec: g.execWalled,
+		Repo: g.repo, Base: g.base, Head: g.head, TempRoot: g.runDir, Exec: g.execWalled,
 	})
+	if stop := g.timedOut(err); stop != nil {
+		return stop
+	}
 	switch {
 	case errors.Is(err, review.ErrNoTestsChanged):
 		return &acceptStop{verdict: "REJECT", reason: "no-test", at: "-"}
@@ -640,14 +720,11 @@ func (g *acceptGate) mutate() *acceptStop {
 		// without.
 		return &acceptStop{verdict: "REJECT", reason: "named-test-not-red", at: g.h.TestName}
 	case err != nil:
-		if g.ctx.Err() != nil {
-			return &acceptStop{verdict: "ABSTAIN", reason: "timeout"}
-		}
 		return g.toolchain(fmt.Errorf("mutate could not run: %v", err))
 	}
 	g.red = res.Red
 	for _, green := range res.Greens {
-		if g.written[green.Name] {
+		if g.written[path.Dir(green.File)+":"+green.Name] {
 			// A test the card wrote that is green without the change proves nothing
 			// about the change (SPEC-REVIEW rule, `docs/SPEC-REVIEW.md:653-654`). A
 			// pre-existing test that stays green was never about this fix and is
@@ -694,40 +771,81 @@ func acceptPkgArg(pkg string) string {
 }
 
 // execWalled is the wrap: nova-sandbox's flags, then --, then the command verbatim
-// (SPEC-SWARM rule 12: no argument re-parsed, no quote re-interpreted). The slot is read,
-// the gate's own directory and the Go build cache are written, the Go roots are read.
+// (SPEC-SWARM rule 12: no argument re-parsed, no quote re-interpreted).
+//
+// The lists are the narrowest that run a Go build (cold read of f927bccc, HIGH 3): READ
+// the Go roots and nothing under the swarm root -- a `--read <slot>` admitted the
+// worker's copy, and a test reading ../../jobs/<label>/... went green under the real
+// wall; WRITE the one tree this command works in, first (the cwd and the temp
+// directory default to it), then the gate's own build cache and home -- never one root
+// over head, base and mutate trees together, so a head test cannot reach the base tree.
+// The network is denied (§1 rule 10). Builds carry -buildvcs=false, so nothing reads the
+// tree's .git file.
 func (g *acceptGate) execWalled(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
-	argv := []string{"--read", g.slot}
+	var argv []string
 	for _, r := range g.reads {
 		argv = append(argv, "--read", r)
 	}
-	argv = append(argv, "--write", g.runDir)
-	for _, w := range g.writes {
-		argv = append(argv, "--write", w)
-	}
-	argv = append(argv, "--cwd", dir, "--", name)
-	argv = append(argv, args...)
+	argv = append(argv, "--write", dir, "--write", g.gocache, "--write", g.home, "--net-deny", "--cwd", dir, "--", name)
+	argv = append(argv, acceptNoVCS(name, args)...)
 	cmd := exec.CommandContext(ctx, g.sandbox, argv...)
 	cmd.Dir = dir
+	// When the deadline kills the wall, a grandchild it started may still hold the
+	// output pipe; without a bound, CombinedOutput would wait for it for as long as it
+	// runs, and a step that overran --timeout would overrun it again (cold read of
+	// f927bccc, MEDIUM 5: the test measured 36 s against an 8 s budget).
+	cmd.WaitDelay = 2 * time.Second
 	// The verdict is a property of the range, never of the environment the gate was
 	// started in (internal/goenv: a caller's GOFLAGS=-json would hide every result).
-	cmd.Env = goenv.Clean(os.Environ())
+	// HOME and GOCACHE are the gate's, inside its write set, as the wall's rule 9 wants.
+	cmd.Env = append(goenv.Clean(os.Environ()), "HOME="+g.home, "GOCACHE="+g.gocache)
 	return cmd
+}
+
+// acceptNoVCS puts -buildvcs=false after a go build, vet or test verb that lacks it.
+func acceptNoVCS(name string, args []string) []string {
+	if name != "go" || len(args) == 0 {
+		return args
+	}
+	switch args[0] {
+	case "build", "vet", "test":
+	default:
+		return args
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-buildvcs") {
+			return args
+		}
+	}
+	return append([]string{args[0], "-buildvcs=false"}, args[1:]...)
 }
 
 func (g *acceptGate) wall(dir, name string, args ...string) (string, error) {
 	out, err := g.execWalled(g.ctx, dir, name, args...).CombinedOutput()
+	if g.ctx.Err() != nil {
+		return string(out), errTimedOut
+	}
 	return string(out), err
 }
 
+// timedOut is checked after every wall call: a step that overran --timeout is the
+// gate's budget speaking, ABSTAIN timeout, never a red charged to the card (cold read
+// of f927bccc, MEDIUM 5).
+func (g *acceptGate) timedOut(err error) *acceptStop {
+	if errors.Is(err, errTimedOut) || g.ctx.Err() != nil {
+		return &acceptStop{verdict: "ABSTAIN", reason: "timeout"}
+	}
+	return nil
+}
+
 // testBodiesAt reads every Test function declared directly in one package directory at
-// one ref: name -> body, and name -> the file that declares it.
+// one ref, from the gate's clone: name -> body, and name -> the file that declares it.
 func (g *acceptGate) testBodiesAt(ref, dir string) (map[string]string, map[string]string, error) {
 	args := []string{"ls-tree", "-r", "--name-only", ref}
 	if dir != "." && dir != "" {
 		args = append(args, "--", dir)
 	}
-	out, err := g.git(g.job, args...)
+	out, err := g.git(g.repo, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not list %s at %s: %v", dir, sha12(ref), err)
 	}
@@ -737,7 +855,7 @@ func (g *acceptGate) testBodiesAt(ref, dir string) (map[string]string, map[strin
 		if p == "" || !acceptIsTestFile(p) || path.Dir(p) != dir {
 			continue
 		}
-		src, err := g.git(g.job, "show", ref+":"+p)
+		src, err := g.git(g.repo, "show", ref+":"+p)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not read %s at %s: %v", p, sha12(ref), err)
 		}
@@ -749,7 +867,9 @@ func (g *acceptGate) testBodiesAt(ref, dir string) (map[string]string, map[strin
 }
 
 // acceptTestBodies splits a Go source into its Test functions, each body running to the
-// next top-level func.
+// next top-level func. Trailing blank lines belong to the file, not the function: a
+// test whose only difference between base and head is the blank line before a new
+// neighbour was not changed by the card.
 func acceptTestBodies(src string) map[string]string {
 	out := map[string]string{}
 	for _, m := range acceptTestFunc.FindAllStringSubmatchIndex(src, -1) {
@@ -757,9 +877,6 @@ func acceptTestBodies(src string) map[string]string {
 		if j := strings.Index(src[m[1]:], "\nfunc "); j >= 0 {
 			end = m[1] + j + 1
 		}
-		// Trailing blank lines belong to the file, not the function: a test whose only
-		// difference between base and head is the blank line before a new neighbour
-		// was not changed by the card.
 		out[src[m[2]:m[3]]] = strings.TrimSpace(src[m[0]:end])
 	}
 	return out
@@ -810,14 +927,26 @@ func acceptFirstLine(out string) string {
 }
 
 // acceptToolchainRed: the red is the bench's when the command could not be started at
-// all, or when its first non-notice line is the wall's refusal, a missing toolchain or a
-// full disk.
+// all, when the wall itself answered (nova-sandbox's exits 125, 126, 127: refused, not
+// executed, not found), or when a wall or toolchain line appears BEFORE the first test
+// result. Lines after `=== RUN` are the card's tests talking, and a red test that prints
+// "Operation not permitted" is still the card's red (cold read of f927bccc, MEDIUM 4).
 func acceptToolchainRed(out string, err error) bool {
 	var ee *exec.ExitError
 	if err != nil && !errors.As(err, &ee) {
 		return true
 	}
-	return acceptWallMark.MatchString(acceptFirstLine(out))
+	if ee != nil {
+		switch ee.ExitCode() {
+		case sandbox.ExitRefused, sandbox.ExitNotExecuted, sandbox.ExitNotFound:
+			return true
+		}
+	}
+	prefix := out
+	if i := strings.Index(out, "=== RUN"); i >= 0 {
+		prefix = out[:i]
+	}
+	return acceptWallMark.MatchString(acceptFirstLine(prefix))
 }
 
 func (g *acceptGate) toolchain(err error) *acceptStop {
@@ -864,8 +993,12 @@ func (g *acceptGate) git(dir string, args ...string) (string, error) {
 	return acceptGitOut(g.ctx, dir, args...)
 }
 
+// acceptGitOut runs one git command with no hook and no filesystem monitor, whatever the
+// repository's own config says: a hook is a program the repository chose, and the gate
+// runs none of them (cold read of f927bccc, HIGH 1).
 func acceptGitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	argv := append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.Output()
@@ -1024,8 +1157,9 @@ func (g *acceptGate) gateWeakened() *acceptStop {
 		return g.toolchain(err)
 	}
 	const fixturePath = "cmd/nova-pulse/testdata/accept"
-	archive := exec.CommandContext(g.ctx, "git", "archive", "--format=tar", g.base, fixturePath)
-	archive.Dir = g.job
+	// From the gate's own clone, hook-off, like every other git call (cold read HIGH 1).
+	archive := exec.CommandContext(g.ctx, "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "archive", "--format=tar", g.base, fixturePath)
+	archive.Dir = g.repo
 	archive.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	tarBytes, err := archive.Output()
 	if err != nil {

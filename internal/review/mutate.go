@@ -513,7 +513,10 @@ func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// No hook and no filesystem monitor, whatever the repository's own config says: a
+	// hook is a program the repository chose, and a gate runs none of them.
+	argv := append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
