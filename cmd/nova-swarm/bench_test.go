@@ -82,9 +82,16 @@ func newProbeFixture(t *testing.T) *probeFixture {
 
 func (f *probeFixture) writeTable(t *testing.T, cores, wall string) string {
 	t.Helper()
+	return f.writeTableHost(t, "b2", cores, wall)
+}
+
+// writeTableHost is writeTable with the host column named: "local" is the row for
+// the operator's own machine, which the probe proves without ssh.
+func (f *probeFixture) writeTableHost(t *testing.T, host, cores, wall string) string {
+	t.Helper()
 	p := filepath.Join(f.dir, "benches.tsv")
 	body := "name\thost\troot\tcores\tharness\tauth\twall\n" +
-		"b2\tb2\t" + f.root + "\t" + cores + "\t" + f.harness + "\t" + f.auth + "\t" + wall + "\n"
+		"b2\t" + host + "\t" + f.root + "\t" + cores + "\t" + f.harness + "\t" + f.auth + "\t" + wall + "\n"
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +182,48 @@ func TestBenchProbeNeverReadsAuth(t *testing.T) {
 				t.Errorf("the probe read the auth file: %s", line)
 			}
 		}
+	}
+}
+
+// The local row reads the auth mode through the Go stdlib, never through `stat -c`.
+// `-c` is GNU's spelling; darwin's stat has no -c at all and refuses the option, so
+// a probe that shells out tells an operator on a Mac that a perfectly good 0600 auth
+// file is not 0600. A remote bench is Linux and keeps its one `stat -c %a` round
+// trip; the local row must not exec stat at all.
+func TestBenchProbeLocalRowNeedsNoGNUStat(t *testing.T) {
+	windowsIsNotABench(t)
+	f := newProbeFixture(t)
+	statLog := filepath.Join(f.dir, "stat.log")
+	f.env = append(f.env, "STAT_LOG="+statLog)
+	// A BSD stat, exactly as darwin's: it records its argv and refuses -c.
+	writeScript(t, filepath.Join(f.fakeBin, "stat"), `printf '%s\n' "$*" >> "$STAT_LOG"
+case "$1" in
+-c) printf 'stat: illegal option -- c\n' >&2; exit 1;;
+esac
+printf '%s\n' "${STAT_MODE:-600}"`)
+	writeScript(t, filepath.Join(f.fakeBin, "taskset"), "exit 0")
+	table := f.writeTableHost(t, "local", "1-15", "sandbox")
+	exit, stdout, _, _ := f.probe(t, "--benches", table, "--bench", "b2")
+	if exit != 0 {
+		t.Fatalf("a local row with a 0600 auth admits without GNU stat, got %d:\n%s", exit, stdout)
+	}
+	if !strings.Contains(stdout, "check=auth ok=true 0600") {
+		t.Errorf("the auth check reads mode 0600:\n%s", stdout)
+	}
+	// Nothing was exec'd to answer the question.
+	if b, err := os.ReadFile(statLog); err == nil && strings.TrimSpace(string(b)) != "" {
+		t.Errorf("the local row exec'd stat instead of the stdlib: %s", strings.TrimSpace(string(b)))
+	}
+	// And still never a read: the mode is all the probe wants.
+	if err := os.Chmod(f.auth, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, _, _ = f.probe(t, "--benches", table, "--bench", "b2")
+	if exit != 1 {
+		t.Fatalf("a local row with a 0644 auth refuses at exit 1, got %d:\n%s", exit, stdout)
+	}
+	if !strings.Contains(stdout, "check=auth") || !strings.Contains(stdout, "644") {
+		t.Errorf("the refusal names the mode it found:\n%s", stdout)
 	}
 }
 
