@@ -93,7 +93,7 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 	before := len(l.pushes())
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-1", "--pr", "1,2,3",
-		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m")
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m", "--readers", "gafferongames")
 
 	if exit != 1 {
 		t.Fatalf("a red batch is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
@@ -135,7 +135,7 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	before := len(l.pushes())
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-2", "--pr", "1 2",
-		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m")
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m", "--readers", "gafferongames")
 
 	if exit != 0 {
 		t.Fatalf("a green batch is exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
@@ -427,7 +427,7 @@ func TestTheGatesCloneSharesNoObjectFileWithTheFixtureRepository(t *testing.T) {
 	l := batchRepo(t)
 	root := filepath.Join(l.dir, "batch")
 	exit, stdout, stderr := l.run("batch", "--name", "integration-transport", "--pr", "1",
-		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m")
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m", "--readers", "gafferongames")
 	if exit != 0 {
 		t.Fatalf("the gate did not run: exit %d\n%s\n%s", exit, stdout, stderr)
 	}

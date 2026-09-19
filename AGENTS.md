@@ -76,13 +76,19 @@ names before you call anything green.
 2. Open a pull request into `dev`. Link the issue, say what changed and report
    the checks you ran.
 3. A coordinator collects green pull requests into an **integration batch** on a
-   `rowan/integration-*` branch and runs `nova-merge batch`, which builds, vets,
-   tests and runs the lisp suite over the merged tree and prints a `BATCH OK`
-   receipt for that sha.
+   `rowan/integration-*` branch and runs `nova-merge batch --readers <login,...>`,
+   which builds, vets, tests and runs the lisp suite over the merged tree and
+   prints a `BATCH OK` receipt for that sha.
 4. **The one door** is `nova-merge land --repo <owner>/<name> --pr <n>
-   --receipt-file <path>`. It is the only thing that admits anything to the
-   queue, through `internal/merge.Enqueuer.Enqueue`, and it refuses a head that
-   is not a batch's.
+   --readers <login,...> --receipt-file <path>`. It is the only thing that
+   admits anything to the queue, through `internal/merge.Enqueuer.Enqueue`, and
+   it refuses a head that is not a batch's.
+5. **A HOLD stops a landing the way a red does.** Both verbs read each member's
+   comments and reviews and refuse one carrying an unlifted HOLD from a named
+   reader, because on 2026-09-19 a held head reached `dev` through a green gate:
+   the hold was posted nine minutes after the gate read that member. `--readers`
+   or the loud `--no-require-holds` is required; `--ignore-hold <n>` steps over
+   one, on the record.
 
 **You never merge your own pull request.** Not `gh pr merge`, not `--auto`, not
 the web button. `--auto` does not queue here — it leaves a standing instruction

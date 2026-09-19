@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,14 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	receipt := f.fs.String("receipt", "", "")
 	receiptFile := f.fs.String("receipt-file", "", "")
 	noJump := f.fs.Bool("no-jump", false, "")
+	// #1572's second half. The hold that put a held head on dev arrived AFTER the gate
+	// said BATCH OK and BEFORE this verb ran: a check only in `batch` would still have
+	// admitted it. So the same read happens here, on this verb's own fresh look, over
+	// the batch pull request AND every member its receipt names.
+	readers := f.fs.String("readers", "", "")
+	noRequireHolds := f.fs.Bool("no-require-holds", false, "")
+	ignoreHold := newIntList()
+	f.fs.Var(ignoreHold, "ignore-hold", "")
 	timeout := f.fs.Int("timeout", 120, "")
 	if !f.parse(args, stderr) {
 		return 2
@@ -66,6 +75,12 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *timeout < 1 || *timeout > maxTimeout {
 		f.problem(fmt.Sprintf("--timeout is a number of seconds this tool waits for gh before saying so, from 1 to %d, got %d", maxTimeout, *timeout))
 	}
+	if !*noRequireHolds && len(splitLogins(*readers)) == 0 {
+		f.problem("--readers <login,...> names the readers whose HOLD stops this landing, like gafferongames; it is required because the one landing that did not read them put a held head on dev on 2026-09-19 (#1572). Pass --no-require-holds to land without the read and own that.")
+	}
+	if *noRequireHolds && len(splitLogins(*readers)) > 0 {
+		f.problem("--readers and --no-require-holds say opposite things about the same read; give one")
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -78,21 +93,27 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 		line = lastBatchLine(string(raw))
 	}
 	return runLandVerb(landRun{
-		repo:    *repo,
-		pr:      *pr,
-		receipt: line,
-		jump:    !*noJump,
-		timeout: time.Duration(*timeout) * time.Second,
+		repo:         *repo,
+		pr:           *pr,
+		receipt:      line,
+		jump:         !*noJump,
+		timeout:      time.Duration(*timeout) * time.Second,
+		readers:      splitLogins(*readers),
+		requireHolds: !*noRequireHolds,
+		ignoreHold:   ignoreHold.values,
 	}, stdout, stderr, deps)
 }
 
 // landRun is one landing's whole invocation, checked.
 type landRun struct {
-	repo    string
-	pr      int
-	receipt string
-	jump    bool
-	timeout time.Duration
+	repo         string
+	pr           int
+	receipt      string
+	jump         bool
+	timeout      time.Duration
+	readers      []string
+	requireHolds bool
+	ignoreHold   []int
 }
 
 func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
@@ -122,6 +143,14 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	if head.Red > 0 || head.Pending > 0 || head.Total() == 0 {
 		return landRefused(stderr, fmt.Sprintf("pull request %d is not green (%s); the queue takes a batch CI has judged, and this one it has not",
 			in.pr, oneline.Field(head.Field())))
+	}
+	// THE HOLD READ, ON THIS VERB'S OWN FRESH LOOK (#1572). The batch pull request
+	// itself and every member its receipt names, because the hold that reached dev on
+	// 2026-09-19 was on a MEMBER and arrived in the nine minutes between BATCH OK and
+	// here. A landing is refused, not dropped: this verb lands one thing and there is
+	// nothing to leave behind.
+	if code := landHoldRead(in, host, stderr); code != 0 {
+		return code
 	}
 	if err := merge.NewEnqueuer(deps.NewEnqueueHost(in.repo, in.timeout)).Enqueue(
 		context.Background(),
@@ -176,4 +205,62 @@ func receiptMembers(receipt string) string {
 		return "-"
 	}
 	return rec.Members
+}
+
+// landHoldRead refuses the landing when the batch or any member its receipt names carries
+// an unlifted HOLD from one of the named readers. Exit 1: the verb ran, read the forge and
+// says no.
+func landHoldRead(in landRun, host merge.Host, stderr io.Writer) int {
+	if !in.requireHolds {
+		fmt.Fprintf(stderr, "LAND NOTE holds=unread reason=%s\n", oneline.Field(
+			"--no-require-holds was given: this batch lands whatever a reader has said about it or its members"))
+		return 0
+	}
+	ignored := map[int]bool{}
+	for _, n := range in.ignoreHold {
+		ignored[n] = true
+	}
+	for _, n := range landSubjects(in) {
+		pr, err := host.PR(n)
+		if err != nil {
+			return landCouldNotRun(stderr, fmt.Sprintf("pull request %d could not be read, and the hold read is on: %s", n, oneline.Err(err)))
+		}
+		vs, err := host.Verdicts(n)
+		if err != nil {
+			return landCouldNotRun(stderr, fmt.Sprintf("pull request %d's comments and reviews could not be read, and the hold read is on: %s", n, oneline.Err(err)))
+		}
+		holds := merge.UnliftedHolds(vs, pr.HeadOID, in.readers)
+		if len(holds) == 0 {
+			continue
+		}
+		if ignored[n] {
+			fmt.Fprintf(stderr, "LAND NOTE #%d holds=ignored reason=%s\n", n,
+				oneline.Field(fmt.Sprintf("--ignore-hold %d was given: %s", n, oneline.Escape(holds[0].Line()))))
+			continue
+		}
+		return landRefused(stderr, fmt.Sprintf(
+			"pull request %d carries an unlifted %s; a hold is lifted by an APPROVE from that same reader naming this very head, and --ignore-hold %d steps over it on the record",
+			n, oneline.Escape(holds[0].Line()), n))
+	}
+	return 0
+}
+
+// landSubjects is the batch pull request and every member its receipt names, in that
+// order. A landing with no receipt reads the batch alone -- there is nothing else to name.
+func landSubjects(in landRun) []int {
+	out := []int{in.pr}
+	seen := map[int]bool{in.pr: true}
+	rec, err := merge.ParseBatchReceipt(strings.TrimSpace(in.receipt))
+	if err != nil {
+		return out
+	}
+	for _, raw := range strings.Split(rec.Members, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || n < 1 || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
 }

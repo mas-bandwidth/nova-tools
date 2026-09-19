@@ -219,6 +219,22 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// bench with no sbcl is a bench that cannot judge this batch, and the gate says FAIL
 	// rather than a green nobody may trust.
 	requireLisp := f.fs.Bool("require-lisp", false, "")
+	// #1572. --readers NAMES WHOSE HOLD COUNTS, and --no-require-holds turns the read
+	// off out loud, the pair --require-checks already has. A held head reached dev at
+	// 02:43Z on 2026-09-19 through a green gate: the HOLD landed on #1551 nine minutes
+	// after this verb read that member and four minutes before land, and a gate that
+	// reads OPEN, base, MERGEABLE and ci-ok has no way to see one. A hold deserves the
+	// same treatment as a red -- refused by the tool, on the tool's own fresh read.
+	//
+	// It is a NAMED SET rather than anyone who types the word, because this lane's own
+	// status comments quote HOLD while reporting on one; a naive match over every
+	// comment would have dropped several innocent members that same night.
+	readers := f.fs.String("readers", "", "")
+	noRequireHolds := f.fs.Bool("no-require-holds", false, "")
+	// --ignore-hold <n> is the escape for a hold known to be lifted out of band, so the
+	// refusal is a refusal and not a wall. It is repeatable and every use is printed.
+	ignoreHold := newIntList()
+	f.fs.Var(ignoreHold, "ignore-hold", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -255,6 +271,14 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *gomaxprocs < 0 {
 		f.problem(fmt.Sprintf("--gomaxprocs is the share of the machine this batch takes, the way CI divides its cores by the runners on it; 0 is all of them, and a negative one is a typo, got %d", *gomaxprocs))
 	}
+	// The named set or the loud waiver, and never neither: a gate that silently counts
+	// nobody's hold is the gate that admitted a held head on 2026-09-19 (#1572).
+	if !*noRequireHolds && len(splitLogins(*readers)) == 0 {
+		f.problem("--readers <login,...> names the readers whose HOLD this gate refuses a member for, like gafferongames; it is required because a gate that reads nobody's hold admitted a held head on 2026-09-19 (#1572). Pass --no-require-holds to build a batch without the read and own that.")
+	}
+	if *noRequireHolds && len(splitLogins(*readers)) > 0 {
+		f.problem("--readers and --no-require-holds say opposite things about the same read; give one")
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -271,6 +295,9 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		requireLisp:  *requireLisp,
 		requireCheck: !*noRequireChecks,
 		receiptFile:  strings.TrimSpace(*receiptFile),
+		readers:      splitLogins(*readers),
+		requireHolds: !*noRequireHolds,
+		ignoreHold:   ignoreHold.values,
 	}, stdout, stderr, deps)
 }
 
@@ -292,6 +319,12 @@ type batchRun struct {
 	requireLisp  bool
 	requireCheck bool
 	receiptFile  string
+	// readers is the named set whose HOLD drops a member, requireHolds is whether the
+	// read happens at all, and ignoreHold is the members whose hold the caller has
+	// taken responsibility for by number (#1572).
+	readers      []string
+	requireHolds bool
+	ignoreHold   []int
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -449,18 +482,44 @@ const batchRequiredCheck = "ci-ok"
 // The forge is reached through the one host seam the rest of this binary uses, so the
 // tests drive merge.FakeHost and no test here opens a socket.
 func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
+	host := deps.NewHost(in.repo, in.timeout)
+	// #1572 FIRST, AND FOR EVERY MEMBER: a reader's HOLD is not a check and no test in
+	// this repository encodes one, so it is read here or it is not read at all.
+	held, code := heldMembers(in, stdout, stderr, deps, host, start)
+	if code != 0 {
+		return nil, nil, code
+	}
+	dropHeld := func(n int) bool {
+		v, ok := held[n]
+		if !ok {
+			return false
+		}
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n,
+			fmt.Sprintf("an unlifted %s; a hold is lifted by an APPROVE from that same reader naming this very head, and --ignore-hold %d steps over it on the record", oneline.Escape(v.Line()), n), since(start))
+		return true
+	}
 	if !in.requireCheck {
 		fmt.Fprintf(stderr, "BATCH NOTE checks=waived reason=%q t=%.1fs\n",
 			"--no-require-checks was given: a member is merged whatever its own head last did, and a red batch may be one member's own fault",
 			since(start))
-		return in.prs, nil, 0
+		for _, n := range in.prs {
+			if dropHeld(n) {
+				dropped = append(dropped, n)
+				continue
+			}
+			keep = append(keep, n)
+		}
+		return keep, dropped, 0
 	}
 	receipts, err := batchReceipts(in.receiptFile)
 	if err != nil {
 		return nil, nil, batchRefused(stderr, err)
 	}
-	host := deps.NewHost(in.repo, in.timeout)
 	for _, n := range in.prs {
+		if dropHeld(n) {
+			dropped = append(dropped, n)
+			continue
+		}
 		pr, err := host.PR(n)
 		if err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
@@ -914,3 +973,79 @@ func numberOrNone(names []string) string {
 // the wall clock on purpose: the question a reader has at minute three is how long this
 // has really taken, which no injected clock can answer.
 func since(start time.Time) float64 { return time.Since(start).Seconds() }
+
+// splitLogins reads a comma-separated --readers value into the logins it names, dropping
+// empties so a trailing comma is a typo and not a reader called "".
+func splitLogins(raw string) []string {
+	var out []string
+	for _, s := range strings.Split(raw, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// intList is a repeatable integer flag: --ignore-hold 1551 --ignore-hold 1560.
+type intList struct{ values []int }
+
+func newIntList() *intList { return &intList{} }
+
+func (l *intList) String() string { return numberList(l.values) }
+
+func (l *intList) Set(raw string) error {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 1 {
+		return fmt.Errorf("a pull request number, got %q", raw)
+	}
+	l.values = append(l.values, n)
+	return nil
+}
+
+// heldMembers is #1572's read: every member carrying an unlifted HOLD from one of the
+// named readers, keyed by number, with the verdict that holds it.
+//
+// It runs at the SAME POINT the gate reads a member's ci-ok, and it runs for every
+// member -- including one admitted on a batch branch or on a receipt. Those two shortcuts
+// are about EVIDENCE THE GATE ITSELF PRODUCED, and a hold is a judgement no gate produces:
+// a batch pull request a reader has held is not a batch that lands because its own branch
+// is the right shape.
+func heldMembers(in batchRun, stdout, stderr io.Writer, deps Deps, host merge.Host, start time.Time) (map[int]merge.Verdict, int) {
+	if !in.requireHolds {
+		fmt.Fprintf(stderr, "BATCH NOTE holds=unread reason=%q t=%.1fs\n",
+			"--no-require-holds was given: a member is merged whatever a reader has said about it, and a held head may reach the base through this batch",
+			since(start))
+		return nil, 0
+	}
+	ignored := map[int]bool{}
+	for _, n := range in.ignoreHold {
+		ignored[n] = true
+	}
+	held := map[int]merge.Verdict{}
+	for _, n := range in.prs {
+		pr, err := host.PR(n)
+		if err != nil {
+			return nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d could not be read, and the hold read is on, so this gate cannot tell whether a reader has held it: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+		}
+		vs, err := host.Verdicts(n)
+		if err != nil {
+			return nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d's comments and reviews could not be read, and the hold read is on: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+		}
+		holds := merge.UnliftedHolds(vs, pr.HeadOID, in.readers)
+		if len(holds) == 0 {
+			continue
+		}
+		if ignored[n] {
+			// THE ESCAPE IS ON THE RECORD. A hold the caller has taken responsibility for
+			// is still printed, with the login and the instant, so the line a reader reads
+			// afterwards says which hold was stepped over and by whose word.
+			fmt.Fprintf(stderr, "BATCH NOTE #%d holds=ignored reason=%q t=%.1fs\n", n,
+				fmt.Sprintf("--ignore-hold %d was given: %s", n, oneline.Escape(holds[0].Line())), since(start))
+			continue
+		}
+		held[n] = holds[0]
+	}
+	return held, 0
+}
