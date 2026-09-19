@@ -31,10 +31,17 @@ import (
 // from when a verb is not given one on the command line.
 const DecisionsEnv = "NOVA_DSN"
 
-// PGDriverName is the database/sql driver a postgres:// DSN opens. A build that
-// links a Postgres driver (lib/pq, pgx) registers this name; a build with none
-// refuses rather than guessing.
-const PGDriverName = "postgres"
+// PGDriverName is the database/sql driver a postgres:// DSN opens.
+//
+// It used to be "postgres", and NOTHING registered that name: pgx's stdlib
+// shim registers "pgx", it was imported only by internal/record, and
+// cmd/nova-decide does not import internal/record. So every postgres:// DSN
+// failed at sql.Open with an unknown driver -- the second half of why the
+// Postgres path was unreachable (Stella, 2026-09-19, on #1925: the adoption
+// "depends on an owned migration and driver registration, neither of which is
+// in this repository"). The driver is registered by this package now, in
+// pgdriver.go, and this constant names it.
+const PGDriverName = "pgx"
 
 // decisionsHeader is the TSV fallback's first line, in the column order the
 // table is declared in. `source` is LAST because it was added after the other
@@ -97,7 +104,7 @@ func OpenDecisions(dsn string) (DecisionDriver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decide: open postgres: %w", err)
 		}
-		return &postgresDriver{db: db}, nil
+		return &postgresDriver{db: db, schema: pgSchema{db: db}, rows: pgRows{db: db}}, nil
 	}
 	return &tsvDriver{path: dsn}, nil
 }
@@ -241,15 +248,52 @@ func (c *Client) record(state string, qs map[string]Question, answers map[string
 	}
 }
 
-// postgresDriver is the decisions table in Postgres, one writer per row.
-type postgresDriver struct{ db *sql.DB }
+// postgresDriver is the decisions table in Postgres, one writer per row. The
+// schema and the rows go through seams so the version gate and the migration's
+// effect are testable without a database; the SQL text itself is exercised by
+// the live-Postgres round trip, which states its skip reason when it is not.
+type postgresDriver struct {
+	db     *sql.DB
+	schema decisionsSchema
+	rows   decisionsRows
+}
+
+// pgSchema and pgRows are the real halves, over one *sql.DB.
+type pgSchema struct{ db *sql.DB }
+type pgRows struct{ db *sql.DB }
+
+func (p pgSchema) Exec(stmt string) error {
+	_, err := p.db.Exec(stmt)
+	return err
+}
+
+// MaxSchemaVersion answers 0 for a database with no version table at all,
+// which is precisely an unmigrated one: to_regclass returns NULL rather than
+// erroring, so the absent table is an answer and never a failure.
+func (p pgSchema) MaxSchemaVersion() (int, error) {
+	var version sql.NullInt64
+	err := p.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM decisions_schema_version
+        WHERE to_regclass('decisions_schema_version') IS NOT NULL`).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		// A database that has never been migrated has no such relation, and
+		// saying so is the gate's job, not an error to propagate.
+		if strings.Contains(strings.ToLower(err.Error()), "does not exist") {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return int(version.Int64), nil
+}
 
 // The durable table carries the same two facts the TSV does: a confidence that
 // is NULL where no provider answered, and the source that says which of the
 // two decided. A table with no `source` column and a NOT NULL
 // `provider_confidence` cannot hold a machinery receipt, and the append fails
 // loudly rather than writing a number about a call nobody made.
-func (p *postgresDriver) Append(row DecisionRow) error {
+func (p pgRows) Insert(row DecisionRow) error {
 	_, err := p.db.Exec(
 		`INSERT INTO decisions (question_hash, kind, answer, provider_confidence, floor, outcome, source) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		row.QuestionHash, row.Kind, row.Answer,
@@ -258,7 +302,7 @@ func (p *postgresDriver) Append(row DecisionRow) error {
 	return err
 }
 
-func (p *postgresDriver) Rows(kind string) ([]DecisionRow, error) {
+func (p pgRows) Select(kind string) ([]DecisionRow, error) {
 	rows, err := p.db.Query(
 		`SELECT question_hash, kind, answer, provider_confidence, floor, outcome, source FROM decisions WHERE kind = $1 ORDER BY question_hash`,
 		kind)
@@ -281,7 +325,31 @@ func (p *postgresDriver) Rows(kind string) ([]DecisionRow, error) {
 	return out, rows.Err()
 }
 
-func (p *postgresDriver) Close() error { return p.db.Close() }
+// Append gates on the schema BEFORE it writes. A database that cannot hold the
+// row's source and its absent provider confidence is a typed refusal naming
+// the migration, never a row degraded into the old provider-shaped columns.
+func (p *postgresDriver) Append(row DecisionRow) error {
+	if err := EnsureDecisionsSchema(p.schema); err != nil {
+		return err
+	}
+	return p.rows.Insert(row)
+}
+
+// Rows gates too: a read that names a column the table does not have is a
+// confusing driver error, and the same refusal is the useful answer.
+func (p *postgresDriver) Rows(kind string) ([]DecisionRow, error) {
+	if err := EnsureDecisionsSchema(p.schema); err != nil {
+		return nil, err
+	}
+	return p.rows.Select(kind)
+}
+
+func (p *postgresDriver) Close() error {
+	if p.db == nil {
+		return nil
+	}
+	return p.db.Close()
+}
 
 // tsvDriver is the decisions table as a TSV file, the fallback where no
 // Postgres is linked. The file stays the record; the table is its index.

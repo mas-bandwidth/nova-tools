@@ -1013,6 +1013,39 @@ the other six; a file written before it exists is six columns wide and is still 
 source unknown rather than guessed. `provider_confidence` is a dash — NULL in Postgres — for a row
 no provider answered.
 
+### the decisions table's schema is owned and versioned
+
+The Postgres decisions table has a migration of its own: `internal/decide/schema.sql`, embedded and
+versioned in `decisions_schema_version` (a **separate** counter from `internal/record`'s
+`schema_version` — the two stores are reached by different DSNs and must not share a number).
+Install it with
+
+```
+nova-decide migrate --dsn <dsn>          # or $NOVA_DSN
+MIGRATE OK store=postgres version=1
+```
+
+It is idempotent in both directions: a fresh database gets the whole table, with `source` present
+and `provider_confidence` nullable; a database carrying the hand-made six-column shape SPEC-DECIDE
+describes in prose is upgraded in place by `ADD COLUMN IF NOT EXISTS source` and
+`ALTER COLUMN provider_confidence DROP NOT NULL`. Running it twice is a no-op, so it is safe on
+every start. A TSV `--dsn` needs no migration and says so.
+
+**Below the required version the writer refuses rather than degrading the row.** It does not drop
+the source, it does not invent a confidence, and it does not print a decision line with a warning
+attached:
+
+```
+DECIDE REFUSED reason=decisions-schema-unmigrated the decision was settled and its configured
+decisions table cannot hold the row's source or its absent provider confidence, so there is no
+receipt and nothing was written: … ; run: nova-decide migrate --dsn <dsn>
+```
+
+Exit 2, nothing on stdout, and **no `receipt=recorded`**: a row that was refused is not a receipt.
+Ownership of this DDL was searched before it was written — no `decisions` table was declared
+anywhere in the organisation, and this repository holds the only writer, the only reader, the
+declaring spec and the org's one versioned migration pattern.
+
 `tune --kind <kind>` reads the decisions TABLE rather than a JSONL log and prints the rows behind
 one kind; a kind with no rows is a refusal, because a floor with no rows behind it is untuned. It
 lists rows and reports no floor — the floors come from `--decisions`.
