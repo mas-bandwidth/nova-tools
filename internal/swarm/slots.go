@@ -398,12 +398,34 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	return ids, held, share, free, holders, true, nil
 }
 
-// ReleaseSlotLeases removes owner's leases: all of them with all=true, or
-// only the ones carrying label otherwise. It reports the removed count and
-// the owner's leases still held.
+// ReleaseSlotLeases removes owner's leases: all of them with all=true, or only the
+// ones carrying label otherwise. It reports the removed count and the owner's leases
+// still held. It never frees a seat whose holder is still running; see
+// ReleaseSlotLeasesForcing.
 func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int, err error) {
+	released, held, _, err = ReleaseSlotLeasesForcing(store, owner, label, all, false)
+	return released, held, err
+}
+
+// ReleaseSlotLeasesForcing is the body, with the live-seat fence spelled out.
+//
+// A LEASE IS NOT A TICKET SOMEBODY ELSE MAY TEAR UP (issue #1902). Deleting a lease
+// does not stop the process holding it: the holder keeps running, keeps spending, and
+// the seat it is sitting in is handed to the next taker. Johnny freed a live `native`'s
+// only seat from outside and watched a second `native` take it -- two cards on a
+// capacity-1 bench, both printing NATIVE OK -- and a card given --no-wall did the same
+// to a bystander from inside its own shell. `--owner` is an unauthenticated string and
+// every owner on a shared bench is the same unix user, so who CALLED release is not a
+// fence either. The only fence that means anything is the holder: a lease whose pid is
+// ALIVE and is not this process is KEPT and counted in live.
+//
+// Releasing your OWN lease is always allowed: `run`'s dispatcher and `native`'s cleanup
+// give back the seat they are sitting in while their own pid is alive, and that is the
+// ordinary end of a run rather than a steal. force is the person's loud override, the
+// way --no-wall is the loud way to ask for no containment.
+func ReleaseSlotLeasesForcing(store, owner, label string, all, force bool) (released, held, live int, err error) {
 	if strings.TrimSpace(owner) == "" {
-		return 0, 0, fmt.Errorf("owner is required")
+		return 0, 0, 0, fmt.Errorf("owner is required")
 	}
 	// Under the store lock (issue #1900), so that a release cannot interleave with a
 	// take's count-then-mkdir and leave the count the grant was made against wrong.
@@ -413,10 +435,11 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 	entries, err := os.ReadDir(slotStoreDir(store))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, 0, nil
+			return 0, 0, 0, nil
 		}
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
+	self := os.Getpid()
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -432,12 +455,17 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 			held++
 			continue
 		}
+		if !force && l.Pid != self && Alive(l.Pid, "") {
+			live++
+			held++
+			continue
+		}
 		if rerr := safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name())); rerr != nil {
-			return released, held, rerr
+			return released, held, live, rerr
 		}
 		released++
 	}
-	return released, held, nil
+	return released, held, live, nil
 }
 
 // ReleaseSlotLeasesByID removes EXACTLY the leases named, and only while they are still

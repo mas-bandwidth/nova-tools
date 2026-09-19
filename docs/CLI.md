@@ -2426,6 +2426,22 @@ refusing before it started — a missing harness, say — deletes a lease it nev
 (Stella, on #1562). `nova-swarm slots release --owner … --label …` keeps the by-owner-and-label
 behaviour, because that is what a person at a prompt means by it.
 
+**A release never frees a seat whose holder is still running (issue #1902).** Deleting a
+lease does not stop the process holding it: the holder keeps running and the seat it is
+sitting in is handed to the next taker, so two cards end up on a one-seat bench. A lease
+whose pid is alive and is not this process is kept, counted in the `live=` field of the
+`SLOTS RELEASED` line, and named on stderr as `SLOTS KEPT`, and the verb exits 2. Giving
+back your OWN seat is always allowed — that is how `run` and `native` end. `--force` is
+the loud override for a person who knows something the store cannot.
+
+`nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]`
+
+`--force` frees a lease whose holder is still running, which **oversubscribes the bench**:
+the holder keeps its seat in fact while the store hands the same seat to the next taker.
+It is an operator's act, typed at a prompt by someone who knows what the store cannot see
+— a holder on another host, a pid the kernel has since handed to somebody else. No card
+carries it, and no manager, launcher or cleanup path passes it by default.
+
 
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
