@@ -61,6 +61,13 @@ var swarmAudit = audit.Config{
 		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
 		// escaped literal can come back.
 		"termSuffix",
+		// swarm.PublicRefusalLine (CARD-8390) renders the whole CARD REFUSED line and
+		// puts the repo and the worker name through oneline.Field inside
+		// internal/swarm before returning, so the line it returns is already one
+		// safe token. The repo comes from the card's own text -- a file a card
+		// author writes -- and the worker name from the description, so nothing
+		// but Field-escaped fields can come back.
+		"swarm.PublicRefusalLine",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -97,6 +104,15 @@ var swarmAudit = audit.Config{
 		// this package renders through oneline.Err, and the Lua scripts run inside Redis
 		// and write only that instance's own keys.
 		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
+		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
+		// request and returns typed answers; it holds no writer of this
+		// package's stream, and the one value this binary takes from it -- the
+		// chosen id -- is put through oneline.Field before it is printed.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// lanes (pull, SPEC-JOBS section 5) reads queue/lanes/ and writes the
+		// card files it places; it never writes to a stream, and every id it
+		// returns is put through oneline.Field before this package prints it.
+		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the

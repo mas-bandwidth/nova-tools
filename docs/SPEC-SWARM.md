@@ -852,9 +852,26 @@ their own environment and pass it to the harness under the description's
 absent, is refused naming the variable and the remedy — run the binary under
 `nova-secrets exec --only <NAME> -- <this command>`. The value is never written
 to any file, never printed, and never in a RUN or SUPERVISE line; the harness
-config still carries the variable's NAME, never the value (the key section
-below). The wall's probe has no key file to prove it cannot read, and runs its
-other checks without one (SPEC-SANDBOX rule 10).
+ config still carries the variable's NAME, never the value (the key section
+ below). The wall's probe has no key file to prove it cannot read, and runs its
+ other checks without one (SPEC-SANDBOX rule 10).
+
+ **A description carries `class`, and a `public` worker never sees private
+ source (CARD-8390).** `class` is `"public"` or `"paid"`, default `"paid"`;
+ anything else is refused where the description is loaded. `add`, `batch`,
+ `run` and `native` enforce it the same way: when the worker's class is
+ `public`, the card is scanned for clone URLs (`git clone ... <url>` and
+ `github.com/<owner>/<repo>`), and the card is refused unless every URL's
+ `owner/repo` is listed in `<root>/public-repos.txt` — one `owner/repo` per
+ line, where `<root>` is the pool directory for `add`/`batch`/`run` and the
+ configured root for `batch --cards`/`native`; a missing file refuses every
+ card for a `public`-class worker. The refusal is one line, `CARD REFUSED
+ reason=private-source repo=<owner/repo> class=public worker=<name>`, and the
+ card is not admitted: never queued by `add`/`batch`, never started by `run`
+ or `batch --cards`, never run by `native`. A `paid`-class worker admits every
+ card, as before. (Glenn, 2026-09-17: Muse, contributor-free, is for public
+ repos only; assume every provider trains, so the confinement is machinery,
+ not a promise.)
 
 **`worker check <description.json>`** validates a description before any launch and
 starts nothing. It loads the file with the same strict loader `run` and `native` use,

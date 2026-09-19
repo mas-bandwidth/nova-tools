@@ -168,3 +168,36 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		}
 	}
 }
+
+// cut writes queue/lanes/{red,green,small,next}/ (docs/SPEC-JOBS.md section 5):
+// all four directories are visible, a fix lands in red and a small,
+// already-approved read lands in green.
+func TestCutKindWritesPriorityLanes(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+	code, _, errs, _ := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 601, Title: "the lanes exist",
+		Out: filepath.Join(dir, "a"), Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("fix exit = %d, stderr=%s", code, errs)
+	}
+	for _, lane := range []string{"red", "green", "small", "next"} {
+		if st, err := os.Stat(filepath.Join(queue, "lanes", lane)); err != nil || !st.IsDir() {
+			t.Fatalf("cut did not write queue/lanes/%s/: %v", lane, err)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "red", "*.card")); len(matches) != 1 {
+		t.Fatalf("a fix card is not in the red lane: %v", matches)
+	}
+	code, _, errs, _ = cutKind(t, CutKindInput{
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456", Title: "an approved read",
+		Out: filepath.Join(dir, "b"), Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("read exit = %d, stderr=%s", code, errs)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "green", "*.card")); len(matches) != 1 {
+		t.Fatalf("a read card is not in the green lane: %v", matches)
+	}
+}
