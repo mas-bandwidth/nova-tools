@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,10 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	receiptFile := f.fs.String("receipt-file", "", "")
 	noJump := f.fs.Bool("no-jump", false, "")
 	timeout := f.fs.Int("timeout", 120, "")
+	reviewersFile := f.fs.String("reviewers", "", "")
+	noRequireHolds := f.fs.Bool("no-require-holds", false, "")
+	reason := f.fs.String("reason", "", "")
+	untypedComments := f.fs.String("untyped-comments", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -57,6 +62,19 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	}
 	if *pr < 1 {
 		f.problem(fmt.Sprintf("--pr is the number of the batch's own pull request, the one opened from the branch `nova-merge batch` built, got %d", *pr))
+	}
+	// --reviewers XOR --no-require-holds: exactly one required (SPEC-DECIDE reading 3, demanded test 28)
+	if (*reviewersFile == "") == (*noRequireHolds == false) {
+		f.problem("exactly one of --reviewers <file> or --no-require-holds --reason <text> is required; exit 2 with neither or both")
+	}
+	if *noRequireHolds && strings.TrimSpace(*reason) == "" {
+		f.problem("--no-require-holds requires --reason <text>")
+	}
+	if *untypedComments == "ignore" && strings.TrimSpace(*reason) == "" {
+		f.problem("--untyped-comments=ignore requires --reason <text>")
+	}
+	if *untypedComments != "" && *untypedComments != "ignore" {
+		f.problem(fmt.Sprintf("--untyped-comments must be ignore, got %q", *untypedComments))
 	}
 	// TWO SPELLINGS OF ONE RECEIPT IS TWO RECEIPTS, and a run that took the first would be
 	// a run whose evidence depends on which flag the caller believed.
@@ -78,21 +96,29 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 		line = lastBatchLine(string(raw))
 	}
 	return runLandVerb(landRun{
-		repo:    *repo,
-		pr:      *pr,
-		receipt: line,
-		jump:    !*noJump,
-		timeout: time.Duration(*timeout) * time.Second,
+		repo:            *repo,
+		pr:              *pr,
+		receipt:         line,
+		jump:            !*noJump,
+		timeout:         time.Duration(*timeout) * time.Second,
+		reviewersFile:   strings.TrimSpace(*reviewersFile),
+		noRequireHolds:  *noRequireHolds,
+		reason:          strings.TrimSpace(*reason),
+		untypedComments: strings.TrimSpace(*untypedComments),
 	}, stdout, stderr, deps)
 }
 
 // landRun is one landing's whole invocation, checked.
 type landRun struct {
-	repo    string
-	pr      int
-	receipt string
-	jump    bool
-	timeout time.Duration
+	repo            string
+	pr              int
+	receipt         string
+	jump            bool
+	timeout         time.Duration
+	reviewersFile   string
+	noRequireHolds  bool
+	reason          string
+	untypedComments string
 }
 
 func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
@@ -123,6 +149,106 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 		return landRefused(stderr, fmt.Sprintf("pull request %d is not green (%s); the queue takes a batch CI has judged, and this one it has not",
 			in.pr, oneline.Field(head.Field())))
 	}
+
+	// SPEC-DECIDE reading 3 (lines 1134-1136): land folds every member of the receipt again,
+	// from the wire, immediately before Enqueuer.Enqueue, and one held member refuses the whole landing.
+	var rs *merge.ReviewerSet
+	if !in.noRequireHolds {
+		var err error
+		rs, err = merge.LoadReviewers(in.reviewersFile)
+		if err != nil {
+			return landCouldNotRun(stderr, fmt.Sprintf("reviewer file %s could not be read: %s", oneline.Field(in.reviewersFile), oneline.Err(err)))
+		}
+	}
+
+	checkPRs := []int{in.pr}
+	if recMembers := receiptMembers(in.receipt); recMembers != "" && recMembers != "-" && recMembers != "none" {
+		for _, part := range strings.Split(recMembers, ",") {
+			part = strings.TrimSpace(part)
+			if num, err := strconv.Atoi(part); err == nil && num > 0 {
+				checkPRs = append(checkPRs, num)
+			}
+		}
+	}
+
+	for _, m := range checkPRs {
+		var mPR merge.PR
+		if m == in.pr {
+			mPR = data
+		} else {
+			var err error
+			mPR, err = host.PR(m)
+			if err != nil {
+				if in.noRequireHolds {
+					continue
+				}
+				return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d could not be read: %s", m, oneline.Err(err)))
+			}
+		}
+		vs, err := host.Verdicts(m)
+		if err != nil {
+			if in.noRequireHolds {
+				continue
+			}
+			return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d's verdicts could not be read: %s", m, oneline.Err(err)))
+		}
+
+		if in.noRequireHolds {
+			var recordsOnly []merge.Verdict
+			for _, v := range vs {
+				if v.Source == "record" {
+					recordsOnly = append(recordsOnly, v)
+				}
+			}
+			vs = recordsOnly
+		}
+
+		if in.untypedComments == "ignore" {
+			var nonPending []merge.Verdict
+			for _, v := range vs {
+				if v.Source != "comment-pending" {
+					nonPending = append(nonPending, v)
+				}
+			}
+			vs = nonPending
+		}
+
+		holds := merge.UnliftedHolds(vs, mPR.HeadOID, mPR.Author, rs)
+		if len(holds) > 0 {
+			h := holds[0]
+			if h.Source == "comment-pending" {
+				line := fmt.Sprintf("LAND REFUSED reason=held member=#%d who=unknown hold=%s source=comment-pending at=%s",
+					m, oneline.Field(h.ID), oneline.Field(h.At))
+				if in.noRequireHolds {
+					line += fmt.Sprintf(" holds=waived reason=%q", in.reason)
+				}
+				if in.untypedComments == "ignore" {
+					line += fmt.Sprintf(" untyped=ignored reason=%q", in.reason)
+				}
+				fmt.Fprintf(stderr, "%s\n", oneline.Escape(line))
+			} else {
+				carried := "no"
+				if h.Carried {
+					carried = "yes"
+				}
+				conf := h.Conf
+				if conf == "" {
+					conf = "-"
+				}
+				line := fmt.Sprintf("LAND REFUSED reason=held member=#%d who=%s hold=%s source=%s held_at=%s carried=%s at=%s conf=%s",
+					m, oneline.Field(h.Who), oneline.Field(h.ID), oneline.Field(h.Source), oneline.Field(merge.Short(h.Head)), oneline.Field(carried), oneline.Field(h.At), oneline.Field(conf))
+				if in.noRequireHolds {
+					line += fmt.Sprintf(" holds=waived reason=%q", in.reason)
+				}
+				if in.untypedComments == "ignore" {
+					line += fmt.Sprintf(" untyped=ignored reason=%q", in.reason)
+				}
+				fmt.Fprintf(stderr, "%s\n", oneline.Escape(line))
+			}
+			return 1
+		}
+	}
+
 	if err := merge.NewEnqueuer(deps.NewEnqueueHost(in.repo, in.timeout)).Enqueue(
 		context.Background(),
 		merge.EnqueuePR{Number: in.pr, HeadRef: data.HeadRef, HeadSHA: data.HeadOID, Receipt: in.receipt},
@@ -132,9 +258,16 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 		}
 		return landCouldNotRun(stderr, oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	fmt.Fprintf(stdout, "LAND OK pr=%d head=%s branch=%s checks=%s members=%s jump=%t\n",
+	okLine := fmt.Sprintf("LAND OK pr=%d head=%s branch=%s checks=%s members=%s jump=%t",
 		in.pr, oneline.Field(data.HeadOID), oneline.Field(data.HeadRef), oneline.Field(head.Field()),
 		oneline.Field(receiptMembers(in.receipt)), in.jump)
+	if in.noRequireHolds {
+		okLine += fmt.Sprintf(" holds=waived reason=%q", in.reason)
+	}
+	if in.untypedComments == "ignore" {
+		okLine += fmt.Sprintf(" untyped=ignored reason=%q", in.reason)
+	}
+	fmt.Fprintf(stdout, "%s\n", oneline.Escape(okLine))
 	return 0
 }
 

@@ -51,6 +51,10 @@ type FakeHost struct {
 	Failures  map[int][]Failure
 	Changed   map[int][]string
 	Issues    map[int]string
+	// Reads is the verdicts the forge carries for a pull request (#1572): the HOLDs and
+	// APPROVEs its readers posted as comments or reviews. VerdictErr is the read failing.
+	Reads      map[int][]Verdict
+	VerdictErr error
 }
 
 // QueuePRs lists the open pull requests this fake reports to the queue sweep. It is the
@@ -211,4 +215,21 @@ func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
 		c.AddRun(d.Name, d.Conclusion, d.SHA)
 	}
 	f.ChecksBy[oid] = c
+}
+
+// Verdicts is the reads a test says this pull request carries (#1572). A host with no
+// entry for a pull request carries none, which is the ordinary case.
+func (f *FakeHost) Verdicts(n int) ([]Verdict, error) {
+	if f.VerdictErr != nil {
+		return nil, f.VerdictErr
+	}
+	return append([]Verdict(nil), f.Reads[n]...), nil
+}
+
+// SetVerdicts records what the forge says a pull request's readers have said.
+func (f *FakeHost) SetVerdicts(n int, vs ...Verdict) {
+	if f.Reads == nil {
+		f.Reads = map[int][]Verdict{}
+	}
+	f.Reads[n] = append(f.Reads[n], vs...)
 }

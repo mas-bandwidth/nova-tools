@@ -108,8 +108,22 @@ func ReadFile(entry, who, head string, s Submission) string {
 // callers pass the record directory, never a raw pull request number or branch name.
 // Keeping the record's path and bytes here makes every writer use the same read format.
 func ReadItem(entry, who, head, verdict, note string, s Submission) (Item, error) {
+	return ReadItemScoped(entry, who, head, verdict, note, "", nil, s)
+}
+
+// ReadItemScoped constructs a read record with optional scope and releases.
+func ReadItemScoped(entry, who, head, verdict, note, scope string, releases []string, s Submission) (Item, error) {
 	file := ReadFile(entry, who, head, s)
-	rec := Read{Who: who, Verdict: verdict, Note: note, At: s.At, Head: head, File: file}
+	rec := Read{
+		Who:      who,
+		Verdict:  verdict,
+		Note:     note,
+		At:       s.At,
+		Head:     head,
+		File:     file,
+		Scope:    scope,
+		Releases: releases,
+	}
 	if err := ValidRead(rec); err != nil {
 		return Item{}, err
 	}

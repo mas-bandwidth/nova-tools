@@ -403,6 +403,8 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	head := f.fs.String("head", "", "")
 	verdict := f.fs.String("verdict", "", "")
 	note := f.fs.String("note", "", "")
+	scope := f.fs.String("scope", "", "")
+	releases := f.fs.String("releases", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -419,6 +421,14 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if !f.done(stderr) {
 		return 2
 	}
+	var releaseIDs []string
+	if *releases != "" {
+		for _, r := range strings.Split(*releases, ",") {
+			if trimmed := strings.TrimSpace(r); trimmed != "" {
+				releaseIDs = append(releaseIDs, trimmed)
+			}
+		}
+	}
 	st, code := openLane("read", *f.lane, stderr)
 	if st == nil {
 		return code
@@ -431,7 +441,7 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprintf(stderr, "READ REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	item, err := merge.ReadItem(merge.EntryDirName(id), *who, *head, *verdict, *note, sub)
+	item, err := merge.ReadItemScoped(merge.EntryDirName(id), *who, *head, *verdict, *note, *scope, releaseIDs, sub)
 	if err != nil {
 		fmt.Fprintf(stderr, "READ REFUSED: %s\n", oneline.Err(err))
 		return 2

@@ -52,6 +52,27 @@ func landDeps(h *merge.FakeHost, q *fakeLandEnqueue) Deps {
 
 func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string) (int, string, string) {
 	t.Helper()
+	effective := append([]string(nil), args...)
+	hasReviewers := false
+	hasNoRequire := false
+	for _, a := range effective {
+		if a == "--reviewers" || strings.HasPrefix(a, "--reviewers=") {
+			hasReviewers = true
+		}
+		if a == "--no-require-holds" {
+			hasNoRequire = true
+		}
+	}
+	if !hasReviewers && !hasNoRequire {
+		effective = append(effective, "--no-require-holds", "--reason", "test")
+	}
+	var out, errb bytes.Buffer
+	exit := run(effective, &out, &errb, landDeps(h, q))
+	return exit, out.String(), errb.String()
+}
+
+func runLandBare(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string) (int, string, string) {
+	t.Helper()
 	var out, errb bytes.Buffer
 	exit := run(args, &out, &errb, landDeps(h, q))
 	return exit, out.String(), errb.String()

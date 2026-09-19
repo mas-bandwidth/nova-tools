@@ -82,6 +82,11 @@ func EvaluateReads(e *Entry, author string) Standing {
 			st.Held = true
 			continue
 		}
+		// A scoped APPROVE record satisfies nothing in the read condition (SPEC-DECIDE:1100-1103):
+		// needs_read is met only by an UNSCOPED APPROVE.
+		if r.Scope != "" {
+			continue
+		}
 		st.Approves++
 		// An approve from the author is recorded, is shown, and does not count: the
 		// condition is that somebody other than the writer looked.

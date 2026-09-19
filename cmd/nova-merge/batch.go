@@ -219,6 +219,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// bench with no sbcl is a bench that cannot judge this batch, and the gate says FAIL
 	// rather than a green nobody may trust.
 	requireLisp := f.fs.Bool("require-lisp", false, "")
+	reviewersFile := f.fs.String("reviewers", "", "")
+	noRequireHolds := f.fs.Bool("no-require-holds", false, "")
+	reason := f.fs.String("reason", "", "")
+	untypedComments := f.fs.String("untyped-comments", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -226,6 +230,19 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f.require("pr", *prRaw, "the pull request numbers to land, in the order they land, like 1301,1302,1307")
 	f.require("root", *root, "the directory this batch clones and builds under, which it rebuilds on every run")
 	f.require("repo", *repo, "the <owner>/<name> whose pull request heads are merged, like mas-bandwidth/nova-tools")
+	// --reviewers XOR --no-require-holds: exactly one required (SPEC-DECIDE reading 3, demanded test 28)
+	if (*reviewersFile == "") == (*noRequireHolds == false) {
+		f.problem("exactly one of --reviewers <file> or --no-require-holds --reason <text> is required; exit 2 with neither or both")
+	}
+	if *noRequireHolds && strings.TrimSpace(*reason) == "" {
+		f.problem("--no-require-holds requires --reason <text>")
+	}
+	if *untypedComments == "ignore" && strings.TrimSpace(*reason) == "" {
+		f.problem("--untyped-comments=ignore requires --reason <text>")
+	}
+	if *untypedComments != "" && *untypedComments != "ignore" {
+		f.problem(fmt.Sprintf("--untyped-comments must be ignore, got %q", *untypedComments))
+	}
 	// --name is one path element and half a ref name, so it is held to both: a name that
 	// could climb out of --root is a name that could remove a directory nobody named, and
 	// a name git could read as an option is lesson 48.
@@ -259,18 +276,22 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 	return runBatch(batchRun{
-		steps:        deps.BatchGate,
-		name:         *name,
-		base:         *base,
-		root:         *root,
-		repo:         *repo,
-		reference:    *reference,
-		prs:          prs,
-		timeout:      timeout,
-		gomaxprocs:   *gomaxprocs,
-		requireLisp:  *requireLisp,
-		requireCheck: !*noRequireChecks,
-		receiptFile:  strings.TrimSpace(*receiptFile),
+		steps:           deps.BatchGate,
+		name:            *name,
+		base:            *base,
+		root:            *root,
+		repo:            *repo,
+		reference:       *reference,
+		prs:             prs,
+		timeout:         timeout,
+		gomaxprocs:      *gomaxprocs,
+		requireLisp:     *requireLisp,
+		requireCheck:    !*noRequireChecks,
+		receiptFile:     strings.TrimSpace(*receiptFile),
+		reviewersFile:   strings.TrimSpace(*reviewersFile),
+		noRequireHolds:  *noRequireHolds,
+		reason:          strings.TrimSpace(*reason),
+		untypedComments: strings.TrimSpace(*untypedComments),
 	}, stdout, stderr, deps)
 }
 
@@ -280,18 +301,25 @@ type batchRun struct {
 	// steps is the suite this run performs. Nil is batchGate, which is what every
 	// invocation of the binary uses; a caller injects a shorter one only through
 	// Deps.BatchGate, and only the tests do.
-	steps        []batchStep
-	name         string
-	base         string
-	root         string
-	repo         string
-	reference    string
-	prs          []int
-	timeout      time.Duration
-	gomaxprocs   int
-	requireLisp  bool
-	requireCheck bool
-	receiptFile  string
+	steps           []batchStep
+	name            string
+	base            string
+	root            string
+	repo            string
+	reference       string
+	prs             []int
+	timeout         time.Duration
+	gomaxprocs      int
+	requireLisp     bool
+	requireCheck    bool
+	receiptFile     string
+	reviewersFile   string
+	noRequireHolds  bool
+	reason          string
+	untypedComments string
+	holdsCount      int
+	dispositions    string
+	reviewersSHA    string
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -352,7 +380,7 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		return code
 	}
 
-	prs, prechecked, code := admissible(in, stdout, stderr, deps, start)
+	prs, prechecked, code := admissible(&in, stdout, stderr, deps, start)
 	if code != 0 {
 		return code
 	}
@@ -417,10 +445,21 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 
 // batchLine is the fields every verdict line carries, green or red.
 func batchLine(in batchRun, baseSHA, headSHA string, members, dropped []int, skipped []string) string {
-	return fmt.Sprintf("name=%s base=%s head=%s members=%s dropped=%s skipped=%s checks=%s",
+	line := fmt.Sprintf("name=%s base=%s head=%s members=%s dropped=%s skipped=%s checks=%s",
 		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
 		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)),
 		oneline.Field(numberOrNone(skipped)), oneline.Field(checksWord(in)))
+
+	if in.noRequireHolds {
+		line += fmt.Sprintf(" holds=waived reason=%q", in.reason)
+	} else {
+		line += fmt.Sprintf(" holds=%d dispositions=%s reviewers=%s",
+			in.holdsCount, oneline.Field(in.dispositions), oneline.Field(in.reviewersSHA))
+	}
+	if in.untypedComments == "ignore" {
+		line += fmt.Sprintf(" untyped=ignored reason=%q", in.reason)
+	}
+	return line
 }
 
 // checksWord is what the verdict line says about edge 25's admission: `required` when
@@ -437,30 +476,111 @@ func checksWord(in batchRun) string {
 // gate will merge it. It is CI's one rollup job, the same name the merge condition reads.
 const batchRequiredCheck = "ci-ok"
 
+func getReviewersSHA(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	cmd := exec.Command("git", "log", "-1", "--format=%H", "--", path)
+	if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) >= 12 {
+		return strings.TrimSpace(string(out))[:12]
+	}
+	dir := filepath.Dir(path)
+	cmd2 := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	if out, err := cmd2.Output(); err == nil && len(strings.TrimSpace(string(out))) >= 12 {
+		return strings.TrimSpace(string(out))[:12]
+	}
+	return "000000000000"
+}
+
 // admissible is edge 25's gate in front of the gate: every member whose OWN head has no
 // green ci-ok is dropped BEFORE the merge, by name and with the state it was in.
-//
-// The reason is the batch 7 morning: three members were green under this gate on linux
-// and red on CI's windows legs, and the batch pull request went red after the gate had
-// said OK. A member that has not been green on its own is a member nobody has judged on
-// every platform yet, and putting it in a batch asks this gate a question it cannot
-// answer -- it would report the WHOLE batch red for one member's own fault.
-//
-// The forge is reached through the one host seam the rest of this binary uses, so the
-// tests drive merge.FakeHost and no test here opens a socket.
-func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
+// In addition (#1572 / SPEC-DECIDE reading 3), it collects every hold on the member
+// and drops one carrying an unreleased HOLD or a pending comment.
+func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
+	var rs *merge.ReviewerSet
+	if !in.noRequireHolds {
+		var err error
+		rs, err = merge.LoadReviewers(in.reviewersFile)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf("reviewer file %s could not be read: %w", in.reviewersFile, err))
+		}
+		in.reviewersSHA = getReviewersSHA(in.reviewersFile)
+		in.dispositions = deps.Now().UTC().Format(time.RFC3339)
+	}
+
+	host := deps.NewHost(in.repo, in.timeout)
+
+	// SPEC-DECIDE reading 3: hold check runs for every PR in in.prs
+	var survivors []int
+	for _, n := range in.prs {
+		pr, err := host.PR(n)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d could not be read, and the hold read is on, so this gate cannot tell whether a reader has held it: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+		}
+		vs, err := host.Verdicts(n)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d's comments and reviews could not be read, and the hold read is on: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+		}
+
+		if in.noRequireHolds {
+			// Under --no-require-holds, forge sources are waived, lane records still checked!
+			var recordsOnly []merge.Verdict
+			for _, v := range vs {
+				if v.Source == "record" {
+					recordsOnly = append(recordsOnly, v)
+				}
+			}
+			vs = recordsOnly
+		}
+
+		if in.untypedComments == "ignore" {
+			var nonPending []merge.Verdict
+			for _, v := range vs {
+				if v.Source != "comment-pending" {
+					nonPending = append(nonPending, v)
+				}
+			}
+			vs = nonPending
+		}
+
+		holds := merge.UnliftedHolds(vs, pr.HeadOID, pr.Author, rs)
+		if len(holds) > 0 {
+			dropped = append(dropped, n)
+			in.holdsCount++
+			h := holds[0]
+			if h.Source == "comment-pending" {
+				fmt.Fprintf(stderr, "BATCH DROP #%d reason=\"head %s has a pending comment\" who=unknown hold=%s source=comment-pending at=%s\n",
+					n, oneline.Field(merge.Short(pr.HeadOID)), oneline.Field(h.ID), oneline.Field(h.At))
+			} else {
+				carried := "no"
+				if h.Carried {
+					carried = "yes"
+				}
+				conf := h.Conf
+				if conf == "" {
+					conf = "-"
+				}
+				fmt.Fprintf(stderr, "BATCH DROP #%d reason=\"head %s carries an unreleased HOLD\" who=%s hold=%s source=%s held_at=%s carried=%s at=%s conf=%s\n",
+					n, oneline.Field(merge.Short(pr.HeadOID)), oneline.Field(h.Who), oneline.Field(h.ID), oneline.Field(h.Source), oneline.Field(merge.Short(h.Head)), oneline.Field(carried), oneline.Field(h.At), oneline.Field(conf))
+			}
+			continue
+		}
+		survivors = append(survivors, n)
+	}
+
 	if !in.requireCheck {
 		fmt.Fprintf(stderr, "BATCH NOTE checks=waived reason=%q t=%.1fs\n",
 			"--no-require-checks was given: a member is merged whatever its own head last did, and a red batch may be one member's own fault",
 			since(start))
-		return in.prs, nil, 0
+		return survivors, dropped, 0
 	}
 	receipts, err := batchReceipts(in.receiptFile)
 	if err != nil {
 		return nil, nil, batchRefused(stderr, err)
 	}
-	host := deps.NewHost(in.repo, in.timeout)
-	for _, n := range in.prs {
+	for _, n := range survivors {
 		pr, err := host.PR(n)
 		if err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
