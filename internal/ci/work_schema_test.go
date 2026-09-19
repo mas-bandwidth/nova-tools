@@ -648,12 +648,36 @@ func TestJSONRequestFrameParsing(t *testing.T) {
 // `:assignment`, and has no entry for `reassign` or `task packet` at all --
 // see TestRule3VerbsWithoutASchemaEntryAreNamed below.
 var admittingEventKinds = map[string]bool{
-	":assignment":  true,
+	// The spec's closed list of admitting kinds (SPEC-WORK.md:4880), named
+	// literally. Stella's [P2] on 3967655e: the first cut listed only the kinds
+	// the SHIPPED file happens to use, so a schema carrying an unmarked verb of
+	// kind :lease, :handoff, :reassign, :allocation or :packet passed the
+	// coverage test. The closed list is the closed list.
+	":lease":       true,
+	":handoff":     true,
+	":reassign":    true,
 	":offer":       true,
 	":acknowledge": true,
+	":allocation":  true,
+	":packet":      true,
 	":transition":  true,
-	":undo":        true,
-	":redo":        true,
+
+	// This schema's own spellings of the same effects. It has no `:lease` kind:
+	// `take`, `release`, `heartbeat`, `attempt` and `responsible` all carry
+	// `:assignment`, which is where a lease, a handoff and an allocation are
+	// written. `:undo` and `:redo` carry the compensating take and the
+	// compensating `state --to doing` rule 3 names.
+	":assignment": true,
+	":undo":       true,
+	":redo":       true,
+}
+
+// canonicalAdmittingKinds is the spec's closed list on its own, so a fixture
+// can be built per kind and the shipped file can be checked to use only
+// spellings this test knows.
+var canonicalAdmittingKinds = []string{
+	":lease", ":handoff", ":reassign", ":offer", ":acknowledge",
+	":allocation", ":packet", ":transition",
 }
 
 // rule3Marks is rule 3's own list of admission verbs, as this schema spells
@@ -849,6 +873,89 @@ func TestRule3VerbsWithoutASchemaEntryAreNamed(t *testing.T) {
 	for _, verb := range []string{"reassign", "task packet"} {
 		if byVerb[verb] {
 			t.Errorf("%s now has a schema entry: add it to rule3Marks and rule3Forms", verb)
+		}
+	}
+}
+
+// TestEveryCanonicalAdmittingKindIsCovered is Stella's [P2] on 3967655e made
+// into a test. She mutated the shipped schema with one unmarked hypothetical
+// verb of each canonical admitting kind and TestShippedSchemaDeclaresEveryNeedsGate
+// still passed, because the kind list held only the spellings the shipped file
+// happens to use. One negative fixture per kind, so the list cannot quietly
+// shrink again.
+func TestEveryCanonicalAdmittingKindIsCovered(t *testing.T) {
+	for _, kind := range canonicalAdmittingKinds {
+		k := kind
+		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
+			if !admittingEventKinds[k] {
+				t.Fatalf("%s is a canonical admitting kind and the coverage rule does not know it", k)
+			}
+			verb := "hypothetical-" + strings.TrimPrefix(k, ":")
+			findings := checkNeedsGateCoverage(workSchema{Verbs: []verbEntry{{
+				Verb: verb, Op: verb, EventKind: &k, Mutating: true,
+			}}})
+			if len(findings) != 1 {
+				t.Fatalf("an unmarked %s verb must produce one finding, got %v", k, findings)
+			}
+			if !strings.Contains(findings[0], verb) {
+				t.Fatalf("the finding must name the verb, got %q", findings[0])
+			}
+			findings = checkNeedsGateCoverage(workSchema{Verbs: []verbEntry{{
+				Verb: verb, Op: verb, EventKind: &k, Mutating: true,
+				NeedsGate: "refuses",
+			}}})
+			if len(findings) != 0 {
+				t.Fatalf("a marked %s verb must pass, got %v", k, findings)
+			}
+		})
+	}
+}
+
+// TestShippedSchemaSurvivesAnInjectedUnmarkedVerb is the mutation Stella ran,
+// as a test: the shipped file plus one unmarked hypothetical verb of each
+// canonical admitting kind must FAIL the coverage rule. The first cut passed.
+func TestShippedSchemaSurvivesAnInjectedUnmarkedVerb(t *testing.T) {
+	ws := loadWorkSchema(t)
+	for _, kind := range canonicalAdmittingKinds {
+		k := kind
+		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
+			verb := "injected-" + strings.TrimPrefix(k, ":")
+			mutated := workSchema{Verbs: append(append([]verbEntry{}, ws.Verbs...), verbEntry{
+				Verb: verb, Op: verb, EventKind: &k, Mutating: true,
+			})}
+			named := false
+			for _, f := range checkNeedsGateCoverage(mutated) {
+				if strings.Contains(f, verb) {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("an unmarked %s verb injected into the shipped schema must be found", k)
+			}
+		})
+	}
+}
+
+// TestShippedSchemaUsesOnlyKnownEventKinds keeps the kind list honest from the
+// other side: a verb entry whose event kind this test has never heard of is a
+// verb the coverage rule silently ignores.
+func TestShippedSchemaUsesOnlyKnownEventKinds(t *testing.T) {
+	ws := loadWorkSchema(t)
+	// Kinds the shipped file uses that are deliberately NOT admitting, listed
+	// so a NEW kind appearing forces a decision rather than being ignored.
+	nonAdmitting := map[string]bool{
+		":machine": true, ":structure": true, ":scope": true, ":evidence": true,
+		":execution-control": true, ":decline": true, ":prioritise": true,
+		":goal": true, ":friend": true, ":model": true, ":observe": true,
+		":config": true, ":route": true, ":report": true, ":dep": true,
+	}
+	for _, v := range ws.Verbs {
+		if v.EventKind == nil {
+			continue
+		}
+		k := *v.EventKind
+		if !admittingEventKinds[k] && !nonAdmitting[k] {
+			t.Errorf("%s carries event kind %s, which this coverage test has never heard of: decide whether it admits", v.Verb, k)
 		}
 	}
 }
