@@ -1200,6 +1200,45 @@ reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
 
+### `subverb-help` — every sub-verb answers `--help`
+
+**The rule.** Every function that parses a sub-verb's flag set answers a request
+for help — `cliflags.Help`, `cliflags.Answer`, or a reference to `flag.ErrHelp`
+— or its package answers at the dispatcher before it dispatches, with a
+`cliflags.Answer` call in the same directory. `<tool> <verb> --help` prints THAT
+verb's usage on stdout, at exit 0, with nothing on stderr.
+**The hurt.** Every verb here parses with a `flag.ContinueOnError` set whose
+output is `io.Discard`, because `internal/oneline`'s audit will not let package
+flag print an argument the binary did not author. Package flag answers `--help`
+with the sentinel `flag.ErrHelp`, the sentinel looked like a parse failure, and
+a person who asked a reasonable question got `flag: help requested` — the flag
+package's own internals — on stderr at exit 2. A dogfooder measured it across
+the family on 2026-09-18: `nova-merge simulate`, `nova-pulse cut`, `nova-pulse
+fill`, `nova-tokens fold`, `nova-tokens check`, `nova-check links` and more.
+`#1336` fixed it verb by verb inside `internal/release` and `internal/update`;
+`internal/cliflags` is that fix with the shape taken out. 57 offending functions
+on the dev this branched from, none here.
+**The test.** `TestEverySubVerbFlagSetAnswersHelp`
+(`internal/ci/subverb_help_class_test.go`) is the class rule in source: it
+collects, per directory, every name bound to a `*flag.FlagSet`, finds every
+function that calls `Parse` on one of them — through a field as well
+(`f.fs.Parse(args)` counts, `time.Parse(...)` does not) — and holds it to the
+rule. Each tool package proves the behaviour itself with a
+`TestEverySubVerbAnswersHelp` naming its verbs.
+**Its allowlist.** `internal/ci/testdata/subverb_help_allowlist.txt`,
+`<path>:<func>` per line with its reason, checked in BOTH directions so the list
+only shrinks. Today it is EMPTY, and it stays empty: it exists so a function
+that cannot be fixed in the same change is written down with its reason rather
+than quietly excused.
+**Its remedy line.** `<path>:<line>: <func> parses a sub-verb's flags and never
+answers flag.ErrHelp, so `--help` there prints `flag: help requested` at exit 2;
+answer it with cliflags.Help(out, err, cliflags.Usage(usage, <verb>)) and return
+0, or answer at the dispatcher with cliflags.Answer`.
+**Its narrowings.** Test files and `internal/cliflags` itself are not read — the
+one implementation cannot be read against itself. The test cannot see a function
+that answers help for one of its verbs and not another; that is what the
+per-package `TestEverySubVerbAnswersHelp` is for, and it names every verb.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —

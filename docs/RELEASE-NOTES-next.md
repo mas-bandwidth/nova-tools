@@ -79,6 +79,18 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 
 No new verbs or flags. **`nova-merge simulate` now leaves no worktree behind and keeps the exit table docs/CLI.md documents:** the scratch worktree's directory *and* git's entry for it under `.git/worktrees/` both go (the old removal used `git worktree remove --force`, which the lane's git seam refuses in any argument, so it never ran and its error was discarded), and an invalid invocation — an unreadable or non-numeric `--entries`, a `--repo` that is not a repository, a `--base` or a `pull/<n>/head` the origin does not have — is exit 2 as the docs say, not 1. `nova-merge`'s fetched-tip fold is lock-free and retries only the failed records; `nova-update`'s reporter-death cases are staged and tested; the spec-versus-code drift that kept their docs honest was closed.
 
+## Every tool: `<verb> --help` answers
+
+`<tool> <verb> --help` (and `-h`) now prints THAT verb's usage on stdout and
+exits 0, in every binary here. It used to exit 2 with `flag: help requested` --
+package flag's own sentinel text, handed to somebody who asked a reasonable
+question -- because every verb parses with a `flag.ContinueOnError` set whose
+output is discarded, and the sentinel was treated as a parse failure. A
+dogfooder measured it across the family on 2026-09-18. `internal/cliflags` is
+the one answer, and a class test walks every flag set in `cmd/` and `internal/`
+so it cannot come back. A bad invocation is still exit 2: a mistyped flag, a
+missing one, a positional argument where none is taken.
+
 ## Upgrading
 
 ```

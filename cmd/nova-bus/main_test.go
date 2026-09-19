@@ -347,12 +347,28 @@ func TestRefusingToGuess(t *testing.T) {
 	}
 }
 
-// -h on a verb is an unusable invocation, not a success. A caller gating on exit 0 must
-// never see one from a flag it mistyped.
-func TestVerbHelpIsRefusedNotAnswered(t *testing.T) {
+// -h on a verb is a QUESTION, and the answer is that verb's usage at exit 0.
+// It used to be refused with exit 2 and the flag package's own `flag: help
+// requested`, which is the tool answering a reasonable question with its
+// internals; a dogfooder measured it across the family on 2026-09-18 and it is
+// one class fix now (internal/cliflags). A mistyped flag is still exit 2 --
+// that case is one line down in TestARefusalIsOneLineAndNamesTheDoor.
+func TestVerbHelpIsAnsweredNotRefused(t *testing.T) {
 	t.Parallel()
 	checkout, _ := busDir(t)
-	invoke(t, "", "check", "--bus", checkout, "--full", "-h").mustCode(t, 2)
+	for _, args := range [][]string{
+		{"check", "--bus", checkout, "--full", "-h"},
+		{"check", "--help"},
+		{"send", "--help"},
+	} {
+		r := invoke(t, "", args...).mustCode(t, 0)
+		if !strings.Contains(r.stdout, "nova-bus "+args[0]+" ") {
+			t.Errorf("%v: stdout carries no usage for %s:\n%s", args, args[0], r.stdout)
+		}
+		if r.stderr != "" {
+			t.Errorf("%v: a question wrote to stderr: %q", args, r.stderr)
+		}
+	}
 }
 
 func TestSendLandsANoteAndCheckPasses(t *testing.T) {

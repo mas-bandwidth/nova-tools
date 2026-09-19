@@ -36,6 +36,11 @@ var secretsAudit = audit.Config{
 		"main.go|runSealCLI|line":         "formatted SEAL OK line from internal/secrets.RunSeal",
 	},
 	Imports: []string{
+		// cliflags answers `<tool> <verb> --help`. It hands back lines of THIS
+		// package's own usage constant and never the verb it was asked about,
+		// and it writes only to the stream this package gives it, so nothing
+		// an argument carries can reach a stream through it.
+		`"github.com/mas-bandwidth/nova-tools/internal/cliflags"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,

@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -25,6 +26,9 @@ func cmdClip(args []string, stdout, stderr io.Writer) int {
 	result := fs.String("result", "", "")
 	harvest := fs.String("harvest", "", "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "clip")) {
+			return 0
+		}
 		return refuse(stderr, " clip", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

@@ -15,7 +15,9 @@ func TestARefusalIsOneLineAndNamesTheDoor(t *testing.T) {
 		nil,
 		{"wibble"},
 		{"inbox", "--azz", "Ada"},
-		{"check", "-h"},
+		// `check -h` used to belong here. It is a question now, answered with
+		// the check usage at exit 0; see TestVerbHelpIsAnsweredNotRefused.
+		{"check", "--azz", "Ada"},
 	} {
 		r := invoke(t, "", args...)
 		if r.code != 2 {

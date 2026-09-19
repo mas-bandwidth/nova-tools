@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -109,7 +110,10 @@ func packet(args []string, out, errOut io.Writer) int {
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
 	fs.Var(&rules, "rule", "")
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		if cliflags.Help(out, err, cliflags.Usage(usage, "packet")) {
+			return 0
+		}
 		return refuse(errOut, "bad packet flags")
 	}
 	if *lane == "" || *who == "" || *dest == "" {

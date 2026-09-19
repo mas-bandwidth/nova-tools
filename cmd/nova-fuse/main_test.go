@@ -1338,6 +1338,11 @@ var fuseAudit = audit.Config{
 	},
 	Shadows: []string{"fuse", "OneLine", "Fold", "why", "since"},
 	Imports: []string{
+		// cliflags answers `<tool> <verb> --help`. It hands back lines of THIS
+		// package's own usage constant and never the verb it was asked about,
+		// and it writes only to the stream this package gives it, so nothing
+		// an argument carries can reach a stream through it.
+		`"github.com/mas-bandwidth/nova-tools/internal/cliflags"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by

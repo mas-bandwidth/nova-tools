@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -73,6 +74,9 @@ func adoptionVerb(name string, args []string, stamp string, out, errs io.Writer)
 	f.StringVar(&o.as, "as", "", "friend filter")
 	f.IntVar(&o.max, "max", 20, "output cap")
 	if err := f.Parse(interspersed(f, args)); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(updateVerbs, "adoption")) {
+			return 0
+		}
 		return refusal(errs, "ADOPTION", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	if o.file == "" {

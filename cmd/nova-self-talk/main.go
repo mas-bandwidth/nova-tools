@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
@@ -179,8 +180,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
 	max := fs.Int("max", bounded.Default, "finding lines to print per class before one MORE line stands for the rest; 0 prints all")
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(stdout, usage)
+		if cliflags.Help(stdout, err, usage) {
 			return 0
 		}
 		return refuse(stderr, oneline.Cap(err.Error(), oneline.TailBytes), "basename")

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 )
 
 // pulseVerbs is SPEC-PULSE's verbs block, byte for byte (docs/SPEC-PULSE.md, "The verbs").
@@ -74,6 +75,11 @@ func harvestVerb(args []string, out, errs io.Writer) int {
 	f.IntVar(&o.maxBodyBytes, "max-body-bytes", 4096, "cap on the PR body")
 	f.IntVar(&o.max, "max", 20, "per-kind output cap")
 	if err := f.Parse(args); err != nil {
+		// `nova-pulse <verb> --help` is a question, not a parse failure: see
+		// internal/cliflags for what the flag package would otherwise print.
+		if cliflags.Help(out, err, cliflags.Usage(pulseVerbs, "harvest")) {
+			return 0
+		}
 		return refusal(errs, "HARVEST", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
 	if len(f.Args()) != 0 {
@@ -110,6 +116,9 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	f.IntVar(&o.max, "max", 20, "per-kind output cap")
 	f.IntVar(&o.expandingHours, "expanding-hours", 2, "hours above the threshold before the verdict reads EXPANDING")
 	if err := f.Parse(args); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(pulseVerbs, "status")) {
+			return 0
+		}
 		return refusal(errs, "STATUS", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
 	if len(f.Args()) != 0 {
@@ -141,6 +150,9 @@ func progressVerb(args []string, out, errs io.Writer) int {
 	f.StringVar(&o.roots, "roots", "", "the benches to measure, comma separated")
 	f.StringVar(&o.day, "day", "", "the day the window starts at, YYYY-MM-DD")
 	if err := f.Parse(args); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(pulseVerbs, "progress")) {
+			return 0
+		}
 		return refusal(errs, "PROGRESS", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
 	if len(f.Args()) != 0 {
@@ -168,6 +180,9 @@ func beatVerb(args []string, out, errs io.Writer) int {
 	f.StringVar(&o.title, "title", "", "the one-line title of this beat")
 	f.StringVar(&o.resume, "resume", "", "the resume rule this beat writes")
 	if err := f.Parse(args); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(pulseVerbs, "beat")) {
+			return 0
+		}
 		return refusal(errs, "BEAT", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
 	if len(f.Args()) != 0 {
@@ -200,6 +215,9 @@ func watchVerb(args []string, out, errs io.Writer) int {
 	f.StringVar(&o.until, "until", "", "the event that ends the watch")
 	f.StringVar(&o.cap, "cap", "", "the wall the watch never runs past")
 	if err := f.Parse(args); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(pulseVerbs, "watch")) {
+			return 0
+		}
 		return refusal(errs, "WATCH", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
 	if len(f.Args()) != 0 {

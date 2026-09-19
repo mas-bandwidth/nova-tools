@@ -3,7 +3,6 @@ package update
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
@@ -81,6 +81,16 @@ nova-version diff --from <a.tsv> --to <b.tsv>
 nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
 nova-version help`
+
+// verbsBlock is the usage block the binary named name answers out of: the two
+// binaries built on this package print different verbs, and `--help` on a verb
+// must not answer out of the other one's block.
+func verbsBlock(name string) string {
+	if name == "nova-version" {
+		return versionVerbs
+	}
+	return updateVerbs
+}
 
 func help(name string, w io.Writer) {
 	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
@@ -170,6 +180,10 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		}
 		return diffVerb(name, args, out, errs)
 	}
+	// helpVerb is the verb the PERSON typed, kept because the next lines rewrite
+	// nova-version's `send` into `report`: somebody who asks what `send` takes
+	// is answered out of the send line, not out of the one it became.
+	helpVerb := verb
 	impliedSend := name == "nova-version" && verb == "send"
 	if impliedSend {
 		verb = "report"
@@ -225,13 +239,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		}
 	}
 	if err := f.Parse(interspersed(f, args)); err != nil {
-		// `<tool> <verb> --help` is a reasonable question, and the flag
-		// package answers it with the sentinel flag.ErrHelp. Printing that
-		// gave the person `flag: help requested` -- the package's internals,
-		// leaked to somebody who asked for help (darwin dogfood, 2026-09-18).
-		// They get the usage, and exit 0, because asking is not an error.
-		if errors.Is(err, flag.ErrHelp) {
-			help(name, out)
+		// `<tool> <verb> --help` is a question, not a parse failure; the flag
+		// package answers it with the sentinel flag.ErrHelp and this binary
+		// printed that sentinel (`flag: help requested`) at exit 2 until the
+		// darwin dogfood pass of 2026-09-18. internal/cliflags is the answer.
+		if cliflags.Help(out, err, cliflags.Usage(verbsBlock(name), helpVerb)) {
 			return 0
 		}
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))

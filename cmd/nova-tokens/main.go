@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -495,6 +496,9 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "fold")) {
+			return 0
+		}
 		return refuse(stderr, " fold", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "fold"); refused {
@@ -909,6 +913,9 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "sources")) {
+			return 0
+		}
 		return refuse(stderr, " sources", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "sources"); refused {
@@ -999,6 +1006,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "report")) {
+			return 0
+		}
 		return refuse(stderr, " report", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "report"); refused {
@@ -1202,6 +1212,9 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "sum")) {
+			return 0
+		}
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "sum"); refused {
@@ -1311,6 +1324,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	strict := fs.Bool("strict", false, "")
 	noSpend := fs.String("no-spend", "", "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "check")) {
+			return 0
+		}
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "check"); refused {

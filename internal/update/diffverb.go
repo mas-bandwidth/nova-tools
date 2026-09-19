@@ -1,6 +1,8 @@
 package update
 
 import (
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
+
 	"bufio"
 	"flag"
 	"fmt"
@@ -51,6 +53,9 @@ func diffVerb(name string, args []string, out, errs io.Writer) int {
 	fs.StringVar(&from, "from", "", "snapshot to compare from")
 	fs.StringVar(&to, "to", "", "snapshot to compare to")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(versionVerbs, "diff")) {
+			return 0
+		}
 		return refusal(errs, "DIFF", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	var missing []string

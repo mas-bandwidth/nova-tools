@@ -94,6 +94,20 @@ as "unlimited". The same law applies to scope: `nova-self-talk`'s skip list and
 its rule-document list both default to empty, and every skip and every banner is
 the caller's, per run — **no basename is special to this tool.**
 
+**Help is an answer, not a refusal.** `<tool> help` prints the banner, and
+`<tool> <verb> --help` -- or `-h` -- prints THAT verb's usage on stdout and
+exits 0. A person who asks what a verb takes has not made a bad invocation.
+Every verb here parses with a `flag.ContinueOnError` set whose output is
+`io.Discard`, because package flag may never print an argument the binary did
+not author; package flag answers `--help` with the sentinel `flag.ErrHelp`, and
+treating that sentinel as a parse failure printed `flag: help requested` at exit
+2 -- the flag package's internals, handed to somebody who asked. That is one
+answer, `internal/cliflags`, and `internal/ci`'s
+`TestEverySubVerbFlagSetAnswersHelp` walks every flag set in `cmd/` and
+`internal/` so it stays answered. Exit 2 still belongs to the invocation that
+cannot run: a mistyped flag, a missing one, a positional argument where none is
+taken.
+
 **Output grammar.** One machine-scannable line per event, first token names the
 check, second token is `OK` or `FAIL`:
 

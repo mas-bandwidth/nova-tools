@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
@@ -279,6 +280,13 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	cfg := loadWakeConfig()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; watch is the blocking call, serve is the process outside a session")
+	}
+	// `nova-wake <verb> --help` is a question, not a parse failure. These verbs
+	// share one flag-parsing helper that answers over stderr and has no way to
+	// say "answered, exit 0", so the question is answered here, before any flag
+	// set exists; internal/cliflags says why that is the shape.
+	if cliflags.Answer(stdout, usage, args) {
+		return 0
 	}
 	switch args[0] {
 	case "watch":

@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -165,6 +166,13 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; quickstart is the first run")
+	}
+	// `nova-check <verb> --help` is a question, not a parse failure. These verbs
+	// share one flag-parsing helper that answers over stderr and has no way to
+	// say "answered, exit 0", so the question is answered here, before any flag
+	// set exists; internal/cliflags says why that is the shape.
+	if cliflags.Answer(stdout, usage, args) {
+		return 0
 	}
 	switch args[0] {
 	case "quickstart":
@@ -501,6 +509,9 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "nocode")) {
+			return 0
+		}
 		return refuse(stderr, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

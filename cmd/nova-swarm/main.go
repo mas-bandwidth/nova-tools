@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -152,6 +153,13 @@ func main() {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `status --pool <dir>` is the one that only looks")
+	}
+	// `nova-swarm <verb> --help` is a question, not a parse failure. These verbs
+	// share one flag-parsing helper that answers over stderr and has no way to
+	// say "answered, exit 0", so the question is answered here, before any flag
+	// set exists; internal/cliflags says why that is the shape.
+	if cliflags.Answer(stdout, usage, args) {
+		return 0
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {

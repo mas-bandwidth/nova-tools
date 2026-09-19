@@ -26,6 +26,11 @@ var workAudit = audit.Config{
 	// same shape. It cannot return an unescaped string, so the tripwire counts it.
 	Escapers: []string{"oneline.Quote", "field"},
 	Imports: []string{
+		// cliflags answers `<tool> <verb> --help`. It hands back lines of THIS
+		// package's own usage constant and never the verb it was asked about,
+		// and it writes only to the stream this package gives it, so nothing
+		// an argument carries can reach a stream through it.
+		`"github.com/mas-bandwidth/nova-tools/internal/cliflags"`,
 		// buildinfo answers which build this is; its Line renders every field through
 		// oneline.Field itself, and the version print site wraps the result in
 		// oneline.Escape so the tripwire sees the escape.

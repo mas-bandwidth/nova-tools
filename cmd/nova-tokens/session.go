@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -26,6 +27,9 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	out := fs.String("out", "", "")
 	day := fs.String("day", "", "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "session")) {
+			return 0
+		}
 		return refuse(stderr, " session", err.Error())
 	}
 	if n := fs.NArg(); n > 0 {
