@@ -472,8 +472,11 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
-		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
+	// `killed=<n>` sits between the log count and the bounded tail field since issue #640:
+	// an idle kill is a kill, and the row now says how much of the card's tree went with
+	// it. The bounded field stays LAST, which is the rule the grammar has always had.
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 killed=1 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
+		t.Fatalf("the ABSTAIN reason names how many it killed and the child's log it watched:\n%s", out)
 	}
 }
 
