@@ -520,6 +520,15 @@ What the verb does, in order, and there is no other order:
    sandbox may not mount a volume, so the line names both remedies — a shell that
    is not sandboxed, or the bare wall form, which needs no volume at all. Both
    failures are `reason=volume_failed`.
+
+   That cause has a **second face one step earlier**: under a seatbelt wall
+   `diskutil` cannot reach DiskArbitration at all and fails every call with
+   *"framework being unavailable due to being booted in single-user mode"*, which
+   is neither what happened nor anywhere to look. Wherever that phrase is in a
+   disk failure, the refusal carries the same cause-and-remedy sentence as the
+   unmounted volume — one sentence, written once, so the faces cannot drift — and
+   the container refusal (`reason=no_container`) drops its `--container` advice,
+   because a container named by hand fails the same way one call later.
 3. **Run.** The volume is the run's **only `--write`**, so the seatbelt profile
    of the darwin section allows writes there and nowhere else; rule 8's temp
    directory defaults inside it, which puts `TMPDIR` on the volume too. The
