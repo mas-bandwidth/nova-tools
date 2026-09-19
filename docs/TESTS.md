@@ -345,6 +345,42 @@ refuses a supplied head that differs from the entry's current head. The packet
 records the exact range and either includes its selected diff or says that the
 byte budget omitted it with the command that prints it.
 
+### mutate: the selected form, and the abstain
+
+A lab with the #1828 shape: one fix in `sign/sign.go`, the test that detects it,
+and a co-touched test in `shape/shape_test.go` that is correctly insensitive to
+it. The default verdict is per FILE, so it says `FAIL` although the card's named
+`TEST:` is red — which is what `--test` exists to answer (#1849).
+
+```
+$ nova-review mutate --repo . --base main --head card
+MUTATE GREEN test=TestShapeOnly file=shape/shape_test.go: green with the change reverted; it proves nothing
+MUTATE GREEN test=TestSignPositive file=sign/sign_test.go: green with the change reverted; it proves nothing
+MUTATE 19947c2e reverted=1 red=1 green=2 FAIL
+
+$ nova-review mutate --repo . --base main --head card --test TestSignZero
+MUTATE 19947c2e reverted=1 red=1 green=2 test=TestSignZero PASS
+```
+
+The counts do not move: the co-touched units are still the evidence for how the
+question was answered. What moves is which unit the verdict is about. A name that
+cannot be resolved among the test units of the files this range changed is
+refused, never answered for a different test:
+
+```
+$ nova-review mutate --repo . --base main --head card --test TestNoSuchThing
+MUTATE REFUSED: the named test was not run: --test TestNoSuchThing names no test declared by a test file this range changed
+```
+
+A range that changes only test files — every `internal/docs` and `internal/ci`
+doc-rule repair — abstains on stdout, exit 2. It is inability to prove the
+control, never acceptance (#1850):
+
+```
+$ nova-review mutate --repo . --base card --head tests-only
+MUTATE be009676 ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
+```
+
 ## nova-merge
 
 Fixture: a bare git repository and a fake host, both made in `t.TempDir()` by
