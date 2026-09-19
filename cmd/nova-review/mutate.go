@@ -121,9 +121,11 @@ func mutate(args []string, out, errOut io.Writer) int {
 	return 1
 }
 
-// mutateSeed is the seed form. The refusal comes BEFORE any suite runs: a control whose
+// mutateSeed is the seed form. The refusal comes BEFORE the seeded run: a control whose
 // size is wrong is not a control, and running it anyway would produce a verdict line
-// somebody could quote.
+// somebody could quote. The named suites are listed and run once at the UNSEEDED head
+// before that, because a package that does not exist and a suite that is already red
+// both kill every seed, and a PASS under either is a control that never ran.
 func mutateSeed(ctx context.Context, repo, head, seed, tests string, out, errOut io.Writer) int {
 	var pkgs []string
 	for _, p := range strings.Split(tests, ",") {
