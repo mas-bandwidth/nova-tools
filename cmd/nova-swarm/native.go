@@ -78,6 +78,10 @@ type nativeRunConfig struct {
 	// `unmetered`.
 	tokens    int
 	unmetered bool
+	// usageInterval is how often a live sample reads the harness's database while the
+	// launch runs (rule 13d). cmdNative has already refused one under a second and one not
+	// shorter than the deadline, so what reaches here is a usable interval.
+	usageInterval time.Duration
 }
 
 // nativeRunResult is what one run records when the child has gone.

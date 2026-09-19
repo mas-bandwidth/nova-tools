@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // TestNativeBudgetEndsTheCardAndKeepsFindings is demanded test 13d (SPEC-SWARM.md:3324,
@@ -121,6 +123,12 @@ func TestNativeUnmeteredPrintsTheWordOnTheLine(t *testing.T) {
 // sample has observed anything the spelling is rule 13's own dash -- "`budget=-/<n>` for a
 // job whose usage was never observed" -- and it is never silence and never `unmetered`.
 func TestNativeNumericBudgetPrintsAgainstTheNumber(t *testing.T) {
+	// A NUMERIC BUDGET WANTS A READER (rule 13d, and this repo's slice 2): on a bench with
+	// no `sqlite3` the same launch is a NATIVE REFUSED, which is the rule working and not
+	// this assertion failing. The skip names the missing program rather than pretending.
+	if !swarm.SQLiteOnPath() {
+		t.Skipf("%s is not on PATH, and a numeric budget is refused without it (rule 13d)", swarm.SQLiteBinary)
+	}
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := budgetCard(t, root)
