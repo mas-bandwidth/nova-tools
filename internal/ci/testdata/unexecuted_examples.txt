@@ -1,0 +1,141 @@
+# PASTEABLE LINES NO TEST EXECUTES THROUGH onboarding.CompareTranscript
+# (docs/SPEC-TOOLWORK.md §7 rule 7, PR #1637 at 34f3188c).
+#
+# Every `$ ` line in a fenced block of README.md, docs/USAGE.md,
+# docs/nova-swarm-quickstart.md and docs/CLI.md's `### First run` sections, and every
+# `example:` line of every `help` banner, is either executed by a test through the one
+# comparator or listed here with the reason it is not.
+#
+# One entry per line, `<line>` TAB `<reason>`. The separator is a TAB and not the ` #'
+# the other allowlists use, because these keys are lines a stranger pastes into a shell
+# and one of them carries a shell comment of its own.
+#
+# THE LIST ONLY SHRINKS. TestUnexecutedExamplesOnlyShrink checks it in both directions:
+# an unlisted pasteable line is red on the pull request that adds it, and an entry whose
+# line has left the document -- or whose document a test now executes through the
+# comparator -- is a stale entry and red too.
+#
+# Today: 118 lines, none executed. What each one DOES when pasted is not this rule's
+# question; #1455 measured that and found 28 of 61 banner examples exiting 2.
+
+# docs/CLI.md — the  blocks of the command reference.
+docs/CLI.md: HOME=/Users/me/pool/jobs/j1/home \	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: mkdir -p /Users/me/pool/jobs/j1/home	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-board quickstart --dir ./board --stale 10m	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-bus names --bus ./bus	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-check quickstart --dir ./self	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-fuse check --box ./fuse-box.json a-forum	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-fuse check --box ./fuse-box.json a-public-issue-tracker	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-fuse lift quarantine --box ./fuse-box.json a-forum	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-fuse status --box ./fuse-box.json	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-memory check --root ./corpus --channels bm25 --k 2 -	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-memory quickstart --root ./corpus	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-memory stats --root ./corpus	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-merge add --lane ./lane --pr 949 --needs-read	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-merge status --lane ./lane	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-play read --source story.txt	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-sandbox check	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-self-talk ./pages/journal.md	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-swarm quickstart --pool ./pool	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-swarm status --pool ./pool --max 20	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-wake probe --here	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-wake quickstart --state ./wake.state --reports ./reports	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+docs/CLI.md: nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports	docs/CLI.md is compared by no test; the card that puts its `### First run` blocks behind the one comparator takes this line off the list
+
+# The help banners — run by each tool's TestUsageBannerExamplesRun, compared by nothing.
+help nova-board: nova-board check --dir ./board --words windows	cmd/nova-board's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-board: nova-board list --dir ./board --stale 10m --list --max 3	cmd/nova-board's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-board: nova-board quickstart --dir ./board --stale 10m	cmd/nova-board's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-bus: nova-bus check --bus ./bus --full	cmd/nova-bus's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-bus: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate	cmd/nova-bus's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-bus: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open	cmd/nova-bus's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-bus: nova-bus names --bus ./bus	cmd/nova-bus's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-cairn: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual	cmd/nova-cairn's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-cairn: nova-cairn index --store ./cairns	cmd/nova-cairn's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-cairn: nova-cairn open --store ./cairns --session s1 --publish manual	cmd/nova-cairn's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-cairn: nova-cairn receipt --store ./cairns --session s1 --entry e1	cmd/nova-cairn's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-check: nova-check attest --home ./self --manifest ./self/MANIFEST	cmd/nova-check's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-check: nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2	cmd/nova-check's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-check: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts	cmd/nova-check's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-check: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000	cmd/nova-check's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-check: nova-check quickstart --dir ./self	cmd/nova-check's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-ci: nova-ci failed --help	cmd/nova-ci's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-ci: nova-ci help	cmd/nova-ci's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-ci: nova-ci slowtests --budget 60	cmd/nova-ci's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-ci: nova-ci version	cmd/nova-ci's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide --questions ./questions.json --state ./state.md --floor 0.9	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide help --hours 3 --retries-on-rung 2 --landing-moved	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide log --log ./decide.jsonl --summary	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide route --unit ./unit.json --usage ./usage.tsv --log ./decide.jsonl	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-decide: nova-decide tune --decisions ./decisions.jsonl	cmd/nova-decide's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-fuse: nova-fuse check --box ./fuse-box.json a-forum	cmd/nova-fuse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-fuse: nova-fuse check --box ./fuse-box.json a-public-issue-tracker	cmd/nova-fuse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-fuse: nova-fuse lift quarantine --box ./fuse-box.json a-forum	cmd/nova-fuse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-fuse: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"	cmd/nova-fuse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-fuse: nova-fuse status --box ./fuse-box.json	cmd/nova-fuse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-memory: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md	cmd/nova-memory's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-memory: nova-memory quickstart --root ./corpus	cmd/nova-memory's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-memory: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass	cmd/nova-memory's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-merge: nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read	cmd/nova-merge's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-merge: nova-merge dry-run --lane ./rehearsal-lane	cmd/nova-merge's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-merge: nova-merge packet --lane ./rehearsal-lane --who emma --all	cmd/nova-merge's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-merge: nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"	cmd/nova-merge's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-merge: nova-merge status --lane ./rehearsal-lane	cmd/nova-merge's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-play: nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."	cmd/nova-play's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-play: nova-play read --source story.txt	cmd/nova-play's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-play: nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."	cmd/nova-play's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-post: nova-post help	cmd/nova-post's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-post: nova-post version	cmd/nova-post's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-pulse: nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue	cmd/nova-pulse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-pulse: nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120	cmd/nova-pulse's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-review: nova-review --version	cmd/nova-review's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-sandbox: nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \	cmd/nova-sandbox's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets names --store ./secrets --as rowan	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets place --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets placed --machine mini	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-secrets: nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops	cmd/nova-secrets's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-self-talk: nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md	cmd/nova-self-talk's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-self-talk: nova-self-talk ./pages/journal.md	cmd/nova-self-talk's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-swarm: nova-swarm quickstart --pool ./pool	cmd/nova-swarm's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-swarm: nova-swarm status --pool ./pool --max 20	cmd/nova-swarm's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-swarm: nova-swarm template --name read-pr	cmd/nova-swarm's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-tokens: nova-tokens check --out ./out	cmd/nova-tokens's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-tokens: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus	cmd/nova-tokens's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-tokens: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts	cmd/nova-tokens's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-tokens: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts	cmd/nova-tokens's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-tokens: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20	cmd/nova-tokens's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-tokens: nova-tokens sum --out ./out --month 2026-09	cmd/nova-tokens's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-update: nova-update report --file cmd/nova-update/testdata/example.tsv	cmd/nova-update's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-update: nova-update version	cmd/nova-update's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-version: nova-version report --file cmd/nova-version/testdata/example.tsv	cmd/nova-version's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-version: nova-version version	cmd/nova-version's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-wake: nova-wake probe --here	cmd/nova-wake's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-wake: nova-wake quickstart --state ./wake.state --reports ./reports	cmd/nova-wake's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-wake: nova-wake watch --state ./wake.state --max 5s --on-deadline hold --interval 5s --reports ./reports --max-lines 0 --baseline	cmd/nova-wake's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-wake: nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports	cmd/nova-wake's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-work: nova-work dependencies --graph ./deps.json --node a --needs b	cmd/nova-work's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-work: nova-work dependencies --graph ./deps.json --node b	cmd/nova-work's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-work: nova-work events --redis 127.0.0.1:6379 --once	cmd/nova-work's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-work: nova-work plan check --file ./work.work --max-bytes 65536	cmd/nova-work's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-work: nova-work ready --node a --graph ./deps.json	cmd/nova-work's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)
+help nova-work: nova-work set check --file ./work-set.lisp --ready	cmd/nova-work's TestUsageBannerExamplesRun RUNS this line and compares no output; #1455 is the open count (28 of 61 banner examples exited 2 when pasted)

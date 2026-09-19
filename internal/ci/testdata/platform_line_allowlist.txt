@@ -1,0 +1,8 @@
+# The `## <tool>` sections of docs/TESTS.md whose `Platform:` line does not parse as a
+# GOOS list, one per line as <tool>, each with the issue that owes it
+# (docs/SPEC-TOOLWORK.md §7 rule 5, PR #1637 at 34f3188c).
+#
+# THE LIST ONLY SHRINKS: a listed section whose line now parses as a GOOS list is a
+# stale entry and red, so the exception cannot be widened and left there.
+
+nova-swarm  # #1509 -- its line names a MACHINE STATE and not a platform: "recorded on a machine whose wall probe fails (containment broken)". §7 rule 5 spells the line `Platform: <goos>[,<goos>]` and says nothing about a bench whose containment is broken, which is not a GOOS and is not a leg ci.yml can run. The question is in this branch's HANDOFF and on #1509; either the rule grows a second key for a machine precondition, or that transcript moves behind one.
