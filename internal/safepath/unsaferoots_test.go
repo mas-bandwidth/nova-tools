@@ -117,3 +117,55 @@ func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
 		t.Errorf("RemoveUnderRoots deleted %s, the fixture's stand-in home, under a wider root", fakeHomeReal)
 	}
 }
+
+// RemoveUnder resolves its root through symlinks for the containment test but never
+// re-asks whether the RESOLVED root is a boundary at all: refuseUnsafeRoot sees only
+// the absolute form. So a root that is a symlink to the home, or to the whole disk,
+// walks past the check that a literal home or "/" is refused by, and the removal then
+// happens under the real home. Johnny, 2026-09-19: "HOME as a literal root refuses. A
+// symlink to HOME, and HOME as a path under /Users, do not." Both doors must refuse the
+// resolved root, not the name the caller happened to spell it with.
+func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
+	t.Run("a root that is a symlink to the home", func(t *testing.T) {
+		fakeHome := t.TempDir()
+		t.Setenv("HOME", fakeHome)
+		fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
+		if err != nil {
+			t.Fatalf("could not resolve the fixture's fake home: %v", err)
+		}
+		victim := filepath.Join(fakeHomeReal, "victim")
+		mustWrite(t, filepath.Join(victim, "keep"), "x")
+
+		elsewhere := t.TempDir()
+		rootLink := filepath.Join(elsewhere, "home-link")
+		if err := os.Symlink(fakeHomeReal, rootLink); err != nil {
+			t.Fatal(err)
+		}
+
+		err = RemoveUnder(rootLink, victim)
+		if err == nil || !errors.Is(err, ErrUnsafe) {
+			t.Errorf("RemoveUnder(%q, %q) = %v, want a refusal that wraps ErrUnsafe", rootLink, victim, err)
+		}
+		if !exists(victim) {
+			t.Errorf("RemoveUnder deleted %s through a root that is a symlink to the fixture's home", victim)
+		}
+	})
+
+	t.Run("a root that is a symlink to the whole disk", func(t *testing.T) {
+		elsewhere := t.TempDir()
+		rootLink := filepath.Join(elsewhere, "disk-link")
+		if err := os.Symlink(string(os.PathSeparator), rootLink); err != nil {
+			t.Fatal(err)
+		}
+		victim := filepath.Join(t.TempDir(), "victim")
+		mustWrite(t, filepath.Join(victim, "keep"), "x")
+
+		err := RemoveUnder(rootLink, victim)
+		if err == nil || !errors.Is(err, ErrUnsafe) {
+			t.Errorf("RemoveUnder(%q, %q) = %v, want a refusal that wraps ErrUnsafe", rootLink, victim, err)
+		}
+		if !exists(victim) {
+			t.Errorf("RemoveUnder deleted %s through a root that is a symlink to the whole disk", victim)
+		}
+	})
+}

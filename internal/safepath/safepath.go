@@ -70,6 +70,12 @@ func RemoveUnder(root, path string) error {
 	if err != nil {
 		return err
 	}
+	// The resolved root is the boundary that will actually be used, so it is the one
+	// that has to be a boundary: a root spelled as a symlink to the home or to the
+	// whole disk is that directory, whatever the caller called it.
+	if err := refuseUnsafeRoot(rootReal); err != nil {
+		return err
+	}
 	pathReal, err := filepath.EvalSymlinks(pathAbs)
 	if err != nil {
 		if os.IsNotExist(err) {
