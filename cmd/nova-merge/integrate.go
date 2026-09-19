@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -72,7 +71,7 @@ type member struct {
 	Head string
 }
 
-func (m member) String() string { return fmt.Sprintf("#%d@%s", m.PR, merge.Short(m.Head)) }
+func (m member) String() string { return "#" + strconv.Itoa(m.PR) + "@" + merge.Short(m.Head) }
 
 // cmdIntegrate is the verb's front door: it checks the invocation and hands a checked
 // run to runIntegrate.
@@ -281,12 +280,13 @@ func isHexSHA(s string) bool {
 // integrateRefused is the verb saying NO: exit 1, one line, naming the step, the member
 // where there is one, and the reason.
 func integrateRefused(stderr io.Writer, step, why string, n int) int {
-	who := ""
 	if n > 0 {
-		who = fmt.Sprintf(" member=#%d", n)
+		fmt.Fprintf(stderr, "INTEGRATE REFUSED step=%s member=#%d reason=%q\n",
+			oneline.Field(strings.ToLower(step)), n, oneline.Cap(why, oneline.TailBytes))
+		return 1
 	}
-	fmt.Fprintf(stderr, "INTEGRATE REFUSED step=%s%s reason=%q\n",
-		oneline.Field(strings.ToLower(step)), who, oneline.Cap(why, oneline.TailBytes))
+	fmt.Fprintf(stderr, "INTEGRATE REFUSED step=%s reason=%q\n",
+		oneline.Field(strings.ToLower(step)), oneline.Cap(why, oneline.TailBytes))
 	return 1
 }
 
@@ -318,7 +318,7 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 				m.PR, oneline.Field(merge.Short(m.Head)), oneline.Field(merge.Short(pr.HeadOID)))
 			return integrateRefused(stderr, "heads", fmt.Sprintf(
 				"head moved: the caller named %s and the forge says %s; every read this landing folds was recorded at the head the caller named, so this member waits for a fresh read at %s",
-				merge.Short(m.Head), merge.Short(pr.HeadOID), merge.Short(pr.HeadOID)), m.PR)
+				oneline.Field(merge.Short(m.Head)), oneline.Field(merge.Short(pr.HeadOID)), oneline.Field(merge.Short(pr.HeadOID))), m.PR)
 		}
 		if pr.Merged || pr.Closed {
 			return integrateRefused(stderr, "heads", fmt.Sprintf("pull request %d is not open; a member of a batch is an open pull request", m.PR), m.PR)
@@ -337,12 +337,7 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 
 	// STEP 3: THE GROUPING, SIMULATED ONTO THE BASE AS IT STANDS NOW.
-	entries, err := writeEntries(in)
-	if err != nil {
-		return integrateCouldNotRun(stderr, "simulate", oneline.Err(err))
-	}
-	defer os.Remove(entries)
-	simArgs := []string{"--repo", in.local, "--base", in.base, "--entries", entries,
+	simArgs := []string{"--repo", in.local, "--base", in.base, "--prs", prList(in.members),
 		"--checks", in.checks, "--timeout", in.timeout.String()}
 	var sim bytes.Buffer
 	if code := cmdSimulate(simArgs, io.MultiWriter(stdout, &sim), stderr, deps); code != 0 {
@@ -377,7 +372,7 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 	var gate bytes.Buffer
 	if code := cmdBatch(batchArgs, io.MultiWriter(stdout, &gate), stderr, deps); code != 0 {
-		return integrateRefused(stderr, "batch", fmt.Sprintf("the gate on %s did not say BATCH OK: %s", in.on, lastLineOf(gate.String())), 0)
+		return integrateRefused(stderr, "batch", fmt.Sprintf("the gate on %s did not say BATCH OK: %s", oneline.Field(in.on), oneline.Escape(oneline.Cap(lastLineOf(gate.String()), oneline.TailBytes))), 0)
 	}
 	receipt := lastLineOf(gate.String())
 	rec, err := merge.ParseBatchReceipt(receipt)
@@ -386,7 +381,7 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 	if rec.Dropped != "" && rec.Dropped != "none" && rec.Dropped != "-" {
 		return integrateRefused(stderr, "batch", fmt.Sprintf(
-			"the gate dropped %s; a landing lands the group the caller named or none of it, so re-run with the members that remain", rec.Dropped), 0)
+			"the gate dropped %s; a landing lands the group the caller named or none of it, so re-run with the members that remain", oneline.Field(rec.Dropped)), 0)
 	}
 	fmt.Fprintf(stdout, "INTEGRATE BATCH on=%s head=%s members=%s dropped=none receipt=ok t=%.1fs\n",
 		oneline.Field(in.on), oneline.Field(rec.Head), oneline.Field(rec.Members), since(start))
@@ -398,18 +393,26 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 
 	// STEP 6: THE PULL REQUEST, WITH THE RECEIPT AND THE BASIS.
-	body, err := integrateBody(in, receipt, branch, rec.Head)
+	basis, err := os.ReadFile(in.basis)
 	if err != nil {
-		return integrateCouldNotRun(stderr, "pr", oneline.Err(err))
+		return integrateCouldNotRun(stderr, "pr", fmt.Sprintf("--basis %s could not be read: %s", oneline.Field(in.basis), oneline.Err(err)))
 	}
+	if strings.TrimSpace(string(basis)) == "" {
+		return integrateRefused(stderr, "pr", fmt.Sprintf(
+			"--basis %s is empty; a batch whose members have no stated basis is a batch nobody can check", oneline.Field(in.basis)), 0)
+	}
+	body := merge.IntegrationBody{
+		Bench: in.on, Receipt: receipt, Basis: string(basis), Branch: branch, Head: rec.Head,
+		Lane: in.lane, Reviewers: filepath.Base(in.reviewersFile),
+	}.Render()
 	title := in.title
 	if title == "" {
-		title = fmt.Sprintf("%s: %s — gated on %s", in.name, rec.Members, in.on)
+		title = in.name + ": " + rec.Members + " — gated on " + in.on
 	}
 	forge := deps.NewIntegrateForge(in.repo, in.timeout)
 	ref, err := forge.CreatePR(merge.NewPR{Base: in.base, Head: branch, Title: title, Body: body, Draft: in.draft})
 	if err != nil {
-		return integrateCouldNotRun(stderr, "pr", fmt.Sprintf("the pull request for %s could not be opened: %s", branch, oneline.Err(err)))
+		return integrateCouldNotRun(stderr, "pr", fmt.Sprintf("the pull request for %s could not be opened: %s", oneline.Field(branch), oneline.Err(err)))
 	}
 	fmt.Fprintf(stdout, "INTEGRATE PR number=%d url=%s draft=%t receipt=in-body basis=%s t=%.1fs\n",
 		ref.Number, oneline.Field(ref.URL), in.draft, oneline.Field(filepath.Base(in.basis)), since(start))
@@ -425,13 +428,11 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 
 	// STEP 9: THE QUEUE. `land` stays the one caller of the one door.
-	receiptPath, err := writeReceipt(in, receipt)
-	if err != nil {
-		return integrateCouldNotRun(stderr, "land", oneline.Err(err))
-	}
-	defer os.Remove(receiptPath)
+	// THE RECEIPT IS PASSED AS A LINE, not as a file: `land --receipt` takes the BATCH OK
+	// line itself, read by the same parser a file would have been, and cmd/nova-merge
+	// writes no file but the lane's own (source_test.go).
 	landArgs := []string{"--repo", in.repo, "--pr", strconv.Itoa(ref.Number),
-		"--receipt-file", receiptPath, "--reviewers", in.reviewersFile, "--lane", in.lane,
+		"--receipt", receipt, "--reviewers", in.reviewersFile, "--lane", in.lane,
 		"--timeout", strconv.Itoa(int(in.timeout.Seconds()))}
 	if in.untypedComments != "" {
 		landArgs = append(landArgs, "--untyped-comments", in.untypedComments, "--reason", in.reason)
@@ -446,7 +447,10 @@ func runIntegrate(in integrateRun, stdout, stderr io.Writer, deps Deps) int {
 	// STEP 10: EACH MEMBER CLOSED WITH ITS POINTER.
 	closed := 0
 	for _, m := range in.members {
-		pointer := integratePointer(in, m, ref, rec, receipt)
+		pointer := merge.MemberPointer{
+			Batch: ref.Number, Name: in.name, Bench: in.on, Head: m.Head,
+			BatchHead: rec.Head, Base: in.base, Members: rec.Members, Receipt: receipt,
+		}.Render()
 		if err := forge.ClosePR(m.PR, pointer); err != nil {
 			fmt.Fprintf(stdout, "INTEGRATE CLOSE member=#%d verdict=unclosed reason=%q\n", m.PR, oneline.Err(err))
 			return integrateCouldNotRun(stderr, "close", fmt.Sprintf(
@@ -485,7 +489,7 @@ func integrateHoldPass(in integrateRun, host merge.Host, rs *merge.ReviewerSet, 
 			fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d member=#%d verdict=moved forge=%s\n",
 				pass, m.PR, oneline.Field(merge.Short(pr.HeadOID)))
 			return integrateRefused(stderr, "hold", fmt.Sprintf(
-				"head moved between the gate and the door: the caller named %s and the forge now says %s", merge.Short(m.Head), merge.Short(pr.HeadOID)), m.PR)
+				"head moved between the gate and the door: the caller named %s and the forge now says %s", oneline.Field(merge.Short(m.Head)), oneline.Field(merge.Short(pr.HeadOID))), m.PR)
 		}
 		var vs []merge.Verdict
 		laneVs, err := merge.LoadLaneVerdicts(in.lane, m.PR)
@@ -513,9 +517,9 @@ func integrateHoldPass(in integrateRun, host merge.Host, rs *merge.ReviewerSet, 
 			}
 			fmt.Fprintf(stdout, "INTEGRATE HOLD pass=%d member=#%d verdict=held who=%s hold=%s source=%s held_at=%s carried=%s at=%s\n",
 				pass, m.PR, oneline.Field(h.Who), oneline.Field(h.ID), oneline.Field(h.Source),
-				oneline.Field(merge.Short(h.Head)), carried, oneline.Field(h.At))
+				oneline.Field(merge.Short(h.Head)), oneline.Field(carried), oneline.Field(h.At))
 			return integrateRefused(stderr, "hold", fmt.Sprintf(
-				"head %s carries an unreleased HOLD by %s (%s, %s); no flag here lifts one", merge.Short(pr.HeadOID), h.Who, h.Source, h.At), m.PR)
+				"head %s carries an unreleased HOLD by %s (%s, %s); no flag here lifts one", oneline.Field(merge.Short(pr.HeadOID)), oneline.Field(h.Who), oneline.Field(h.Source), oneline.Field(h.At)), m.PR)
 		}
 		// THE SENSITIVE-PREFIX RULE (SPEC-TOOLWORK eligibility rule 13): a member whose
 		// diff touches one of the named prefixes has ONE reader -- the designated mind --
@@ -542,9 +546,9 @@ func integrateSensitive(in integrateRun, m member, vs []merge.Verdict, pr merge.
 	if in.sensitive == "" {
 		return "unchecked", "", 0
 	}
-	prefixes, err := readPrefixes(in.sensitive)
+	prefixes, err := merge.ReadPrefixes(in.sensitive)
 	if err != nil {
-		return "", fmt.Sprintf("--sensitive %s could not be read: %s", in.sensitive, oneline.Err(err)), 1
+		return "", fmt.Sprintf("--sensitive %s could not be read: %s", oneline.Field(in.sensitive), oneline.Err(err)), 1
 	}
 	paths, err := memberPaths(in, m)
 	if err != nil {
@@ -574,7 +578,7 @@ func integrateSensitive(in integrateRun, m member, vs []merge.Verdict, pr merge.
 	}
 	return "", fmt.Sprintf(
 		"the diff touches %s, whose read is %s's and nobody else's, and %s has recorded no APPROVE at head %s; where that mind is asleep the work waits",
-		strings.Join(touched, ","), in.designated, in.designated, merge.Short(pr.HeadOID)), 1
+		oneline.Field(strings.Join(touched, ",")), oneline.Field(in.designated), oneline.Field(in.designated), oneline.Field(merge.Short(pr.HeadOID))), 1
 }
 
 // integratePush is step 5: the branch is pushed ONLY if no branch of that name exists.
@@ -589,13 +593,13 @@ func integratePush(in integrateRun, branch, head string, stdout, stderr io.Write
 	g := merge.NewGit(in.local, in.timeout, deps.Runner)
 	out, err := g.Out("ls-remote", "--heads", "origin", "refs/heads/"+branch)
 	if err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("origin could not be asked whether %s exists: %s", branch, oneline.Err(err)))
+		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("origin could not be asked whether %s exists: %s", oneline.Field(branch), oneline.Err(err)))
 	}
 	if existing := countRefs(out); existing != 0 {
 		fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s lease=must-not-exist existed=%d verdict=refused\n",
 			oneline.Field(branch), existing)
 		return integrateRefused(stderr, "push", fmt.Sprintf(
-			"origin already holds %s; this verb's lease is must-not-exist and it never forces, so give --name a name of its own", branch), 0)
+			"origin already holds %s; this verb's lease is must-not-exist and it never forces, so give --name a name of its own", oneline.Field(branch)), 0)
 	}
 	// THE GATED OBJECT LIVES IN THE GATE'S OWN CLONE and nowhere else: `batch` clones
 	// under --root, builds rowan/<name> there and PUSHES NOTHING. So the object is
@@ -607,7 +611,7 @@ func integratePush(in integrateRun, branch, head string, stdout, stderr io.Write
 		return integrateCouldNotRun(stderr, "push", oneline.Err(err))
 	}
 	if _, err := g.Run("fetch", "--quiet", gate, branch); err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("the gate's tree at %s could not be fetched: %s", gate, oneline.Err(err)))
+		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("the gate's tree at %s could not be fetched: %s", oneline.Field(gate), oneline.Err(err)))
 	}
 	fetched, err := g.Out("rev-parse", "FETCH_HEAD")
 	if err != nil {
@@ -616,19 +620,19 @@ func integratePush(in integrateRun, branch, head string, stdout, stderr io.Write
 	if !sameHead(fetched, head) {
 		return integrateRefused(stderr, "push", fmt.Sprintf(
 			"the gate's receipt names %s and its clone's %s is at %s; the tree about to be pushed is not the tree that was gated",
-			merge.Short(head), branch, merge.Short(fetched)), 0)
+			oneline.Field(merge.Short(head)), oneline.Field(branch), oneline.Field(merge.Short(fetched))), 0)
 	}
 	if _, err := g.Run("push", "origin", head+":refs/heads/"+branch); err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be pushed to origin: %s", branch, oneline.Err(err)))
+		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be pushed to origin: %s", oneline.Field(branch), oneline.Err(err)))
 	}
 	back, err := g.Out("ls-remote", "--heads", "origin", "refs/heads/"+branch)
 	if err != nil {
-		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be read back off origin: %s", branch, oneline.Err(err)))
+		return integrateCouldNotRun(stderr, "push", fmt.Sprintf("%s could not be read back off origin: %s", oneline.Field(branch), oneline.Err(err)))
 	}
 	readback := firstRefSHA(back)
 	if !sameHead(readback, head) {
 		return integrateRefused(stderr, "push", fmt.Sprintf(
-			"origin read back %s for %s and the gate's head is %s; somebody else is writing this branch", merge.Short(readback), branch, merge.Short(head)), 0)
+			"origin read back %s for %s and the gate's head is %s; somebody else is writing this branch", oneline.Field(merge.Short(readback)), oneline.Field(branch), oneline.Field(merge.Short(head))), 0)
 	}
 	fmt.Fprintf(stdout, "INTEGRATE PUSH branch=%s head=%s lease=must-not-exist existed=0 readback=%s forced=no t=%.1fs\n",
 		oneline.Field(branch), oneline.Field(head), oneline.Field(readback), since(start))
@@ -665,9 +669,9 @@ func integrateCI(in integrateRun, host merge.Host, pr int, head string, stdout, 
 		}
 		if !deps.Now().Before(deadline) {
 			fmt.Fprintf(stdout, "INTEGRATE CI pr=%d head=%s check=%s state=timeout waited=%s\n",
-				pr, oneline.Field(merge.Short(head)), batchRequiredCheck, in.ciTimeout)
+				pr, oneline.Field(merge.Short(head)), batchRequiredCheck, oneline.Field(in.ciTimeout.String()))
 			return integrateRefused(stderr, "ci", fmt.Sprintf(
-				"%s was still %s after %s; the pull request stands and nothing was queued", batchRequiredCheck, state, in.ciTimeout), 0)
+				"%s was still %s after %s; the pull request stands and nothing was queued", batchRequiredCheck, oneline.Field(state), oneline.Field(in.ciTimeout.String())), 0)
 		}
 		deps.Sleep(in.ciInterval)
 	}
@@ -694,7 +698,7 @@ func integrateCIRed(in integrateRun, pr int, stdout, stderr io.Writer, deps Deps
 			pr, runID, report.Jobs, report.Cancelled)
 		return integrateRefused(stderr, "ci", fmt.Sprintf(
 			"%s is red on pull request %d and run %d named no failing test; read the run before anything else happens (%s)",
-			batchRequiredCheck, pr, runID, report.SummaryLine()), 0)
+			batchRequiredCheck, pr, runID, oneline.Escape(oneline.Cap(report.SummaryLine(), oneline.TailBytes))), 0)
 	}
 	for _, f := range report.Failures {
 		fmt.Fprintf(stdout, "INTEGRATE FAIL pr=%d run=%d test=%s pkg=%s job=%s at=%s\n",
@@ -702,7 +706,7 @@ func integrateCIRed(in integrateRun, pr int, stdout, stderr io.Writer, deps Deps
 	}
 	return integrateRefused(stderr, "ci", fmt.Sprintf(
 		"%s is red on pull request %d with %d named failing test(s), the first of them %s; a named failing test is a finding and never a rerun",
-		batchRequiredCheck, pr, len(report.Failures), report.Failures[0].Test), 0)
+		batchRequiredCheck, pr, len(report.Failures), oneline.Field(report.Failures[0].Test)), 0)
 }
 
 // integrateReverify is step 11: every pull request still open, against the base the
@@ -741,140 +745,6 @@ func integrateReverify(in integrateRun, stdout, stderr io.Writer, deps Deps, sta
 	}
 	fmt.Fprintf(stdout, "INTEGRATE REVERIFY open=%d dirty=%d base=%s t=%.1fs\n",
 		counted, dirty, oneline.Field(in.base), since(start))
-}
-
-// integrateBody is the pull request's body: the gate's receipt verbatim, the lease said
-// out loud, and the caller's basis file whole. The basis is the caller's words and this
-// verb neither writes nor summarises them -- what a member landed on is a judgement, and
-// a tool that composed that sentence would be a tool asserting a read it did not do.
-func integrateBody(in integrateRun, receipt, branch, head string) (string, error) {
-	basis, err := os.ReadFile(in.basis)
-	if err != nil {
-		return "", fmt.Errorf("--basis %s could not be read: %w", in.basis, err)
-	}
-	if strings.TrimSpace(string(basis)) == "" {
-		return "", fmt.Errorf("--basis %s is empty; a batch whose members have no stated basis is a batch nobody can check", in.basis)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Gated on `%s` by `nova-merge integrate` (#1845).\n\n", in.on)
-	b.WriteString("## The gate's receipt\n\n```\n")
-	b.WriteString(receipt)
-	b.WriteString("\n```\n\n")
-	b.WriteString("## The basis, per member\n\n")
-	b.Write(basis)
-	if !strings.HasSuffix(string(basis), "\n") {
-		b.WriteString("\n")
-	}
-	fmt.Fprintf(&b, "\n## The push\n\n`%s` was pushed at `%s` under a **must-not-exist lease**: "+
-		"`origin` held no ref of that name before the push (`ls-remote` count 0), the push was a plain one "+
-		"and never a force, and the ref read back `%s`.\n\n", branch, head, head)
-	fmt.Fprintf(&b, "## The hold read\n\nThe members were read for holds twice — once at admission and once at the door — "+
-		"through `internal/merge`'s verdict fold (`LoadLaneVerdicts`, `Host.Verdicts`, `UnliftedHolds`), "+
-		"over the lane `%s` and the reviewer file `%s`. No flag in this verb lifts a hold.\n",
-		in.lane, filepath.Base(in.reviewersFile))
-	return b.String(), nil
-}
-
-// integratePointer is the comment a member is closed with: which batch carried it, the
-// gate's receipt, the head that did not move, and where the basis is.
-func integratePointer(in integrateRun, m member, ref merge.PRRef, rec merge.BatchReceipt, receipt string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Landed in batch #%d (`%s`), gated on `%s`.\n\n", ref.Number, in.name, in.on)
-	fmt.Fprintf(&b, "- head: `%s` — the head this landing folded, and it did not move between the read and the door\n", m.Head)
-	fmt.Fprintf(&b, "- batch head: `%s`, base `%s`\n", rec.Head, in.base)
-	fmt.Fprintf(&b, "- members: `%s`\n", rec.Members)
-	fmt.Fprintf(&b, "- basis: stated per member in #%d's body\n\n", ref.Number)
-	b.WriteString("The gate's receipt:\n\n```\n")
-	b.WriteString(receipt)
-	b.WriteString("\n```\n\nClosed by `nova-merge integrate` (#1845): the work is on the batch, not lost.\n")
-	return b.String()
-}
-
-// writeEntries is the --entries file `simulate` reads: one member per line, in landing
-// order, which is the order the gate merges them in.
-func writeEntries(in integrateRun) (string, error) {
-	f, err := os.CreateTemp("", "nova-merge-integrate-entries-*.txt")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	for _, m := range in.members {
-		fmt.Fprintf(f, "%d\n", m.PR)
-	}
-	return f.Name(), nil
-}
-
-// writeReceipt puts the gate's BATCH OK line where `land` reads it: one file, one line,
-// the same parser at both ends.
-func writeReceipt(in integrateRun, receipt string) (string, error) {
-	f, err := os.CreateTemp("", "nova-merge-integrate-receipt-*.txt")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(receipt + "\n"); err != nil {
-		return "", err
-	}
-	return f.Name(), nil
-}
-
-// memberPaths is the member's changed paths, read out of the local clone against the
-// base: `git diff --name-only <base>...<head>`, the three-dot form, so the answer is what
-// the member changed and not what the base did while it waited.
-func memberPaths(in integrateRun, m member) ([]string, error) {
-	g := merge.NewGit(in.local, in.timeout, nil)
-	if _, err := g.Run("fetch", "--quiet", "origin", in.base, "pull/"+strconv.Itoa(m.PR)+"/head"); err != nil {
-		return nil, err
-	}
-	out, err := g.Out("diff", "--name-only", "origin/"+in.base+"..."+m.Head)
-	if err != nil {
-		return nil, err
-	}
-	var paths []string
-	for _, line := range strings.Split(out, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			paths = append(paths, line)
-		}
-	}
-	return paths, nil
-}
-
-// gateClonePath is where `batch` put the tree it gated: <root>/<name>/repo, the one
-// place the integration branch exists after a gate that pushes nothing. It is computed
-// the same way runBatch computes it, and a drift between the two is a fetch that fails
-// by name rather than a push of the wrong tree.
-func gateClonePath(in integrateRun) (string, error) {
-	rootAbs, err := filepath.Abs(in.root)
-	if err != nil {
-		return "", fmt.Errorf("--root %s: %w", in.root, err)
-	}
-	return filepath.Join(rootAbs, in.name, "repo"), nil
-}
-
-// readPrefixes reads the sensitive-prefix file: one path prefix per line, blanks and
-// lines beginning with # ignored.
-func readPrefixes(path string) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var out []string
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		out = append(out, line)
-	}
-	if err := s.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("%s names no prefix; an empty rule would pass everything", path)
-	}
-	return out, nil
 }
 
 // sameHead compares two heads, either of which may be an abbreviation.
@@ -966,4 +836,40 @@ func dedupe(in []string) []string {
 		}
 	}
 	return out
+}
+
+// memberPaths is the member's changed paths, read out of the local clone against the
+// base: `git diff --name-only <base>...<head>`, the three-dot form, so the answer is what
+// the member changed and not what the base did while it waited.
+func memberPaths(in integrateRun, m member) ([]string, error) {
+	g := merge.NewGit(in.local, in.timeout, nil)
+	if _, err := g.Run("fetch", "--quiet", "origin"); err != nil {
+		return nil, err
+	}
+	if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(m.PR)+"/head"); err != nil {
+		return nil, err
+	}
+	out, err := g.Out("diff", "--name-only", "origin/"+in.base+"..."+m.Head)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths, nil
+}
+
+// gateClonePath is where `batch` put the tree it gated: <root>/<name>/repo, the one
+// place the integration branch exists after a gate that pushes nothing. It is computed
+// the same way runBatch computes it, and a drift between the two is a fetch that fails
+// by name rather than a push of the wrong tree.
+func gateClonePath(in integrateRun) (string, error) {
+	rootAbs, err := filepath.Abs(in.root)
+	if err != nil {
+		return "", fmt.Errorf("--root %s: %w", in.root, err)
+	}
+	return filepath.Join(rootAbs, in.name, "repo"), nil
 }

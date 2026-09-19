@@ -58,7 +58,7 @@ usage:
   nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
-  nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+  nova-merge simulate   --repo <path> --base <branch> [--entries <file> | --prs <list>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]

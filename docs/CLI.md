@@ -1045,7 +1045,7 @@ The things a first run gets wrong, and what each one wants:
 ### simulate
 
 ```
-nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+nova-merge simulate --repo <path> --base <branch> [--entries <file> | --prs <list>] [--checks "<a>,<b>"] [--timeout <duration>]
 ```
 
 `simulate` checks a queue as a growing batch. It fetches `origin/<base>`, makes a
@@ -1056,8 +1056,10 @@ skipped. The pass stops at the first step whose configured checks fail; it does
 not separately prove that entry green on its own or identify a unique culprit.
 
 `--repo` is a local clone whose origin holds the queue's heads. `--entries` is a
-file of pull request numbers, one per line; with no `--entries` the queue itself is
-read, one `gh api graphql` naming the base branch's merge queue. `--checks` is a
+file of pull request numbers, one per line; **`--prs`** is the same queue as a list —
+`1749,1753,1754` — for a caller who has the numbers rather than a file, and giving both
+is refused because two spellings of one queue are two queues. With neither, the queue
+itself is read, one `gh api graphql` naming the base branch's merge queue. `--checks` is a
 comma-separated list of commands and defaults to
 `go build ./...,go test ./internal/ci/`, which is the hand loop this verb replaces,
 written out as it was run. `--timeout` is a duration **per check**, default `5m`.
