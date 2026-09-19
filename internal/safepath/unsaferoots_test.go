@@ -169,3 +169,194 @@ func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
 		}
 	})
 }
+
+// HOLD on #1871 at 71604b4e (johnny-...): "The two named items refuse. On APFS,
+// `EvalSymlinks("/Users/Glenn")` stays `/Users/Glenn` and string-compare misses
+// `/Users/glenn`. Identify HOME by `os.SameFile`, not by the string."
+//
+// A directory has many names and EvalSymlinks does not reduce them to one: it resolves
+// links and cleans, which is enough on a case-sensitive volume and is why every string
+// compare in this package passed on linux. The volume the tool actually runs on for Glenn
+// is APFS, where a case variant and a Unicode normalisation variant are the SAME
+// DIRECTORY and compare unequal -- and neither folding the case nor picking a form is
+// something the process can read off the path.
+//
+// NO TEST HERE EVER NAMES THE REAL HOME. Each one sets HOME to a directory it made under
+// t.TempDir() and deletes only inside it.
+
+// caseInsensitiveVolume probes, rather than assumes, whether dir's volume folds case: it
+// makes one file and asks for it back by another spelling. It is a probe because the
+// answer is the volume's, not the platform's -- a case-sensitive APFS volume exists, and
+// so does a case-insensitive mount under linux.
+func caseInsensitiveVolume(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe")
+	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
+	return err == nil
+}
+
+// A HOME THE STRING COMPARE MISSES, three spellings of it, and the removal each one used
+// to get. Every case is the same shape: the path handed in IS the home directory, by
+// device and inode, and the only question is whether the check can see that.
+func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
+	// A RELATIVE HOME. os.UserHomeDir hands back $HOME exactly as it stands, and a
+	// relative one resolves to a relative string that can never equal the absolute path
+	// under test -- so the home comparison silently answered "different" about the home
+	// itself. This is the portable case: it is red on linux and on darwin alike, and it
+	// is the same bug Johnny found, met through the spelling instead of through the case.
+	t.Run("HOME spelled relative to the working directory", func(t *testing.T) {
+		parent := t.TempDir()
+		realHome := filepath.Join(parent, "home")
+		mustWrite(t, filepath.Join(realHome, "keep"), "x")
+		t.Chdir(parent)
+		t.Setenv("HOME", "home")
+
+		err := RemoveUnderRoots(realHome, parent)
+		if err == nil || !errors.Is(err, ErrUnsafe) {
+			t.Errorf("RemoveUnderRoots(%q, %q) with HOME=%q = %v, want a refusal that wraps ErrUnsafe", realHome, parent, "home", err)
+		}
+		if !exists(realHome) {
+			t.Errorf("RemoveUnderRoots deleted %s, the fixture's stand-in home, because HOME was spelled relative", realHome)
+		}
+	})
+
+	// A HOME THE OLD CHECK COULD NOT RESOLVE. EvalSymlinks(home) returning an error made
+	// the comparison vanish -- `if err == nil && ...` -- so the one case where the tool
+	// could NOT tell whether it was about to delete the home was the case where it went
+	// ahead. An unanswered question about the home is a refusal.
+	t.Run("HOME that cannot be stat'd fails closed", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root traverses a 0o000 directory, so the unreadable-home case cannot be built here")
+		}
+		parent := t.TempDir()
+		locked := filepath.Join(parent, "locked")
+		hidden := filepath.Join(locked, "home")
+		mustWrite(t, filepath.Join(hidden, "keep"), "x")
+		victimRoot := t.TempDir()
+		victim := filepath.Join(victimRoot, "victim")
+		mustWrite(t, filepath.Join(victim, "keep"), "x")
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(locked, 0o755) })
+		t.Setenv("HOME", hidden)
+
+		err := RemoveUnderRoots(victim, victimRoot)
+		if err == nil {
+			t.Errorf("RemoveUnderRoots(%q, %q) = nil with an unreadable HOME; a home the check cannot identify is a refusal, not a pass", victim, victimRoot)
+		}
+		if !exists(victim) {
+			t.Errorf("RemoveUnderRoots removed %s while it could not tell whether HOME was involved", victim)
+		}
+	})
+
+	// JOHNNY'S OWN CASE, on the volume that has it. Skipped on hulk, which is linux and
+	// case-sensitive; it is the Studio's leg of the PR's CI that runs this one.
+	t.Run("a case-variant spelling of HOME", func(t *testing.T) {
+		parent := t.TempDir()
+		if !caseInsensitiveVolume(t, parent) {
+			t.Skip("this volume is case-sensitive, so a case variant is a different directory here; the darwin CI leg covers this")
+		}
+		realHome := filepath.Join(parent, "glenn")
+		mustWrite(t, filepath.Join(realHome, "keep"), "x")
+		t.Setenv("HOME", realHome)
+		variant := filepath.Join(parent, "Glenn")
+		vi, verr := os.Stat(variant)
+		ri, rerr := os.Stat(realHome)
+		if verr != nil || rerr != nil || !os.SameFile(vi, ri) {
+			t.Fatalf("the fixture's own premise failed: %q and %q are not the same directory", variant, realHome)
+		}
+
+		err := RemoveUnderRoots(variant, parent)
+		if err == nil || !errors.Is(err, ErrUnsafe) {
+			t.Errorf("RemoveUnderRoots(%q, %q) = %v, want a refusal: it IS %q", variant, parent, err, realHome)
+		}
+		if !exists(realHome) {
+			t.Errorf("RemoveUnderRoots deleted the fixture's home through the spelling %q", variant)
+		}
+	})
+}
+
+// The same three questions of the single-root door, which has its own copy of the check.
+func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
+	t.Run("a relative HOME as the root", func(t *testing.T) {
+		parent := t.TempDir()
+		realHome := filepath.Join(parent, "home")
+		victim := filepath.Join(realHome, "victim")
+		mustWrite(t, filepath.Join(victim, "keep"), "x")
+		t.Chdir(parent)
+		t.Setenv("HOME", "home")
+
+		err := RemoveUnder(realHome, victim)
+		if err == nil || !errors.Is(err, ErrUnsafe) {
+			t.Errorf("RemoveUnder(%q, %q) with HOME=%q = %v, want a refusal: the root IS the home", realHome, victim, "home", err)
+		}
+		if !exists(victim) {
+			t.Errorf("RemoveUnder removed %s under a root that is the home, because HOME was spelled relative", victim)
+		}
+	})
+
+	t.Run("a case-variant spelling of HOME as the root", func(t *testing.T) {
+		parent := t.TempDir()
+		if !caseInsensitiveVolume(t, parent) {
+			t.Skip("this volume is case-sensitive, so a case variant is a different directory here; the darwin CI leg covers this")
+		}
+		realHome := filepath.Join(parent, "glenn")
+		victim := filepath.Join(realHome, "victim")
+		mustWrite(t, filepath.Join(victim, "keep"), "x")
+		t.Setenv("HOME", realHome)
+
+		err := RemoveUnder(filepath.Join(parent, "Glenn"), victim)
+		if err == nil || !errors.Is(err, ErrUnsafe) {
+			t.Errorf("RemoveUnder with the root spelled %q = %v, want a refusal: it IS the home", filepath.Join(parent, "Glenn"), err)
+		}
+		if !exists(victim) {
+			t.Errorf("RemoveUnder removed %s under the home spelled with a different case", victim)
+		}
+	})
+}
+
+// The containment test is an ancestor relation and it is identity too: a path reached
+// through a spelling of its root that the root's own string is not a prefix of is still
+// under it, and a path that merely shares a prefix is not. The second half is what a
+// string prefix gets wrong in the other direction.
+func TestStrictlyUnderIsAnIdentityWalkNotAStringPrefix(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	deep := filepath.Join(root, "a", "b")
+	mustWrite(t, filepath.Join(deep, "keep"), "x")
+	sibling := filepath.Join(parent, "rootsibling")
+	mustWrite(t, filepath.Join(sibling, "keep"), "x")
+
+	// Reached through a symlinked PARENT: a different string for the same directory.
+	link := filepath.Join(parent, "alias")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		name string
+		root string
+		path string
+		want bool
+	}{
+		{"below, by the plain spelling", root, deep, true},
+		{"below, with the root spelled through a symlink", link, deep, true},
+		{"the root itself is not strictly below itself", root, root, false},
+		{"a sibling whose name merely starts with the root's", root, sibling, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := strictlyUnder(c.root, c.path)
+			if err != nil {
+				t.Fatalf("strictlyUnder(%q, %q) errored: %v", c.root, c.path, err)
+			}
+			if got != c.want {
+				t.Errorf("strictlyUnder(%q, %q) = %v, want %v", c.root, c.path, got, c.want)
+			}
+		})
+	}
+}
