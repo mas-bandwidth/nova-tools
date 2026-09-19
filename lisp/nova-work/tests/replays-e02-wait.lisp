@@ -274,3 +274,22 @@
                (check-equal nil line "and does not call it unknown")
                (check-equal 0 code "and answers exit 0")))
         (close-durable-operation-registry registry)))))
+
+;;; ------------------------------------------------------------------
+;;; a-wait-that-times-out-under-load-never-releases-an-unheld-mutex  :2738-2739, :5980
+;;; ------------------------------------------------------------------
+
+(deftest "a-wait-that-times-out-under-load-never-releases-an-unheld-mutex" "docs/SPEC-WORK.md:2738-2739,5980"
+    "expected=each-of-300-timed-out-waits-answers-state-timeout-code-0;never-a-release-of-a-mutex-the-thread-does-not-hold"
+  (let* ((path (test-journal-path "operation-wait-stress"))
+         (registry (wait-test-registry path)))
+    (unwind-protect
+         (dotimes (i 300)
+           (handler-bind ((error (lambda (c)
+                                   (error "iteration ~D: ~A" i c))))
+             (multiple-value-bind (rows state cursor line code)
+                 (durable-operation-wait registry "op-a" :timeout "30ms" :after 0)
+               (declare (ignore rows cursor line))
+               (check-equal 0 code (format nil "iteration ~D exits 0" i))
+               (check-equal :timeout state (format nil "iteration ~D reports :timeout" i)))))
+      (close-durable-operation-registry registry))))

@@ -194,9 +194,14 @@ exit 2."
                                 (format nil "OPERATION NOTE waiting id=~A timeout=~A after=~D"
                                         id timeout after)
                                 0)))
-              (sb-thread:condition-wait (operation-event-stream-cvar stream)
-                                        (operation-event-stream-lock stream)
-                                        :timeout remaining))))))))
+              (or (sb-thread:condition-wait (operation-event-stream-cvar stream)
+                                            (operation-event-stream-lock stream)
+                                            :timeout remaining)
+                  ;; NIL: the mutex is not held, answer the same note.
+                  (return (values '() :timeout after
+                                  (format nil "OPERATION NOTE waiting id=~A timeout=~A after=~D"
+                                          id timeout after)
+                                  0))))))))))
 
 ;;; ------------------------------------------------------------------
 ;;; The resident session's own recovery journal (SPEC-WORK.md:2729-2731)
