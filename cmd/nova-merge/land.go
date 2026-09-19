@@ -68,8 +68,12 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if (*reviewersFile == "") == (*noRequireHolds == false) {
 		f.problem("exactly one of --reviewers <file> or --no-require-holds --reason <text> is required; exit 2 with neither or both")
 	}
-	if *reviewersFile != "" && (strings.TrimSpace(*lane) == "" || strings.TrimSpace(*lane) == "none") {
-		f.problem("--lane is required when --reviewers is specified")
+	// --lane is required whatever the mode: --no-require-holds waives the FORGE sources
+	// whole, never the lane's own read records (SPEC-DECIDE reading 3, *The inputs* (a)),
+	// and the fold can only read those records when it is told where they are. A waiver
+	// with no lane is the door --ignore-hold used to be: a recorded HOLD nobody looked at.
+	if strings.TrimSpace(*lane) == "" || strings.TrimSpace(*lane) == "none" {
+		f.problem("--lane is required when --reviewers or --no-require-holds is specified")
 	}
 	if *noRequireHolds && strings.TrimSpace(*reason) == "" {
 		f.problem("--no-require-holds requires --reason <text>")
@@ -209,21 +213,17 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 			Reviewers:       rs,
 			UntypedComments: in.untypedComments,
 		}
+		// A waiver drops the forge sources WHOLE. It never filters them -- there is no
+		// forge verdict with source=record, so a "keep the records" branch here was the
+		// leftover of --ignore-hold and a false green over FakeHost.Verdicts; the lane's
+		// records are in vs already, from LoadLaneVerdicts.
 		forgeVs, err := host.Verdicts(m, opts)
 		if err != nil {
 			if !in.noRequireHolds {
 				return landCouldNotRun(stderr, fmt.Sprintf("member pull request %d's verdicts could not be read: %s", m, oneline.Err(err)))
 			}
-		} else {
-			if in.noRequireHolds {
-				for _, v := range forgeVs {
-					if v.Source == "record" {
-						vs = append(vs, v)
-					}
-				}
-			} else {
-				vs = append(vs, forgeVs...)
-			}
+		} else if !in.noRequireHolds {
+			vs = append(vs, forgeVs...)
 		}
 
 		holds := merge.UnliftedHolds(vs, mPR.HeadOID, mPR.Author, rs)
