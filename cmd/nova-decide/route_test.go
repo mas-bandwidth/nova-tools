@@ -255,3 +255,54 @@ func TestNoVerbTakesAKeyOnArgv(t *testing.T) {
 		t.Error("the usage offers a key flag; the key comes only from the environment")
 	}
 }
+
+// THE COORDINATOR'S LINE (Glenn 2026-09-19). Before every Agent spawn the
+// coordinator asks the ladder and takes the rung; --paste prints the one line
+// it acts on, with the MODEL ID from the registry beside the mind. The model id
+// is registry data and nothing here knows one: a ladder of its own names its
+// own models and the line carries them.
+func TestRoutePastesTheCoordinatorLine(t *testing.T) {
+	reg := filepath.Join(t.TempDir(), "registry.json")
+	body := `{"minds":[
+	  {"name":"tiny","lineage":"local","height":0,"availability":"available","ask":"card","model":"local/tiny-1"},
+	  {"name":"big","lineage":"local","height":1,"availability":"available","ask":"bus"}
+	]}`
+	if err := os.WriteFile(reg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unit := writeUnit(t, map[string]any{"id": "card-91", "kind": "rebase", "files": 2, "packages": 1})
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"route", "--unit", unit, "--no-jev", "--registry", reg, "--paste"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("--paste prints the decision line and one pasteable line, got:\n%s", stdout.String())
+	}
+	if want := "ROUTE card-91 -> tiny (local/tiny-1) conf="; !strings.HasPrefix(lines[1], want) {
+		t.Fatalf("the pasteable line is %q, want it to begin %q", lines[1], want)
+	}
+	// Without --paste the verb's output is exactly what it was.
+	var plain bytes.Buffer
+	if code := run([]string{"route", "--unit", unit, "--no-jev", "--registry", reg}, &plain, &stderr); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if plain.String() != lines[0]+"\n" {
+		t.Fatalf("--paste changed the decision line:\n%q\n%q", plain.String(), lines[0])
+	}
+}
+
+// A mind that is ASKED rather than run has no model id, and the line says how
+// it is asked in place of an id it does not have: "ask on the bus" is the
+// action, not a model to launch.
+func TestRoutePasteNamesHowAMindIsAsked(t *testing.T) {
+	unit := writeUnit(t, map[string]any{"id": "card-92", "kind": "design", "files": 2})
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"route", "--unit", unit, "--no-jev", "--paste"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[1], "(ask-bus)") {
+		t.Fatalf("the pasteable line must name how the mind is asked, got:\n%s", stdout.String())
+	}
+}

@@ -1,7 +1,7 @@
 package ci
 
 // failed_test.go is the red-test contract of `nova-ci failed`, fed by the real thing:
-// testdata/failed/ holds cuts of four job logs from 2026-09-18, the day Rowan pulled the
+// testdata/failed/ holds cuts of five job logs from 2026-09-18, the day Rowan pulled the
 // failing lines out of them by hand six times.
 //
 //	windows-sandbox.log       job 105673713280, test-windows-pr (0): plain `go test`
@@ -12,6 +12,9 @@ package ci
 //	                          power-runner flake
 //	merge-darwin-timeout.log  job 105698657603, test-hosted-merge (darwin, 1) of run
 //	                          35375346271: `panic: test timed out after 1m40s`
+//	inline-gate-werror.log    job 105551505883, inline-gate (ubuntu-latest, go) of run
+//	                          35329874611 of mas-bandwidth/schema: a C compiler error
+//	                          under -Werror inside `make test`, so no test event at all
 //
 // Each file is a window of the real log, ANSI, timestamps and all, with nothing added.
 // Nothing here reads the network: the fixtures are on disk and the forge is a fake.
@@ -233,7 +236,7 @@ func TestTheMessageLinesAreCappedAndTheRestCounted(t *testing.T) {
 		`FAILED job="j" pkg=p test=TestX at=x_test.go:1`,
 		"a", "b",
 		"    ...+3 more lines",
-		"FAILED OK jobs=1 tests=1",
+		"FAILED RED jobs=1 failed=1 tests=1",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Errorf("lines =\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
@@ -366,7 +369,7 @@ func TestARunReadsOnlyTheJobsThatDidNotSucceed(t *testing.T) {
 			t.Errorf("read the log of a job that did not fail: %q", c)
 		}
 	}
-	if got := report.SummaryLine(); got != "FAILED OK jobs=3 tests=6" {
+	if got := report.SummaryLine(); got != "FAILED RED jobs=3 failed=3 tests=6" {
 		t.Errorf("summary = %q", got)
 	}
 }
@@ -429,7 +432,7 @@ func TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport(t *testing.T) {
 	if len(report.Timeouts) != 1 {
 		t.Errorf("%d timeouts, want the darwin one", len(report.Timeouts))
 	}
-	if got := report.SummaryLine(); got != "FAILED OK jobs=3 tests=5 unread=1" {
+	if got := report.SummaryLine(); got != "FAILED RED jobs=3 failed=3 tests=5 unread=1" {
 		t.Errorf("summary = %q, want unread= counted so a short report is not read as a small failure", got)
 	}
 	lines := report.Lines(1)
@@ -456,5 +459,112 @@ func TestTheSelectorReachesTheForgeUntouched(t *testing.T) {
 	}
 	if f.calls[0] != "resolve run=0 pr=1370 branch= mergeGroup=true" {
 		t.Errorf("first call = %q", f.calls[0])
+	}
+}
+
+// (14) A job whose conclusion is failure and whose log holds no test event -- a C
+// compiler error under -Werror inside `make test` -- is a line of its own: the job, the
+// step that went red, and the lines the runner itself marked as errors. A job counted in
+// jobs= and then never named is a report that reads as a green run.
+func TestAFailingJobWithNoTestEventIsNamedAnyway(t *testing.T) {
+	f := &fakeFailForge{
+		run: 35329874611,
+		jobs: []FailedJob{{
+			ID: 11, Name: "inline-gate (ubuntu-latest, go)", Conclusion: "failure",
+			Steps: []FailedStep{
+				{Name: "Set up job", Conclusion: "success"},
+				{Name: "make test", Conclusion: "failure"},
+			},
+		}},
+		logs: map[int64]string{11: failedFixture(t, "inline-gate-werror.log")},
+	}
+	_, report, err := ReadFailedRun(f, RunSelector{Run: 35329874611}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Failures) != 0 {
+		t.Errorf("%d failing tests, want 0: this log holds no test event", len(report.Failures))
+	}
+	want := []string{
+		`NOTEST job="inline-gate (ubuntu-latest, go)" step="make test" tests=none`,
+		"    ...+1 earlier lines",
+		"    test/c-tables/fixedform_v2.c:25:22: error: 'back.grade' may be used uninitialized [-Werror=maybe-uninitialized]",
+		"    Process completed with exit code 2.",
+		"FAILED RED jobs=1 failed=1 tests=0",
+	}
+	if got := report.Lines(2); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if report.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1: a job whose conclusion is failure is a red run", report.ExitCode())
+	}
+}
+
+// (15) Run 35329874611 of mas-bandwidth/schema, whole: one job red of its own and seven
+// cancelled out from under it. The summary splits the count, so a reader sees which of
+// the eight is the red to chase and which seven are its collateral.
+func TestTheSummarySplitsARealRedFromItsCancelledSiblings(t *testing.T) {
+	start := time.Date(2026, 9, 18, 9, 31, 14, 0, time.UTC)
+	jobs := []FailedJob{{
+		ID: 11, Name: "inline-gate (ubuntu-latest, go)", Conclusion: "failure",
+		Steps: []FailedStep{{Name: "make test", Conclusion: "failure", Started: start, Completed: start.Add(51 * time.Minute)}},
+	}}
+	logs := map[int64]string{11: failedFixture(t, "inline-gate-werror.log")}
+	for i := 0; i < 7; i++ {
+		id := int64(20 + i)
+		jobs = append(jobs, FailedJob{
+			ID: id, Name: fmt.Sprintf("inline-gate (macos-latest, %d)", i), Conclusion: "cancelled",
+			Steps: []FailedStep{{Name: "make test", Conclusion: "cancelled", Started: start, Completed: start.Add(59 * time.Minute)}},
+		})
+		logs[id] = "2026-09-18T10:30:19.3899906Z Cleaning up orphan processes\n"
+	}
+	f := &fakeFailForge{run: 35329874611, jobs: jobs, logs: logs}
+	_, report, err := ReadFailedRun(f, RunSelector{Run: 35329874611}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.SummaryLine(); got != "FAILED RED jobs=8 failed=1 cancelled=7 tests=0" {
+		t.Errorf("summary = %q, want the eight split into the one red and its seven siblings", got)
+	}
+	if report.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1", report.ExitCode())
+	}
+	var named int
+	for _, l := range report.Lines(8) {
+		if strings.HasPrefix(l, `NOTEST job="inline-gate (ubuntu-latest, go)"`) {
+			named++
+		}
+	}
+	if named != 1 {
+		t.Errorf("%d lines name the one job that went red of its own, want 1:\n%s", named, strings.Join(report.Lines(8), "\n"))
+	}
+}
+
+// (16) A run cancelled and nothing else is exit 1, the code it has always had: the caller
+// asked what the run said and it said something. Every cancelled job is already explained
+// by its own CANCELLED line, so none of them earns a NOTEST as well.
+func TestACancelledOnlyRunStaysExitOne(t *testing.T) {
+	start := time.Date(2026, 9, 18, 9, 31, 14, 0, time.UTC)
+	f := &fakeFailForge{
+		run: 35329874611,
+		jobs: []FailedJob{{
+			ID: 20, Name: "test (macos-latest)", Conclusion: "cancelled",
+			Steps: []FailedStep{{Name: "make test", Conclusion: "cancelled", Started: start, Completed: start.Add(59 * time.Minute)}},
+		}},
+		logs: map[int64]string{20: "2026-09-18T10:30:19.3899906Z Cleaning up orphan processes\n"},
+	}
+	_, report, err := ReadFailedRun(f, RunSelector{Run: 35329874611}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`CANCELLED job="test (macos-latest)" step="make test" after=59m0s`,
+		"FAILED RED jobs=1 cancelled=1 tests=0",
+	}
+	if got := report.Lines(8); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if report.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1, the exit a cancelled run has always had", report.ExitCode())
 	}
 }

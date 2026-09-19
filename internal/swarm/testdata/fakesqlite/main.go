@@ -19,6 +19,12 @@ import (
 // its owner is a unix fact.
 const NotADatabase = "not a database"
 
+// FlushMarker is the suffix a test appends to the -wal path to say "flush on the next
+// refusal". With it, the fake refuses once with `database is locked` and removes the -wal
+// on its way out, so the reader that retries sees the flush land. Without it the -wal
+// stays and every attempt is refused.
+const FlushMarker = ".flush-on-refusal"
+
 func main() {
 	// argv is `-readonly -tabs <db> <query>`: the query is last, the database before it.
 	args := os.Args[1:]
@@ -38,6 +44,40 @@ func main() {
 		// forgets the flag gets a failure here rather than a green test.
 		fmt.Fprintln(os.Stderr, "Error: fake sqlite3 refuses to open a database for writing")
 		os.Exit(1)
+	}
+	// A WRITE-AHEAD LOG THE HARNESS HAS NOT CHECKPOINTED: `-readonly` cannot replay it, so a
+	// real sqlite3 refuses with `database is locked` until the writer flushes and the -wal
+	// goes. The fake says exactly that while a -wal sits beside the database, so a reader
+	// that must wait out a flush can be tested with no sqlite3 and no clock of its own.
+	if _, err := os.Stat(db + "-wal"); err == nil {
+		// A test that wants the flush to land MID-READ drops FlushMarker beside the -wal.
+		// The first call then refuses with the -wal still there -- the reader's retry
+		// looks at that file, not at the error text, so it must survive the refusal that
+		// causes the retry -- and the SECOND call checkpoints it and reads. The flush is
+		// an event this fake produces on being asked twice, never a clock the test sleeps
+		// on (docs/SPEC-CI.md, the fixed-waits class).
+		marker := db + "-wal" + FlushMarker
+		if _, err := os.Stat(marker); err != nil {
+			fmt.Fprintln(os.Stderr, "Error: database is locked")
+			os.Exit(1)
+		}
+		asked := marker + ".asked"
+		if _, err := os.Stat(asked); err != nil {
+			if err := os.WriteFile(asked, nil, 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: fake sqlite3 could not record the refusal: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Fprintln(os.Stderr, "Error: database is locked")
+			os.Exit(1)
+		}
+		// Asked a second time: the writer has checkpointed. The -wal and the marks go,
+		// and this call reads the database the way any other call would.
+		for _, f := range []string{asked, marker, db + "-wal"} {
+			if err := os.Remove(f); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: fake sqlite3 could not checkpoint: %v\n", err)
+				os.Exit(1)
+			}
+		}
 	}
 	raw, err := os.ReadFile(db)
 	if err != nil {

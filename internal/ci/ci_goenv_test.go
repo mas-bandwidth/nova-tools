@@ -177,6 +177,8 @@ func TestGoEnvVerbLineMatchesTheSpec(t *testing.T) {
 // on 2026-09-18 that made `nova-review mutate` report red=2 green=0 on a range
 // that is red=1 green=1, failing three legs of integration-4 (#1332).
 func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
+	t.Parallel()
+
 	res, err := CheckGoEnv(repoRoot(t), goEnvAllowlistPath)
 	if err != nil {
 		t.Fatal(err)

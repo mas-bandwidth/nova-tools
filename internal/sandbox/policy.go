@@ -61,35 +61,44 @@ func refuse(reason, format string, a ...any) Refusal {
 // Input is the argv as the caller typed it, before any resolution. Everything here is a
 // claim about this job; Build turns it into a Policy or into refusals.
 type Input struct {
-	Reads     []string
-	Writes    []string
-	Cwd       string // empty: the first --write (rule 13)
-	Tmp       string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
-	Name      string // windows container name; accepted and ignored elsewhere
-	NetDeny   bool
-	NetListen bool
-	GPU       string   // --gpu none|metal; empty means none (issue #230)
-	Argv      []string // the command and its arguments, everything after --
-	Home      string   // the caller's HOME as the child will see it (rule 9)
-	LookAt    string   // PATH to resolve the command on; empty means the process's own
+	Reads []string
+	// ReadsNoExec is --read-noexec: readable, recursively, and NOT EXECUTABLE. It exists
+	// because a --read root carries EXECUTE on both bodies -- landlock's read subset is
+	// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally --
+	// so naming a directory the job's own user can write to (a GOPATH/bin, a
+	// node_modules/.bin, a pip --user bin) lets the job RUN whatever is in it. A cache or
+	// a data tree wants reading, and this is the form that says so (Johnny's security
+	// read of #1364, where the module cache was about to be granted exec).
+	ReadsNoExec []string
+	Writes      []string
+	Cwd         string // empty: the first --write (rule 13)
+	Tmp         string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
+	Name        string // windows container name; accepted and ignored elsewhere
+	NetDeny     bool
+	NetListen   bool
+	GPU         string   // --gpu none|metal; empty means none (issue #230)
+	Argv        []string // the command and its arguments, everything after --
+	Home        string   // the caller's HOME as the child will see it (rule 9)
+	LookAt      string   // PATH to resolve the command on; empty means the process's own
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
 // two named exceptions to "never guessed" are rule 4's, and both are recorded here as
 // the caller's own first --write.
 type Policy struct {
-	Reads     []string // resolved, read-only, recursive
-	Writes    []string // resolved, read+write, recursive; the first is load-bearing
-	OptRoots  []string // the platform's optional roots that EXIST on this machine
-	Cwd       string
-	Tmp       string
-	Home      string
-	Name      string
-	NetDeny   bool
-	NetListen bool
-	GPUMode   GPUMode
-	Command   string   // the resolved absolute path of the executable
-	Argv      []string // Command followed by its arguments, verbatim
+	Reads       []string // resolved, read-only, recursive; carries EXECUTE
+	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
+	Writes      []string // resolved, read+write, recursive; the first is load-bearing
+	OptRoots    []string // the platform's optional roots that EXIST on this machine
+	Cwd         string
+	Tmp         string
+	Home        string
+	Name        string
+	NetDeny     bool
+	NetListen   bool
+	GPUMode     GPUMode
+	Command     string   // the resolved absolute path of the executable
+	Argv        []string // Command followed by its arguments, verbatim
 
 	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
 	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
@@ -134,7 +143,8 @@ func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 // file-read-metadata, which is stat and not a listing: /opt does not become readable, only
 // traversable, which is exactly what resolving a path through it needs.
 func (p *Policy) ancestorPaths() []string {
-	paths := append(append([]string{}, p.Reads...), p.Writes...)
+	paths := append(append([]string{}, p.Reads...), p.ReadsNoExec...)
+	paths = append(paths, p.Writes...)
 	paths = append(paths, p.OptRoots...)
 	return append(paths, p.Cwd, p.Tmp)
 }
@@ -484,6 +494,14 @@ func Build(in Input) (*Policy, []Refusal) {
 		}
 		p.Reads = append(p.Reads, got)
 	}
+	for _, raw := range in.ReadsNoExec {
+		got, r := resolvePath("bad_read", "--read-noexec", raw)
+		if r != nil {
+			bad = append(bad, *r)
+			continue
+		}
+		p.ReadsNoExec = append(p.ReadsNoExec, got)
+	}
 	for _, raw := range in.Writes {
 		got, r := resolvePath("bad_write", "--write", raw)
 		if r != nil {
@@ -498,6 +516,23 @@ func Build(in Input) (*Policy, []Refusal) {
 		for _, w := range p.Writes {
 			if r == w {
 				bad = append(bad, refuse("bad_read", "%s is in both --read and --write; name it once, and --write already carries read", r))
+			}
+		}
+	}
+	// The same rule for the no-exec list, and for the two read lists against each other.
+	// A path in both --read and --read-noexec asks for execute and for no execute at
+	// once, and a tool that picked one would be deciding which the caller meant; a path in
+	// --read-noexec and --write is the same contradiction, because --write carries execute
+	// on both bodies.
+	for _, n := range p.ReadsNoExec {
+		for _, r := range p.Reads {
+			if n == r {
+				bad = append(bad, refuse("bad_read", "%s is in both --read and --read-noexec; one carries execute and the other takes it away, so name it once", n))
+			}
+		}
+		for _, w := range p.Writes {
+			if n == w {
+				bad = append(bad, refuse("bad_read", "%s is in both --read-noexec and --write; --write carries read AND execute, so the no-exec grant would buy nothing. Name it once", n))
 			}
 		}
 	}

@@ -20,12 +20,35 @@ var (
 	hygieneDisk                     = func(home string) pulse.HygieneDisk { return pulse.OSDisk{Home: home} }
 )
 
+// The runner `_diag` prune's defaults under the names their flags carry, so a
+// change to either is a change to one line and the test that pins it.
+const (
+	diagDaysDefault     = pulse.HygieneDiagDaysDefault
+	diagMaxBytesDefault = pulse.HygieneDiagMaxBytesDefault
+)
+
 const hygieneUsage = `nova-pulse hygiene run                     --home <dir> [--dry-run] [--hostname <name>]
+                                          [--diag-days <n>] [--diag-max-bytes <n>]
 nova-pulse hygiene reap <slot>            --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot>     --home <dir>
 nova-pulse hygiene drop-cache             --home <dir>
 nova-pulse hygiene log [n]                --home <dir>`
+
+// hygieneFlagValue reads a flag's value in either spelling, --name <v> or
+// --name=<v>, advancing i past a separate value. It answers false when a
+// separate value is missing, which is a refusal and never a default.
+func hygieneFlagValue(args []string, i *int, name string) (string, bool) {
+	a := args[*i]
+	if v, ok := strings.CutPrefix(a, name+"="); ok {
+		return v, true
+	}
+	if *i+1 >= len(args) {
+		return "", false
+	}
+	*i++
+	return args[*i], true
+}
 
 func hygieneRefuse(stderr io.Writer, what string) int {
 	fmt.Fprintf(stderr, "nova-pulse hygiene: %s; run: nova-pulse help\n", what)
@@ -37,6 +60,7 @@ func hygieneRefuse(stderr io.Writer, what string) int {
 func cmdHygiene(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var home, hostname, roots, logPath, cache string
 	dry := false
+	diagDays, diagMaxBytes := diagDaysDefault, diagMaxBytesDefault
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -46,6 +70,26 @@ func cmdHygiene(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 0
 		case a == "--dry-run":
 			dry = true
+		case a == "--diag-days" || strings.HasPrefix(a, "--diag-days="):
+			v, ok := hygieneFlagValue(args, &i, "--diag-days")
+			if !ok {
+				return hygieneRefuse(stderr, "--diag-days wants a value")
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return hygieneRefuse(stderr, "--diag-days wants a whole number of days, at least 1, got "+oneline.Field(v))
+			}
+			diagDays = n
+		case a == "--diag-max-bytes" || strings.HasPrefix(a, "--diag-max-bytes="):
+			v, ok := hygieneFlagValue(args, &i, "--diag-max-bytes")
+			if !ok {
+				return hygieneRefuse(stderr, "--diag-max-bytes wants a value")
+			}
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 1 {
+				return hygieneRefuse(stderr, "--diag-max-bytes wants a byte count, at least 1, got "+oneline.Field(v))
+			}
+			diagMaxBytes = n
 		case a == "--home" || a == "--hostname" || a == "--roots" || a == "--log" || a == "--cache":
 			if i+1 >= len(args) {
 				return hygieneRefuse(stderr, a+" wants a value")
@@ -85,6 +129,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	in := pulse.HygieneInput{
 		Home: home, Hostname: hostname, LogPath: logPath, CachePath: cache, DryRun: dry,
+		DiagDays: diagDays, DiagMaxBytes: diagMaxBytes,
 		Now: func() time.Time { return now }, Procs: hygieneProcs, Disk: hygieneDisk(home),
 		Stdout: stdout, Stderr: stderr,
 	}

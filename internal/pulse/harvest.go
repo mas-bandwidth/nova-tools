@@ -36,6 +36,42 @@ type HarvestInput struct {
 	Decide  bool
 	Floor   float64
 	Decider Decider
+
+	// Bench turns the harvest around: the jobs are read on that bench over the
+	// BenchShell seam rather than under a local root, and Root names the swarm
+	// root ON the bench (comma separated for more than one). A bench harvest
+	// wants no --sources, no --templates and no --id -- which a `cut --rows`
+	// never produces -- and never relaunches: it folds what is there.
+	Bench string
+	// Machines is the machines registry --bench is held against before the first ssh
+	// (Glenn's lock of 2026-09-18: runner hosts are CI-only). An empty path leaves the
+	// verb unguarded, which is what a test and a by-hand run want; cmd/nova-pulse names
+	// the registry on every real invocation.
+	Machines     string
+	SSH          string   // the ssh program the shipped shell runs; "" is "ssh"
+	Clones       []string // <owner>/<name>=<dir>, or a bare <dir> for any repo
+	Session      string   // only jobs whose RESULT.md names this session
+	BranchPrefix string   // only branches under this prefix; "" is rowan/
+	Base         string   // the base of a card that names none; "" is dev
+	Since        time.Duration
+	Shell        BenchShell
+	Forge        Forge
+
+	// Launched is the queue directory `fill` moves live cards into. When it is
+	// named, harvest drains it: a card whose job has finished leaves it for Done
+	// or Failed, its launched marker goes with it, and its lane is free.
+	Launched string
+	Done     string
+	Failed   string
+	// The working layout (SPEC-PULSE, "Harvest on the working layout"): every
+	// path from a flag. --working names the bench's working root, --roots the
+	// swarm roots it also folds, --base the ref the commit is measured past,
+	// --since (SinceStamp) the session window and --timer installs the bench's
+	// own clock.
+	Working    string
+	Roots      string
+	SinceStamp string
+	Timer      string
 }
 
 func field(s string) string {
@@ -63,6 +99,12 @@ func Harvest(in HarvestInput) int {
 	}
 	started := in.Now()
 
+	// A bench harvest is the whole verb: the jobs are on the bench, the cards.tsv
+	// this fold reads is not, and there is nothing here to relaunch.
+	if strings.TrimSpace(in.Bench) != "" {
+		return harvestBench(in)
+	}
+
 	if strings.TrimSpace(in.ID) == "" {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --id; refusing to guess (supply the pulse id)"))
 	}
@@ -86,7 +128,7 @@ func Harvest(in HarvestInput) int {
 		}
 	}
 
-	var done, pushed, prs, abstain, mismatch, refused, retried int
+	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
@@ -103,6 +145,13 @@ func Harvest(in HarvestInput) int {
 		if state != "done" {
 			if ps, pb, pr, pl, pd := classifyPool(in.Root, c, contract); ps != "" {
 				state, branch, repo, resultLines, jobDir = ps, pb, pr, pl, pd
+			} else if state == "abstain" && !isDir(jobDir) {
+				// The card has no job directory under this root at all: it did
+				// not abstain here, it ran somewhere else. Counting it as an
+				// abstain rewrote a card that had finished green on a bench and
+				// reported `retry=1` for a success (dogfood, 2026-09-18). It is
+				// its own state, and the note names the remedy.
+				state = "elsewhere"
 			}
 		}
 		// Every folded job joins its root's status index whether it landed or not: a
@@ -121,11 +170,35 @@ func Harvest(in HarvestInput) int {
 			lines = append(lines, fmt.Sprintf("HARVEST RETRY label=%s card=%s: %s",
 				field(c.Label), field(c.Card), oneline.Escape(refusal)))
 			appendRetry(in.Root, c, refusal)
+		case "elsewhere":
+			elsewhere++
+			fmt.Fprintf(in.Stderr, "HARVEST NOTE label=%s: no job directory under %s; this card ran somewhere else (harvest it from the bench: nova-pulse harvest --bench <name> --root <the bench's swarm root>)\n",
+				field(c.Label), field(in.Root))
 		case "refused":
 			refused++
 			writeSeen(in.Root, c, "refused")
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
 		case "done":
+			// THE KEY-SHAPE SCAN COMES FIRST (#1814), before the typed decision and long
+			// before any push: the two things a harvest publishes are the card's commits
+			// and its RESULT.md, copied into the PR body, and neither leaves this machine
+			// until both have been read for the shape of a key. A hit refuses, quarantines
+			// the job and writes the HUMAN line, and prints nothing it matched
+			// (harvest_secret.go).
+			findings, scanErr := secretScan(jobDir, resultLines)
+			if scanErr != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest", c.Label, scanErr))
+				continue
+			}
+			if len(findings) > 0 {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				secretRefusal{Site: "harvest", Label: c.Label, JobDir: jobDir,
+					QuarantineRoot: in.Root, HumanDir: in.Root, Out: in.Stderr}.refuse(findings)
+				continue
+			}
 			done++
 			// The typed decision is asked after the job is read and before any push:
 			// fixed and failed push as today, no-change and already-fixed push nothing
@@ -179,6 +252,9 @@ func Harvest(in HarvestInput) int {
 	for _, l := range lines {
 		grouped.Line(l)
 	}
+	// A local harvest drains --launched too when it is named: the lane of a card whose
+	// job under this root has finished is released here, not only by `manager`.
+	drained := drainLaunched(in, localJobStates(in.Root), grouped)
 	grouped.More()
 
 	code := 0
@@ -186,9 +262,13 @@ func Harvest(in HarvestInput) int {
 	if mismatch > 0 || abstain > 0 || refused > 0 {
 		code = 1
 	}
-	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d usd=%s took=%s\n",
-		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, usd,
-		in.Now().Sub(started).Round(time.Millisecond))
+	tail := ""
+	if strings.TrimSpace(in.Launched) != "" {
+		tail = fmt.Sprintf(" drained=%d", drained)
+	}
+	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
+		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,
+		in.Now().Sub(started).Round(time.Millisecond), tail)
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.

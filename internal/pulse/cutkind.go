@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -83,8 +84,37 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s (pass a writable --out directory)\n", oneline.Field(name), oneline.Err(err))
 		return 2
 	}
+	// cut writes queue/lanes/{red,green,small,next}/ as well as --out: the lane is
+	// a directory, so it is visible and editable, and nova-swarm pull drains it.
+	if _, err := lanes.Write(in.Queue, []lanes.Card{cutKindLane(in.Kind, n, card)}); err != nil {
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: lanes under %s: %s (pass a writable --queue)\n", oneline.Field(in.Queue), oneline.Err(err))
+		return 2
+	}
 	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s\n", oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out))
 	return 0
+}
+
+// cutKindLane places the one typed card in its lane: a fix repairs a red bench
+// or a red PR and is red; a read is a small, already-approved PR and is green;
+// a replay or a spec is next. The step budget is the kind's own.
+func cutKindLane(kind string, n int, body string) lanes.Card {
+	c := lanes.Card{ID: fmt.Sprintf("card-%d", n), Kind: kind, Steps: cutKindSteps(kind), Body: body}
+	switch kind {
+	case "fix":
+		c.Red = true
+	case "read":
+		c.Approved = true
+	}
+	return c
+}
+
+// cutKindSteps is the step budget each kind may spend, the number the lane
+// ordering compares.
+func cutKindSteps(kind string) int {
+	if kind == "read" {
+		return 8
+	}
+	return 20
 }
 
 // cutKindProblem is every refusal this cutter has, each naming its remedy.
