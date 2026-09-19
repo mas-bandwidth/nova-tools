@@ -104,15 +104,36 @@ func unescapeText(s string) string {
 	return b.String()
 }
 
+// formatAuthor renders an author for a version-2 NOTE or REPLY line. A bare
+// token is written as-is; anything else — empty, or carrying a space, a double
+// quote, a backslash or an unprintable rune — is written as a Go-quoted string.
+// The two shapes never collide: a bare token can never contain a quote or a
+// backslash, so the reader can tell them apart by the leading byte alone.
 func formatAuthor(author string) string {
-	if strings.ContainsAny(author, " \"") {
+	if authorNeedsQuote(author) {
 		return strconv.Quote(author)
 	}
 	return author
 }
 
-func parseAuthor(val string) string {
-	if strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`) {
+func authorNeedsQuote(author string) bool {
+	if author == "" {
+		return true
+	}
+	for _, r := range author {
+		if r == ' ' || r == '"' || r == '\\' || !strconv.IsPrint(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseAuthor decodes one author field. In version 2 a value starting with a
+// double quote is a Go-quoted string and is unquoted; anything else is a bare
+// token. Version-1 sidecars never quoted authors, so their values are taken
+// literally (see the legacy notes in docs/SPEC-PLAY.md).
+func parseAuthor(val string, version int) string {
+	if version >= 2 && strings.HasPrefix(val, `"`) {
 		if unquoted, err := strconv.Unquote(val); err == nil {
 			return unquoted
 		}
@@ -176,7 +197,7 @@ func LoadStore(source string) (*Store, error) {
 		}
 		switch {
 		case strings.HasPrefix(line, "NOTE "):
-			n := parseNoteLine(line)
+			n := parseNoteLine(line, s.Version)
 			s.Notes = append(s.Notes, n)
 			currentNote = &s.Notes[len(s.Notes)-1]
 			currentReply = nil
@@ -210,7 +231,7 @@ func LoadStore(source string) (*Store, error) {
 				currentField = nil
 			}
 		case strings.HasPrefix(line, "REPLY ") && currentNote != nil:
-			r := parseReplyLine(line)
+			r := parseReplyLine(line, s.Version)
 			currentNote.Replies = append(currentNote.Replies, r)
 			currentReply = &currentNote.Replies[len(currentNote.Replies)-1]
 			currentField = nil
@@ -249,7 +270,7 @@ func SaveStore(source string, s *Store) error {
 	return os.WriteFile(nf, []byte(b.String()), 0o644)
 }
 
-func parseNoteLine(line string) Note {
+func parseNoteLine(line string, version int) Note {
 	// NOTE id=<id> author=<author> created=<ts>
 	rest := strings.TrimPrefix(line, "NOTE ")
 	n := Note{}
@@ -259,8 +280,11 @@ func parseNoteLine(line string) Note {
 		if strings.HasPrefix(part, "id=") {
 			n.ID = strings.TrimPrefix(part, "id=")
 		} else if strings.HasPrefix(part, "author=") {
-			n.Author = parseAuthor(strings.TrimPrefix(part, "author="))
-			for i+1 < len(parts) && !strings.Contains(parts[i+1], "=") {
+			n.Author = parseAuthor(strings.TrimPrefix(part, "author="), version)
+			// Version 1 wrote multi-word authors unquoted, so the name runs on
+			// until the next key=value token. A version-2 field is framed and
+			// complete: never glue the following tokens onto it.
+			for version < 2 && i+1 < len(parts) && !strings.Contains(parts[i+1], "=") {
 				i++
 				n.Author += " " + parts[i]
 			}
@@ -272,7 +296,7 @@ func parseNoteLine(line string) Note {
 	return n
 }
 
-func parseReplyLine(line string) Reply {
+func parseReplyLine(line string, version int) Reply {
 	rest := strings.TrimPrefix(line, "REPLY ")
 	r := Reply{}
 	parts := splitFields(rest)
@@ -281,8 +305,8 @@ func parseReplyLine(line string) Reply {
 		if strings.HasPrefix(part, "id=") {
 			r.ID = strings.TrimPrefix(part, "id=")
 		} else if strings.HasPrefix(part, "author=") {
-			r.Author = parseAuthor(strings.TrimPrefix(part, "author="))
-			for i+1 < len(parts) && !strings.Contains(parts[i+1], "=") {
+			r.Author = parseAuthor(strings.TrimPrefix(part, "author="), version)
+			for version < 2 && i+1 < len(parts) && !strings.Contains(parts[i+1], "=") {
 				i++
 				r.Author += " " + parts[i]
 			}
@@ -294,26 +318,34 @@ func parseReplyLine(line string) Reply {
 	return r
 }
 
+// splitFields splits a record line into space-separated fields, keeping a
+// Go-quoted value together as one field. It is escape aware: inside a quoted
+// value a backslash escapes the next byte, so the escaped quotes that
+// strconv.Quote emits do not end the value. Without this the splitter ends the
+// field in the middle of an author such as `Ada \"The Reader\" Lovelace`, and
+// the fragments are rejoined raw — which is how the quoting compounded on every
+// rewrite before this repair.
 func splitFields(s string) []string {
 	var fields []string
 	var current strings.Builder
 	inQuote := false
-	for _, r := range s {
-		switch r {
-		case '"':
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inQuote && c == '\\' && i+1 < len(s):
+			current.WriteByte(c)
+			i++
+			current.WriteByte(s[i])
+		case c == '"':
 			inQuote = !inQuote
-			current.WriteRune(r)
-		case ' ':
-			if inQuote {
-				current.WriteRune(r)
-			} else {
-				if current.Len() > 0 {
-					fields = append(fields, current.String())
-					current.Reset()
-				}
+			current.WriteByte(c)
+		case c == ' ' && !inQuote:
+			if current.Len() > 0 {
+				fields = append(fields, current.String())
+				current.Reset()
 			}
 		default:
-			current.WriteRune(r)
+			current.WriteByte(c)
 		}
 	}
 	if current.Len() > 0 {
