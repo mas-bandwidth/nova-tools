@@ -1,4 +1,4 @@
-# Mechanical tool work — specification (draft 3, 2026-09-19)
+# Mechanical tool work — specification (draft 4, 2026-09-19)
 
 Glenn, 2026-09-19: *"I want to upgrade our tools so we can push more work to swarms
 mechanically."*
@@ -25,9 +25,7 @@ call** and reads **no prose as an instruction**. Mechanical acceptance decides w
 card's commit becomes a pull request in the read queue. It never lands anything: the
 read condition (`docs/SPEC-MERGE.md:808-827`) and the one entry to the merge queue
 (`docs/SPEC-MERGE.md:1540-1561`, *"swarms produce branches, never queue entries"*) stand
-as written, with one bounded change stated where it is made (the eligibility rule, 3:
-sampled reads for a kind the coordinator trusted inside the measured bound), and §6 makes
-the lane hold them harder, not softer.
+exactly as written, and §6 makes the lane hold them harder, not softer.
 
 ## The failures it closes
 
@@ -76,9 +74,12 @@ measurement also **bounds** the decision.
    `cmd/nova-tokens` or `internal/pulse`, carried as `area=` on the `OUTCOME` line — the
    record is the last **N** gated cards of that kind and area in
    `<queue>/decide/outcomes.jsonl`, the file `harvest` already appends (§4 rule 5). A
-   card **passes** when the gate said `ACCEPT OK` and no HOLD later landed on its pull
-   request; it **fails** when the gate said `REJECT`, or a HOLD landed on it after an
-   `ACCEPT OK`. An `ABSTAIN` is the bench's and counts for neither. Nothing else feeds
+   card **passes** when the gate said `ACCEPT OK` **and a read of it was recorded** at its
+   head with no HOLD; it **fails** when the gate said `REJECT`, or a HOLD landed on it
+   after an `ACCEPT OK`. **An accepted result nobody has read yet counts for neither**,
+   like an `ABSTAIN`, which is the bench's: a result nobody looked at cannot draw a HOLD,
+   and a rate that counted it as a pass would rise by not looking — a rule over nothing
+   passes by checking nothing. Nothing else feeds
    it, no verb takes a number for it, and a job that ships its own `OUTCOME` is a
    `stray-file` (§4), so a swarm cannot write its own record.
 
@@ -109,14 +110,16 @@ measurement also **bounds** the decision.
    they are a place to start, held in `<queue>/trust.tsv` (`kind`, `n`, `rate`,
    `run_of_fails`), and the first month's outcomes are what tune them. Meeting the
    bound does not trust a kind by itself; the coordinator says so with the command, and
-   may decline. **What trusted buys:** reads of that kind's accepted results drop from
-   every one to a sample — `audit_rate`, default 0.1, untuned, the same idea as #1627's
-   `--audit-rate` — and the rest land on the gate, CI and no hold. A sampled read that
-   ends in a HOLD is a fail in the record like any other. *This is the one place this
-   document changes the read condition*, and only for a swarm's gated result of a kind
-   the coordinator trusted inside the bound; Glenn's rule of 2026-09-09 (shared tools
-   merge only after reads from other lines, `docs/SPEC-MERGE.md:836`) still governs
-   everything a person or a builder writes, and every trial.
+   may decline. **What trusted buys, and what it does not.** On trial `harvest` spawns a per-result read
+   card for every accepted result (SPEC-PULSE rule 13) and the coordinator looks at each;
+   for a trusted kind that per-result read drops to a sample — `audit_rate`, default 0.1,
+   in data, untuned, the same idea as #1627's `--audit-rate`. **The landing read is
+   untouched.** Every change that lands, trusted or not, still needs what
+   `docs/SPEC-MERGE.md:808-837` demands: an approve recorded by a line that is not the
+   author, for the current head (Glenn, 2026-09-09: shared tools merge only after reads
+   from other lines, `docs/SPEC-MERGE.md:836`). Nothing here sets `needs_read=no`, and
+   no record stands in for that approve. Trust saves the coordinator's attention; it
+   never lets a change land unread.
 4. **The record decays by itself, a run of fails resets it, and one command pauses a
    kind.** *Decay:* the record is only ever the last N cards, so old passes fall out as
    new cards arrive and a kind that gets worse loses its rate with nobody deciding
@@ -229,8 +232,10 @@ a run-rung answer, is cut); `a-kind-with-no-track-record-is-on-trial`;
 `an-abstain-counts-for-neither`; `a-hold-after-accept-ok-is-a-fail`;
 `set-trusted-is-refused-under-n-cards`; `set-trusted-is-refused-under-the-pass-rate`;
 `meeting-the-bound-trusts-nothing-until-the-coordinator-says-so`;
-`trusted-reads-are-sampled-at-the-audit-rate` (a fake random source; the sampled one is
-`needs_read=yes`); `three-fails-in-a-row-reset-to-trial-and-empty-the-record`;
+`the-coordinators-per-result-read-is-sampled-for-a-trusted-kind` (a fake random source);
+`a-trusted-result-still-needs-an-approve-record-to-land` (`batch` drops it without one);
+`an-unread-result-counts-for-neither` (ten accepted, none read: `cards=0/10`, and
+`--set trusted` is refused); `the-rate-cannot-rise-by-not-looking`; `three-fails-in-a-row-reset-to-trial-and-empty-the-record`;
 `set-trial-and-set-paused-are-never-refused`; `a-paused-kind-is-not-cut`;
 `a-pause-after-launch-abstains-at-harvest`; `no-verb-takes-a-number-for-the-record`
 (class test: nothing but `harvest` appends `outcomes.jsonl`);
@@ -854,8 +859,8 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
    members once (`BATCH DROP #<n> reason="build red with this member merged: <first
    line>"`) instead of failing the batch whole.
 7. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
-   condition; `needs_read` stands for every result of a kind on trial and for the sampled results of a
-   trusted kind (the eligibility rule, 2-3), and the reader
+   condition; `needs_read` stands for every swarm PR that changes code, on trial or trusted
+   (the eligibility rule, 3), and the reader
    *"judges spec fit and nothing else"* (`docs/SPEC-REVIEW.md:659-660`) because the
    gate already did the rest. What the gate cannot judge it hands over by name: a
    pre-existing test body changed under `TEST-EDIT:`, and a rebase's conflicted files.
@@ -969,7 +974,7 @@ narrowest, most mechanical kinds with the strongest controls.
 | T3 (#1648) | builder: no gate yet | `nova-pulse accept`: the worktree, the step order, the base's tests surviving (`test-weakened`), the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
 | T4 (#1649) | builder: no gate yet | `accept --selftest`: the fixture repository, the twelve one-edit seeds, `control=<id>`, OK refused without a control on file, and `gate-weakened` with its own red test | §1 rules 6-8, eligibility rule 10 |
 | T5 (#1650) | builder: no gate yet | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line with `class=rejected`; no decide call where the gate decided; the route outcome written | §1 rule 1, §4 rules 1-2, eligibility rule 7 |
-| T6 (#1651) | builder: no gate yet | the header lines in `cut`, the `lint --card` tokens, the track record computed from `outcomes.jsonl`, `nova-pulse trust` (show, `--set trusted` refused outside the bound, `--set trial`, `--set paused`), the reset on a run of fails, sampled reads for a trusted kind, the route check at dispatch — answer, rule table or `eligible=no` — the kinds table with `fix-red` and `transcript-test`, the first-card rule | the eligibility rule 1-8, §5 rules 1-5 |
+| T6 (#1651) | builder: no gate yet | the header lines in `cut`, the `lint --card` tokens, the track record computed from `outcomes.jsonl`, `nova-pulse trust` (show, `--set trusted` refused outside the bound, `--set trial`, `--set paused`), the reset on a run of fails, the coordinator's per-result read sampled for a trusted kind (the landing read untouched; only read results count), the route check at dispatch — answer, rule table or `eligible=no` — the kinds table with `fix-red` and `transcript-test`, the first-card rule | the eligibility rule 1-8, §5 rules 1-5 |
 | T7 (#1652) | builder: no gate yet | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
 | T8 (#1653) | trial, trusted after a track record | `transcript-test`, one card per tool, the sections no test executes: nova-ci, nova-decide, nova-pulse (`PATHS:` never reaching `testdata/accept/`), nova-review, and nova-post after its block is re-cut (Q5) | §7 rule 1 |
 | T9 (#1654) | trial, trusted after a track record | `transcript-test`, one card per tool, the set-of-shapes tests moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
@@ -1038,8 +1043,7 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
 
 It lands no code. It forbids no path to a swarm. It does not let a swarm land anything,
 lift a hold, skip a read, enqueue anything, write its own track record or edit what judges
-it. It changes the read condition in one stated place only (sampled reads for a trusted kind),
-and it does not move a security-kind unit off
+it. It does not change the read condition, and it does not move a security-kind unit off
 the designated mind: SPEC-DECIDE's routing table does that, by commit, or nothing does. It lets no classifier answer suffice for anything. It does not specify Jev's
 question, options, state or floor — that is the Jev lane's SPEC-DECIDE amendment. It
 does not widen the wall: §2 names narrower roots per leg and refuses an unknown one. It
