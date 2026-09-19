@@ -1,6 +1,8 @@
 package ci
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -124,5 +126,38 @@ func TestSharedRepoTreeSkipsTheGitDirectory(t *testing.T) {
 		if f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/") {
 			t.Fatalf("the shared tree walked into .git (%s); no rule reads it and the walk is the cost", f.Rel)
 		}
+	}
+}
+
+// And .git is skipped whatever it IS. In a linked worktree -- which is where
+// every lane in this repository works -- `.git` is a FILE holding one
+// `gitdir:` line, not a directory, so a walk that skips it only as a directory
+// lists it as a file: not source, unparseable as Go, and enough to fail the rule
+// above on a tree that is otherwise clean.
+func TestSharedRepoTreeSkipsAGitFileAsWellAsAGitDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// The worktree shape: .git is one line naming the real repository.
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /nowhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "kept.go"), []byte("package kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := loadRepoTree(root)
+	if err != nil {
+		t.Fatalf("loading a tree whose .git is a file: %v", err)
+	}
+	var rels []string
+	for _, f := range idx.Files {
+		rels = append(rels, f.Rel)
+		if f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/") {
+			t.Errorf("the walk listed %s; .git is skipped by name, whether it is a directory or a worktree's file", f.Rel)
+		}
+	}
+	if idx.ByRel("kept.go") == nil {
+		t.Errorf("the walk lost the one source file beside .git; it lists %v", rels)
 	}
 }
