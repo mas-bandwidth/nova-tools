@@ -386,6 +386,24 @@ command loop is a defect)."
     ;; revalidates it and admits one envelope. See receipt-admission.lisp.
     (when (member verb '(:acknowledge :decline))
       (return-from %submit (receipt-submit kernel request)))
+    ;; THE NEW VERBS of draft 26 (SPEC-WORK.md:1014-1058) are mutations and
+    ;; belong on this one door like every other. `submit-new-verb` used to be a
+    ;; SECOND door that read the state, built a candidate and installed it with
+    ;; `(setf (kernel-state kernel) ...)` all on the CALLER's thread, beside a
+    ;; writer doing the same -- the read-modify-write rule 6 forbids in as many
+    ;; words (SPEC-WORK.md:2603-2616). The body is unchanged; it runs here now.
+    ;;
+    ;; `:undo` AND `:redo` ARE NOT ROUTED, and this is named rather than
+    ;; guessed: the keyword collides. `:undo` on THIS door is the undo machinery
+    ;; (`%submit-undo`, fields `:of`, `:reason`); `:undo` on the new-verb door is
+    ;; draft 26's CONFIG event (kind `:undo`, fields `:request-of`, `:reason`).
+    ;; Two different verbs under one keyword, told apart only by which door the
+    ;; caller knocked on. Routing them here makes the undo machinery answer a
+    ;; draft-26 request -- measured: `MUTATION FAIL node=-: unknown field:
+    ;; request-of`. Which one keeps the keyword is a spec question, so the two
+    ;; keep the old direct path and the question is filed.
+    (when (and (new-verb-p verb) (not (member verb '(:undo :redo))))
+      (return-from %submit (%submit-new-verb-guarded kernel request)))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"
