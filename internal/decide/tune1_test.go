@@ -2,6 +2,7 @@ package decide
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -257,5 +258,89 @@ func TestAnAsleepMindIsNotOnTheHeightLadder(t *testing.T) {
 		if m.Availability == AvailabilityAsleep {
 			t.Errorf("an asleep mind was offered to the provider: %s", m.Name)
 		}
+	}
+}
+
+// The evidence flags reach the PROVIDER, not just the rules: the size the
+// caller gave is in the state the question is asked over, and a sized unit
+// answers the rung its size supports at an ordinary confidence.
+//
+// The hurt this pins: on 2026-09-18 a manager's fix-with-red-test units came
+// back astra at 0.69-0.74 and the report was that --files/--packages are
+// accepted only with --no-jev. They are not dropped -- buildUnit runs before
+// the verb consults jev at all. What happened is upstream of the provider: a
+// unit with no size is THIN, thin scores confThin, confThin is below every
+// usable floor, so the rules step the start rung up BEFORE the offer set is
+// built -- and the rung the size would have supported is then not among the
+// options at all, so no provider answer can recover it. Both halves are
+// asserted here.
+func TestTheSizeEvidenceReachesTheProviderAndThinEvidenceSaysSo(t *testing.T) {
+	reg := testRegistry(t)
+	sized := Unit{ID: "ev-with", Kind: KindFixWithRedTest, Files: 2, Packages: 1}
+	fake := &fakeDecider{choice: "rung-1", conf: 0.80}
+	res, err := RouteJev(context.Background(), fake, reg, sized, DefaultFloor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rung.Name != "opus" {
+		t.Errorf("a 2-file fix-with-red-test answers the child rung, got %s (%s)", res.Rung.Name, res.Reason)
+	}
+	if res.Source != SourceJev || res.SteppedUp {
+		t.Errorf("an ordinary confidence over sized evidence stands as the provider gave it: source %s stepped %v", res.Source, res.SteppedUp)
+	}
+	// The state the provider was asked over carries the size, in buckets.
+	for _, want := range []string{"files: 1-3", "packages: 1-3", "kind: fix-with-red-test"} {
+		if !strings.Contains(fake.state, want) {
+			t.Errorf("the state the provider saw is missing %q:\n%s", want, fake.state)
+		}
+	}
+	// And the same unit with no size at all: thin, stepped up before the offer
+	// set is built, and the line SAYS it is thin rather than leaving a caller
+	// who forgot --files hunting for a floor problem.
+	thin := &fakeDecider{choice: "rung-1", conf: 0.74}
+	bare, err := RouteJev(context.Background(), thin, reg, Unit{ID: "ev-without", Kind: KindFixWithRedTest}, DefaultFloor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.Rung.Height <= res.Rung.Height {
+		t.Errorf("thin evidence cannot support the rung a sized unit gets: %s vs %s", bare.Rung.Name, res.Rung.Name)
+	}
+	if !strings.Contains(bare.Reason, "no size evidence") {
+		t.Errorf("the line says the unit is thin: %s", bare.Reason)
+	}
+	// The rung the size would have supported is genuinely gone from the offer
+	// set -- which is why naming the cause on the line matters.
+	for _, name := range bare.Offered {
+		if name == "opus" {
+			t.Error("thin evidence stepped up, so the child rung is not among the options; the reason line is the only way a caller learns why")
+		}
+	}
+}
+
+// A dogfood transcript diff starts at the bottom rung, and naming it does NOT
+// weaken the security rule: `guard` still resolves to the designated mind on
+// every path. The kind exists because the work was being named `guard` and
+// priced as one -- 21 Flash cards over dogfood transcripts found four real
+// drifts for about 20 cents on 2026-09-18.
+func TestDogfoodIsItsOwnKindAndGuardIsUntouched(t *testing.T) {
+	reg := testRegistry(t)
+	res := mustRoute(t, reg, Unit{ID: "dogfood-transcript-1", Kind: KindDogfood, Files: 1, Packages: 1}, DefaultFloor)
+	if res.Rung.Name != "flash" {
+		t.Errorf("a dogfood transcript diff starts at the bottom rung, got %s (%s)", res.Rung.Name, res.Reason)
+	}
+	if !Mechanical(KindDogfood) || !KnownKind(KindDogfood) {
+		t.Error("dogfood is a known, mechanical kind: a card rung may take it")
+	}
+	// The same work named guard is still security, and security never falls
+	// through: designated, at confidence 1, with no provider call to make.
+	guarded := mustRoute(t, reg, Unit{ID: "dogfood-as-guard", Kind: KindGuard, Files: 1, Packages: 1}, DefaultFloor)
+	if !guarded.Designated || guarded.Rung.Name != "johnny" {
+		t.Errorf("guard is a security kind and resolves to its designated mind, got %s (designated %v)", guarded.Rung.Name, guarded.Designated)
+	}
+	// And a dogfood unit that DOES touch something security-shaped is security
+	// again, by touch and not by name: the new kind is not a way around it.
+	touched := mustRoute(t, reg, Unit{ID: "dogfood-touches", Kind: KindDogfood, Files: 1, Touches: []string{TouchSecrets}}, DefaultFloor)
+	if !touched.Designated || touched.Rung.Name != "johnny" {
+		t.Errorf("a dogfood unit that touches secrets is still security, got %s (designated %v)", touched.Rung.Name, touched.Designated)
 	}
 }

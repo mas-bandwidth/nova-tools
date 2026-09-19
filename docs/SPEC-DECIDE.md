@@ -164,7 +164,7 @@ YET**. The owner and the wait are two facts and neither hides the other — a se
 designated rung timed out answers with that rung AND the wait.
 
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
-`fixture-retarget`, `fleet-chore`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`fixture-retarget`, `fleet-chore`, `dogfood`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
 `cause-to-find` — size (files, packages, lanes), lane
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
@@ -179,6 +179,17 @@ actually landed it. Named `fix-with-red-test`, the ladder answered `opus`, two r
 0.03-0.04 and about 150 s each. The size term may raise a row test's rung and never lowers it, so
 one file stays card work: one file is the shape of a trivial rebase AND of a subtle codegen fix,
 and the count cannot tell them apart.
+
+**A dogfood transcript diff is not a guard.** `dogfood` is a kind of its own and starts at the
+bottom rung: reading a documented transcript against what the tool actually prints is a
+comparison, not a judgement about safety. It exists because the work was being named `guard`, and
+`guard` is a SECURITY kind — it resolves to the designated mind on every path, at any height, at
+any floor (that is the rule, and nothing here touches it). So a documented-transcript diff was
+being priced as a guard and handed to the mind the fleet reserves for guards, secrets, the
+sandbox, sudo, deploy keys and the network. Measured 2026-09-18: 21 Flash cards over dogfood
+transcripts found four real drifts for about 20 cents. Naming the work `dogfood` prices it at the
+rung that does it; naming it `guard` was the mistake, and the security rule was doing exactly what
+it says.
 
 **A mechanical kind that failed on a card rung was not mechanical.** The DeepSeek rungs are
 eligible for mechanical kinds only (friends first), and a mechanical kind is one whose answer is a

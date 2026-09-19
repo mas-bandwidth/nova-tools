@@ -42,6 +42,7 @@ const (
 	KindStack           = "stack"
 	KindFixtureRetarget = "fixture-retarget"
 	KindFleetChore      = "fleet-chore"
+	KindDogfood         = "dogfood"
 	KindRowTest         = "row-test"
 	KindFixWithRedTest  = "fix-with-red-test"
 	KindNewVerb         = "new-verb"
@@ -84,6 +85,7 @@ var startHeights = map[string]int{
 	KindStack:           0,
 	KindFixtureRetarget: 0,
 	KindFleetChore:      0,
+	KindDogfood:         0,
 	KindRowTest:         1,
 	KindFixWithRedTest:  2,
 	KindNewVerb:         2,
@@ -105,6 +107,7 @@ var mechanicalKinds = map[string]bool{
 	KindStack:           true,
 	KindFixtureRetarget: true,
 	KindFleetChore:      true,
+	KindDogfood:         true,
 	KindRowTest:         true,
 }
 
@@ -127,7 +130,7 @@ var ordinaryPlatforms = map[string]bool{
 
 // Kinds is every kind a unit may name, in the order the spec names them.
 var Kinds = []string{
-	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindRowTest,
+	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindRowTest,
 	KindFixWithRedTest, KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
 }
 
@@ -534,6 +537,14 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 		conf = confEscalated
 	case u.thin():
 		conf = confThin
+		// Say it on the line. Thin evidence is below every usable floor, so it
+		// steps the answer up BEFORE the provider is offered anything -- and
+		// the rung the evidence would have supported is then not in the offer
+		// set at all, so no provider answer can recover it. A caller who simply
+		// forgot --files reads "below the floor" and looks for a floor problem;
+		// what they have is a unit with no size on it (2026-09-18: a manager's
+		// fix-with-red-test units answered astra for exactly this reason).
+		reasons = append(reasons, "the unit carries no size evidence (no files, packages, lanes or attempts), which no floor can support for a first attempt")
 	}
 	res.Rung, res.Confidence = m, conf
 	if conf < floor {
