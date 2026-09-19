@@ -68,9 +68,23 @@ type Exec struct{}
 // Since git 2.30 `git commit`, `git fetch`, `git merge` and `git receive-pack` end by
 // forking `git maintenance run --auto --quiet --detach`. `--detach` is git's own word for
 // "do not wait for this one": the command the tool waited for has exited while a git
-// nobody asked for is still inside the repository. Traced on git 2.53, that child creates
-// <gitdir>/objects/maintenance.lock after its parent is gone -- a new entry in a directory
-// the tool, or the test that called the tool, may already be removing.
+// nobody asked for is still inside the repository. TRACED ON GIT 2.53 (vision, space),
+// where that child creates <gitdir>/objects/maintenance.lock after its parent is gone -- a
+// new entry in a directory the tool, or the test that called the tool, may already be
+// removing.
+//
+// AND TRACED AGAIN ON GIT 2.43 (hulk), WHICH DOES IT BY ANOTHER NAME. On 2.53+
+// `receive-pack` reaches the maintenance run through run_auto_maintenance(), which honours
+// `maintenance.auto=false`. On 2.43 `receive-pack` forks `git gc --auto --quiet` itself,
+// gated only by `receive.autogc` -- and `gc.auto=0` makes that child a NO-OP without
+// stopping it being STARTED, which is the thing that matters: a started git is a git
+// writing in the directory. Measured on hulk with the other four settings already applied,
+// as `-c` AND in the receiving repository's own config: a push forked one
+// `git gc --auto --quiet` per push, to a path and to a `file://` URL alike, and adding
+// `receive.autogc=false` to the RECEIVING repository removed it. `commit`, `merge`,
+// `clone`, `fetch` and `am` forked none on 2.43 -- each one run under GIT_TRACE2_EVENT
+// rather than assumed. That is why this list is five settings and not four, and why the
+// gate on hulk refused this change the first time it was offered.
 //
 // This tool removes such directories by design. `batch` rebuilds its own working directory
 // with safepath.RemoveUnder at the start of every run, and the tests remove theirs with
@@ -79,7 +93,7 @@ type Exec struct{}
 // assertions had already passed.
 //
 // The settings are refused nowhere: `-c` is a global option, so it goes in front of any
-// subcommand, and none of the four is one of rule 4's four spellings (guard reads the
+// subcommand, and none of the five is one of rule 4's four spellings (guard reads the
 // tool's own argument list, before this).
 var noBackgroundGit = []string{
 	// No `maintenance run --auto --detach` after commit, fetch, merge or receive-pack.
@@ -91,6 +105,9 @@ var noBackgroundGit = []string{
 	"-c", "gc.autoDetach=false",
 	// And no fsmonitor--daemon left holding the work tree after the command returns.
 	"-c", "core.fsmonitor=false",
+	// And, on a git older than 2.53, no `gc --auto --quiet` forked by receive-pack: that
+	// one is gated by this setting alone, in the RECEIVING repository (see above).
+	"-c", "receive.autogc=false",
 }
 
 // NoBackgroundGit puts those settings in front of a git argument list. Exec.Run applies
