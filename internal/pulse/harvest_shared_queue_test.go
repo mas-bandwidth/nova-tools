@@ -273,12 +273,16 @@ func TestBenchListScriptAsksWhetherEachRootIsThere(t *testing.T) {
 			t.Errorf("the listing script does not hold %q:\n%s", want, script)
 		}
 	}
-	jobs, missing := parseBenchJobs("ROOT\t/a\tok\nROOT\t/b\tmissing\n" + benchJobListing("/a/0/jobs/card-1", nil))
+	jobs, missing, incomplete := parseBenchJobs("ROOT\t/a\tok\nROOT\t/b\tmissing\nROOT\t/c\tincomplete\n" +
+		benchJobListing("/a/0/jobs/card-1", nil))
 	if len(jobs) != 1 {
 		t.Errorf("the parser read %d jobs past the ROOT lines, want 1", len(jobs))
 	}
 	if len(missing) != 1 || missing[0] != "/b" {
 		t.Errorf("the parser reported missing=%v, want [/b]", missing)
+	}
+	if len(incomplete) != 1 || incomplete[0] != "/c" {
+		t.Errorf("the parser reported incomplete=%v, want [/c]", incomplete)
 	}
 }
 

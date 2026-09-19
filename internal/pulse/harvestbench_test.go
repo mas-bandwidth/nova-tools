@@ -104,6 +104,13 @@ func benchGit(t *testing.T, specs, arglog string, counts map[string]string) {
 
 func benchHarvestInput(t *testing.T, root string, shell *fakeShell, forge *fakeForge) HarvestInput {
 	t.Helper()
+	return benchHarvestInputShell(t, root, shell, forge)
+}
+
+// benchHarvestInputShell is the same, for a test whose seam is not the fake shell -- the
+// one that runs the generated script under /bin/sh to hold the script's own boundary.
+func benchHarvestInputShell(t *testing.T, root string, shell BenchShell, forge *fakeForge) HarvestInput {
+	t.Helper()
 	return HarvestInput{
 		Bench:  "hulk",
 		Root:   "/home/gaffer/rowan-swarm-root",
@@ -365,13 +372,16 @@ func TestHarvestReleasesTheLaneOfAFinishedCard(t *testing.T) {
 	if err := os.MkdirAll(launched, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The markers carry the session `fill --session` stamps into them: since #1950 a
+	// drain names whose cards it is releasing and is never a wildcard over a shared
+	// directory.
 	for _, c := range []struct{ name, lane string }{
 		{"card-9601.md", "schema"}, {"card-9602.md", "pulse"}, {"card-9603.md", "bus"},
 	} {
 		if err := os.WriteFile(filepath.Join(launched, c.name), []byte("RESULT "+c.name+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		body := "lane=" + c.lane + "\nbench=hulk\nlabel=" + strings.TrimSuffix(c.name, ".md") + "\n"
+		body := "lane=" + c.lane + "\nbench=hulk\nsession=s-42\nlabel=" + strings.TrimSuffix(c.name, ".md") + "\n"
 		if err := os.WriteFile(filepath.Join(launched, c.name+".launched"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -379,15 +389,22 @@ func TestHarvestReleasesTheLaneOfAFinishedCard(t *testing.T) {
 	done := "/home/gaffer/rowan-swarm-root/0/jobs/card-9601"
 	running := "/home/gaffer/rowan-swarm-root/1/jobs/card-9602"
 	shell := &fakeShell{answer: func(bench, script string) (string, error) {
-		if strings.Contains(script, "touch") {
+		switch {
+		case strings.Contains(script, "touch"):
 			return "", nil
+		case strings.Contains(script, "PROBE"):
+			// card-9603's own job directory is asked for BY NAME and is not
+			// there; a sibling job being listed is not evidence about it.
+			return "PROBE\tcard-9603\tabsent\n", nil
 		}
 		return benchJobListing(done, []string{
 			"RESULT card-9601 sha=abc", "DONE", "BRANCH rowan/card-9601", "REPO mas-bandwidth/nova-tools",
+			"SESSION s-42",
 		}) + benchJobListing(running, nil), nil
 	}}
 	in := benchHarvestInput(t, root, shell, &fakeForge{})
 	in.Launched = launched
+	in.Session = "s-42"
 	code, out, errb := runBenchHarvest(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s\n%s", code, out, errb)

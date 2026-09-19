@@ -152,7 +152,7 @@ func harvestBench(in HarvestInput) int {
 	if err != nil {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("listing jobs on %s: %s", field(in.Bench), oneline.Err(err)))
 	}
-	jobs, missing := parseBenchJobs(raw)
+	jobs, missing, incomplete := parseBenchJobs(raw)
 	// A --root that does not resolve ON THE BENCH is a refusal before any state changes,
 	// never a silent `jobs=0` (#1950): a quoted '~/rowan-working/tmp' reached the verb with
 	// the tilde unexpanded, the listing found nothing, and the drain read that nothing as
@@ -163,7 +163,30 @@ func harvestBench(in HarvestInput) int {
 	}
 
 	lines := bound(in.Stdout, in.Max)
-	state := map[string]string{} // label -> the drain's verdict on that job
+	roots := splitList(in.Root)
+	facts := drainFacts{
+		state: map[string]string{}, // label -> the drain's verdict on that job
+		// A root the bench could not read whole proves no absence: the traversal that
+		// would have found the job may simply have been refused (#1950, Stella's
+		// two-root fixture). The fold still folds what it DID see.
+		complete: len(incomplete) == 0,
+		// The per-label probe (Johnny's HOLD on #1984): `job-dir-gone` is never
+		// inferred from a sibling job being listed. Each candidate card's OWN job
+		// directory is looked for BY NAME on the bench, over the same shell seam.
+		probe: func(labels []string) map[string]string {
+			out, err := shell.Run(in.Bench, benchProbeScript(roots, labels))
+			if err != nil {
+				fmt.Fprintf(in.Stderr, "HARVEST NOTE probe on %s: %s\n", field(in.Bench), oneline.Err(err))
+				return map[string]string{}
+			}
+			return parseProbes(out)
+		},
+	}
+	for _, r := range incomplete {
+		lines.Line(fmt.Sprintf("HARVEST ROOT-INCOMPLETE bench=%s root=%s (a directory under it could not be read or entered; this run infers no absence and drains no card as job-dir-gone)",
+			field(in.Bench), field(r)))
+	}
+	state := facts.state
 	var done, pushed, prs, noCommit, skipped, failed int
 
 	for _, j := range jobs {
@@ -324,7 +347,8 @@ func harvestBench(in HarvestInput) int {
 			field(in.Bench), field(label), field(branch), field(sha), field(base), field(dest.repo), pr))
 	}
 
-	drained, left := drainLaunched(in, state, lines)
+	drained, left, drainFailed := drainLaunched(in, facts, lines)
+	failed += drainFailed
 	lines.More()
 
 	fmt.Fprintf(in.Stdout, "HARVEST BENCH %s bench=%s jobs=%d done=%d pushed=%d prs=%d no-commit=%d skipped=%d drained=%d left=%d took=%s\n",
@@ -348,17 +372,36 @@ func okOrRed(failed int) string {
 // session, the branch prefix, the base, the age -- is taken here in Go, never in the
 // script: half the defects of the hand loop were the shell itself (memory: "No shell for
 // coordination").
-// It also answers for each root whether that root is a directory ON THE BENCH -- `ROOT
-// <path> <ok|missing>` -- so a root that does not resolve there is a refusal before any
-// state changes rather than an empty listing the drain then reads as "everything is gone"
-// (#1950).
+// It also answers, per root, whether the traversal ON THE BENCH actually COMPLETED --
+// `ROOT <path> <ok|missing|incomplete>`:
+//
+//   - `missing`, so a root that does not resolve there is a refusal before any state
+//     changes rather than an empty listing the drain reads as "everything is gone" (#1950);
+//   - `incomplete`, because a glob is silent about the difference between "nothing is here"
+//     and "I was not allowed to look". Stella's fixture, run under /bin/sh: root A holds a
+//     readable job, root B holds a LIVE job under a `jobs` directory at mode 000. The glob
+//     `B/*/jobs/*/` matches nothing, the script exits 0, and B's live card was then
+//     classified `job-dir-gone` on the strength of A's job. So every root, every slot
+//     under it and every `jobs` directory under that is held against `-r` and `-x` before
+//     the glob is believed, and one unreadable directory makes that WHOLE root incomplete.
+//     An incomplete root proves no absence: no marker is drained as `job-dir-gone` from a
+//     run that could not read the whole scope a marker might live in.
 func benchListScript(roots []string) string {
 	globs := make([]string, 0, len(roots))
 	var checks strings.Builder
 	for _, r := range roots {
-		globs = append(globs, shellQuote(r)+"/*/jobs/*/")
-		fmt.Fprintf(&checks, "if [ -d %s ]; then printf 'ROOT\\t%%s\\tok\\n' %s; else printf 'ROOT\\t%%s\\tmissing\\n' %s; fi; ",
-			shellQuote(r), shellQuote(r), shellQuote(r))
+		q := shellQuote(r)
+		globs = append(globs, q+"/*/jobs/*/")
+		// `c` is this root's completeness: any directory on the path to a job that is
+		// there but cannot be read or entered makes the traversal incomplete.
+		fmt.Fprintf(&checks, "if [ -d %s ]; then c=1; if [ ! -r %s ] || [ ! -x %s ]; then c=0; fi; "+
+			"for s in %s/*/; do s=${s%%/}; [ -d \"$s\" ] || continue; "+
+			"if [ ! -r \"$s\" ] || [ ! -x \"$s\" ]; then c=0; continue; fi; "+
+			"[ -e \"$s/jobs\" ] || continue; "+
+			"if [ ! -d \"$s/jobs\" ] || [ ! -r \"$s/jobs\" ] || [ ! -x \"$s/jobs\" ]; then c=0; fi; done; "+
+			"if [ \"$c\" = 1 ]; then printf 'ROOT\\t%%s\\tok\\n' %s; else printf 'ROOT\\t%%s\\tincomplete\\n' %s; fi; "+
+			"else printf 'ROOT\\t%%s\\tmissing\\n' %s; fi; ",
+			q, q, q, q, q, q, q)
 	}
 	return checks.String() +
 		"for j in " + strings.Join(globs, " ") + "; do j=${j%/}; [ -d \"$j\" ] || continue; " +
@@ -368,22 +411,86 @@ func benchListScript(roots []string) string {
 		"printf 'END\\n'; done"
 }
 
+// probeLabelMax caps one probe script: a shared launched directory holds a few hundred
+// cards at most, and a script naming more than this is a sign something else is wrong.
+const probeLabelMax = 500
+
+// benchProbeScript asks the bench about ONE THING per label: is there a job directory of
+// this name under any root, and could every place it might be actually be read?
+//
+// Johnny's HOLD on #1984: `job-dir-gone` fired when any SIBLING job was listed, never
+// because this card's own directory was probed absent. A card is now called dead only when
+// the bench was asked for it BY NAME and said `absent`:
+//
+//	PROBE <label> present   -- the job directory is there; the card is alive
+//	PROBE <label> absent    -- every readable place it could be was looked in; it is gone
+//	PROBE <label> unknown   -- a `jobs` directory on the way could not be read or entered
+//
+// `unknown` beats `absent` and `present` beats both: no permission failure is ever read as
+// an absence (Stella's third residual, at the label's own scope this time).
+func benchProbeScript(roots, labels []string) string {
+	if len(labels) > probeLabelMax {
+		labels = labels[:probeLabelMax]
+	}
+	quoted := make([]string, 0, len(labels))
+	for _, l := range labels {
+		quoted = append(quoted, shellQuote(l))
+	}
+	slots := make([]string, 0, len(roots))
+	for _, r := range roots {
+		slots = append(slots, shellQuote(r)+"/*/")
+	}
+	return "for l in " + strings.Join(quoted, " ") + "; do p=0; u=0; " +
+		"for s in " + strings.Join(slots, " ") + "; do s=${s%/}; [ -d \"$s\" ] || continue; " +
+		"j=\"$s/jobs\"; [ -d \"$j\" ] || continue; " +
+		"if [ ! -r \"$j\" ] || [ ! -x \"$j\" ]; then u=1; continue; fi; " +
+		"if [ -e \"$j/$l\" ]; then p=1; fi; done; " +
+		"if [ \"$p\" = 1 ]; then printf 'PROBE\\t%s\\tpresent\\n' \"$l\"; " +
+		"elif [ \"$u\" = 1 ]; then printf 'PROBE\\t%s\\tunknown\\n' \"$l\"; " +
+		"else printf 'PROBE\\t%s\\tabsent\\n' \"$l\"; fi; done"
+}
+
+// parseProbes reads the PROBE lines back. A label the bench said nothing about is absent
+// from the map, which the drain reads as "not proven" and leaves alone.
+func parseProbes(out string) map[string]string {
+	probed := map[string]string{}
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		rest, ok := strings.CutPrefix(line, "PROBE\t")
+		if !ok {
+			continue
+		}
+		label, state, ok := strings.Cut(rest, "\t")
+		if !ok {
+			continue
+		}
+		switch state = strings.TrimSpace(state); state {
+		case "present", "absent", "unknown":
+			probed[strings.TrimSpace(label)] = state
+		}
+	}
+	return probed
+}
+
 // parseBenchJobs reads what benchListScript printed: JOB, then MTIME and the R lines when
 // the job has a RESULT.md, then END. A line the parser does not know is skipped rather
 // than guessed at -- a bench that prints a warning on login does not lose the harvest.
-// It returns the roots the bench answered `missing` for beside the jobs; a listing that
-// names no root at all (an older bench script, a test's fake shell) reports none, so the
-// refusal is on evidence and never on silence.
-func parseBenchJobs(out string) ([]benchJob, []string) {
-	var jobs []benchJob
-	var missing []string
+// It returns the roots the bench answered `missing` and `incomplete` for beside the jobs; a
+// listing that names no root at all (an older bench script, a test's fake shell) reports
+// neither, so the refusal is on evidence and never on silence.
+func parseBenchJobs(out string) (jobs []benchJob, missing, incomplete []string) {
 	var cur *benchJob
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		switch {
 		case strings.HasPrefix(line, "ROOT\t"):
 			path, state, ok := strings.Cut(strings.TrimPrefix(line, "ROOT\t"), "\t")
-			if ok && strings.TrimSpace(state) == "missing" {
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(state) {
+			case "missing":
 				missing = append(missing, strings.TrimSpace(path))
+			case "incomplete":
+				incomplete = append(incomplete, strings.TrimSpace(path))
 			}
 		case strings.HasPrefix(line, "JOB\t"):
 			if cur != nil {
@@ -406,7 +513,7 @@ func parseBenchJobs(out string) ([]benchJob, []string) {
 	if cur != nil {
 		jobs = append(jobs, *cur)
 	}
-	return jobs, missing
+	return jobs, missing, incomplete
 }
 
 // resultField reads a RESULT.md field line: `NAME <value>` or `NAME: <value>`, the first
@@ -566,17 +673,24 @@ const (
 // every card failed and deleted every marker, including five cards of other lanes whose
 // jobs were running on other benches. The rule now, one guard per clause:
 //
-//	(a) the record must be the caller's   -- --session against the marker's session=
+//	(a) the record must be the caller's   -- a KNOWN session against the marker's session=
 //	(b) it must match --bench when given  -- --bench against the marker's bench=
-//	(c) the job must be finished, or provably dead -- a RESULT.md this fold harvested,
-//	    or a label absent from a listing that actually covered THIS card's own bench
+//	(c) the job must be finished, or provably dead -- a RESULT.md this fold harvested, or
+//	    a label absent from a COMPLETE, readable listing that covered this card's bench
 //	(d) --max bounds what is CONSUMED, not just what is printed
 //
-// Everything else is left byte-identical and counted in `left`, so `drained=<n> left=<m>`
-// is the whole receipt: what this harvest took, and what it deliberately did not.
-func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList) (drained, left int) {
+// Everything else is left byte-identical and counted in `left`, with one bounded
+// `HARVEST LEFT reason=<r> cards=<n>` line per reason, so `drained=<n> left=<m>` is the
+// whole receipt: what this harvest took, what it deliberately did not, and why.
+//
+// The card and its marker move as a PAIR or not at all (Stella's HOLD on #1984): the
+// destination is checked for a collision first, the MARKER moves before the card, and a
+// card move that fails rolls the marker back. A drain that could not complete is never
+// counted in `drained`, prints `HARVEST DRAIN-FAIL` with a named reason, and makes the verb
+// exit non-zero. Reporting `drained=1` over a split pair is worse than reporting nothing.
+func drainLaunched(in HarvestInput, facts drainFacts, lines *boundedList) (drained, left, failed int) {
 	if strings.TrimSpace(in.Launched) == "" {
-		return 0, 0
+		return 0, 0, 0
 	}
 	doneDir, failedDir := in.Done, in.Failed
 	if doneDir == "" {
@@ -591,8 +705,18 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 	}
 	stamp := now().UTC().Format("20060102T150405Z")
 
+	leftBy := map[string]int{}
 	cards := readyCards(in.Launched)
 	sort.Strings(cards)
+
+	// Pass one decides everything that can be decided from what the fold already knows,
+	// and collects the labels that need the bench asked about them BY NAME.
+	type candidate struct {
+		card, base, label string
+		m                 map[string]string
+	}
+	items := make([]candidate, 0, len(cards))
+	var unprobed []string
 	for _, card := range cards {
 		base := filepath.Base(card)
 		m := readLaunchedMarker(in.Launched, base)
@@ -600,36 +724,77 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 		if label == "" {
 			label = strings.TrimSuffix(base, ".md")
 		}
-		st, why := drainVerdict(in, m, state, label)
+		items = append(items, candidate{card: card, base: base, label: label, m: m})
+		if _, _, reason := drainVerdict(in, m, facts, label); reason == "unprobed" {
+			unprobed = append(unprobed, label)
+		}
+	}
+	// The probe is ONE call for every candidate, and it is the only thing that can turn
+	// an unknown label into `job-dir-gone` (Johnny's HOLD on #1984).
+	if len(unprobed) > 0 && facts.probe != nil {
+		facts.probed = facts.probe(unprobed)
+	}
+
+	for _, it := range items {
+		card, base, label, m := it.card, it.base, it.label, it.m
+		st, why, reason := drainVerdict(in, m, facts, label)
 		if st == "" {
 			left++
+			leftBy[reason]++
 			continue
 		}
 		// (d) --max bounds the mutation. `--max 1` printed one line and drained 151.
 		if in.Max > 0 && drained >= in.Max {
 			left++
+			leftBy["max"]++
 			continue
 		}
 		dir := doneDir
 		if st == "failed" {
 			dir = failedDir
 		}
+		fail := func(reason, detail string) {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST DRAIN-FAIL card=%s lane=%s bench=%s reason=%s %s",
+				field(base), field(m["lane"]), field(m["bench"]), reason, detail))
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			left++
-			fmt.Fprintf(in.Stderr, "HARVEST NOTE drain %s: %s\n", field(base), oneline.Err(err))
+			fail("destination", oneline.Err(err))
 			continue
 		}
-		if err := os.Rename(card, filepath.Join(dir, base)); err != nil {
-			left++
-			fmt.Fprintf(in.Stderr, "HARVEST NOTE drain %s: %s\n", field(base), oneline.Err(err))
+		// The pair moves whole or not at all. A destination that already holds either
+		// half is evidence somebody else wrote, and a rename would overwrite it.
+		destCard, destMarker := filepath.Join(dir, base), launchedMarker(dir, base)
+		srcMarker := launchedMarker(in.Launched, base)
+		hasMarker := exists(srcMarker)
+		if exists(destCard) || (hasMarker && exists(destMarker)) {
+			fail("destination-exists", fmt.Sprintf("dir=%s (something is already there; this run overwrites no evidence)", field(dir)))
 			continue
 		}
-		// The launched marker MOVES with its card; it is never deleted. It is the only
+		// The launched marker MOVES with its card and is never deleted: it is the only
 		// record of which bench the job is on, and a card whose marker was deleted
-		// cannot be harvested by anyone afterwards -- 149 of them had to be
-		// reconstructed by hand by scanning every bench (#1950).
-		if err := os.Rename(launchedMarker(in.Launched, base), launchedMarker(dir, base)); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(in.Stderr, "HARVEST NOTE drain %s: %s\n", field(base), oneline.Err(err))
+		// cannot be harvested by anyone afterwards -- 149 had to be reconstructed by
+		// hand (#1950). It moves FIRST: a marker that cannot move leaves the card
+		// exactly where it is, with its record beside it.
+		if hasMarker {
+			if err := renameForDrain(srcMarker, destMarker); err != nil {
+				fail("marker-move", fmt.Sprintf("%s (the card stays where it is, with its record)", oneline.Err(err)))
+				continue
+			}
+		}
+		if err := renameForDrain(card, destCard); err != nil {
+			detail := oneline.Err(err)
+			if hasMarker {
+				// Put the record back beside its card: the pair is recoverable in
+				// ONE place, which is the whole point of moving the marker first.
+				if back := renameForDrain(destMarker, srcMarker); back != nil {
+					fail("rollback", fmt.Sprintf("%s; the marker is at %s and its card at %s -- MOVE IT BACK BY HAND",
+						detail, field(destMarker), field(card)))
+					continue
+				}
+			}
+			fail("card-move", fmt.Sprintf("%s (the pair is untouched under --launched)", detail))
+			continue
 		}
 		note := fmt.Sprintf("%s\tlane=%s\tbench=%s\tlabel=%s\twhy=%s\n", stamp, m["lane"], m["bench"], label, why)
 		_ = os.WriteFile(marker(dir, base, st, stamp), []byte(note), 0o644)
@@ -637,67 +802,179 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 		lines.Line(fmt.Sprintf("HARVEST DRAIN card=%s lane=%s state=%s bench=%s why=%s",
 			field(base), field(m["lane"]), st, field(m["bench"]), why))
 	}
-	return drained, left
+	for _, reason := range leftReasons {
+		if n := leftBy[reason]; n > 0 {
+			lines.Line(fmt.Sprintf("HARVEST LEFT reason=%s cards=%d", reason, n))
+		}
+	}
+	if leftBy["no-session"] > 0 {
+		fmt.Fprintf(in.Stderr, "HARVEST NOTE drain: --launched without --session drains nothing (name the session whose cards these are: the one `fill --session` stamped into the launched markers)\n")
+	}
+	return drained, left, failed
+}
+
+// renameForDrain is the drain's one mutation, held in a variable so a test can inject a
+// failing rename and prove the card and its marker are never left in two places. Nothing
+// but a test ever replaces it.
+var renameForDrain = os.Rename
+
+// exists says whether a path is there at all -- a file, a directory, anything.
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// leftReasons is the printing order of the `HARVEST LEFT` counts: one bounded line per
+// reason, never one per card, because a shared queue holds a hundred cards that are simply
+// somebody else's and saying so a hundred times is not a receipt.
+var leftReasons = []string{"running", "unharvested", "no-session", "other-session", "other-bench",
+	"probe-present", "probe-unknown", "unprobed", "unproven", "incomplete-listing", "max"}
+
+// drainFacts is everything the fold learned, and the ONLY evidence the drain is allowed to
+// decide on: what became of each job, the session each job's own RESULT.md named, and
+// whether the bench's traversal was complete and readable. Anything not in here is unknown,
+// and unknown means leave the card alone.
+type drainFacts struct {
+	state    map[string]string // label -> jobRunning | jobDone | jobHeld
+	complete bool              // every --root was enumerated whole, and readable
+	// probed is the per-label answer to "is THIS card's own job directory there?":
+	// present | absent | unknown. probe fills it in one call for the labels the fold
+	// said nothing about. A label in neither is not proven gone and is left alone.
+	probed map[string]string
+	probe  func(labels []string) map[string]string
 }
 
 // drainVerdict answers what this harvest may do with ONE launched card, from that card's
-// own launch record and from what the fold learned about its job. An empty state is the
-// answer for everything this run cannot prove is its own and finished: leave it exactly as
-// found. This is #1950's rule and the only place it is decided.
-func drainVerdict(in HarvestInput, m map[string]string, state map[string]string, label string) (st, why string) {
-	// (a) The record must be the caller's. The marker carries the session `fill` stamped
-	// into it; a card of another lane's session is not this harvest's to move, and a
-	// marker that names no session at all cannot be proved to be ours either.
-	if want := strings.TrimSpace(in.Session); want != "" && m["session"] != want {
-		return "", ""
+// own launch record and from what the fold learned. Everything this run cannot PROVE is its
+// own and finished is left exactly as found, with the reason it was left. This is #1950's
+// rule and the only place it is decided.
+func drainVerdict(in HarvestInput, m map[string]string, facts drainFacts, label string) (st, why, reason string) {
+	// (a) The record must be the caller's, and the caller must SAY who that is. Stella's
+	// ownership ruling and Johnny's finding on #1984: an omitted --session silently meant
+	// every session in a shared queue. It is not inferred from anything -- not from the
+	// job's RESULT.md, not from the lane, not from the bench. No --session, no drain.
+	want := strings.TrimSpace(in.Session)
+	if want == "" {
+		return "", "", "no-session"
+	}
+	if m["session"] != want {
+		return "", "", "other-session"
 	}
 	// (b) It must be on the bench this harvest looked at. The drain printed
 	// `bench=captainamerica` under `--bench vision` and moved the card anyway.
 	if m["bench"] != strings.TrimSpace(in.Bench) {
-		return "", ""
+		return "", "", "other-bench"
 	}
 	// (c) Finished, or provably dead. jobHeld and an unknown job are both "not proven".
-	switch state[label] {
+	switch facts.state[label] {
 	case jobDone:
-		return "done", "result"
-	case jobRunning, jobHeld:
-		return "", ""
+		return "done", "result", ""
+	case jobRunning:
+		return "", "", "running"
+	case jobHeld:
+		return "", "", "unharvested"
 	}
-	// A label the listing did not name is `job-dir-gone` ONLY when the listing covered
-	// this card's own bench AND actually answered -- an empty listing proves nothing, and
-	// `jobs=0 ... drained=151` was the whole of #1950.
-	if len(state) == 0 {
-		return "", ""
+	// A label the listing did not name is `job-dir-gone` only on EVIDENCE OF ABSENCE, and
+	// there are three ways to have none.
+	//
+	// An empty listing proves nothing -- `jobs=0 ... drained=151` was the whole of #1950.
+	// A traversal that could not read a directory proves nothing either: Stella's fixture
+	// put a live job under a `jobs` directory at mode 000, the glob matched nothing, the
+	// script exited 0, and a second root's visible job was enough to call that live card
+	// dead. And a sibling job being listed says nothing at all about THIS card (Johnny),
+	// so the bench is asked for this label BY NAME and only its own answer counts.
+	if !facts.complete {
+		return "", "", "incomplete-listing"
 	}
-	return "failed", "job-dir-gone"
+	if len(facts.state) == 0 {
+		return "", "", "unproven"
+	}
+	switch facts.probed[label] {
+	case "absent":
+		return "failed", "job-dir-gone", ""
+	case "present":
+		return "", "", "probe-present"
+	case "unknown":
+		return "", "", "probe-unknown"
+	}
+	// Nobody has asked the bench about this label yet, or the probe never answered.
+	return "", "", "unprobed"
 }
 
 // localJobStates is the drain's state map when there is no --bench: every
 // `<root>/<slot>/jobs/<label>` under the root, done when it carries a RESULT.md.
-func localJobStates(root string) map[string]string {
+// It answers `complete` too: a directory that is there and could not be read is a hole in
+// the traversal, and a hole means this run cannot say any label is absent (#1950).
+func localJobStates(root string) (map[string]string, bool) {
 	out := map[string]string{}
 	slots, err := os.ReadDir(root)
 	if err != nil {
-		return out
+		return out, false
 	}
+	complete := true
 	for _, s := range slots {
 		if !s.IsDir() {
 			continue
 		}
-		jobs, err := os.ReadDir(filepath.Join(root, s.Name(), "jobs"))
+		jobsDir := filepath.Join(root, s.Name(), "jobs")
+		jobs, err := os.ReadDir(jobsDir)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 		for _, j := range jobs {
 			if !j.IsDir() {
 				continue
 			}
-			st := "running"
-			if _, err := os.Stat(filepath.Join(root, s.Name(), "jobs", j.Name(), "RESULT.md")); err == nil {
-				st = "done"
+			st := jobRunning
+			if _, err := os.Stat(filepath.Join(jobsDir, j.Name(), "RESULT.md")); err == nil {
+				st = jobDone
 			}
 			out[j.Name()] = st
 		}
+	}
+	return out, complete
+}
+
+// localProbe is the local form's per-label probe, the same question benchProbeScript asks
+// over ssh: is THIS label's own job directory under this root, and could every `jobs`
+// directory it might be in actually be read? os.ReadDir reports the permission error a
+// glob swallows, so an unreadable directory answers `unknown` and never `absent`.
+func localProbe(root string, labels []string) map[string]string {
+	out := map[string]string{}
+	slots, err := os.ReadDir(root)
+	if err != nil {
+		return out
+	}
+	unknown := false
+	dirs := make([]string, 0, len(slots))
+	for _, s := range slots {
+		if !s.IsDir() {
+			continue
+		}
+		jobsDir := filepath.Join(root, s.Name(), "jobs")
+		if _, err := os.ReadDir(jobsDir); err != nil {
+			if !os.IsNotExist(err) {
+				unknown = true
+			}
+			continue
+		}
+		dirs = append(dirs, jobsDir)
+	}
+	for _, label := range labels {
+		state := "absent"
+		for _, d := range dirs {
+			if exists(filepath.Join(d, label)) {
+				state = "present"
+				break
+			}
+		}
+		if state == "absent" && unknown {
+			state = "unknown"
+		}
+		out[label] = state
 	}
 	return out
 }
