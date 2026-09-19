@@ -825,10 +825,12 @@ and two with one `at` to the second fold **hold-last**, as rule 18 folds
 red-last; the tool deletes no record, and the lane branch's history keeps
 the hold.
 
-**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §6 (draft, 2026-09-19; #1572):** `batch`, `land`,
-`queue sweep` and `react` fold dispositions too — the lane's records, and the forge's comments
-and reviews, which can only ADD a hold and never approve or lift — and refuse a held member,
-read once at admission and again at the door.
+**Amended by [SPEC-DECIDE.md](SPEC-DECIDE.md) reading 3, *The hold check* (draft, 2026-09-19;
+#1572, #1627), which [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §6 points to:** `batch`, `land`,
+`queue sweep` and `react` fold holds too — the lane's line-level APPROVE/HOLD records, and the
+forge's comments and reviews, which can only ADD a hold and never approve or release — and
+refuse a held member, read once at admission and again at the door; a scoped APPROVE releases
+only the hold ids it names, and no flag ignores a hold.
 
 **An approve from the author is not a read.** The prototype counts any recorded
 approve, which made a self-approve indistinguishable from a read — and the whole

@@ -1,4 +1,4 @@
-# Mechanical tool work — specification (draft 4, 2026-09-19)
+# Mechanical tool work — specification (draft 5, 2026-09-19)
 
 Glenn, 2026-09-19: *"I want to upgrade our tools so we can push more work to swarms
 mechanically."*
@@ -76,7 +76,8 @@ measurement also **bounds** the decision.
    `<queue>/decide/outcomes.jsonl`, the file `harvest` already appends (§4 rule 5). A
    card **passes** when the gate said `ACCEPT OK` **and a read of it was recorded** at its
    head with no HOLD; it **fails** when the gate said `REJECT`, or a HOLD landed on it
-   after an `ACCEPT OK`. **An accepted result nobody has read yet counts for neither**,
+   after an `ACCEPT OK` (a hold is what the one fold of `docs/SPEC-DECIDE.md` reading 3,
+   #1627, says it is; §6). **An accepted result nobody has read yet counts for neither**,
    like an `ABSTAIN`, which is the bench's: a result nobody looked at cannot draw a HOLD,
    and a rate that counted it as a pass would rise by not looking — a rule over nothing
    passes by checking nothing. Nothing else feeds
@@ -202,7 +203,8 @@ every card whatever its area, and the ruling does not loosen them:
     is to change an existing test carries `TEST-EDIT: <file>` in its header — written
     by the card writer, inside the contract hash (§5 rule 1) — and only the named file
     is excused. A deleted test file is never excused.
-12. **HOLDs still block** (§6), and nothing here lifts one.
+12. **HOLDs still block** (§6, which is the fold of `docs/SPEC-DECIDE.md` reading 3, #1627),
+    and nothing here lifts one.
 13. **A security-kind unit is the designated mind's, by machinery, and that IS the
     classifier's answer.** A card whose `PATHS:` or diff touches a guard, secrets, the
     sandbox, sudo, deploy keys or the network is a security kind: *"a kind and not a
@@ -301,7 +303,12 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    counts `rejected=<n>` on `HARVEST OK`, and sends the card down rule 14's requeue-once
    path with the reason token as the requeue's evidence. `ABSTAIN` pushes nothing and
    requeues nothing: it is the bench's fault, and it is one line in `<root>/bench.tsv`
-   for a person. There is no `--no-gate`. A kind whose declared gate is `none` (reads,
+   for a person. The one abstain that is nobody's fault is `reason=paused`: the
+   coordinator paused the kind after the card was launched (the eligibility rule, 4);
+   `harvest` re-reads the trust state and produces it, it writes no `bench.tsv` row, it
+   requeues nothing (the remedy is `trust --set trial`, not a rerun), and for the track
+   record it counts as neither a pass nor a fail, like every `ABSTAIN` (the eligibility
+   rule, 1). There is no `--no-gate`. A kind whose declared gate is `none` (reads,
    probes) skips the step and its `HARVEST` row says `gate=none`, so a green row never
    claims a check that did not run.
 2. **The gate reads the card and the commit, never the report.** Its inputs are the
@@ -592,7 +599,7 @@ mechanical, and the harvest half never trusts that the staging half ran.
    and are not valid keys for any provider.
 7. **The checks are one package with one entry point**, `internal/hygiene.Check(repo,
    base, head, paths, identity) []Finding`, called by `accept`, by `nova-merge batch`
-   on each member (§6 rule 6) and by a `nova-check hygiene` verb a person can run on a
+   on each member (§6 rule 7) and by a `nova-check hygiene` verb a person can run on a
    branch before asking for a read. One implementation, three callers, so the lane and
    the harvest cannot disagree about what clean means. `identity` is a set and
    `paths` may be absent: at harvest the set is the pool's one row and `paths` is the
@@ -773,82 +780,55 @@ everything it was specified to check. Three more were one command from the same 
 the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head) and
 #1479 (green, MERGEABLE, approved, and does not compile on `dev`).
 
-1. **One fold, two sources, and the forge source is one-way: it can only ADD a hold.**
-   The fold takes (a) the lane's records — `nova-merge read` and `nova-review verdict`,
-   each written by the reader's own verb on the reader's own machine and pushed to the
-   lane branch (`docs/SPEC-MERGE.md:286-304`) — and (b) the forge's reviews and comments
-   on the pull request. **Only (a) can approve, and only (a) can lift.** A forge comment
-   that says APPROVE, in prose or on a typed line, counts for nothing: on this
-   repository several friends write through one shared login, so a pasted
-   `verdict=APPROVE` naming Stella is indistinguishable from Stella's, and a read is
-   *"recorded by the reader, with the verb … never by writing a note the coordinator
-   then reads and transcribes"* (SPEC-MERGE rule 19), while *"an APPROVE names what it
-   compared"* (`docs/SPEC-REVIEW.md:236`). The key is `(who, head)`; per key the newest
-   `at` wins and a tie folds **hold-last** (`docs/SPEC-MERGE.md:820-827`). `who` is a
-   name in the lane's `reviewers.tsv` (`who`, `logins`, `may-hold`) and is never
-   inferred from a login: a login is evidence about an account.
-2. **What on the forge adds a hold, and the head each one binds to.** From any login
-   listed in `reviewers.tsv`, **whenever it was posted** — there is no time filter on a
-   hold, because a filter that drops what came before the last push lets a push lift a
-   hold, and on this repository holds ARE forge comments: that is #1572 by one push. A
-   review in state `CHANGES_REQUESTED` binds to its `commit_id`; an untyped comment binds
-   to the head that was current when it was posted; a typed line binds to its own
-   `head=`. All three then carry forward under rule 3 until the holder's own release
-   (rule 4). The three forms: the review; a comment carrying the typed line
+**The fold is specified once, in `docs/SPEC-DECIDE.md`, reading 3, *The hold check: no held
+head is batched or landed* (#1627), and this section restates none of it.** Drafts 1 to 4 of
+this file carried their own fold beside #1627's, and two implementations following their own
+spec could have disagreed on a landing. There is now one contract, and where this file and that
+reading seem to differ, that reading wins and this file has a bug. What follows names the
+paragraphs of reading 3 that hold each sentence, so that an implementer of T16 opens one text.
 
-   ```
-   DISPOSITION who=<name> head=<sha40> verdict=HOLD [scope="<text>"]
-   ```
-
-   which `nova-merge read` and `nova-review verdict` print beside their record for the
-   reader to paste; **or** a comment with no typed line whose text holds the word
-   `HOLD` as a heading word or inside bold — `hold-unparsed`, attributed to
-   `who=unknown`. The login is **not** used to excuse a comment: draft 1 skipped the
-   pull request's author login, and where the friends and the author share one login
-   that skips every comment there is and fails open — #1572 again. The one exclusion is
-   by `who`: a comment carrying `DISPOSITION who=<the entry's author> verdict=NOTE` is
-   the author's own status note and is not scanned, because this lane quotes the word
-   while reporting on holds. A comment from a login not in `reviewers.tsv` adds nothing
-   and is counted (`foreign=<n>`), so a stranger on a public repository cannot stop the
-   lane and cannot be missed either.
-3. **What blocks.** A member is **held** when, for any `who` with `may-hold` or for
-   `who=unknown`: the newest disposition at the current head is HOLD; **or** there is
-   none at the current head and the newest at any earlier head is HOLD (`hold-carried`:
-   a push does not lift a hold, SPEC-REVIEW rule 7, *"a HOLD never expires"*,
-   `docs/SPEC-REVIEW.md:269`). A false drop costs one verb from the reviewer; a false
-   admit costs a held head on `dev`.
-4. **What lifts, and it is always the verb.** A HOLD attributed to a named `who` is
-   lifted only by **that** `who` recording APPROVE at the current head with `nova-merge
-   read` or `nova-review verdict` — a scoped APPROVE counts, a prose *"clear"* and a
-   pasted line do not. A `who=unknown` hold is lifted when a `may-hold` reviewer who is
-   not the entry's author records, with the verb, at the current head and later than
-   the comment, either a HOLD of their own (the hold is now theirs) or an APPROVE whose
-   `--note` names the comment's id. Nothing the author, the lane or a forge comment can
-   type lifts anything. There is no `--ignore-hold`: the escape for a holder who cannot
-   be woken is Glenn removing that name's `may-hold` in `reviewers.tsv` by commit,
-   which is a record with an author and a date.
-5. **Read twice: at admission and again at the door.** `batch` folds each member's
-   dispositions at the point it reads that member's `ci-ok`, from the wire, and drops a
-   held member before the merge:
-
-   ```
-   BATCH DROP #<n> reason="held by <who> at <stamp> head=<sha12> (<hold|hold-carried|hold-unparsed>) <url>"
-   ```
-
-   `BATCH OK` gains `holds=<n>` (members dropped as held) and `dispositions=<stamp>`
-   (when the fold was read). `land` reads the receipt's `members=` list and folds every
-   member **again**, from the wire, immediately before `Enqueuer.Enqueue`; one held
-   member refuses the whole landing, exit 1:
-
-   ```
-   LAND REFUSED pr=<n> member=#<m> held by <who> at <stamp> (posted after BATCH OK at <stamp>); rebuild the batch without it
-   ```
-
-   The 02:34Z hold arrived between the two reads; only the second one sees it. `queue
-   sweep` and `react` fold the same way and never enqueue a held pull request
-   (`held=<n>` on `QUEUE SWEEP`), and `nova-pulse status` counts held PRs so a lane
-   standing behind a hold does not read as a lane with nothing to do.
-6. **A swarm's member carries its gate's line and passes hygiene again.** A member
+1. **What the fold takes** is reading 3, *The inputs*: the lane's line-level APPROVE/HOLD read
+   records (`nova-merge read`, and the `nova-review verdict --kind line` that writes the same
+   record, `docs/SPEC-REVIEW.md:253-260`), the forge's `CHANGES_REQUESTED` reviews, and the
+   comments from a login in the reviewer file. **An ABSTAIN record, a `child` record and a `card`
+   record are not inputs.** The fold is over **unresolved holds**, each with its holder, its head
+   and its release condition, and nothing newer masks one: a same-head or a later-head ABSTAIN
+   by the same reader leaves a hold exactly where it was. The sources are a union, and a hold in
+   any one of them stops the member.
+2. **Whose hold it is** is reading 3, *Who holds*, and SPEC-DECIDE S6: `who` is a name in the
+   lane's reviewer file (`who`, `logins`, `may-hold`) mapped through the typed `DISPOSITION who=`
+   line, and `unknown` otherwise; a `who=unknown` hold holds; a login is evidence about an
+   account and excuses nothing (draft 1 skipped the author's login, and where the friends and the
+   author share one login that skipped every comment there was). The one comment not scanned is
+   the entry author's own `verdict=NOTE` line.
+3. **What adds a hold** is reading 3, *What adds a hold, by the rule table, with no call* and
+   *What the decider may do, which is add*: a typed `DISPOSITION … verdict=HOLD` line, a
+   first-line hold token, the word `HOLD` as a heading word or in bold, a `CHANGES_REQUESTED`
+   review, a decided `hold` at any confidence; each binds to a head and **carries across a
+   push**, with no time filter (SPEC-REVIEW rule 7, *"a HOLD never expires"*,
+   `docs/SPEC-REVIEW.md:269`). The forge source is one-way: it only ever adds. A false drop costs
+   one verb from the reviewer; a false admit costs a held head on `dev`.
+4. **What releases a hold** is reading 3, *What releases a hold*: only its holder, only by the
+   verb (`nova-merge read --verdict approve --head <sha40>`, or the `nova-review verdict` line
+   APPROVE that writes it), only at the current head, and a **scoped** APPROVE releases only the
+   hold ids it names with `--releases`, so a reviewer who held the parser and approved the
+   documentation has not released the parser. A forge `APPROVED` review, the forge's dismissal
+   of a review, a comment typed or untyped, a decider's answer and a push each release nothing.
+   A `who=unknown` hold is released only by a `may-hold` reader's verb naming it.
+5. **What no flag does** is reading 3, *No flag ignores a hold*: there is no `--ignore-hold`.
+   `--no-require-holds --reason <text>` is the one waiver, of the forge sources whole and never
+   of the lane's records, XOR `--reviewers`, printed on every line. The escape for a holder who
+   cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, and the
+   receipt names the commit and not the reader.
+6. **Where the fold runs** is reading 3, *The inputs* and *The lines*: at `batch`, at the point
+   it reads each member's `ci-ok`, from the wire; **again** at `land`, over the receipt's
+   `members=`, from the wire, immediately before `Enqueuer.Enqueue`, where one held member
+   refuses the whole landing (the 02:34Z hold arrived between the two reads, and only the
+   second one sees it); and at `queue sweep` and `react`, which never enqueue a held pull
+   request. The `BATCH DROP`, `LAND REFUSED`, `holds=` and `dispositions=` grammar is reading
+   3's. This file adds one line: `nova-pulse status` counts held PRs, so a lane standing behind a
+   hold does not read as a lane with nothing to do.
+7. **A swarm's member carries its gate's line and passes hygiene again.** A member
    whose head branch was pushed by `harvest` is admitted to a batch only if its PR
    body's first line is an `ACCEPT OK` whose `head=` is the member's current head and
    whose `control=` is on file; otherwise `BATCH DROP #<n> reason="no ACCEPT OK for head
@@ -858,7 +838,7 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
    — the rule added here is that the failing member is **named** by bisecting the
    members once (`BATCH DROP #<n> reason="build red with this member merged: <first
    line>"`) instead of failing the batch whole.
-7. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
+8. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
    condition; `needs_read` stands for every swarm PR that changes code, on trial or trusted
    (the eligibility rule, 3), and the reader
    *"judges spec fit and nothing else"* (`docs/SPEC-REVIEW.md:659-660`) because the
@@ -867,20 +847,30 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
    And for a security-kind member the read that counts is the designated mind's and
    nobody else's (the eligibility rule, 13).
 
-**Red tests**, the forge a fake in every one: `batch-drops-a-member-held-at-its-head`;
-`batch-drops-a-carried-hold-after-a-push`; `a-forge-hold-posted-before-a-push-still-holds`
-(three fixtures — a typed line, a `CHANGES_REQUESTED` review, an untyped comment — each
-posted at head A, then a push to B, with NO lane record at all: still held, `hold-carried`); `a-newer-approve-by-the-same-who-lifts-it`;
-`another-reviewers-approve-lifts-nothing`; `a-pasted-approve-line-lifts-nothing` (the
-shared login types `verdict=APPROVE who=<holder>`; the member stays held);
-`a-forge-approved-review-counts-for-nothing`; `changes-requested-is-a-hold-bound-to-its-commit-id`;
-`an-untyped-hold-from-the-shared-login-fails-closed` (author and reviewers on ONE login,
-the fixture draft 1 failed open on); `the-authors-note-line-drops-nothing`;
-`an-unknown-hold-is-lifted-only-by-a-reviewers-verb`; `a-foreign-login-adds-nothing-and-is-counted`;
-`removing-may-hold-by-commit-releases-the-lane`; `two-names-one-login-fold-separately`;
-`land-refuses-a-hold-posted-after-batch-ok` (the fake forge grows a comment between the
-two reads; the receipt is #1572's timeline); `sweep-never-enqueues-a-held-pr`;
-`batch-names-the-member-that-breaks-the-build`; `swarm-member-without-accept-ok-is-dropped`.
+**Red tests.** The fold's tests are reading 3's *Demanded tests* in `docs/SPEC-DECIDE.md`
+(#1627), by name, each a transition table over a fake forge, and T16 is not done until every one
+of them is red then green; this file names the ones its reviewers asked for so that no reading of
+this file can miss them: `an-abstain-record-is-not-an-input` (a recorded HOLD at H1, then the
+same reader's ABSTAIN at H1: held; then a push to H2 and their ABSTAIN at H2: still held,
+`carried=yes`); `child-and-card-records-are-not-inputs`;
+`a-scoped-approve-releases-only-the-holds-it-names` (a parser HOLD and a docs HOLD by one
+reader; their docs-scoped APPROVE leaves the parser held; their scoped APPROVE naming nothing
+releases nothing; their unscoped APPROVE at the current head releases both);
+`a-push-releases-nothing` (a typed line, a `CHANGES_REQUESTED` review and an untyped HOLD
+comment, each posted at head A, then a push to B, with NO lane record at all: each still held);
+`an-untyped-hold-from-the-shared-login-fails-closed` (author and reviewers on ONE login, the
+fixture draft 1 failed open on); `the-authors-note-line-is-not-scanned-and-the-authors-login-skips-nothing`;
+`a-comment-never-releases-anything` (a pasted `DISPOSITION … verdict=APPROVE` from the shared
+login naming the current head; still held); `a-forge-approved-review-releases-nothing`;
+`a-dismissal-releases-nothing`; `only-the-holder-releases`;
+`an-unknown-hold-is-released-only-by-a-readers-verb-naming-it`; `two-names-one-login-fold-separately`;
+`there-is-no-flag-that-ignores-one-hold`; `no-require-holds-waives-the-forge-sources-only-and-is-printed`;
+`reviewers-xor-no-require-holds`; `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
+`land-refuses-a-hold-posted-after-batch-ok` (the receipt is #1572's timeline);
+`sweep-and-react-never-enqueue-a-held-pr`. A class test, `toolwork-names-only-tests-reading-3-demands`,
+asserts every test name in this paragraph appears in reading 3's list, so the two texts cannot
+drift apart. This file's own tests, for rules 7 and 8: `batch-names-the-member-that-breaks-the-build`;
+`swarm-member-without-accept-ok-is-dropped`; `status-counts-held-prs`.
 
 ## 7. Tests that execute documents
 
@@ -984,8 +974,8 @@ narrowest, most mechanical kinds with the strongest controls.
 | T13 (#1658) | builder: no kind yet | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
 | T14 (#1659) | trial, trusted after a track record | `rebase`: the conflicting open PRs that are ours, oldest first, one per card (54 conflicted at the triage); the read card lists the files that conflicted | §5 `rebase` |
 | T15 (#1660) | trial, trusted after a track record | `mutation-kill`: one card per surviving mutant, from a mutation pass a builder runs with hand-written one-edit seeds and files (Q8) | §5 `mutation-kill` |
-| T16 (#1572) | builder: no kind yet | #1572: the disposition fold, the forge adding holds only and the verb alone lifting, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
-| T17 (#1661) | builder: no kind yet | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build; a security-kind member needs the designated mind's APPROVE | §6 rule 6, eligibility rule 13 |
+| T16 (#1572) | builder: no kind yet | #1572: the one fold exactly as `docs/SPEC-DECIDE.md` reading 3 (#1627) specifies it — the forge adding holds only, the holder's verb alone releasing, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too, no flag ignores a hold — with reading 3's demanded tests | §6 rules 1-6, SPEC-DECIDE reading 3 |
+| T17 (#1661) | builder: no kind yet | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build; a security-kind member needs the designated mind's APPROVE | §6 rule 7, eligibility rule 13 |
 | T18 (#1662) | builder: no kind yet | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
 | T19 (#1663) | builder: no kind yet | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
 | T20 (#1664) | builder: no kind yet | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
@@ -1012,17 +1002,28 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
   to do this, and the classifier (Jev) says its work they can handle."* There is no
   never-touch set. The eligibility rule replaces it, and the invariant that survives is
   mechanical: a card never edits what judges it (rules 10-11).
-- **Q2. Whose HOLD counts.** Default, taken from the cold read of draft 1: every name in
-  the lane's `reviewers.tsv` with `may-hold`, keyed by `who` and never by login, seeded
-  with Glenn and every friend who reads for this repository; plus `who=unknown` for an
-  untyped hold, which fails closed.
-- **Q3. What lifts a HOLD, and the escape.** Default: only the holder's own APPROVE at
-  the current head, by the verb; a hold carries across a push; no `--ignore-hold`. The
-  escape for a holder who cannot be woken (#1519) is Glenn removing that name's
-  `may-hold` by commit, which is a record.
-- **Q4. Will friends write the typed `DISPOSITION` line?** No longer load-bearing: the
-  forge only adds holds and fails closed on an untyped one, and only the verb lifts or
-  approves, so the typed line buys attribution and nothing else.
+- **Q2. Whose HOLD counts. — SETTLED in `docs/SPEC-DECIDE.md` reading 3 (#1627), *Who
+  holds*, and S6:** every name in the lane's reviewer file with `may-hold`, keyed by `who`
+  and never by login, seeded by commit with Glenn and every friend who reads for this
+  repository; plus `who=unknown` for a hold with no mapped name, which fails closed.
+  Stella (2026-09-19, #1637 at 6d5a30da): configured named participants count, and a
+  shared account identifies an account, not which friend is speaking.
+- **Q3. What lifts a HOLD, and the escape. — SETTLED in reading 3, *What releases a hold*
+  and *No flag ignores a hold*:** only the holder's own APPROVE at the current head, by the
+  verb, and a scoped APPROVE releases only the hold ids it names; a hold carries across a
+  push; no `--ignore-hold` (Johnny and Emma on #1680, Stella on this file: *"a hold is a
+  no"*); `--no-require-holds --reason` waives the forge sources whole and is printed. The
+  escape for a holder who cannot be woken (#1519) is a commit removing that name's
+  `may-hold`, which is a record, and the receipt names the commit and not the reader.
+- **Q4. Will friends write the typed `DISPOSITION` line?** Stella, Emma and Johnny each
+  said yes on 2026-09-19 and have since. It is not load-bearing: the forge only adds holds
+  and fails closed on an untyped one, and only the verb lifts or approves, so the typed
+  line buys attribution (a hold under a name instead of `who=unknown`) and nothing else.
+- **Q10. The one point the join did not settle:** the baseline for a scanned comment that
+  carries neither a typed line nor the word HOLD is *not a hold* in reading 3, with
+  `--strict-comments` as the lane's opt-in. Stella asked for the strict reading by
+  default; Johnny called the flag the right door. The coordinator carries the ruling;
+  either answer is one sentence in reading 3 and none here.
 - **Q5. nova-post's quickstart documents `--channel fake`, which the tool refuses.**
   Default: re-cut the block; a fake channel does not ship. nova-post's T8 card waits on
   that re-cut.
@@ -1045,7 +1046,8 @@ It lands no code. It forbids no path to a swarm. It does not let a swarm land an
 lift a hold, skip a read, enqueue anything, write its own track record or edit what judges
 it. It does not change the read condition, and it does not move a security-kind unit off
 the designated mind: SPEC-DECIDE's routing table does that, by commit, or nothing does. It lets no classifier answer suffice for anything. It does not specify Jev's
-question, options, state or floor — that is the Jev lane's SPEC-DECIDE amendment. It
+question, options, state or floor — that is the Jev lane's SPEC-DECIDE amendment. It does not
+specify the hold fold either: that is SPEC-DECIDE reading 3 (#1627), once, and §6 points at it. It
 does not widen the wall: §2 names narrower roots per leg and refuses an unknown one. It
 does not make a mutant generator (Q8). It does not certify any Linux bench for a walled
 leg until §2 rule 7's list is closed.
