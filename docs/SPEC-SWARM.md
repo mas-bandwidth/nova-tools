@@ -1220,6 +1220,18 @@ replaced), and its `permission.external_directory` allows:
   `READ:` line, and that path's parent with a `/*` on it, which is what the
   fence asks about for a file. A walled run takes none of them: the WALL owns
   what the child may read (SPEC-SANDBOX rule 1), and the fence is not a wall.
+  A card is the MODEL's text, and a fence rule a card can widen for itself is
+  no fence; and
+- **on every run, walled or not**, every `read_roots` entry of the worker
+  description, in the same three spellings (issue #1463). This one is the
+  DESK's declaration and not the model's: a person wrote it, `LoadWorker`
+  validated it, and it is the same list the wall is handed on the line above
+  (`nova-sandbox --read <read_roots entry>`). The fence may not deny what the
+  wall grants — a second, weaker fence that contradicts the first one can only
+  cost cards, and it cost one whole card at `NATIVE OK rc=0 harness=ok` before
+  this rule existed. **Red test:** a walled `native` run whose description
+  names `read_roots` writes a config that allows those roots, and still names
+  no path the card asked for.
 
 **Nothing ABOVE the job is ever named** — not the `jobs` parent. The harness
 resolves a card's `../scratch` after the card's own `cd repo`, so a parent rule
