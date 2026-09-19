@@ -1228,6 +1228,3 @@ func TestQueueSweepRefusesMalformedLaneRecord(t *testing.T) {
 	contains(t, stderr, "QUEUE REFUSED")
 	contains(t, stderr, "corrupt.json")
 }
-
-
-

@@ -182,4 +182,3 @@ func TestLoadLaneVerdictsRefusesLaneNone(t *testing.T) {
 		t.Fatalf("LoadLaneVerdicts error must name 'none': %v", err)
 	}
 }
-
