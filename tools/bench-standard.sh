@@ -150,6 +150,34 @@ else
   fi
 fi
 
+# (3b) the network probe runs inside the real sandbox, never on the host, so
+# what it reports is what a card would see (#893).
+if [ "$OS" = "Linux" ]; then
+  probe_url="${NOVA_PROBE_URL:-https://models.opencode.ai/api.json}"
+  probe_dir="$(mktemp -d "$HOME_DIR/nova-bench/nova-probe.XXXXXX" 2>/dev/null || true)"
+  if [ -z "$probe_dir" ]; then
+    drift "sandbox-network: cannot make probe dir under $HOME_DIR/nova-bench"
+  else
+    mkdir -p "$probe_dir/home"
+    sandbox_bin="$HOME_DIR/.local/bin/nova-sandbox"
+    if [ ! -x "$sandbox_bin" ]; then
+      drift "sandbox-network: $sandbox_bin not executable"
+    else
+      http="$(HOME="$probe_dir/home" "$sandbox_bin" --read "$HOME_DIR/nova-bench" --write "$probe_dir" --cwd "$probe_dir" -- curl -s -o /dev/null -w '%{http_code}' "$probe_url" 2>/dev/null || true)"
+      # Only an all-digit reply is curl's http code. Anything else means the
+      # binary did not run the command (check (4) already owns whether the
+      # nova-sandbox on the bench is the one we want); an empty reply is a
+      # reachability failure and still drifts.
+      case "$http" in
+        "") drift "sandbox-network: curl inside nova-sandbox got http= (want 200)" ;;
+        *[!0-9]*) ;;
+        *) [ "$http" = "200" ] || drift "sandbox-network: curl inside nova-sandbox got http=$http (want 200)" ;;
+      esac
+    fi
+    rm -rf "$probe_dir"
+  fi
+fi
+
 # (4) the 16 nova bins each report $NOVA_WANT.
 if [ -z "$NOVA_WANT" ]; then
   drift "NOVA_WANT unset (set NOVA_WANT to the wanted version)"

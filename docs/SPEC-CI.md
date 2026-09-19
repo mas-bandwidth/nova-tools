@@ -914,101 +914,6 @@ and these tests must answer identically on every platform in the matrix — so a
 command assembled in a variable or hidden in a composite action is not seen, and
 the allowlist is matched by prefix.
 
-### `windows-pr` — a pull request gets a Windows leg, and it stays cheap
-
-**The rule.** `test-windows-pr` runs on `windows-latest` over the packages
-`.github/scripts/select-packages.sh` selects — the same script the self-hosted
-shards call, so there is one answer to "what does this change test" — sharded,
-skipped when the PR moves no Go file, fork-guarded, and aggregated by `ci-ok`.
-**The hurt.** Windows ran only in the merge group and on push, so a Windows-only
-failure was found after a PR was enqueued, where a red shard drops the whole
-group and restarts every PR behind it: one PR's small mistake became every PR's
-delay (ledger items 22, 26). `#1317` landed the leg; it paid for itself three
-times in its first real run (ledger 38) — `#1324`'s install-skip, and behind it a
-product bug (`adopt` named a bare `nova-update` on a Windows target), and the
-execute-bit assertion class.
-**The test.** `TestPullRequestsGetAWindowsLeg` (`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** None; the shape is the contract and the test is the shape.
-**Its remedy line.** Each finding names the missing part of the shape — the
-runner, the shard count, the sizes file, the selection script, the skip
-condition, the fork guard or the `ci-ok` need.
-**Its narrowings.** It reads `ci.yml` as text, so it pins the words a reviewer
-would look for rather than the semantics a YAML parser would give; a leg that
-satisfies every string and still does the wrong thing passes here and is caught
-by the run.
-
-### `windows-sizes` — the shard plan comes from measurements, never a convention
-
-**The rule.** The three numbers that decide this leg's cost — the measured sizes
-in `testdata/ci/package-sizes-windows.tsv`, the shard budget, and
-`WINDOWS_TIMEOUT` in the Makefile — stay in one place and in step, and the
-ceiling can never drop back below a size actually observed.
-**The hurt.** Ledger items 39–40. The leg shipped with the hosted convention of
-100 s per package; its first real run (`#1332`) found four packages ON that
-ceiling under `-short`. A ceiling a tree's packages sit on is not naming a hang,
-it IS the hang. Then the PR leg's six-minute cap killed finished shards 2–4
-seconds into cleanup, and the merge leg's cap cut a shard mid-listing. The lesson
-the whole day repeated: **a number in a table or a cap must come from a
-measurement, and a measurement made at a cap is a floor, not a size.**
-**The test.** `TestWindowsPRShardPlanIsDerivedFromMeasurements`
-(`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
-floors rather than written as sizes; the forcing packages `#1332` measured at the
-ceiling are named in the test, so they cannot quietly fall out of the table.
-**Its remedy line.** `the Makefile does not say where WINDOWS_TIMEOUT's number
-comes from; a ceiling is a claim about the machine and belongs in the repository
-with its measurement`.
-**Its narrowings.** It checks that the numbers are measured and consistent, not
-that they are still TRUE: a package that doubles on windows-latest keeps its old
-row until somebody measures again, and only the run says so.
-
-### `windows-table` — the merge gate's Windows leg deals from the Windows table
-
-**The rule.** The merge group's windows leg reads the FULL column of the Windows
-sizes table, takes its ceiling from `make -s windows-timeout`, and deals an
-unmeasured or censored package across EVERY slot; linux and darwin keep the Linux
-table, which is their measurement.
-**The hurt.** Ledger item 38: the merge group's windows leg dealt from the LINUX
-table — `cmd/nova-bus` at 6.4 s bought three shards, and shard 0 was killed at
-the 100 s ceiling with three tests still running. Linux could not have said
-otherwise: `cmd/nova-bus` is 10.0 s on hulk and at least 100 s there,
-`cmd/nova-swarm` 51.0 s on hulk and 37 s there.
-**The test.** `TestMergeGateWindowsLegDealsFromTheWindowsTable`
-(`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** None.
-**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
-windows leg would deal from the Linux column again, which is how integration-4's
-group was dropped`; `an unknown Windows size must be dealt across every slot,
-never guessed downward`; and `the merge gate's windows leg does not take its
-ceiling from make -s windows-timeout; the Windows number would be written twice
-and drift`.
-**Its narrowings.** It asserts the shell branch's text inside one named step; if
-the step is renamed the test fails loudly rather than silently passing, which is
-the trade it takes.
-
-### `one-windows-leg` — exactly one Windows leg on a pull request
-
-**The rule.** Exactly one `pull_request` job reaches `windows-latest`, and it is
-`test-windows-pr`; the packages and path filters of the retired hosted leg are
-still present in it.
-**The hurt.** Ledger items 39–40: integration-4 ran both legs on the same commit.
-The three sharded shards passed at 13:37–13:43Z and the older unsharded leg was
-cancelled by its own six-minute timeout at 13:43:39 and failed the run. A second
-leg that can only fail is not redundancy, it is a second thing to fix.
-**The test.** `TestOnlyOneWindowsLegRunsOnAPullRequest`
-(`internal/ci/ci_windows_pr_test.go`).
-**Its allowlist.** None. The retirement is only correct if nothing it covered was
-lost, so the two packages it ran and the three paths it watched are asserted
-present in `test-windows-pr` — the paths matter on their own, because a change to
-a fixture under `cmd/nova-bus` moves no `.go` file and `select-packages.sh`
-cannot see it.
-**Its remedy line.** `the pull_request jobs that reach windows-latest are <jobs>,
-want exactly [test-windows-pr]; two Windows legs on one PR is a second thing to
-fix and integration-4 is what it costs`.
-**Its narrowings.** It counts jobs that name `windows-latest` AND the
-`pull_request` event in their text; a Windows runner reached through a reusable
-workflow or a matrix value built elsewhere would not be counted.
-
 ### `darwin-sizes` — the darwin cap is measured on a quiet host, with a stated margin
 
 **The rule.** The numbers that decide the darwin merge leg's cost — the measured
@@ -1317,3 +1222,124 @@ so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 **Its narrowings.** Two independent selections are pinned by two regular
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
+
+## Parked class tests
+
+A parked rule is one this repository decided to stop enforcing, kept here with
+its hurt so the decision can be read rather than rediscovered. The test files are
+DELETED — a class test that does not run is worse than no test, because it reads
+like cover — and `internal/docs`' index test knows this section by name, so the
+`Test…` names below are allowed to name tests that no longer exist. Nothing else
+in this document is allowed to.
+
+**Why these four are parked.** Glenn, 2026-09-18: *"drop the native windows CI
+runners. WSL only from now on."* Every `windows-latest` leg left `ci.yml` in that
+change — `test-windows-pr`'s four shards, `test-hosted-merge`'s windows leg, and
+`test-hosted`'s windows entry on the push and nightly matrix — and with them the
+measured Windows size table, `WINDOWS_TIMEOUT` and `make windows-timeout`. What
+remains on the CL path is ONE cheap compile guard in the `lint` job,
+`make vet-windows` (`GOOS=windows go vet ./...`), which type-checks every package
+and every `_test.go` for Windows on a Linux runner in seconds; the merge gate
+(`nova-merge`'s `vet-windows` step) runs the same command, so the guard is
+paid twice before a change lands. Running Windows TESTS is the certification
+tier's job, which is a release blocker and never a CL one. Windows as a place to
+put work is the Threadripper under WSL2 — a LINUX bench with Linux runners
+labelled `linux,X64,threadripper` — see `docs/BENCH-STANDARD-WINDOWS.md`.
+
+**What would unpark them.** A native Windows CI runner, or a measured Windows leg
+that fits the two-minute law. Read `windows-sizes` below before writing either:
+its rule — a number in a table or a cap must come from a MEASUREMENT, and a
+measurement made at a cap is a floor and not a size — is the one that cost the
+most to learn and it is live today, one platform over, as `darwin-sizes`.
+
+### `windows-pr` — a pull request gets a Windows leg, and it stays cheap
+
+**The rule.** `test-windows-pr` runs on `windows-latest` over the packages
+`.github/scripts/select-packages.sh` selects — the same script the self-hosted
+shards call, so there is one answer to "what does this change test" — sharded,
+skipped when the PR moves no Go file, fork-guarded, and aggregated by `ci-ok`.
+**The hurt.** Windows ran only in the merge group and on push, so a Windows-only
+failure was found after a PR was enqueued, where a red shard drops the whole
+group and restarts every PR behind it: one PR's small mistake became every PR's
+delay (ledger items 22, 26). `#1317` landed the leg; it paid for itself three
+times in its first real run (ledger 38) — `#1324`'s install-skip, and behind it a
+product bug (`adopt` named a bare `nova-update` on a Windows target), and the
+execute-bit assertion class.
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." `test-windows-pr` is gone from `ci.yml` and `TestPullRequestsGetAWindowsLeg` is deleted with it. The rule is kept here for the record, and it is the one to read first if a Windows leg is ever wanted again.
+**Its allowlist.** None; the shape is the contract and the test is the shape.
+**Its remedy line.** Each finding names the missing part of the shape — the
+runner, the shard count, the sizes file, the selection script, the skip
+condition, the fork guard or the `ci-ok` need.
+**Its narrowings.** It reads `ci.yml` as text, so it pins the words a reviewer
+would look for rather than the semantics a YAML parser would give; a leg that
+satisfies every string and still does the wrong thing passes here and is caught
+by the run.
+
+### `windows-sizes` — the shard plan comes from measurements, never a convention
+
+**The rule.** The three numbers that decide this leg's cost — the measured sizes
+in `testdata/ci/package-sizes-windows.tsv`, the shard budget, and
+`WINDOWS_TIMEOUT` in the Makefile — stay in one place and in step, and the
+ceiling can never drop back below a size actually observed.
+**The hurt.** Ledger items 39–40. The leg shipped with the hosted convention of
+100 s per package; its first real run (`#1332`) found four packages ON that
+ceiling under `-short`. A ceiling a tree's packages sit on is not naming a hang,
+it IS the hang. Then the PR leg's six-minute cap killed finished shards 2–4
+seconds into cleanup, and the merge leg's cap cut a shard mid-listing. The lesson
+the whole day repeated: **a number in a table or a cap must come from a
+measurement, and a measurement made at a cap is a floor, not a size.**
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." `TestWindowsPRShardPlanIsDerivedFromMeasurements` is deleted, `WINDOWS_TIMEOUT` is out of the Makefile and `testdata/ci/package-sizes-windows.tsv` is out of the tree; the measurements are in git at dev `65e86175`. **The rule itself is NOT parked**: it runs today as `darwin-sizes`, on the platform that still has a measured merge leg.
+**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
+floors rather than written as sizes; the forcing packages `#1332` measured at the
+ceiling are named in the test, so they cannot quietly fall out of the table.
+**Its remedy line.** `the Makefile does not say where WINDOWS_TIMEOUT's number
+comes from; a ceiling is a claim about the machine and belongs in the repository
+with its measurement`.
+**Its narrowings.** It checks that the numbers are measured and consistent, not
+that they are still TRUE: a package that doubles on windows-latest keeps its old
+row until somebody measures again, and only the run says so.
+
+### `windows-table` — the merge gate's Windows leg deals from the Windows table
+
+**The rule.** The merge group's windows leg reads the FULL column of the Windows
+sizes table, takes its ceiling from `make -s windows-timeout`, and deals an
+unmeasured or censored package across EVERY slot; linux and darwin keep the Linux
+table, which is their measurement.
+**The hurt.** Ledger item 38: the merge group's windows leg dealt from the LINUX
+table — `cmd/nova-bus` at 6.4 s bought three shards, and shard 0 was killed at
+the 100 s ceiling with three tests still running. Linux could not have said
+otherwise: `cmd/nova-bus` is 10.0 s on hulk and at least 100 s there,
+`cmd/nova-swarm` 51.0 s on hulk and 37 s there.
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." The merge gate's windows leg, its arm of the shard plan and `make windows-timeout` are all gone. **The rule itself is NOT parked**: it runs today as `darwin-table`.
+**Its allowlist.** None.
+**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
+windows leg would deal from the Linux column again, which is how integration-4's
+group was dropped`; `an unknown Windows size must be dealt across every slot,
+never guessed downward`; and `the merge gate's windows leg does not take its
+ceiling from make -s windows-timeout; the Windows number would be written twice
+and drift`.
+**Its narrowings.** It asserts the shell branch's text inside one named step; if
+the step is renamed the test fails loudly rather than silently passing, which is
+the trade it takes.
+
+### `one-windows-leg` — exactly one Windows leg on a pull request
+
+**The rule.** Exactly one `pull_request` job reaches `windows-latest`, and it is
+`test-windows-pr`; the packages and path filters of the retired hosted leg are
+still present in it.
+**The hurt.** Ledger items 39–40: integration-4 ran both legs on the same commit.
+The three sharded shards passed at 13:37–13:43Z and the older unsharded leg was
+cancelled by its own six-minute timeout at 13:43:39 and failed the run. A second
+leg that can only fail is not redundancy, it is a second thing to fix.
+**PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." Exactly ZERO `pull_request` jobs reach `windows-latest` now, which is the same rule at its limit, and `TestOnlyOneWindowsLegRunsOnAPullRequest` is deleted. What a pull request gets instead is the `lint` job's `make vet-windows` (`GOOS=windows go vet ./...`), which compiles every package and every test file for Windows on a Linux runner.
+**Its allowlist.** None. The retirement is only correct if nothing it covered was
+lost, so the two packages it ran and the three paths it watched are asserted
+present in `test-windows-pr` — the paths matter on their own, because a change to
+a fixture under `cmd/nova-bus` moves no `.go` file and `select-packages.sh`
+cannot see it.
+**Its remedy line.** `the pull_request jobs that reach windows-latest are <jobs>,
+want exactly [test-windows-pr]; two Windows legs on one PR is a second thing to
+fix and integration-4 is what it costs`.
+**Its narrowings.** It counts jobs that name `windows-latest` AND the
+`pull_request` event in their text; a Windows runner reached through a reusable
+workflow or a matrix value built elsewhere would not be counted.

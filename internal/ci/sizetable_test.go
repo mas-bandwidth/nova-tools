@@ -9,23 +9,26 @@ import (
 )
 
 // sizetable_test.go holds the one reading of a measured package-size table, so
-// the Windows table and the darwin table are parsed by the same code and answer
-// the same way.
+// every such table is parsed by the same code and answers the same way.
 //
-// There are two of these tables now — testdata/ci/package-sizes-windows.tsv and
-// testdata/ci/package-sizes-darwin.tsv — and a third (the Linux
-// testdata/ci/package-sizes.tsv) in the older two-column shape. The two
-// three-column tables are the same measurement on different machines: a package
-// whose Windows size says nothing about its darwin size, recorded in the same
-// format so the same rules apply to both. Writing the parser twice would have
-// been two chances to disagree about what a censored row means, and what a
-// censored row means is the whole lesson: integration-4's group was dropped by
-// guessing an unknown size downward.
+// There is ONE three-column table today — testdata/ci/package-sizes-darwin.tsv —
+// beside the Linux testdata/ci/package-sizes.tsv in the older two-column shape.
+// There were two: testdata/ci/package-sizes-windows.tsv went with the native
+// Windows legs on 2026-09-18 (Glenn: "drop the native windows CI runners. WSL
+// only from now on."). The parser stays PARAMETERISED by the table's name rather
+// than collapsing back into the darwin test, because the next platform measured
+// here must not be a second chance to disagree about what a censored row means —
+// and what a censored row means is the whole lesson: integration-4's group was
+// dropped by guessing an unknown size downward.
 //
-// This file was extracted from ci_windows_pr_test.go in the same commit that
-// added the darwin table, with no change to what it accepts or what it says: the
-// messages below are the Windows messages with the file name as a parameter, and
-// every Windows test body is byte-identical across that extraction.
+// This file was extracted from the Windows class tests in the same commit that
+// added the darwin table, with no change to what it accepts or what it says.
+
+// modulePath is this module, the prefix every size table is keyed by: the tables
+// are keyed the way `go list` prints, so a row can be held against the tree
+// without a toolchain. It lived beside the Windows class tests until they were
+// parked on 2026-09-18 and moved here, to the parser every table shares.
+const modulePath = "github.com/mas-bandwidth/nova-tools/"
 
 // measuredSize is one row's reading of a size column: the number, and whether
 // the run that produced it was CENSORED (it hit its timeout, so the true size is
