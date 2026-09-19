@@ -114,12 +114,13 @@ below the state's revision is refused rather than silently reissued."
     ;; immutable stage the readers produced outside the mutation loop; :lease-by
     ;; and :lease-default are the CLI's --by and --default, renamed here because
     ;; :by is this kernel's author field on every request.
-    (:acknowledge :verb :node :by :offer :attempt :reply :stage :provenance
-                  :provenance-sha256 :staged :lease-by :lease-default
+    (:acknowledge :verb :node :by :offer :attempt :generation :reply :stage
+                  :provenance :provenance-sha256 :staged :expect
+                  :staged-payload :payload-sha256 :lease-by :lease-default
                   :observed-model :bench :execution :reason
                   :request :stamp :clock :generation-owner)
-    (:decline :verb :node :by :offer :attempt :reply :provenance
-              :provenance-sha256 :staged :reason
+    (:decline :verb :node :by :offer :attempt :generation :reply :provenance
+              :provenance-sha256 :staged :expect :reason
               :request :stamp :clock :generation-owner)))
 
 (defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
@@ -381,6 +382,11 @@ command loop is a defect)."
       (return-from %submit (fleet-release-submit kernel request)))
     (when (eq verb :probe)
       (return-from %submit (fleet-probe-submit kernel request)))
+    ;; The savepoint capture (SPEC-WORK.md:7161): a READ on the command thread.
+    ;; It writes no event, appends nothing and moves no revision; it exists so
+    ;; the image and the cut are taken at one revision under the single writer.
+    (when (eq verb :savepoint-capture)
+      (return-from %submit (savepoint-capture-submit kernel request)))
     ;; The two receipt verbs (SPEC-WORK.md:3857-3868). Their readers already ran
     ;; outside this loop and handed in an immutable stage; the one writer
     ;; revalidates it and admits one envelope. See receipt-admission.lisp.

@@ -308,6 +308,38 @@ writes nothing at all."
         (error 'unsupported-input
                :what (format nil "malformed ~A" (string-downcase (symbol-name key))))))))
 
+(defun %receipt-tuple-mismatch (kernel request)
+  "The offer's immutable tuple, revalidated against the offer the kernel itself
+pinned (src/control.lisp `prepare-offer`). Answers NIL when it still holds, or
+the field that moved (SPEC-WORK.md:3864-3865). An offer the kernel never pinned
+is a mismatch, never a permissive default."
+  (let* ((id (getf request :offer))
+         (offer (and id (%offer kernel id))))
+    (cond
+      ((null offer) (format nil "no such offer ~A" (or id "-")))
+      ((and (getf request :node)
+            (not (equal (getf request :node) (of-node offer))))
+       (format nil "node ~A is not offer ~A's ~A"
+               (getf request :node) id (of-node offer)))
+      ((and (getf request :attempt)
+            (not (equal (getf request :attempt) (of-attempt offer))))
+       (format nil "attempt ~A is not offer ~A's ~A"
+               (getf request :attempt) id (of-attempt offer)))
+      ((and (getf request :generation)
+            (not (eql (getf request :generation) (of-generation offer))))
+       (format nil "generation ~A is not offer ~A's ~A"
+               (getf request :generation) id (of-generation offer)))
+      (t nil))))
+
+(defun stage-payload-file (pointer)
+  "Stage the offered payload outside the mutation loop: read the real bytes the
+pointer names and freeze their digest, which the writer matches against
+--payload-sha256 before admitting one envelope (SPEC-WORK.md:3863-3866)."
+  (handler-case (stage-payload (read-provenance-bytes pointer))
+    (error ()
+      (make-staged-input :bytes nil :result nil :valid-p nil :rev 0
+                         :reason "invalid stage"))))
+
 (defun %receipt-submit (kernel request)
   (let* ((verb (getf request :verb))
          (word (receipt-word verb)))
@@ -350,6 +382,66 @@ writes nothing at all."
         (unless (equal (staged-input-digest staged) (getf request :provenance-sha256))
           (return-from %receipt-submit
             (%receipt-fail verb request "invalid stage" 2)))
+        ;; A STALE STAGE. The readers ran outside the loop and froze the
+        ;; revision they ran at; a stage the writer has already moved past
+        ;; admits nothing (SPEC-WORK.md:3866-3867).
+        (let ((current (state-revision (kernel-state kernel))))
+          (unless (eql (staged-input-rev staged) current)
+            (return-from %receipt-submit
+              (values nil
+                      (format nil "~A FAIL node=~A offer=~A reply=~A staged=~A current=~D: invalid stage"
+                              word (or (getf request :node) "-")
+                              (or (getf request :offer) "-")
+                              (or (getf request :reply) "-")
+                              (staged-input-rev staged) current)
+                      2 nil))))
+        ;; --expect, then the offer's immutable tuple, then the offered
+        ;; payload's own stage: the writer revalidates each before it admits one
+        ;; envelope (SPEC-WORK.md:3864-3866).
+        (let ((expect (getf request :expect))
+              (current (state-revision (kernel-state kernel))))
+          (when (and expect (not (eql expect current)))
+            (return-from %receipt-submit
+              (values nil
+                      (format nil "~A FAIL node=~A offer=~A reply=~A expect=~D current=~D: stale"
+                              word (or (getf request :node) "-")
+                              (or (getf request :offer) "-")
+                              (or (getf request :reply) "-")
+                              expect current)
+                      1 nil))))
+        (let ((mismatch (%receipt-tuple-mismatch kernel request)))
+          (when mismatch
+            (return-from %receipt-submit
+              (%receipt-fail verb request
+                             (format nil "tuple mismatch: ~A" mismatch) 1))))
+        (let ((payload (getf request :staged-payload)))
+          (when (or payload (getf request :payload-sha256))
+            (unless (and (staged-input-p payload)
+                         (staged-input-valid-p payload)
+                         (equal (staged-input-digest payload)
+                                (getf request :payload-sha256)))
+              (return-from %receipt-submit
+                (%receipt-fail verb request "invalid stage" 2)))))
+        ;; An acceptance stands on a verified delivery, never on its own word
+        ;; (SPEC-WORK.md:3853-3855, the reason at :6019).
+        (when (and (eq verb :acknowledge) (eq (getf request :stage) :accepted))
+          (unless (find-if (lambda (row)
+                             (and (equal (getf row :offer) (getf request :offer))
+                                  (eq (getf row :effect) :received)))
+                           (admitted-receipts (kernel-state kernel)))
+            (return-from %receipt-submit
+              (%receipt-fail verb request "no received receipt" 1))))
+        ;; One reply id names one set of received bytes. A second admission of
+        ;; the same reply over other bytes is refused by name and writes
+        ;; nothing (SPEC-WORK.md:6019).
+        (let ((prior (admitted-receipt (kernel-state kernel) (getf request :reply))))
+          (when (and prior (not (equal (getf prior :receipt-digest)
+                                       (staged-input-digest staged))))
+            (return-from %receipt-submit
+              (%receipt-fail verb request
+                             (format nil "conflicting bytes for receipt ~A"
+                                     (getf request :reply))
+                             1))))
         (let* ((result (staged-input-result staged))
                (effect (receipt-effect verb (getf request :stage)))
                (seal (%receipt-seal-event requester result effect))

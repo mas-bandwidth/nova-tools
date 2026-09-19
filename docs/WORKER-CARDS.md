@@ -22,18 +22,34 @@ this table, is what a bench with a stale clone reads.
 
 | rule token | practice |
 | --- | --- |
-| `result-first` | 1 — line 1 is the `RESULT: ` contract line |
+| `result-first` | 1 — line 1 is the contract line, in either form the tools write today: `RESULT <label> sha=<sha12>` as `cut` writes it, or `RESULT: <CARD-id> <what done looks like>`. The two disagree by one colon and #1741 settles which stands |
 | `result-last` | 1, 25 — the last step writes `RESULT.md`, whose line 1 is that contract line |
 | `no-sandbox` | 2 — a card runs inside the wall and never invokes it |
 | `files-named` | 3 — the work is anchored to a named file or package |
 | `red-test` | 4, 23 — a reproducing test named, or `probe`/`read` for a card that only reads |
 | `test-command` | 5 — the gate written verbatim, or `no tests` said in words |
-| `clone-step` | 17, 25 — `STEP 1` clones or `cd`s into the repository |
+| `clone-step` | 17, 25 — `STEP 1` clones or `cd`s into the repository. The WHOLE step is read, its line and the lines under it down to the next `STEP`, so the wording of the STEP line is yours and the command is the rule |
 | `steps-numbered` | 17 — `STEP <n>.` lines, numbered 1, 2, 3 in order |
 | `deadline` | 17 — a deadline, or `finish within <n> minutes` |
 | `scratch-absolute` | 25 — scratch named against a root, never as a bare relative word |
 | `no-parent-path` | 25 — no `../` anywhere: the wall refuses every path above the job |
-| `size` | — the card is under the 12000-byte ceiling, so it is read in one window |
+| `size` | — the card is under the 12000-byte ceiling, so it is read in one window. The ceiling is never silent: every lint ends with the card's size and the cap, on the `LINT OK` line or on a `LINT SIZE` line |
+
+Four more tokens read the **typed header** `cut` writes under the contract line —
+`KIND:`, `PATHS:`, `TEST:`, `LEGS:`, `SOURCE:` (`docs/SPEC-TOOLWORK.md` §5 rule 1). They fire
+on any card that declares one of those five lines, and on any card at all under
+`lint --card <file> --typed`; a card written before §5 carries no header and is checked by the
+twelve rules above only. The grammar is the gate's own: `internal/pulse/cardheader.go` parses
+these lines at `accept`, and the lint accepts exactly what it accepts and refuses what it
+refuses, so a card that lints clean on the bench is not rejected at the gate for its header.
+
+| rule token | what it wants |
+| --- | --- |
+| `kind-declared` | a `KIND: <kind>` line with a kind on it; `cut` writes it from the pool row and a model never does |
+| `paths-declared` | a `PATHS: <glob>[, <glob>...]` line, repository-relative, no `..`, every glob holding at least one literal segment — or `PATHS: none` for a card that changes nothing |
+| `test-named` | a `TEST: <package> <TestName>` line — two fields, the name a Go test name — or `TEST: none` where the kind declares no gate |
+| `paused` | the coordinator has not paused this kind. The remedy is never a rerun: it is `nova-pulse trust --set trial`. Checked only when `lint --card` is handed the state with `--trust <file>`, in the shape `nova-pulse trust` prints |
+
 
 The seven Mercury jobs cited below: 20260914T151824Z-card-03/04, 20260914T152306Z-card-02/05,
 20260914T154040Z-card-06/07, 20260914T153752Z-card-08 — all rc 0, 38 to 60 s, harness-reported
