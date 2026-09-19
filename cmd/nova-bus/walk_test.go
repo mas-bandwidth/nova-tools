@@ -53,9 +53,12 @@ func TestInboxSinceWalkReportsProgressAndHonoursMaxCommits(t *testing.T) {
 // assertion over a fixture this size is a flake on a shared runner and proves nothing on a
 // fast enough machine; a count of work not done is the only honest proof there is.
 //
-// NOT PARALLEL, for the reason the two tests in cursor_test.go are not: both counters are
-// one number for the whole process, and every assertion below is an exact number.
+// PARALLEL, for the reason the two tests in cursor_test.go are: both counts are read for
+// THIS test's bus alone, with bus.CommitsWalkedIn and bus.NoteParsesIn, so a sibling
+// walking its own bus at the same time moves neither, and every assertion below is still
+// an exact number.
 func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("slow: builds a thousand-commit, two-thousand-note fixture; runs on the self-hosted legs and nightly")
 	}
@@ -72,12 +75,12 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	// BEFORE: what the question cost when it was asked without its bound. The distance is
 	// the whole thousand, and every one of them is walked to say so -- on the live bus, 285
 	// commits for a read that then did nothing.
-	mark := bus.CommitsWalked()
+	mark := bus.CommitsWalkedIn(checkout)
 	distance, err := bus.CommitsBetween(checkout, base, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
-	unbounded := bus.CommitsWalked() - mark
+	unbounded := bus.CommitsWalkedIn(checkout) - mark
 	if distance != commits || unbounded != int64(commits) {
 		t.Fatalf("the unbounded count answered %d after walking %d commits, want %d and %d; the fixture is not what this test thinks it is", distance, unbounded, commits, commits)
 	}
@@ -85,28 +88,28 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	// AFTER: the same stale cursor, read by the verb. The default bound is 500, so git stops
 	// one commit past it -- 501 and not 1000 -- and the run opens NO note at all: the bound
 	// is hit before anything is read, which is the whole of what the line says.
-	parses := bus.NoteParses()
-	mark = bus.CommitsWalked()
+	parses := bus.NoteParsesIn(checkout)
+	mark = bus.CommitsWalkedIn(checkout)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stderr", `INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`)
-	if got := bus.CommitsWalked() - mark; got != defaultMaxCommits+1 {
+	if got := bus.CommitsWalkedIn(checkout) - mark; got != defaultMaxCommits+1 {
 		t.Fatalf("a bounded read walked %d commits over a cursor %d behind, want %d: the count is not asked with its bound", got, commits, defaultMaxCommits+1)
 	}
-	if got := bus.NoteParses() - parses; got != 0 {
+	if got := bus.NoteParsesIn(checkout) - parses; got != 0 {
 		t.Fatalf("a bounded read parsed %d notes, want 0: nothing is read past the bound", got)
 	}
 
 	// The read the caller asks for by raising the bound: the thousand commits, once, and
 	// every one of the two thousand notes they carried, once each. Nothing is walked twice.
-	parses = bus.NoteParses()
-	mark = bus.CommitsWalked()
+	parses = bus.NoteParsesIn(checkout)
+	mark = bus.CommitsWalkedIn(checkout)
 	invoke(t, "", advance(checkout, "Ada", "--max-commits", "2000")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d", notes))
-	if got := bus.CommitsWalked() - mark; got != commits {
+	if got := bus.CommitsWalkedIn(checkout) - mark; got != commits {
 		t.Fatalf("the allowed walk crossed %d commits, want the %d since the cursor", got, commits)
 	}
-	if got := bus.NoteParses() - parses; got != notes {
+	if got := bus.NoteParsesIn(checkout) - parses; got != notes {
 		t.Fatalf("the allowed walk parsed %d notes, want the %d it was handed", got, notes)
 	}
 
@@ -115,15 +118,15 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	// made. So the next read crosses that one commit and opens NO note: a cursor commit
 	// carries state files and no note, and an open entry carries its own display line, so a
 	// backlog costs nothing until somebody asks for it with --full.
-	parses = bus.NoteParses()
-	mark = bus.CommitsWalked()
+	parses = bus.NoteParsesIn(checkout)
+	mark = bus.CommitsWalkedIn(checkout)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d", notes))
-	if got := bus.CommitsWalked() - mark; got != 1 {
+	if got := bus.CommitsWalkedIn(checkout) - mark; got != 1 {
 		t.Fatalf("a read at the head walked %d commits, want the 1 the advance's own cursor commit is", got)
 	}
-	if got := bus.NoteParses() - parses; got != 0 {
+	if got := bus.NoteParsesIn(checkout) - parses; got != 0 {
 		t.Fatalf("a read carrying %d notes parsed %d of them, want 0: the carrying set is re-read only on --full", notes, got)
 	}
 }

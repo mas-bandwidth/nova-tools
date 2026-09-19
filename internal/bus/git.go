@@ -1061,6 +1061,7 @@ func commitsSince(dir, from, to string, ceiling int) (int, bool, error) {
 		return 0, false, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
 	}
 	commitsWalked.Add(int64(n))
+	countersFor(dir).commitsWalked.Add(int64(n))
 	return n, ceiling > 0 && n > ceiling, nil
 }
 
