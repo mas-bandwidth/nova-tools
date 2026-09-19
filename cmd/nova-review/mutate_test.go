@@ -461,7 +461,9 @@ func TestMutateSeedFlagCombinationsAreRefused(t *testing.T) {
 // gate quotes it.
 
 // slowSeedLab is seedLab with one unit that outlasts any deadline a caller would set,
-// so the run is killed rather than answered.
+// so the run is killed rather than answered. The sleep is long enough that the unit
+// cannot finish before the deadline on a loaded bench, and the test costs the DEADLINE,
+// never the sleep.
 func slowSeedLab(t *testing.T) string {
 	t.Helper()
 	dir := seedLab(t)
@@ -495,10 +497,20 @@ func TestMutateSeedRefusesAPackageThatDoesNotExist(t *testing.T) {
 
 // mutate-seed-timeout-is-not-a-pass: the deadline kills `go test` before any unit
 // reports, and a deadline is a could-not-run -- exit 2 -- never a mutant that died.
+//
+// This is the end-to-end of it, and the only way to have it end to end is to let a
+// real second pass: the deadline is `--timeout`, in whole seconds, on the wall clock.
+// So it is behind `-short`, and `internal/review`'s
+// TestSeedTimeoutIsACouldNotRunAndNeverAKill holds the same rule at the function that
+// decides it, instantly, on every run. The two-minute law is not a thing to spend a
+// second of on a branch that already has the proof.
 func TestMutateSeedTimeoutIsNotAPass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("a real --timeout is a real second; internal/review holds this rule without the clock")
+	}
 	dir := slowSeedLab(t)
 	var out, errb bytes.Buffer
-	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign", "--timeout", "2"}, &out, &errb)
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign", "--timeout", "1"}, &out, &errb)
 	if code != 2 {
 		t.Fatalf("exit %d, want 2\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
