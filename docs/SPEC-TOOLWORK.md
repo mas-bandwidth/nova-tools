@@ -727,30 +727,30 @@ card's worth; `S` is SWARM-ELIGIBLE (once T1-T6 are on `dev`), `O` is OPUS+FRIEN
 
 | # | who | item | section |
 |---|---|---|---|
-| T1 | O | `nova-review mutate`: `reverted=<n>` on the verdict line, and the `--seed` form with `edits=1` asserted | §1 rule 9 |
-| T2 | O | `internal/hygiene.Check` and its data files (stray list, key shapes), plus `nova-check hygiene` | §3 rules 3-7 |
-| T3 | O | `nova-pulse accept`: the worktree, the step order, the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
-| T4 | O | `accept --selftest`: the fixture repository, the eight one-edit seeds, `control=<id>`, and OK refused without a control on file | §1 rules 6-8 |
-| T5 | O | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line; no decide call where the gate decided | §1 rule 1, §4 rules 1-2 |
-| T6 | O | the five header lines in `cut`, the `lint --card` tokens, `pitstop_paths.txt` with its class test, admission refusal, the kinds table with `fix-red` and `transcript-test`, the pilot rule | pit-stop rule, §5 rules 1-5 |
-| T7 | O | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
-| T8 | S | `transcript-test`, one card per tool, the sections no test executes whose tool is outside the pit-stop set: nova-ci, nova-decide, nova-pulse, nova-review, and nova-post after Q5 | §7 rule 1 |
-| T9 | S | `transcript-test`, one card per tool, the set-of-shapes tests outside the pit-stop set moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
-| T10 | S | `fix-red` cards over the triage's defects whose paths miss the pit-stop set (the first: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
-| T11 | S | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool outside the pit-stop set, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
-| T12 | O | the transcript tests of the four protected tools — nova-sandbox and nova-secrets (unexecuted), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, pit-stop rule |
-| T13 | O | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
-| T14 | S | `rebase`: the conflicting open PRs that are ours and miss the pit-stop set, oldest first, one per card (54 conflicted at the triage) | §5 `rebase` |
-| T15 | S | `mutation-kill`: one card per surviving mutant in the Go tools outside the pit-stop set, from a mutation pass an Opus child runs and files (Q8) | §5 `mutation-kill` |
-| T16 | O | #1572: the disposition fold, the typed `DISPOSITION` line printed by `read` and `verdict`, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
-| T17 | O | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build | §6 rule 6 |
-| T18 | O | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
-| T19 | O | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
-| T20 | O | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
-| T21 | O | staging: the pool's `identity.tsv`, the clone's local git config, no symlink out of the job root | §3 rules 1-2 |
-| T22 | O | the Jev boundary: the state built from `OUTCOME`, `class=`/`conf=` written back, `outcomes.jsonl` — with the Jev lane's SPEC-DECIDE amendment, not before it | §4 rules 3-5 |
-| T23 | O | `Platform:` lines and their class test (#1509); the unexecuted-examples count and its shrink-only list | §7 rules 5, 7 |
-| T24 | O | move each section's normative text home into its own spec and leave this file as the index | preamble |
+| T1 (#1646) | O | `nova-review mutate`: `reverted=<n>` on the verdict line, and the `--seed` form with `edits=1` asserted | §1 rule 9 |
+| T2 (#1647) | O | `internal/hygiene.Check` and its data files (stray list, key shapes), plus `nova-check hygiene` | §3 rules 3-7 |
+| T3 (#1648) | O | `nova-pulse accept`: the worktree, the step order, the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
+| T4 (#1649) | O | `accept --selftest`: the fixture repository, the eight one-edit seeds, `control=<id>`, and OK refused without a control on file | §1 rules 6-8 |
+| T5 (#1650) | O | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line; no decide call where the gate decided | §1 rule 1, §4 rules 1-2 |
+| T6 (#1651) | O | the five header lines in `cut`, the `lint --card` tokens, `pitstop_paths.txt` with its class test, admission refusal, the kinds table with `fix-red` and `transcript-test`, the pilot rule | pit-stop rule, §5 rules 1-5 |
+| T7 (#1652) | O | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
+| T8 (#1653) | S | `transcript-test`, one card per tool, the sections no test executes whose tool is outside the pit-stop set: nova-ci, nova-decide, nova-pulse, nova-review, and nova-post after Q5 | §7 rule 1 |
+| T9 (#1654) | S | `transcript-test`, one card per tool, the set-of-shapes tests outside the pit-stop set moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
+| T10 (#1655) | S | `fix-red` cards over the triage's defects whose paths miss the pit-stop set (the first: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
+| T11 (#1656) | S | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool outside the pit-stop set, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
+| T12 (#1657) | O | the transcript tests of the four protected tools — nova-sandbox and nova-secrets (unexecuted), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, pit-stop rule |
+| T13 (#1658) | O | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
+| T14 (#1659) | S | `rebase`: the conflicting open PRs that are ours and miss the pit-stop set, oldest first, one per card (54 conflicted at the triage) | §5 `rebase` |
+| T15 (#1660) | S | `mutation-kill`: one card per surviving mutant in the Go tools outside the pit-stop set, from a mutation pass an Opus child runs and files (Q8) | §5 `mutation-kill` |
+| T16 (#1572) | O | #1572: the disposition fold, the typed `DISPOSITION` line printed by `read` and `verdict`, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
+| T17 (#1661) | O | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build | §6 rule 6 |
+| T18 (#1662) | O | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
+| T19 (#1663) | O | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
+| T20 (#1664) | O | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
+| T21 (#1665) | O | staging: the pool's `identity.tsv`, the clone's local git config, no symlink out of the job root | §3 rules 1-2 |
+| T22 (#1666) | O | the Jev boundary: the state built from `OUTCOME`, `class=`/`conf=` written back, `outcomes.jsonl` — with the Jev lane's SPEC-DECIDE amendment, not before it | §4 rules 3-5 |
+| T23 (#1667) | O | `Platform:` lines and their class test (#1509); the unexecuted-examples count and its shrink-only list | §7 rules 5, 7 |
+| T24 (#1668) | O | move each section's normative text home into its own spec and leave this file as the index | preamble |
 
 T7 is `O` although `internal/onboarding` is outside the pit-stop set: it is the
 comparator every T8 and T9 card is judged against, and the thing that judges a swarm's
