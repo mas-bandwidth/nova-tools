@@ -780,6 +780,16 @@ jobs:
             *" ./internal/ci "*|*"/internal/ci "*) ;;
             *) pkgs="$pkgs ./internal/ci" ;;
           esac
+          # internal/docs holds the front page's contract: AGENTS.md must name
+          # every class rule indexed in docs/SPEC-CI.md. It reads the tree as
+          # text too, so a docs-only change can break its class test (#1504)
+          # without naming a dependent. Always append it, same guard as above,
+          # so the red surfaces on the PR and not in an integration batch
+          # (#1364, #1409).
+          case " $pkgs " in
+            *" ./internal/docs "*|*"/internal/docs "*) ;;
+            *) pkgs="$pkgs ./internal/docs" ;;
+          esac
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 

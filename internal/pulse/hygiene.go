@@ -32,6 +32,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // HygieneProcs answers whether any process names a slot in its command line or
@@ -324,9 +325,29 @@ func (h *hygiene) logVerb() int {
 // run is the timer's verb: it walks both roots, leaves every live slot alone,
 // reaps the dead, deletes the read jobs, drops the cache when the disk is low,
 // and prints one HYGIENE line (and, unless --dry-run, logs it too).
+//
+// THE THREE RULES OF #1499/#1512, WHICH THIS VERB COST TWO CERTIFY TREES AND A
+// 43-CARD SWARM ROOT TO LEARN, are asked in this order:
+//
+//   - IS IT A SLOT? A slot is the shape the launcher makes, <slot>/jobs. A
+//     directory under a root without one is somebody's work -- a certify tree, a
+//     toolchain, a clone -- and is skipped whole, at any age, and is not even
+//     counted as a slot.
+//   - IS IT LEASED? Liveness is the launcher's own lease and nothing else. No
+//     silence is ever a reason to delete: one long model call and one long
+//     compile are both silent. A process naming the path is a SECOND REASON TO
+//     KEEP, never a reason to delete.
+//   - IS IT OLD? Age is required before any deletion. An unleased job goes when
+//     it is harvested, or when nothing in it has changed for MinAgeHours; an
+//     emptied slot only once it too has been quiet that long -- read BEFORE the
+//     pass deletes anything under it, because deleting a job touches jobs/ and an
+//     age read afterwards says "just now" of a slot idle for days.
+//
+// And the cache is never dropped while any lease is live (cache=kept-lease):
+// that is a running card's build cut out from under it.
 func (h *hygiene) run() int {
 	before := h.disk.Free()
-	slots, reaped, jobs, dropped := 0, 0, 0, 0
+	slots, reaped, jobs, dropped, dead := 0, 0, 0, 0, 0
 	for _, root := range h.roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -340,25 +361,46 @@ func (h *hygiene) run() int {
 			if _, err := safepath.ResolvedUnder(slot, root); err != nil {
 				continue
 			}
+			// Rule 1, asked FIRST: what this tool does not recognise as a slot it
+			// does not touch -- not its jobs, not its scratch, not the directory.
+			if !slotShaped(slot) {
+				continue
+			}
 			slots++
-			if h.liveSlot(slot) {
+			slotAge := h.hoursSince(newestMTime(slot))
+			// Rule 2 and rule 3, per job.
+			for _, job := range h.jobDirs(slot) {
+				if h.jobLeased(job) || h.pathLive(job) {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(job, ".harvested")); err == nil {
+					if h.remove("delete-job", job) {
+						jobs++
+					}
+					continue
+				}
+				if m := newestMTime(job); m <= 0 || h.hoursSince(m) < MinAgeHours {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(job, "RESULT.md")); err == nil {
+					if h.remove("delete-job", job) {
+						jobs++
+					}
+				} else if h.remove("DEAD", job) {
+					dead++
+				}
+			}
+			// The slot's own scratch -- <slot>/data is a card's HOME and
+			// <slot>/tmp its TMPDIR -- goes only when nothing in the slot is live.
+			if h.slotLeased(slot) || h.pathLive(slot) {
 				continue
 			}
 			if dirExists(filepath.Join(slot, "data")) || dirExists(filepath.Join(slot, "tmp")) {
 				h.reapSlot(slot)
 				reaped++
 			}
-			newest := h.newestLog(slot)
-			for _, job := range h.jobDirs(slot) {
-				_, harvested := os.Stat(filepath.Join(job, ".harvested"))
-				stale := newest > 0 && (h.now.Unix()-newest)/3600 >= 6
-				if harvested == nil || stale {
-					if h.remove("delete-job", job) {
-						jobs++
-					}
-				}
-			}
-			if emptyDir(filepath.Join(slot, "jobs")) && !dirExists(filepath.Join(slot, "data")) {
+			// Rule 3 for the slot: recognised, emptied of jobs, and quiet.
+			if emptyDir(filepath.Join(slot, "jobs")) && slotAge >= MinAgeHours {
 				if h.remove("delete-slot", slot) {
 					dropped++
 				}
@@ -369,12 +411,14 @@ func (h *hygiene) run() int {
 	size := h.disk.SizeGB(h.cache)
 	cache := "kept"
 	if h.disk.FreeGB() < 25 || size > 20 {
-		if h.removeUnder("drop-cache", h.cache, filepath.Join(h.in.Home, ".cache")) {
+		if h.anyLeased() {
+			cache = "kept-lease"
+		} else if h.removeUnder("drop-cache", h.cache, filepath.Join(h.in.Home, ".cache")) {
 			cache = "dropped"
 		}
 	}
-	line := fmt.Sprintf("HYGIENE %s slots=%d reaped=%d jobs-deleted=%d slots-deleted=%d diag-deleted=%d diag-freed=%d cache=%s(%dG) free %s -> %s",
-		h.host, slots, reaped, jobs, dropped, diagN, diagBytes, cache, size, before, h.disk.Free())
+	line := fmt.Sprintf("HYGIENE %s slots=%d reaped=%d jobs-deleted=%d slots-deleted=%d dead=%d diag-deleted=%d diag-freed=%d cache=%s(%dG) free %s -> %s",
+		h.host, slots, reaped, jobs, dropped, dead, diagN, diagBytes, cache, size, before, h.disk.Free())
 	if !h.in.DryRun {
 		h.appendLog(line)
 	}
@@ -521,35 +565,107 @@ func (h *hygiene) jobDirs(slot string) []string {
 	return out
 }
 
-// liveSlot is the shell's liveness rule: a job whose harness log is under 15
-// minutes old with no RESULT.md, or any process naming the slot in its command
-// line or cwd, holds the whole slot.
-func (h *hygiene) liveSlot(slot string) bool {
-	now := h.now.Unix()
+// MinAgeHours is how long anything must have been quiet before this verb may
+// delete it: an unleased job, and an emptied slot. It is the shell reaper's
+// MIN_AGE_H, read the same way and for the same reason.
+const MinAgeHours = 6
+
+// slotShaped answers rule 1: a slot is what the launcher makes, <slot>/jobs,
+// created before the child starts. A symlink named jobs is not that shape and is
+// not followed.
+func slotShaped(slot string) bool {
+	info, err := os.Lstat(filepath.Join(slot, "jobs"))
+	return err == nil && info.IsDir()
+}
+
+// jobLeased answers rule 2, and it answers it with internal/swarm's own record
+// rather than a second spelling of it: <job>/.lease is what `nova-swarm native`
+// WRITES, carrying the launcher's pid and a heartbeat it bumps while the child
+// runs, and swarm.JobLease.Live is the same judgement the launcher itself makes
+// about another run's lease -- the pid where this kernel can be asked, and the
+// heartbeat against swarm.JobLeaseStale where it cannot. A reaper that re-spells
+// that rule is a reaper that can disagree with the launcher, and the way it
+// disagrees is by deleting a running card's directory.
+//
+// A lease this process cannot READ -- a .lease that is a directory, or
+// unreadable -- is a job whose owner cannot be established, so it is KEPT.
+func (h *hygiene) jobLeased(job string) bool {
+	lease, err := swarm.ReadJobLease(job)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	return lease.Live(h.now)
+}
+
+// slotLeased is whether any job in the slot is leased.
+func (h *hygiene) slotLeased(slot string) bool {
 	for _, job := range h.jobDirs(slot) {
-		info, err := os.Stat(filepath.Join(job, "harness-output.log"))
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(job, "RESULT.md")); err == nil {
-			continue
-		}
-		if (now-info.ModTime().Unix())/60 < 15 {
+		if h.jobLeased(job) {
 			return true
 		}
 	}
-	return h.in.Procs != nil && h.in.Procs.Busy(slot)
+	return false
 }
 
-// newestLog is the newest harness-output.log mtime under the slot's jobs, or 0.
-func (h *hygiene) newestLog(slot string) int64 {
-	var newest int64
-	for _, job := range h.jobDirs(slot) {
-		info, err := os.Stat(filepath.Join(job, "harness-output.log"))
+// anyLeased is whether any job under any root is leased. It is rule 6's
+// question: the build cache is a running card's build.
+func (h *hygiene) anyLeased() bool {
+	for _, root := range h.roots {
+		entries, err := os.ReadDir(root)
 		if err != nil {
 			continue
 		}
-		if m := info.ModTime().Unix(); m > newest {
+		for _, e := range entries {
+			if !e.IsDir() || !safepath.NameOK(e.Name()) {
+				continue
+			}
+			slot := filepath.Join(root, e.Name())
+			if _, err := safepath.ResolvedUnder(slot, root); err != nil {
+				continue
+			}
+			if slotShaped(slot) && h.slotLeased(slot) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pathLive is the SECOND REASON TO KEEP: a process whose command line or cwd
+// names the path. It is never a reason to delete, so it is only ever consulted
+// after the lease has already said nothing.
+func (h *hygiene) pathLive(path string) bool {
+	return h.in.Procs != nil && h.in.Procs.Busy(path)
+}
+
+// hoursSince is a unix second turned into whole hours before now.
+func (h *hygiene) hoursSince(m int64) int64 {
+	if m <= 0 {
+		return 0
+	}
+	return (h.now.Unix() - m) / 3600
+}
+
+// newestMTime is the newest mtime of a directory and its direct entries -- where
+// a job's own files (harness-output.log, RESULT.md, .lease) and a slot's own
+// (jobs, data, tmp) sit. It is deliberately not a recursive walk: the shell
+// reaper reads one level and the two must agree.
+func newestMTime(p string) int64 {
+	info, err := os.Lstat(p)
+	if err != nil {
+		return 0
+	}
+	newest := info.ModTime().Unix()
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		return newest
+	}
+	for _, e := range entries {
+		ei, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if m := ei.ModTime().Unix(); m > newest {
 			newest = m
 		}
 	}
