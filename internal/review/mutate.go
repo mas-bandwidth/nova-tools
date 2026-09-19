@@ -601,8 +601,13 @@ func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// gitOut runs git with object replacement switched off. A worker who can write the
+// job clone's `.git` can `git replace <head> <base>` and every later read of the
+// range -- rev-parse, merge-base, the diff this package reverts -- would then be
+// reading the base's objects, not the head's. The ref lives under `refs/replace/`
+// and is never in the diff, so nothing else in the range can see it.
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

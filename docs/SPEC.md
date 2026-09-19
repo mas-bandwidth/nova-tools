@@ -1466,7 +1466,11 @@ textual with `--text --no-textconv`, so a `-diff` attribute — committed, in
 a file holding a key into "Binary files differ"; paths are read with
 `core.quotePath=false` and unquoted besides, so one non-ASCII byte in a name
 does not skip that file; and blob ids are read in full, because an abbreviation
-is ambiguous sooner or later. The conflict-marker check reads the added lines
+is ambiguous sooner or later. Object replacement is switched off with
+`--no-replace-objects`: `git replace <head> <base>` writes a ref under the job
+clone's own `.git` -- never a commit in the range -- and every later read of the
+range would otherwise be shown the base's objects and report the range clean.
+The conflict-marker check reads the added lines
 of that same diff rather than asking `git diff --check`, which honours a
 `-diff` attribute whatever `--text` says. A check whose subject can choose what
 it is shown is not a check.
