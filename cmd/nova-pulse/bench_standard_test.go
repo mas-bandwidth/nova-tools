@@ -54,10 +54,12 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 		"exit 0\n")
 	// Fake curl: the probe reads only the http code it prints.
 	writeBenchExe(t, filepath.Join(bin, "curl"), "#!/bin/sh\necho 200\n")
-	// Fake go printing the wanted version.
-	writeBenchExe(t, filepath.Join(bin, "go"), "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
-	// Fake sbcl: presence on PATH is the check.
-	writeBenchExe(t, filepath.Join(bin, "sbcl"), "#!/bin/sh\nexit 0\n")
+	// Fake go printing the wanted version, placed under $HOME/sdk/<goVer>/bin: check (3b)
+	// resolves `go` with readlink -f and drifts unless it lies under a root the sandbox
+	// wall grants, and $HOME/sdk is that root (internal/swarm/toolchain.go:152, Exec: true).
+	writeBenchExe(t, filepath.Join(home, "sdk", goVer, "bin", "go"), "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
+	// Fake sbcl, same granted root as go.
+	writeBenchExe(t, filepath.Join(home, "sdk", "sbcl-2.5.8", "bin", "sbcl"), "#!/bin/sh\nexit 0\n")
 	// Fake nova-secrets whose check passes for any key.
 	writeBenchExe(t, filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nexit 0\n")
 	// The toolchain roots the sandbox wall grants a card, taken from the ONE list rather
@@ -91,8 +93,10 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 	// Minimal PATH: the fakes first, then the system dirs. The test never
 	// touches the real go, sbcl or nova-secrets, and a long inherited PATH
 	// (IDE shims, SDKs) only slows every command -v lookup in the script.
+	goBin := filepath.Join(home, "sdk", goVer, "bin")
+	sbclBin := filepath.Join(home, "sdk", "sbcl-2.5.8", "bin")
 	cmd.Env = append([]string{},
-		"PATH="+bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/sbin"+string(os.PathListSeparator)+"/sbin",
+		"PATH="+goBin+string(os.PathListSeparator)+sbclBin+string(os.PathListSeparator)+bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/sbin"+string(os.PathListSeparator)+"/sbin",
 		"HOME="+home,
 		"NOVA_WANT="+want,
 		"NOVA_GO="+goVer,
