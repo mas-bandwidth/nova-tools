@@ -258,6 +258,7 @@ func (r *refusals) print(stderr io.Writer) int {
 const (
 	wantsOut     = "the directory the day files are written to"
 	wantsRepos   = "a file of <name><TAB><regexp> lines, in priority order, naming your repos"
+	wantsUnits   = "a work set, `(work-set \"id\" :units ((unit \"u1\" :pr 1412 :branch \"…\" :lane \"…\") …))`, whose units a transcript is attributed to"
 	wantsDay     = "one UTC day as YYYY-MM-DD, or --all for every day the sources name"
 	wantsWho     = "the name this report is from, as the bus knows it"
 	wantsMonth   = "one month as YYYY-MM"
@@ -356,9 +357,17 @@ func (s *sourceFlags) check(r *refusals) {
 
 // read reads every declared source, in declaration order, through the one reader per kind.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source {
+	return s.readWithUnits(rules, nil, now)
+}
+
+// readWithUnits is read with the work set a fold was given, which only the Claude reader
+// uses: a unit is attributed from a CHILD TRANSCRIPT's tool inputs, and a billing export,
+// a swarm usage file and a bus self-report carry no tool inputs to read one from. Their
+// rows are `-`, which is the truthful answer and not a gap.
+func (s *sourceFlags) readWithUnits(rules *tokens.Rules, units *tokens.Units, now time.Time) []*tokens.Source {
 	var out []*tokens.Source
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, rules, units))
 	}
 	for _, it := range s.opencode.items {
 		out = append(out, tokens.ReadOpenCode(it.label, it.value, s.scratch, time.Duration(s.timeout)*time.Second, rules))
@@ -491,6 +500,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	all := fs.Bool("all", false, "")
 	allowShrink := fs.Bool("allow-shrink", false, "")
+	unitsPath := fs.String("units", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
@@ -528,6 +538,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
+	var units *tokens.Units
+	if *unitsPath != "" {
+		units, err = tokens.LoadUnits(*unitsPath)
+		if err != nil {
+			r.add("--units " + *unitsPath + ": " + err.Error() + "; it wants " + wantsUnits)
+			return r.print(stderr)
+		}
+	}
 	release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
 	if err != nil {
 		r.add(err.Error())
@@ -535,7 +553,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	defer release()
 
-	sources := sf.read(rules, now)
+	sources := sf.readWithUnits(rules, units, now)
+	if units != nil {
+		fmt.Fprintf(stdout, "TOKENS UNITS set=%s units=%d file=%s\n",
+			oneline.Field(orDashText(units.Set)), units.Len(), oneline.Field(*unitsPath))
+	}
 	folder := tokens.NewFolder()
 	for _, s := range sources {
 		for _, m := range s.Stream {
@@ -768,7 +790,7 @@ func buildDayFile(day string, rows []*tokens.Row, folder *tokens.Folder, now tim
 			labels[l] = true
 		}
 		f.Rows = append(f.Rows, tokens.DayRow{
-			Date: day, Model: r.Model, Repo: r.Repo, Counts: r.Counts,
+			Date: day, Model: r.Model, Repo: r.Repo, Unit: r.Unit, Counts: r.Counts,
 			Rough: r.Rough, Basis: r.Basis(), Sources: r.Sources(),
 		})
 	}
@@ -1211,6 +1233,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	month := fs.String("month", "", "")
 	swarmRoot := fs.String("swarm-root", "", "")
 	day := fs.String("day", "", "")
+	byFlag := fs.String("by", "pair", "")
 	max := fs.Int("max", bounded.Default, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -1239,6 +1262,11 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case !validMonth(*month):
 		r.add("--month is not a month: " + *month + "; it wants " + wantsMonth)
 	}
+	switch *byFlag {
+	case "pair", "unit":
+	default:
+		r.add("--by is pair or unit, got " + *byFlag + "; `pair` is the (model, repo) tables this verb has always printed and `unit` is what one piece of work cost")
+	}
 	checkMax(r, *max)
 	if len(r.list) > 0 {
 		return r.print(stderr)
@@ -1260,22 +1288,35 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(*month), oneline.Field(stamp(now)), oneline.Field(buildVersion()),
 		len(s.Days), oneline.Field(first), oneline.Field(last), len(s.Missing), s.Rows, oneline.Field(turns))
 
-	pairs := bounded.Capped(stdout, *max, "SUM", "pair", "nova-tokens sum --out "+*out+" --month "+*month+" --max 0")
-	for _, p := range s.Pairs {
-		pairs.Line(fmt.Sprintf("SUM PAIR model=%s repo=%s %s days=%d",
-			oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
+	widen := "nova-tokens sum --out " + *out + " --month " + *month + " --max 0"
+	// `--by unit` prints the units table INSTEAD of the two (model, repo) tables, and not
+	// beside them: the tables are the answer a reader asked for, and printing both doubles
+	// a listing on a month with a hundred units for a question nobody asked.
+	if *byFlag == "unit" {
+		units := bounded.Capped(stdout, *max, "SUM", "unit", widen)
+		for _, u := range s.Units {
+			units.Line(fmt.Sprintf("SUM UNIT unit=%s %s pairs=%d days=%d",
+				oneline.Field(u.Unit), aggFields(u.Agg), u.Agg.Keys(), u.Agg.Days()))
+		}
+		units.More()
+	} else {
+		pairs := bounded.Capped(stdout, *max, "SUM", "pair", widen)
+		for _, p := range s.Pairs {
+			pairs.Line(fmt.Sprintf("SUM PAIR model=%s repo=%s %s days=%d",
+				oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
+		}
+		pairs.More()
+		models := bounded.Capped(stdout, *max, "SUM", "model", widen)
+		for _, m := range s.Models {
+			models.Line(fmt.Sprintf("SUM MODEL model=%s %s repos=%d",
+				oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
+		}
+		models.More()
 	}
-	pairs.More()
-	models := bounded.Capped(stdout, *max, "SUM", "model", "nova-tokens sum --out "+*out+" --month "+*month+" --max 0")
-	for _, m := range s.Models {
-		models.Line(fmt.Sprintf("SUM MODEL model=%s %s repos=%d",
-			oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
-	}
-	models.More()
-	fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d\n",
-		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models))
-	fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d nonutc=%d\n",
-		oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), s.Total.NonUTC)
+	fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d units=%d\n",
+		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models), len(s.Units))
+	fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d units=%d nonutc=%d\n",
+		oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), len(s.Units), s.Total.NonUTC)
 	return 0
 }
 
@@ -1394,4 +1435,13 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
 		oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
 	return 0
+}
+
+// orDashText is the dash a value nobody wrote is printed as: a work set with no id of its
+// own still loads, and an empty field on a printed line is a field a scanner cannot read.
+func orDashText(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return tokens.Dash
+	}
+	return s
 }
