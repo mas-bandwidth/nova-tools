@@ -93,6 +93,7 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 	image := f.fs.String("image", "", "")
 	model := f.fs.String("model", "", "")
 	container := f.fs.String("container", "", "")
+	workSet := f.fs.String("work-set", "", "")
 	once := f.fs.Bool("once", false, "")
 
 	if !f.parse(args, stderr) {
@@ -134,7 +135,7 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 
 	// 3. Worker daemon: --seat or --slots given, or --bench given without --worker
 	if strings.TrimSpace(*seat) != "" || *slots > 0 || (strings.TrimSpace(*bench) != "" && strings.TrimSpace(*worker) == "") {
-		return pullWorker(f, *bench, *slots, *seat, *store, *harvest, *image, *model, *runner, *container, *forDur, *once, stdout, stderr)
+		return pullWorker(f, *bench, *slots, *seat, *store, *harvest, *image, *model, *runner, *container, *workSet, *forDur, *once, stdout, stderr)
 	}
 
 	// 4. Lease take (section 3): --store and --owner given without --bench
@@ -147,7 +148,7 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 }
 
 // pullWorker runs the pull worker process in container/runner.
-func pullWorker(f *flags, bench string, slots int, seat, store, harvest, image, model, runner, container, forDur string, once bool, stdout, stderr io.Writer) int {
+func pullWorker(f *flags, bench string, slots int, seat, store, harvest, image, model, runner, container, workSet, forDur string, once bool, stdout, stderr io.Writer) int {
 	f.want(bench, "bench", "the bench name or directory")
 	if slots <= 0 {
 		slots = 1
@@ -176,6 +177,7 @@ func pullWorker(f *flags, bench string, slots int, seat, store, harvest, image, 
 		Model:     model,
 		Runner:    runner,
 		Container: container,
+		WorkSet:   workSet,
 		For:       dur,
 		Once:      once,
 		Stdout:    stdout,

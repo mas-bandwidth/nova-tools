@@ -14,6 +14,7 @@ package swarm
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -21,10 +22,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -51,6 +54,11 @@ type PullWorkerOptions struct {
 	Once      bool          // if true, run at most one card and exit
 	Stdout    io.Writer
 	Stderr    io.Writer
+
+	// Work language admission and attempt contract
+	WorkSet       string          // path to work set (.lisp)
+	Admission     *jobs.Admission // admission authority over lane and bench slots
+	RecordAttempt func(unit, by, outcome, proof string, pr int) error // hook for attempt recording
 
 	// RunCard is an optional test hook to execute a card instead of the container/runner command.
 	RunCard func(ctx context.Context, label, cardPath, workDir string) (int, error)
@@ -131,6 +139,13 @@ func RunPullWorker(ctx context.Context, opts PullWorkerOptions) int {
 		opts.Model = DefaultWorkerModel
 	}
 
+	admission := opts.Admission
+	if admission == nil {
+		benchSlot := "slot:" + opts.Bench
+		admission = jobs.New(jobs.Vector{benchSlot: int64(opts.Slots)})
+		defer admission.Close()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -196,10 +211,44 @@ func RunPullWorker(ctx context.Context, opts PullWorkerOptions) int {
 			continue
 		}
 
+		// Admission check under SPEC-WORKLANG Amendment 1 and SPEC-JOBS section 9:
+		// Vector requests the bench slot and lane (if named, capacity 1).
+		lane := CardLane(string(cardBytes))
+		reqVec := jobs.Vector{"slot:" + opts.Bench: 1}
+		if lane != "" {
+			reqVec[jobs.Lane(lane)] = 1
+		}
+		_, admitErr := admission.Grant(jobs.Request{
+			ID:     label,
+			Vector: reqVec,
+		})
+		if admitErr != nil {
+			fmt.Fprintf(opts.Stderr, "nova-swarm pull: %s\n", oneline.Err(admitErr))
+			_ = returnCardForLease(opts.Store, SlotLease{Owner: leaseOwner, Label: res.Card})
+			_, _, _ = ReleaseSlotLeases(opts.Store, leaseOwner, res.Card, false)
+			if opts.Once {
+				return 2
+			}
+			select {
+			case <-ctx.Done():
+				return 0
+			case <-time.After(1 * time.Second):
+				continue
+			}
+		}
+
+		// Record attempt start (outcome: uncertain, A4)
+		if opts.RecordAttempt != nil {
+			_ = opts.RecordAttempt(label, leaseOwner, "uncertain", "", 0)
+		} else if opts.WorkSet != "" {
+			_ = defaultRecordAttempt(ctx, opts.WorkSet, label, leaseOwner, "uncertain", "", 0, opts.Stderr)
+		}
+
 		// Create isolated workspace for this card.
 		workDir := filepath.Join(opts.Store, "work", label)
 		if err := os.MkdirAll(workDir, 0o755); err != nil {
 			fmt.Fprintf(opts.Stderr, "nova-swarm pull: mkdir workdir: %s\n", oneline.Err(err))
+			_ = admission.Release(label)
 			_, _, _ = ReleaseSlotLeases(opts.Store, leaseOwner, res.Card, false)
 			if opts.Once {
 				return 2
@@ -232,6 +281,27 @@ func RunPullWorker(ctx context.Context, opts PullWorkerOptions) int {
 		resultPath := filepath.Join(opts.Harvest, label, "RESULT.md")
 		harvestResult(workDir, resultPath)
 
+		// Termination proof and attempt completion (SPEC-WORKLANG A3 and A4).
+		resultBytes, _ := os.ReadFile(resultPath)
+		if len(resultBytes) == 0 {
+			_ = os.MkdirAll(filepath.Dir(resultPath), 0o755)
+			_ = os.WriteFile(resultPath, []byte(fmt.Sprintf("RESULT: exit=%d\n", exitCode)), 0o644)
+			resultBytes, _ = os.ReadFile(resultPath)
+		}
+		proof := fmt.Sprintf("%x", sha256.Sum256(resultBytes))
+		pr := ExtractPR(resultBytes)
+
+		outcome := "ok"
+		if runErr != nil || exitCode != 0 {
+			outcome = "failed"
+		}
+
+		if opts.RecordAttempt != nil {
+			_ = opts.RecordAttempt(label, leaseOwner, outcome, proof, pr)
+		} else if opts.WorkSet != "" {
+			_ = defaultRecordAttempt(ctx, opts.WorkSet, label, leaseOwner, outcome, proof, pr, opts.Stderr)
+		}
+
 		// Move taken card to done/
 		doneDir := filepath.Join(opts.Store, "done")
 		if err := os.MkdirAll(doneDir, 0o755); err == nil {
@@ -242,6 +312,9 @@ func RunPullWorker(ctx context.Context, opts PullWorkerOptions) int {
 
 		// Release lease.
 		_, _, _ = ReleaseSlotLeases(opts.Store, leaseOwner, res.Card, false)
+
+		// Release admission reservation.
+		_ = admission.Release(label)
 
 		// Clean up workspace. The container is the hygiene.
 		_ = safepath.RemoveUnder(opts.Store, workDir)
@@ -379,4 +452,71 @@ func harvestResult(workDir, harvestPath string) {
 			return
 		}
 	}
+}
+
+// CardLane reads a card's `LANE: <name>` line, or "" when it names none.
+func CardLane(cardContent string) string {
+	for _, line := range strings.Split(cardContent, "\n") {
+		line = strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(line, "LANE:"); ok {
+			if lane := strings.TrimSpace(v); lane != "" {
+				return lane
+			}
+		}
+	}
+	return ""
+}
+
+// ExtractPR parses a PR number from RESULT.md lines.
+func ExtractPR(data []byte) int {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if idx := strings.Index(line, "/pull/"); idx != -1 {
+			rest := line[idx+len("/pull/"):]
+			var digits []byte
+			for i := 0; i < len(rest) && rest[i] >= '0' && rest[i] <= '9'; i++ {
+				digits = append(digits, rest[i])
+			}
+			if len(digits) > 0 {
+				if n, err := strconv.Atoi(string(digits)); err == nil && n > 0 {
+					return n
+				}
+			}
+		}
+		if strings.HasPrefix(line, "PR") {
+			rest := strings.TrimPrefix(line, "PR")
+			rest = strings.TrimPrefix(rest, ":")
+			rest = strings.TrimSpace(rest)
+			rest = strings.TrimPrefix(rest, "#")
+			var digits []byte
+			for i := 0; i < len(rest) && rest[i] >= '0' && rest[i] <= '9'; i++ {
+				digits = append(digits, rest[i])
+			}
+			if len(digits) > 0 {
+				if n, err := strconv.Atoi(string(digits)); err == nil && n > 0 {
+					return n
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func defaultRecordAttempt(ctx context.Context, workSet, unit, by, outcome, proof string, pr int, stderr io.Writer) error {
+	args := []string{
+		"attempt", "record",
+		"--file", workSet,
+		"--unit", unit,
+		"--by", by,
+		"--outcome", outcome,
+	}
+	if proof != "" {
+		args = append(args, "--proof", proof)
+	}
+	if pr > 0 {
+		args = append(args, "--pr", strconv.Itoa(pr))
+	}
+	cmd := exec.CommandContext(ctx, "nova-work", args...)
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
