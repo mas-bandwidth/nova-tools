@@ -55,6 +55,11 @@ type LaunchInput struct {
 	Version string
 	// Attempts is the bound on start-time provider failures. 0 takes DefaultLaunchAttempts.
 	Attempts int
+	// Max is the ceiling on the cards this invocation considers, the repo's --max
+	// convention: 0 means all (docs/SPEC.md, Conventions). It was on the usage line, was
+	// parsed, and was then dropped on the floor -- `--max 1` admitted three cards
+	// (issue #1821). The rows beyond it are left in the caller's cards.tsv untouched.
+	Max int
 	// Sleep is the backoff between those attempts; nil is time.Sleep. A test passes one
 	// that returns at once, so a bounded retry costs a test no wall clock.
 	Sleep  func(time.Duration)
@@ -74,10 +79,6 @@ type LaunchInput struct {
 // RoutesLogFile is the log rule 8 demands: one ROUTE line per card, beside the
 // card's label and the time, under the queue directory.
 const RoutesLogFile = "ROUTES.log"
-
-// sliceTimeout is rule 8's quiet window: a slot whose native.log was written within this
-// window still holds a live native and is not free.
-const sliceTimeout = 120 * time.Second
 
 // nativeRunner is the command nova-swarm batch starts once per card, given label, slot,
 // model, card path and root. It is the runner the deployment keeps on PATH -- the same one
@@ -100,6 +101,13 @@ func Launch(in LaunchInput) int {
 	if len(cards) == 0 {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
+	}
+	// --max, before anything is paid for: routing a card costs a model call, and a card
+	// over the ceiling is not this invocation's to route, admit or queue (issue #1821).
+	if in.Max > 0 && len(cards) > in.Max {
+		fmt.Fprintf(in.Stderr, "PULSE NOTE max=%d: %s holds %d cards; this pulse considers the first %d and leaves the rest where they are\n",
+			in.Max, oneline.Field(in.Cards), len(cards), in.Max)
+		cards = cards[:in.Max]
 	}
 	// ROUTE (SPEC-DECIDE rule 8): with --routes, each card's worker is a typed decision, and
 	// the ROUTE line is logged beside the card and the time. Below the floor the card keeps
@@ -165,7 +173,7 @@ func Launch(in LaunchInput) int {
 			return 2
 		}
 		id = ran
-		record(in.Root, id, len(goCards))
+		record(in.Root, id, len(goCards), in.Slots, in.Deadline)
 		batches = 1
 	}
 
@@ -329,7 +337,11 @@ func (in LaunchInput) sleep(d time.Duration) {
 // swarm's own reason when the batch failed, and whether it succeeded; the refusal line is
 // the caller's to write, because only the caller knows whether a retry is left.
 func runBatch(in LaunchInput, id, cardsPath, runner string, swarmBin resolvedSwarm) (string, bool) {
-	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
+	// `nova-swarm batch` runs --then with sh -c (internal/swarm/batch.go), so every field
+	// interpolated here is shell text, not an argv slot. A root path holding a space split
+	// the harvest's --root in two; one holding a `;`, a backtick or a `$(` would have run
+	// something else. Both fields are quoted as shell tokens (issue #1825).
+	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", shellToken(id), shellToken(in.Root))
 	// The file budget, because `nova-swarm batch` refuses an admission that names none
 	// ("--files is required and is at least 1, got 0") and a launch with no configured
 	// budget would otherwise send the zero the swarm reads as "refusing to guess". A
@@ -371,14 +383,29 @@ func runBatch(in LaunchInput, id, cardsPath, runner string, swarmBin resolvedSwa
 	return "", true
 }
 
-// record appends one row to <root>/pulses/<id>.tsv naming the batch: its id and card count.
-func record(root, id string, n int) {
+// record appends one row to <root>/pulses/<id>.tsv naming the batch: its id, its card count,
+// and the width and deadline it ran with.
+//
+// The last two are new (issue #1819). Rule 15's pulse-again is a real `nova-pulse launch`
+// subprocess, and launch requires --slots and --deadline; harvest had neither and invoked a
+// launch that could only refuse. It does not have to guess: the pulse being harvested ran
+// with a width and a deadline, and this is where they are written down. The first two fields
+// are unchanged, so a reader of the old two-field row still reads it.
+func record(root, id string, n, slots int, deadline string) {
 	f, err := os.OpenFile(filepath.Join(root, "pulses", id+".tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "pulse-%s\t%d\n", id, n)
+	fmt.Fprintf(f, "pulse-%s\t%d\t%d\t%s\n", id, n, slots, oneline.Field(deadline))
+}
+
+// shellToken quotes a string so `sh -c` reads it as exactly one argument, whatever it holds.
+// Single quotes are literal in POSIX sh, and the one character they cannot hold is closed,
+// escaped and reopened. Used for every field launch interpolates into the --then string that
+// `nova-swarm batch` will run as a shell command (issue #1825).
+func shellToken(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // queueRemainder appends each overflow card to <root>/queue.tsv, one row per card.
@@ -444,33 +471,36 @@ func routesLogPath(in LaunchInput) string {
 	return filepath.Join(in.Root, RoutesLogFile)
 }
 
-// freeSlots counts the free slots among the first `slots`, a slot free only when it holds no
-// lock (its slot file is absent or state=free) and its native.log has been quiet.
+// freeSlots counts the free slots among the first `slots`. A slot is free when it holds no
+// lock -- its slot file absent, or state=free -- AND NOTHING ELSE.
+//
+// It used to also refuse a slot whose <pool>/<n>/native.log had been written in the last 120
+// seconds, which meant the only thing standing between a card and a slot could be a file's
+// mtime. docs/SPEC-PULSE.md rule 8 and docs/CLI.md both say, in those words, "never a log
+// age and never a 120 s rule", and rule 8 demands a test named
+// launch-slot-free-from-lock-files. Two documents against one constant: the constant loses
+// (issue #1822). A live native holds the swarm's own lock (issue #457), which is the fact
+// this reads; a log's mtime is a guess about that fact and was wrong in both directions --
+// it took a slot no one held, and it freed a held slot whose worker had simply gone quiet.
 func freeSlots(root string, slots int, now time.Time) int {
 	pool := filepath.Join(root, "pool")
 	n := 0
 	for i := 1; i <= slots; i++ {
-		if slotFree(pool, i, now) {
+		if slotFree(pool, i) {
 			n++
 		}
 	}
 	return n
 }
 
-func slotFree(pool string, n int, now time.Time) bool {
-	if raw, err := os.ReadFile(filepath.Join(pool, "slots", strconv.Itoa(n)+".json")); err == nil {
-		var sf struct {
-			State string `json:"state"`
-		}
-		_ = json.Unmarshal(raw, &sf)
-		if sf.State != "free" {
-			return false
-		}
+func slotFree(pool string, n int) bool {
+	raw, err := os.ReadFile(filepath.Join(pool, "slots", strconv.Itoa(n)+".json"))
+	if err != nil {
+		return true
 	}
-	if fi, err := os.Stat(filepath.Join(pool, strconv.Itoa(n), "native.log")); err == nil {
-		if now.Sub(fi.ModTime()) < sliceTimeout {
-			return false
-		}
+	var sf struct {
+		State string `json:"state"`
 	}
-	return true
+	_ = json.Unmarshal(raw, &sf)
+	return sf.State == "free"
 }

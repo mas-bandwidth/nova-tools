@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,47 @@ func setupPulse(t *testing.T) (root, specs, arglog string) {
 	root = t.TempDir()
 	specs = fakePATH(t)
 	arglog = filepath.Join(root, "argv.log")
+	// The pulse table `launch` writes beside every pulse: its id, its card count, and
+	// the width and deadline it ran with. Rule 15's relaunch reads the last two and
+	// passes them to the launch subprocess, which requires both (issue #1819).
+	writePulseTable(t, root, "p1", 1, 4, "300")
 	return root, specs, arglog
+}
+
+// writePulseTable writes <root>/pulses/<id>.tsv exactly as launch's record() does.
+func writePulseTable(t *testing.T, root, id string, cards, slots int, deadline string) {
+	t.Helper()
+	dir := filepath.Join(root, "pulses")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf("pulse-%s\t%d\t%d\t%s\n", id, cards, slots, deadline)
+	if err := os.WriteFile(filepath.Join(dir, id+".tsv"), []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// queueCard writes a card file and the queue.tsv row `launch --queue` writes for its
+// overflow: label<TAB>model<TAB>card, three fields (issue #1820).
+func queueCard(t *testing.T, root, label string) string {
+	t.Helper()
+	dir := filepath.Join(root, "cardsrc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	card := filepath.Join(dir, label+".md")
+	if err := os.WriteFile(card, []byte("RESULT "+label+" sha=000000000000\nREPO owner/repo\nSTEP 1. go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "queue.tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(label + "\tflash\t" + card + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	return card
 }
 
 // fakeGit records every git invocation and succeeds; nothing here has a repository.
@@ -46,7 +87,10 @@ func addCard(t *testing.T, root, label, slot, model, contract, result string) {
 		t.Fatal(err)
 	}
 	cardPath := filepath.Join(cardDir, label+".md")
-	if err := os.WriteFile(cardPath, []byte(contract+"\nSTEP 1. go\n"), 0o644); err != nil {
+	// The card names its own repository: a harvest checks the RESULT.md's REPO line
+	// against the card before it pushes anywhere, because a RESULT is a report and not
+	// an instruction (issue #1824). Every card these tests fold is for owner/repo.
+	if err := os.WriteFile(cardPath, []byte(contract+"\nREPO owner/repo\nSTEP 1. go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	job := filepath.Join(root, slot, "jobs", label)
@@ -203,11 +247,11 @@ func TestHarvestRelaunchesQueueFirst(t *testing.T) {
 	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd",
 		"RESULT done sha=ddd\nDONE\nBRANCH bd\nREPO owner/repo\n")
 
-	writeTSV(t, filepath.Join(root, "queue.tsv"), []string{
-		"q\tq1\tfix\tt1\tfix\n",
-		"q\tq2\tfix\tt2\tfix\n",
-		"q\tq3\tfix\tt3\tfix\n",
-	})
+	// The queue is what `launch --queue` actually writes: three-field card rows, not
+	// the five-field candidate table this test used to plant (issue #1820).
+	queueCard(t, root, "q1")
+	queueCard(t, root, "q2")
+	queueCard(t, root, "q3")
 	writeTSV(t, filepath.Join(root, "next.tsv"), []string{
 		"pr\towner/repo#42\tread\ttitle\tread\n",
 	})

@@ -18,7 +18,10 @@ func addPoolCard(t *testing.T, root, label, state, id, contract, result string) 
 		t.Fatal(err)
 	}
 	cardPath := filepath.Join(cardDir, label+".md")
-	if err := os.WriteFile(cardPath, []byte(contract+"\nSTEP 1. go\n"), 0o644); err != nil {
+	// The card names its own repository: a harvest checks the RESULT.md's REPO line
+	// against the card before it pushes anywhere, because a RESULT is a report and not
+	// an instruction (issue #1824). Every card these tests fold is for owner/repo.
+	if err := os.WriteFile(cardPath, []byte(contract+"\nREPO owner/repo\nSTEP 1. go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pool := filepath.Join(root, "pool")

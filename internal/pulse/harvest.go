@@ -117,16 +117,31 @@ func Harvest(in HarvestInput) int {
 	// folds every job dir under it instead: the RESULT.md files are the record, and
 	// their own line 1 is the contract (rule 11). The refusal stands only when
 	// neither the file nor a job dir is there.
-	cardsPath := filepath.Join(in.Root, "cards.tsv")
+	//
+	// THE PULSE TABLE FIRST (issue #1818). `launch` writes the cards it admitted to
+	// <root>/cards/<id>/cards.tsv -- docs/CLI.md and SPEC-PULSE rule 10 both say so, and
+	// the --then launch chains is this exact verb with this exact --id. Harvest read
+	// <root>/cards.tsv and nothing else, so every chained harvest of a successful pulse
+	// refused with "run: nova-pulse cut" -- the wrong door, because launch had already
+	// written the table. The root table stays as the fallback for a root `cut` wrote.
+	cardsPath := pulseCardsPath(in.Root, in.ID)
 	cards, err := readCards(cardsPath)
 	if err != nil {
-		if _, statErr := os.Stat(cardsPath); os.IsNotExist(statErr) {
-			cards = discoverRootCards(in.Root)
-		}
-		if len(cards) == 0 {
-			return refusal(in.Stderr, "HARVEST", err)
+		rootPath := filepath.Join(in.Root, "cards.tsv")
+		if rootCards, rootErr := readCards(rootPath); rootErr == nil {
+			cards, err, cardsPath = rootCards, nil, rootPath
 		}
 	}
+	if err != nil || len(cards) == 0 {
+		if found := discoverRootCards(in.Root); len(found) > 0 {
+			cards, err = found, nil
+		}
+		if len(cards) == 0 {
+			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot read %s, %s or any job directory under %s (harvest folds the pulse launch admitted; check the --id, or run: nova-pulse cut)",
+				oneline.Field(pulseCardsPath(in.Root, in.ID)), oneline.Field(filepath.Join(in.Root, "cards.tsv")), oneline.Field(in.Root)))
+		}
+	}
+	_ = cardsPath
 
 	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
@@ -202,6 +217,17 @@ func Harvest(in HarvestInput) int {
 						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
 					continue
 				}
+			}
+			// A RESULT.md is a report, never an instruction (SPEC-SWARM:40-44). The
+			// REPO and BRANCH lines on it are a worker's claim about where its work
+			// belongs, and harvest used to form https://github.com/<REPO>.git from
+			// that claim and push there -- a RESULT naming a repo nobody in this
+			// pulse has ever heard of opened a draft PR on it (issue #1824).
+			if err := allowedPush(in, jobDir, c, repo, branch); err != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
 			}
 			url := pushURL(repo)
 			if err := push(in, jobDir, url, branch); err != nil {
@@ -375,8 +401,15 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
 	norm := strings.ReplaceAll(body, "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
+	// PREFIX, not equality (issue #1823). The card generator can truncate the issue
+	// title, so the card's contract line may be a PREFIX of the RESULT.md line 1 rather
+	// than the whole of it -- docs/SPEC-SWARM.md:1482-1491, and `nova-swarm batch`'s own
+	// gather has scored it that way all along. Harvest compared with != and called a card
+	// the batch had already scored `done` a mismatch, so it was never pushed. Trailing
+	// spaces are trimmed on both sides first, exactly as the spec words it.
 	line1 := strings.TrimSpace(firstNonEmpty(lines))
-	if line1 != contract {
+	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
+	if want == "" || !strings.HasPrefix(strings.TrimRight(line1, " \t"), want) {
 		return "mismatch", "", "", lines
 	}
 	line2 := ""

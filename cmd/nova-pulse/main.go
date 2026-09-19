@@ -436,6 +436,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Benches: *benches, Bench: *bench,
 		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Runner: *runner, Swarm: *swarmBin, Attempts: *attempts, Version: buildVersion(),
+		Max:    *max,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,
 	})

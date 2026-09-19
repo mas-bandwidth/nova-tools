@@ -1315,7 +1315,8 @@ nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [-
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
 free slots under `<root>` (`<root>/pool/slots/<n>.json` absent or `state=free`,
-never a log age), fills every free slot in `cards.tsv` order, and queues the
+never a log age — the binary agreed with this sentence only from issue #1822 on,
+having until then also refused any slot whose `native.log` was under 120 s old), fills every free slot in `cards.tsv` order, and queues the
 rest under `<root>/queue.tsv` when `--queue` is set. The admitted cards are
 written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
 `nova-swarm batch` in its **card form** — the only form that runs a card:
@@ -1360,6 +1361,11 @@ wrote to `<root>/<slot>/jobs/<label>/`: the label, the runner's `rc`, the wall
 clock, the `reason` token and the first telling line of the harness capture, plus
 the job directory to read the whole of it in (issue #1761). Before that — a
 refusal with no job tree — the swarm's own line is relayed unchanged.
+
+**`--max <n>` bounds what this invocation considers** (default 20, `0` all, the repo's own
+convention). It was on this synopsis, was parsed, and was then ignored — `--max 1` admitted
+three cards (issue #1821). The rows beyond it stay in the caller's `cards.tsv`, and a
+truncated pulse says so on a `PULSE NOTE max=` line.
 
 **`--attempts <n>` bounds the start-time retry** (default 3, `1` is no retry).
 A batch that fails within 15 seconds with a provider start failure in the harness
@@ -1677,6 +1683,27 @@ nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates 
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 ```
+
+The first form folds **the pulse `launch` admitted**: `<root>/cards/<id>/cards.tsv`,
+the table launch writes for that `--id`, falling back to `<root>/cards.tsv` for a root
+`cut` wrote and to the job directories themselves for a bare swarm root. Reading only
+`<root>/cards.tsv` meant the `--then` harvest launch chains refused every successful
+pulse, with `run: nova-pulse cut` as the remedy — the wrong door, because launch had
+already written the table (issue #1818).
+
+A card is **this** card when its `RESULT.md` line 1 **begins with** the card's contract
+line, trailing spaces trimmed — the same rule `nova-swarm batch`'s gather applies
+(`docs/SPEC-SWARM.md`), because a card generator can truncate a title. Harvest compared
+for equality and scored a card the gather had already called `done` as `mismatch`, so it
+was never pushed (issue #1823).
+
+**A `RESULT.md` is a report, never an instruction** (`docs/SPEC-SWARM.md`). Before any
+push, the `REPO` line on it is checked against the repository the **card** names, or
+failing that against the job clone's own `origin`; a `REPO` that matches neither, or a
+card and clone that name none, is refused by name and counted `refused`, and nothing is
+pushed or opened. Harvest used to form `https://github.com/<REPO>.git` from the worker's
+line and push there (issue #1824). The branch prefix policy and #1650's `accept` gate are
+not part of that check yet.
 
 The first form folds one pulse's cards under a local root: it pushes and opens a PR for
 every card whose `RESULT.md` line 1 equals its contract line, sends every abstain to

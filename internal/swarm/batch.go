@@ -1199,7 +1199,7 @@ func cardHarnessSilent(job string) bool {
 		return false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(line, "NATIVE OK ") {
+		if !isNativeVerdictLine(line) {
 			continue
 		}
 		for _, tok := range strings.Fields(line) {
@@ -1224,7 +1224,7 @@ func cardFenceRejected(job string) (string, bool) {
 		return "", false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(line, "NATIVE OK ") {
+		if !isNativeVerdictLine(line) {
 			continue
 		}
 		fields := strings.Fields(line)
@@ -1239,6 +1239,16 @@ func cardFenceRejected(job string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// isNativeVerdictLine reports whether a line is `native`'s own verdict line, in either of
+// its two words. `NATIVE OK` used to be the only one; a run that produced nothing now says
+// `NATIVE INCOMPLETE` instead (nova-tools #1844), and the tokens this file reads off that
+// line -- harness=silent, fence=rejected -- are exactly as true on the incomplete one.
+// Reading only "NATIVE OK " would have silently stopped seeing them for failed runs, which
+// is the class of bug the rename exists to end.
+func isNativeVerdictLine(line string) bool {
+	return strings.HasPrefix(line, "NATIVE OK ") || strings.HasPrefix(line, "NATIVE INCOMPLETE ")
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
