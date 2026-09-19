@@ -2288,7 +2288,9 @@ retiring an individual slot; they are separate from its job evidence.
 Because `GOTOOLCHAIN=local` is pinned, the bench's own Go must be reachable
 inside the wall. `nova-swarm native` therefore names the provisioning standard's
 toolchain roots on the wall's argv, read-only and skipped when one is not there.
-It is **one list with two kinds**:
+It is **one list with two kinds, per operating system**.
+
+On **every** bench:
 
 - `~/sdk` (Go and sbcl) as `--read`, which carries execute, so
   `~/sdk/go1.26.5/bin/go` runs. Without it a card was denied the bench's `go`
@@ -2299,13 +2301,40 @@ It is **one list with two kinds**:
   them, and the bench user can write to that tree, so execute there would put a
   dependency's own files one exec away from running inside the wall.
 
-`~/go/bin` is granted under NEITHER kind — it is GOPATH/bin, a card that could
-exec it could run bench-user tools, and read-without-execute buys nothing in a
-directory of binaries. `~/go/bin/go` still works, because it is a symlink into
-`~/sdk` and the kernel checks the resolved target. No other path under your home
-is granted: not `~/.config/nova-secrets`, not `~/.ssh`. The list and each root's
-kind live in `internal/swarm/toolchain.go` and are checked against
-`tools/bench-standard.sh` by a test, so provisioning and the wall cannot drift
+On a **Mac** bench the toolchains are installed and on `PATH` rather than
+unpacked into a home, and each one finds its own runtime beside the launcher
+that ran it — so inside the wall, without its tree, `go` says `cannot find GOROOT
+directory: 'go' binary is trimmed`, `java` says `Unable to locate a Java Runtime`
+and `dotnet` says `Failed to resolve full path of the current executable []`
+(measured on the M2 Air, 2026-09-18). Darwin therefore also names, all as
+`--read` because all of them are runtimes a card runs:
+
+- `/opt/homebrew/Cellar/go` and `/opt/homebrew/Cellar/sbcl`, each narrowed to
+  the one version directory this bench runs — read off the launcher, the way
+  `readlink -f "$(command -v go)"` does, so a `brew upgrade` needs no edit here.
+- `/opt/homebrew/opt/openjdk` and `/Library/Java/JavaVirtualMachines` for
+  `java`, and `/usr/local/share/dotnet` for `dotnet`.
+
+Each is skipped when it is not installed, and each reaches the argv resolved
+through its symlinks, because the wall checks the resolved target — on the Air
+`/opt/homebrew/opt/openjdk` resolves to `/opt/homebrew/Cellar/openjdk/27`.
+
+One narrowing, measured: with the JDK tree granted, that JDK runs inside the
+wall, but the `/usr/bin/java` **stub** still says `Unable to locate a Java
+Runtime`, because it asks `/usr/libexec/java_home`, which needs a system service
+the wall denies rather than a path anyone can grant. A Java card sets
+`JAVA_HOME`, and then the stub works too.
+
+No launcher directory is ever a toolchain root. `~/go/bin` is granted under
+NEITHER kind — it is GOPATH/bin, a card that could exec it could run bench-user
+tools, and read-without-execute buys nothing in a directory of binaries.
+`~/go/bin/go` still works, because it is a symlink into `~/sdk` and the kernel
+checks the resolved target; `/opt/homebrew/bin` is out for the same reason, and
+the Cellar tree behind it is what is granted. No other path under your home is
+granted: not `~/.config/nova-secrets`, not `~/.ssh`. The list and each root's
+kind live in `internal/swarm/toolchain.go` and are checked, per OS and in both
+directions, against `tools/bench-standard.sh` and `nova-pulse fleet standard`'s
+own `toolchain-*` checks by a test, so provisioning and the wall cannot drift
 apart.
 
 ## nova-sandbox

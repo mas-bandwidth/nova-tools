@@ -106,8 +106,16 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	}
 	// A home of the test's own, with the standard's shape under it, so the assertion is
 	// about the argv and not about the machine the test happens to run on.
-	home := t.TempDir()
-	for _, name := range swarm.ToolchainRootNames() {
+	// The LINUX list, named rather than taken from the machine, so the assertion is the
+	// same on a Mac runner and on a linux one: those are the roots that live under a home.
+	// The home RESOLVED, because a root reaches the argv resolved through its symlinks (the
+	// wall checks the resolved target) and on a Mac a temp dir is under /var, itself a link
+	// to /private/var. Resolving here keeps the assertion about the argv.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range swarm.ToolchainRootNames("linux") {
 		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -122,14 +130,14 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 		}
 		others = append(others, other)
 	}
-	cfg := nativeRunConfig{slotDir: slot, benchHome: home}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}
 	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
 	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
 	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
 	// read-only root that slipped onto --read is exactly the widening Johnny's security
 	// read of #1364 refused.
-	for _, root := range swarm.ToolchainRootList() {
+	for _, root := range swarm.ToolchainRootList("linux") {
 		path := filepath.Join(home, filepath.FromSlash(root.Name))
 		want, wrong := "--read-noexec", "--read"
 		if root.Exec {
@@ -184,6 +192,68 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 // TestNativeArgvSkipsAToolchainRootThatIsNotThere: rule 5 of the wall REFUSES a --read
 // naming a path that does not exist, so a bench without the standard's layout -- a darwin
 // bench has no ~/sdk -- loses the root rather than refusing the run.
+// TestNativeArgvReadsTheDarwinToolchainRoots is the darwin face of the same edge, measured
+// on the M2 Air 2026-09-18: a Mac's toolchains are INSTALLED and on PATH, and three of them
+// still died inside the bare wall because each resolves its runtime from the directory of
+// the launcher that ran it, and that launcher is a symlink out of any granted tree --
+// `go: cannot find GOROOT directory: 'go' binary is trimmed`, `dotnet: Failed to resolve
+// full path of the current executable []`, `java: Unable to locate a Java Runtime`. The
+// remedy measured by hand was `--read /opt/homebrew/Cellar/go/1.27.1`, and the wall now
+// names that tree itself, with the version read off the launcher.
+//
+// It runs ON a Mac, because what it asserts is that THIS bench's own installed toolchain
+// reaches the argv; the per-OS list itself is held by the class test in internal/ci on every
+// platform.
+func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the darwin toolchain roots are this bench's own installs; asserted on a Mac")
+	}
+	var system []swarm.ToolchainRoot
+	for _, r := range swarm.ToolchainRoots("darwin", os.Getenv("HOME")) {
+		if !r.Home() {
+			system = append(system, r)
+		}
+	}
+	if len(system) == 0 {
+		t.Skip("this Mac has none of the darwin system toolchains installed")
+	}
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "darwin"}
+	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for _, r := range system {
+		// Every darwin system root is a RUNTIME the card runs, so every one of them is the
+		// exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
+		// checked against the resolved target and `/opt/homebrew/opt/openjdk` is itself a
+		// symlink into the Cellar.
+		if !r.Exec {
+			t.Errorf("the darwin system root %s is granted without execute; it is a runtime the card runs", r.Name)
+		}
+		if !filepath.IsAbs(r.Path) || strings.HasSuffix(r.Path, string(filepath.Separator)+"bin") {
+			t.Errorf("the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
+		}
+		if !hasFlagPair(argv, "--read", r.Path) {
+			t.Errorf("the wall argv does not carry the darwin toolchain root %s (%s) as --read:\n%s", r.Name, r.Path, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, "--write", r.Path) {
+			t.Errorf("the darwin toolchain root %s is a WRITE; it is read-only:\n%s", r.Path, strings.Join(argv, " "))
+		}
+	}
+	// AND NEVER A DIRECTORY OF LAUNCHERS. `/opt/homebrew/bin` holds a symlink for every
+	// formula on the machine and brew writes it; the grant is on the Cellar tree the runtime
+	// lives in, and naming the bin directory as a toolchain root is the widening Johnny's
+	// security read of #1364 refused on ~/go/bin.
+	for _, r := range swarm.ToolchainRootList("darwin") {
+		if strings.HasSuffix(r.Name, "/bin") {
+			t.Errorf("the darwin list names the launcher directory %s as a toolchain root", r.Name)
+		}
+	}
+}
+
 func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
@@ -192,7 +262,7 @@ func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir() // empty: not one root exists under it
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for i, a := range argv {
 		if a != "--read" && a != "--read-noexec" {
 			continue

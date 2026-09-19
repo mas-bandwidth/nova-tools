@@ -45,6 +45,15 @@ type StandardCheck struct {
 	Probe string // one line of POSIX shell printing the value on stdout
 	Match string // one of the Match* constants
 	Want  string // what Match compares against
+	// Root, when set, is the TOOLCHAIN ROOT this check is the standard's own copy of, in the
+	// slash form internal/swarm/toolchain.go declares it: HOME-relative (`sdk`) or absolute
+	// (`/opt/homebrew/Cellar/go`). The wall grants exactly these paths, so the standard and
+	// the wall are ONE LIST checked in both directions, per OS, by the class test in
+	// internal/ci -- a root the wall grants that no bench provisions is a wall naming a path
+	// that will not be there, and a root a bench has that the wall never names is the hurt of
+	// 2026-09-18 returning. The KIND of each grant is the wall's decision and lives with the
+	// wall, not here: a bench only has to HAVE a root.
+	Root string
 }
 
 // FleetStandardChecks is the standard itself: the checks for one operating system, in the
@@ -57,6 +66,16 @@ type StandardCheck struct {
 // fleet/macos/provision-mac-bench.sh: the Go SDK and sbcl under ~/sdk, real git ahead of
 // the Xcode shim, and each runner's .path carrying it (INSTALL-batman.md, 2026-09-18:
 // /usr/bin/git is the shim and the sandbox cannot read /var/db/xcode_select_link).
+//
+// THE TOOLCHAIN ROOTS (the `toolchain-*` checks, Root set) are this table's half of the one
+// list the sandbox wall grants -- internal/swarm/toolchain.go is the other half, and the
+// class test in internal/ci fails when they drift apart in either direction, per OS. A LINUX
+// root is DEMANDED, because the standard's own installer is what puts it there and a bench
+// missing one kills every Go card on it. A DARWIN root is REPORTED and never drifted on: a
+// Mac's toolchains are installed and on PATH rather than unpacked into a home, so which
+// trees exist is the machine's shape -- a Mac with no .NET is a Mac with no .NET -- while
+// that the bench has a working Go at all is what the `go` check above asserts. The wall
+// skips an absent root either way, so the report is the wall's argv read in advance.
 func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCheck {
 	if strings.TrimSpace(goWant) == "" {
 		goWant = "go1.26.5"
@@ -93,6 +112,43 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		{
 			Name: "runner-path", OS: "darwin", Match: MatchEquals, Want: "ok",
 			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; case "$(head -n 1 "$p")" in /usr/bin:*|/usr/bin) bad="$p";; esac; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
+		},
+		// The toolchain roots the sandbox wall grants a card, one check each.
+		{
+			Name: "toolchain-sdk", OS: "linux", Root: "sdk", Match: MatchEquals, Want: "present",
+			Probe: `[ -d "$HOME/sdk" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-modcache", OS: "linux", Root: "go/pkg/mod", Match: MatchEquals, Want: "present",
+			Probe: `[ -d "$HOME/go/pkg/mod" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-sdk", OS: "darwin", Root: "sdk", Match: MatchNonempty,
+			Probe: `[ -d "$HOME/sdk" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-modcache", OS: "darwin", Root: "go/pkg/mod", Match: MatchNonempty,
+			Probe: `[ -d "$HOME/go/pkg/mod" ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-brew-go", OS: "darwin", Root: "/opt/homebrew/Cellar/go", Match: MatchNonempty,
+			Probe: `case "$(readlink -f "$(command -v go 2>/dev/null)" 2>/dev/null)" in /opt/homebrew/Cellar/go/*) echo present;; *) echo absent;; esac`,
+		},
+		{
+			Name: "toolchain-brew-sbcl", OS: "darwin", Root: "/opt/homebrew/Cellar/sbcl", Match: MatchNonempty,
+			Probe: `case "$(readlink -f "$(command -v sbcl 2>/dev/null)" 2>/dev/null)" in /opt/homebrew/Cellar/sbcl/*) echo present;; *) echo absent;; esac`,
+		},
+		{
+			Name: "toolchain-brew-openjdk", OS: "darwin", Root: "/opt/homebrew/opt/openjdk", Match: MatchNonempty,
+			Probe: `[ -d /opt/homebrew/opt/openjdk ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-jvm", OS: "darwin", Root: "/Library/Java/JavaVirtualMachines", Match: MatchNonempty,
+			Probe: `[ -d /Library/Java/JavaVirtualMachines ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-dotnet", OS: "darwin", Root: "/usr/local/share/dotnet", Match: MatchNonempty,
+			Probe: `[ -d /usr/local/share/dotnet ] && echo present || echo absent`,
 		},
 		{
 			Name: "go", OS: "windows", Match: MatchContains, Want: goWant,
