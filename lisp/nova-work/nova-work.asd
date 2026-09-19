@@ -86,4 +86,5 @@
                 (:file "tests/replays-785-gate-verbs")
                 (:file "tests/replays-785-ready-row")
                 (:file "tests/replays-785-dep")
-                (:file "tests/replays-785-report")))
+                (:file "tests/replays-785-report")
+                (:file "tests/replays-785-report-ask")))

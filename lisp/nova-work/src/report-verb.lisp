@@ -295,15 +295,6 @@ on free text."
                 (setf (kernel-next-rev kernel) (1+ (work-event-rev event)))
                 (values t line 0 envelope)))))))))
 
-(defun state-reports (state)
-  "Every `:report` event in the journal, OLDEST FIRST. A read.
-
-`state-history` already answers oldest first; the first cut reversed it again
-and handed back newest first, which the concurrency case below caught."
-  (loop for record in (state-history state)
-        append (remove-if-not (lambda (e) (eq :report (getf e :kind)))
-                              (getf record :events))))
-
 (defun report-submit (kernel &key subject act what acted-at instead-of reason
                                   as request stamp (clock :tool) expect skew view)
   "`report`: the caller's wrapper. It submits one `:report` command, so the
@@ -315,3 +306,118 @@ the one total order (Stella's [P1] on 12236baa)."
                        :instead-of instead-of :reason reason :as as
                        :request request :stamp stamp :clock clock
                        :expect expect :skew skew :view view)))
+
+;;; ------------------------------------------------------------------
+;;; the one reports ask                          SPEC-WORK.md:5142-5163
+;;; ------------------------------------------------------------------
+;;;
+;;; Rule 10: "Reports are read by one ask, and the counts are information."
+;;; `query --ask reports --branch open --since <revision>`. No rule, gate or
+;;; exit in the document reads these counts, and none of them has a value that
+;;; is good or bad by itself.
+
+(defun %report-private-p (state event)
+  "Whether the report's subject is a `:private` node. The privacy floor holds,
+the id included: such a report prints `subject=node:-`, `need=-`, `what=-` and
+`reason=-` on every read but the owning session's, is counted in `reports=` and
+in the line's `private=`, and names nothing of the node, as every other view of
+a private node does (the approved follow-up #1580 at 191b9ab7, its rule 10)."
+  (let ((node (report-subject-node event)))
+    (and node
+         (let ((n (%node-quiet state node)))
+           (and n (eq :true (wnode-private n)))))))
+
+(defun %report-row (state event &key owning)
+  "One `QUERY ROW` of rule 10 (SPEC-WORK.md:5148). The row prints the why beside
+the what, `reason=` last, so the one read of reports is not a log without its
+reasons."
+  (let* ((hidden (and (%report-private-p state event) (not owning)))
+         (subject (getf event :subject))
+         (kind (and (consp subject) (first subject)))
+         (value (and (consp subject) (second subject)))
+         (lag (ignore-errors
+               (- (parse-rfc3339 (getf event :stamp))
+                  (parse-rfc3339 (getf event :acted-at))))))
+    (format nil "QUERY ROW ~A kind=report act=~(~A~) subject=~A instead-of=~A acted-at=~A at=~A clock=~(~A~) lag=~A by=~A unmet=~A need=~A what=~A reason=~A"
+            (getf event :rev)
+            (getf event :act)
+            (if hidden "node:-" (report-subject-selector kind value))
+            (getf event :instead-of)
+            (getf event :acted-at)
+            (getf event :stamp)
+            (getf event :clock)
+            (%report-duration lag)
+            (getf event :by)
+            (let ((u (getf event :unmet))) (if (absentp u) "-" (format nil "~D" u)))
+            (let ((n (getf event :need)))
+              (if (or hidden (absentp n) (null n)) "-" n))
+            (if hidden "-" (getf event :what))
+            (if hidden "-" (getf event :reason)))))
+
+(defparameter *reports-default-max* 20
+  "The default page size of the reports ask. SPEC-WORK.md bounds every listing
+the same way: a listing is capped at 20 unless `--max` says otherwise, `--max 0`
+means ALL, and a negative `--max` is refused. Stella's [P2] on 3967655e's
+sibling: the first cut defaulted to 21 and printed 21 rows with no `MORE` line,
+and `--max 0` printed zero rows WITH a `MORE` line -- exactly backwards.")
+
+(defun query-reports (state &key since node (max *reports-default-max*)
+                                 (branch :open) floor owning)
+  "`query --ask reports --branch open --since <revision>` (SPEC-WORK.md:5142).
+
+Answers (values COUNT-LINE ROWS EXIT-CODE MORE-LINE). Rows are one per
+`:report` event since that revision, NEWEST LAST, capped by `--max` with a
+`MORE` line, and `--node <id>` narrows it to reports whose subject is that node.
+
+`--since` is required and is refused before the retention boundary exactly as
+`handoffs --since` is; `--branch closed` and `--branch root` are exit 2 as they
+are for `handoffs`.
+
+The three counts: `reports=` is the events in the range, `no-verb=` those whose
+`:instead-of` is `-`, and `launched-unmet=` the `:launched` reports whose
+`:unmet` was above zero. **No rule, gate or exit in this document reads these
+counts**, and none of them has a value that is good or bad by itself.
+
+The range is counted in REVISIONS, which the session assigns, so a backdated or
+postdated `--acted-at` moves no report into or out of any answer."
+  (when (member branch '(:closed :root))
+    (return-from query-reports
+      (values (format nil "QUERY FAIL ask=reports: not admitted under branch=~(~A~)" branch)
+              '() 2 nil)))
+  (unless (integerp since)
+    (return-from query-reports
+      (values "QUERY FAIL ask=reports: --since is required" (list) 2 nil)))
+  (unless (and (integerp max) (>= max 0))
+    (return-from query-reports
+      (values (format nil "QUERY FAIL ask=reports max=~A: --max is zero (all) or a positive count"
+                      max)
+              (list) 2 nil)))
+  (when (and floor (< since floor))
+    (return-from query-reports
+      (values (format nil "QUERY FAIL ask=reports since=~D floor=~D: before the retention boundary"
+                      since floor)
+              '() 2 nil)))
+  (let* ((all (remove-if-not
+               (lambda (e)
+                 (and (> (getf e :rev) since)
+                      (or (null node) (equal node (report-subject-node e)))))
+               (state-reports state)))
+         (reports (length all))
+         (no-verb (count-if (lambda (e) (equal "-" (getf e :instead-of))) all))
+         (launched-unmet (count-if (lambda (e)
+                                     (and (eq :launched (getf e :act))
+                                          (let ((u (getf e :unmet)))
+                                            (and (integerp u) (plusp u)))))
+                                   all))
+         (private (count-if (lambda (e) (%report-private-p state e)) all))
+         ;; `--max 0` means all; a positive max caps; a negative one is refused
+         ;; above.
+         (shown (if (and max (plusp max) (< max reports)) (subseq all 0 max) all))
+         (more-p (< (length shown) reports)))
+    (values (format nil "QUERY OK ask=reports branch=~(~A~) since=~D shown=~D [reports=~D no-verb=~D launched-unmet=~D] private=~D"
+                    branch since (length shown) reports no-verb launched-unmet private)
+            (mapcar (lambda (e) (%report-row state e :owning owning)) shown)
+            0
+            (when more-p
+              (format nil "QUERY MORE ask=reports shown=~D of=~D"
+                      (length shown) reports)))))
