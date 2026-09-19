@@ -378,7 +378,7 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 		}
 	}
 	for _, name := range missing {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
+		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess; run: nova-bus help\n", f.verb, name)
 	}
 	return len(missing) == 0
 }
@@ -414,7 +414,7 @@ func (f *flags) atLeastZero(name string, value int, stderr io.Writer) bool {
 // count reads a required positive integer flag.
 func (f *flags) count(name string, value int, stderr io.Writer) bool {
 	if value < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s must be given and at least 1, got %d; refusing to guess\n", f.verb, name, value)
+		fmt.Fprintf(stderr, "nova-bus %s: --%s must be given and at least 1, got %d; refusing to guess; run: nova-bus help\n", f.verb, name, value)
 		return false
 	}
 	return true
@@ -445,7 +445,7 @@ func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, s
 		}
 	}
 	if flagValue < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var\n", f.verb, flagValue)
+		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var; run: nova-bus help\n", f.verb, flagValue)
 		return 0, false
 	}
 	return flagValue, true
@@ -666,7 +666,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*to) == "" {
-			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess\n")
+			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 	} else {
@@ -809,7 +809,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 		return 2
 	}
 	if (*file == "") == !*useStdin {
-		fmt.Fprint(stderr, "nova-bus prepare: give exactly one of --file and --stdin; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus prepare: give exactly one of --file and --stdin; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	source := "(stdin)"
@@ -896,12 +896,12 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	}
 	if hasPrepared {
 		if (*preparedFile == "") == !*usePreparedStdin {
-			fmt.Fprint(stderr, "nova-bus send: give exactly one of --prepared and --prepared-stdin; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus send: give exactly one of --prepared and --prepared-stdin; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 	} else {
 		if (*file == "") == !*useStdin {
-			fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 	}
@@ -1201,7 +1201,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if len(notes) == 0 {
-		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
@@ -1296,7 +1296,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	before, err := time.Parse(time.RFC3339, *beforeFlag)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess\n", *beforeFlag)
+		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess; run: nova-bus help\n", *beforeFlag)
 		return 2
 	}
 	if !*dryRun {
@@ -1304,7 +1304,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus close: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run)\n")
+			fmt.Fprint(stderr, "nova-bus close: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run); run: nova-bus help\n")
 			return 2
 		}
 	}
@@ -1499,7 +1499,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// a report should do unless it was asked otherwise.
 	if *advance {
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess; run: nova-bus help\n")
 			return 2
 		}
 		if !f.attempts(*attempts, stderr) {
@@ -1510,7 +1510,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	if *askDecide && (*decideFloor < 0 || *decideFloor > 1) {
-		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess\n", *decideFloor)
+		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess; run: nova-bus help\n", *decideFloor)
 		return 2
 	}
 	// A bus with no .public marker is a private one, and --decide would hand its note
@@ -1553,7 +1553,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 	code, r := inboxListing(o, stdout, stderr, now)
-	if code != 0 || !o.advance || (o.bodies && r.AdvanceTo == "") {
+	// r.Bounded is the listing that did not run: the since-walk stopped at --max-commits,
+	// the remedy is already on stderr, and there is nothing read for a cursor to stand on.
+	if code != 0 || r.Bounded || !o.advance || (o.bodies && r.AdvanceTo == "") {
 		return code
 	}
 	if o.bodies {
@@ -1634,6 +1636,13 @@ type inboxReading struct {
 	Legacy bus.LegacyLine
 	// Cursor is the commit this run read from, and "" for a full read.
 	Cursor string
+	// Bounded says the since-walk STOPPED at --max-commits and this listing read nothing:
+	// the run printed one INBOX WALK bounded line with the remedy and exited 0. It is on
+	// the reading rather than in the exit code because "nothing to report" and "I did not
+	// look" are the same 0 to a shell and must not be the same thing to a caller holding
+	// --advance: a cursor moved over a walk nobody made takes every note behind the bound
+	// as read.
+	Bounded bool
 	// Full says the run walked the whole bus.
 	Full bool
 	// SwitchDay says this listing PRINTED the INBOX SWITCH line: the reader's cursor
@@ -1781,6 +1790,20 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			}
 			if over {
 				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
+				// THE BOUND ENDS THE RUN, AND THAT INCLUDES THE ADVANCE. This is the one
+				// exit-0 way out of a listing that did not run, and the caller reads exit 0
+				// plus --advance as "the listing is done, move the cursor". It used to hand
+				// back the ZERO reading -- Me is resolved onto it at the END of a listing
+				// that finished -- so the advance ran with an EMPTY LANE, wrote CURSOR at
+				// the checkout ROOT, and left it there for every later run on that bus to
+				// refuse over until a human deleted it.
+				//
+				// Both halves are named here: who the reader is, so nothing downstream is
+				// guessing, and Bounded, which is the caller's instruction not to advance. A
+				// walk that read NOTHING has no claim to make -- advancing over it would take
+				// every unread note behind the bound as read, which is the one outcome the
+				// bound exists to prevent.
+				r.Me, r.Bounded = me, true
 				return 0, r
 			}
 			var walk *walkProgress
@@ -2231,6 +2254,28 @@ func legacyToken(l bus.LegacyLine) string {
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
 func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+	// NO LANE, NO WRITE, AND NOTHING TOUCHED. Every state path this function builds is
+	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
+	// paths that land at the checkout ROOT and that git refuses to stage as outside the
+	// repository. That is how the 2026-09-19 break ended: the cursor was written at the
+	// root, the staging failed, and the stray file refused every later run on the bus.
+	//
+	// A lane-less reader is a shape the roster can hold -- a participant with no lane of
+	// their own is listed so they can be addressed -- so this is a refusal and not a
+	// panic, and it comes FIRST, before the checkout is read or a byte is written. The
+	// cost of the old order was never the exit code; it was the file left behind.
+	if me.Lane == "" {
+		// A reader who reached here with no name either is not on the roster at all or was
+		// never resolved against it, and "" has no lane on this bus is a line nobody can act
+		// on. The refusal says which reader it is when it knows and says so plainly when it
+		// does not.
+		who := me.Name
+		if who == "" {
+			who = "this reader"
+		}
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s has no lane on this bus, so there is nowhere to write a cursor\n", oneline.Field(who))
+		return 1
+	}
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane), bus.BeatPath(me.Lane)}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
@@ -2899,7 +2944,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *timeout <= 0 {
-		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	// THE CEILING IS ABOUT THE HARNESS AND NOT ABOUT THE BUS. This verb is meant to be
@@ -3351,6 +3396,13 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if code != 0 {
 		return code, r, buf.String(), false
 	}
+	// A poll whose since-walk hit the bound read nothing, so it has neither news to return
+	// on nor a read to advance over. `wait` refuses a cursor already past the bound before
+	// it blocks (WAIT BLIND, #1518); this is the same state arriving mid-wait, when the bus
+	// moves past the bound while the wait is standing there.
+	if r.Bounded {
+		return 0, r, "", false
+	}
 	if !keep(r) {
 		return 0, r, "", false
 	}
@@ -3540,7 +3592,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// what they want checked. There is no default here for the same reason there is no
 	// default bus.
 	if !*full && strings.TrimSpace(*as) == "" && strings.TrimSpace(*since) == "" {
-		fmt.Fprint(stderr, "nova-bus check: give one of --full, --as <name> or --since <commit>; refusing to guess\n")
+		fmt.Fprint(stderr, "nova-bus check: give one of --full, --as <name> or --since <commit>; refusing to guess; run: nova-bus help\n")
 		return 2
 	}
 	if *rebuildIndex && !*full {

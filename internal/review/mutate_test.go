@@ -527,3 +527,51 @@ func TestMutateRunsALispSuiteAndCountsItRed(t *testing.T) {
 		t.Fatalf("lisp suite not red without the change: pass=%v red=%d green=%d skips=%+v", res.Pass, res.Red, res.Green, res.Skips)
 	}
 }
+
+// resolve is the whole of --test's rule, and the four answers it can give (#1849,
+// Stella's ruling stella-e72bbf88a3f7). It is tested here rather than only through
+// the verb because ONE of the four -- a unit whose file could not be run -- is a
+// branch a fixture cannot reach on demand: a skip comes from a deleted test file or
+// a runner that would not start, and neither leaves a unit behind to name. A rule
+// that is only ever exercised by the paths that happen to be easy is a rule with a
+// hole in exactly the place the ruling says must not be inferred.
+func TestResolveNamesOneUnitOrSaysWhyItCannot(t *testing.T) {
+	units := []unit{
+		{name: "TestSignZero", file: "sign/sign_test.go", pkg: "sign"},
+		{name: "TestShapeOnly", file: "shape/shape_test.go", pkg: "shape"},
+		{name: "TestBoth", file: "sign/sign_test.go", pkg: "sign"},
+		{name: "TestBoth", file: "shape/shape_test.go", pkg: "shape"},
+		{name: "TestNotRun", file: "gone/gone_test.go", pkg: "gone"},
+	}
+	skipped := map[string]bool{"gone/gone_test.go": true}
+
+	// Resolved: the one unit with that name.
+	got, err := resolve("TestSignZero", units, skipped)
+	if err != nil || got.file != "sign/sign_test.go" {
+		t.Fatalf("resolve(TestSignZero) = %+v, %v", got, err)
+	}
+	// Resolved by qualification, which is what a caller does instead of guessing.
+	got, err = resolve("shape/shape_test.go:TestBoth", units, skipped)
+	if err != nil || got.file != "shape/shape_test.go" {
+		t.Fatalf("resolve(qualified) = %+v, %v", got, err)
+	}
+	for _, tc := range []struct{ name, want string }{
+		{"TestNoSuchThing", "names no test"},
+		{"TestBoth", "ambiguous"},
+		{"TestNotRun", "could not be run"},
+		{"sign/sign_test.go:TestShapeOnly", "names no test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolve(tc.name, units, skipped)
+			if err == nil {
+				t.Fatalf("resolve(%q) = %+v, want an error", tc.name, got)
+			}
+			if !errors.Is(err, ErrTestNotRun) {
+				t.Errorf("resolve(%q) error is not ErrTestNotRun: %v", tc.name, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("resolve(%q) = %v, want it to say %q", tc.name, err, tc.want)
+			}
+		})
+	}
+}

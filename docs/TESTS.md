@@ -100,7 +100,7 @@ Ada's first line above is the refusal worth meeting here rather than on a live b
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
 
-Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and `hosts=`, `gpu=`, `used=` and `ancestors=` fields this transcript has no slot for.
+Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and, where the wall is built below the ABI the kernel reports, a `used=` field this transcript has no slot for.
 
 `read_root` reads the probe's own executable, `os.Executable()`, because the root it
 exercises is "the directory of the resolved command" and the probe's child is this
@@ -113,7 +113,7 @@ the dispatcher's own `HOME` does not.
 
 ```
 $ nova-sandbox check
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+CHECK OK backend=sandbox-exec abi=- net=enforceable hosts=none note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox probe --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 --secret /Users/me/.config/anthropic/env
 PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-46261
@@ -154,6 +154,8 @@ SECRETS RULE     - path_regex: ^rowan\.yaml$
 SECRETS RULE       age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk,age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
 SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
+Done. Your new key is at /Users/me/.config/nova-secrets/rowan.key. Nothing failed.
+Next: send this public key to whoever seals your seat: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
 $ nova-secrets check --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
 SECRETS CHECK OK  as=other recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
@@ -186,20 +188,35 @@ KERNEL OK bytes=771 budget=4000
 ## nova-self-talk
 
 Fixture: `cmd/nova-self-talk/testdata/example-pages`.
+The test's copy of it is `./pages`, which is what the lines below type.
+
+A line below opening `! ` is one this tool writes to standard ERROR: the
+findings go there and the protocol lines go to standard output, and the order a
+terminal interleaves the two in is not the same twice — the second block's last
+finding arrived after the `NOTE` line on one bench and before it on another.
+That is why the block cannot be read as one stream (#1549, and the marker is
+#1570's). `# Stderr: whole` on a command line says the marked lines are ALL it
+writes there: these are findings, not narration, and a transcript that quietly
+lost one would be hiding the thing the tool exists to say.
 
 ### First run
 
 ```
-$ nova-self-talk ./pages/journal.md
-SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
-SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+$ nova-self-talk ./pages/journal.md   # Stderr: whole
+! SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
 SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
-$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+! SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK DATED n=1 files=2
+SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
+SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 ```
 
 ## nova-fuse
@@ -307,11 +324,19 @@ WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default 
 
 `nova-review` builds an artifact from a lane already initialized by
 `nova-merge`; it has no state-creating quickstart. Its first safe command only
-identifies the binary:
+identifies the binary.
+
+Two parts of the line below belong to the run and not to the document, and both
+are declared by `cmd/nova-review/firstrun_test.go`. The build triple
+`<goos>/<goarch> go<version>` is whichever machine runs it -- the one pasted
+here is the Mac it was recorded on (2026-09-19). The version word is whatever
+the build stamped itself with: a build you make prints the stamp shown here,
+and the unstamped binary `go test` builds prints `devel`. Everything else on
+the line is compared.
 
 ```
 $ nova-review version
-nova-review devel
+nova-review v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1
 ```
 
 A packet needs the lane, one selector, a reader and a new relative output
@@ -319,6 +344,42 @@ path. It refuses an existing output rather than replacing a packet, and it
 refuses a supplied head that differs from the entry's current head. The packet
 records the exact range and either includes its selected diff or says that the
 byte budget omitted it with the command that prints it.
+
+### mutate: the selected form, and the abstain
+
+A lab with the #1828 shape: one fix in `sign/sign.go`, the test that detects it,
+and a co-touched test in `shape/shape_test.go` that is correctly insensitive to
+it. The default verdict is per FILE, so it says `FAIL` although the card's named
+`TEST:` is red — which is what `--test` exists to answer (#1849).
+
+```
+$ nova-review mutate --repo . --base main --head card
+MUTATE GREEN test=TestShapeOnly file=shape/shape_test.go: green with the change reverted; it proves nothing
+MUTATE GREEN test=TestSignPositive file=sign/sign_test.go: green with the change reverted; it proves nothing
+MUTATE 19947c2e reverted=1 red=1 green=2 FAIL
+
+$ nova-review mutate --repo . --base main --head card --test TestSignZero
+MUTATE 19947c2e reverted=1 red=1 green=2 test=TestSignZero PASS
+```
+
+The counts do not move: the co-touched units are still the evidence for how the
+question was answered. What moves is which unit the verdict is about. A name that
+cannot be resolved among the test units of the files this range changed is
+refused, never answered for a different test:
+
+```
+$ nova-review mutate --repo . --base main --head card --test TestNoSuchThing
+MUTATE REFUSED: the named test was not run: --test TestNoSuchThing names no test declared by a test file this range changed
+```
+
+A range that changes only test files — every `internal/docs` and `internal/ci`
+doc-rule repair — abstains on stdout, exit 2. It is inability to prove the
+control, never acceptance (#1850):
+
+```
+$ nova-review mutate --repo . --base card --head tests-only
+MUTATE be009676 ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
+```
 
 ## nova-merge
 
@@ -336,12 +397,15 @@ than a person. So the rehearsal comes first, against a bare repository of your
 own (`git init -q --bare ./rehearsal.git`), whose absolute path is what `--remote`
 wants: git runs inside the lane directory, so a relative one resolves against the
 lane and is refused. Both lines below are executed by
-`cmd/nova-merge/firstrun_test.go`.
+`cmd/nova-merge/firstrun_test.go`. A line opening `! ` is one the tool writes to
+standard ERROR: the two NOTE lines are findings about the reader's own repository,
+and `# Stderr: whole` says they are ALL it writes there (#1549, #1570).
 
 ```
-$ nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+$ nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"   # Stderr: whole
+! INIT NOTE the repository's default branch could not be read from $PWD/rehearsal.git, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15). nova-merge init --lane ./rehearsal-lane --default-branch <branch> records it, and --hosted-red names states the other arm outright
 INIT OK lane=./rehearsal-lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
-STATUS NOTE the lane's base main could not be read from origin, so base_state is UNKNOWN: git fetch origin main: exit status 128: fatal: couldn't find remote ref main
+! STATUS NOTE the lane's base main could not be read from origin, so base_state is UNKNOWN: git fetch origin main: exit status 128: fatal: couldn't find remote ref main
 STATUS OK prs=0 branches=0 base=main base_state=UNKNOWN ready=0 blocked=0 waiting=0 reads=0a/0h
 ```
 
@@ -371,6 +435,21 @@ a missing key and an unreadable questions file are each one line on stderr at
 exit 2. Below the floor the answer is still one line, and the exit is 3 — a
 suggestion, never an authorization.
 
+**The keyed line is NOT in the block below, and that is deliberate.** Asking a
+model is the one thing in this section that needs a key and a network, so a
+test can only run it by reaching a model from `go test` — which this repository
+does not do — or by skipping it, which is a step that never runs at all wearing
+the clothes of one that does. What it prints, when you run it yourself with a
+key in your environment, is `DECIDE gate=go conf=0.94 floor=0.90 below=-` from
+`nova-decide --questions ./questions.json --state ./state.md --floor 0.9`. Every
+line in the blocks below is executed by `cmd/nova-decide/firstrun_test.go`.
+
+Two parts of the `version` line belong to the run and not to the document, and
+the test declares both: the `<goos>/<goarch> go<version>` tail is whichever
+machine runs it, and the version word is what the build stamped itself with --
+the stamp shown here in a build you make, and `devel` in the unstamped binary
+`go test` builds.
+
 ### First run
 
 ```
@@ -378,34 +457,34 @@ $ nova-decide
 DECIDE REFUSED reason=no-arguments --questions is required, refusing to guess; run: nova-decide help
 
 $ nova-decide version
-nova-decide devel linux/amd64 go1.26.5
-
-$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
-DECIDE gate=go conf=0.94 floor=0.90 below=-
+nova-decide v0.16.0-dev.c839379e.0.20260919154525-3c3efc0e155c darwin/arm64 go1.27.1
 ```
 
 ### The ladder of minds
 
 `route`, `help` and `log` need no key and no network with `--no-jev`: the rules
 alone answer, the same way every time. These lines were produced by running the
-binary built on this branch.
+binary built on this branch. `log` reads a log of your own: the one below is
+the single row the first `route` line writes when it is given `--log
+./decide.jsonl`, and `cmd/nova-decide/firstrun_test.go` writes exactly that row
+before it runs the block.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.65 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
 $ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
-ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.90 wait=- reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
+ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.65 wait=- next=- steps=1 reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus
 
 $ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
-ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.90 wait=awaiting_termination reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.65 wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus
 
 $ nova-decide help --hours 6 --asked-all-friends
 HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
 
 $ nova-decide log --log ./decide.jsonl --summary
 LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
-LOG OK rows=1 kinds=1 escalations=0
+LOG OK rows=1 kinds=1 escalations=0 coverage=0/1
 ```
 
 ## nova-pulse
@@ -427,6 +506,8 @@ $ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queu
 PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
 ```
 
+### Cutting cards, and the pool
+
 Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 `./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
@@ -445,7 +526,7 @@ CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
 CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
 
 $ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
-POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 prs=0 work=0 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```
 
 ## nova-board
@@ -465,8 +546,8 @@ BOARD LEG leg=cpp owed=1 probed=0
 BOARD LEG leg=go owed=0 probed=1
 BOARD NEXT the oldest OVERDUE card 283e2dd1e5c5424d7637d28488365e98, owed by emma, due 2026-09-11T09:00:00Z -- the token ledger has no September rows yet
 BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 quarantined=0 shown=8 backend=dir source=./board
-QUICKSTART LINE n=1 what=check: "nova-board check --dir ./board --words \"the token ledger\" || { [ $? -eq 1 ] && exit 0; exit 2; }"
-QUICKSTART LINE n=2 what=add: "nova-board add --dir ./board --as <your-name> --text \"the token ledger has no September rows yet\" --by 4h --default \"the filer files it as a known gap\""
+QUICKSTART LINE n=1 what=check: "nova-board check --dir ./board --words 'the token ledger' || { [ $? -eq 1 ] && exit 0; exit 2; }"
+QUICKSTART LINE n=2 what=add: "nova-board add --dir ./board --as <your-name> --text 'the token ledger has no September rows yet' --by 4h --default 'the filer files it as a known gap'"
 QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads "if it is already there, stop"; the exit-2 arm tells a NO from a board that could not be read
 QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -70,72 +71,114 @@ func hygieneRun(t *testing.T, now time.Time, args ...string) (int, string, strin
 	return code, out.String(), errb.String()
 }
 
-var hygieneLogLine = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z (reap|delete-job|delete-slot|delete-diag|drop-cache|HYGIENE) .+$`)
+var hygieneLogLine = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z (reap|DEAD|delete-job|delete-slot|delete-diag|drop-cache|HYGIENE) .+$`)
 
-// hygiene-run-reaps-dead-and-leaves-live: a fake bench tree with a live slot, a
-// slot a process names, a dead slot and an empty slot. `run` reaps the dead,
-// deletes the harvested and stale jobs and the emptied slots, leaves the live
-// ones alone, and writes one HYGIENE line plus one log line per deletion.
+// hygiene-run-reaps-dead-and-leaves-live: a fake bench tree with a leased slot,
+// a slot a process names, a bare directory that is NOT a slot, a dead slot and
+// an emptied one. `run` reaps the dead, deletes the harvested and stale jobs and
+// the quiet emptied slots, leaves the live ones and the bare directory alone,
+// and writes one HYGIENE line plus one log line per deletion.
+//
+// The fixture was rebuilt for #1512. It used to say a slot was live because its
+// log was one minute old, and it used to delete a bare directory under the root
+// with no jobs/ at all -- the two rules that ate two certify trees and a 43-card
+// swarm root. Liveness is now the lease, and a directory that is not a slot is
+// not this verb's business. See hygiene_reaper_class_test.go for the class.
 func TestHygieneRunReapsDeadAndLeavesLive(t *testing.T) {
 	now := time.Date(2026, 9, 17, 18, 0, 0, 0, time.UTC)
+	stale := now.Add(-7 * time.Hour)
 	home := t.TempDir()
 	root1 := filepath.Join(home, "rowan-swarm-root")
 	root2 := filepath.Join(home, "rowan-working", "tmp")
 
+	// A LEASED slot, quiet for seven hours: silence is not death.
 	live := filepath.Join(root1, "live")
-	hygieneWrite(t, filepath.Join(live, "jobs", "card-live", "harness-output.log"), "running\n", now.Add(-time.Minute))
+	liveJob := filepath.Join(live, "jobs", "card-live")
+	hygieneWrite(t, filepath.Join(liveJob, "harness-output.log"), "a long compile\n", stale)
+	host, _ := os.Hostname()
+	hygieneWrite(t, filepath.Join(liveJob, ".lease"),
+		fmt.Sprintf("pid=%d\nhost=%s\nlabel=card-live\n", os.Getpid(), host), now)
 
+	// A slot a process names: the second reason to keep, never a reason to delete.
 	busy := filepath.Join(root1, "busy")
-	hygieneMkdir(t, filepath.Join(busy, "jobs", "card-busy"))
+	busyJob := filepath.Join(busy, "jobs", "card-busy")
+	hygieneWrite(t, filepath.Join(busyJob, "harness-output.log"), "quiet but held\n", stale)
 
+	// A BARE directory under the root: somebody's work, not a slot, at any age.
+	bare := filepath.Join(root1, "certify-tree")
+	hygieneWrite(t, filepath.Join(bare, "corpus", "data.txt"), "the corpus\n", stale)
+
+	// A dead slot: an unleased job quiet seven hours that left no RESULT.md, its
+	// scratch, and the card's HOME and TMPDIR.
 	dead := filepath.Join(root1, "dead")
 	hygieneMkdir(t, filepath.Join(dead, "data"))
 	hygieneMkdir(t, filepath.Join(dead, "tmp"))
 	oldJob := filepath.Join(dead, "jobs", "card-old")
 	hygieneMkdir(t, filepath.Join(oldJob, "scratch"))
-	hygieneMkdir(t, filepath.Join(oldJob, ".nova-sandbox-tmp"))
-	hygieneMkdir(t, filepath.Join(oldJob, "repo", "scratch"))
-	hygieneWrite(t, filepath.Join(oldJob, "harness-output.log"), "old\n", now.Add(-7*time.Hour))
+	hygieneWrite(t, filepath.Join(oldJob, "harness-output.log"), "crashed\n", stale)
 
-	hygieneMkdir(t, filepath.Join(root1, "empty"))
+	// An emptied slot, quiet seven hours.
+	empty := filepath.Join(root1, "empty")
+	hygieneMkdir(t, filepath.Join(empty, "jobs"))
 
+	// A harvested job: read, so it goes whatever its age.
 	harvested := filepath.Join(root1, "harvested")
-	hygieneMkdir(t, filepath.Join(harvested, "jobs", "card-read"))
-	hygieneWrite(t, filepath.Join(harvested, "jobs", "card-read", ".harvested"), "", time.Time{})
+	harvestedJob := filepath.Join(harvested, "jobs", "card-read")
+	hygieneWrite(t, filepath.Join(harvestedJob, ".harvested"), "", stale)
 
+	// The same, under the second root, with a card HOME to reap.
 	old := filepath.Join(root2, "old")
 	hygieneMkdir(t, filepath.Join(old, "data"))
-	hygieneMkdir(t, filepath.Join(old, "jobs", "card-tmp"))
-	hygieneWrite(t, filepath.Join(old, "jobs", "card-tmp", ".harvested"), "", time.Time{})
+	oldHarvested := filepath.Join(old, "jobs", "card-tmp")
+	hygieneWrite(t, filepath.Join(oldHarvested, ".harvested"), "", stale)
 
-	defer swapHygieneEnv(hygieneFakeProcs{busy: map[string]bool{busy: true}}, hygieneFakeDisk{freeGB: 40, free: "40G", sizeGB: 0})()
+	// Age every slot and its jobs directory: an age read after a deletion would
+	// say "just now" of a slot idle for days, so the verb reads it first, and the
+	// fixture has to be old for the emptied slots to go at all.
+	for _, p := range []string{
+		filepath.Join(bare, "corpus"), bare,
+		liveJob, filepath.Join(live, "jobs"), live,
+		busyJob, filepath.Join(busy, "jobs"), busy,
+		filepath.Join(oldJob, "scratch"), oldJob, filepath.Join(dead, "jobs"),
+		filepath.Join(dead, "data"), filepath.Join(dead, "tmp"), dead,
+		filepath.Join(empty, "jobs"), empty,
+		harvestedJob, filepath.Join(harvested, "jobs"), harvested,
+		oldHarvested, filepath.Join(old, "jobs"), filepath.Join(old, "data"), old,
+	} {
+		if err := os.Chtimes(p, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	defer swapHygieneEnv(hygieneFakeProcs{busy: map[string]bool{busy: true, busyJob: true}}, hygieneFakeDisk{freeGB: 40, free: "40G", sizeGB: 0})()
 
 	code, out, errb := hygieneRun(t, now, "run", "--home", home, "--hostname", "bench")
 	if code != 0 {
 		t.Fatalf("hygiene run exit = %d, stderr=%s", code, errb)
 	}
+	// slots= counts what the verb RECOGNISES as a slot: the bare certify tree is
+	// not one and is not counted. dead= is the unleased job that left no
+	// RESULT.md, which is a different fact from a job somebody read.
 	// diag-deleted and diag-freed join the line with the runner `_diag` prune:
 	// this fixture has no runner directory, so both are zero and every field is
 	// still named.
-	wantLine := "HYGIENE bench slots=6 reaped=2 jobs-deleted=3 slots-deleted=4 diag-deleted=0 diag-freed=0 cache=kept(0G) free 40G -> 40G"
+	wantLine := "HYGIENE bench slots=6 reaped=2 jobs-deleted=2 slots-deleted=4 dead=1 diag-deleted=0 diag-freed=0 cache=kept(0G) free 40G -> 40G"
 	if got := strings.TrimSpace(out); got != wantLine {
 		t.Fatalf("the one HYGIENE line:\n got: %s\nwant: %s", got, wantLine)
 	}
 
 	for _, keep := range []string{
-		live, filepath.Join(live, "jobs", "card-live", "harness-output.log"),
-		busy, filepath.Join(busy, "jobs", "card-busy"),
+		live, filepath.Join(liveJob, "harness-output.log"), filepath.Join(liveJob, ".lease"),
+		busy, busyJob,
+		bare, filepath.Join(bare, "corpus", "data.txt"),
 	} {
 		if !hygieneExists(keep) {
-			t.Errorf("run removed %s, a live slot", keep)
+			t.Errorf("run removed %s, which is live or is not a slot", keep)
 		}
 	}
 	for _, gone := range []string{
-		dead, filepath.Join(root1, "empty"), harvested, old,
-		filepath.Join(root1, "dead", "data"),
-		filepath.Join(oldJob, "scratch"),
-		filepath.Join(oldJob, ".nova-sandbox-tmp"),
-		filepath.Join(oldJob, "repo", "scratch"),
+		dead, empty, harvested, old,
+		filepath.Join(dead, "data"), oldJob,
 	} {
 		if hygieneExists(gone) {
 			t.Errorf("run left %s, a dead or harvested thing", gone)
@@ -154,20 +197,17 @@ func TestHygieneRunReapsDeadAndLeavesLive(t *testing.T) {
 	}
 	stamp := now.Format(time.RFC3339)
 	want := map[string]bool{
-		stamp + " reap " + filepath.Join(dead, "data"):                         false,
-		stamp + " reap " + filepath.Join(dead, "tmp"):                          false,
-		stamp + " reap " + filepath.Join(oldJob, "scratch"):                    false,
-		stamp + " reap " + filepath.Join(oldJob, ".nova-sandbox-tmp"):          false,
-		stamp + " reap " + filepath.Join(oldJob, "repo", "scratch"):            false,
-		stamp + " delete-job " + oldJob:                                        false,
-		stamp + " delete-slot " + dead:                                         false,
-		stamp + " delete-slot " + filepath.Join(root1, "empty"):                false,
-		stamp + " delete-job " + filepath.Join(harvested, "jobs", "card-read"): false,
-		stamp + " delete-slot " + harvested:                                    false,
-		stamp + " reap " + filepath.Join(old, "data"):                          false,
-		stamp + " delete-job " + filepath.Join(old, "jobs", "card-tmp"):        false,
-		stamp + " delete-slot " + old:                                          false,
-		stamp + " " + wantLine:                                                 false,
+		stamp + " DEAD " + oldJob:                      false,
+		stamp + " reap " + filepath.Join(dead, "data"): false,
+		stamp + " reap " + filepath.Join(dead, "tmp"):  false,
+		stamp + " delete-slot " + dead:                 false,
+		stamp + " delete-slot " + empty:                false,
+		stamp + " delete-job " + harvestedJob:          false,
+		stamp + " delete-slot " + harvested:            false,
+		stamp + " reap " + filepath.Join(old, "data"):  false,
+		stamp + " delete-job " + oldHarvested:          false,
+		stamp + " delete-slot " + old:                  false,
+		stamp + " " + wantLine:                         false,
 	}
 	for _, line := range log {
 		if _, ok := want[line]; ok {
@@ -191,6 +231,9 @@ func TestHygieneRunDryRunChangesNothing(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "rowan-swarm-root")
 	dead := filepath.Join(root, "dead")
+	// A SLOT, which is <slot>/jobs: a bare directory is not one and this verb
+	// would touch nothing at all (#1512).
+	hygieneMkdir(t, filepath.Join(dead, "jobs"))
 	hygieneMkdir(t, filepath.Join(dead, "data"))
 	defer swapHygieneEnv(hygieneFakeProcs{busy: map[string]bool{}}, hygieneFakeDisk{freeGB: 40, free: "40G"})()
 

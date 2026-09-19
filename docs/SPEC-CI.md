@@ -512,7 +512,9 @@ here that has one points at it.
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
 next card: a rule lands with its sweep of the tree, or it does not land
-([pit-stop ledger item 20](../reports/pitstop-tests-2026-09-17.md)).
+(pit-stop ledger item 20, 2026-09-17, which lives in the `rowan-new`
+repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
+this one, so the citation is deliberately prose and not a link).
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier
@@ -1431,6 +1433,51 @@ root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots` and, on a
 Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
 Cellar prefix is read off the launcher rather than guessed by
 `TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
+
+### `ciworkspace` — the workspace cleanup never fails a job before checkout
+
+**The rule.** Every copy of the `remove stale build dirs from the shared runner`
+step in `.github/workflows/ci.yml` refuses an EMPTY `GITHUB_WORKSPACE`
+(`[ -n … ] || exit 1`), CONTINUES when the workspace directory does not exist
+(`[ -d … ] || exit 0`), and CONTINUES when the workspace holds no `.git`
+(`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0`). It may not exit non-zero
+because `.git` is absent: the step runs before `actions/checkout`, so an absent
+`.git` is the normal first-run state and not a fault. The last guard is the
+BELT, and it points the other way from the first two: the step ends in
+`find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`, so
+the shape has to keep that sweep off any directory that is not a checkout of
+this repository. `GITHUB_WORKSPACE` is whatever the runner was configured with;
+a runner pointed at a home directory, a mount, or a hand-made path by a
+misconfiguration would have had its contents deleted by the repair for #1751 as
+written, which traded a red job for a lost directory. A workspace with no `.git`
+has nothing of ours in it to clean, and `actions/checkout` empties a
+non-repository workspace itself before it clones, so continuing loses nothing.
+**The hurt.** The step's precheck was
+`[ -n "${GITHUB_WORKSPACE}" ] && [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 1`.
+On 2026-09-19 the captainamerica runners came back into service with fresh
+workspaces and **five jobs across three PRs went red before a line of the
+repository had been read**, `ci-ok` failing downstream of them, every one
+reporting `failed_step: 2:remove stale build dirs from the shared runner`
+(`#1751`, receipts on the issue).
+**The test.** `TestWorkspaceCleanupDoesNotFailBeforeCheckout`
+(`internal/ci/ciworkspace_class_test.go`). It reads `ci.yml` as text, finds
+EVERY copy of the named step, and reports the occurrence index and its line
+number, so a repair made in five of six copies is found rather than passing on
+the first.
+**Its allowlist.** None. Every copy of the step is held to the same shape; a
+copy that needs an exception is a copy that should not exist.
+**Its remedy lines.** `the cleanup step still refuses a workspace with no .git;
+it runs before checkout, so a runner whose workspace does not exist yet goes red
+before a line of the repository is read (#1751)`; its two companions for a
+dropped `[ -n … ] || exit 1` refusal and a missing `[ -d … ] || exit 0` guard;
+and, for the belt, `the cleanup step runs `find … -exec rm -rf` with no
+`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0` belt in front of it; a workspace
+that exists but is not a checkout of this repository must be left alone rather
+than emptied (#1751)`.
+**Its narrowings.** It matches the step by its `- name:` text, so a copy renamed
+or a cleanup inlined into another step would not be counted; and it reads the
+workflow as text, so a value built elsewhere and interpolated in is invisible to
+it.
 
 ## Parked class tests
 
