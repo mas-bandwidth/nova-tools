@@ -707,46 +707,68 @@ nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
 nova-decide tune --kind <kind> [--dsn <dsn>] [--decisions <tsv>]
 ```
 
-**`--default` names what a below-floor row actually gets, and it changes the answer.** Escalation
-is not one thing. Where the escalation is a step UP a rung — the `route` question — the row gets a
-different, more careful answer, and the cap on the escalation rate is the right shape: the cost of
-escalating is money, and the verb should not spend it on more rows than the cap allows. Where the
-escalation is a fallback to ONE cheap answer — the who-reads question, where below the floor the
-reader defaults to `opus-child` — escalating is the RISKY direction, and a verb that only counts
-escalations picks the floor that takes the most risk. Naming the default lets each floor report
-`defaulted=`, `default_agree=` and `missed=`, and the best floor becomes the one that misses
-fewest; a tie is broken by the agree rate and then by the higher floor. A default no labeled row
-ever answered is a refusal, not a zero: a floor tuned against an answer the log never holds is
-untuned.
+**`--default` names what a below-floor row actually gets.** Escalation is not one thing. Where the
+escalation is a step UP a rung — the `route` question — the row gets a different, more careful
+answer, and a cap on the escalation rate is the right shape: escalating costs money, and the verb
+should not spend it on more rows than the cap allows. Where the escalation is a fallback to ONE
+configured default, the interesting number is how often that default **disagreed** with the row's
+label, and no field held it. With a default named each floor also reports `defaulted=`,
+`default_agree=` and `missed=`, and the best floor is the one that misses fewest; a tie is broken
+by the agree rate and then by the higher floor. A default no labeled row ever answered is a
+refusal, not a zero.
 
-Measured 2026-09-19, over the day's 47 who-reads answers from six manager lanes joined to what the
-friends actually did on the message bus (`internal/decide/testdata/reader-2026-09-19.jsonl`; nine
-of those pull requests were later HELD — #1815 and #1871 by Johnny, #1776, #1785, #1830, #1833,
-#1856 and #1860 by Stella, #1832 by Emma):
+**It is a calculation, and what it says about a log is a statement about that log.** A floor for a
+reading is set from that reading's own adjudicated evidence — truth labelled separately from the
+observation, bound to the question version, the decider and the model — and this flag does not
+manufacture any of that. The example below runs over
+`internal/decide/testdata/reader-observations-2026-09-19.jsonl`, whose own README says it tunes
+nothing: 47 answers from one day, labelled by later HOLDs, asked with a previous question version,
+sparse in every stopping class but one.
 
 ```
-$ nova-decide tune --decisions internal/decide/testdata/reader-2026-09-19.jsonl \
-    --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7
-TUNE floor=0.5 decided=40 agree=27 agree_rate=0.68 escalated=7 escalation_rate=0.15
-TUNE floor=0.65 decided=35 agree=24 agree_rate=0.69 escalated=12 escalation_rate=0.26
-TUNE floor=0.8 decided=29 agree=23 agree_rate=0.79 escalated=18 escalation_rate=0.38
-TUNE floor=0.9 decided=22 agree=19 agree_rate=0.86 escalated=25 escalation_rate=0.53
-TUNE OK lines=47 labeled=47 best_floor=0.9
-
-$ nova-decide tune --decisions internal/decide/testdata/reader-2026-09-19.jsonl \
+$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
     --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7 --default opus-child
 TUNE floor=0.5 decided=40 agree=27 agree_rate=0.68 escalated=7 escalation_rate=0.15 defaulted=7 default_agree=7 missed=0
 TUNE floor=0.65 decided=35 agree=24 agree_rate=0.69 escalated=12 escalation_rate=0.26 defaulted=12 default_agree=11 missed=1
 TUNE floor=0.8 decided=29 agree=23 agree_rate=0.79 escalated=18 escalation_rate=0.38 defaulted=18 default_agree=15 missed=3
 TUNE floor=0.9 decided=22 agree=19 agree_rate=0.86 escalated=25 escalation_rate=0.53 defaulted=25 default_agree=21 missed=4
-TUNE OK lines=47 labeled=47 best_floor=0.5
 ```
 
-The two runs read the same 47 rows and answer 0.9 and 0.5. The first is the higher agree rate on
-the rows it kept; the second is the only floor that hands NO friend hold to the default reader. A
-missed hold lands a defect and a needless friend read costs minutes, so the who-reads question
-runs at `--floor 0.5`. The `route` question keeps 0.65: there the escalation is a rung up and the
-cap is the cost that matters.
+Without `--default` the same rows answer `best_floor=0.9`; with it they answer `0.5`. **Neither is
+a tuned floor for the who-reads reading** — that reading is untuned until its own contract
+evidence exists. What the two runs show is that the second arithmetic is expressible at all, and
+that the first is silent about the cost the fallback carries.
+
+### the question and its criteria are one pair
+
+`nova-decide --questions <file>` loads the question file AND the criteria file it names. A
+question file may carry `criteria_version`, `criteria_file` and typed `state_fields` beside its
+`questions`; any other key beside them is a refusal that names it.
+
+```json
+{
+  "criteria_version": "2026-09-19.2",
+  "criteria_file": "criteria-reader.md",
+  "state_fields": [
+    {"name": "security_shaped_package", "type": "bool"},
+    {"name": "design_defaults_taken", "type": "int"},
+    {"name": "notes", "type": "string", "optional": true}
+  ],
+  "questions": { "reader": { "type": "choice", "instructions": "…", "criteria": { "…": "…" } } }
+}
+```
+
+The criteria file sits **beside** its question file — the name carries no path — and its own
+`version:` line must match. What goes to the provider is the criteria first and the state second.
+Before the call, the state's `key: value` lines are checked against the declared fields: a
+required field the state does not carry, or carries with the wrong type, is
+`DECIDE REFUSED reason=bad-state` at exit 2, naming the field, with **no request made**. An
+absolute `criteria_file`, a parent escape, a symlink resolving out of the question's directory, or
+a file over 64 KiB is `bad-questions`: a question file is not a way to read an unrelated local
+file and post it to a provider.
+
+The pairs this repository ships are in `docs/decide/`. They name configured ROLES and no roster;
+one house's role binding and its trial rows are in `docs/decide/examples/`.
 
 `tune --kind <kind>` reads the decisions TABLE rather than a JSONL log and prints the rows behind
 one kind; a kind with no rows is a refusal, because a floor with no rows behind it is untuned. It

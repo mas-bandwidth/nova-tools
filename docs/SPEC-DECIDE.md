@@ -414,83 +414,108 @@ retained at `mas-bandwidth/rowan-new
 reports/jev/2026-09-17-589-abstain-reason.tsv@4857e071 (model jev-latest, 31
 rows)`. The fallback for `needs_human` is a person, never a second guess.
 
-### the who-reads question, and the criteria beside it
+### a typed question and the criteria it is answered against are ONE versioned pair
 
-After every ACCEPT a shift manager asks one typed `choice`: who reads this card for landing.
-The answers are the ladder — `johnny`, `stella`, `emma`, `opus-child`, `fable-child`, `rowan` —
-and the fallback below the floor is `opus-child`, the cheap one.
+Glenn, 2026-09-19: *"Jev needs context to make good decisions, so if you inform it via input
+tokens what sort of criteria it should use to make decisions, I'm sure this will help it
+improve."* The criteria are therefore a **file beside the question**, carried into the request,
+not a paragraph each caller keeps its own copy of. `docs/decide/` holds the pair for each typed
+question: `questions-<name>.json` and `criteria-<name>.md`, the first naming the second and its
+version.
 
-**The question and its criteria are ONE versioned pair, and the asker embeds the criteria**
-(Glenn, 2026-09-19: *"if you inform it via input tokens what sort of criteria it should use to
-make decisions, I'm sure this will help it improve"*). The question is
-`docs/decide/questions-reader.json` and the criteria are `docs/decide/criteria-reader.md`, whose
-`version:` line the question cites; `internal/docs` refuses a question whose version, choices or
-declared state fields have drifted from the file. Before this, twelve manager lanes each carried
-their own copy and they HAD drifted: `work-swarm`'s named `emma` as the default reader where
-`tools13`'s named `opus-child`, so the same card asked in two lanes was two different questions.
+**The pair is loaded, not asserted.** `decide.LoadQuestionFile` reads the question, reads the
+criteria file it names, and refuses when their versions disagree. `QuestionFile.Payload` validates
+the caller's state against the typed `state_fields` the question declares and returns the bytes
+that go out — the criteria first, the state second. Both refusals happen **before the provider is
+dialled**: a required fact the state does not carry, or carries with the wrong type, is a refusal
+and never an answer given over evidence that was not there. The first shape of this shipped a
+parser that admitted `criteria_version`, `criteria_file` and `state_fields` and then discarded
+them, with a documentation test comparing two files on disk; text parity is not ingestion, and the
+request carried the same bytes it always had. The control that keeps this honest is a
+**request capture**: a test reads the body that actually left and asserts the named criteria are
+in it and that a file the question did not name is not.
 
-**The state carries the facts the criteria turn on, and the asker computes them first.** The
-`johnny` answer is `security_shaped_package`; the `stella` answer is `design_defaults_taken` and
-`normative_spec_moved`; `friend_holds_the_area` says which friend already has an open read on
-those files today. A criterion that names a fact the state does not carry is a criterion the
-provider must infer from prose, and prose is what rule 4 keeps out.
+**The criteria file is read from beside its question and nowhere else.** An absolute path, a
+parent escape, a symlink resolving out, and anything over a 64 KiB cap are all the same refusal: a
+question file is not a way to read an unrelated local file and post it to a provider.
 
-Measured 2026-09-19 over 47 answers from six manager lanes, joined to the friends' verdicts on the
-message bus: nine of those pull requests were later HELD by a friend, and the answer named the
-friend who held it on seven (#1815 and #1871 to Johnny, #1776, #1785, #1830, #1833 and #1860 to
-Stella). It missed two. **#1856** carried four named design defaults and a journal touched at its
-identity seam, and was answered `opus-child` at 0.70 — above the floor — because the four defaults
-were in the state's prose and in no field; Stella held it. **#1832** was answered `stella` at
-0.55, *below* the floor, so the fallback took it, and Emma held it on a four-character defect that
-371 green tests and two passing controls could not see. On the binary question — does this need a
-friend at all — 11 answers named a friend, 9 cards needed one, and 8 of the 9 were named:
-precision 8/11, recall 8/9.
+**The normative pair names roles, never a roster.** The questions offer configured roles —
+`security-designate`, `design-authority`, `lane-owner`, `child-review`, `second-child-review`,
+`coordinator`, `all-friends`, `human` — and the binding from a role to a mind is local, is not in
+the pair, and is never sent. A role the registry does not configure is a refusal, because no model
+response creates or overrides an ownership binding. One house's binding and its trial rows live in
+`docs/decide/examples/`, which says on its face that it is not part of the contract. `internal/docs`
+refuses a normative question or criteria file that carries a person, a model or a house role.
 
-**The floor for this question is 0.5, and not the route question's 0.65.** Below the floor this
-answer does not step UP, it falls back to the cheapest reader, so escalating here is the risky
-direction and a floor tuned on the agree rate alone tunes for the risk. `nova-decide tune
---default opus-child` over those 47 rows reports `missed=` per floor — 0 at 0.5, 1 at 0.65, 3 at
-0.8, 4 at 0.9 — and picks 0.5, the only floor that hands no friend HOLD to the default. A missed
-HOLD lands a defect; a needless friend read costs a friend minutes.
+### the who-reads question
+
+After every ACCEPT a shift manager asks one typed `choice`: which ROLE reads this card first.
+
+**It names the first read, and the mandatory rules are machinery.** Prose in a criteria file is
+something a high-confidence answer may contradict, and rule 6 already says confidence never
+authorizes. So `internal/decide/readers.go` derives four things and CONSTRAINS the answer with
+them, at every confidence:
+
+1. a settled security designation is taken **with no provider asked at all**;
+2. an unresolved holder of the area keeps its read, and no answer lifts a hold or replaces its
+   holder — `ReadDecision.LiftsHold` is a field so a caller gates on it rather than on the absence
+   of a sentence;
+3. a design read the evidence requires (`design_defaults_taken` above zero, or normative text
+   moved) survives an answer that names somebody else first;
+4. the human is reached only after the friends, which is `help --state`'s own rule.
+
+The red test is an **obediently wrong** answer — the provider naming the cheap reader on a
+security-shaped unit — asserted at 1.00 and at 0.10, because an answer that is wrong at one
+confidence is wrong at both.
+
+**The state carries the facts the criteria turn on, and the asker computes them first**:
+`security_shaped_package`, `design_defaults_taken`, `normative_spec_moved`, `holder_of_the_area`,
+`hold_is_open`. A criterion that names a fact the state does not carry is a criterion the provider
+must infer from prose, and prose is what rule 4 keeps out.
+
+**No floor is set for this reading.** `docs/decide/examples/2026-09-19-local-trial.md` records a
+day of observations — 47 answers from six lanes, joined afterwards to later HOLDs on the message
+bus — and they tune nothing. A later HOLD is an observation, not an adjudication: a pull request
+nobody held is not one that needed no reader, because nobody looked, and "the default would have
+missed it" is a counterfactual nothing tested. The rows also predate this question version and
+this state shape, and their stopping classes are sparse. They are kept as the arithmetic fixture
+for `tune --default` and as the reason to carry the fields, and for nothing else. The reading is
+**untuned until its own contract evidence exists**.
 
 ### the issue pre-triage question
 
 One typed `choice` over an open issue: `mechanical-card`, `design-ruling`, `already-fixed`,
-`held`, `infra-opus`. The question is `docs/decide/questions-triage.json` and its criteria
-`docs/decide/criteria-triage.md`, under the same version gate.
+`held`, `repository-machinery`. The pair is `docs/decide/questions-triage.json` and
+`criteria-triage.md`, under the same version gate. **The answer routes and never admits**: no
+classification at any confidence cuts a card, lifts a hold or skips a read.
 
 **The question carries three tree facts the asker computes before asking**, because the provider
-cannot see the repository and guessing about it is the whole of the error: `held_by_open_pr` (from
-`gh pr list --state open --json number,files` against the issue's named paths),
+cannot see the repository and guessing about it is the whole of the error: `held_by_open_pr`,
 `cited_path_exists_on_dev`, and `last_comment_says_fixed`.
 
-Measured 2026-09-19: 49 issues triaged, 32 answered `mechanical-card`, and a manager took all 32
-to the tree. **Two could be cut** (#1808 and #1788, landed as #1888 and #1889) — 6%. Of the thirty
-that could not, sixteen were held by an open pull request, six were already fixed or half-fixed on
-dev or cited a path not on dev in that shape, five were a design ruling the issue's own text asks
-for, two were an infra prefix a card lane may not touch, and one was a sweep rather than one card.
-**Twenty-two of the thirty are answered by those three yes/no facts**, and none of the twenty-two
-is a judgement the provider got wrong — it is a fact it was never shown.
+Observed 2026-09-19: 49 issues triaged, 32 answered `mechanical-card`, and a manager took all 32
+to the tree. Two could be cut. Of the thirty that could not, sixteen were held by an open change,
+six were already fixed or cited a path not in the tree in that shape, five were a design ruling
+the issue's own text asks for, two were an infra prefix a card lane may not touch, and one was a
+sweep rather than one card. **Twenty-two of the thirty are answered by those three facts**, and
+none of the twenty-two is a judgement the provider got wrong — it is a fact it was never shown.
+That is a statement about which fields the question was missing; it is not a precision, and it
+sets no floor.
 
-### the escalate question — `help --state` and then to whom
+### the escalate question — `help --state` and then to which role
 
 `nova-decide help --state <json>` answers the second decision from the line's own counters, with
-no provider, no key and no network: `continue`, `ask-all-friends` or `ask-glenn`, and Glenn only
-after the friends. It was hooked up and **unused on 2026-09-19** — zero calls, while twelve
-manager lanes each escalated by hand into an `ESCALATE.tsv` with a free-text
-`what-Rowan-must-decide` column.
+no provider, no key and no network: `continue`, `ask-all-friends` or `ask-glenn`, and the person
+only after the friends. It was hooked up and **unused on 2026-09-19** — zero calls, while every
+shift lane escalated by hand into a free-text column.
 
 The ESCALATE step is the two halves together: `help --state` first, and where its answer is not
-`continue`, one typed `choice` over the ladder — `docs/decide/questions-escalate.json`, criteria
-`docs/decide/criteria-escalate.md`, under the same version gate. `help_answer` and `help_reason`
-go into the state verbatim, so the typed answer is anchored to counters the line measured rather
-than to how stuck it feels, and `glenn` is refused unless `help_answer` is `ask-glenn`.
-
-Worked example from the day: `work-swarm` escalated AUDIT row E05.6 at 17:22Z as not cuttable
-because `docs/SPEC-WORK.md:7176-7182` did not settle whether the journal's identity seam could
-move. `spec_is_silent_or_contradictory=yes`, `security_shaped_package=no`: the answer is `stella`.
-She ruled on both defaults and the row landed on the bottom rung ninety minutes later as #1856.
-The lane reached that answer by hand; the fields say it.
+`continue`, one typed `choice` over the configured roles —
+`docs/decide/questions-escalate.json`, criteria `criteria-escalate.md`. `help_answer` and
+`help_reason` go into the state verbatim, so the typed answer is anchored to counters the line
+measured rather than to how stuck it feels. An answer naming `human` while `help_answer` is
+`ask-all-friends` is **overruled by the machinery** and the friends stand; it is not a preference
+the provider may outbid.
 
 ### nova-bus inbox triage (opt-in, public buses only)
 

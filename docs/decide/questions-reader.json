@@ -1,31 +1,32 @@
 {
-  "criteria_version": "2026-09-19.1",
-  "criteria_file": "docs/decide/criteria-reader.md",
+  "criteria_version": "2026-09-19.2",
+  "criteria_file": "criteria-reader.md",
   "state_fields": [
-    "kind",
-    "files",
-    "packages",
-    "lines_changed",
-    "security_shaped_package",
-    "friend_holds_the_area",
-    "design_defaults_taken",
-    "normative_spec_moved",
-    "rung_that_wrote_it",
-    "attempt",
-    "test_added",
-    "pre_existing_tests_repaired"
+    {"name": "kind", "type": "string"},
+    {"name": "files", "type": "int"},
+    {"name": "packages", "type": "int"},
+    {"name": "security_shaped_package", "type": "bool"},
+    {"name": "design_defaults_taken", "type": "int"},
+    {"name": "normative_spec_moved", "type": "bool"},
+    {"name": "holder_of_the_area", "type": "string"},
+    {"name": "hold_is_open", "type": "bool"},
+    {"name": "test_added", "type": "bool"},
+    {"name": "pre_existing_tests_repaired", "type": "int"},
+    {"name": "attempt", "type": "int"},
+    {"name": "lines_changed", "type": "string", "optional": true},
+    {"name": "notes", "type": "string", "optional": true}
   ],
   "questions": {
     "reader": {
       "type": "choice",
-      "instructions": "A finished, gated card is ready to be read for landing. Choose exactly one reader. The criteria below are the whole rule and docs/decide/criteria-reader.md is their long form, which the asker embeds in the state above this question; answer from the state's fields, never from the card's prose. The cost is not symmetric: a needless friend read costs a friend a few minutes, and a missed HOLD lands a defect on dev. When two readers are arguable, name the friend.",
+      "instructions": "A finished, gated card is ready to be read for landing. Name the role that should read it FIRST. The answer is a role and never a person: the binding from a role to a reader is local and is not yours to make. It names the first read only -- it removes no read the evidence already requires, lifts no hold and replaces no holder, and the machinery enforces that whatever you answer and at whatever confidence. A settled security designation is taken without asking you at all. The criteria below are the whole rule and criteria-reader.md is their long form, carried above this question. Answer from the state's typed fields, never from prose beside them. The cost is not symmetric: a needless read costs a reader minutes, and a read that should have happened and did not lands a defect.",
       "criteria": {
-        "johnny": "ANY of: the change execs a process, pushes, reads the environment or a secret, touches the sandbox, sudo, deploy keys or the network, or lands in the reaper, the launcher or the merge machinery. state field security_shaped_package=yes is this answer on its own, at any confidence. Measured 2026-09-19: both cards whose state said yes (#1815, #1871) were HELD by Johnny.",
-        "stella": "ANY of: the card took a design default no ruling covers (state field design_defaults_taken is 1 or more), the spec is silent or contradictory on what was built, normative spec text moved, or the judgement is about kernel semantics or scope rather than code. Measured 2026-09-19: six pull requests were HELD by Stella and every one of them had taken a named design default or moved normative text; #1856 named FOUR and was still sent to opus-child, and Stella held it.",
-        "emma": "Go correctness, tests, or documentation checked against what a binary prints, inside a lane Emma owns, where the design is already settled. state field friend_holds_the_area=emma is a strong pull to this answer.",
-        "opus-child": "The default. A self-contained mechanical change inside ONE package, with a red test and a one-edit control, no spec question, no design default taken, and security_shaped_package=no. Measured 2026-09-19: 38 of 47 cards were this, and none of the 38 was later held.",
-        "fable-child": "As opus-child, where a SECOND independent reading of the same small mechanical card is worth more than a first reading by the usual one.",
-        "rowan": "Only where the open question is a coordination call -- landing order, sequencing, which of two branches goes first -- and not the code. Measured 2026-09-19: rowan was answered on 10 cards and not one of them turned out to be a coordination call."
+        "security-designate": "The change execs a process, pushes, reads the environment or a secret, touches the sandbox, sudo, deploy keys or the network, or lands in the reaper, the launcher or the merge machinery. The state field security_shaped_package is this answer, and the machinery takes it without asking.",
+        "design-authority": "The card took a design default no ruling covers (design_defaults_taken is 1 or more), normative specification text moved, the specification is silent or contradictory on what was built, or the judgement is about kernel semantics or scope rather than code.",
+        "lane-owner": "Ordinary correctness, tests, or documentation checked against what a binary prints, inside one owned lane whose design is already settled.",
+        "child-review": "The configured default. A self-contained mechanical change inside ONE package, with a red test and a one-edit control, no specification question, no design default taken, and security_shaped_package false.",
+        "second-child-review": "As child-review, where a SECOND independent reading of the same small mechanical card is worth more than a first reading by the usual one.",
+        "coordinator": "Only where the open question is a coordination call -- landing order, sequencing, which of two branches goes first -- and not the code."
       }
     }
   }

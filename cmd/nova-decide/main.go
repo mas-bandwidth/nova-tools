@@ -231,14 +231,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, *prefix, "bad-floor",
 			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
-	raw, err := os.ReadFile(*questions)
-	if err != nil {
-		return refuse(stderr, *prefix, "bad-questions", fmt.Sprintf("cannot read questions: %s", oneline.Err(err)))
-	}
-	qs, err := decide.ParseQuestions(raw)
+	// The question and the criteria it is answered against load as ONE
+	// versioned pair, and the pair is what goes out: the criteria are read
+	// from the file the question names, beside it and nowhere else, and the
+	// state is validated against the typed fields the question declares --
+	// all of it BEFORE the provider is dialled, so a missing fact is a
+	// refusal and never an answer given over evidence that was not there.
+	qf, err := decide.LoadQuestionFile(*questions)
 	if err != nil {
 		return refuse(stderr, *prefix, "bad-questions", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	qs := qf.Questions
 	var state string
 	switch {
 	case *stateFile == "" || *stateFile == "-":
@@ -254,6 +257,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		state = string(b)
 	}
+	payload, err := qf.Payload(state)
+	if err != nil {
+		return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
 	client, err := decide.New(*baseURL, *keyEnv)
 	if err != nil {
 		return refuse(stderr, *prefix, "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -267,7 +274,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer store.Close()
 		client.UseDecisions(store)
 	}
-	answers, _, err := client.Decide(context.Background(), state, qs)
+	answers, _, err := client.Decide(context.Background(), payload, qs)
 	if err != nil {
 		return refuse(stderr, *prefix, "provider-error", oneline.Cap(err.Error(), oneline.TailBytes))
 	}

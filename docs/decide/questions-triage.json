@@ -1,27 +1,27 @@
 {
-  "criteria_version": "2026-09-19.1",
-  "criteria_file": "docs/decide/criteria-triage.md",
+  "criteria_version": "2026-09-19.2",
+  "criteria_file": "criteria-triage.md",
   "state_fields": [
-    "title",
-    "labels",
-    "body_bytes",
-    "files_named",
-    "age_days",
-    "held_by_open_pr",
-    "cited_path_exists_on_dev",
-    "last_comment_says_fixed",
-    "issue_state"
+    {"name": "title", "type": "string"},
+    {"name": "body_bytes", "type": "int"},
+    {"name": "age_days", "type": "int"},
+    {"name": "issue_is_open", "type": "bool"},
+    {"name": "held_by_open_pr", "type": "bool"},
+    {"name": "cited_path_exists_on_dev", "type": "bool"},
+    {"name": "last_comment_says_fixed", "type": "bool"},
+    {"name": "files_named", "type": "string", "optional": true},
+    {"name": "labels", "type": "string", "optional": true}
   ],
   "questions": {
     "triage": {
       "type": "choice",
-      "instructions": "An open issue has not been turned into a swarm work card. Decide what kind of work it is. The three tree facts in the state -- held_by_open_pr, cited_path_exists_on_dev, last_comment_says_fixed -- are computed by the asker before this question is asked, because you cannot see the tree and guessing about it is what made this question wrong before. Answer from the state's fields; docs/decide/criteria-triage.md is the long form and the asker embeds it above.",
+      "instructions": "An open issue has not been turned into a work card. Classify the work. The three tree facts in the state -- held_by_open_pr, cited_path_exists_on_dev, last_comment_says_fixed -- are computed before this question is asked, because you cannot see the repository and guessing about it is what made this question wrong before. Answer from the state's typed fields; criteria-triage.md is the long form and is carried above. This answer routes and never admits: no classification at any confidence cuts a card, lifts a hold or skips a read.",
       "criteria": {
-        "mechanical-card": "ALL of: the issue names exact PATHS or a red test that exists; the repair is one line, one flag, one count or one refusal with no door; acceptance is a single sentence; no design ruling is needed; held_by_open_pr=no; cited_path_exists_on_dev=yes; last_comment_says_fixed=no. A capable small model writes it from a card with anchors, red test first.",
+        "mechanical-card": "ALL of: the issue names exact paths, or a red test that exists; the repair is a procedure -- a wrong line, a missing flag, a stale count, a refusal with no door; acceptance is one sentence; no design ruling is needed; held_by_open_pr false; cited_path_exists_on_dev true; last_comment_says_fixed false.",
         "design-ruling": "The issue asks a question rather than reporting a defect: which of two shapes, whether a behaviour should exist, what a specification ought to say, what number a bound takes. A card cannot pick the number.",
-        "already-fixed": "last_comment_says_fixed=yes, or issue_state is closed, or cited_path_exists_on_dev=no because the code the issue describes is not on dev in that shape any more.",
-        "held": "held_by_open_pr=yes. The repair is real and unheld work is not: an open pull request already touches the file, so a card would collide with it. This is not a judgement about the issue, it is a fact about the tree.",
-        "infra-opus": "The work lives in the repository's own machinery rather than its tools: CI workflows, tools/ and scripts/, the swarm and pulse launchers, the sandbox, or anything touching keys, credentials or a destructive operation's guard."
+        "already-fixed": "last_comment_says_fixed true, or issue_is_open false, or cited_path_exists_on_dev false because the code the issue describes is not in the tree in that shape any more.",
+        "held": "held_by_open_pr true. An open change already touches the file, so a card would collide with it. This is a fact about the tree and not a judgement about the issue.",
+        "repository-machinery": "The work lives in the repository's own machinery rather than its tools: continuous-integration workflows, the tooling and script directories, the launchers, the sandbox, or anything touching keys, credentials or a destructive operation's guard."
       }
     }
   }
