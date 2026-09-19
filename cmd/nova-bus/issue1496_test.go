@@ -10,9 +10,9 @@ import "testing"
 // vary between runs; the exact ordered string pins the fixed order the repair promises.
 
 func TestIssue1496ABareVerbNamesEveryMissingRequiredFlagInAFixedOrder(t *testing.T) {
-	const want = "nova-bus send: --branch is required; refusing to guess\n" +
-		"nova-bus send: --bus is required; refusing to guess\n" +
-		"nova-bus send: --remote is required; refusing to guess\n"
+	const want = "nova-bus send: --branch is required; refusing to guess; run: nova-bus help\n" +
+		"nova-bus send: --bus is required; refusing to guess; run: nova-bus help\n" +
+		"nova-bus send: --remote is required; refusing to guess; run: nova-bus help\n"
 	first := ""
 	for i := 0; i < 20; i++ {
 		r := invoke(t, "", "send")

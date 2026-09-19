@@ -847,7 +847,7 @@ meaning of "pull the intelligence up, push down to machinery."
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
@@ -971,13 +971,38 @@ with `cd`; the `STEP` lines are numbered `1, 2, 3, …` in order; the card names
 a reproducing test, or says `probe`/`read` when it only reads; it names a test
 command (`go test`, `pytest`, …) or states `no tests`; it carries a deadline or
 the words `finish within`; it names a file or a package; scratch is named
-absolutely, never as a bare relative path; no `../` path appears anywhere,
-because the wall refuses a path above the job; it never invokes `nova-sandbox`;
+absolutely, never as a bare relative path; the card walks no path above the job,
+because the wall refuses one; it never invokes `nova-sandbox`;
 its final step writes `RESULT.md` with the `RESULT: ` line first; and the card
-is under 12000 bytes. A card that satisfies all of them prints one line,
-`LINT OK card=<name> checks=<n>`, and exits 0; a card that drifts prints
+is under the advisory 12000-byte ceiling. A card that satisfies all of them
+prints one line, `LINT OK card=<name> checks=<n> bytes=<n> cap=<n>`, and exits
+0; a card that drifts prints
 `LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what the rule wants>`
 for each finding and exits 2, so a caller can refuse to admit it.
+
+**`no-parent-path` reads what the card WALKS, not every `../` in its text.** The
+rule is the wall's: a worktree, a scratch or a notes file above the job root
+dies on its first write. A parent path handed to a command that walks it — a
+`cd`, a `pushd`, a `mkdir`, a `cp`, a `mv`, a `rm`, a `git -C`, a redirect, a
+`--root` — is that drift wherever it is written, inside a fenced block as much
+as outside one, because a card's commands live in fences. A `../` the card
+merely **quotes** is not: a fenced block, an inline backtick span, a markdown
+link target, and a `go test` ellipsis such as `ok .../internal/pulse` are
+quotations, not instructions. Measured across five managers' cards on
+2026-09-19, every `no-parent-path` finding the text rule produced was one of
+those four, and the rule that is wrong on every card is the rule whose true
+finding on the next card goes unread (issues #1494, #1527).
+
+**The 12000-byte ceiling is advice and the output says so.** It is a reading
+budget — past it a model stops reading the card in one window — and not an
+input limit: a 12422-byte card was measured through the harness untruncated. A
+card over it is never refused, never truncated and still ships, so it draws
+`LINT NOTE card=<name> size: …`, never a `LINT DRIFT`, and the note changes no
+verdict: a card whose only findings are advisory exits 0. Every lint carries the
+size, on the `LINT OK` line and on a closing
+`LINT SIZE card=<name> bytes=<n> cap=<n> advisory=true`, so the question two
+managers answered differently on one day is answered in the bytes (#1494,
+#1527).
 
 **Every drift carries its remedy, and the binary prints the whole table** (issue
 #1464). A rule token and a quoted line are not an instruction: three of the five
@@ -1444,6 +1469,43 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   packet — an abstain that names *why* it stopped and the log it watched, never
   a bare missing result — and the BATCH line's `idle=<n>` counts those kills.
 
+- `--stall-after <seconds>` (default 0, off) is the **first-token** deadline,
+  and it is not the idle window. Every signal `--idle` has needs a FIRST sample
+  to compare against — a log that grew, a tree whose CPU advanced — so a card
+  that never speaks once is invisible to it and runs to the batch deadline,
+  paid for. On **2026-09-17** a fresh known-answer card hung for its entire
+  150 s having produced no token at all, while `deepseek-flash` on the same
+  bench in the same second answered in 11 s. A card that has produced **nothing
+  at all** since it launched is therefore ended at `--stall-after` and scored
+  `<label> slot=<n>: ABSTAIN reason=stalled log=0 watched=<path>`. A card that
+  produced one byte and then went quiet is the idle window's business and this
+  check never fires for it.
+
+- `--max-inflight <n>` (default 0, no cap) is the **per-route** in-flight cap.
+  A route is the **provider, the model and the key**: two models on one key
+  share that key's queue and the same model on two keys do not, so neither
+  alone is the unit, and the key is named by its **profile** — this string
+  reaches a log. At most `n` of the batch's cards run against one route at a
+  time; the rest **wait**, holding no process, no bench slot lease and no
+  spend, with their deadlines not yet begun. Measured **2026-09-17**: above
+  roughly 30–40 concurrent requests on one Muse contributor-free key the tail
+  latency goes to infinity — hulk and vision returned **zero** results in
+  thirteen minutes at load 0.5–2.0 — and every card launched past that point
+  burns its whole deadline for nothing. A launcher with no cap turns a free
+  tier's queue into spend.
+
+  When a cap is set the batch prints one line per route, after the BATCH line:
+
+  ```
+  BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
+  ```
+
+  `peak` is the most ever in flight on that route and `held-back` is how many
+  launches had to wait, so a reader chasing a slow batch can rule the cap in or
+  out without guessing. A batch that set no cap prints no such line and behaves
+  exactly as it did before. A card still held when the batch's deadline passes
+  is never launched at all, and is scored `deadline`.
+
 ### gather — one bounded packet, mechanically
 
 `gather` reads every card's `RESULT.md` and folds the batch into **one
@@ -1506,6 +1568,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
+| `stalled` | was killed because it produced NOTHING AT ALL -- no first token -- within `--stall-after` of launching; not the idle window, which needs a first sample to compare against (#917) |
 | `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
@@ -1594,10 +1657,10 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1611,6 +1674,40 @@ HOLD: <one bounded quoted line>
 `BATCH` is the packet's first line: the id, the admitted n, the cards done,
 the cards abstain, the token and usd totals, `idle=<n>` — how many cards the
 idle timeout killed — and `stalled=<n>`, how many ended with no output at all.
+
+**A card the batch reaped is counted too, and its numbers come from the
+harness's own store.** `usage.tsv` is composed at the END of a run, so a card
+killed for idleness or at the deadline leaves none, and on **2026-09-19
+14:58Z** a card that had run for minutes and made real paid calls was reported
+`in=0 out=0 usd=0.0000` — a number where there should be a measurement. When a
+card wrote no usage row, the totals read the store under its own data home, the
+same store `native` samples its usage from. **The row wins wherever it exists**:
+`native` composed it from that store with the run's own window, provider and
+model, and reading the database over the top of a row that already reported
+would double-count the card. A row at the **slot** root counts only when its
+`job` column names this card: slot directories are reused, and an earlier
+card's leftover row is not this one's.
+
+**A reaped card's numbers are a LOWER BOUND, and `partial=<n>` says how many
+cards are floors.** The card was killed mid-turn, and the assistant row for the
+turn in flight carries no tokens object — the provider charged for it and no
+database holds the figure. The field is printed only when `n` is above zero,
+the way `benches=` is.
+
+**An absence contributes zero, silently; a reader that stopped contributes zero
+and says so.** The two absences are a store that is **not there** (`no-store`)
+and one that is there, was read perfectly, and holds nothing in the window
+(`no-rows`) — the shape a harness killed before its first answer leaves. Neither
+is a fault, and a note on either would fire on every card reaped early and teach
+its readers to scroll past the line, taking the note that matters with it. The
+two failures are `no-sqlite3` and `query-failed` — a missing program, a locked
+or corrupt database, a query past its timeout — and for those
+`BATCH NOTE <label> store unread: <reason>` goes to stderr, because a zero
+nobody was told about is the fault this whole reader exists to close. The store
+reads run **in parallel, at most four at a time**: each carries the usage
+reader's 20-second timeout, and serially `n` reaped cards would add `22n`
+seconds to a gather that is otherwise all file reads.
+
 One card line per card, in admission order: its label, its resolved slot, and
 either its disposition line — line 2 verbatim, capped — or `ABSTAIN` with its
 one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and
@@ -1932,14 +2029,14 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
 BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s> stopped=<b>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>

@@ -1992,6 +1992,15 @@
     #:fetch-resolver-fact
     #:verify-qualifies-p
     #:verify
+    ;; the verification cache file (SPEC-WORK.md:1294-1325)
+    #:verification-fact-form
+    #:write-verification-cache
+    #:read-verification-cache
+    #:resolver-identities
+    #:persist-verification-cache
+    #:session-cache
+    #:session-verification
+    #:verification-session-cache-path
     ;; the needs-met predicate and its five reason tokens (nova-tools #785,
     ;; SPEC-WORK.md:4740-4866)
     #:needs-view

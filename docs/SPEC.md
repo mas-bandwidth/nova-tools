@@ -322,15 +322,18 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Seven record-layer checks in one binary, each a wall: a record passes or it
+Eight record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check. Six of them are
-checks over one line's own self repo; the seventh, `dogfood`, is a check over
-the record the family keeps about its own tools, and it is here because it is
-the same shape: a ledger written in advance, read back, and held to.
+checks over one line's own self repo. The other two are the same shape pointed
+somewhere else: `dogfood` is a check over the record the family keeps about its
+own tools, and `hygiene` is a check over a BRANCH — the four mechanical
+questions the accept gate asks of every card's range, put behind a door a
+person can knock on before asking a friend for a read. Each is a ledger written
+in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `dogfood`, plus `version` and `help`. `nova-check version` is the Conventions'
+`corpus`, `hygiene`, `dogfood`, plus `version` and `help`. `nova-check version` is the Conventions'
 build line, exit 0; before it existed the same words were
 `nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
 named no build.
@@ -1384,6 +1387,89 @@ has gone missing.
 **Three: an indented example is illustration** — which is the point — so a
 four-column table indented after a blank line is not checked. Indented rows
 *abutting* the table above them are named instead, per the list above.
+
+---
+
+### hygiene — is this branch's range clean, before anybody reads it
+
+```
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+```
+
+**Why it exists.** The accept gate asks four mechanical questions of every
+card's range (SPEC-TOOLWORK.md §3): is every commit the pool's own and none of
+them a merge (`identity`), does every changed path match one of the card's
+declared globs (`out-of-path`), was anything added that does not belong in a
+repository (`stray-file`), and does any added line have the SHAPE of a key
+(`secret`). None of the four reads prose and none needs a model. They are one
+package with one entry point, `internal/hygiene.Check`, and this verb is the
+third of its three callers — `nova-pulse accept` at harvest and `nova-merge
+batch` on every member are the other two. One implementation, three callers, so
+the lane and the harvest cannot disagree about what clean means: a second copy
+of these rules is a second definition, and the day the two drift is the day a
+branch passes one and fails the other with nobody able to say which is right.
+
+It is here rather than in `nova-pulse` because the person who wants the answer
+is usually not a gate. It is the thing to type before asking a friend to read
+something, and it decides nothing: it prints what is wrong and exits.
+
+**It never guesses an identity.** `--identity` is required and repeatable with
+commas, `Name <email>`; there is no default and no falling back to the
+repository's own config, because a range checked against nobody would admit
+anybody. `--paths` may be ABSENT, which is a different fact from "the paths
+matched" and is printed as such: `out-of-path` is skipped and the line says
+`paths=-`. A friend's own branch has no card and no declared paths, and a line
+that simply left the field out would read as a bound that held. When `--paths`
+IS given it is validated the same way `cut` validates a card's `PATHS:` line —
+at most eight globs, no `..`, nothing absolute, and nothing that matches every
+file there is.
+
+**Exit codes**, as the Conventions give them: **0** clean, **1** findings,
+**2** could not run. The third is the one that matters most here. A bad ref, a
+directory that is not a working copy, an empty identity set, a `PATHS:` glob
+that bounds nothing, a git that could not be run — every one of them is a
+refusal, never a clean answer, because a check that could not run has found
+nothing and reporting that as clean is the one answer this tool must not be
+able to give.
+
+```
+HYGIENE FINDING reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>: <why>
+HYGIENE MORE kind=finding shown=<n> total=<t> nova-check hygiene --repo <dir> … --max 0
+HYGIENE OK base=<ref> head=<ref> paths=<glob,…|-> findings=0
+HYGIENE NO base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
+nova-check hygiene: <what was wrong>; run: nova-check help
+```
+
+The listing is capped at `--max` (default 20, `0` for all) and counted, like
+every listing in this binary, and the MORE line carries the command that prints
+the rest. `OK` goes to stdout, `NO` and the refusal to stderr, and the findings
+list to stdout in both cases — a caller that wants the verdict alone reads the
+last line.
+
+**What it deliberately does not do.** It never opens `RESULT.md` or any other
+prose a worker wrote: this is a check over a diff, not a reading of a report.
+It never prints matched secret text — only the path, the line and the shape's
+NAME — because a finding travels into a gate's stdout, a PR body, a harvest log
+and whatever a coordinator pastes into a chat, and a finding that quotes the
+key has copied the key into every one of those places. And it decides nothing:
+it returns findings and exits, and what a finding COSTS is the caller's rule,
+not this verb's.
+
+**The subject repo does not get a vote on what git shows this check.** That is
+not a detail, it is the whole reason this verb can be trusted on a range
+somebody else wrote. The bench's global and system git config are blanked, and
+so is the subject's own influence over the diff: the prefixes are passed
+explicitly, so `diff.noprefix` in the checked repo cannot hide every finding by
+dropping the `a/` and `b/` a parser reads file names from; the diff is forced
+textual with `--text --no-textconv`, so a `-diff` attribute — committed, in
+`.git/info/attributes`, or named by a local `core.attributesFile` — cannot turn
+a file holding a key into "Binary files differ"; paths are read with
+`core.quotePath=false` and unquoted besides, so one non-ASCII byte in a name
+does not skip that file; and blob ids are read in full, because an abbreviation
+is ambiguous sooner or later. The conflict-marker check reads the added lines
+of that same diff rather than asking `git diff --check`, which honours a
+`-diff` attribute whatever `--text` says. A check whose subject can choose what
+it is shown is not a check.
 
 ---
 
@@ -4881,8 +4967,8 @@ than trusted. And its transport is git: what it cannot do is make anybody pull.
 
 ## nova-update and nova-version
 
-[SPEC-UPDATE.md](docs/SPEC-UPDATE.md) defines the shared inventory reader, optional
-updates and reporting. [Prepared delivery](docs/SPEC-BUS-DELIVERY.md) keeps one
+[SPEC-UPDATE.md](SPEC-UPDATE.md) defines the shared inventory reader, optional
+updates and reporting. [Prepared delivery](SPEC-BUS-DELIVERY.md) keeps one
 identity across retries. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNOWN,
 CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
@@ -4922,12 +5008,17 @@ in both the MORE line and the closing line.
 
 ### WAITS ON: nothing
 
-The six record-layer checks are the tool measured here, and they have no
-clock, no subprocess, no network and no lock. There is no `--timeout`, no
-interval, no poll, no `gh` and no `git` on that path: they wait only on the
-filesystem, and every verb measured returned **under 0.30 s** — inside the
-two-minute rule by two orders of magnitude, so this is the tool that can be run
-between edits.
+The six record-layer checks over one line's own self repo are the tool measured
+here, and they have no clock, no subprocess, no network and no lock. There is
+no `--timeout`, no interval, no poll, no `gh` and no `git` on that path: they
+wait only on the filesystem, and every verb measured returned **under 0.30 s** —
+inside the two-minute rule by two orders of magnitude, so this is the tool that
+can be run between edits.
+
+`hygiene` is the other exception and it is stated rather than papered over: it
+reads a range out of a real repository, so it runs `git` as a subprocess and
+takes a `--timeout` (default 120 s) for it. It touches no network and takes no
+lock. Its cost is the size of the range, not of the repository.
 
 `dogfood` (2026-09-18) is the exception, and it is stated rather than papered
 over: `record` reads the clock, because a receipt is a dated record; `ledger`

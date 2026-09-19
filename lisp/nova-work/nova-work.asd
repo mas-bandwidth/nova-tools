@@ -25,6 +25,7 @@
                (:file "src/session")
                (:file "src/state-export")
                (:file "src/verifier")
+               (:file "src/verification-cache-file")
                (:file "src/receipt-admission")
                (:file "src/needs")
                (:file "src/fleet")
@@ -45,14 +46,14 @@
                (:file "src/roadmap")
                (:file "src/savepoint")
                (:file "src/savepoint-create")
-               (:file "src/dedup-root")
                (:file "src/savepoint-restore")
                (:file "src/compaction")
                (:file "src/new-verbs")
                (:file "src/decide")
                (:file "src/request-line")
                (:file "src/replays-verdict-state")
-               (:file "src/replays-notes")))
+               (:file "src/replays-notes")
+               (:file "src/dedup-root")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -86,4 +87,5 @@
                 (:file "tests/replays-notes")
                 (:file "tests/replays-785-gate")
                 (:file "tests/request-line")
-                (:file "tests/replays-concurrency-witness")))
+                (:file "tests/replays-concurrency-witness")
+                (:file "tests/replays-restart-and-recovery")))
