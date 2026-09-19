@@ -506,10 +506,10 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 ```
 nova-decide route --unit <json file|inline json> --usage <path> --log <path>
-                  [--registry <path>] [--floor 0.9] [--base-url <url>] [--key-env JEV_API_KEY]
+                  [--registry <path>] [--floor 0.65] [--base-url <url>] [--key-env JEV_API_KEY]
                   (--usage and --log are REQUIRED whenever jev is asked)
 nova-decide route --unit <json file|inline json> --no-jev [--registry <path>]
-                  [--usage <path>] [--log <path>] [--floor 0.9]
+                  [--usage <path>] [--log <path>] [--floor 0.65]
 nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                   [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
@@ -526,7 +526,13 @@ Who does this unit of work. The rungs come from a registry — a data file of mi
 
 The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
 
-Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `fleet-chore`).
+Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `row-test`, `dogfood`, `fleet-chore`).
+
+**`row-test` is card work by kind, because its size lies.** One row of a table-driven suite, on a leg whose card shape is already proven, starts at `pro` — not at the bottom. It has a kind of its own because the two names it used to wear both answered wrong: as `fixture-retarget` the ladder read one file and one package and answered `flash`, one rung under the rung that landed it; as `fix-with-red-test` it answered `opus`, two rungs over. Measured 2026-09-18, the schema campaign's row cards ran on `pro` and came back green at usd 0.03-0.04 and about 150 s each. The size term raises a row test's rung and never lowers it: one file is the shape of a trivial rebase **and** of a subtle codegen fix, and a count cannot tell them apart.
+
+**`dogfood` is a kind, because a transcript diff is not a guard.** Reading a documented transcript against what the tool actually prints starts at the bottom rung. The kind exists because that work was being named `guard`, and `guard` is a **security** kind — it resolves to the designated mind on every path, at any height, at any floor, which is the rule working correctly on a unit that was described wrongly. Measured 2026-09-18: 21 Flash cards over dogfood transcripts found four real drifts for about 20 cents. Name it `dogfood` and it is priced at the rung that does it.
+
+**A mechanical kind that failed on a card rung was not mechanical.** A confirmed failure on `flash` or `pro` takes **both** card rungs out for that unit and the answer is the child rung: a mechanical kind is one whose answer is a procedure, and a failure is the evidence that the procedure was not given after all, so the other card rung is the same mistake one height up. Sideways-before-up cannot reach this case, because `flash` and `pro` are the only two minds of one lineage standing at two different heights. An attempt that merely timed out is **not** a confirmed failure and takes nothing out.
 
 **Security never falls through.** `--guard`, `--secrets`, `--kind guard` and each `--touches` value resolve to the designated rung on every path — Jev on or off, at any floor, after any attempt, including an attempt by that rung itself. It is a kind and not a height, so sideways, up, the floor and never-down do not apply to it. If no mind is designated, or every designated one is asleep, the work **waits**: that is a refusal, not a route to somebody else.
 
@@ -535,6 +541,8 @@ Two rungs are chosen by **kind** and not by height, and by machinery rather than
 `--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
 
 **What Jev is told is typed and enumerated**, and it is less than the evidence: one `field: value` line each for the kind, size buckets, whether the lane is one a mind on the ladder **owns** (`none`, `owned`, `other` — never which lane), an attempt-count bucket, a platform flag (`ordinary` or `named`), a security flag and a deadline bucket — every value checked against the closed set its field allows before anything is sent, so the boundary fails closed. **No registry string crosses it either**: a mind's name, its lineage and its lanes are local configuration, not public data, so the rungs Jev chooses between are **opaque ids** (`rung-1`, `rung-2`) described only by the step above the lowest rung offered, a per-call lineage label, whether that mind owns the lane, and how it is asked. The answer is mapped back to a mind here. The unit's id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in the process. `--floor` refuses NaN, an infinity, a negative and anything above one, with one remedy line.
+
+**The floor is a number with rows behind it.** The default is **0.65**, and it was 0.9 until the rows existed. Measured 2026-09-18: 39 real route calls over 13 units came back between 0.61 and 0.91, and the same unit with the same evidence came back 0.78, 0.80, 0.81 and 0.82 on four separate calls. A floor of 0.9 therefore stepped up on 13 units of 13 — the provider's answer never survived, and the route was the rules plus exactly one rung, bought with a call. A floor of 0.8 sits inside that noise, so the same unit routes to one mind on one call and another on the next. A floor of 0.95 sent an eight-file pull request a child had landed green all the way to `all-friends`. 0.65 sits below the whole band, so a step-up means the confidence actually collapsed; 0.7 was still inside it, and one rebase unit came back 0.68, 0.69 and 0.71 on three calls and routed two ways. Re-tune it from the log, never from a feeling about the model.
 
 **Accounting is not optional.** Token spend reporting is an obligation and every decision is logged, so **`--usage` and `--log` are required whenever jev is asked**. A route that would call the provider without them is refused *before* the call, in one line naming the missing flag and the line to paste — a call nobody can account for is refused rather than made and then forgotten. `--no-jev` makes no call, so there is nothing to account for and both stay optional there.
 
@@ -615,6 +623,38 @@ $ nova-decide help --state ; echo "exit=$?"
 HELP REFUSED reason=bad-flags flag needs an argument: -state
 exit=2
 ```
+
+### The coordinator's line — route with the key sealed
+
+The key arrives from the environment and nowhere else (SPEC-DECIDE rule 3), so a real route runs under `nova-secrets exec`. This is the whole line, as one paste:
+
+```
+nova-secrets exec --store ~/rowan-working/secrets --as studio \
+  --key ~/.config/nova-secrets/studio.key --sops /opt/homebrew/bin/sops \
+  --only JEV_API_KEY --require JEV_API_KEY -- \
+  nova-decide route --unit-id <id> --kind <kind> --files <n> --packages <n> \
+    --usage ~/rowan-working/queue/decide/usage.tsv \
+    --log ~/rowan-working/queue/decide/route.jsonl
+```
+
+`--only JEV_API_KEY --require JEV_API_KEY` is the pair that matters: `--only` hands the child that one variable and nothing else, and `--require` refuses *before* the command runs if the store does not hold it, so a route never fails halfway with a key-shaped hole. The key is never an argument, never a file the tool reads and never a line it prints. `--usage` and `--log` are the accounting, required whenever jev is asked, and pointing every caller at **one** pair of paths is what makes the log a calibration record rather than a pile of them. Run several decisions under **one** `exec` — `... -- sh -c '<several nova-decide route lines>'` — rather than one decrypt per call.
+
+### outcome — the other half of the row
+
+```
+nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked
+```
+
+What **happened** to a unit a decision routed. Rule 8 asks for the decision to be logged beside the outcome it predicted, and this is the half nobody was writing: on 2026-09-18 the shared log held 78 rows, 73 escalations and **zero** successes, so `log --summary` had nothing to regenerate a starting rung from.
+
+Run it the moment a routed unit lands or comes back failing:
+
+```
+$ nova-decide outcome --log ~/rowan-working/queue/decide/route.jsonl --unit-id row-card-9 --result green
+OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
+```
+
+`green` is `ok` and names the rung that succeeded, `red` is `failed`, `blocked` is `abandoned`. The kind and the rung are read from that unit's last **decision** row rather than retyped, because a caller who has to retype them will eventually retype them wrong; an outcome for a unit no decision routed is a refusal, not a row. It appends a row of its own — the log is append-only and a row written is never rewritten — marked `source: outcome`, which the summary folds into the rung it names without counting a second decision.
 
 ### log — the escalation log
 
