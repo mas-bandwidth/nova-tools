@@ -65,7 +65,7 @@ func harvestDecideRun(t *testing.T, root string, dec Decider, floor float64) (st
 func oneDoneCard(t *testing.T, root string) {
 	t.Helper()
 	addCard(t, root, "a", "1", "flash", "RESULT a sha=aaa",
-		"RESULT a sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\nred: TestFooBar -- boom\ngreen: ok\nfiles: a.go b.go\n")
+		"RESULT a sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\nred: TestFooBar -- boom\ngreen: ok\nfiles: a.go b.go\n")
 }
 
 // harvest-class-asks-the-question: the harvest sends the RESULT.md first line, the
@@ -112,7 +112,7 @@ func TestHarvestDecideAsksTheClassQuestion(t *testing.T) {
 	}
 
 	state := <-states
-	for _, want := range []string{"RESULT a sha=aaa", "BRANCH br1", "commits", "files: a.go b.go"} {
+	for _, want := range []string{"RESULT a sha=aaa", "BRANCH rowan/br1", "commits", "files: a.go b.go"} {
 		if !strings.Contains(state, want) {
 			t.Fatalf("the state does not carry %q:\n%s", want, state)
 		}
