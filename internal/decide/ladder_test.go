@@ -2,6 +2,7 @@ package decide
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -117,12 +118,19 @@ func TestSidewaysBeforeUp(t *testing.T) {
 	if res.Rung.Height != opus.Height {
 		t.Errorf("sideways keeps the height: %d vs %d", res.Rung.Height, opus.Height)
 	}
+	// No sideways rung exists at the card heights -- flash and pro are one
+	// lineage -- so the answer steps UP. It steps past pro as well, because a
+	// mechanical kind that failed on a card rung was not mechanical after all
+	// (see TestAFailedCardRungTakesTheWholeLineageOut).
 	mech := Unit{ID: "s2", Kind: KindStack, Files: 2, Packages: 1, Attempts: []Attempt{
 		{Rung: "flash", Outcome: OutcomeFailed, Reason: "rebase conflict"},
 	}}
 	res = mustRoute(t, reg, mech, DefaultFloor)
-	if res.Rung.Name != "pro" {
-		t.Errorf("flash failed and no sideways rung exists: up to pro, got %s (%s)", res.Rung.Name, res.Reason)
+	if res.Rung.Name != "opus" {
+		t.Errorf("flash failed and no sideways rung exists: up, got %s (%s)", res.Rung.Name, res.Reason)
+	}
+	if res.Rung.Height <= 0 {
+		t.Errorf("up means a greater height than the rung that failed: %d", res.Rung.Height)
 	}
 	if !res.Escalated {
 		t.Error("a decision that carries a prior attempt is an escalation")
@@ -224,7 +232,7 @@ func TestRouteLineShape(t *testing.T) {
 	if strings.Contains(line, "\n") {
 		t.Fatalf("exactly one line: %q", line)
 	}
-	for _, want := range []string{"ROUTE ", "unit=card\\x2041", "rung=flash", "confidence=0.9", "floor=0.90", "reason=\"", "ask=card"} {
+	for _, want := range []string{"ROUTE ", "unit=card\\x2041", "rung=flash", "confidence=0.9", fmt.Sprintf("floor=%.2f", DefaultFloor), "reason=\"", "ask=card"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the line is missing %q: %s", want, line)
 		}

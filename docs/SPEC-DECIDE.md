@@ -164,10 +164,56 @@ YET**. The owner and the wait are two facts and neither hides the other — a se
 designated rung timed out answers with that rung AND the wait.
 
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
-`fixture-retarget`, `fleet-chore`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`fixture-retarget`, `fleet-chore`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
 `cause-to-find` — size (files, packages, lanes), lane
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
+
+**A row test is card work, and its size says so wrongly.** `row-test` is a kind of its own and it
+starts at `pro`, not at the bottom: one row of a table-driven suite, on a leg whose card shape has
+already been proven, is work a card rung does well and work the cheapest rung does not. The kind
+exists because the two names it used to wear both answered wrong. Named `fixture-retarget`, the
+ladder read its size — one file, one package — and answered `flash`, one rung under the rung that
+actually landed it. Named `fix-with-red-test`, the ladder answered `opus`, two rungs over. Measured
+2026-09-18: the schema campaign's row cards ran on the `pro` rung and came back green, at usd
+0.03-0.04 and about 150 s each. The size term may raise a row test's rung and never lowers it, so
+one file stays card work: one file is the shape of a trivial rebase AND of a subtle codegen fix,
+and the count cannot tell them apart.
+
+**A mechanical kind that failed on a card rung was not mechanical.** The DeepSeek rungs are
+eligible for mechanical kinds only (friends first), and a mechanical kind is one whose answer is a
+procedure rather than a judgement. A CONFIRMED failure on a card rung is the evidence that the
+procedure was not given after all, so no card rung is eligible for that unit again: the answer
+steps past the other card rung to the child rungs. The per-height sideways rule cannot reach this
+case, because `flash` and `pro` are the only two minds of one lineage standing at two DIFFERENT
+heights; every other lineage puts its minds far enough apart that a lineage which failed is a
+lineage the height rule already excludes. The hurt: a fleet-chore a Flash card delivered as a
+workflow edit needed a class test nobody had asked for, and the ladder's next answer was the other
+card rung — the same mistake one rung up — when the work went to a child and finished
+(nova-tools#1482, 2026-09-18).
+
+**The floor is a number with rows behind it.** The default floor is **0.65**, and rule 8 is why it
+is not 0.9 any more. Measured 2026-09-18, 39 real route calls over 13 units: every confidence the
+provider returned fell between 0.61 and 0.91, and the same unit with the same evidence came back
+0.78, 0.80, 0.81 and 0.82 on four separate calls. A floor of 0.9 therefore stepped up on 13 units
+of 13 — the provider's answer never survived, and the route was the rules plus exactly one rung,
+bought with a call. A floor of 0.8 sits inside the provider's own noise, so the same unit routed to
+one mind on one call and another on the next. A floor of 0.95 sent an eight-file pull request a
+child had landed green all the way to all-friends. 0.65 sits below the whole measured band, so a
+step-up means the confidence actually collapsed rather than that it came back ordinary; 0.7 was
+still inside it, and one rebase unit came back 0.68, 0.69 and 0.71 on three calls and routed two
+ways on the strength of it. The number
+moves again when the rows move: it is re-tuned from the log, never from a feeling about the model.
+
+**The outcome is written by the verb that watched the work.** `nova-decide outcome --log <path>
+--unit-id <id> --result green|red|blocked` appends the other half of rule 8's row: what happened to
+a unit a decision routed. It is a row of its own, because the log is append-only and a row written
+is never rewritten; it carries `source: outcome`, so the summary folds it into the rung it names
+without counting a second decision. The kind and the rung are read from the last DECISION row for
+that unit rather than retyped by the caller, and an outcome for a unit no decision routed is a
+refusal. The hurt: on 2026-09-18 the log held 78 rows and 73 escalations and zero successes,
+because nothing wrote the second half, so `log --summary` regenerated no starting rung from any of
+them.
 
 **The public-data boundary is explicit, and it is an allowlist.** What the provider sees is
 typed and enumerated: a `Public()` projection of the unit and nothing else — a kind, size
