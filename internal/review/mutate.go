@@ -618,6 +618,14 @@ func runUnits(ctx context.Context, execFn func(context.Context, string, string, 
 		}
 		return nil, "the suite could not be run: the run exited non-zero with no --- FAIL: line naming a unit: " + firstLine(text)
 	}
+	// And the other half of the same HOLD: a "--- FAIL:" line is still a line the card
+	// prints, and this repo's own suites build fake go-test transcripts for a living.
+	// The exit status is the one channel the card does not write, and a go test with a
+	// failed unit never exits 0. A FAIL line beside a zero exit is a claim the status
+	// contradicts, so it names no kill: both must agree before a unit is scored red.
+	if err == nil && len(failed) > 0 {
+		return nil, "the suite could not be run: the run printed a --- FAIL: line but exited 0, so its output and its status disagree: " + firstLine(text)
+	}
 	return failed, ""
 }
 

@@ -166,3 +166,30 @@ func TestMutateABareFAILOrPanicLineWithNoStructuredFAILLineIsNotAKill(t *testing
 		}
 	}
 }
+
+// The same HOLD from the other side (johnny-357c06749499: "Card stdout picks the
+// verdict"). The free-text fallback is gone, but a "--- FAIL:" line is still just a
+// line a card's own TestMain, init or a t.Log of a captured transcript can print --
+// this repo's own suites build fake go-test output for a living. When the process
+// exits 0 it has said, with the one channel a card cannot forge past, that nothing
+// failed; a "--- FAIL:" line beside a zero exit is a claim contradicted by the
+// status, and scoring it as a kill lets a card whose tests assert nothing report
+// ACCEPT OK. A kill needs both: a --- FAIL: line naming the unit AND a non-zero exit.
+func TestMutateAFAILLineWithAZeroExitIsNotAKill(t *testing.T) {
+	repo, base, head := seamLab(t)
+	execFn := func(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "sh", "-c", "echo '=== RUN   TestSignZero'; echo '--- FAIL: TestSignZero (0.00s)'; echo 'FAIL'; exit 0")
+		cmd.Dir = dir
+		return cmd
+	}
+	res, err := Mutate(context.Background(), MutateOptions{Repo: repo, Base: base, Head: head, TempRoot: t.TempDir(), Exec: execFn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Red != 0 || res.Pass {
+		t.Fatalf("a forged --- FAIL: line beside exit 0: red=%d pass=%v, want no kill from card stdout alone", res.Red, res.Pass)
+	}
+	if len(res.Skips) != 1 || !strings.Contains(res.Skips[0].Reason, "could not be run") {
+		t.Fatalf("a forged --- FAIL: line beside exit 0: skips=%v, want one could-not-run skip", res.Skips)
+	}
+}
