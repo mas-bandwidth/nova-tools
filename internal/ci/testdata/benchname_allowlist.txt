@@ -24,3 +24,9 @@ cmd/nova-pulse/fill.go:flashLauncher.Launch the raw per-card launcher; the same 
 cmd/nova-pulse/power.go:powerOnlineCount the Mac power verbs exist FOR the CI runner hosts: nova-pulse wake and sleep are how batman and superman are woken for the merge group and let sleep again (the fleet runs on solar). A runner host is the RIGHT answer here, so a bench guard would refuse the verb's whole purpose; they place no card and no load, only a magic packet and a runner-list read
 cmd/nova-pulse/power.go:powerBusyCount the same verbs, asking GitHub whether that runner host's runners are busy before letting it sleep
 cmd/nova-pulse/power.go:powerWakeFail formats one WAKE FAIL line for those verbs and touches no machine
+
+# `accept --bench` is the name the gate's own record carries, not a machine it reaches:
+# the gate runs locally, where harvest runs (T05's harvest resolves its bench through
+# requireBench before it calls accept), and the name is compared to the certification
+# record's bench= field and printed on the ACCEPT line.
+internal/pulse/accept.go:acceptReadCert compares the bench name to the certification record's bench= field and its legs= list and touches no machine; a record naming another bench is ABSTAIN bench-uncertified, which is a narrowing of what the gate will judge, not a road to a host

@@ -1769,6 +1769,25 @@ Each verb narrates on stderr while it waits on a machine (`STANDARD WALK bench=�
 `STANDARD DONE … elapsed=…`), so a step over a tenth of a second says what it is doing; the
 bench lines themselves stay on stdout.
 
+### accept
+
+```
+nova-pulse accept --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity "<Name> <<email>>"[,...] [--sandbox <path>] [--timeout <s>] [--max <n>]
+```
+
+The mechanical accept gate ([SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1): it reads the
+card `cut` wrote and the job's commit -- never `RESULT.md` -- makes a throwaway
+worktree of the head under the job's slot, and runs, in order and each once, inside
+`nova-sandbox`: hygiene (`identity`, `out-of-path`, `stray-file`, `secret`), the kind's
+shape check, the base's tests surviving at head (`test-weakened`), build, vet, the
+changed packages' tests, then `nova-review mutate` with the fix reverted. One line:
+`ACCEPT OK` (exit 0), `ACCEPT REJECT reason=<token> at=<where>` (exit 1), or
+`ACCEPT ABSTAIN reason=<token>` when the fault is the bench's (exit 2). A red is a
+finding, never a rerun; a red the card neither changed nor named is run once at the
+base and is `base-red` when red there too. `--cert` is the bench's certification
+record: until `nova-pulse certify` exists, a hand-written `bench=<name> legs=<a,b>`
+line, printed as `cert=hand`. `control=-` until `--selftest` lands.
+
 ### hygiene
 
 ```

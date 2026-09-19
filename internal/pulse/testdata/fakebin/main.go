@@ -27,8 +27,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -42,6 +44,12 @@ type rule struct {
 	Stderr     string `json:"stderr,omitempty"`
 	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
+	// Exec runs whatever follows the first `--` in this fake's own argv, with the
+	// caller's stdio and environment, honouring a `--cwd <dir>` before the `--`, and
+	// exits with the child's code. It is how a fake nova-sandbox lets the accept gate's
+	// real go build, vet and test run in a test without a wall on the bench: the argv
+	// is still logged, so the test can prove every command went through the wrap.
+	Exec bool `json:"exec,omitempty"`
 }
 
 type spec struct {
@@ -96,6 +104,9 @@ func main() {
 	if r.SleepMS > 0 {
 		time.Sleep(time.Duration(r.SleepMS) * time.Millisecond)
 	}
+	if r.Exec {
+		os.Exit(passThrough(args))
+	}
 	if r.StdoutFile != "" {
 		out, err := os.ReadFile(r.StdoutFile)
 		if err != nil {
@@ -146,4 +157,39 @@ func appendLine(path, line string) {
 	}
 	defer f.Close()
 	fmt.Fprintln(f, line)
+}
+
+// passThrough is the Exec rule: run the command after `--` in the directory a `--cwd`
+// names, stdio and environment inherited, and answer with its exit code. A missing `--`
+// or an empty command is the fake's own failure, exit noSpec, so a test cannot mistake
+// it for the tool under test.
+func passThrough(args []string) int {
+	cwd := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			cmdline := args[i+1:]
+			if len(cmdline) == 0 {
+				fmt.Fprintln(os.Stderr, "the fake exec rule found nothing after --")
+				return noSpec
+			}
+			cmd := exec.Command(cmdline[0], cmdline[1:]...)
+			cmd.Dir = cwd
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if err := cmd.Run(); err != nil {
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					return ee.ExitCode()
+				}
+				fmt.Fprintf(os.Stderr, "the fake exec rule could not run %s: %v\n", cmdline[0], err)
+				return noSpec
+			}
+			return 0
+		}
+		if args[i] == "--cwd" && i+1 < len(args) {
+			cwd = args[i+1]
+			i++
+		}
+	}
+	fmt.Fprintln(os.Stderr, "the fake exec rule found no --")
+	return noSpec
 }

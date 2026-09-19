@@ -62,6 +62,12 @@ type MutateOptions struct {
 	// a sibling's `nova-review-mutate-*` appearing between a snapshot and its check made
 	// the assertion red four times (#1341 twice, #1345, #1360).
 	TempRoot string
+	// Exec builds the command for every test run mutate makes, or is nil for
+	// exec.CommandContext. The accept gate (SPEC-TOOLWORK §1 rule 3) hands one that
+	// wraps the argv in nova-sandbox, so the suites it judges run inside the wall; the
+	// dir is the worktree the tests run in, and the wrapper names it as the cwd. Nothing
+	// else about the run changes: mutate still sets Dir and Env on what comes back.
+	Exec func(ctx context.Context, dir string, name string, args ...string) *exec.Cmd
 }
 
 // GreenTest is a test that stayed green with the change reverted: the one thing that
@@ -93,7 +99,11 @@ type MutateResult struct {
 	Reverted int
 	Pass     bool
 	Greens   []GreenTest
-	Skips    []Skip
+	// Reds are the units that went red with the change reverted, by name and file: the
+	// accept gate asks whether the card's named TEST: is among them (named-test-not-red),
+	// which a count alone cannot answer.
+	Reds  []GreenTest
+	Skips []Skip
 }
 
 // Verdict is the word that ends the MUTATE line.
@@ -203,7 +213,7 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 		skipped[s.File] = true
 	}
 	for _, u := range groupByPkg(units) {
-		failed, reason := runUnits(ctx, wt, u)
+		failed, reason := runUnits(ctx, opts.Exec, wt, u)
 		if reason != "" {
 			for _, one := range u {
 				if !skipped[one.file] {
@@ -217,6 +227,7 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 			if failed[one.name] {
 				res.Red++
 				redFiles[one.file] = true
+				res.Reds = append(res.Reds, GreenTest{Name: one.name, File: one.file})
 				continue
 			}
 			// A unit with no FAIL line is green, and so is a unit with no result
@@ -413,14 +424,19 @@ var goResult = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): ([A-Za-z_0-9]+)`)
 // package that does not build is the strongest red there is -- the tests cannot even
 // compile without the change -- so every unit in it counts failed. A named skip reason
 // comes back when the suite could not be run at all, and then nothing is judged.
-func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]bool, skip string) {
+func runUnits(ctx context.Context, execFn func(context.Context, string, string, ...string) *exec.Cmd, wt string, units []unit) (failed map[string]bool, skip string) {
 	failed = map[string]bool{}
+	if execFn == nil {
+		execFn = func(ctx context.Context, _ string, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, name, args...)
+		}
+	}
 	if units[0].lisp {
 		script := units[0].name
 		if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(script))); err != nil {
 			return nil, "the lisp project has no run-tests.sh in the worktree"
 		}
-		cmd := exec.CommandContext(ctx, "sh", script)
+		cmd := execFn(ctx, wt, "sh", script)
 		cmd.Dir = wt
 		err := cmd.Run()
 		var ee *exec.ExitError
@@ -442,7 +458,7 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	if units[0].pkg == "." {
 		args[len(args)-1] = "./"
 	}
-	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd := execFn(ctx, wt, "go", args...)
 	cmd.Dir = wt
 	// The verdict is a property of the range, never of the environment mutate was
 	// started in. A caller's GOFLAGS=-json -- which is what CI's `make test`
