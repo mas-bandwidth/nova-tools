@@ -48,7 +48,7 @@ func TestCloseDoesNotCollideAndIsOneReceiptPerLane(t *testing.T) {
 		mustContain(t, "stdout", "CLOSE OK closed=4 kept=0 commit=-")
 
 	r := invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
-		"--remote", "origin", "--branch", "main", "--attempts", "3").
+		"--remote", "origin", "--branch", "main", "--no-push").
 		mustCode(t, 0)
 	if strings.Contains(r.stderr, "file exists") {
 		t.Fatalf("the close collided with itself:\n%s", r.stderr)
@@ -108,7 +108,7 @@ func TestCloseThatCannotFinishWritesNothing(t *testing.T) {
 	commitAs(t, checkout, "Ada", "an empty index for Ada's lane")
 	chmod(t, lane+"/INDEX", 0o444)
 	r := invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
-		"--remote", "origin", "--branch", "main", "--attempts", "3").
+		"--remote", "origin", "--branch", "main", "--no-push").
 		mustCode(t, 1)
 	// `CLOSE FAIL <path>:` and not a bare `CLOSE FAIL:` -- the path is how this asserts the
 	// run reached the WRITE loop and stopped inside it, rather than being turned away
@@ -122,7 +122,7 @@ func TestCloseThatCannotFinishWritesNothing(t *testing.T) {
 	}
 
 	invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
-		"--remote", "origin", "--branch", "main", "--attempts", "3").
+		"--remote", "origin", "--branch", "main", "--no-push").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=2")
 }
