@@ -422,6 +422,15 @@ It fetches every `--interval` and returns the moment your inbox would list somet
 
 `--quiet-beats` is accepted and changes nothing since 2026-09-17 (#328): a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — never wakes a wait; a beat is not news, exactly as before.
 
+`--max-commits <n>` bounds the since-walk exactly as it does on `inbox` (500 by default), and a wait whose cursor is **further behind than that bound** is refused before it blocks, because every poll it made would read nothing and it would still end by saying "nothing yet" (#1518):
+
+```
+WAIT BLIND commits=500 remedy="raise --max-commits or close --before <instant>"
+WAIT REFUSED: as=Johnny cursor=8cd06f5a... is further behind than this walk may cross, ...
+```
+
+exit 2. That is a loop stopping rather than a loop running green and deaf for hours. The two ways out are the ones the line names: raise the bound for this read, or `close --before <instant>` to empty the backlog the cursor is behind.
+
 **`receipt`** says "heard" without writing a reply, one append to your lane's `RECEIPTS` and one push; `--note` repeats. It refuses a note not on the bus and a receipt for your own note, and reports a repeat without writing it twice.
 
 ```
