@@ -41,6 +41,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -752,15 +753,35 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	return ask(socket, b.String(), stdout, stderr)
 }
 
+// askTimeout is the wall-clock bound one exchange may spend. It is a variable
+// only so the tests can shorten it: a wedged session is a thirty-second wait
+// by design and a test suite cannot afford one per case.
+var askTimeout = workclient.DefaultTimeout
+
 // ask is the whole wire: one line in, one line out, newline-terminated both
 // ways. The dial and the read live in internal/workclient so that this package
 // keeps a single print path; here only the reply is classified.
+//
+// Three ways there is no reply line, and they are three different refusals,
+// because they send a person to three different places. A socket nothing is
+// listening on is no such session. A session that accepts and then says
+// nothing inside the bound is a session to go and look at — and, if the
+// request was a mutation, one whose work may still have been accepted, since a
+// client that stopped waiting is no more a rollback than a disconnect is
+// (docs/SPEC-WORK.md, "The engine and its client"). A reply past the wire's cap
+// is a session speaking a shape this wire does not carry.
 func ask(socket, request string, stdout, stderr io.Writer) int {
-	line, err := workclient.Exchange(socket, request)
-	if err != nil {
+	line, err := workclient.ExchangeWithin(socket, request, askTimeout)
+	switch {
+	case err == nil:
+		return printReply(line, stdout, stderr)
+	case errors.Is(err, workclient.ErrSilent):
+		return refused(stderr, "the session at "+socket+" accepted the request and did not answer: "+err.Error()+"; a mutation may still have been accepted -- ask the session rather than retrying blind")
+	case errors.Is(err, workclient.ErrTooLong):
+		return refused(stderr, "the session at "+socket+" answered past the wire's bound: "+err.Error())
+	default:
 		return refused(stderr, "no such session: cannot reach "+socket+": "+err.Error())
 	}
-	return printReply(line, stdout, stderr)
 }
 
 // printReply splits the session's line by the second token and by nothing

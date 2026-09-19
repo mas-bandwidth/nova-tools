@@ -422,11 +422,29 @@ It fetches every `--interval` and returns the moment your inbox would list somet
 
 `--quiet-beats` is accepted and changes nothing since 2026-09-17 (#328): a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — never wakes a wait; a beat is not news, exactly as before.
 
+`--max-commits <n>` bounds the since-walk exactly as it does on `inbox` (500 by default), and a wait whose cursor is **further behind than that bound** is refused before it blocks, because every poll it made would read nothing and it would still end by saying "nothing yet" (#1518):
+
+```
+WAIT BLIND commits=500 remedy="raise --max-commits or close --before <instant>"
+WAIT REFUSED: as=Johnny cursor=8cd06f5a... is further behind than this walk may cross, ...
+```
+
+exit 2. That is a loop stopping rather than a loop running green and deaf for hours. The two ways out are the ones the line names: raise the bound for this read, or `close --before <instant>` to empty the backlog the cursor is behind.
+
 **`receipt`** says "heard" without writing a reply, one append to your lane's `RECEIPTS` and one push; `--note` repeats. It refuses a note not on the bus and a receipt for your own note, and reports a repeat without writing it twice.
 
 ```
 nova-bus receipt --bus ~/bus --as Ada --note bo-abcdef012345 --remote origin --branch main
 ```
+
+**`close --before <instant>`** is the explicit opt-in bulk cutoff the `INBOX OPEN` large-list line names: every open note addressed to you and dated before the instant is closed, and everything at or after it is left open. `--dry-run` reports the split and writes nothing.
+
+```
+nova-bus close --bus ~/bus --as Ada --before 2026-09-18T12:00:00Z --remote origin --branch main
+CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
+```
+
+**One receipt per sender lane**, carrying a `Re:` line for every note of theirs it closes — `closed=` counts the notes, `receipts=` the files it took. It was one file per closed note until #1540, and that could not finish: every receipt in a run shares the stamp as its subject, so every filename differed only by an id hashed over fields two receipts also shared but for `re`, and two notes sharing a target id produced one filename twice and `file exists` at the second write. One receipt per lane removes that by construction — two receipts differ in `To`, in `Re` and in body — and a target named twice is closed once. A close that cannot finish takes back everything it wrote, so a failed run leaves the lane exactly as it found it.
 
 **`check`** is the gate: every note parses, every header resolves, every note sits in the lane its `From:` names, every id is well formed and unique, every `Re:` and receipt names something that exists, every lane has an owner and holds nothing but notes, its state files and a `README.md`. It reports every finding in one run and asserts nothing about a body. It refuses to guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.
 
@@ -1291,7 +1309,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1304,6 +1322,12 @@ written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
 ```
 nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner nova-native-runner.sh --root <root> --then "nova-pulse harvest --id <id> --root <root>"
 ```
+
+`--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
+unchanged, and only when they are given: one pulse fills every bench the caller names
+— the Studio and the Space in one tick, as SPEC-SWARM's **Benches** section allows —
+instead of a pulse being one bench (issue #637). Neither flag is read by `launch`
+itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
 no launch flag supplies, so launch never calls it (issue #630). `--runner` is
@@ -1735,6 +1759,22 @@ under `~/sdk`, real git ahead of the Xcode shim, and every runner's `.path` carr
 with the stamp, seat and space checks shared. Left out, `--os` is asked of the bench with
 `uname -s`. With no `--want` the stamp check reports what the bench has instead of
 demanding one.
+
+The on-host witness, `tools/bench-standard.sh`, asks the space question **with the same
+probe and the same floor** — `df -Pk "$HOME"` in gigabytes against `NOVA_MIN_FREE_G`
+(default 25) — and names the three largest directories under `$HOME` when it drifts, so the
+line says where the space went rather than only that there is none (#1048):
+
+```
+DRIFT disk free=3G want>=25G (both launchers refuse below it); largest under /home/rowan: /home/rowan/rowan-swarm-root 53G; /home/rowan/go 8G; /home/rowan/nova-bench 2G
+```
+
+25 GB is not a round number chosen here: it is a term of the launcher's own capacity
+formula, `allowed = min(cores*1.5 - load - 8, (free_gb - 25)/2, memfree_gb/2)`, so a bench
+below it is a bench nothing will be launched onto — which is a drift however clean the rest
+of the standard finds it. A Go card costs 5–7 GB in its own slot against 330 MB for a Lisp
+card, which is how two benches reached 100% under 120 cards and lost their runners. The
+`du` runs only on the failing path: a green run never pays for a walk of the whole home.
 
 `fleet mirror` creates the bare mirror a card clones from, or fetches the one already
 there, and **deletes nothing**:
