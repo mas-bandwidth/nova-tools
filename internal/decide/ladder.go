@@ -50,6 +50,7 @@ const (
 	KindDesign          = "design"
 	KindGuard           = "guard"
 	KindCauseToFind     = "cause-to-find"
+	KindTranscriptTest  = "transcript-test"
 )
 
 // The outcome of one attempt.
@@ -93,6 +94,7 @@ var startHeights = map[string]int{
 	KindFixtureRetarget: 0,
 	KindFleetChore:      0,
 	KindDogfood:         0,
+	KindTranscriptTest:  0,
 	KindRowTest:         1,
 	KindFixWithRedTest:  2,
 	KindNewVerb:         2,
@@ -115,6 +117,7 @@ var mechanicalKinds = map[string]bool{
 	KindFixtureRetarget: true,
 	KindFleetChore:      true,
 	KindDogfood:         true,
+	KindTranscriptTest:  true,
 	KindRowTest:         true,
 }
 
@@ -137,7 +140,7 @@ var ordinaryPlatforms = map[string]bool{
 
 // Kinds is every kind a unit may name, in the order the spec names them.
 var Kinds = []string{
-	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindRowTest,
+	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindTranscriptTest, KindRowTest,
 	KindFixWithRedTest, KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
 }
 

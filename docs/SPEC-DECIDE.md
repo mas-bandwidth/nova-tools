@@ -164,7 +164,7 @@ YET**. The owner and the wait are two facts and neither hides the other — a se
 designated rung timed out answers with that rung AND the wait.
 
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
-`fixture-retarget`, `fleet-chore`, `dogfood`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`fixture-retarget`, `fleet-chore`, `dogfood`, `transcript-test`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
 `cause-to-find` — size (files, packages, lanes), lane
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
@@ -190,6 +190,20 @@ sandbox, sudo, deploy keys and the network. Measured 2026-09-18: 21 Flash cards 
 transcripts found four real drifts for about 20 cents. Naming the work `dogfood` prices it at the
 rung that does it; naming it `guard` was the mistake, and the security rule was doing exactly what
 it says.
+
+**A transcript test is the same comparison, and the ladder had no name for it.** `transcript-test`
+is a kind of its own and starts at the bottom rung, beside `dogfood`: a documented transcript read
+line for line against what the binary prints is a comparison against an exact expected string,
+which is a procedure and not a judgement. It exists because the ladder refused the work outright.
+Measured 2026-09-19 in the shared route log: twelve route calls named `transcript-test` and every
+one of them was REFUSED — `want one of rebase, stack, fixture-retarget, fleet-chore, dogfood,
+row-test, ...` — so twelve units got no answer at all and the managers dispatched them by hand.
+They ran on the bottom rung, direct: tools13's t1 to t6 (#1802, #1789, #1798, #1799, #1795) and
+tools10's c17 and c18. Eleven came back green; the twelfth was an ABSTAIN on the manager's own
+wrong premise (`cmd/nova-play/firstrun_test.go:200` already compared line for line), which is a
+card fault and not the rung's failure. A kind the table does not hold is not a conservative
+answer, it is no answer: the work is dispatched anyway, off the ladder, and the log learns nothing
+from it.
 
 **A mechanical kind that failed on a card rung was not mechanical.** The DeepSeek rungs are
 eligible for mechanical kinds only (friends first), and a mechanical kind is one whose answer is a
@@ -399,6 +413,64 @@ below all flagged needs_human, in the 2026-09-17 abstain trial of 30 calls,
 retained at `mas-bandwidth/rowan-new
 reports/jev/2026-09-17-589-abstain-reason.tsv@4857e071 (model jev-latest, 31
 rows)`. The fallback for `needs_human` is a person, never a second guess.
+
+### the who-reads question, and the criteria beside it
+
+After every ACCEPT a shift manager asks one typed `choice`: who reads this card for landing.
+The answers are the ladder — `johnny`, `stella`, `emma`, `opus-child`, `fable-child`, `rowan` —
+and the fallback below the floor is `opus-child`, the cheap one.
+
+**The question and its criteria are ONE versioned pair, and the asker embeds the criteria**
+(Glenn, 2026-09-19: *"if you inform it via input tokens what sort of criteria it should use to
+make decisions, I'm sure this will help it improve"*). The question is
+`docs/decide/questions-reader.json` and the criteria are `docs/decide/criteria-reader.md`, whose
+`version:` line the question cites; `internal/docs` refuses a question whose version, choices or
+declared state fields have drifted from the file. Before this, twelve manager lanes each carried
+their own copy and they HAD drifted: `work-swarm`'s named `emma` as the default reader where
+`tools13`'s named `opus-child`, so the same card asked in two lanes was two different questions.
+
+**The state carries the facts the criteria turn on, and the asker computes them first.** The
+`johnny` answer is `security_shaped_package`; the `stella` answer is `design_defaults_taken` and
+`normative_spec_moved`; `friend_holds_the_area` says which friend already has an open read on
+those files today. A criterion that names a fact the state does not carry is a criterion the
+provider must infer from prose, and prose is what rule 4 keeps out.
+
+Measured 2026-09-19 over 47 answers from six manager lanes, joined to the friends' verdicts on the
+message bus: nine of those pull requests were later HELD by a friend, and the answer named the
+friend who held it on seven (#1815 and #1871 to Johnny, #1776, #1785, #1830, #1833 and #1860 to
+Stella). It missed two. **#1856** carried four named design defaults and a journal touched at its
+identity seam, and was answered `opus-child` at 0.70 — above the floor — because the four defaults
+were in the state's prose and in no field; Stella held it. **#1832** was answered `stella` at
+0.55, *below* the floor, so the fallback took it, and Emma held it on a four-character defect that
+371 green tests and two passing controls could not see. On the binary question — does this need a
+friend at all — 11 answers named a friend, 9 cards needed one, and 8 of the 9 were named:
+precision 8/11, recall 8/9.
+
+**The floor for this question is 0.5, and not the route question's 0.65.** Below the floor this
+answer does not step UP, it falls back to the cheapest reader, so escalating here is the risky
+direction and a floor tuned on the agree rate alone tunes for the risk. `nova-decide tune
+--default opus-child` over those 47 rows reports `missed=` per floor — 0 at 0.5, 1 at 0.65, 3 at
+0.8, 4 at 0.9 — and picks 0.5, the only floor that hands no friend HOLD to the default. A missed
+HOLD lands a defect; a needless friend read costs a friend minutes.
+
+### the issue pre-triage question
+
+One typed `choice` over an open issue: `mechanical-card`, `design-ruling`, `already-fixed`,
+`held`, `infra-opus`. The question is `docs/decide/questions-triage.json` and its criteria
+`docs/decide/criteria-triage.md`, under the same version gate.
+
+**The question carries three tree facts the asker computes before asking**, because the provider
+cannot see the repository and guessing about it is the whole of the error: `held_by_open_pr` (from
+`gh pr list --state open --json number,files` against the issue's named paths),
+`cited_path_exists_on_dev`, and `last_comment_says_fixed`.
+
+Measured 2026-09-19: 49 issues triaged, 32 answered `mechanical-card`, and a manager took all 32
+to the tree. **Two could be cut** (#1808 and #1788, landed as #1888 and #1889) — 6%. Of the thirty
+that could not, sixteen were held by an open pull request, six were already fixed or half-fixed on
+dev or cited a path not on dev in that shape, five were a design ruling the issue's own text asks
+for, two were an infra prefix a card lane may not touch, and one was a sweep rather than one card.
+**Twenty-two of the thirty are answered by those three yes/no facts**, and none of the twenty-two
+is a judgement the provider got wrong — it is a fact it was never shown.
 
 ### nova-bus inbox triage (opt-in, public buses only)
 

@@ -44,6 +44,15 @@ type TuneOptions struct {
 	Conf          string
 	Floors        []float64
 	MaxEscalation float64
+	// Default is the answer a below-floor row actually gets. Where the
+	// escalation is a step UP a rung it is empty, because the row gets a
+	// different, more careful answer and no single name covers it. Where
+	// the escalation is a fallback to one cheap answer -- the who-reads
+	// question falls back to opus-child -- naming it here lets each floor
+	// report what that fallback got right and what it MISSED, and the best
+	// floor becomes the one that misses fewest rather than the one that
+	// agrees most on the rows it kept.
+	Default string
 }
 
 func (o TuneOptions) withDefaults() TuneOptions {
@@ -72,6 +81,12 @@ type FloorStat struct {
 	Decided   int
 	Agree     int
 	Escalated int
+	// Defaulted is the escalated rows a named default answered, and
+	// DefaultAgree how many of those the default got right. Both are zero
+	// when no default is named: an escalation with no single answer behind
+	// it is a count and not a score.
+	Defaulted    int
+	DefaultAgree int
 }
 
 // AgreeRate is the share of decided rows that agreed with their label.
@@ -104,6 +119,9 @@ type TuneResult struct {
 type tuneRow struct {
 	confidence float64
 	agree      bool
+	// defaultAgrees is whether the NAMED DEFAULT would have been right on
+	// this row, which is what a below-floor row is actually scored against.
+	defaultAgrees bool
 }
 
 // Tune parses a decisions log and reports, per floor, the decisions it made
@@ -112,6 +130,8 @@ type tuneRow struct {
 // refusal, never a guess.
 func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 	opts = opts.withDefaults()
+	dflt := strings.TrimSpace(opts.Default)
+	defaultSeen := false
 	res := TuneResult{}
 	rows := make([]tuneRow, 0)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
@@ -136,10 +156,16 @@ func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 		}
 		choice, _ := scalarField(fields, opts.Choice)
 		res.Labeled++
-		rows = append(rows, tuneRow{confidence: confidence, agree: choice == label})
+		if dflt != "" && label == dflt {
+			defaultSeen = true
+		}
+		rows = append(rows, tuneRow{confidence: confidence, agree: choice == label, defaultAgrees: dflt != "" && label == dflt})
 	}
 	if err := scanner.Err(); err != nil {
 		return TuneResult{}, fmt.Errorf("decide: tune: read log: %w", err)
+	}
+	if dflt != "" && !defaultSeen {
+		return TuneResult{}, fmt.Errorf("decide: tune: no labeled row is %q, so a floor tuned against that default is tuned against nothing; refusing to guess", dflt)
 	}
 	floors := append([]float64(nil), opts.Floors...)
 	sort.Float64s(floors)
@@ -152,15 +178,22 @@ func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 				if row.agree {
 					stat.Agree++
 				}
-			} else {
-				stat.Escalated++
+				continue
+			}
+			stat.Escalated++
+			if dflt == "" {
+				continue
+			}
+			stat.Defaulted++
+			if row.defaultAgrees {
+				stat.DefaultAgree++
 			}
 		}
 		res.Floors = append(res.Floors, stat)
 		if stat.EscalationRate(res.Labeled) > opts.MaxEscalation {
 			continue
 		}
-		if best < 0 || stat.AgreeRate() >= res.Floors[best].AgreeRate() {
+		if best < 0 || betterFloor(stat, res.Floors[best], dflt != "") {
 			best = len(res.Floors) - 1
 		}
 	}
@@ -175,8 +208,12 @@ func Tune(data []byte, opts TuneOptions) (TuneResult, error) {
 func (r TuneResult) Render() string {
 	var b strings.Builder
 	for _, stat := range r.Floors {
-		fmt.Fprintf(&b, "TUNE floor=%g decided=%d agree=%d agree_rate=%.2f escalated=%d escalation_rate=%.2f\n",
+		fmt.Fprintf(&b, "TUNE floor=%g decided=%d agree=%d agree_rate=%.2f escalated=%d escalation_rate=%.2f",
 			stat.Floor, stat.Decided, stat.Agree, stat.AgreeRate(), stat.Escalated, stat.EscalationRate(r.Labeled))
+		if stat.Defaulted > 0 || stat.DefaultAgree > 0 {
+			fmt.Fprintf(&b, " defaulted=%d default_agree=%d missed=%d", stat.Defaulted, stat.DefaultAgree, stat.Missed())
+		}
+		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "TUNE OK lines=%d labeled=%d best_floor=%g\n", r.Lines, r.Labeled, r.BestFloor)
 	return b.String()
@@ -227,4 +264,25 @@ func numberField(fields map[string]json.RawMessage, name string) (float64, bool)
 		}
 	}
 	return 0, false
+}
+
+// Missed is the below-floor rows a named default answered WRONG: the rows the
+// floor handed to the cheap answer where the log says the cheap answer was not
+// the one the work needed. It is zero where no default is named.
+func (s FloorStat) Missed() int { return s.Defaulted - s.DefaultAgree }
+
+// betterFloor is the comparison behind BestFloor. With no default named it is
+// the old rule and nothing moves: the highest agree rate wins, and a tie keeps
+// the higher, more selective floor. With a default named the cost is not
+// symmetric -- a miss lands a defect where a needless escalation costs minutes
+// -- so fewest misses wins first, and only a tie there is broken by the agree
+// rate and then by the higher floor.
+func betterFloor(candidate, best FloorStat, hasDefault bool) bool {
+	if !hasDefault {
+		return candidate.AgreeRate() >= best.AgreeRate()
+	}
+	if candidate.Missed() != best.Missed() {
+		return candidate.Missed() < best.Missed()
+	}
+	return candidate.AgreeRate() >= best.AgreeRate()
 }

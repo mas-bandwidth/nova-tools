@@ -293,6 +293,7 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	label := fs.String("label", "label", "field holding the outcome")
 	choice := fs.String("choice", "decision", "field holding the decision")
 	conf := fs.String("conf", "confidence", "field holding the confidence")
+	dflt := fs.String("default", "", "the answer a below-floor row actually gets; with it each floor reports what that default got right and what it MISSED, and the best floor is the one that misses fewest")
 	maxEscalation := fs.Float64("max-escalation", decide.DefaultMaxEscalation, "escalation-rate cap for the best floor")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
@@ -325,6 +326,7 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 		Conf:          *conf,
 		Floors:        parsedFloors,
 		MaxEscalation: *maxEscalation,
+		Default:       *dflt,
 	})
 	if err != nil {
 		return refuse(stderr, "TUNE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))

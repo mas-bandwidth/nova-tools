@@ -697,6 +697,61 @@ LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flas
 LOG OK rows=1 kinds=1 escalations=0 coverage=0/1
 ```
 
+`nova-decide tune` is the other half of rule 8: it reads a decisions log back and reports, per
+confidence floor, what that floor decided, what it agreed with, and what it escalated.
+
+```
+nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
+                 [--label label] [--choice decision] [--conf confidence]
+                 [--max-escalation 0.7] [--default <answer>]
+nova-decide tune --kind <kind> [--dsn <dsn>] [--decisions <tsv>]
+```
+
+**`--default` names what a below-floor row actually gets, and it changes the answer.** Escalation
+is not one thing. Where the escalation is a step UP a rung — the `route` question — the row gets a
+different, more careful answer, and the cap on the escalation rate is the right shape: the cost of
+escalating is money, and the verb should not spend it on more rows than the cap allows. Where the
+escalation is a fallback to ONE cheap answer — the who-reads question, where below the floor the
+reader defaults to `opus-child` — escalating is the RISKY direction, and a verb that only counts
+escalations picks the floor that takes the most risk. Naming the default lets each floor report
+`defaulted=`, `default_agree=` and `missed=`, and the best floor becomes the one that misses
+fewest; a tie is broken by the agree rate and then by the higher floor. A default no labeled row
+ever answered is a refusal, not a zero: a floor tuned against an answer the log never holds is
+untuned.
+
+Measured 2026-09-19, over the day's 47 who-reads answers from six manager lanes joined to what the
+friends actually did on the message bus (`internal/decide/testdata/reader-2026-09-19.jsonl`; nine
+of those pull requests were later HELD — #1815 and #1871 by Johnny, #1776, #1785, #1830, #1833,
+#1856 and #1860 by Stella, #1832 by Emma):
+
+```
+$ nova-decide tune --decisions internal/decide/testdata/reader-2026-09-19.jsonl \
+    --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7
+TUNE floor=0.5 decided=40 agree=27 agree_rate=0.68 escalated=7 escalation_rate=0.15
+TUNE floor=0.65 decided=35 agree=24 agree_rate=0.69 escalated=12 escalation_rate=0.26
+TUNE floor=0.8 decided=29 agree=23 agree_rate=0.79 escalated=18 escalation_rate=0.38
+TUNE floor=0.9 decided=22 agree=19 agree_rate=0.86 escalated=25 escalation_rate=0.53
+TUNE OK lines=47 labeled=47 best_floor=0.9
+
+$ nova-decide tune --decisions internal/decide/testdata/reader-2026-09-19.jsonl \
+    --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7 --default opus-child
+TUNE floor=0.5 decided=40 agree=27 agree_rate=0.68 escalated=7 escalation_rate=0.15 defaulted=7 default_agree=7 missed=0
+TUNE floor=0.65 decided=35 agree=24 agree_rate=0.69 escalated=12 escalation_rate=0.26 defaulted=12 default_agree=11 missed=1
+TUNE floor=0.8 decided=29 agree=23 agree_rate=0.79 escalated=18 escalation_rate=0.38 defaulted=18 default_agree=15 missed=3
+TUNE floor=0.9 decided=22 agree=19 agree_rate=0.86 escalated=25 escalation_rate=0.53 defaulted=25 default_agree=21 missed=4
+TUNE OK lines=47 labeled=47 best_floor=0.5
+```
+
+The two runs read the same 47 rows and answer 0.9 and 0.5. The first is the higher agree rate on
+the rows it kept; the second is the only floor that hands NO friend hold to the default reader. A
+missed hold lands a defect and a needless friend read costs minutes, so the who-reads question
+runs at `--floor 0.5`. The `route` question keeps 0.65: there the escalation is a rung up and the
+cap is the cost that matters.
+
+`tune --kind <kind>` reads the decisions TABLE rather than a JSONL log and prints the rows behind
+one kind; a kind with no rows is a refusal, because a floor with no rows behind it is untuned. It
+lists rows and reports no floor — the floors come from `--decisions`.
+
 ## Build
 
 Go 1.26 or newer, standard library only.
