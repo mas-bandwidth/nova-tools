@@ -98,6 +98,26 @@ type BatchInput struct {
 	Benches    string // path to the benches table; empty means no table is read
 	Bench      string // comma-separated bench names to allocate the cards across; empty means local only
 	Then       string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// MaxInflight is the per-route in-flight cap of nova-tools#917: at most this many of a
+	// batch's cards run against one provider/model/key at a time, and the rest WAIT --
+	// held, not refused, holding no process and no spend, with their deadlines not begun.
+	// Zero is no cap, which is today's behaviour byte for byte.
+	//
+	// Measured 2026-09-17: above roughly 30-40 concurrent requests on one Muse key the tail
+	// latency goes to infinity, and every card launched past that point burns its whole
+	// deadline for nothing -- and is paid for.
+	MaxInflight int
+	// StallAfter is the FIRST-TOKEN deadline of the same issue: a card that has been running
+	// this long and has produced nothing at all -- no byte of log, no turn in its harness
+	// store -- is ended `ABSTAIN reason=stalled`.
+	//
+	// IT IS NOT THE IDLE TIMEOUT. `--idle` is about a card that WAS working and stopped, and
+	// every signal it has needs a first sample to compare against; a card that never spoke
+	// once has no such sample and is invisible to it. On 2026-09-17 a fresh known-answer
+	// card hung for its entire 150 s deadline having produced no token at all, while
+	// deepseek-flash on the same bench in the same second answered in 11 s. Zero leaves a
+	// card to its deadline, which is today's behaviour.
+	StallAfter time.Duration
 	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
 	// it is set, the model a card is dispatched with is the ladder's answer --
 	// which MIND does this unit of work -- and not the string the fill script
@@ -286,17 +306,22 @@ func Batch(in BatchInput) int {
 		// scratch is the directory under the local root this card's files are read from:
 		// <bench>-<n> for a remote card, whose files the pull below brings back, and the
 		// bare <n> for a local one.
-		scratch    string
-		bench      string
-		label      string
-		idleLog    string // the file the idle monitor watched; set only on an idle kill
-		cpu        uint64 // the card's process tree's CPU time at the last sample; guarded by doneMu
-		haveCPU    bool   // whether cpu holds a sample to compare against; guarded by doneMu
-		done       bool   // guarded by doneMu
-		idleKilled bool   // guarded by doneMu
-		deadKilled bool   // killed at the batch deadline; guarded by doneMu
-		rc         int    // the child's exit code; guarded by doneMu
-		lastGrow   time.Time
+		scratch     string
+		bench       string
+		label       string
+		idleLog     string    // the file the idle monitor watched; set only on an idle kill
+		cpu         uint64    // the card's process tree's CPU time at the last sample; guarded by doneMu
+		haveCPU     bool      // whether cpu holds a sample to compare against; guarded by doneMu
+		done        bool      // guarded by doneMu
+		idleKilled  bool      // guarded by doneMu
+		deadKilled  bool      // killed at the batch deadline; guarded by doneMu
+		stallKilled bool      // killed for never producing a first token (#917); guarded by doneMu
+		launched    bool      // the child has been started; a card still held by the route cap has not
+		launchedAt  time.Time // when it was started, which is when its stall clock begins
+		moved       bool      // it has produced SOMETHING at least once; guarded by doneMu
+		route       string    // the provider/model/key queue it was launched against
+		rc          int       // the child's exit code; guarded by doneMu
+		lastGrow    time.Time
 		// pgid and started are the card's OWN process group and the identity retained for
 		// it at launch (issue #640). They are read at `cmd.Start()` and never again from
 		// the process, because a kill that asks a dying child for its group asks too late.
@@ -344,10 +369,221 @@ func Batch(in BatchInput) int {
 		reapWG.Wait()
 	}
 	procs := make([]proc, len(cards))
+	// THE LAUNCH IS GATED PER ROUTE (nova-tools#917). Every card takes one of its route's
+	// slots before its process starts and gives it back when that process ends, so at most
+	// `MaxInflight` of this batch's cards are ever in flight against one provider/model/key.
+	// With no cap the gate admits everything at once and this is today's loop unchanged.
+	//
+	// THE WAITER IS STARTED HERE, at the launch, rather than in a second pass afterwards.
+	// It has to be: the loop below now BLOCKS on the gate, and the thing that unblocks it is
+	// a card ending -- which is what the waiter observes. A second pass after the loop would
+	// be a pass that never runs.
+	gate := newInflight(in.MaxInflight)
+	defer gate.close()
+	var wg sync.WaitGroup
+	// One count held for the whole launch loop, so `allDone` cannot close on the first card
+	// finishing while later cards are still held at the gate.
+	wg.Add(1)
+	launchDone := false
+	defer func() {
+		if !launchDone {
+			wg.Done()
+		}
+	}()
+	allDone := make(chan struct{})
+	stopMonitor := make(chan struct{})
+	var monitorWG sync.WaitGroup
+	startMonitor := func() {
+		if in.Idle <= 0 && in.StallAfter <= 0 {
+			return
+		}
+		monitorWG.Add(1)
+		go func() {
+			defer monitorWG.Done()
+			tickC, stopTicker := clk.NewTicker(idlePollInterval)
+			defer stopTicker()
+			lastSize := make([]int64, len(procs))
+			var lastSample time.Time
+			for {
+				select {
+				case <-stopMonitor:
+					return
+				case <-allDone:
+					return
+				case now := <-tickC:
+					// The process table is read once per activity poll, outside the lock, and
+					// every card is asked of that one snapshot (issue #593).
+					var toReap []*proc
+					var snap activitySnapshot
+					var sampleSpan time.Duration
+					if now.Sub(lastSample) >= activityInterval(in.Idle) {
+						if in.snapshot != nil {
+							snap = in.snapshot()
+						} else {
+							snap = newProcSnapshot()
+						}
+						sampleSpan = now.Sub(lastSample)
+						lastSample = now
+					}
+					doneMu.Lock()
+					for i := range procs {
+						// A CARD STILL HELD AT THE ROUTE GATE HAS NOT STARTED, and nothing
+						// about it can be idle or stalled: it has no process, its deadline
+						// has not begun, and its clocks do not run. This monitor now starts
+						// BEFORE the launch loop -- it has to, because the loop blocks on
+						// the gate and the thing that unblocks it is a card ending, which
+						// only this monitor can force -- so it sees cards that do not exist
+						// yet, and it leaves them alone.
+						if !procs[i].launched || procs[i].done || procs[i].idleKilled || procs[i].stallKilled {
+							continue
+						}
+						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
+						if size > 0 {
+							procs[i].moved = true
+						}
+						if size != lastSize[i] {
+							lastSize[i] = size
+							procs[i].moved = true
+							procs[i].lastGrow = now
+							continue
+						}
+						// A silent log is not a silent card: a harness inside a `go test` that
+						// prints nothing for minutes is working, and its work is CPU its process
+						// tree spent -- its children's as much as its own. A card is idle only
+						// when NEITHER its log NOR its tree moved for the whole --idle window.
+						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
+							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
+								prev := procs[i].cpu
+								grew := procs[i].haveCPU && cpu > prev
+								// A tree whose CPU fell LOST a process since the last
+								// sample: that process was alive and charged, and its
+								// departure is work done, not the still, silent card
+								// the idle timeout is for. It is also the card whose
+								// runner has exited but not yet been reaped, whose CPU
+								// can no longer be read (issue #916).
+								shrank := procs[i].haveCPU && cpu < prev
+								procs[i].cpu, procs[i].haveCPU = cpu, true
+								// CPU growth is activity only when the tree spent a real
+								// share of the sample interval working. Darwin counts
+								// CPU in nanoseconds, so a process that only slept
+								// still shows a few microseconds of runtime
+								// bookkeeping between two samples, and under the
+								// injected clock two polls can be a real microsecond
+								// apart while the virtual window says seconds:
+								// any-increment-at-all used to keep a silent card
+								// alive on darwin where linux's coarse ticks saw zero
+								// (issue #916). A tree that is working spends a large
+								// fraction of the interval; one percent separates the
+								// two by orders of magnitude on both platforms.
+								if grew && cpu-prev >= uint64(sampleSpan)/100 {
+									// A tree that is working has MOVED, so the
+									// first-token check below never fires for a
+									// card that is compiling in silence (#593).
+									procs[i].moved = true
+									procs[i].lastGrow = now
+									continue
+								}
+								if shrank {
+									procs[i].moved = true
+									procs[i].lastGrow = now
+									continue
+								}
+							}
+						}
+						// THE FIRST-TOKEN DEADLINE (nova-tools#917), and it is NOT the idle
+						// timeout above. Every signal the idle window has needs a first
+						// sample to compare against -- a log that grew, a tree whose CPU
+						// advanced -- and a card that has never spoken once provides none
+						// of them, so it is invisible to all of them and runs until the
+						// batch deadline. On 2026-09-17 a fresh known-answer card did
+						// exactly that for its whole 150 s while deepseek-flash on the same
+						// bench in the same second answered in 11 s: the tier had queued it
+						// and would never answer.
+						//
+						// So a card that has produced NOTHING AT ALL since it launched is
+						// ended at `StallAfter`, and its reason names what happened rather
+						// than borrowing the idle token: `ABSTAIN reason=stalled`. A card
+						// that produced one byte and then went quiet is the idle window's
+						// business, not this one's, and this check never fires for it.
+						if in.StallAfter > 0 && !procs[i].moved &&
+							now.Sub(procs[i].launchedAt) >= in.StallAfter {
+							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
+							if _, ok := FindCardResult(job); ok {
+								continue
+							}
+							procs[i].stallKilled = true
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
+							toReap = append(toReap, &procs[i])
+							continue
+						}
+						if in.Idle > 0 && now.Sub(procs[i].lastGrow) >= in.Idle {
+							// A card that already published a result is finishing, not
+							// idle: its file exists and gather will score it by that
+							// result, so the kill would only race the write and score
+							// a half-written RESULT (issue #916).
+							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
+							if _, ok := FindCardResult(job); ok {
+								continue
+							}
+							procs[i].idleKilled = true
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
+							toReap = append(toReap, &procs[i])
+						}
+					}
+					doneMu.Unlock()
+					// THE REAP IS OUTSIDE THE LOCK, and that is not a tidiness: a reap waits
+					// for the kernel to agree the group is gone, and the goroutine that
+					// would mark this card done takes doneMu to do it. Reaping under the
+					// lock would hold it for the whole grace and report every group as a
+					// survivor.
+					reapCardGroups(toReap)
+				}
+			}
+		}()
+	}
+	// THE MONITOR RUNS DURING LAUNCHING ONLY WHEN LAUNCHING CAN BLOCK. With a route cap the
+	// loop below waits at the gate, and the only thing that can free a slot is a card ending
+	// -- which for a hung card is this monitor's doing, so it must already be running or the
+	// batch deadlocks until its deadline. With NO cap the loop never waits, and the monitor
+	// starts after it exactly as it always has: starting it earlier would change when every
+	// existing card's first sample is taken, for no gain.
+	if in.MaxInflight > 0 {
+		startMonitor()
+	}
+
+	go func() { wg.Wait(); close(allDone) }()
+	// THE DEADLINE IS ARMED ONCE, HERE, AND TWO THINGS WAIT ON IT. The launch loop below
+	// blocks at the route gate, so the batch's own deadline has to be able to fire DURING
+	// launching: without this, a batch whose first card hangs and whose cap is one would sit
+	// in `acquire` with nothing watching the clock. When it fires, the gate is closed -- every
+	// held card is released without launching, and each is scored `deadline` -- and the
+	// select below, which waits on the same channel rather than arming a second timer, reaps
+	// whatever is still running.
+	deadline := make(chan struct{})
+	go func() {
+		select {
+		case <-clk.After(in.Deadline):
+			gate.close()
+			close(deadline)
+		case <-allDone:
+		}
+	}()
 	for i, c := range cards {
 		// A card refused at admission never starts: it is already its own ABSTAIN row.
 		if c.admitWhy != "" {
 			procs[i] = proc{slot: c.slot, label: c.label, done: true}
+			continue
+		}
+		// THE GATE. This blocks while the card's route is full, and a card held here holds
+		// nothing else: no process, no bench slot lease, no spend, and its deadline has not
+		// begun. It returns false only once the batch has given up -- its own deadline
+		// passed -- and then this card is never launched at all and is scored `deadline`.
+		route := RouteKey(c.model, in.Auth)
+		if !gate.acquire(route) {
+			doneMu.Lock()
+			procs[i] = proc{slot: c.slot, label: c.label, scratch: scratchName(c), bench: c.bench,
+				done: true, deadKilled: true, route: route}
+			doneMu.Unlock()
 			continue
 		}
 		// A remote card's job directory sits under <root>/<bench>-<n>/jobs/<label>; a local
@@ -427,26 +663,16 @@ func Batch(in BatchInput) int {
 		if cmd.Process != nil {
 			pgid, started = cmd.Process.Pid, StartStamp(cmd.Process.Pid)
 		}
+		doneMu.Lock()
 		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label,
-			lastGrow: clk.Now(), pgid: pgid, started: started}
-	}
-
-	// wait: every card ends, or the deadline. The wait is one select over one "all done"
-	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
-	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
-	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
-	// time, and kills a card only when neither has moved for the idle window: a dead card is
-	// removed from the wait, so the batch returns on its slowest still-working card rather
-	// than burning the whole deadline, and a card whose harness is busy and silent -- a
-	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
-	var wg sync.WaitGroup
-	allDone := make(chan struct{})
-	for i := range procs {
-		if procs[i].cmd == nil {
-			continue
-		}
+			lastGrow: clk.Now(), pgid: pgid, started: started,
+			launched: true, launchedAt: clk.Now(), route: route}
+		doneMu.Unlock()
+		// THE WAITER, started at the launch. It marks the card done, records its exit code,
+		// and GIVES THE ROUTE'S SLOT BACK -- exactly once per acquire, however the card
+		// ended. A release that does not happen is a route that never launches again.
 		wg.Add(1)
-		go func(p *proc) {
+		go func(p *proc, route string) {
 			defer wg.Done()
 			err := p.cmd.Wait()
 			doneMu.Lock()
@@ -459,119 +685,30 @@ func Batch(in BatchInput) int {
 				p.rc = -1
 			}
 			doneMu.Unlock()
-		}(&procs[i])
+			gate.release(route)
+		}(&procs[i], route)
 	}
-	go func() { wg.Wait(); close(allDone) }()
+	// The launch loop is over: drop the count that kept `allDone` open across it.
+	launchDone = true
+	wg.Done()
+	// The uncapped case, where the loop never waited and the monitor's first sample belongs
+	// here, after every card has started, exactly where it has always been taken.
+	if in.MaxInflight <= 0 {
+		startMonitor()
+	}
 
-	stopMonitor := make(chan struct{})
-	var monitorWG sync.WaitGroup
-	if in.Idle > 0 {
-		monitorWG.Add(1)
-		go func() {
-			defer monitorWG.Done()
-			tickC, stopTicker := clk.NewTicker(idlePollInterval)
-			defer stopTicker()
-			lastSize := make([]int64, len(procs))
-			var lastSample time.Time
-			for {
-				select {
-				case <-stopMonitor:
-					return
-				case <-allDone:
-					return
-				case now := <-tickC:
-					// The process table is read once per activity poll, outside the lock, and
-					// every card is asked of that one snapshot (issue #593).
-					var toReap []*proc
-					var snap activitySnapshot
-					var sampleSpan time.Duration
-					if now.Sub(lastSample) >= activityInterval(in.Idle) {
-						if in.snapshot != nil {
-							snap = in.snapshot()
-						} else {
-							snap = newProcSnapshot()
-						}
-						sampleSpan = now.Sub(lastSample)
-						lastSample = now
-					}
-					doneMu.Lock()
-					for i := range procs {
-						if procs[i].done || procs[i].idleKilled {
-							continue
-						}
-						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
-						if size != lastSize[i] {
-							lastSize[i] = size
-							procs[i].lastGrow = now
-							continue
-						}
-						// A silent log is not a silent card: a harness inside a `go test` that
-						// prints nothing for minutes is working, and its work is CPU its process
-						// tree spent -- its children's as much as its own. A card is idle only
-						// when NEITHER its log NOR its tree moved for the whole --idle window.
-						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
-							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
-								prev := procs[i].cpu
-								grew := procs[i].haveCPU && cpu > prev
-								// A tree whose CPU fell LOST a process since the last
-								// sample: that process was alive and charged, and its
-								// departure is work done, not the still, silent card
-								// the idle timeout is for. It is also the card whose
-								// runner has exited but not yet been reaped, whose CPU
-								// can no longer be read (issue #916).
-								shrank := procs[i].haveCPU && cpu < prev
-								procs[i].cpu, procs[i].haveCPU = cpu, true
-								// CPU growth is activity only when the tree spent a real
-								// share of the sample interval working. Darwin counts
-								// CPU in nanoseconds, so a process that only slept
-								// still shows a few microseconds of runtime
-								// bookkeeping between two samples, and under the
-								// injected clock two polls can be a real microsecond
-								// apart while the virtual window says seconds:
-								// any-increment-at-all used to keep a silent card
-								// alive on darwin where linux's coarse ticks saw zero
-								// (issue #916). A tree that is working spends a large
-								// fraction of the interval; one percent separates the
-								// two by orders of magnitude on both platforms.
-								if grew && cpu-prev >= uint64(sampleSpan)/100 {
-									procs[i].lastGrow = now
-									continue
-								}
-								if shrank {
-									procs[i].lastGrow = now
-									continue
-								}
-							}
-						}
-						if now.Sub(procs[i].lastGrow) >= in.Idle {
-							// A card that already published a result is finishing, not
-							// idle: its file exists and gather will score it by that
-							// result, so the kill would only race the write and score
-							// a half-written RESULT (issue #916).
-							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
-							if _, ok := FindCardResult(job); ok {
-								continue
-							}
-							procs[i].idleKilled = true
-							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
-							toReap = append(toReap, &procs[i])
-						}
-					}
-					doneMu.Unlock()
-					// THE REAP IS OUTSIDE THE LOCK, and that is not a tidiness: a reap waits
-					// for the kernel to agree the group is gone, and the goroutine that
-					// would mark this card done takes doneMu to do it. Reaping under the
-					// lock would hold it for the whole grace and report every group as a
-					// survivor.
-					reapCardGroups(toReap)
-				}
-			}
-		}()
-	}
+	// wait: every card ends, or the deadline. The wait is one select over one "all done"
+	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
+	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
+	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
+	// time, and kills a card only when neither has moved for the idle window: a dead card is
+	// removed from the wait, so the batch returns on its slowest still-working card rather
+	// than burning the whole deadline, and a card whose harness is busy and silent -- a
+	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
 
 	select {
 	case <-allDone:
-	case <-clk.After(in.Deadline):
+	case <-deadline:
 		var toReap []*proc
 		doneMu.Lock()
 		for i := range procs {
@@ -727,7 +864,7 @@ func Batch(in BatchInput) int {
 		// (issue #594): it is copied up to the job root before the card is scored, and the
 		// copy is said once on stderr so the packet's own bytes stay bounded by n.
 		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
-		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
+		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].stallKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		// THE REPORT LINE. A wall death is named once, with the path the wall refused, the
 		// step the card reached and -- when its clone holds commits past its base -- the
@@ -810,6 +947,13 @@ func Batch(in BatchInput) int {
 		fmt.Fprintf(in.Stdout, " uniform-abstain=%s", oneline.Field(uniform))
 	}
 	fmt.Fprintln(in.Stdout)
+	// WHAT THE CAP DID, one line per route, only when there was a cap (#917). `peak` is the
+	// most this launcher ever had in flight on that route and `held-back` is how many
+	// launches had to wait for a slot: together they say whether the cap bound anything at
+	// all, so a reader chasing a slow batch can rule it in or out without guessing.
+	for _, line := range gate.statusLines() {
+		fmt.Fprintln(in.Stdout, line)
+	}
 	for _, r := range rows {
 		if r.state == "done" {
 			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
@@ -979,7 +1123,7 @@ func findResultBelow(dir string, depth int) (string, bool) {
 // a matching result means it finished late. The tail is one bounded field the remedy needs --
 // the log the idle monitor watched, or the job directory that holds no result -- printed
 // after log=<n>, never in place of the token.
-func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
+func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
@@ -990,6 +1134,16 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		// path and the kind rather than being folded into the missing-result class.
 		if errors.Is(err, errNotRegular) {
 			return "abstain", "refused", err.Error(), ""
+		}
+		// A card that never produced a first token is `stalled`, and it is said BEFORE
+		// the idle token because it is a different fact: `idle=<s>` is a card that was
+		// working and stopped, and this one never started answering at all (#917).
+		if stallKilled {
+			watched := idleLog
+			if watched == "" {
+				watched = logPath
+			}
+			return "abstain", "stalled", "watched=" + watched, ""
 		}
 		if idleKilled {
 			watched := idleLog

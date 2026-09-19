@@ -411,6 +411,14 @@ nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 --advance --remote or
 
 Every return has three parts: what is new, in full; one `INBOX OPEN carrying=<n> heard=<m>` line for the backlog; and the backlog itself only if you ask with `--open`, capped at `--open-max` (default 20). Anything unreadable, and any note on the bus that reaches nobody, is named. `--receipt-max-words` is the threshold for telling a bare receipt from a note carrying a finding, and it comes from you because it is a property of how your bus writes; a `Kind:` line in a header always wins. It reports and exits 0 whether the inbox is empty or full. Without `--advance` it writes nothing; with it, it moves your cursor and pushes it, so your place survives a change of machine.
 
+`--max-commits <n>` (default 500) bounds the since-walk: a cursor further behind HEAD than that stops the run with one line and the remedy, on stderr, at exit 0 —
+
+```
+INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
+```
+
+A bounded run **read nothing, so it moves no cursor**, and `--advance` beside it writes nothing at all: advancing over a walk nobody made would take every unread note behind the bound as read, which is the one outcome the bound exists to prevent. Raise the bound to read the stale cursor, or draw a switch-day line with `close --before <instant>` to take the history as read and start over.
+
 Past `--open-warn` carried (default 40) every return adds a line naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. It is a note, not a refusal: a backlog grows one note at a time and no single run says it is growing.
 
 **`wait`** is the same listing, blocking, for a harness that does not wake you:
@@ -2162,6 +2170,26 @@ Where the card names no `KIND:`, the kind is read from its contract line by a de
 **No key is no call.** An absent key is said once, by the name of the variable and never by its value, and the batch runs on today's models — so the loop runs on a bench with no API at all.
 
 **A card that fails its gate re-enters one rung up.** The ladder is the retry policy: a confirmed failure is appended to the unit as evidence, and the rung that failed — and its lineage at that height — is out of the eligible set, so the answer is another lineage on the same rung where there is one (sideways before up) and the rung above where there is not. It is never a retry on the rung that just failed.
+
+**The free tier that queues forever: `--max-inflight` and `--stall-after` (#917).** Both default to **0, which is off**, and a batch that names neither behaves exactly as it does today.
+
+```
+nova-swarm batch --cards <tsv> ... [--max-inflight <n>] [--stall-after <seconds>]
+```
+
+`--max-inflight <n>` caps how many of the batch's cards run against **one route** at a time, where a route is the **provider, the model and the key** — two models on one key share that key's queue and the same model on two keys do not, so neither alone is the unit. The key is named by its **auth profile** (the `--auth` file), never by its value: this string is printed. Cards past the cap **wait** — they hold no process, no bench slot lease and no spend, and their deadlines have not begun. When the batch's own deadline passes, every card still waiting is released unlaunched and scored `deadline`.
+
+With a cap set, one line per route follows the BATCH line:
+
+```
+BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
+```
+
+`peak` is the most ever in flight on that route and `held-back` is how many launches had to wait for a slot; a route whose `peak` is under the cap and whose `held-back` is `0` never was the constraint. With no cap no such line is printed.
+
+`--stall-after <seconds>` is the **first-token** deadline and is **not** `--idle`. Every signal the idle window has needs a first sample to compare against, so a card that never speaks once is invisible to it and burns its whole deadline. A card that has produced **nothing at all** since it launched is ended at `--stall-after` and scored `ABSTAIN reason=stalled`; a card that spoke once and went quiet is `--idle`'s business and this never fires for it, and a card burning CPU in silence has moved and is not stalled (#593).
+
+Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contributor-free key the tail latency goes to infinity — hulk and vision returned zero results in thirteen minutes at load 0.5–2.0 — while `deepseek-flash` on the same bench in the same second answered in 11 s. A launcher with no cap turns a free tier's queue into spend.
 
 **`native` takes a bench slot lease, and refuses a launch it cannot lease (#1546).**
 `--slots-store <dir>` and `--owner <name>` are **required**. The run takes exactly one
