@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
@@ -25,7 +26,7 @@ nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
-nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--gate-bench <name> --cert <path> --identity "Name <email>"] [--sandbox <path>] [--queue <dir>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
@@ -473,6 +474,15 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	working := f.fs.String("working", "", "")
 	roots := f.fs.String("roots", "", "")
 	timer := f.fs.String("timer", "", "")
+	// The accept gate (SPEC-TOOLWORK §1 rule 1): the harvest runs it before any push
+	// for every done card whose kind declares one. There is no --no-gate; a bench and a
+	// certification record are what it needs, and without them a gated card abstains
+	// rather than being pushed unjudged.
+	gateBench := f.fs.String("gate-bench", "", "")
+	cert := f.fs.String("cert", "", "")
+	identity := f.fs.String("identity", "", "")
+	sandbox := f.fs.String("sandbox", "", "")
+	queue := f.fs.String("queue", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -537,6 +547,10 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *decideOn && (*floor < 0 || *floor > 1) {
 		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g", *floor))
 	}
+	gateIDs, badIDs := parseIdentities(*identity)
+	for _, b := range badIDs {
+		f.add(b)
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -560,6 +574,13 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Launched:     *launched,
 		Done:         *doneDir,
 		Failed:       *failedDir,
+		GateBench:    *gateBench,
+		Cert:         *cert,
+		Identities:   gateIDs,
+		Sandbox:      *sandbox,
+		Fixtures:     embeddedFixtures(),
+		Build:        buildinfo.Version(version),
+		Queue:        *queue,
 	}
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)

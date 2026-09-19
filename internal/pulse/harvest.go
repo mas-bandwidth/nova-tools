@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -36,6 +38,21 @@ type HarvestInput struct {
 	Decide  bool
 	Floor   float64
 	Decider Decider
+
+	// The accept gate (SPEC-TOOLWORK §1 rule 1): for every done card whose header
+	// names a gated kind, harvest runs accept after the line-1 verify and before any
+	// push. Gate is the seam (nil is pulse.Accept; a test's fake); GateBench, Cert,
+	// Identities, Sandbox, Fixtures and Build are what the gate needs on THIS host, and
+	// Queue is where <queue>/decide/outcomes.jsonl is appended (empty appends nothing).
+	// There is no --no-gate.
+	Gate       func(AcceptInput) int
+	GateBench  string
+	Cert       string
+	Identities []hyg.Identity
+	Sandbox    string
+	Fixtures   fs.FS
+	Build      string
+	Queue      string
 
 	// Bench turns the harvest around: the jobs are read on that bench over the
 	// BenchShell seam rather than under a local root, and Root names the swarm
@@ -144,6 +161,7 @@ func Harvest(in HarvestInput) int {
 	_ = cardsPath
 
 	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
+	var rejected, benched int  // the gate's own two: a card it sent back, and one the bench could not judge
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
@@ -215,26 +233,85 @@ func Harvest(in HarvestInput) int {
 				continue
 			}
 			done++
-			// The typed decision is asked after the job is read and before any push:
-			// fixed and failed push as today, no-change and already-fixed push nothing
-			// and are marked harvested, off-branch pushes nothing and prints the remedy,
-			// and anything below the floor leaves today's path exactly as it was.
+			cardStart := in.Now()
+			// The accept gate is the harvest's default step, between rule 12's line-1
+			// verify and its push (SPEC-TOOLWORK §1 rule 1). There is no --no-gate: a
+			// kind that declares none is skipped and SAYS so on its row.
+			g := in.runGate(jobDir, c.Card, c.Label)
+			oc := outcome{
+				Label: c.Label, Kind: cardKindName(c.Card), Gather: "done",
+				Accept: g.verdict, Reason: g.reason, Class: "-", Conf: "-",
+				Head: g.head, Base: short12(g.base), Bench: in.GateBench,
+				Cert: g.cert, Control: g.control, PR: "-",
+			}
+			finish := func(dir string) {
+				oc.Took = fmt.Sprintf("%d", in.Now().Sub(cardStart).Milliseconds())
+				writeOutcome(dir, oc)
+				appendOutcomeRow(in.Queue, oc)
+				recordRouteOutcome(in, c.Label, g.verdict)
+			}
+			gateTail := " gate=" + field(g.verdict)
+			if cls, decided := classForGate(g.verdict); decided {
+				// §4 rule 2: a typed judgment over evidence a verb already settled is a
+				// paid coin-flip over a known answer. No decide call is made.
+				oc.Class, oc.Conf = cls, "-"
+				gateTail += fmt.Sprintf(" class=%s conf=- floor=- below=-", field(cls))
+			}
+			switch g.verdict {
+			case "reject":
+				rejected++
+				gateTail += " reason=" + field(g.reason) + " at=" + field(g.at)
+				dir := jobDir
+				if g.reason == "secret" {
+					// A key in a worker's diff means a key reached a worker: the job is
+					// moved aside and a person is told. It is never deleted (§3 rule 6).
+					if q := quarantine(in, c, jobDir, g.at); q != "" {
+						dir = q
+						gateTail += " quarantine=" + field(q)
+					}
+				}
+				writeSeen(in.Root, c, "rejected")
+				appendRetry(in.Root, c, "accept reject reason="+g.reason+" at="+g.at)
+				retried++
+				lines = append(lines, fmt.Sprintf("HARVEST REJECT label=%s kind=%s%s",
+					field(c.Label), field(oc.Kind), gateTail))
+				finish(dir)
+				continue
+			case "abstain":
+				benched++
+				gateTail += " reason=" + field(g.reason)
+				// The bench could not judge it: nothing is pushed and nothing is
+				// requeued, and unless the kind was merely paused it is one line for a
+				// person in <root>/bench.tsv.
+				appendBench(in, c, g.reason)
+				lines = append(lines, fmt.Sprintf("HARVEST ABSTAIN label=%s kind=%s%s",
+					field(c.Label), field(oc.Kind), gateTail))
+				finish(jobDir)
+				continue
+			}
+			// The typed decision is asked only where the gate did not decide: fixed and
+			// failed push as today, no-change and already-fixed push nothing and are
+			// marked harvested, off-branch pushes nothing and prints the remedy, and
+			// anything below the floor leaves today's path exactly as it was.
 			classTail := ""
-			if in.Decide {
+			if in.Decide && oc.Class == "-" {
 				class := in.decideClass(jobDir, branch, resultLines)
 				classTail = " " + classFields(class, in.Floor)
+				oc.Class, oc.Conf = class.kind, fmt.Sprintf("%.2f", class.conf)
 				switch class.kind {
 				case "no-change", "already-fixed":
 					writeSeen(in.Root, c, "done")
-					line := fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail)
+					line := fmt.Sprintf("HARVEST SKIP label=%s%s%s", field(c.Label), gateTail, classTail)
 					if class.kind == "already-fixed" {
 						line += " test=" + field(class.test)
 					}
 					lines = append(lines, line)
+					finish(jobDir)
 					continue
 				case "off-branch":
-					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s remedy=%s",
-						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
+					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s%s remedy=%s",
+						field(c.Label), gateTail, classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
+					finish(jobDir)
 					continue
 				}
 			}
@@ -274,21 +351,35 @@ func Harvest(in HarvestInput) int {
 			}
 			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+				finish(jobDir)
 				continue
 			}
 			pushed++
-			pr, err := openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
+			// An accepted card's PR body opens with the line the gate printed, so the
+			// first thing a reader sees is the verdict and not the worker's prose.
+			body := resultLines
+			if g.line != "" {
+				body = append([]string{g.line, ""}, resultLines...)
+			}
+			// WHERE it opens stays c.Card's answer and never a URL this loop hands
+			// down: openPR resolves the destination for itself, because a leaf handed a
+			// URL is a leaf with no rule (#1809, Johnny's HOLDs at 8bfa4020, 7f692ef6).
+			pr, err := openPR(in, jobDir, c.Card, repo, c.Label, branch, body)
 			if err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+				finish(jobDir)
 				continue
 			}
 			prs++
+			oc.PR = fmt.Sprintf("%d", pr)
 			// The line and the next-card record name the RESOLVED repository, never
 			// the RESULT's claim: an operator reading HARVEST PR is reading where the
-			// branch actually went.
-			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
-				field(dest.repo), pr, field(c.Label), field(branch), classTail))
+			// branch actually went. The gate's verdict rides on the same line, so one
+			// row says both where it went and what judged it.
+			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s%s",
+				field(dest.repo), pr, field(c.Label), field(branch), gateTail, classTail))
 			appendNext(in.Root, dest.repo, pr, c.Label)
+			finish(jobDir)
 		}
 	}
 
@@ -310,15 +401,15 @@ func Harvest(in HarvestInput) int {
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || rejected > 0 || benched > 0 {
 		code = 1
 	}
 	tail := ""
 	if strings.TrimSpace(in.Launched) != "" {
 		tail = fmt.Sprintf(" drained=%d", drained)
 	}
-	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
-		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,
+	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d rejected=%d benched=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
+		result, field(in.ID), done, pushed, prs, abstain, rejected, benched, mismatch, refused, retried, elsewhere, usd,
 		in.Now().Sub(started).Round(time.Millisecond), tail)
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is

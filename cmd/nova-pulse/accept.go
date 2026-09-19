@@ -80,18 +80,9 @@ func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f.want(*job, "job", "the job directory whose clone holds the card's commit")
 	f.want(*card, "card", "the card file cut wrote; its header names the kind, the paths and the test")
 	f.want(*base, "base", "the ref the card's range is judged against")
-	var ids []hygiene.Identity
-	for _, one := range strings.Split(*identity, ",") {
-		one = strings.TrimSpace(one)
-		if one == "" {
-			continue
-		}
-		name, email, ok := strings.Cut(one, "<")
-		if !ok || !strings.HasSuffix(email, ">") {
-			f.add(fmt.Sprintf("--identity %q: want `Name <email>`", one))
-			continue
-		}
-		ids = append(ids, hygiene.Identity{Name: strings.TrimSpace(name), Email: strings.TrimSpace(strings.TrimSuffix(email, ">"))})
+	ids, bad := parseIdentities(*identity)
+	for _, b := range bad {
+		f.add(b)
 	}
 	if len(ids) == 0 {
 		// No default identity: a range checked against nobody would admit anybody. Until
@@ -107,4 +98,23 @@ func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Timeout: time.Duration(*timeout) * time.Second, Max: *max,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 	})
+}
+
+// parseIdentities reads a `--identity "Name <email>[,Name <email>]"` flag into the set a
+// commit's author and committer must be in. It is shared by `accept` and by `harvest`,
+// which runs the same gate: two spellings of one rule is one rule that can disagree.
+func parseIdentities(s string) (ids []hygiene.Identity, bad []string) {
+	for _, one := range strings.Split(s, ",") {
+		one = strings.TrimSpace(one)
+		if one == "" {
+			continue
+		}
+		name, email, ok := strings.Cut(one, "<")
+		if !ok || !strings.HasSuffix(email, ">") {
+			bad = append(bad, fmt.Sprintf("--identity %q: want `Name <email>`", one))
+			continue
+		}
+		ids = append(ids, hygiene.Identity{Name: strings.TrimSpace(name), Email: strings.TrimSpace(strings.TrimSuffix(email, ">"))})
+	}
+	return ids, bad
 }
