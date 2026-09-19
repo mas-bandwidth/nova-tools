@@ -1281,6 +1281,55 @@ with the reason`.
 are read; a bench name that arrives as a different type, or through a package
 outside them, is the compiler's rule, not this one.
 
+### `namedpaths` — every path this repository names, it has
+
+**The rule.** A token in this repository's non-test Go source — in a string
+literal OR in a comment — or in `docs/*.md`, that begins with one of this
+repository's own top-level directories (`cmd`, `internal`, `docs`, `tools`,
+`scripts`, `testdata`, `fleet`, `infra`, `.github`) and carries a slash must
+name a file or a directory that is in the tree, or be named in the allowlist
+with its reason.
+**The hurt.** `cmd/nova-pulse/fleet_verbs.go:6` and
+`internal/pulse/fleetstandard.go:6` both named `bench-standard.sh` as though it
+sat under `scripts/`. The file is `tools/bench-standard.sh` and has been since
+it moved, so a friend
+following either comment found nothing — and nine such references were in the
+tree when the rule landed, because a path inside a comment or a string is just
+text to Go and nothing in CI had an opinion about it. Glenn's law of 2026-09-17
+is that prompts give positive instructions with EXACT paths; the learning loop
+says the text a friend reads IS the mechanism, so a dead path is not a typo, it
+is a friend's search.
+**The test.** `TestEveryNamedRepoPathExists`
+(`internal/ci/namedpaths_class_test.go`), with
+`TestTheNamedPathHeuristicReadsWhatItClaims`, which holds the reader to
+thirteen hand-written lines so a rule that quietly stopped matching anything
+cannot pass as a green run, and `TestTheNamedPathExistenceCheckReadsTheTree`,
+which holds the other half against this package's own directory.
+**Its allowlist.** `internal/ci/testdata/namedpaths_allowlist.txt`, one
+`<name> <reason>` per line, in three groups: the files a specification has
+PLANNED and nobody has written yet (33 today, most of them SPEC-CHAT's and
+SPEC-LOCAL's), the invented names a document uses to show the SHAPE of a path
+(`.github/scripts/foo.sh`, `docs/history`), and the paths that live in another
+tree — another repository, another branch, or a retired file. Checked in BOTH
+directions, and the second direction has two spellings: a listed name nothing
+writes any more is a stale row, and a listed name that is IN the tree now is the
+good red — the planned file was written, so the row goes on the same day.
+**Its remedy lines.** `<file>:<line>: <name> names no file or directory in this
+tree; a friend following it finds nothing -- correct the path, or add it to
+internal/ci/testdata/namedpaths_allowlist.txt with the reason it is not a real
+path`, and for the two stale spellings `delete the stale entry (the list only
+shrinks)` and `it is in the tree now; delete the entry`.
+**Its narrowings.** Test files and `testdata/` fixtures are not read — a
+fixture's whole job is to be an invented tree. A token that does not BEGIN a
+word is out, which is what keeps import paths, URLs and paths on a bench out. A
+glob, a template or a printf verb on either side takes the token out, so
+`docs/SPEC-*.md` and `internal/%s/doc.go` are patterns, not names. A
+package-qualified Go symbol (`internal/merge.Enqueuer.Enqueue`) and a bare
+exported name under a package directory (`internal/lockfile/TestLockRule1`) are
+read as symbols, not files, by Go's own upper-case signal. And a `testdata/…`
+name is looked for under EVERY package, because a fixture path is always written
+relative to the package that owns it.
+
 ### `prmerge` — nothing reaches the dev merge queue but a batch
 
 **The rule.** Glenn, 2026-09-18: "Nothing reaches the dev merge queue but a
