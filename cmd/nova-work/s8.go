@@ -16,6 +16,12 @@ import (
 // validates and a thin client never second-guesses the engine's bounds.
 func init() {
 	verbFlags["query"] = []flagSpec{
+		{name: "session"},
+		{name: "snapshot"},
+		{name: "max-bytes"},
+		{name: "max-depth"},
+		{name: "max-nodes"},
+		{name: "cache"},
 		{name: "ask"},
 		{name: "branch"},
 		{name: "node"},
@@ -24,6 +30,7 @@ func init() {
 		{name: "category"},
 		{name: "axis"},
 		{name: "for"},
+		{name: "class"},
 		{name: "since"},
 		{name: "at"},
 		{name: "from"},
@@ -33,12 +40,6 @@ func init() {
 		{name: "max"},
 		{name: "order"},
 		{name: "window"},
-		{name: "session"},
-		{name: "snapshot"},
-		{name: "max-bytes"},
-		{name: "max-depth"},
-		{name: "max-nodes"},
-		{name: "cache"},
 	}
 }
 
@@ -59,6 +60,22 @@ var validAskKinds = map[string]bool{
 	"models":    true,
 	"ready":     true,
 	"fleet":     true,
+	"routes":    true,
+	// reports stands on the spec's own --ask line and is marked SPEC-AHEAD
+	// (nova-tools#854) there. The client carries it because help prints that
+	// line verbatim, and a help naming an ask the client itself refuses is
+	// worse than a session refusing one it does not answer yet.
+	"reports": true,
+}
+
+// openOnlyAsks are the asks the spec admits under --branch open and nowhere
+// else: "who, stale, handoffs and reports: --branch open only, the other two
+// exit 2".
+var openOnlyAsks = map[string]bool{
+	"who":      true,
+	"stale":    true,
+	"handoffs": true,
+	"reports":  true,
 }
 
 func queryVerb(args []string, stdout, stderr io.Writer) int {
@@ -105,7 +122,7 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 		return refused(stderr, "--ask is required")
 	}
 	if !validAskKinds[askKind] {
-		return refused(stderr, fmt.Sprintf("--ask %q is not one of the known kinds (done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)", askKind))
+		return refused(stderr, fmt.Sprintf("--ask %q is not one of the known kinds (done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes, reports)", askKind))
 	}
 
 	branch := *strs["branch"]
@@ -116,13 +133,28 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 		return refused(stderr, fmt.Sprintf("--branch %q is not one of open, closed, root", branch))
 	}
 
-	// Constraint: who, stale and handoffs are --branch open only.
-	if (askKind == "who" || askKind == "stale" || askKind == "handoffs") && branch != "open" {
+	// Constraint: who, stale, handoffs and reports are --branch open only
+	// ("who, stale, handoffs and reports: --branch open only, the other two
+	// exit 2").
+	if openOnlyAsks[askKind] && branch != "open" {
 		return refused(stderr, "--ask "+askKind+" is --branch open only; --branch "+branch+" is refused")
 	}
 
+	// Constraint: reports requires --since ("reports: --since <revision>,
+	// required (SPEC-AHEAD: #854)").
+	if askKind == "reports" && *strs["since"] == "" {
+		return refused(stderr, "--ask reports requires --since <revision>")
+	}
+
+	// Constraint: --class is the routes ask's own ("routes: --class optional,
+	// the card class whose ordered route list the projection emits"), and
+	// names nothing on any other ask.
+	if *strs["class"] != "" && askKind != "routes" {
+		return refused(stderr, "--class is refused on --ask "+askKind+" (only --ask routes admits it)")
+	}
+
 	// Constraint: --branch closed and --branch root require --from and --to.
-	if (branch == "closed" || branch == "root") && askKind != "who" && askKind != "stale" && askKind != "handoffs" {
+	if (branch == "closed" || branch == "root") && !openOnlyAsks[askKind] {
 		if *strs["from"] == "" || *strs["to"] == "" {
 			return refused(stderr, "--branch "+branch+" requires --from and --to")
 		}
