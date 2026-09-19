@@ -41,6 +41,13 @@ says ANCHOR STALE instead of silently reassigning notes to the wrong place.
 Flags come before positional arguments. Exit codes: 0 success, 1 anchor
 conflict, 2 could not run.
 
+Notes live in <source>.notes beside the source, in sidecar format version 2:
+one escaped line per passage, body and reply body, and a quoted author when
+the name carries a space, a quote or a backslash. A sidecar written before
+version 2 has no VERSION line; it is still read, and the next successful
+annotate or reply rewrites it as version 2 in place, keeping every value it
+just read. See docs/SPEC-PLAY.md.
+
 example:
   nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
   nova-play read --source story.txt
