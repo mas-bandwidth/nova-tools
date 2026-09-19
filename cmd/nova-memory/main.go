@@ -256,7 +256,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 	ok = true
 	for _, name := range sorted {
 		if !given[name] {
-			fmt.Fprintf(stderr, "nova-memory %s: --%s is required; refusing to guess\n", fs.Name(), name)
+			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
 			fmt.Fprint(stderr, hintFor(name))
 			ok = false
 		}
@@ -300,12 +300,12 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 	for _, root := range r.root {
 		fi, err := os.Stat(root)
 		if err != nil || !fi.IsDir() {
-			fmt.Fprintf(stderr, "nova-memory %s: --root %s is not a readable directory\n", name, oneline.Escape(root))
+			refuse(stderr, " "+name, fmt.Sprintf("--root %s is not a readable directory", oneline.Escape(root)))
 			return nil, 0, false
 		}
 		c, err := memindex.Build(os.DirFS(root), exclude)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory %s: building the index over %s: %s\n", name, oneline.Escape(root), oneline.Err(err))
+			refuse(stderr, " "+name, fmt.Sprintf("building the index over %s: %s", oneline.Escape(root), oneline.Err(err)))
 			return nil, 0, false
 		}
 		parts = append(parts, c)
@@ -325,7 +325,8 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 // find their three mistakes.
 func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 	if strings.TrimSpace(spec) == "" {
-		fmt.Fprintf(stderr, "nova-memory %s: --channels named no channels; refusing to guess\n  %s\n", verb, channelsHint)
+		refuse(stderr, " "+verb, "--channels named no channels; refusing to guess")
+		fmt.Fprintf(stderr, "  %s\n", channelsHint)
 		return nil, false
 	}
 	var out []string
@@ -337,10 +338,13 @@ func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 			// A stray comma is a typo. Dropping it silently would run fewer
 			// channels than the caller asked for and report the number under
 			// a name that no longer describes it.
-			fmt.Fprintf(stderr, "nova-memory %s: --channels %q has an empty entry; refusing to guess\n", verb, spec)
+			refuse(stderr, " "+verb, fmt.Sprintf("--channels %q has an empty entry; refusing to guess", spec))
 			return nil, false
 		default:
-			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s\n", verb, n, channelsHint)
+			// This hint is on the same line rather than indented below it, so the
+			// suffix is appended in place at the end; inserting the door before
+			// the hint would rewrite the line the caller is told to read.
+			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s; run: nova-memory help\n", verb, n, channelsHint)
 			return nil, false
 		}
 	}
@@ -373,7 +377,7 @@ func chanNames(chans []memindex.Channel) string {
 // zero does not mean unlimited.
 func checkK(k int, verb string, stderr io.Writer) bool {
 	if k <= 0 {
-		fmt.Fprintf(stderr, "nova-memory %s: --k must be a positive receipt budget (got %d); refusing to guess\n", verb, k)
+		refuse(stderr, " "+verb, fmt.Sprintf("--k must be a positive receipt budget (got %d); refusing to guess", k))
 		return false
 	}
 	return true
@@ -552,8 +556,7 @@ func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // all three ran: a partial demonstration that exited 0 would be teaching the
 // green, and the green is the one thing this tool is careful about.
 func stepFailed(verb string, code int, stderr io.Writer) int {
-	fmt.Fprintf(stderr, "nova-memory quickstart: the %s step could not run (exit %d); nothing further was attempted\n", verb, code)
-	return 2
+	return refuse(stderr, " quickstart", fmt.Sprintf("the %s step could not run (exit %d); nothing further was attempted", verb, code))
 }
 
 // topTerms picks the demonstration query when the caller gave none: the terms
@@ -600,7 +603,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		bad = true
 	}
 	if given["draft"] && strings.TrimSpace(*draft) == "" {
-		fmt.Fprintln(stderr, "nova-memory quickstart: --draft names a candidate file; omit it to use this corpus's own first paragraph")
+		refuse(stderr, " quickstart", "--draft names a candidate file; omit it to use this corpus's own first paragraph")
 		bad = true
 	}
 	if bad {
@@ -619,15 +622,13 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		// memindex.Build refuses an empty corpus, so this is a guard and not a
 		// path — stated rather than assumed, because the alternative is an
 		// index panic on the friendliest verb in the tool.
-		fmt.Fprintln(stderr, "nova-memory quickstart: this corpus holds no indexable paragraph; there is nothing to demonstrate on")
-		return 2
+		return refuse(stderr, " quickstart", "this corpus holds no indexable paragraph; there is nothing to demonstrate on")
 	}
 	wordsSource := "given"
 	if len(words) == 0 {
 		words, wordsSource = topTerms(c, 3), "corpus-top-terms"
 		if len(words) == 0 {
-			fmt.Fprintln(stderr, "nova-memory quickstart: this corpus has no term to demonstrate a search with; name some with --words")
-			return 2
+			return refuse(stderr, " quickstart", "this corpus has no term to demonstrate a search with; name some with --words")
 		}
 	}
 	candidate := "corpus-first-paragraph"
@@ -743,7 +744,7 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 		bad = true
 	}
 	if given["pin"] && strings.TrimSpace(*pin) == "" {
-		fmt.Fprintln(stderr, "nova-memory boot: --pin names the file listing the memories to load; name it")
+		refuse(stderr, " boot", "--pin names the file listing the memories to load; name it")
 		bad = true
 	}
 	if bad {
@@ -765,45 +766,45 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 func loadPin(root, pin string, stderr io.Writer) (int, int64, bool) {
 	entries, err := readPin(pin)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory boot: %s\n", oneline.Err(err))
+		refuse(stderr, " boot", oneline.Err(err))
 		return 0, 0, false
 	}
 	if len(entries) == 0 {
-		fmt.Fprintf(stderr, "nova-memory boot: --pin %s names no memories; a boot of nothing is not a boot\n", oneline.Escape(pin))
+		refuse(stderr, " boot", fmt.Sprintf("--pin %s names no memories; a boot of nothing is not a boot", oneline.Escape(pin)))
 		return 0, 0, false
 	}
 	var total int64
 	seen := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		if strings.HasPrefix(e, "/") || filepath.IsAbs(e) {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is absolute; every entry is relative to --root\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is absolute; every entry is relative to --root", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		if e != path.Clean(e) {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is not canonical (no \"./\", \"//\", \"..\" or trailing \"/\")\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is not canonical (no \"./\", \"//\", \"..\" or trailing \"/\")", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		if e == ".." || strings.HasPrefix(e, "../") {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q escapes --root\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q escapes --root", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		if seen[e] {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q appears twice; double-counted bytes are a lie\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q appears twice; double-counted bytes are a lie", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		seen[e] = true
 		full := filepath.Join(root, filepath.FromSlash(e))
 		fi, err := os.Lstat(full)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q does not exist under --root\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q does not exist under --root", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		if !fi.Mode().IsRegular() {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is not a regular file\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is not a regular file", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		if fi.Size() == 0 {
-			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is empty; a memory of zero bytes cannot be loaded\n", oneline.Escape(e))
+			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is empty; a memory of zero bytes cannot be loaded", oneline.Escape(e)))
 			return 0, 0, false
 		}
 		total += fi.Size()
@@ -859,7 +860,7 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "nova-memory search: no query words given; refusing to guess")
+		refuse(stderr, " search", "no query words given; refusing to guess")
 		bad = true
 	}
 	if bad {
@@ -908,7 +909,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "nova-memory check: name exactly one candidate file, or - for stdin; refusing to guess")
+		refuse(stderr, " check", "name exactly one candidate file, or - for stdin; refusing to guess")
 		bad = true
 	}
 	if bad {
@@ -920,16 +921,14 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if fs.Arg(0) != "-" {
 		f, err := os.Open(fs.Arg(0))
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory check: %s\n", oneline.Err(err))
-			return 2
+			return refuse(stderr, " check", oneline.Err(err))
 		}
 		defer f.Close()
 		src, name = f, fs.Arg(0)
 	}
 	raw, err := io.ReadAll(src)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory check: reading %s: %s\n", oneline.Escape(name), oneline.Err(err))
-		return 2
+		return refuse(stderr, " check", fmt.Sprintf("reading %s: %s", oneline.Escape(name), oneline.Err(err)))
 	}
 	var candidates []string
 	// The same line-ending normalization memindex.Build does before its own
@@ -944,8 +943,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(candidates) == 0 {
 		// Unusable input, not a verdict: a run over nothing must never print
 		// a green that a caller reads as "nothing was already known".
-		fmt.Fprintf(stderr, "nova-memory check: %s holds no candidate paragraph of at least %d terms; nothing to check\n", oneline.Escape(name), memindex.MinTerms)
-		return 2
+		return refuse(stderr, " check", fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", oneline.Escape(name), memindex.MinTerms))
 	}
 
 	c, _, ok := rf.build("check", stderr)
@@ -1007,7 +1005,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		case "info":
 			gateLinks = false
 		default:
-			fmt.Fprintf(stderr, "nova-memory verify: --links must be gate or info (got %q); refusing to guess\n", *links)
+			refuse(stderr, " verify", fmt.Sprintf("--links must be gate or info (got %q); refusing to guess", *links))
 			bad = true
 		}
 	}
@@ -1015,7 +1013,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		// Zero already means "all". A negative ceiling is neither a number of lines nor
 		// a way of asking for every line, so it is a typo with two readings and gets
 		// neither.
-		fmt.Fprintf(stderr, "nova-memory verify: --fail-max must be a line ceiling of zero or more (got %d); 0 means print them all\n", *failMax)
+		refuse(stderr, " verify", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
 		bad = true
 	}
 	if bad {
@@ -1025,19 +1023,16 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		// --coverage and --frontmatter globs and [[wikilink]] resolution all
 		// walk one tree, and a relative .md link resolves against one root, so
 		// verification names one root and no more.
-		fmt.Fprintf(stderr, "nova-memory verify: --root names exactly one tree for verification, but %d were given\n", len(rf.root))
-		return 2
+		return refuse(stderr, " verify", fmt.Sprintf("--root names exactly one tree for verification, but %d were given", len(rf.root)))
 	}
 	if len(coverage) == 0 && len(front) == 0 && !gateLinks {
 		// Every check is off and wikilinks are informational: this run can
 		// only ever exit 0. A green that could not have been anything else is
 		// not a check, so it is refused rather than printed.
-		fmt.Fprintln(stderr, "nova-memory verify: no gating check requested (no --coverage, no --frontmatter, --links=info) — a run that cannot fail is not a verification")
-		return 2
+		return refuse(stderr, " verify", "no gating check requested (no --coverage, no --frontmatter, --links=info) — a run that cannot fail is not a verification")
 	}
 	if len(exempt) > 0 && len(front) == 0 {
-		fmt.Fprintln(stderr, "nova-memory verify: --exempt only applies to --frontmatter, which was not given")
-		return 2
+		return refuse(stderr, " verify", "--exempt only applies to --frontmatter, which was not given")
 	}
 
 	c, _, ok := rf.build("verify", stderr)
@@ -1050,28 +1045,24 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	for _, pair := range coverage {
 		a, b, found := strings.Cut(pair, ":")
 		if !found || a == "" || b == "" {
-			fmt.Fprintf(stderr, "nova-memory verify: --coverage wants A:B, got %q\n", pair)
-			return 2
+			return refuse(stderr, " verify", fmt.Sprintf("--coverage wants A:B, got %q", pair))
 		}
 		fnds, err := memindex.Coverage(fsys, a, b)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory verify: %s\n", oneline.Err(err))
-			return 2
+			return refuse(stderr, " verify", oneline.Err(err))
 		}
 		gating = append(gating, fnds...)
 	}
 	for _, g := range front {
 		fnds, err := memindex.FrontmatterPresent(fsys, g, exempt)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory verify: %s\n", oneline.Err(err))
-			return 2
+			return refuse(stderr, " verify", oneline.Err(err))
 		}
 		gating = append(gating, fnds...)
 	}
 	wl, err := memindex.Wikilinks(fsys, c)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory verify: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " verify", oneline.Err(err))
 	}
 	if gateLinks {
 		gating = append(gating, wl...)
@@ -1133,15 +1124,15 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if given["floor"] && (*floor <= 0 || *floor > 1) {
-		fmt.Fprintf(stderr, "nova-memory eval: --floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement\n", *floor)
+		refuse(stderr, " eval", fmt.Sprintf("--floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement", *floor))
 		bad = true
 	}
 	if given["fail-max"] && *failMax < 0 {
-		fmt.Fprintf(stderr, "nova-memory eval: --fail-max must be a line ceiling of zero or more (got %d); 0 means print them all\n", *failMax)
+		refuse(stderr, " eval", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
 		bad = true
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "nova-memory eval: name exactly one gold file; refusing to guess")
+		refuse(stderr, " eval", "name exactly one gold file; refusing to guess")
 		bad = true
 	}
 	if bad {
@@ -1149,8 +1140,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	}
 	rows, err := readGold(fs.Arg(0))
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory eval: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " eval", oneline.Err(err))
 	}
 
 	c, _, ok := rf.build("eval", stderr)
