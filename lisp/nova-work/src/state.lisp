@@ -60,7 +60,11 @@
   revision
   ;; SPEC-WORK.md:1674-1680 -- the lease log, newest first, "kept whole for
   ;; handoffs". A settle of a live lease appends a :release here.
-  lease-log)
+  lease-log
+  ;; SPEC-WORK.md:1056-1058 -- the CONFIG the session holds beside the work tree
+  ;; (the fleet, the model routes and the ACTIVE allocation registry), carried
+  ;; by the state so the one writer applies and the one journal replays it.
+  config)
 
 (defun %node (state id)
   "Every node access goes through here so *VISITS* is honest."
@@ -281,7 +285,8 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
-                              :history '() :rows '() :revision 0 :lease-log '())))
+                              :history '() :rows '() :revision 0 :lease-log '()
+                              :config (make-empty-work-config))))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
         (%adjust-counters state id 1))
@@ -580,7 +585,8 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                  :history (wstate-history state)
                  :rows (wstate-rows state)
                  :revision (wstate-revision state)
-                 :lease-log (wstate-lease-log state))))
+                 :lease-log (wstate-lease-log state)
+                 :config (copy-work-config (wstate-config state)))))
 
 ;;; Applying one event. The live path and the replay path share it, which is
 ;;; what makes the reconstruction independent of the live counters.
@@ -590,6 +596,16 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     ;; A recorded external effect is an outcome, not a verb of the state
     ;; grammar: it advances the revision and changes nothing else.
     (when (eq kind :external)
+      (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
+      (return-from apply-event state))
+    ;; A `:machine` CONFIG event writes the fleet section of CONFIG and advances
+    ;; the revision, and NOTHING ELSE: no count, roadmap or required set moves
+    ;; (SPEC-WORK.md:1056-1058, :3484-3486, :3617-3630). It is applied here,
+    ;; inside the one writer, in the same total order as every other event, so
+    ;; the mutation is journaled first and comes back with `replay-journal`.
+    (when (eq kind :machine)
+      (setf (wstate-config state)
+            (%machine-apply-event (wstate-config state) event))
       (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
       (return-from apply-event state))
     ;; The six new verbs draft 26 added write the `friends`, `models` and

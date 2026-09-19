@@ -44,10 +44,19 @@
     ;; A member is CONFIG, never work: no count, roadmap or required set moves.
     (check-equal before-open (state-open-count (kernel-state k))
                  "a :machine event moves no |O|")
-    (check-equal before-rev (state-revision (kernel-state k))
-                 "a :machine event moves no work revision")
-    (check-equal before-history (length (state-history (kernel-state k)))
-                 "a :machine event writes no work-tree history")
+    (check-equal (1+ before-rev) (state-revision (kernel-state k))
+                 "the revision advanced by exactly one")
+    ;; The CONFIG envelope grows the work-tree history like every other
+    ;; envelope (apply-envelope, state.lisp:697-700), and its single event
+    ;; names no containment node: `:node` is `(:absent)`.
+    (let* ((history (state-history (kernel-state k)))
+           (record (car (last history)))
+           (event (first (getf record :events))))
+      (check-equal (1+ before-history) (length history)
+                   "exactly one envelope record was added")
+      (check-equal t (absentp (getf event :node))
+                   "the envelope record names no containment node")
+      (check-equal +absent+ (getf event :node) "the node field is the absent value"))
     (check-equal before-rows (length (state-closed-rows (kernel-state k)))
                  "a :machine event moves no closed row")
     ;; A heartbeat, an observe and a probe are not CONFIG changes: the verb

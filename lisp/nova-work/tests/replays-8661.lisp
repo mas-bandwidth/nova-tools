@@ -185,7 +185,7 @@
          (before-history (length (state-history (kernel-state kernel)))))
     ;; The real `machine --register` verb writes one CONFIG member through
     ;; `submit`, with `:node (:absent)`, and moves no work-tree count.
-    (multiple-value-bind (ok line code event)
+    (multiple-value-bind (ok line code envelope)
         (submit kernel
                 (list :verb :machine :change :register :machine "m-a1"
                       :name "studio" :owner "glenn" :connect "profile:studio"
@@ -196,15 +196,22 @@
       (check-equal 0 code "machine register exit code")
       (ok (search "MACHINE OK" line) "the register prints a MACHINE OK line")
       (ok (search "machine=m-a1" line) "the line names the machine")
-      (check-equal t (absentp (getf event :node))
+      (check-equal t (absentp (work-event-node (first (getf envelope :events))))
                    "the :machine event writes :node (:absent)")
-      (check-equal +absent+ (getf event :node) "the node field is the absent value"))
+      (check-equal +absent+ (work-event-node (first (getf envelope :events)))
+                   "the node field is the absent value"))
     (check-equal before-open (state-open-count (kernel-state kernel))
                  "|O| is unchanged")
-    (check-equal before-rev (state-revision (kernel-state kernel))
-                 "a machine moves no work revision")
-    (check-equal before-history (length (state-history (kernel-state kernel)))
-                 "a machine writes no work-tree history")
+    (check-equal (1+ before-rev) (state-revision (kernel-state kernel))
+                 "the revision advanced by exactly one")
+    (let* ((history (state-history (kernel-state kernel)))
+           (record (car (last history))))
+      (check-equal (1+ before-history) (length history)
+                   "exactly one envelope record was added")
+      (check-equal t (absentp (getf (first (getf record :events)) :node))
+                   "the envelope record names no containment node")
+      (check-equal +absent+ (getf (first (getf record :events)) :node)
+                   "the node field is the absent value"))
     (let ((machine (fleet-member (kernel-fleet kernel) "m-a1")))
       ;; the machine is a :kind :machine member of the fleet section of CONFIG.
       (check-equal :fleet (getf (machine-config-section machine) :section)

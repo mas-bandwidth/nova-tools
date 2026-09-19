@@ -179,7 +179,8 @@ refusal phrase is fixed, so no refused value is ever echoed (SPEC-WORK.md:3541-3
       (push id (fleet-order fleet))
       ;; The machine is CONFIG; opening its one ACTIVE allocator is how a slot
       ;; later becomes takeable (SPEC-WORK.md:3707-3715).
-      (%register-machine-allocator kernel request id limits facts connect roles)
+      (%register-machine-allocator (kernel-allocations kernel)
+                                   request id limits facts connect roles)
       (values t (machine-ok-line event) 0 event))))
 
 (defun %machine-change (kernel request)
@@ -214,7 +215,7 @@ meaningful CONFIG change, never a heartbeat, a probe or a load sample
                       (remove key (machine-facts member)
                               :key (lambda (f) (getf f :key)) :test #'equal)))))
       (when (member change '(:permit :exclude :limit :fact))
-        (%sync-machine-allocator kernel member change))
+        (%sync-machine-allocator (kernel-allocations kernel) member change))
       (values t (format nil "MACHINE OK machine=~A" (machine-id member)) 0
               (%machine-event kernel request change)))))
 
@@ -1443,12 +1444,12 @@ evidence, never CONFIG."
                    :at (or (getf request :at) 0))
     (values ok line code nil)))
 
-(defun %register-machine-allocator (kernel request id limits facts connect roles)
+(defun %register-machine-allocator (allocations request id limits facts connect roles)
   "Open the ONE authoritative allocator for the physical machine in the
 kernel's ACTIVE allocation registry. The declared :limits supply the
 concurrency and cores; the machine generation is what `take`, `heartbeat` and
 `release` compare against."
-  (let ((registry (kernel-allocations kernel)))
+  (let ((registry allocations))
     (fleet-register-machine registry
                             :machine-id id
                             :aliases (getf request :aliases)
@@ -1462,11 +1463,11 @@ concurrency and cores; the machine generation is what `take`, `heartbeat` and
                             :connect connect
                             :roles (copy-list roles))))
 
-(defun %sync-machine-allocator (kernel member change)
+(defun %sync-machine-allocator (allocations member change)
   "A meaningful machine CONFIG change moves the live allocator's declared
 numbers and bumps the machine generation; an allocation is never touched
 (SPEC-WORK.md:3724-3730)."
-  (let ((allocator (fleet-allocator-of (kernel-allocations kernel)
+  (let ((allocator (fleet-allocator-of allocations
                                        (machine-id member))))
     (when allocator
       (setf (fleet-allocator-limits allocator) (copy-list (machine-limits member)))

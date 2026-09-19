@@ -42,6 +42,13 @@
     (:observe    :change :friend :state :source :attempt :observed-model
                  :bench :usage :reason)
     (:config     :friend :base :revision :hash :parts :reason)
+    ;; The fleet member (SPEC-WORK.md:1046-1049): `:change` is one of
+    ;; `:register`, `:retire`, `:permit`, `:exclude`, `:limit` or `:fact`, and
+    ;; the subject is a machine identity, never a `:node`. The `fleet` section
+    ;; is CONFIG under the one writer and the one journal (SPEC-WORK.md:1056-
+    ;; 1058); a `:machine` event moves no count, roadmap or required set.
+    (:machine    :change :machine :name :owner :connect :roles :workload
+                 :key :value :declared-by :reason)
     ;; The typed-decision event of docs/SPEC-DECIDE.md:177-187. It carries the
     ;; question's hash, so a replay reads the answer back by the hash alone. It
     ;; is journaled and never applied: a decision advises and the machinery

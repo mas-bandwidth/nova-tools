@@ -21,7 +21,7 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet routes allocations
+  state journal next-rev
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -39,6 +39,17 @@
   ;; session holds beside the fleet and the routes; a receipt is admitted only
   ;; after one of them vouches (SPEC-WORK.md:3859, src/receipt-admission.lisp).
   verifiers)
+;;; The CONFIG lives on the state now; these three stay FUNCTIONS so the 43 read
+;;; sites are unchanged (SPEC-WORK.md:1056-1058).
+
+(defun kernel-fleet (kernel)
+  (work-config-fleet (wstate-config (kernel-state kernel))))
+
+(defun kernel-routes (kernel)
+  (work-config-routes (wstate-config (kernel-state kernel))))
+
+(defun kernel-allocations (kernel)
+  (work-config-allocations (wstate-config (kernel-state kernel))))
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -62,19 +73,15 @@ below the state's revision is refused rather than silently reissued."
       (error 'unsupported-input
              :what (format nil "rev-base ~D is at or below the state's own revision ~D"
                            rev-base (state-revision state))))
+    ;; The fleet, the routes and the ACTIVE allocations ride on the state so
+    ;; the one writer applies and the one journal replays (SPEC-WORK.md:1056-1058).
+    (setf (wstate-config state)
+          (%make-work-config :fleet (make-fleet :friends friends)
+                             :routes (make-route-registry)
+                             :allocations (make-fleet-registry)))
     (let ((k (%make-kernel :state state
                            :journal (or journal (make-ordering-journal))
                            :next-rev (or rev-base (1+ (state-revision state)))
-                           ;; The fleet is CONFIG supplied to the session, never a
-                           ;; constant in the tool; see src/fleet.lisp.
-                           :fleet (make-fleet :friends friends)
-                           ;; The model route registry is CONFIG supplied/held by
-                           ;; the session beside the fleet; see src/routes.lisp.
-                           :routes (make-route-registry)
-                           ;; The fleet's ACTIVE half: one authoritative allocator
-                           ;; per physical machine and the allocations it holds,
-                           ;; never CONFIG; see src/fleet.lisp.
-                           :allocations (make-fleet-registry)
                            :controls (make-ctl)
                            ;; The operator-configured verifiers a receipt needs
                            ;; (SPEC-WORK.md:3859); see receipt-admission.lisp.
@@ -363,7 +370,7 @@ command loop is a defect)."
     ;; not a work-tree transition: it shares `submit`'s answer shape but never
     ;; touches the root, its counters or its history.
     (when (eq verb :machine)
-      (return-from %submit (machine-submit kernel request)))
+      (return-from %submit (%machine-verb-submit kernel request)))
     ;; The one verb that configures the model routes (SPEC-WORK.md:2289, *Model
     ;; routes*) is CONFIG too: it writes a `:kind :route` member beside the
     ;; fleet and never touches the root, its counters or its history.

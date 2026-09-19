@@ -227,6 +227,15 @@
     #:kernel-fleet
     #:kernel-routes
     #:kernel-allocations
+    ;; the CONFIG the session holds beside the work tree: the fleet, the model
+    ;; routes and the ACTIVE allocation registry, carried by the state so the
+    ;; one writer applies and the one journal replays it (SPEC-WORK.md:1056-1058)
+    #:work-config
+    #:make-empty-work-config
+    #:copy-work-config
+    #:work-config-fleet
+    #:work-config-routes
+    #:work-config-allocations
     #:fleet-friends
     #:fleet-machines
     #:fleet-order
