@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // A ROUTE AT ITS CAP LAUNCHES NOTHING FURTHER until one in flight finishes (#917). This is
@@ -155,4 +157,39 @@ func waitFor(t *testing.T, ok func() bool) {
 		time.Sleep(2 * time.Millisecond) // wall-ok: polling a condition in a test
 	}
 	t.Fatal("the condition never held")
+}
+
+// THE ROUTE IS ONE FIELD ON THE LINE, whatever the auth profile is called. The profile half
+// of a route is a PATH a person typed on `--auth`, and a path may carry a space, a tab or a
+// newline; the model half comes out of a cards TSV. `BATCH ROUTE <route> cap=… peak=…
+// held-back=…` is read by splitting on spaces, so a route printed raw turns one line into
+// two and every field after it into a stranger -- and a newline in it forges a whole line.
+func TestTheRouteIsOneFieldOnTheStatusLine(t *testing.T) {
+	f := newInflight(1)
+	route := RouteKey("prov/model", "/tmp/my keys/auth.json")
+	if !f.acquire(route) {
+		t.Fatal("the first acquire under a cap of one is granted")
+	}
+	lines := f.statusLines()
+	if len(lines) != 1 {
+		t.Fatalf("one route gives one line, got %d: %q", len(lines), lines)
+	}
+	got := lines[0]
+	fields := strings.Fields(got)
+	if len(fields) != 6 {
+		t.Fatalf("BATCH ROUTE <route> cap= peak= held-back= is six fields, got %d in %q", len(fields), got)
+	}
+	if fields[2] != oneline.Field(route) {
+		t.Fatalf("the route field is the escaped route %q, got %q (line %q)", oneline.Field(route), fields[2], got)
+	}
+	// And a newline in the profile can never end the line early.
+	g := newInflight(1)
+	forged := RouteKey("prov/model", "a\nBATCH ROUTE forged cap=99 peak=99 held-back=99")
+	if !g.acquire(forged) {
+		t.Fatal("acquire granted")
+	}
+	out := g.statusLines()
+	if len(out) != 1 || strings.Contains(out[0], "\n") {
+		t.Fatalf("a newline in the auth profile must not forge a second line, got %q", out)
+	}
 }

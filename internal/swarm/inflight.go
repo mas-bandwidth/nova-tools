@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE PER-ROUTE IN-FLIGHT CAP (nova-tools#917).
@@ -143,7 +145,10 @@ func (f *inflight) statusLines() []string {
 	sort.Strings(routes)
 	out := make([]string, 0, len(routes))
 	for _, r := range routes {
-		out = append(out, fmt.Sprintf("BATCH ROUTE %s cap=%d peak=%d held-back=%d", r, f.cap, f.peak[r], f.waited[r]))
+		// THE ROUTE IS ESCAPED WHERE IT IS PRINTED, never where it is keyed: the profile half
+		// is a path a person typed on `--auth` and may carry a space, a tab or a newline, and
+		// this line is read by splitting on spaces. A raw route turns one line into two.
+		out = append(out, fmt.Sprintf("BATCH ROUTE %s cap=%d peak=%d held-back=%d", oneline.Field(r), f.cap, f.peak[r], f.waited[r]))
 	}
 	return out
 }
