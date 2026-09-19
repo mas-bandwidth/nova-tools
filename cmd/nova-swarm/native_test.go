@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NATIVE OPENCODE PATH (issue #296, slice 2). A frozen run configuration is executed
@@ -86,6 +87,119 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 		}
 	} else if hasFlagPair(argv, "--read", "/opt/homebrew") {
 		t.Errorf("the wall argv reads /opt/homebrew, which is absent:\n%s", strings.Join(argv, " "))
+	}
+}
+
+// TestNativeArgvReadsTheBenchToolchainRoots is the edge the schema dogfood loop found on
+// 2026-09-18, and it is the whole bug in one assertion: the provisioning standard puts Go
+// and sbcl under `~/sdk` with `~/go/bin` on PATH and the module cache at `~/go/pkg/mod`,
+// the wall named none of them, and `nova-swarm native` pins GOTOOLCHAIN=local -- so every
+// Go card on hulk got `Permission denied` on the bench's own go and then
+// `go.mod requires go >= 1.26 (running go 1.22.2)` from the only one the wall left it.
+// The roots are read-only and come from ONE list (swarm.ToolchainRoots).
+func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A home of the test's own, with the standard's shape under it, so the assertion is
+	// about the argv and not about the machine the test happens to run on.
+	home := t.TempDir()
+	for _, name := range swarm.ToolchainRootNames() {
+		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Paths that are NOT the toolchain, made before the argv so an argv that named the
+	// home or globbed it would carry them.
+	var others []string
+	for _, name := range []string{".config/nova-secrets", ".ssh"} {
+		other := filepath.Join(home, filepath.FromSlash(name))
+		if err := os.MkdirAll(other, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		others = append(others, other)
+	}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: home}
+	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
+	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
+	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
+	// read-only root that slipped onto --read is exactly the widening Johnny's security
+	// read of #1364 refused.
+	for _, root := range swarm.ToolchainRootList() {
+		path := filepath.Join(home, filepath.FromSlash(root.Name))
+		want, wrong := "--read-noexec", "--read"
+		if root.Exec {
+			want, wrong = "--read", "--read-noexec"
+		}
+		if !hasFlagPair(argv, want, path) {
+			t.Errorf("the wall argv does not carry the toolchain root %s as %s:\n%s", path, want, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, wrong, path) {
+			t.Errorf("the toolchain root %s is on %s, which is the other kind:\n%s", path, wrong, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, "--write", path) {
+			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", path, strings.Join(argv, " "))
+		}
+	}
+	// THE MODULE CACHE BY NAME, because it is the root this argv form was added for: READ
+	// WITHOUT EXECUTE, never read+execute. Every `go mod download` on the bench lands
+	// there and the bench user can write to it, so a card able to execute out of it could
+	// run whatever a dependency shipped.
+	modCache := filepath.Join(home, filepath.FromSlash("go/pkg/mod"))
+	if !hasFlagPair(argv, "--read-noexec", modCache) {
+		t.Errorf("the module cache is not granted read-without-execute:\n%s", strings.Join(argv, " "))
+	}
+	if hasFlagPair(argv, "--read", modCache) {
+		t.Errorf("the module cache is on --read, which CARRIES EXECUTE:\n%s", strings.Join(argv, " "))
+	}
+	// NOTHING ELSE UNDER HOME. The wall gained the toolchain and not the home: the key
+	// store and an ssh directory beside it stay outside every named path, on either flag.
+	for _, other := range append(others, home) {
+		for _, flag := range []string{"--read", "--read-noexec", "--write"} {
+			if hasFlagPair(argv, flag, other) {
+				t.Errorf("the wall argv names %s on %s, and it is not a toolchain root:\n%s", other, flag, strings.Join(argv, " "))
+			}
+		}
+	}
+	// ~/go/bin is granted BY NEITHER KIND (Johnny's security read of #1364): every
+	// `go install` on the bench lands there and the bench user can write to it. On a
+	// provisioned bench ~/go/bin/go is a symlink into the sdk tree and the kernel checks
+	// the resolved target, so a card's PATH still finds the granted toolchain.
+	goBin := filepath.Join(home, filepath.FromSlash("go/bin"))
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv = nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for _, flag := range []string{"--read", "--read-noexec", "--write"} {
+		if hasFlagPair(argv, flag, goBin) {
+			t.Errorf("the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
+		}
+	}
+}
+
+// TestNativeArgvSkipsAToolchainRootThatIsNotThere: rule 5 of the wall REFUSES a --read
+// naming a path that does not exist, so a bench without the standard's layout -- a darwin
+// bench has no ~/sdk -- loses the root rather than refusing the run.
+func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir() // empty: not one root exists under it
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for i, a := range argv {
+		if a != "--read" && a != "--read-noexec" {
+			continue
+		}
+		if i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
+			t.Errorf("the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
+		}
 	}
 }
 

@@ -91,12 +91,23 @@ near the end.
    directory, the login keychain (`~/Library/Keychains`) and the shell history
    (`~/.zsh_history`, `~/.bash_history`) are outside every root list, and a
    caller that adds one back has done so in its own argv.
-4. **Both lists are explicit and are never guessed.** `--read <dir>` and
-   `--write <dir>` are each repeatable and have **no default**. Zero `--write`
+4. **Every list is explicit and is never guessed.** `--read <dir>`,
+   `--read-noexec <dir>` and `--write <dir>` are each repeatable and have **no
+   default**. Zero `--write`
    is exit 125 and `refusing to guess`: a command with no writable directory is
    a misconfiguration, not a tighter sandbox. Zero `--read` is legal — the
    roots are the floor. A `--write` path is readable as well as writable; a
-   path given to both is a refusal naming both flags, not a silent merge. A
+   path given to both is a refusal naming both flags, not a silent merge.
+   **`--read` CARRIES EXECUTE and `--read-noexec` does not**: landlock's read
+   subset is `EXECUTE|READ_FILE|READ_DIR` and the darwin profile grants
+   `process-exec*` globally, so under `--read` a program anywhere under the
+   root runs. `--read-noexec` is the same read grant with the execute taken
+   back — on darwin a last-wins `deny process-exec*` emitted after the global
+   grant, on linux the read subset minus `fsExecute` — and it is what a cache
+   or a data tree this user can write to is named with: a module cache, a
+   `node_modules/.bin`, a `pip --user` tree. A path in both read lists, or in
+   `--read-noexec` and `--write`, is a refusal naming both flags: one asks for
+   execute and the other takes it away, and `--write` carries both. A
    default write set would be a guess about somebody else's job. **The two
    named exceptions**, and there are no others: rule 8 puts the temp directory
    under the **first** `--write` and rule 13 defaults the `--cwd` to the
@@ -105,7 +116,7 @@ near the end.
    `--write`" stop contradicting each other. The order of `--write` flags is
    therefore meaningful and the callers below pass the job directory first.
 5. **Paths are resolved, absolute and existing.** Each `--read`, each
-   `--write`, the `--cwd`, the `--tmp` and each root is resolved with
+   `--read-noexec`, each `--write`, the `--cwd`, the `--tmp` and each root is resolved with
    `filepath.EvalSymlinks` and `filepath.Abs` before it reaches a policy,
    because macOS's `/tmp` is a symlink to `/private/tmp` and a sandbox profile
    written against the link grants nothing. A path that does not exist is
@@ -410,7 +421,7 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
@@ -1022,7 +1033,7 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
+SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
@@ -1035,7 +1046,7 @@ SANDBOX REAP OK volumes=<n>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise> gpu=<none|metal>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
-POLICY OK backend=<name> read=<n> write=<n> bytes=<n> gpu=<none|metal>
+POLICY OK backend=<name> read=<n> read-noexec=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 nova-sandbox <build identity> <goos>/<goarch> <go version> backend=<name> platform=<os>

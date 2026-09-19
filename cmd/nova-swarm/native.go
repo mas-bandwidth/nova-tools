@@ -48,6 +48,11 @@ type nativeRunConfig struct {
 	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
 	configFile     string // optional: an opencode.json provider config copied beside the auth copy
+	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
+	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
+	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
+	// argv has to be assertable without the machine's real toolchain under it.
+	benchHome string
 	// WORKER (issue #881): the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
@@ -662,12 +667,46 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
+	// THE BENCH TOOLCHAIN (internal/swarm/toolchain.go is the one source of these names).
+	// This is the implicit worker description's `read_roots`: the provisioning standard puts
+	// Go and sbcl in a user directory, and without the roots the wall denied EXECUTION of
+	// the bench's own `go` and left the card the distribution's 1.22.2, which `go.mod`
+	// refuses under GOTOOLCHAIN=local. Read-only, skipped if absent, and nothing else under
+	// HOME is named.
+	//
+	// ONE LIST, TWO KINDS, and the kind comes from the list rather than from here: `--read`
+	// for the sdk tree, whose `go` the card must RUN, and `--read-noexec` for the module
+	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
+	// so the cache under that flag would put every dependency's own files one exec away from
+	// running inside the wall (Johnny's security read of #1364).
+	for _, root := range swarm.ToolchainRoots(benchHome(cfg)) {
+		flag := "--read-noexec"
+		if root.Exec {
+			flag = "--read"
+		}
+		argv = append(argv, flag, root.Path)
+	}
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)
 	}
 	argv = append(argv, "--")
 	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
 	return argv
+}
+
+// benchHome is the home the toolchain roots are found under: the one a caller named, and
+// otherwise this process's own. An OS that will not say is the empty string, which names no
+// root at all -- a wall with no toolchain root is the behaviour of every run before the
+// roots existed, and it is never a guess at a directory.
+func benchHome(cfg nativeRunConfig) string {
+	if cfg.benchHome != "" {
+		return cfg.benchHome
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
 }
 
 // nativeChildEnv is the child's whole environment, built rather than inherited: a short

@@ -1223,6 +1223,39 @@ so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
 
+### `toolchainroots` — the bench standard and the wall name one list, with one kind each
+
+**The rule.** `internal/swarm/toolchain.go` is the ONE list of the bench
+toolchain roots the sandbox wall grants a card, and each root carries its KIND:
+`~/sdk` read **and execute**, `~/go/pkg/mod` read **without** execute, `~/go/bin`
+granted under neither. `tools/bench-standard.sh` carries the same names between
+its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and both
+`docs/SPEC-SWARM.md` and `docs/CLI.md` name every granted root.
+**The hurt.** Two contracts named the same paths in two places and disagreed: the
+provisioning standard put Go under `~/sdk`, the wall's implicit worker
+description named no toolchain root at all and pinned `GOTOOLCHAIN=local`, so
+every Go card on hulk was denied EXECUTION of the bench's own `go`, fell back to
+`/usr/bin/go` 1.22.2 and died on `go: go.mod requires go >= 1.26` (the schema
+dogfood loop, 2026-09-18). The kind half is Johnny's security read of `#1364`: a
+`--read` root CARRIES EXECUTE on both wall bodies, so the first fix was one
+review away from handing a card execute over the module cache and `~/go/bin`.
+**The test.** `TestBenchStandardAndTheWallNameTheSameToolchainRoots`
+(`internal/ci/toolchainroots_class_test.go`), checked in BOTH directions — a root
+the wall grants that the standard does not provision is a wall granting a path
+that will not be there, and a root the standard provisions that the wall does not
+grant is the original bug returning — plus the kinds by name.
+**Its allowlist.** None. The list is read from the one source at run time, so a
+root added tomorrow is held to the standard and to a kind on the day it appears.
+**Its remedy line.** `the provisioning standard and the wall name different
+toolchain roots … They are ONE list. Edit internal/swarm/toolchain.go and the
+marked block in the script together`, and for a kind, `the wall grants the module
+cache ~/go/pkg/mod EXECUTE: it is the read-without-execute kind`.
+**Its narrowings.** It reads the declaration, not a running wall: that the two
+kinds are ENFORCED is proved by the wall's own tests on both bodies
+(`TestLandlockReadNoExecReadsAndRefusesToExecute`,
+`TestReadNoExecReadsAndRefusesToExecuteOnDarwin`), and that the argv carries each
+root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots`.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with
