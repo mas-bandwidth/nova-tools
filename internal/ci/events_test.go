@@ -7,9 +7,11 @@ package ci
 // test here opens a socket to GitHub or starts a redis server of its own.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,7 +200,7 @@ func TestProducerPublishesDevMovedOnlyOnChange(t *testing.T) {
 func TestReactorEnqueuesGreenPR(t *testing.T) {
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
-	r := NewReactor(rdb, &fakeForge{}, func(_ context.Context, pr int, _ string) error {
+	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(_ context.Context, pr int, _ string) error {
 		enqueued = append(enqueued, pr)
 		return nil
 	}, nil)
@@ -212,14 +214,29 @@ func TestReactorEnqueuesGreenPR(t *testing.T) {
 	}
 }
 
-// 5. A PR in the skip set is not enqueued.
-func TestReactorSkipsTheSkipSet(t *testing.T) {
+// openGate is a gate that stops nothing, for the tests that are about something else.
+type openGate struct{}
+
+func (openGate) Skipped(int) (bool, error)   { return false, nil }
+func (openGate) Held() (bool, string, error) { return false, "", nil }
+
+// oneGate is THE ONE HOLD AND THE ONE SKIP SET (edge 18), as a test can set them: the
+// reactor reads whatever the lane's queue.json and hold say, and nothing else.
+type oneGate struct {
+	skip   map[int]bool
+	held   bool
+	reason string
+}
+
+func (g oneGate) Skipped(pr int) (bool, error) { return g.skip[pr], nil }
+func (g oneGate) Held() (bool, string, error)  { return g.held, g.reason, nil }
+
+// 5. A PR the QUEUE skips is not enqueued -- the queue's own skip set, not a second one
+// in redis (edge 18).
+func TestReactorSkipsTheQueuesSkipSet(t *testing.T) {
 	_, rdb, ctx := newBus(t)
-	if err := rdb.SAdd(ctx, SetEnqueueSkip, "42").Err(); err != nil {
-		t.Fatal(err)
-	}
 	var enqueued []int
-	r := NewReactor(rdb, &fakeForge{}, func(_ context.Context, pr int, _ string) error {
+	r := NewReactor(rdb, &fakeForge{}, oneGate{skip: map[int]bool{42: true}}, func(_ context.Context, pr int, _ string) error {
 		enqueued = append(enqueued, pr)
 		return nil
 	}, nil)
@@ -231,22 +248,65 @@ func TestReactorSkipsTheSkipSet(t *testing.T) {
 	}
 }
 
-// 6. While enqueue:hold exists every green PR waits.
-func TestReactorHoldsOnTheHoldKey(t *testing.T) {
+// 6. While the LANE'S hold stands every green PR waits, and the line carries the reason
+// the person wrote -- not the name of a redis key (edge 18).
+func TestReactorHoldsOnTheLanesHold(t *testing.T) {
 	_, rdb, ctx := newBus(t)
-	if err := rdb.Set(ctx, KeyEnqueueHold, "1", time.Minute).Err(); err != nil {
-		t.Fatal(err)
-	}
 	var enqueued []int
-	r := NewReactor(rdb, &fakeForge{}, func(_ context.Context, pr int, _ string) error {
+	var log bytes.Buffer
+	r := NewReactor(rdb, &fakeForge{}, oneGate{held: true, reason: "the base is frozen"}, func(_ context.Context, pr int, _ string) error {
 		enqueued = append(enqueued, pr)
 		return nil
-	}, nil)
+	}, &log)
 	if err := r.Handle(ctx, ChannelPRChecksDone, `{"number":42,"head":"a1b2","conclusion":"SUCCESS"}`); err != nil {
 		t.Fatal(err)
 	}
 	if len(enqueued) != 0 {
 		t.Fatalf("a held PR was enqueued: %v", enqueued)
+	}
+	if !strings.Contains(log.String(), `the\x20base\x20is\x20frozen`) {
+		t.Errorf("the hold line does not carry the reason: %q", log.String())
+	}
+}
+
+// EDGE 17: a reactor built with no door says so on the first green pull request rather
+// than reporting an enqueue into a set nothing reads.
+func TestReactorWithNoDoorRefusesRatherThanReportingAnEnqueue(t *testing.T) {
+	_, rdb, ctx := newBus(t)
+	r := NewReactor(rdb, &fakeForge{}, openGate{}, nil, nil)
+	err := r.Handle(ctx, ChannelPRChecksDone, `{"number":42,"head":"a1b2","conclusion":"SUCCESS"}`)
+	if err == nil {
+		t.Fatal("a reactor with nowhere to enqueue reported success")
+	}
+	if !strings.Contains(err.Error(), "--lane") {
+		t.Errorf("the failure does not name the door: %v", err)
+	}
+}
+
+// EDGE 20: one malformed payload is one message dropped, said out loud and counted --
+// never the death of the reactor, which already ignores a channel it has never heard of.
+func TestReactorDropsAMalformedPayloadAndCarriesOn(t *testing.T) {
+	_, rdb, ctx := newBus(t)
+	var enqueued []int
+	var log bytes.Buffer
+	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(_ context.Context, pr int, _ string) error {
+		enqueued = append(enqueued, pr)
+		return nil
+	}, &log)
+	if err := r.act(ctx, ChannelPRChecksDone, "{not json"); err != nil {
+		t.Fatalf("a malformed payload killed the reactor: %v", err)
+	}
+	if r.Dropped != 1 {
+		t.Errorf("Dropped = %d, want 1", r.Dropped)
+	}
+	if !strings.Contains(log.String(), "REACT DROP") {
+		t.Errorf("the drop was not said out loud: %q", log.String())
+	}
+	if err := r.act(ctx, ChannelPRChecksDone, `{"number":42,"head":"a1b2","conclusion":"SUCCESS"}`); err != nil {
+		t.Fatalf("the message after the bad one: %v", err)
+	}
+	if len(enqueued) != 1 || enqueued[0] != 42 {
+		t.Fatalf("enqueued = %v, want [42] after the dropped message", enqueued)
 	}
 }
 
@@ -254,7 +314,7 @@ func TestReactorHoldsOnTheHoldKey(t *testing.T) {
 func TestReactorDoesNotEnqueueARed(t *testing.T) {
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
-	r := NewReactor(rdb, &fakeForge{}, func(_ context.Context, pr int, _ string) error {
+	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(_ context.Context, pr int, _ string) error {
 		enqueued = append(enqueued, pr)
 		return nil
 	}, nil)
@@ -275,7 +335,7 @@ func TestReactorPublishesRebaseWantedForDirtyPRs(t *testing.T) {
 		{Number: 7, Branch: "rowan/dirty", Head: "d7", Mergeable: "DIRTY"},
 		{Number: 8, Branch: "rowan/clean", Head: "c8", Mergeable: "CLEAN"},
 	}}}
-	r := NewReactor(rdb, forge, func(context.Context, int, string) error { return nil }, nil)
+	r := NewReactor(rdb, forge, openGate{}, func(context.Context, int, string) error { return nil }, nil)
 	if err := r.Handle(ctx, ChannelDevMoved, `{"sha":"base-2"}`); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +359,7 @@ func TestReactorCardDonePublishesNothing(t *testing.T) {
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelRebaseWanted, ChannelPRChecksDone, ChannelCardDone)
 	var enqueued []int
-	r := NewReactor(rdb, &fakeForge{}, func(_ context.Context, pr int, _ string) error {
+	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(_ context.Context, pr int, _ string) error {
 		enqueued = append(enqueued, pr)
 		return nil
 	}, nil)
@@ -317,7 +377,7 @@ func TestReactorRunReturnsAtItsDeadline(t *testing.T) {
 	_, rdb, ctx := newBus(t)
 	deadline, cancel := context.WithTimeout(ctx, reactorDeadline())
 	defer cancel()
-	r := NewReactor(rdb, &fakeForge{}, func(context.Context, int, string) error { return nil }, nil)
+	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(context.Context, int, string) error { return nil }, nil)
 	if err := r.Run(deadline); err != context.DeadlineExceeded {
 		t.Fatalf("Run returned %v, want the deadline", err)
 	}

@@ -140,11 +140,11 @@ func port(args []string, out, errOut io.Writer) int {
 	timeout := fs.Int("timeout", 300, "")
 	if fs.Parse(args) != nil || fs.NArg() != 0 {
 		return portRefuse(errOut, *table, *pr, "", "usage", "",
-			"refusing to guess; pass --table <section> --pr <n>")
+			"refusing to guess; pass --lane <dir> --table <section> --pr <n>")
 	}
 	if *lane == "" || *table == "" || *pr == 0 {
 		return portRefuse(errOut, *table, *pr, "", "usage", "",
-			"refusing to guess; pass --table <section> --pr <n>")
+			"refusing to guess; pass --lane <dir> --table <section> --pr <n>")
 	}
 	if *maxFlag < 0 {
 		return portRefuse(errOut, *table, *pr, "", "max", "", "--max must be non-negative")

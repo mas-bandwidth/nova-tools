@@ -83,12 +83,17 @@ type Skip struct {
 // or one Lisp suite), not files; Pass is the per-file rule: every changed test file has at
 // least one failing unit with the change reverted.
 type MutateResult struct {
-	Head   string
-	Red    int
-	Green  int
-	Pass   bool
-	Greens []GreenTest
-	Skips  []Skip
+	Head  string
+	Red   int
+	Green int
+	// Reverted is the number of non-test HUNKS put back: SPEC-REVIEW says the
+	// revert covers "every non-test hunk", and a caller that gates on that sentence
+	// needs it as a number. A verdict over an empty revert is a verdict about the
+	// head's own suite, so the count is what tells a gate the control ran at all.
+	Reverted int
+	Pass     bool
+	Greens   []GreenTest
+	Skips    []Skip
 }
 
 // Verdict is the word that ends the MUTATE line.
@@ -185,9 +190,13 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 	if err := revert(ctx, repo, wt, base, others); err != nil {
 		return nil, err
 	}
+	reverted, err := countHunks(ctx, repo, base, head, others)
+	if err != nil {
+		return nil, err
+	}
 
-	units, skips := plan(repo, tests)
-	res := &MutateResult{Head: head, Skips: skips}
+	units, skips := plan(wt, tests)
+	res := &MutateResult{Head: head, Skips: skips, Reverted: reverted}
 	redFiles := map[string]bool{}
 	skipped := map[string]bool{}
 	for _, s := range skips {
@@ -303,11 +312,13 @@ func revert(ctx context.Context, repo, wt, base string, others []change) error {
 
 var goTestFunc = regexp.MustCompile(`(?m)^func (Test[A-Z_0-9][A-Za-z_0-9]*)\(`)
 
-// plan turns changed test files into runnable units. A Go test file contributes every test
-// function it declares AT THE HEAD (the tree the worktree started from, which is the tree
-// the test files still hold after the revert); a Lisp test file contributes its project's
+// plan turns changed test files into runnable units, reading them in the WORKTREE and never
+// in the caller's working copy: the worktree is the head, and the caller may sit on any
+// commit at all -- on the base, a test file the head adds is not there to read. A Go test
+// file contributes every test function it declares there (the revert leaves the test hunks
+// alone, so that is the head's text); a Lisp test file contributes its project's
 // run-tests.sh. A file that is neither is skipped with its reason named.
-func plan(repo string, tests []change) ([]unit, []Skip) {
+func plan(wt string, tests []change) ([]unit, []Skip) {
 	var units []unit
 	var skips []Skip
 	for _, t := range tests {
@@ -317,7 +328,7 @@ func plan(repo string, tests []change) ([]unit, []Skip) {
 		}
 		switch {
 		case strings.HasSuffix(t.path, "_test.go"):
-			src, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(t.path)))
+			src, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(t.path)))
 			if err != nil {
 				skips = append(skips, Skip{File: t.path, Reason: "could not read the test file at the head"})
 				continue
@@ -338,7 +349,7 @@ func plan(repo string, tests []change) ([]unit, []Skip) {
 				continue
 			}
 			script := path.Join(proj, "run-tests.sh")
-			if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(script))); err != nil {
+			if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(script))); err != nil {
 				skips = append(skips, Skip{File: t.path, Reason: "the lisp project has no run-tests.sh"})
 				continue
 			}
@@ -497,4 +508,41 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// countHunks is how much was put back: the number of `@@` hunks in the base..head diff
+// restricted to the non-test files the revert touched. A file the head ADDED and the
+// revert removed whole counts as its own hunks, because that is what the diff says was
+// undone.
+//
+// It is read from the range, not from the checkout: `git checkout <base> -- <paths>`
+// says nothing about how many hunks it wrote, and a count that came from the same
+// command whose work it is measuring would agree with itself whatever happened.
+func countHunks(ctx context.Context, repo, base, head string, others []change) (int, error) {
+	if len(others) == 0 {
+		return 0, nil
+	}
+	n := 0
+	paths := make([]string, 0, len(others))
+	for _, c := range others {
+		paths = append(paths, c.path)
+	}
+	for len(paths) > 0 {
+		k := len(paths)
+		if k > 100 {
+			k = 100
+		}
+		args := append([]string{"diff", "--no-ext-diff", "--no-renames", "--unified=0", base, head, "--"}, paths[:k]...)
+		out, err := gitOut(ctx, repo, args...)
+		if err != nil {
+			return 0, fmt.Errorf("could not count the hunks between %s and %s: %v", Short(base), Short(head), err)
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "@@ ") {
+				n++
+			}
+		}
+		paths = paths[k:]
+	}
+	return n, nil
 }

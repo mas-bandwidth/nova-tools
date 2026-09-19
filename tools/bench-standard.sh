@@ -50,8 +50,13 @@ if [ "$OS" = "Linux" ] && [ "${#RUNNERS[@]}" -gt 0 ]; then
     # (1) exactly one listener process mentioning the runner dir.
     pids=""
     if command -v ps >/dev/null 2>&1; then
-      # ps -eo pid=,args= lists "pid cmd..."; match the literal dir.
-      pids="$(ps -eo pid=,args= 2>/dev/null | awk -v dir="$d" 'index($0, dir) {print $1}')"
+      # ps -eo pid=,args= lists "pid cmd...". Match the LISTENER binary under the
+      # runner dir, not the dir string: run.sh and run-helper.sh also carry the dir,
+      # and the awk of this very pipeline carries it in its own argv, so a bare dir
+      # match counted 4 where the answer is 1 on every bench (antman, 2026-09-18).
+      # ps is snapshotted before awk exists for the same reason.
+      pstable="$(ps -eo pid=,args= 2>/dev/null)"
+      pids="$(printf '%s\n' "$pstable" | awk -v bin="${d}bin/Runner.Listener" 'index($0, bin) {print $1}')"
     else
       drift "$unit ps not available to count listeners in $d"
       continue
@@ -118,6 +123,23 @@ if [ "$APPLY" = "1" ] && [ -n "$STRAY_PIDS" ]; then
   echo "NOTE stray runner listeners killed:$STRAY_PIDS"
 fi
 
+# (3a) THE TOOLCHAIN ROOTS the sandbox wall grants a card. This list and
+# internal/swarm/toolchain.go are ONE list: internal/ci's class test fails when they drift
+# apart, because a literal in two places is exactly how the standard and the wall came to
+# contradict each other -- the standard put Go under ~/sdk, the wall named no toolchain root,
+# and every Go card on hulk died on `go.mod requires go >= 1.26 (running go 1.22.2)`.
+# The KIND of each grant lives in internal/swarm/toolchain.go and not here, because it is the
+# wall's decision and not the bench's: ~/sdk is read AND execute (the card runs that go),
+# ~/go/pkg/mod is read WITHOUT execute. A bench only has to HAVE them.
+# NOVA_TOOLCHAIN_ROOTS BEGIN
+NOVA_TOOLCHAIN_ROOTS="sdk go/pkg/mod"
+# NOVA_TOOLCHAIN_ROOTS END
+for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
+  if [ ! -d "$HOME_DIR/$tcroot" ]; then
+    drift "toolchain root $HOME_DIR/$tcroot missing; the sandbox wall grants this path and a card's go lives under it"
+  fi
+done
+
 # (3) go version, sbcl, harness.
 if command -v go >/dev/null 2>&1; then
   goout="$(go version 2>&1 || true)"
@@ -147,6 +169,34 @@ else
   done
   if [ "$harness_ok" = "0" ]; then
     drift "harness missing at $HOME_DIR/nova-bench/harness-<ver>/opencode"
+  fi
+fi
+
+# (3b) the network probe runs inside the real sandbox, never on the host, so
+# what it reports is what a card would see (#893).
+if [ "$OS" = "Linux" ]; then
+  probe_url="${NOVA_PROBE_URL:-https://models.opencode.ai/api.json}"
+  probe_dir="$(mktemp -d "$HOME_DIR/nova-bench/nova-probe.XXXXXX" 2>/dev/null || true)"
+  if [ -z "$probe_dir" ]; then
+    drift "sandbox-network: cannot make probe dir under $HOME_DIR/nova-bench"
+  else
+    mkdir -p "$probe_dir/home"
+    sandbox_bin="$HOME_DIR/.local/bin/nova-sandbox"
+    if [ ! -x "$sandbox_bin" ]; then
+      drift "sandbox-network: $sandbox_bin not executable"
+    else
+      http="$(HOME="$probe_dir/home" "$sandbox_bin" --read "$HOME_DIR/nova-bench" --write "$probe_dir" --cwd "$probe_dir" -- curl -s -o /dev/null -w '%{http_code}' "$probe_url" 2>/dev/null || true)"
+      # Only an all-digit reply is curl's http code. Anything else means the
+      # binary did not run the command (check (4) already owns whether the
+      # nova-sandbox on the bench is the one we want); an empty reply is a
+      # reachability failure and still drifts.
+      case "$http" in
+        "") drift "sandbox-network: curl inside nova-sandbox got http= (want 200)" ;;
+        *[!0-9]*) ;;
+        *) [ "$http" = "200" ] || drift "sandbox-network: curl inside nova-sandbox got http=$http (want 200)" ;;
+      esac
+    fi
+    rm -rf "$probe_dir"
   fi
 fi
 
@@ -225,8 +275,47 @@ if [ -d "$HOME_DIR/.config/opencode" ]; then
   done
 fi
 
+# (7) DISK HEADROOM, and where the space went (issue #1048, item 3).
+#
+# A Go card costs 5-7 GB of module cache, build cache and scratch in its own slot, against
+# 330 MB for a Lisp card. hulk and vision filled to 100% under 120 cards and their runners
+# died; one bench reached 0 free with 53 GB of slot data homes and had to be reaped by hand.
+# BOTH LAUNCHERS REFUSE A BENCH UNDER 25 GB FREE -- it is a term of the capacity formula,
+# `allowed = min(cores*1.5 - load - 8, (free_gb - 25)/2, memfree_gb/2)` at
+# cmd/nova-pulse/fill.go -- so a bench below the floor is a bench nothing will be launched
+# onto, which is not a conforming bench however clean the rest of this script finds it.
+#
+# AND IT NAMES THE THREE LARGEST DIRECTORIES, because "out of disk" is otherwise a sentence
+# somebody has to go and investigate by hand at whatever hour it is. The `du` runs only on
+# the failing path: a walk of a whole bench home is not something a green run should pay.
+# The floor and the probe are `nova-pulse fleet standard`'s, not a second spelling of them:
+# --min-free defaults to 25 there (cmd/nova-pulse/fleet_verbs.go) and its `disk-free` check
+# reads exactly this line (internal/pulse/fleetstandard.go). `df -Pk` is POSIX and answers
+# the same on a GNU and a BSD userland, where `df -BG` is GNU-only and a BSD refuses it
+# outright -- which matters because the bench is Linux and this check's test runs wherever
+# the developer is. The remote witness and the on-host one must agree, and the only way to
+# be sure of that is for them to be one line.
+NOVA_MIN_FREE_G="${NOVA_MIN_FREE_G:-25}"
+free_g="$(df -Pk "$HOME_DIR" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')"
+case "${free_g:-}" in
+  ''|*[!0-9]*) free_g="" ;;
+esac
+if [ -z "$free_g" ]; then
+  drift "disk free unknown: df answered nothing readable for $HOME_DIR; a bench whose space cannot be read is not known to be conforming"
+elif [ "$free_g" -lt "$NOVA_MIN_FREE_G" ]; then
+  largest="$(du -sk "$HOME_DIR"/* 2>/dev/null | sort -rn | head -3 | awk '{
+      k = $1; $1 = ""; sub(/^[ \t]+/, "", $0)
+      v = k; unit = "K"
+      if (k >= 1048576) { v = int(k / 1048576); unit = "G" }
+      else if (k >= 1024) { v = int(k / 1024); unit = "M" }
+      printf "%s%s %d%s", sep, $0, v, unit; sep = "; "
+    }')"
+  [ -n "$largest" ] || largest="nothing readable under $HOME_DIR"
+  drift "disk free=${free_g}G want>=${NOVA_MIN_FREE_G}G (both launchers refuse below it); largest under $HOME_DIR: $largest"
+fi
+
 if [ "$DRIFTS" = "0" ]; then
-  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1"
+  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G"
   exit 0
 fi
 echo "STANDARD DRIFT (see lines above)"

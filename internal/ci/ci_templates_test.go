@@ -245,6 +245,8 @@ func TestTemplatesVerbLineMatchesTheSpec(t *testing.T) {
 // pass are the ones the allowlist already names. The count is the truth about
 // the tree whether or not the lines printed.
 func TestNoUnquotedPathsInTemplateLiterals(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := filepath.Join(root, "internal", "ci", "testdata", "template-paths-allowlist.txt")
 	res, err := CheckTemplates(root, allow)

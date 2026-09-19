@@ -12,6 +12,13 @@
 
 `nova-swarm native` executes one frozen run configuration against a native harness binary (e.g. `opencode`). The configuration is verified before anything is started: the harness binary must exist and be executable, the model must have a valid `provider/model` prefix, the slot directory must reside strictly under the configured root, and any auth entries are copied mode `0600` into an isolated `$XDG_DATA_HOME`.
 
+Before the first run on a bench, its slot store is made once, by hand -- `native` refuses to
+launch without one and never creates one:
+
+```bash
+nova-swarm slots init --store /path/to/root/slots-store --owner stella --capacity 1 --share 1
+```
+
 ### Invocation
 
 ```bash
@@ -22,6 +29,8 @@ nova-swarm native \
   --slot /path/to/root/slot-ds/jobs/card-smoke-ds \
   --root /path/to/root \
   --deadline 120s \
+  --slots-store /path/to/root/slots-store \
+  --owner stella \
   --auth ~/.local/share/opencode/auth.json \
   --label card-smoke-ds
 ```
@@ -81,6 +90,10 @@ MODEL="$3"
 CARD="$4"
 ROOT="$5"
 JOB_DIR="$ROOT/$SLOT/jobs/$LABEL"
+# The bench slot lease (nova-tools#1546): native refuses to launch without a store and an
+# owner. The store is made ONCE per bench, by hand, and is NOT created here -- a runner that
+# made its own store would be a runner that cannot be refused.
+OWNER="${NOVA_SWARM_SLOT_OWNER:?set NOVA_SWARM_SLOT_OWNER to the owner whose bench share this runner holds}"
 mkdir -p "$JOB_DIR"
 
 # Scope git root to the slot directory so OpenCode does not traverse into parent checkouts
@@ -104,6 +117,8 @@ exec nova-swarm native \
   --slot "$JOB_DIR" \
   --root "$ROOT" \
   --deadline 120s \
+  --slots-store "$ROOT/slots-store" \
+  --owner "$OWNER" \
   --auth ~/.local/share/opencode/auth.json
 ```
 

@@ -16,10 +16,10 @@ import (
 // five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
 // release cut from a laptop and a release cut from a bench are the same release.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
 
 // CutNote is the gate in front of a tag, said where a person will meet it
@@ -27,15 +27,19 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
 // because it names the list, and the list has ONE home: composing this from
 // SensitivePaths is why the help cannot fall behind the gate.
 var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
-	"(" + SensitiveShape + "). A range that touches one of them, or that is too big for the forge to list, REFUSES until --security-read names Johnny's read -- a note id or the url of his comment -- " +
+	"(" + SensitiveShape + "). A range that touches one of them REFUSES until --security-read names Johnny's read -- a note id or the url of his comment -- " +
 	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
+	"A range TOO BIG FOR THE FORGE TO LIST is a different refusal and --security-read does not get past it: a read of a list that may be short is a read of a prefix of the truth. " +
+	"Classify such a range from a complete local list instead -- `--local-diff <checkout>` runs `git diff --name-only <previous tag>...<head>` in that checkout, and `--paths-from <file>` writes the answer there for a later cut to read back. " +
 	"The tag is annotated, and the annotation carries `sums=<sha256 of SHA256SUMS>` when --sums names the built checksum file, which is the digest `adopt --repo` reads back."
 
 // AdoptNote is what a person needs before their first adopt, and every sentence
 // of it is something the first dogfood pass had to find out by failing.
 const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fans out from there; it never needs the machines to reach each other. " +
 	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
-	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, or --expect-sums <sha256> names it outright. " +
+	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, --expect-sums <sha256> names it outright, or --expect-sums-from <file> reads it out of the " + DigestFile + " this host's own `release build` wrote. " +
+	"A dev build has no tag, which is why the third exists; the file must be a LOCAL one, because a digest computed on the machine holding the bits is that machine vouching for itself. " +
+	"Install the release on this host before adopting it: the nova-update running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
 	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
 	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
 	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
@@ -47,7 +51,15 @@ type Deps struct {
 	Forge     Forge
 	SSH       SSH
 	Toolchain Toolchain
-	Now       func() time.Time
+	// Git is the local checkout `cut --local-diff` reads the complete path
+	// list out of when the forge's compare is at its ceiling.
+	Git Git
+	Now func() time.Time
+	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
+	// seam rather than a constant because this package is a library and the
+	// stamp lives in main; a nil Self means `adopt` cannot compare its own
+	// version with the release's and does not pretend to.
+	Self func() string
 	// VersionOf answers what the binary at path reports for itself. It is a
 	// seam because `install`'s skip decision is the one place this package
 	// runs a binary it is about to replace.
@@ -58,7 +70,8 @@ type Deps struct {
 // --version, --from and --timeout and a reader should see that once.
 type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
-	stage, retire, expectSums, sums, securityRead, reason                           string
+	stage, retire, expectSums, expectSumsFrom, sums, securityRead, reason           string
+	pathsFrom, localDiff                                                            string
 	platforms                                                                       platformList
 	dryRun                                                                          bool
 	timeout                                                                         time.Duration
@@ -104,9 +117,13 @@ func progress(w io.Writer, format string, a ...any) {
 	fmt.Fprintf(w, "release: "+format+"\n", a...)
 }
 
-// Main is the production entry: the verb with every seam at its default.
-func Main(name string, args []string, out, errs io.Writer) int {
-	return Run(name, args, out, errs, Deps{})
+// Main is the production entry: the verb with every seam at its default, and
+// the one thing a seam cannot default to -- what THIS binary is stamped with,
+// which lives in main and is handed down. `adopt` is the reader: a coordinator
+// older than the release it is fanning out cannot run that release's install,
+// and the fourth dogfood met that as a Studio that could not adopt at all.
+func Main(name string, args []string, stamp string, out, errs io.Writer) int {
+	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
 
 // Run is `nova-update release <verb>`. The verb is dispatched here and each of
@@ -149,6 +166,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
 		f.StringVar(&o.sums, "sums", "", "a built SHA256SUMS whose digest the section and the tag record")
 		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of Johnny's read, required when the range touches a sensitive path")
+		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
+		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "artifact root")
@@ -169,6 +188,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
 		f.StringVar(&o.stage, "stage", "", "where to fetch a host:dir --from to")
 		f.StringVar(&o.expectSums, "expect-sums", "", "sha256 of SHA256SUMS, as the cut recorded it")
+		f.StringVar(&o.expectSumsFrom, "expect-sums-from", "", "a LOCAL "+DigestFile+" this host's own `release build` wrote; a release with no tag has no other digest")
 		f.StringVar(&o.repo, "repo", "", "owner/name, to read that digest off the annotated tag instead")
 		f.StringVar(&o.retire, "retire", "", "second directory on each machine to clear")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
