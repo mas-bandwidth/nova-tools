@@ -128,6 +128,16 @@ var swarmAudit = audit.Config{
 		// and writes only dataHome/auth.json, which is the child's credential, not this
 		// binary's line.
 		`"context"`, `"crypto/sha256"`, `"encoding/base64"`, `"encoding/hex"`, `"encoding/json"`,
+		// goenv (native.go, the T03 repair) supplies the secret-name predicate the
+		// native-argv log reuses instead of keeping its own copy: IsSecretName reads a
+		// name and returns a bool, and Clean returns a copy of the environment slice
+		// this package's own go-build test helper hands it. It holds no writer of this
+		// package's stream -- the package imports only strings, calls no fmt, io or os,
+		// and returns a bool or a fresh slice rather than touching a stream. The bool
+		// only chooses the literal "<redacted>" for a value in writeNativeArgvLog, and
+		// the name and value that follow are put through oneline.Escape before this
+		// package writes them.
+		`"github.com/mas-bandwidth/nova-tools/internal/goenv"`,
 		// publish.go (slice 7) needs bytes and it writes to no stream. bytes.Buffer only
 		// holds the trimmed stdout/stderr of the git and gh children it samples, and every
 		// one of those strings is put through oneline.Field or oneline.Err before this
