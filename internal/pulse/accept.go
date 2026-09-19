@@ -496,7 +496,7 @@ func (g *acceptGate) buildVet() *acceptStop {
 		if err == nil {
 			continue
 		}
-		if acceptToolchainRed(out, err) {
+		if acceptToolchainRed(out, err, false) {
 			g.note(step[0] + ": " + acceptFirstLine(out))
 			return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
 		}
@@ -588,7 +588,7 @@ func (g *acceptGate) weakened() *acceptStop {
 		if err == nil {
 			continue
 		}
-		if acceptToolchainRed(out, err) {
+		if acceptToolchainRed(out, err, true) {
 			g.note("overlay: " + acceptFirstLine(out))
 			return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
 		}
@@ -621,7 +621,7 @@ func (g *acceptGate) headTests() *acceptStop {
 		if err == nil {
 			continue
 		}
-		if acceptToolchainRed(out, err) {
+		if acceptToolchainRed(out, err, true) {
 			g.note("test: " + acceptFirstLine(out))
 			return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
 		}
@@ -662,7 +662,7 @@ func (g *acceptGate) redAtBase(d string, names []string) *acceptStop {
 	if err == nil {
 		return nil
 	}
-	if acceptToolchainRed(out, err) {
+	if acceptToolchainRed(out, err, true) {
 		g.note("base: " + acceptFirstLine(out))
 		return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
 	}
@@ -704,6 +704,16 @@ func (g *acceptGate) mutate() *acceptStop {
 		if strings.Contains(s.Reason, "could not be run") {
 			g.note("mutate: " + s.File + ": " + s.Reason)
 			return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
+		}
+		// The revert would not COMPILE. That is not a kill and it is not the bench's
+		// either: a test coupled to the fix only by compiling against its new symbol
+		// asserts nothing the revert could disprove, and the red team walked the most
+		// common vacuous shape there is straight through this control with it (#1807).
+		// It is checked before the verdict so a second, genuinely red file cannot carry
+		// it through.
+		if strings.HasPrefix(s.Reason, review.SkipRevertNoCompile) {
+			g.note("mutate: " + s.File + ": " + s.Reason)
+			return &acceptStop{verdict: "REJECT", reason: "vacuous-test", at: s.File}
 		}
 	}
 	g.red = res.Red
@@ -911,11 +921,20 @@ func acceptFirstLine(out string) string {
 }
 
 // acceptToolchainRed: the red is the bench's when the command could not be started at
-// all, when the wall itself answered (nova-sandbox's exits 125, 126, 127: refused, not
-// executed, not found), or when a wall or toolchain line appears BEFORE the first test
-// result. Lines after `=== RUN` are the card's tests talking, and a red test that prints
-// "Operation not permitted" is still the card's red (cold read of f927bccc, MEDIUM 4).
-func acceptToolchainRed(out string, err error) bool {
+// all, or when the wall itself answered (nova-sandbox's exits 125, 126, 127: refused, not
+// executed, not found).
+//
+// It is ALSO the bench's when a wall or toolchain line appears before the first test
+// result -- but only for a command whose output the card does not control. cardRuns says
+// which kind this is. `go build` and `go vet` print the toolchain's own words, with the
+// `# pkg` and `[build failed]` carve-outs that keep a compiler error naming WALL the
+// card's (cold read 2 of #1721, item 4). `go test` runs the CARD'S CODE, and a card's
+// TestMain or package init prints before any `=== RUN`: the red team got `ABSTAIN
+// toolchain` for a card-controlled red by printing "Operation not permitted" from
+// TestMain (#1806, PROBE-A), dodging the REJECT, the track-record fail, and staling the
+// bench's certification record on the way out. Output a card's process can write is
+// never the bench's voice; there, the exit code speaks and nothing else does.
+func acceptToolchainRed(out string, err error, cardRuns bool) bool {
 	var ee *exec.ExitError
 	if err != nil && !errors.As(err, &ee) {
 		return true
@@ -939,6 +958,9 @@ func acceptToolchainRed(out string, err error) bool {
 		if strings.HasPrefix(t, "# ") || strings.Contains(t, "[build failed]") || strings.Contains(t, "[setup failed]") {
 			return false
 		}
+	}
+	if cardRuns {
+		return false
 	}
 	return acceptWallMark.MatchString(acceptFirstLine(prefix))
 }

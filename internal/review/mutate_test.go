@@ -389,7 +389,12 @@ func TestSignBig(t *testing.T) {
 // A package that cannot even compile with the change reverted is the strongest red there
 // is, and the parse of `go test` output must read it that way: there are no per-test
 // result lines to count, and counting none would report the tests as green.
-func TestMutateCountsABuildFailureAsRed(t *testing.T) {
+// A build failure on the reverted side is NOT a kill (#1807). This shape -- a new symbol
+// with a test that genuinely asserts on it -- is the honest cost of that rule: mutate
+// cannot tell it apart from a call-only test that asserts nothing, so it is skipped with
+// the reason that says why and the accept gate rejects it as vacuous-test. The remedy for
+// a new-API card is mutation-kill's seed form (T13), not a control that cannot see.
+func TestMutateDoesNotCountABuildFailureAsAKill(t *testing.T) {
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "newapi")
 	write(t, dir, "sign/sign.go", `package sign
@@ -431,8 +436,11 @@ func TestAbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Pass || res.Green != 0 || res.Red != 2 {
-		t.Fatalf("build failure not counted red: pass=%v red=%d green=%d greens=%v", res.Pass, res.Red, res.Green, res.Greens)
+	if res.Pass || res.Red != 0 {
+		t.Fatalf("a build failure on the reverted side was scored as a kill: pass=%v red=%d green=%d greens=%v", res.Pass, res.Red, res.Green, res.Greens)
+	}
+	if len(res.Skips) != 1 || !strings.HasPrefix(res.Skips[0].Reason, SkipRevertNoCompile) {
+		t.Fatalf("the skip does not say the revert would not compile: %+v", res.Skips)
 	}
 }
 
@@ -473,7 +481,11 @@ func TestAbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Pass {
+	// The proof that the added file was REMOVED rather than checked out is that the
+	// revert got as far as a compile that then failed for want of it: `git checkout
+	// <base> -- sign/abs.go` would have made Mutate return an error instead. Since #1807
+	// that compile failure is a skip and not a kill, so the skip is the observable.
+	if len(res.Skips) != 1 || !strings.HasPrefix(res.Skips[0].Reason, SkipRevertNoCompile) {
 		t.Fatalf("an added file was not reverted: red=%d green=%d greens=%v skips=%v", res.Red, res.Green, res.Greens, res.Skips)
 	}
 }
