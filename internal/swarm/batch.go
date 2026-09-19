@@ -472,6 +472,7 @@ func Batch(in BatchInput) int {
 			tickC, stopTicker := clk.NewTicker(idlePollInterval)
 			defer stopTicker()
 			lastSize := make([]int64, len(procs))
+			lastStore := make([]string, len(procs))
 			var lastSample time.Time
 			for {
 				select {
@@ -499,11 +500,41 @@ func Batch(in BatchInput) int {
 						if procs[i].done || procs[i].idleKilled {
 							continue
 						}
+						// EVERY SIGNAL IS SAMPLED BEFORE ANY OF THEM DECIDES, and that is not
+						// a tidiness. The CPU check below keeps STATE -- the previous sample
+						// it compares against -- so a signal above it that said "alive" and
+						// jumped to the next card would leave that state unset, and the tree
+						// would have no baseline to have grown from on the tick after. A card
+						// with a harness store would then never establish one at all. So each
+						// check records what it saw and sets `active`; the decision is one
+						// place, at the bottom.
+						active := false
 						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
 						if size != lastSize[i] {
 							lastSize[i] = size
-							procs[i].lastGrow = now
-							continue
+							active = true
+						}
+						// A SILENT LOG AND A STILL TREE ARE NOT A STILL CARD EITHER, when the
+						// card is waiting on the provider. A `MODE: explore` card spends most
+						// of its window blocked on an HTTP response: it writes no byte to its
+						// log, and a process blocked on the network spends none of the CPU the
+						// check below is looking for. On the Studio, 2026-09-19 14:58Z, that
+						// cost a healthy card that had cloned, branched and was walking a
+						// source file -- `ABSTAIN reason=idle=300 log=1730`, no RESULT.md, and
+						// its spend reported as zero.
+						//
+						// The provider's answers land in the harness's OWN STORE, under the
+						// card's data home -- the same database `native` samples its usage
+						// from (#1712). A store that GREW since the last poll is a turn that
+						// came back, which is progress this monitor can measure where the
+						// provider actually leaves it. It is read for its growth exactly as
+						// the log is: a store written once at startup and still ever since
+						// certifies nothing, and the card is on the clock like any other.
+						if stamp := cardStoreStamp(in.Root, procs[i].scratch); stamp != "" {
+							if stamp != lastStore[i] {
+								lastStore[i] = stamp
+								active = true
+							}
 						}
 						// A silent log is not a silent card: a harness inside a `go test` that
 						// prints nothing for minutes is working, and its work is CPU its process
@@ -534,14 +565,17 @@ func Batch(in BatchInput) int {
 								// fraction of the interval; one percent separates the
 								// two by orders of magnitude on both platforms.
 								if grew && cpu-prev >= uint64(sampleSpan)/100 {
-									procs[i].lastGrow = now
-									continue
+									active = true
 								}
 								if shrank {
-									procs[i].lastGrow = now
-									continue
+									active = true
 								}
 							}
+						}
+						// THE ONE DECISION. A card is alive when ANY of the three moved.
+						if active {
+							procs[i].lastGrow = now
+							continue
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							// A card that already published a result is finishing, not
@@ -1145,6 +1179,80 @@ func logSize(path string) int64 {
 		return 0
 	}
 	return fi.Size()
+}
+
+// cardStoreStamp is the growth signal of a card's own harness store: the database the
+// harness writes every turn into the card's data home, at the standard locations
+// `OpenCodeStoreLocations` already names for the usage reader.
+//
+// THE STAMP IS SIZES AND THE WAL-INDEX HEADER, NEVER MODIFICATION TIMES. This package's own
+// class test in `revision_test.go` admits a modification-time read in two files and this is
+// not one of them.
+//
+// SIZES ALONE ARE NOT ENOUGH, and that is measured rather than argued. With stock settings
+// (`journal_size_limit = -1`) SQLite RESETS THE WAL IN PLACE after the first autocheckpoint:
+// it keeps its high-water mark and writes the next transactions back over the front of it.
+// Two hundred rows and then six commits moved none of `<db>`, `<db>-wal` or `<db>-shm` by a
+// byte of length (Fable's cold read of this change, 2026-09-19). A harness at a steady state
+// of commits would read as STILL -- the exact fault this whole change exists to close,
+// reintroduced one layer down. Apple's `sqlite3` CLI sets a 32768-byte limit and hides it;
+// the SQLite inside the harness is unverified, so the stock behaviour is the one to assume.
+//
+// THE WAL-INDEX HEADER IS WHAT MOVES. `<db>-shm`'s first 48 bytes hold two copies of the
+// record SQLite rewrites at EVERY commit -- a change counter and `mxFrame` among them -- at
+// a constant file length. Those bytes are read, and nothing else is: this is a liveness
+// probe, not a reader of anybody's data. There is no parse, no field is interpreted, and the
+// question stays the only one this monitor asks -- did the harness move -- never what it
+// said. A header that cannot be read (the file is gone between the stat and the open, or the
+// platform will not map it) contributes nothing and the sizes still stand.
+//
+// An empty stamp means NO STORE AT EITHER LOCATION, which is not a signal in either
+// direction: a card whose harness has not written one yet, and every runner that is not this
+// harness, keep exactly the log-and-CPU behaviour they have today.
+func cardStoreStamp(root, scratch string) string {
+	var b strings.Builder
+	for _, db := range OpenCodeStoreLocations(filepath.Join(root, scratch, "data")) {
+		seen := false
+		for _, path := range []string{db, db + "-wal", db + "-shm"} {
+			fi, err := os.Stat(path)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			fmt.Fprintf(&b, "%s:%d;", path, fi.Size())
+			seen = true
+		}
+		// The header only when there is a store here: an empty stamp has to keep meaning NO
+		// STORE, because that is what tells the monitor to leave the log-and-CPU behaviour
+		// alone. A `<db>:;` for a card that has no database would be a non-empty stamp for
+		// every runner in the world.
+		if seen {
+			fmt.Fprintf(&b, "%s:%x;", db, walIndexHeader(db+"-shm"))
+		}
+	}
+	return b.String()
+}
+
+// walIndexHeaderBytes is how much of `<db>-shm` the stamp above folds in: the wal-index
+// header, two copies of a 24-byte record at the very front of the file. Nothing past it is
+// read -- the rest is a hash table whose size tracks the WAL, and the stamp already has that
+// file's length.
+const walIndexHeaderBytes = 48
+
+// walIndexHeader is those bytes, or nil when there is no readable `-shm` there. A short file
+// yields what it has: a harness that has just created the index is mid-write, not a caller
+// error, and the bytes it does hold still differ from the bytes it will hold next.
+func walIndexHeader(path string) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, walIndexHeaderBytes)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && n == 0 {
+		return nil
+	}
+	return buf[:n]
 }
 
 // cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,
