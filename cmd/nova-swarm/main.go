@@ -505,6 +505,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	id := f.fs.String("id", "", "")
 	root := f.fs.String("root", "", "")
 	idle := f.fs.Int("idle", 300, "")
+	// THE FREE TIER THAT QUEUES FOREVER (nova-tools#917). --max-inflight caps how many of
+	// this batch's cards run against ONE provider/model/key at a time, and --stall-after
+	// ends a card that has produced no first token in that many seconds. Both default to
+	// zero, which is off, which is the behaviour every existing caller has today.
+	maxInflight := f.fs.Int("max-inflight", 0, "")
+	stallAfter := f.fs.Int("stall-after", 0, "")
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
 	then := f.fs.String("then", "", "")
@@ -537,7 +543,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
 			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
 				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
@@ -692,7 +698,7 @@ func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	return in
 }
 
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile string, route routeFlags, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
@@ -734,8 +740,10 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 	}
 	return swarm.Batch(swarm.BatchInput{
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
-		Idle:  time.Duration(idle) * time.Second,
-		Cards: cards, Root: root, Runner: runner,
+		Idle:        time.Duration(idle) * time.Second,
+		MaxInflight: maxInflight,
+		StallAfter:  time.Duration(stallAfter) * time.Second,
+		Cards:       cards, Root: root, Runner: runner,
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
 		SlotsStore: slotsStore, SlotOwner: slotOwner,
