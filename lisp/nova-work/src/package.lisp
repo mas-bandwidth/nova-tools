@@ -313,6 +313,10 @@
     #:node-children
     #:roadmap-create
     #:node-move
+    ;; `dep --add` / `dep --remove`: the edge as a verb (SPEC-WORK.md:987, :2362)
+    #:dep-edit
+    #:%dep-submit
+    #:node-structure-log
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note

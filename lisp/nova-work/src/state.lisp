@@ -608,6 +608,49 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     (unless node
       (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (ecase (work-event-kind event)
+      (:structure
+       ;; SPEC-WORK.md:2362 -- a structure verb appends one structure event; its
+       ;; `:verb` names the verb (`dep`) and v1's body fixes the field order at
+       ;; :987. `dep` edits the `:deps` reference edge, so the forward edge, the
+       ;; reverse edge and the append-only structure log are all rebuilt here
+       ;; and a canonical replay reconstructs the same edge the live path did
+       ;; (nova-tools#1673, #785).
+       (let* ((fields (work-event-fields event))
+              (verb (getf fields :verb))
+              (add (getf fields :add +absent+))
+              (remove (getf fields :remove +absent+))
+              (reason (getf fields :reason +absent+)))
+         (unless (eq verb :dep)
+           (error 'unsupported-input
+                  :what (format nil "unsupported: structure verb ~A is not in slice 1"
+                                (if verb (string-downcase (princ-to-string verb)) "-"))))
+         (when (and (stringp add) (plusp (length add)))
+           (unless (member add (wnode-deps node) :test #'equal)
+             (setf (wnode-deps node) (append (wnode-deps node) (list add)))
+             (let ((target (%node-quiet state add)))
+               (when target
+                 (setf (wnode-dependents target)
+                       (append (wnode-dependents target) (list id)))))))
+         (when (and (stringp remove) (plusp (length remove)))
+           (setf (wnode-deps node) (remove remove (wnode-deps node) :test #'equal))
+           (let ((target (%node-quiet state remove)))
+             (when target
+               (setf (wnode-dependents target)
+                     (remove id (wnode-dependents target) :test #'equal)))))
+         ;; Removing the need that raised a `needs-broken` clears it again when
+         ;; every remaining need is terminal. Adding one never raises it: a
+         ;; fresh unmet need is simply not ready (`ready-p`), not broken.
+         (when (and (eq verb :dep) (wnode-needs-broken node))
+           (setf (wnode-needs-broken node)
+                 (not (every (lambda (dep) (%need-terminal-p state dep))
+                             (wnode-deps node)))))
+         (push (list :op :structure :kind :structure :verb verb
+                     :node id :add add :remove remove
+                     :by (work-event-by event) :reason reason
+                     :request (work-event-request event)
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wnode-meta-log node))))
       (:edit
        ;; The five permitted metadata fields, each a tagged patch.
        (dolist (field *metadata-fields*)

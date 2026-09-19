@@ -54,7 +54,13 @@
     ;; the containment forest.
     (:receipt      :change :offer :attempt :reply :stage :provenance
                    :provenance-sha256 :reason)
-    (:receipt-seal :offer :reply :sender :receipt-digest :effect))
+    (:receipt-seal :offer :reply :sender :receipt-digest :effect)
+    ;; The structure verbs (SPEC-WORK.md:2362): `dep` is the first, and v1's own
+    ;; body fixes its field order at :987 -- `dep` -- `:verb`, `:add`, `:remove`,
+    ;; `:reason`. It is an EVENT so a `dep --add`/`--remove` is journaled,
+    ;; replayed and deduplicated like every other mutation, which is what makes
+    ;; the edge survive a restart (nova-tools#1673, #785).
+    (:structure  :verb :add :remove :reason))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")
