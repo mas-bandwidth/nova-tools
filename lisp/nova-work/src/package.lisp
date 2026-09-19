@@ -754,6 +754,27 @@
    #:registry-apply-cancel-record
    #:registry-cancellation-of
    #:registry-operation-cancel
+   ;; the event cursor and the bounded block `operation wait` is
+   ;; (SPEC-WORK.md:2736-2740, :2759)
+   #:*operation-event-cap*
+   #:*operation-wait-page*
+   #:*operation-terminal-states*
+   #:terminal-operation-state-p
+   #:operation-event-stream
+   #:operation-event-stream-p
+   #:operation-event-stream-count
+   #:operation-event-stream-cap
+   #:operation-cell
+   #:ensure-operation-event-stream
+   #:no-such-operation-line
+   #:operation-emit-event
+   #:operation-settle
+   #:operation-notify
+   #:operation-event-page
+   #:operation-row-line
+   #:durable-operation-wait
+   #:session-recovery-journal-path
+   #:open-session-operation-registry
    #:session-operation-list
    #:registry-operation-list
    #:work-session-cancellations

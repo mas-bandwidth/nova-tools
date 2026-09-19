@@ -177,4 +177,14 @@ never claimed cancelled (SPEC-WORK.md:2740-2744)."
                                                      :stamp stamp
                                                      :disposition disposition))
           (setf (getf (cdr cell) :state) disposition)
+          ;; A waiter must not go on blocking behind a disposition that is
+          ;; already durable (SPEC-WORK.md:2740-2743).
+          (operation-notify registry id)
           (values (list :id id :state disposition :request request) nil 0 nil)))))
+
+(defun open-session-operation-registry (session &key (capacity 64))
+  "The resident session's own operation registry, over the local recovery
+journal beside its path. A restart of that session finds every operation id a
+caller was ever told about (SPEC-WORK.md:2729-2733)."
+  (open-durable-operation-registry (session-recovery-journal-path session)
+                                   :capacity capacity))
