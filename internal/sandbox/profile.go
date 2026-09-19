@@ -7,7 +7,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/profiles"
 )
 
-// The five markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of
+// The six markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of
 // these is replaced; the template's own header says what each becomes, and this file is
 // the only thing that fills them. Rule 15: the policy is generated, never hand-edited,
 // and the tool never accepts a caller-supplied profile file.
@@ -15,6 +15,7 @@ const (
 	markerOptRoots  = "@@OPTROOTS@@"
 	markerAncestors = "@@ANCESTORS@@"
 	markerReads     = "@@READS@@"
+	markerNoExec    = "@@READSNOEXEC@@"
 	markerWrites    = "@@WRITES@@"
 	markerNet       = "@@NET@@"
 )
@@ -51,10 +52,22 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
 	}
 
-	var reads, writes []string
+	var reads, noExec, writes []string
 	for i, r := range p.Reads {
 		name := fmt.Sprintf("READ%d", i)
 		reads = append(reads, fmt.Sprintf("(allow file-read* (subpath (param %q)))", name))
+		params = append(params, name+"="+r)
+	}
+	// --read-noexec: READABLE AND NOT EXECUTABLE. This profile grants
+	// (allow process-exec* process-fork) once and globally, so on darwin readable IS
+	// executable unless the exec is taken back -- and SBPL's last matching rule wins, so
+	// the deny has to be emitted, and has to be emitted after the global grant and after
+	// the @@READS@@ block. The template puts the marker there and says why.
+	for i, r := range p.ReadsNoExec {
+		name := fmt.Sprintf("NOEXEC%d", i)
+		noExec = append(noExec,
+			fmt.Sprintf("(allow file-read* (subpath (param %q)))", name),
+			fmt.Sprintf("(deny process-exec* (subpath (param %q)))", name))
 		params = append(params, name+"="+r)
 	}
 	for i, w := range p.Writes {
@@ -93,6 +106,7 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		markerOptRoots:  strings.Join(optRoots, "\n"),
 		markerAncestors: strings.Join(ancestors, "\n"),
 		markerReads:     strings.Join(reads, "\n"),
+		markerNoExec:    strings.Join(noExec, "\n"),
 		markerWrites:    strings.Join(writes, "\n"),
 		markerNet:       net,
 	}

@@ -2283,6 +2283,60 @@ must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
 
+### The bench toolchain inside the wall
+
+Because `GOTOOLCHAIN=local` is pinned, the bench's own Go must be reachable
+inside the wall. `nova-swarm native` therefore names the provisioning standard's
+toolchain roots on the wall's argv, read-only and skipped when one is not there.
+It is **one list with two kinds, per operating system**.
+
+On **every** bench:
+
+- `~/sdk` (Go and sbcl) as `--read`, which carries execute, so
+  `~/sdk/go1.26.5/bin/go` runs. Without it a card was denied the bench's `go`
+  and fell back to `/usr/bin/go`, which `go.mod` refuses. It is the only home
+  directory the wall grants execute on.
+- `~/go/pkg/mod`, the module cache, as `--read-noexec`: readable and **not
+  executable**. A card reads a dependency's sources out of it and never runs
+  them, and the bench user can write to that tree, so execute there would put a
+  dependency's own files one exec away from running inside the wall.
+
+On a **Mac** bench the toolchains are installed and on `PATH` rather than
+unpacked into a home, and each one finds its own runtime beside the launcher
+that ran it — so inside the wall, without its tree, `go` says `cannot find GOROOT
+directory: 'go' binary is trimmed`, `java` says `Unable to locate a Java Runtime`
+and `dotnet` says `Failed to resolve full path of the current executable []`
+(measured on the M2 Air, 2026-09-18). Darwin therefore also names, all as
+`--read` because all of them are runtimes a card runs:
+
+- `/opt/homebrew/Cellar/go` and `/opt/homebrew/Cellar/sbcl`, each narrowed to
+  the one version directory this bench runs — read off the launcher, the way
+  `readlink -f "$(command -v go)"` does, so a `brew upgrade` needs no edit here.
+- `/opt/homebrew/opt/openjdk` and `/Library/Java/JavaVirtualMachines` for
+  `java`, and `/usr/local/share/dotnet` for `dotnet`.
+
+Each is skipped when it is not installed, and each reaches the argv resolved
+through its symlinks, because the wall checks the resolved target — on the Air
+`/opt/homebrew/opt/openjdk` resolves to `/opt/homebrew/Cellar/openjdk/27`.
+
+One narrowing, measured: with the JDK tree granted, that JDK runs inside the
+wall, but the `/usr/bin/java` **stub** still says `Unable to locate a Java
+Runtime`, because it asks `/usr/libexec/java_home`, which needs a system service
+the wall denies rather than a path anyone can grant. A Java card sets
+`JAVA_HOME`, and then the stub works too.
+
+No launcher directory is ever a toolchain root. `~/go/bin` is granted under
+NEITHER kind — it is GOPATH/bin, a card that could exec it could run bench-user
+tools, and read-without-execute buys nothing in a directory of binaries.
+`~/go/bin/go` still works, because it is a symlink into `~/sdk` and the kernel
+checks the resolved target; `/opt/homebrew/bin` is out for the same reason, and
+the Cellar tree behind it is what is granted. No other path under your home is
+granted: not `~/.config/nova-secrets`, not `~/.ssh`. The list and each root's
+kind live in `internal/swarm/toolchain.go` and are checked, per OS and in both
+directions, against `tools/bench-standard.sh` and `nova-pulse fleet standard`'s
+own `toolchain-*` checks by a test, so provisioning and the wall cannot drift
+apart.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
@@ -2292,15 +2346,28 @@ on your machine before use.
 The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md), and `nova-swarm`
 reaches for it per job through `--sandbox`.
 
-Two lists and no defaults. `--read <dir>` is readable and **not** writable, so N
-workers share one copy of an input named once; `--write <dir>` is readable and
-writable and is **required**, because a command with no writable directory is a
-misconfiguration and not a tighter sandbox. Everything else on disk is denied,
-the credential file included — which is the whole point: the key stays with the
-person who owns it, and the wall is what says so.
+Three lists and no defaults. `--read <dir>` is readable and **not** writable, so
+N workers share one copy of an input named once; `--read-noexec <dir>` is the
+same grant **without execute**; `--write <dir>` is readable and writable and is
+**required**, because a command with no writable directory is a misconfiguration
+and not a tighter sandbox. Everything else on disk is denied, the credential file
+included — which is the whole point: the key stays with the person who owns it,
+and the wall is what says so.
 
-**Every path is yours and none is guessed.** A `--read`, a `--write`, a `--cwd`
-or a `--tmp` that does not exist is a refusal and is never created, and `HOME`
+**`--read` carries execute; `--read-noexec` is how you say it must not.**
+Landlock's read subset is `EXECUTE|READ_FILE|READ_DIR` and the darwin profile
+grants `process-exec*` globally, so under `--read` a program anywhere in the tree
+RUNS. For a cache or a data tree this user can write to — a module cache, a
+`node_modules`, a downloads directory — that is a way in, and `--read-noexec`
+grants the reading and takes the execute back (on darwin as a last-wins
+`deny process-exec*` after the global grant, on linux by dropping `fsExecute`
+from the rule). A path named in both lists is a **refusal**, not a merge: one
+asks for execute and the other takes it away. The `SANDBOX OK` and `POLICY OK`
+lines count the two separately, `read=<n> read-noexec=<n>`.
+
+**Every path is yours and none is guessed.** A `--read`, a `--read-noexec`, a
+`--write`, a `--cwd` or a `--tmp` that does not exist is a refusal and is never
+created, and `HOME`
 must resolve **inside a `--write`** — the caller sets it — because almost every
 tool derives a path from it and an inherited `HOME` is denied by the wall. That
 is one flag on every line below, and leaving it off is the first thing a first
@@ -2354,7 +2421,8 @@ What a first run gets wrong, and what each one wants:
   not sequenced into one run per mistake (nova-tools #104).
 - **A toolchain outside the wall.** A command that runs outside the wall and
   dies inside it is missing a `--read`: a toolchain in a user directory is
-  exactly a caller-supplied read-only root, so name it.
+  exactly a caller-supplied read-only root, so name it. Name a cache or a data
+  tree with `--read-noexec` instead, and keep `--read` for what the job runs.
 - **A `--cwd` outside every named path.** It denies `getcwd(3)`, and every git
   command dies there before it reads anything.
 - **Expecting a network promise without asking for one.** Without `--net-deny`

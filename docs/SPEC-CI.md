@@ -1223,6 +1223,59 @@ so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
 
+### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
+
+**The rule.** `internal/swarm/toolchain.go` is the ONE list of the bench
+toolchain roots the sandbox wall grants a card, **per GOOS**, and each root
+carries its KIND: `~/sdk` read **and execute**, `~/go/pkg/mod` read **without**
+execute, `~/go/bin` granted under neither, and on darwin the installed trees
+(`/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`,
+`/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`,
+`/usr/local/share/dotnet`) read **and execute**, never a launcher directory.
+Each OS's side of the agreement is that OS's provisioning standard:
+`tools/bench-standard.sh` carries the linux names between its
+`NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
+`pulse.FleetStandardChecks`'s `toolchain-*` checks carry both OSes' — a linux
+root **demanded**, a darwin root **reported**, because a Mac's toolchains are
+installed rather than provisioned into a home. Both `docs/SPEC-SWARM.md` and
+`docs/CLI.md` name every granted root.
+**The hurt.** Two contracts named the same paths in two places and disagreed: the
+provisioning standard put Go under `~/sdk`, the wall's implicit worker
+description named no toolchain root at all and pinned `GOTOOLCHAIN=local`, so
+every Go card on hulk was denied EXECUTION of the bench's own `go`, fell back to
+`/usr/bin/go` 1.22.2 and died on `go: go.mod requires go >= 1.26` (the schema
+dogfood loop, 2026-09-18). The kind half is Johnny's security read of `#1364`: a
+`--read` root CARRIES EXECUTE on both wall bodies, so the first fix was one
+review away from handing a card execute over the module cache and `~/go/bin`.
+The per-OS half is the same day's darwin face, measured on the M2 Air: a Mac's
+toolchains are INSTALLED and on `PATH`, and three of them still died inside the
+bare wall — `go: cannot find GOROOT directory: 'go' binary is trimmed`,
+`dotnet: Failed to resolve full path of the current executable []`, `java: Unable
+to locate a Java Runtime` — because each resolves its runtime from the directory
+of the launcher that ran it and that launcher is a symlink OUT of any granted
+tree. One list for every OS would have left the Mac benches dead.
+**The test.** `TestBenchStandardAndTheWallNameTheSameToolchainRoots`
+(`internal/ci/toolchainroots_class_test.go`), per OS and checked in BOTH
+directions — a root the wall grants that the standard does not name is a wall
+granting a path that will not be there, and a root the standard names that the
+wall does not grant is the original bug returning — plus the kinds by name and
+the refusal of any `.../bin`.
+**Its allowlist.** None. The list is read from the one source at run time, over
+every OS it speaks for (`swarm.ToolchainRootOSes`), so a root — or an OS — added
+tomorrow is held to the standard and to a kind on the day it appears.
+**Its remedy line.** `the <os> provisioning standard and the wall name different
+toolchain roots … They are ONE list. Edit both sides together`, and for a kind,
+`the wall grants the module cache ~/go/pkg/mod EXECUTE: it is the
+read-without-execute kind`.
+**Its narrowings.** It reads the declaration, not a running wall: that the two
+kinds are ENFORCED is proved by the wall's own tests on both bodies
+(`TestLandlockReadNoExecReadsAndRefusesToExecute`,
+`TestReadNoExecReadsAndRefusesToExecuteOnDarwin`), that the argv carries each
+root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots` and, on a
+Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
+Cellar prefix is read off the launcher rather than guessed by
+`TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with

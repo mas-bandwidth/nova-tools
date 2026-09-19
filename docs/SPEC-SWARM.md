@@ -930,6 +930,82 @@ pin. `--no-shared-caches` restores the old behaviour exactly, with no names set 
 caches under `HOME`, for a bench that wants one slot's caches isolated; the slot's data home
 layout is otherwise untouched.
 
+**The wall reads the bench's toolchain roots, because the standard puts the toolchain in a
+user directory.** The bench provisioning standard installs Go and sbcl under `~/sdk`, puts
+`~/go/bin` on the runner units' `PATH`, and leaves the bench's module cache at
+`~/go/pkg/mod`. The wall named none of them, so a card inside it was denied EXECUTION of the
+bench's own `go` (`Permission denied`), the only reachable Go was the distribution's
+`/usr/bin/go` under the `/usr` root, and `GOTOOLCHAIN=local` — which is right, and stays —
+turned that into `go: go.mod requires go >= 1.26 (running go 1.22.2; GOTOOLCHAIN=local)` on
+every Go card on hulk (found by the schema dogfood loop, 2026-09-18). Two contracts
+contradicted each other. So `native`'s implicit worker description now names those
+roots exactly as `read_roots` names one for an explicit worker: **read-only**, and
+**skipped if absent** — rule 5 refuses a path that is not there, and a darwin bench has no
+`~/sdk`. It is **ONE LIST WITH TWO KINDS**, because a `--read` root CARRIES EXECUTE on both
+bodies (landlock's read subset is `EXECUTE|READ_FILE|READ_DIR`, and the darwin profile
+grants `process-exec*` globally):
+
+- **`~/sdk` as `--read`**, read and execute. It is the Go the card must run, and it is the
+  only home directory the wall grants execute on.
+- **`~/go/pkg/mod` as `--read-noexec`**, read WITHOUT execute. The card reads a module's
+  sources out of the cache and never runs them; every `go mod download` on the bench lands
+  there and the bench user can write to it, so the exec-carrying kind would put a
+  dependency's own files one exec away from running inside the wall.
+
+`~/go/bin` is granted under NEITHER kind: it is GOPATH/bin, every `go install` lands there,
+the bench user can write to it, a card that could exec that tree could run bench-user tools
+inside the wall, and read-without-execute buys nothing in a directory of binaries. Nothing
+is lost — `~/go/bin/go` is a symlink into the sdk tree and the kernel checks the resolved
+target, so a card whose `PATH` finds it first still runs the granted toolchain, while a real
+binary sitting in that directory is `Permission denied` (measured on hulk). The same rule is
+why no launcher directory appears on the darwin side either.
+
+**The list is PER GOOS, because the same hurt has a darwin face.** A Mac bench's toolchains
+are INSTALLED and on `PATH` rather than unpacked into a home, and inside the bare wall three
+of them died on the M2 Air (measured 2026-09-18) — each resolves its own runtime FROM THE
+DIRECTORY OF THE LAUNCHER THAT RAN IT, and that launcher is a symlink out of any granted
+tree:
+
+```
+go: cannot find GOROOT directory: 'go' binary is trimmed
+dotnet: Failed to resolve full path of the current executable []
+java: Unable to locate a Java Runtime
+```
+
+`/opt/homebrew/bin/go` is a symlink into `/opt/homebrew/Cellar/go/1.27.1/libexec`, and the
+remedy measured by hand was to name that tree: `--read /opt/homebrew/Cellar/go/1.27.1`. So
+darwin keeps both home roots — a Mac provisioned to the darwin standard has `~/sdk`, and
+every Mac that has built Go has `~/go/pkg/mod` — and adds the installed trees, every one of
+them `--read` because every one of them is a runtime the card RUNS:
+`/opt/homebrew/Cellar/go` and `/opt/homebrew/Cellar/sbcl`, each reduced to the ONE version
+directory this bench runs by reading it off the launcher (`readlink -f "$(command -v go)"`,
+so a `brew upgrade` is not a stale literal here); `/opt/homebrew/opt/openjdk` and
+`/Library/Java/JavaVirtualMachines` for `java`; and `/usr/local/share/dotnet` for `dotnet`.
+Each is skipped when it is not there — a Mac with no .NET is a Mac with no .NET — and each
+reaches the argv RESOLVED THROUGH ITS SYMLINKS, because the grant is checked against the
+resolved target and `/opt/homebrew/opt/openjdk` is itself a link into the Cellar (on the Air
+it resolves to `/opt/homebrew/Cellar/openjdk/27`). The grant is on the toolchain TREE and
+never on `/opt/homebrew/bin`, which is a writable directory holding a launcher for every
+formula on the machine. Measured inside the wall on the Air with the roots granted:
+`go version go1.27.1 darwin/arm64`, `SBCL 2.6.8`, `dotnet` `10.0.401`, the brewed JDK's own
+`java -version` `openjdk version "27"` — and a script planted in `~/go/bin` still
+`Operation not permitted`.
+
+ONE NARROWING, and it is not a missing root: the `/usr/bin/java` STUB still answers `Unable
+to locate a Java Runtime` inside the wall, because it asks `/usr/libexec/java_home`, which
+needs a macOS system service the wall denies rather than a path anyone can grant. The JDK at
+the granted root runs, and the stub works too once a Java card sets `JAVA_HOME`.
+
+The list is written ONCE, in `internal/swarm/toolchain.go`, the kind is part of it, and each
+OS's entries are that OS's provisioning standard read back: `tools/bench-standard.sh` carries
+the linux names between its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
+`nova-pulse fleet standard`'s check table carries both OSes' — demanding a linux root,
+reporting a darwin one. A class test in `internal/ci` fails, per OS and in both directions,
+when the lists disagree. Nothing else under `HOME` is named: not `~/.config/nova-secrets`,
+not `~/.ssh`, not the home itself. The card's WRITABLE Go caches are still the bench-shared
+pair under `<root>/cache`; `~/go/pkg/mod` is the bench's own copy and is read-only inside the
+wall.
+
 **The harness's own fence is configured by the run, never left to its
 defaults** (issue #644). OpenCode asks before a tool touches a path it calls
 external, and a `run` with no terminal answers every such question by rejecting
