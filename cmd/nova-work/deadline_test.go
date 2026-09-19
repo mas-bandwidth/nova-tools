@@ -155,6 +155,57 @@ func TestAMalformedDeadlineRefusesBeforeAnythingIsDialled(t *testing.T) {
 	}
 }
 
+// An explicitly supplied --deadline with no value is a PRESENT but empty flag:
+// invalid RFC3339, not an omitted one, so it refuses before the dial exactly as
+// a malformed value does. Go's flag package accepts both --deadline= and the
+// two-argument --deadline "", so both spellings are exercised and neither may
+// reach the session.
+func TestAnExplicitEmptyDeadlineRefusesBeforeAnythingIsDialled(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"equals spelling", []string{"operation", "cancel", "--session", "session.sock", "--deadline="}},
+		{"two-argument spelling", []string{"operation", "cancel", "--session", "session.sock", "--deadline", ""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			socket, requests := fakeSession(t, sessionOKLine)
+			args := make([]string, 0, len(tc.args))
+			for _, a := range tc.args {
+				if a == "session.sock" {
+					a = socket
+				}
+				args = append(args, a)
+			}
+
+			var stdout, stderr bytes.Buffer
+			code := run(args, &stdout, &stderr, "")
+			if code != 2 {
+				t.Fatalf("explicit empty deadline exit = %d, want 2 (stderr = %s)", code, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("explicit empty deadline wrote stdout: %q", stdout.String())
+			}
+			line := strings.TrimSuffix(stderr.String(), "\n")
+			if strings.Count(stderr.String(), "\n") != 1 || !strings.HasSuffix(line, "run: nova-work help") {
+				t.Fatalf("explicit empty deadline refusal = %q, want one line ending \"run: nova-work help\"", stderr.String())
+			}
+			if !strings.Contains(line, "--deadline") || !strings.Contains(line, "no value") {
+				t.Fatalf("explicit empty deadline refusal = %q, want it naming --deadline and a missing value", line)
+			}
+			// A short timed receive, not awaitRequest: nothing may reach the
+			// session at all. Copy of the malformed case's grace shape.
+			const grace = 250 * time.Millisecond
+			select {
+			case got := <-requests:
+				t.Fatalf("the client dialled the session before refusing an explicit empty deadline: %q", got)
+			case <-time.After(grace):
+			}
+		})
+	}
+}
+
 func TestAnAbsentDeadlineStillSendsAndKeepsTheOrdinaryDefault(t *testing.T) {
 	socket, requests := fakeSession(t, sessionOKLine)
 

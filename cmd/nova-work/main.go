@@ -839,10 +839,33 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	if p, ok := strs["git-timeout"]; ok {
 		gitTimeout = *p
 	}
-	// The client sizes its own socket bound from --deadline, so this is the one
+	// Presence is separate from the value, and it comes from the FlagSet and
+	// from nothing else: `--deadline=`, `-deadline=` and `--deadline ""` all
+	// leave the string "", and a scan of args for the literal "--deadline"
+	// would disagree with the parser on at least one of them. Visit walks only
+	// the flags the caller actually set, where VisitAll walks every defined
+	// flag. The two empty states need opposite answers -- a supplied empty cap
+	// is invalid RFC3339 and refuses below, while a true omission keeps the
+	// ordinary finite default -- so presence is handed to deadlineParse rather
+	// than folded back into the empty string.
+	deadlineGiven := false
+	f.Visit(func(fl *flag.Flag) {
+		if fl.Name == "deadline" {
+			deadlineGiven = true
+		}
+	})
+	// A supplied-but-empty --deadline is PRESENT and invalid RFC3339, not an
+	// omitted flag: it must not silently fall back to the ordinary default. It
+	// is refused here, before guard (a) and before anything is dialled. A true
+	// omission is deadlineAbsent and keeps the ordinary default below. The
+	// client sizes its own socket bound from --deadline, so this is the one
 	// flag it PARSES AND USES rather than merely forwards; it must not act on a
 	// value it could not read, and an unreadable value is not an absent one.
-	if _, st := deadlineParse(deadline); st == deadlineMalformed {
+	_, state := deadlineParse(deadline, deadlineGiven)
+	if state == deadlineEmptyPresent {
+		return refused(stderr, "--deadline was given with no value; an explicit cap is invalid RFC3339, not an omitted flag")
+	}
+	if state == deadlineMalformed {
 		return refused(stderr, fmt.Sprintf("the deadline %s is not an instant; the client sizes its own bound from --deadline and will not send a request it cannot bound",
 			oneline.Field(deadline)))
 	}

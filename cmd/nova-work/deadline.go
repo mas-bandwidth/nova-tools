@@ -11,25 +11,38 @@ import (
 // wait plus a bounded 30-second transport allowance".
 const transportAllowance = 30 * time.Second
 
-// deadlineState is the three-valued answer a --deadline flag has: absent,
-// well-formed, or malformed. A bool cannot carry it, because its single false
-// is returned from two places for two inputs that need opposite answers:
-// silence takes the ordinary 30-second default, while a broken value refuses
-// before send, and no caller can recover which of the two it got.
+// deadlineState is the four-valued answer a --deadline flag has: absent,
+// well-formed, malformed, or supplied with no value. A bool cannot carry it,
+// because its single false is returned from two places for two inputs that need
+// opposite answers: silence takes the ordinary 30-second default, while a
+// broken value refuses before send, and no caller can recover which of the two
+// it got. Presence is the caller's act, separate from the value: `--deadline=`
+// and an omitted `--deadline` both leave the string "", so the parser is told
+// which of the two it is looking at rather than being left to guess from the
+// empty string alone.
 type deadlineState int
 
 const (
 	deadlineAbsent deadlineState = iota
 	deadlineWellFormed
 	deadlineMalformed
+	// deadlineEmptyPresent is a --deadline the caller supplied with no value.
+	// It is not absent: an explicit cap is invalid RFC3339 and refuses before
+	// the dial, while a true omission keeps the ordinary finite default.
+	deadlineEmptyPresent
 )
 
-// deadlineParse reads a --deadline stamp. A non-empty flag that does not parse
-// as RFC3339 is MALFORMED, not absent: the caller typed something. That
-// distinction is what lets the client refuse a value it cannot read rather than
-// silently substitute the ordinary default for an explicit cap.
-func deadlineParse(flag string) (time.Time, deadlineState) {
+// deadlineParse reads a --deadline stamp and whether the caller supplied it.
+// given separates the two empty strings Go's flag package hands back: a
+// non-empty flag that does not parse as RFC3339 is MALFORMED, not absent, and
+// an empty flag that was given is EMPTY-PRESENT, not absent. That distinction
+// is what lets the client refuse a value it cannot read or a cap it was not
+// handed rather than silently substitute the ordinary default.
+func deadlineParse(flag string, given bool) (time.Time, deadlineState) {
 	if flag == "" {
+		if given {
+			return time.Time{}, deadlineEmptyPresent
+		}
 		return time.Time{}, deadlineAbsent
 	}
 	at, err := time.Parse(time.RFC3339, flag)
@@ -40,12 +53,14 @@ func deadlineParse(flag string) (time.Time, deadlineState) {
 }
 
 // deadlineStamp is the two-valued view for the callers that only ask whether
-// there is a well-formed deadline to cap the local bound with: a false from an
-// absent flag and a false from a malformed one both mean "no bound to derive
-// here". The refusal for a malformed explicit deadline lives in sessionVerb,
-// before either of those callers is reached.
+// there is a well-formed deadline to cap the local bound with: a false from any
+// empty or malformed value means "no bound to derive here". It has no presence
+// to give and does not need one, because a --deadline supplied with no value
+// has no bound either way; the refusal for that fourth state lives in
+// sessionVerb, before either of these callers is reached, so this view is never
+// handed one in the real flow.
 func deadlineStamp(flag string) (time.Time, bool) {
-	at, st := deadlineParse(flag)
+	at, st := deadlineParse(flag, false)
 	return at, st == deadlineWellFormed
 }
 
