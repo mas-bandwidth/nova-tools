@@ -501,3 +501,109 @@ valid UTF-8 and the frame structurally parseable: a corrupt record, not a tear."
       (close-file-journal journal)
       (s19-remove-journal-files journal-path)
       (s19-delete-tree root))))
+
+;;; ------------------------------------------------------------------
+;;; the-journal-identity-is-32-bytes-from-the-os-csprng
+;;; docs/SPEC-WORK.md:451 -- a journal id is 256 random bits as 64 lowercase hex
+;;; characters, an identity and never an ownership token.
+;;; ------------------------------------------------------------------
+
+(defun s19-byte-source (bytes)
+  "A byte source that answers BYTES for any requested count."
+  (lambda (n)
+    (declare (ignore n))
+    bytes))
+
+(deftest "the-journal-identity-is-32-bytes-from-the-os-csprng"
+    "docs/SPEC-WORK.md:451"
+    "expected=the-id-is-the-known-32-bytes-lowercase-hex-and-two-real-mints-differ"
+  (let* ((bytes (make-array 32 :element-type '(unsigned-byte 8)
+                               :initial-contents (loop for i from 0 below 32 collect i)))
+         (expected "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+         (known (let ((nova-work::*journal-identity-byte-source*
+                       (s19-byte-source bytes)))
+                  (mint-journal-identity))))
+    ;; The 32 bytes are hex-encoded DIRECTLY -- not hashed into a well-formed
+    ;; digest -- so the identity is exactly the bytes' lowercase hex.
+    (check-equal 64 (length known) "the identity is not 64 characters")
+    (check-string= expected known
+                   "the identity is not the known 32 bytes' lowercase hex")
+    (check-string= (string-downcase known) known
+                   "the identity is not lowercase hex")
+    ;; With the seam unbound the real OS CSPRNG answers: two successive mints
+    ;; differ and each is 64 lowercase hex characters.
+    (let ((a (mint-journal-identity))
+          (b (mint-journal-identity)))
+      (check-equal 64 (length a) "a real mint is not 64 characters")
+      (check-equal 64 (length b) "a real mint is not 64 characters")
+      (check-string= (string-downcase a) a "a real mint is not lowercase hex")
+      (ok (string/= a b) "two successive real mints were equal: ~A" a))))
+
+;;; ------------------------------------------------------------------
+;;; a-short-csprng-read-refuses-and-mints-nothing
+;;; docs/SPEC-WORK.md:451 -- a source that falls short must refuse, never pad,
+;;; never hash, and never fall back; no journal or segment file is created.
+;;; ------------------------------------------------------------------
+
+(deftest "a-short-csprng-read-refuses-and-mints-nothing"
+    "docs/SPEC-WORK.md:451"
+    "expected=a-short-or-erroring-source-refuses-and-no-journal-or-segment-file-appears"
+  (let ((empty (s19-temp-dir)))
+    (unwind-protect
+         (progn
+           ;; a 31-byte answer is not 256 bits: refuse, naming the source.
+           (let ((refused nil))
+             (handler-case
+                 (let ((nova-work::*journal-identity-byte-source*
+                         (s19-byte-source
+                          (make-array 31 :element-type '(unsigned-byte 8)
+                                         :initial-element 7))))
+                   (mint-journal-identity))
+               (unsupported-input (c) (setf refused (format nil "~A" c))))
+             (ok refused "a 31-byte byte source minted an identity")
+             (ok (search "byte source" refused)
+                 "the refusal does not name the source: ~A" refused))
+           ;; a source that errors refuses too, naming the source.
+           (let ((refused nil))
+             (handler-case
+                 (let ((nova-work::*journal-identity-byte-source*
+                         (lambda (n)
+                           (declare (ignore n))
+                           (error 'unsupported-input
+                                  :what "the journal identity byte source could not be read"))))
+                   (mint-journal-identity))
+               (unsupported-input (c) (setf refused (format nil "~A" c))))
+             (ok refused "a signalling byte source minted an identity")
+             (ok (search "byte source" refused)
+                 "the refusal does not name the source: ~A" refused))
+           ;; a rotation that must mint for a legacy journal refuses at the
+           ;; rotation call site and publishes no new segment.
+           (let* ((rotdir (s19-temp-dir))
+                  (journal-path (format nil "~Alegacy.journal" (namestring rotdir)))
+                  (init (s19-init-digest))
+                  (journal (open-file-journal journal-path :initial-state-hash init)))
+             (unwind-protect
+                  (progn
+                    (close-file-journal journal)
+                    (s19-strip-identity journal-path)
+                    (let ((refused nil))
+                      (handler-case
+                          (let ((nova-work::*journal-identity-byte-source*
+                                  (s19-byte-source
+                                   (make-array 31 :element-type '(unsigned-byte 8)
+                                                  :initial-element 9))))
+                            (rotate-file-journal journal-path :root rotdir :retained-ids '()))
+                        (unsupported-input (c) (setf refused (format nil "~A" c))))
+                      (ok refused "a rotation minted from a short byte source")
+                      (ok (null (probe-file (format nil "~A.2.candidate" journal-path)))
+                          "a candidate segment was left on disk")
+                      (ok (null (probe-file (format nil "~A.2" journal-path)))
+                          "a segment was published")))
+               (ignore-errors (close-file-journal journal))
+               (s19-remove-journal-files journal-path)
+               (s19-delete-tree rotdir)))
+           ;; nothing was written to the empty directory.
+           (ok (null (directory (merge-pathnames "*.*" empty)))
+               "a journal or segment file was created: ~S"
+               (directory (merge-pathnames "*.*" empty))))
+      (s19-delete-tree empty))))

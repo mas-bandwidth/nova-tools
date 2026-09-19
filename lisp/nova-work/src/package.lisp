@@ -1683,6 +1683,7 @@
     ;; the stable logical journal identity and the real journal rotation
     ;; (src/journal-identity.lisp, src/journal-rotate.lisp, SPEC-WORK.md:471-482,
     ;; :7176-7182)
+    #:*journal-identity-byte-source*
     #:mint-journal-identity
     #:header-journal-identity
     #:journal-header-line

@@ -21,13 +21,75 @@
 
 (in-package #:nova-work)
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (require :sb-posix))
+
+(defun read-os-random-bytes (n)
+  "Read exactly N bytes from the operating system CSPRNG and answer them as a
+fresh byte vector. A short read, an end of file or any error signals
+UNSUPPORTED-INPUT naming the source: this reader never pads, never retries
+forever and never falls back to a weaker source, because a guessable journal id
+is worse than no journal (docs/SPEC-WORK.md:451)."
+  (declare (type (integer 0) n))
+  #+sbcl
+  (let ((fd -1)
+        (buf (make-array n :element-type '(unsigned-byte 8)))
+        (filled 0))
+    (unwind-protect
+         (progn
+           (setf fd (handler-case (sb-posix:open "/dev/urandom" sb-posix:o-rdonly)
+                      (error (c)
+                        (error 'unsupported-input
+                               :what (format nil "the OS CSPRNG source /dev/urandom could not be opened: ~A; no journal identity can be minted" c)))))
+           (when (or (null fd) (minusp fd))
+             (error 'unsupported-input
+                    :what "the OS CSPRNG source /dev/urandom could not be opened; no journal identity can be minted"))
+           (loop while (< filled n) do
+             (let ((got (handler-case
+                            (sb-sys:with-pinned-objects (buf)
+                              (sb-posix:read fd
+                                             (sb-sys:sap+ (sb-sys:vector-sap buf) filled)
+                                             (- n filled)))
+                          (error (c)
+                            (error 'unsupported-input
+                                   :what (format nil "the OS CSPRNG source /dev/urandom read failed: ~A; no journal identity can be minted" c))))))
+               (when (or (null got) (<= got 0))
+                 (error 'unsupported-input
+                        :what (format nil "the OS CSPRNG source /dev/urandom returned a short read after ~D of ~D bytes; no journal identity can be minted" filled n)))
+               (incf filled got)))
+           buf)
+      (when (and (integerp fd) (>= fd 0))
+        (ignore-errors (sb-posix:close fd)))))
+  #-sbcl
+  (error 'unsupported-input
+         :what "no operating system CSPRNG reader outside SBCL; the engine's platform is pinned"))
+
+(defvar *journal-identity-byte-source* #'read-os-random-bytes
+  "The seam every journal identity is minted from: a function of one integer N
+that answers N random bytes. It is bound to READ-OS-RANDOM-BYTES, the operating
+system CSPRNG, so a test may bind it to a known or a refusing source. There is no
+fallback of any kind (docs/SPEC-WORK.md:451).")
+
+(defun bytes-to-lowercase-hex (bytes)
+  "The lowercase hex of a byte vector, two characters per byte. Bounds on BYTES
+are the caller's to enforce."
+  (string-downcase
+   (with-output-to-string (s)
+     (loop for b across bytes do (format s "~2,'0x" b)))))
+
 (defun mint-journal-identity ()
-  "Mint a stable logical journal identity: unique to one journal and stable
-across every later physical rotation."
-  (sha256-hex (format nil "nova-work/journal-identity/~A/~A/~A"
-                      (get-universal-time)
-                      (get-internal-real-time)
-                      (random most-positive-fixnum))))
+  "Mint a stable logical journal identity: 256 random bits from the operating
+system CSPRNG, printed as 64 lowercase hex characters, an identity and never an
+ownership token (docs/SPEC-WORK.md:451). The bytes are hex-encoded DIRECTLY and
+never hashed: a short or constant source must refuse, never hide behind a
+well-formed digest. A source that falls short refuses."
+  (let ((bytes (funcall *journal-identity-byte-source* 32)))
+    (unless (and (vectorp bytes)
+                 (= (length bytes) 32)
+                 (every (lambda (b) (and (integerp b) (<= 0 b 255))) bytes))
+      (error 'unsupported-input
+             :what (format nil "the journal identity byte source did not answer exactly 32 bytes (~S); no journal identity can be minted" bytes)))
+    (bytes-to-lowercase-hex bytes)))
 
 (defun header-journal-identity (header-plist)
   "The optional logical identity a journal header carries, or NIL for a legacy
