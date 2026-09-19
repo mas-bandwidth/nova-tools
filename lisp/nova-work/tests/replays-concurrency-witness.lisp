@@ -98,7 +98,7 @@ writer and its counters rather than on one node's transition table.")
                                       (append (state-index-mismatches state)
                                               (unless (cow-partition-holds-p state)
                                                 (list "the C/O partition did not hold"))))))
-                            :name (format nil "cw-~D" i)))))) 
+                            :name (format nil "cw-~D" i))))))
              (dolist (thread threads) (sb-thread:join-thread thread)))
            ;; 0. EVERY APPLY RAN ON THE ONE COMMAND THREAD.
            (check-equal (list "nova-work-kernel")
