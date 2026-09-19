@@ -100,6 +100,16 @@ kind and rolls nothing back (SPEC-WORK.md:7165-7171)."
         (unless (and (probe-file (cdr pair))
                      (%savepoint-reference-holds-p (car pair) (cdr pair)))
           (return-from savepoint-verify-published (%gap id rev "broken hash"))))
+      ;; the dedup root the boundary record names, against the bytes on disk (:7160-7161)
+      (let* ((dedup-root-path (merge-pathnames "dedup-root" dir))
+             (boundary (getf manifest :boundary))
+             (named (and (consp boundary) (consp (cdr boundary))
+                         (getf boundary :dedup-root))))
+        (when named
+          (unless (and (probe-file dedup-root-path)
+                       (dedup-root-holds-p dedup-root-path named))
+            (return-from savepoint-verify-published
+              (%gap id rev (format nil "dedup root ~A is missing or altered" dedup-root-path))))))
       ;; the image is one revision, and it is the manifest's
       (let ((image (handler-case (reconstruct-state (%savepoint-read-object image-path))
                      (error () nil))))

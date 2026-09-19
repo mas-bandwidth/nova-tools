@@ -20,9 +20,23 @@ import (
 // file -- and names each defect by check, line and excerpt before any spend. The checks are
 // the shape the card deaths taught (docs/WORKER-CARDS.md practices 17, 18, 23, 25).
 
-// cardMaxBytes is the ceiling a card may not reach: a card past it is not read in one
-// window, and the lint says so before any spend.
+// cardMaxBytes is the ADVISORY ceiling a card is written within: past it a model stops
+// reading the card in one window, so the lint says so before any spend -- and nothing is
+// refused and nothing is cut, so a card over it still ships (issues #1494, #1527).
+//
+// IT WAS READ BOTH WAYS ON THE SAME DAY. On 2026-09-19 two managers trimmed cards to reach
+// it and two others shipped over it on purpose, because the line said `at or over the
+// 12000-byte ceiling` and the verb exited 2, which is the exit code a caller refuses on.
+// The ceiling is a reading budget, not an input limit: a 12422-byte card was measured
+// through the harness untruncated (#1494). So a card over it draws a `LINT NOTE`, never a
+// `LINT DRIFT`; the note never changes the verdict; and the size rides on every lint,
+// clean or not, with `advisory=true` said in the bytes so nobody has to ask again.
 const cardMaxBytes = 12000
+
+// cardLintAdvisory is every check whose finding is advice rather than a defect. An advisory
+// finding is printed on a `LINT NOTE` line and is not in the verdict: a card whose only
+// findings are advisory is a clean card and exits 0.
+var cardLintAdvisory = map[string]bool{"size": true}
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
@@ -65,10 +79,10 @@ var cardLintRemedies = map[string]string{
 	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes` (practice 17)",
 	"files-named":      "name the file or the package the work lives in, so the change has a home to start from (practice 3)",
 	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one (practice 25)",
-	"no-parent-path":   "the wall refuses every path above the job: put the worktree, the scratch and the notes under the working directory instead of reaching through `../` (practice 25)",
+	"no-parent-path":   swarm.CardParentPathWanted,
 	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
 	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
-	"size":             "cut the card under the ceiling so a model reads it in one window: point at a file instead of pasting it, and drop quoted source",
+	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
 }
 
 // THE TYPED HEADER'S FOUR TOKENS JOIN THE SAME TABLE (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -233,11 +247,13 @@ func lintCard(raw []byte) []cardFinding {
 		}
 	}
 
-	// 9. no `../` path anywhere: the wall refuses a path above the job.
-	for i, l := range lines {
-		if strings.Contains(l, "../") {
-			add("no-parent-path", i+1, l)
-		}
+	// 9. no path above the job: the wall refuses one, so the card may not walk there. The
+	// rule is what the card WALKS, not every `../` in its text; a `../` the card quotes --
+	// a fenced block, a backtick span, a markdown link target, a `go test` ellipsis -- is
+	// not a path the worker takes. The four shapes, measured on the 2026-09-19 shift's own
+	// cards, and what is given up by exempting them, are in internal/swarm/lintparent.go.
+	for _, n := range swarm.CardParentPaths(lines) {
+		add("no-parent-path", n, lines[n-1])
 	}
 
 	// 10. no nova-sandbox invocation: the card runs inside the wall, never probes it.
@@ -264,9 +280,9 @@ func lintCard(raw []byte) []cardFinding {
 		}
 	}
 
-	// 12. the card is under the ceiling.
+	// 12. the card is under the advisory ceiling. Over it is said and never refused.
 	if len(raw) >= cardMaxBytes {
-		add("size", 1, fmt.Sprintf("card is %d bytes, at or over the %d-byte ceiling", len(raw), cardMaxBytes))
+		add("size", 1, fmt.Sprintf("card is %d bytes, over the %d-byte advisory ceiling; it is not refused and not truncated", len(raw), cardMaxBytes))
 	}
 
 	return out
@@ -380,17 +396,38 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 	}
+	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
+	// a defect and exits 2, which a caller refuses on; a note is advice and changes no
+	// verdict. The two are told apart here, once, so neither the writer nor the caller has
+	// to read the check's name to know what happened to the card.
+	var drifts, notes []cardFinding
+	for _, fd := range findings {
+		if cardLintAdvisory[fd.check] {
+			notes = append(notes, fd)
+			continue
+		}
+		drifts = append(drifts, fd)
+	}
+	note := func(fd cardFinding) {
+		fmt.Fprintf(stdout, "LINT NOTE card=%s %s: %d: %s remedy=%s\n",
+			oneline.Field(name), oneline.Field(fd.check), fd.line,
+			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+			oneline.Escape(cardLintRemedy(fd.check)))
+	}
 	// THE CEILING IS NEVER A SILENT BOUND. A card writer learned of the 12000-byte cap by
 	// hitting it: a card at 11k looked exactly like a card at 2k. Every lint says how big
 	// this card is and what the cap is, on the OK line and, below, on the drift path.
-	if len(findings) == 0 {
+	if len(drifts) == 0 {
 		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
+		for _, fd := range notes {
+			note(fd)
+		}
 		return 0
 	}
-	printed := findings
+	printed := drifts
 	more := false
-	if *max > 0 && len(findings) > *max {
-		printed, more = findings[:*max], true
+	if *max > 0 && len(drifts) > *max {
+		printed, more = drifts[:*max], true
 	}
 	for _, fd := range printed {
 		// THE REMEDY RIDES ON THE SAME LINE (issue #1464). `nova-swarm help` promises one
@@ -403,10 +440,14 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	}
 	if more {
 		fmt.Fprintf(stdout, "LINT MORE card=%s findings=%d remedy=nova-swarm lint --card %s --max 0\n",
-			oneline.Field(name), len(findings), oneline.Field(*card))
+			oneline.Field(name), len(drifts), oneline.Field(*card))
+	}
+	for _, fd := range notes {
+		note(fd)
 	}
 	// A drifting card gets the size too: a writer cutting a card down to fix a drift is
-	// exactly the writer who needs to know how close to the ceiling the card already is.
-	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d\n", oneline.Field(name), len(raw), cardMaxBytes)
+	// exactly the writer who needs to know how close to the ceiling the card already is --
+	// and `advisory=true` is the answer to the question two managers asked on one day.
+	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d advisory=true\n", oneline.Field(name), len(raw), cardMaxBytes)
 	return 2
 }

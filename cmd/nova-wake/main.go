@@ -218,8 +218,30 @@ func Version() string { return buildVersion() }
 // an answer. A flag given on the command line wins, and nothing here is
 // printed: reading the file is not a change to report.
 type wakeConfig struct {
-	path   string
-	values map[string]string
+	path    string
+	values  map[string]string
+	entries []configEntry
+}
+
+// configEntry is one key= line from the config file with its 1-based line
+// number, so a refusal can name the line a person has to fix.
+type configEntry struct {
+	key  string
+	line int
+}
+
+// wakeConfigKeys is every key either verb reads from the file: the union of
+// awake's bus, window and max and watch's state, on-deadline, bus, as and
+// receipt-max-words. A key outside this set is a typo or another tool's, and
+// a verb that reads the config refuses it instead of running on defaults.
+var wakeConfigKeys = map[string]bool{
+	"bus":               true,
+	"window":            true,
+	"max":               true,
+	"state":             true,
+	"on-deadline":       true,
+	"as":                true,
+	"receipt-max-words": true,
 }
 
 // configPath is the file a caller may set bus=, window=, max=, state= and as= in.
@@ -238,7 +260,7 @@ func loadWakeConfig() *wakeConfig {
 	if err != nil {
 		return cfg
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -247,9 +269,26 @@ func loadWakeConfig() *wakeConfig {
 		if !ok {
 			continue
 		}
-		cfg.values[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		key := strings.TrimSpace(k)
+		cfg.values[key] = strings.TrimSpace(v)
+		cfg.entries = append(cfg.entries, configEntry{key: key, line: i + 1})
 	}
 	return cfg
+}
+
+// refuseUnknownConfigKeys refuses, one line per key in file order, every key
+// the file names that this tool does not read. It is a verb's job and not
+// loadWakeConfig's because help and version read the same file and a person
+// whose config is wrong is exactly the person who needs to read the help.
+func refuseUnknownConfigKeys(cfg *wakeConfig, stderr io.Writer) int {
+	code := 0
+	for _, e := range cfg.entries {
+		if wakeConfigKeys[e.key] {
+			continue
+		}
+		code = refuse(stderr, "", fmt.Sprintf("%s line %d: unknown key %q", oneline.Escape(cfg.path), e.line, e.key))
+	}
+	return code
 }
 
 // get is the value for key, empty when the file did not name it.
@@ -348,6 +387,9 @@ func awakeRefused(stderr io.Writer, what string) int {
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
 func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
+		return code
+	}
 	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
 	busDir := fs.String("bus", cfg.get("bus"), "")
 	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
@@ -592,6 +634,9 @@ type polled struct {
 }
 
 func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
+	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
+		return code
+	}
 	verb := "watch"
 	if quickstart {
 		verb = "quickstart"
