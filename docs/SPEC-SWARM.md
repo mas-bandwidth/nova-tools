@@ -2684,6 +2684,44 @@ bound, list marker or event-prefix rule is asked to decide it. The prose heurist
 the fallback for a harness with no adapter, and the class is decided from the field before a
 word of it is read.
 
+## A spend cap on the native route: what it can and cannot mean
+
+`nova-swarm native` is the direct-provider path, and it spends without a cap. Its only
+bound is wall-clock `--deadline`; token enforcement today lives only in the supervisor,
+which is the `run`/pool path: `internal/swarm/supervise.go` stops a job when
+`spent >= Sidecar.Tokens`. `native` builds no Sidecar and has no `--tokens`, so two
+cards spending the same key are metered differently depending only on which verb
+launched them. That is the defect this section names, and nothing here is written past
+it.
+
+**A cap on a child is a stop on observations, not a ceiling on spend.** The harness is a
+child process; the tool does not see tokens as they are spent, it sees what the harness
+reports. The only enforceable thing is a supervisor that reads the job's usage as it
+grows and ends the child when the observed sum passes the ceiling. The caveat already
+written at `internal/swarm/supervise.go` carries over whole — "A STOP CONDITION ON
+OBSERVATIONS, not a ceiling on spend" — and it is weaker still on the native route: the
+usage row is written per launch, so between samples the true spend is unknown, and the
+overshoot is bounded by the sampling interval and not by the cap.
+
+**The ending half already exists and must be reused.** `cmd/nova-swarm/native.go` starts
+the child with `ownChildGroup(cmd)` (`Setpgid: true`), and the deadline branch already
+does `swarm.KillGroup(pgid, started)`, which signals the whole process group; the
+outside-TERM branch does `swarm.Reap(pgid, started, swarm.TerminateGrace)` and sets
+`reason=terminated`; and `writeNativeUsage` runs on every branch so the spend is folded
+whichever way the run ends. A cap adds a third branch beside those two, differing only
+in the end word and the reason — not a second kill path.
+
+**The flags must exist, and their absence is a refusal.** `--tokens` (and/or a cost
+ceiling) on `native`, refused when absent on a paid provider rather than defaulted to a
+guess. `docs/CLI.md` already states the rule for the pool route — `--tokens` are
+"required on every `add`, `batch` and `requeue` and zero is refused for both" — and the
+native route is simply outside it. It joins it.
+
+**This section decides none of the rest.** It does not choose a token ceiling over a
+dollar ceiling, it does not name a sampling interval, and it does not say whether a card
+that hits the cap is retried or abandoned. Those are for the friends who read this
+amendment.
+
 ## `requeue` — the same task, changed
 
 ```
