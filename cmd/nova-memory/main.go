@@ -115,6 +115,9 @@ sentences and one run, not two runs.
 
 exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
 
+setup:
+  cp -R cmd/nova-memory/testdata/corpus ./corpus && cp cmd/nova-memory/testdata/corpus/HANDBOOK.md ./draft.md
+
 example:
   nova-memory quickstart --root ./corpus
   nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
