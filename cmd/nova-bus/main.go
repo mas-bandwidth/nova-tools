@@ -83,6 +83,7 @@ usage:
         [--advance [--attempts <n>] [--no-push]]
         [--quiet-beats]
         [--max-commits <n>]
+        [--decide [--floor <f>] [--key-env <name>] [--base-url <url>] [--allow-private]]
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -1603,7 +1604,8 @@ type inboxOpts struct {
 	// provider as one typed decision, and the line carries the answer. floor is the
 	// confidence floor below which the answer is only a suggestion, keyEnv names the
 	// environment variable holding the key, and baseURL is the provider endpoint.
-	// All four are `inbox`'s only; `wait` leaves decide false.
+	// Both `inbox` and `wait` carry all four (#1141): a wait that takes --decide judges
+	// each poll's listing the same way, and without it they stay false.
 	decide  bool
 	floor   float64
 	keyEnv  string
@@ -2844,6 +2846,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
+	askDecide := f.fs.Bool("decide", false, "ask the provider for a typed kind, needs_reply and blocked on every INBOX NOTE line")
+	decideFloor := f.fs.Float64("floor", 0.9, "with --decide, the confidence floor below which a decision is only a suggestion")
+	decideKeyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "with --decide, the environment variable holding the provider key")
+	decideBaseURL := f.fs.String("base-url", decide.DefaultBaseURL, "with --decide, the provider endpoint")
+	allowPrivate := f.fs.Bool("allow-private", false, "with --decide, send note text from a bus whose clone has no .public marker")
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
 	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
 	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a
@@ -2897,6 +2904,22 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
 		return 2
+	}
+	if *askDecide && (*decideFloor < 0 || *decideFloor > 1) {
+		fmt.Fprintf(stderr, "nova-bus wait: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess; run: nova-bus help\n", *decideFloor)
+		return 2
+	}
+	// A bus with no .public marker is a private one, and --decide would hand its note
+	// text to a provider that may train on what it receives. The marker is the clone's
+	// own statement that the bus is public; without it the run refuses by name, and
+	// --allow-private is the one explicit way to mean it anyway.
+	if *askDecide && !*allowPrivate {
+		marker := filepath.Join(*busDir, publicMarker)
+		if _, err := os.Stat(marker); err != nil {
+			fmt.Fprintf(stderr, "WAIT REFUSED: --decide sends note text to a provider that may train on it, and %s has no %s marker; pass --allow-private to mean it anyway, or leave that clone private\n",
+				oneline.Quote(*busDir), publicMarker)
+			return 2
+		}
 	}
 	if *timeout <= 0 {
 		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess; run: nova-bus help\n")
@@ -2995,6 +3018,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
 		maxCommits:  *maxCommits,
+		decide:      *askDecide, floor: *decideFloor, keyEnv: *decideKeyEnv, baseURL: *decideBaseURL,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
