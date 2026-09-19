@@ -116,6 +116,14 @@ pinning -- darwin has no `taskset` and the scheduler is the machine's -- 2026-09
 dev `0edc81b7`, load average 2.3 at the start and 3.7 at the end, both self-hosted
 runners idle throughout. Seven minutes for the 59 packages.
 
+**Spotlight indexing was NOT excluded for this recording** -- it predates #1432 -- so
+part of the spread below is `mds` chasing the clone, the build outputs and `$TMPDIR`,
+where every `t.TempDir()` git repository lands. A darwin bench is not provisioned until
+`mdutil -s` says disabled for the work tree and `$TMPDIR` (`sudo mdutil -i off
+<bench-root>`, or add them to Spotlight Privacy), and `nova-pulse fleet standard` now
+DRIFTs a Mac whose `spotlight-off` check does not say `off`. Re-measure this section on a
+bench provisioned that way before the 2.2 is trusted as darwin's.
+
 Not the budget bench, and not a candidate to be one: it is a laptop, and its numbers
 are here to answer what the same suite costs where a process spawn is dear.
 

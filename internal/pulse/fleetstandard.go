@@ -113,6 +113,21 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 			Name: "runner-path", OS: "darwin", Match: MatchEquals, Want: "ok",
 			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; case "$(head -n 1 "$p")" in /usr/bin:*|/usr/bin) bad="$p";; esac; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
 		},
+		// A darwin bench measures Spotlight as much as the tests (#1432): indexing runs over
+		// the clone, the build outputs and $TMPDIR, where every t.TempDir() git repository
+		// lands, so the same package on the same commit measured 68.1/72.7/73.8/74.2/81.2 s
+		// in one afternoon. A darwin bench is not provisioned until indexing is off for the
+		// directories it works in, the same way a Linux bench is not provisioned until it can
+		// pin a core. `mdutil -s` only READS a volume's status -- nothing is changed and no
+		// sudo is needed -- and it asks about the home work tree and TMPDIR, saying off only
+		// when BOTH are disabled. It prints "Indexing enabled." or "Indexing and searching
+		// disabled.", and "enabled" is not a substring of "disabled", so a disabled volume
+		// cannot be fooled by the enabled sentence. A missing or silent mdutil reports "on":
+		// unknown is not provisioned.
+		{
+			Name: "spotlight-off", OS: "darwin", Match: MatchEquals, Want: "off",
+			Probe: `n=0; for d in "$HOME" "${TMPDIR:-/tmp}"; do case "$(mdutil -s "$d" 2>/dev/null)" in *disabled*) ;; *) n=1;; esac; done; [ "$n" -eq 0 ] && echo off || echo on`,
+		},
 		// The toolchain roots the sandbox wall grants a card, one check each.
 		{
 			Name: "toolchain-sdk", OS: "linux", Root: "sdk", Match: MatchEquals, Want: "present",

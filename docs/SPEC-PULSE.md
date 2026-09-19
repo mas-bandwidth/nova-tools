@@ -484,8 +484,11 @@ script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
 opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
 the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
 the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
-`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
-first — with the stamp, seat and space checks shared. `--os` names the list;
+`/var/db/xcode_select_link`), every runner's `.path` carrying the real git
+first, and `spotlight-off`: `mdutil -s` says disabled for the bench's home work
+tree and `$TMPDIR`, so a recording is not measured against `mds` indexing the
+clone, the build outputs and every `t.TempDir()` repository (#1432) — with the
+stamp, seat and space checks shared. `--os` names the list;
 left out, the bench is asked with `uname -s`. The remote side prints
 `CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This
 retires `bench-standard.sh`, which refused to run anywhere but ON a Linux bench
