@@ -39,9 +39,28 @@ type LaunchInput struct {
 	Floor   float64 // answers below the floor keep the card's own model as the default worker
 	KeyEnv  string  // the environment variable the decision's key comes from
 	BaseURL string  // the decision provider endpoint
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Now     func() time.Time
+	// Runner is the native runner `nova-swarm batch` starts once per card. Empty keeps the
+	// bare PATH name this verb has always passed; a path is checked here and passed
+	// absolute, which is what lets a deployment whose runner is not on PATH launch without
+	// touching PATH at all (issue #1760).
+	Runner string
+	// Swarm is the nova-swarm binary this launch drives. Empty resolves it on PATH -- and
+	// whichever binary answers is asked its version before the batch, so a stale one
+	// shadowing the current one is refused by name rather than by a puzzling flag error
+	// (issue #1760, launchswarm.go).
+	Swarm string
+	// Version is this nova-pulse's own build version, the other half of that check. Empty
+	// runs no probe at all: cmd/nova-pulse always passes one, so a shipped binary always
+	// probes, and the tests that predate the check keep their exact argv.
+	Version string
+	// Attempts is the bound on start-time provider failures. 0 takes DefaultLaunchAttempts.
+	Attempts int
+	// Sleep is the backoff between those attempts; nil is time.Sleep. A test passes one
+	// that returns at once, so a bounded retry costs a test no wall clock.
+	Sleep  func(time.Duration)
+	Stdout io.Writer
+	Stderr io.Writer
+	Now    func() time.Time
 	// Log is where the structured JSON event line goes, beside the stdout line and never
 	// instead of it. nil writes no JSON line, which is how the tests that predate the
 	// slice keep their exact stdout and stderr; cmd/nova-pulse passes stderr, which on a
@@ -104,6 +123,23 @@ func Launch(in LaunchInput) int {
 		cards = admitted
 	}
 
+	// WHICH runner and WHICH nova-swarm, before a slot is taken and before a card is
+	// written: both answers are the caller's to give, and a launch that has the wrong one
+	// of either spends a slot to find out (issue #1760). The refusals name the reason and
+	// the flag that fixes it.
+	runner, err := resolveRunner(in.Runner)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED %s\n", oneline.Err(err))
+		in.event("refuse", "launch: "+oneline.Err(err), 0, err)
+		return 2
+	}
+	swarmBin, err := resolveSwarm(in.Swarm, in.Version)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED %s\n", oneline.Err(err))
+		in.event("refuse", "launch: "+oneline.Err(err), 0, err)
+		return 2
+	}
+
 	free := freeSlots(in.Root, in.Slots, in.Now())
 	n := len(cards)
 	if n > free && !in.Queue {
@@ -124,24 +160,11 @@ func Launch(in LaunchInput) int {
 
 	batches := 0
 	if len(goCards) > 0 {
-		if err := os.MkdirAll(filepath.Join(in.Root, "cards", id), 0o755); err != nil {
-			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		ran, ok := runBatchBounded(in, id, goCards, runner, swarmBin)
+		if !ok {
 			return 2
 		}
-		// The admitted cards become their own cards.tsv, so the batch runs exactly the
-		// cards that fit the free slots and never the queued remainder.
-		admitted := filepath.Join(in.Root, "cards", id, "cards.tsv")
-		if err := writeCardsTSV(admitted, goCards); err != nil {
-			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
-			return 2
-		}
-		if err := os.MkdirAll(filepath.Join(in.Root, "pulses"), 0o755); err != nil {
-			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
-			return 2
-		}
-		if !runBatch(in, id, admitted) {
-			return 2
-		}
+		id = ran
 		record(in.Root, id, len(goCards))
 		batches = 1
 	}
@@ -187,9 +210,125 @@ func (in LaunchInput) event(event, msg string, dur time.Duration, err error) {
 	_ = l.Write(in.Log)
 }
 
-// runBatch admits one batch as the swarm's CARD form of nova-swarm batch and relays a swarm
-// refusal as a PULSE REFUSED, queueing nothing.
-func runBatch(in LaunchInput, id, cardsPath string) bool {
+// runBatchBounded admits the cards as one nova-swarm batch, and retries a batch that failed
+// at START time on the provider's side -- bounded, with a backoff, and only on the signature
+// the layers underneath wrote down (issue #1761, launchswarm.go). It returns the id of the
+// batch that ran, which is not the id it was given when a retry was needed: every attempt is
+// its own batch, with its own cards.tsv and its own `--then`, so the harvest that follows
+// folds exactly the attempt that produced the work.
+//
+// The failed attempt's job directories are moved aside, never deleted: a retry that erases
+// the first failure leaves a lane unable to tell a flake from a pattern.
+func runBatchBounded(in LaunchInput, id string, goCards []CardRow, runner string, swarmBin resolvedSwarm) (string, bool) {
+	attempts := in.Attempts
+	if attempts < 1 {
+		attempts = DefaultLaunchAttempts
+	}
+	for attempt := 1; ; attempt++ {
+		if err := os.MkdirAll(filepath.Join(in.Root, "cards", id), 0o755); err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return "", false
+		}
+		// The admitted cards become their own cards.tsv, so the batch runs exactly the
+		// cards that fit the free slots and never the queued remainder.
+		admitted := filepath.Join(in.Root, "cards", id, "cards.tsv")
+		if err := writeCardsTSV(admitted, goCards); err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return "", false
+		}
+		if err := os.MkdirAll(filepath.Join(in.Root, "pulses"), 0o755); err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return "", false
+		}
+		reason, ok := runBatch(in, id, admitted, runner, swarmBin)
+		if ok {
+			return id, true
+		}
+
+		// What the layers underneath already recorded, read back before anything is said:
+		// `PULSE REFUSED: exit status 3` was the whole of the operator's line while the
+		// label, the rc, the wall clock and the provider's own error reference sat one
+		// directory away (issue #1761).
+		diags := diagnose(in.Root, goCards)
+		if attempt < attempts && anyStartFailure(diags) {
+			for _, d := range diags {
+				parkJob(d.Job, attempt)
+			}
+			wait := backoff(attempt)
+			fmt.Fprintf(in.Stderr, "PULSE RETRY attempt=%d of %d backoff=%s provider-start-failure %s\n",
+				attempt, attempts, wait, firstStartFailureLine(diags))
+			in.event("retry", fmt.Sprintf("launch: pulse %s attempt %d of %d", id, attempt, attempts), 0, nil)
+			in.sleep(wait)
+			id = swarm.NewID(in.Now(), "pulse")
+			continue
+		}
+
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s%s\n",
+			oneline.Cap(reason, oneline.TailBytes), diagTail(diags, attempt, attempts))
+		in.event("refuse", "launch: nova-swarm batch "+oneline.Cap(reason, oneline.TailBytes), 0, nil)
+		return "", false
+	}
+}
+
+// anyStartFailure reports whether any admitted card failed at start time on the provider's
+// side, the one shape a retry is for.
+func anyStartFailure(diags []cardDiag) bool {
+	for _, d := range diags {
+		if d.startFailure() {
+			return true
+		}
+	}
+	return false
+}
+
+func firstStartFailureLine(diags []cardDiag) string {
+	for _, d := range diags {
+		if d.startFailure() {
+			return d.line()
+		}
+	}
+	return ""
+}
+
+// diagTail is the rest of the operator's one line: what each card that left a job directory
+// actually did, and where to read the whole of it. A batch that refused before any job
+// existed adds nothing, and its refusal is the swarm's own line exactly as before.
+func diagTail(diags []cardDiag, attempt, attempts int) string {
+	if len(diags) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, " | attempts=%d of %d", attempt, attempts)
+	shown := 0
+	for _, d := range diags {
+		if shown >= diagCards {
+			fmt.Fprintf(&b, " | +%d more card(s)", len(diags)-shown)
+			break
+		}
+		fmt.Fprintf(&b, " | %s", d.line())
+		shown++
+	}
+	return b.String()
+}
+
+// diagCards is how many cards' diagnoses one refusal line carries. A pulse is several cards
+// and a refusal is one line: the rest are named by count and read in the job tree.
+const diagCards = 3
+
+// sleep is the backoff seam: nil is the real clock, and a test passes one that returns at
+// once so a bounded retry costs it no wall time.
+func (in LaunchInput) sleep(d time.Duration) {
+	if in.Sleep != nil {
+		in.Sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// runBatch admits one batch as the swarm's CARD form of nova-swarm batch. It returns the
+// swarm's own reason when the batch failed, and whether it succeeded; the refusal line is
+// the caller's to write, because only the caller knows whether a retry is left.
+func runBatch(in LaunchInput, id, cardsPath, runner string, swarmBin resolvedSwarm) (string, bool) {
 	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
 	// The file budget, because `nova-swarm batch` refuses an admission that names none
 	// ("--files is required and is at least 1, got 0") and a launch with no configured
@@ -200,11 +339,11 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 		files = DefaultLaunchFiles
 	}
 	var out, errb bytes.Buffer
-	cmd := exec.Command("nova-swarm", "batch",
+	cmd := exec.Command(swarmBin.Path, "batch",
 		"--id", id,
 		"--cards", cardsPath,
 		"--deadline", in.Deadline,
-		"--runner", nativeRunner,
+		"--runner", runner,
 		"--root", in.Root,
 		"--files", strconv.Itoa(files),
 		"--then", then)
@@ -221,12 +360,15 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 	if err := cmd.Run(); err != nil {
 		reason := strings.TrimSpace(errb.String())
 		if reason == "" {
-			reason = oneline.Err(err)
+			// `exit status 3` is a Go *exec.ExitError stringified with nothing added.
+			// It is still the truth about the child, so it is still said -- but it is
+			// said as the exit of a NAMED binary, and the caller adds what the job
+			// tree recorded (issue #1761).
+			reason = fmt.Sprintf("%s batch: %s (it said nothing on stderr)", oneline.Field(swarmBin.Path), oneline.Err(err))
 		}
-		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Cap(reason, oneline.TailBytes))
-		return false
+		return reason, false
 	}
-	return true
+	return "", true
 }
 
 // record appends one row to <root>/pulses/<id>.tsv naming the batch: its id and card count.

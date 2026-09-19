@@ -1310,7 +1310,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1321,7 +1321,7 @@ written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
 `nova-swarm batch` in its **card form** — the only form that runs a card:
 
 ```
-nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner nova-native-runner.sh --root <root> --then "nova-pulse harvest --id <id> --root <root>"
+nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner <runner> --root <root> --files <n> --then "nova-pulse harvest --id <id> --root <root>"
 ```
 
 `--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
@@ -1331,16 +1331,52 @@ instead of a pulse being one bench (issue #637). Neither flag is read by `launch
 itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
-no launch flag supplies, so launch never calls it (issue #630). `--runner` is
-the deployment's native runner on PATH; the one batch is recorded in
-`<root>/pulses/<id>.tsv`. A swarm refusal is relayed as one `PULSE REFUSED`
-line with the swarm's reason.
+no launch flag supplies, so launch never calls it (issue #630). The one batch is
+recorded in `<root>/pulses/<id>.tsv`.
+
+**`--runner <path>` is this deployment's native runner**, and without it launch
+passes the bare name `nova-native-runner.sh` for `nova-swarm batch` to find on
+PATH. A deployment whose runner is not on PATH used to have no remedy inside the
+verb at all, and the only remedy left — putting the runner's directory in front
+of PATH — could put a **stale `nova-swarm` sitting beside it** in front of the
+current one, whose refusal then reads like launch building a bad call. It is not:
+it is a different binary answering (issue #1760). A `--runner` given as a path is
+checked here and passed absolute, so PATH need not be touched.
+
+**`--swarm <path>` names the `nova-swarm` binary launch drives**, and without it
+launch looks it up on PATH. Either way, **whichever binary answers is asked
+`nova-swarm version` before the batch**: launch drives that binary's own flag
+contract, so the two are one build or neither. A binary too old to answer
+`version` at all, one that answers something that is not a version, or one whose
+version differs from this `nova-pulse`'s own, is refused by name —
+`PULSE REFUSED SWARM-VERSION: <path> is nova-swarm <theirs> and this is
+nova-pulse <mine> …` — instead of failing later with a puzzling flag error. The
+comparison is skipped when either side is an unstamped build (`devel`, or a vcs
+stamp), which is not a release for a comparison to mean anything about.
+
+**A refusal names the card, not just an exit code.** When the batch fails after
+the job tree exists, the one line carries what the layers underneath already
+wrote to `<root>/<slot>/jobs/<label>/`: the label, the runner's `rc`, the wall
+clock, the `reason` token and the first telling line of the harness capture, plus
+the job directory to read the whole of it in (issue #1761). Before that — a
+refusal with no job tree — the swarm's own line is relayed unchanged.
+
+**`--attempts <n>` bounds the start-time retry** (default 3, `1` is no retry).
+A batch that fails within 15 seconds with a provider start failure in the harness
+capture (`Unexpected server error`, `Internal server error`, `Service
+Unavailable`, an `err_xxxxxxxx` reference) is retried with a backoff of 15s then
+25s, printing one `PULSE RETRY` line per attempt. Each attempt is its own batch
+with its own id, and the failed attempt's job directory is **moved** to
+`<job>.attempt<n>`, never deleted, so the evidence of why it was retried outlives
+the retry. A dead API key is deliberately **not** in that signature: it is dead on
+the third call too.
 
 ### cut
 
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
+nova-pulse cut --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 ```
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
@@ -1639,6 +1675,7 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 ```
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 ```
 
 The first form folds one pulse's cards under a local root: it pushes and opens a PR for
@@ -1866,7 +1903,7 @@ A prune never runs on a guess.
 ### status
 
 ```
-nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 ```
 
 `status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT

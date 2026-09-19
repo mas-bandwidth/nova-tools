@@ -311,7 +311,7 @@ func TestLaunchPassesBenchesThrough(t *testing.T) {
 	dir := t.TempDir()
 	specs := fakePATH(t)
 	argvLog := filepath.Join(dir, "argv.log")
-	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: argvLog})
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: argvLog, Rules: []fakeRule{swarmVersionRule()}})
 
 	root := filepath.Join(dir, "root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
