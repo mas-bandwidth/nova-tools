@@ -1373,20 +1373,36 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
 `ssh`, pops that many `card-<n>.md` from `--ready` in filename order, moves them into
 `--launched` and hands each to the per-card launcher. The move out of `--ready` is
 the claim, so a card another hand already took is skipped rather than launched
-twice. With no `--bench` the benches are `hulk`, `vision` and `space`; `--once` runs
-exactly one tick, and without it the loop runs until it is killed. One line per
-tick:
+twice. **With no `--bench` the pool is the registry's**, not a list in the tool: every
+machine in `--machines` whose roles carry `bench` and whose notes carry
+`certified=<YYYY-MM-DD>` is filled, in file order, so a bench certified tonight is
+filled tonight without a code change or a release. A registry naming no certified
+bench is a refusal (exit 2) with the remedy on it rather than a tick that fills
+nothing. `--bench` narrows to the names it carries -- it is resolved through the
+registry's role guard exactly as before, so an uncertified bench can still be named
+by hand while it is being proven. `--once` runs exactly one tick, and without it the
+loop runs until it is killed. One line per tick:
 
 ```
 FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
 ```
+
+**The capacity formula measures the volume the cards land on.** The three terms are
+core headroom (`cores*1.5 - load1 - cores/8`, a CI reserve), memory headroom
+(`memavail_gb/2`) and disk headroom (`(free_gb-25)/2`), and the disk term reads the
+**swarm root's** volume: `--swarm-root` (default `$HOME/rowan-swarm-root`, expanded
+by the bench's own shell) is resolved through its symlinks and that path is what
+`df` is given. A bench whose swarm root is a link onto a second disk -- antman's
+`~/rowan-swarm-root -> /data/swarm` -- used to answer for the volume its home sits
+on, which is not the one the cards fill. A swarm root that is not configured, or is
+configured and not there, falls back to `$HOME`.
 
 **A launcher that fails is not a card that ran.** The card goes back to `--ready`,
 its lane is released, the tick counts it under `failed=` and never under `launched=`,
