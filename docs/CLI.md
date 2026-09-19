@@ -2951,11 +2951,15 @@ Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
 at=<file:line>` line with that test's own words indented under it; a cancelled
 step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
 than its log, and a timed-out package is `TIMEOUT job="<name>" pkg=<pkg>
-running=<tests>`. A job whose log the forge will not hand over — a job cancelled
-while its run is still in progress, whose log blob answers 404 — is
-`NOLOG job="<name>" reason="<why>"` and an `unread=<n>` in the closing count, so
-one missing log never sinks the other jobs' reds. The closing
-`FAILED OK jobs=<n> tests=<n>` always prints. It is
+running=<tests>`. A job that went red with no test event in its log — a compiler
+error inside a `make test` step — is `NOTEST job="<name>" step="<name>"
+tests=none` with the lines the runner itself marked as errors under it, so every
+red job is named rather than only counted. A job whose log the forge will not hand
+over — a job cancelled while its run is still in progress, whose log blob answers
+404 — is `NOLOG job="<name>" reason="<why>"` and an `unread=<n>` in the closing
+count, so one missing log never sinks the other jobs' reds. The closing
+`FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n>` always prints,
+and its word is `OK` only when the run said nothing red. It is
 a reader, so exit 1 means the run said something red, exit 0 means it said
 nothing, and exit 2 is a refusal — a bad flag, no such run, or a `gh` that could
 not answer. It runs `gh` for reading only and never merges, enqueues or comments.
