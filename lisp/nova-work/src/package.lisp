@@ -685,6 +685,7 @@
    ;; the framed length-prefixed JSON wire codec (nova-tools card 9132):
    ;; a 4-byte big-endian unsigned length, then that many UTF-8 JSON bytes.
    #:wire-utf8-octets
+   #:utf8-octets
    #:wire-utf8-string
    #:wire-json-escape
    #:wire-json-encode
@@ -2032,9 +2033,34 @@
     #:capture-stage-input
     #:capture-stage-bytes
     #:capture-input-count
+    #:make-capture-input
+    #:capture-input-p
+    #:capture-input-id
+    #:capture-input-kind
+    #:capture-input-expected-revision
+    #:capture-input-bytes
+    #:capture-input-records
+    #:capture-input-source-pin
     #:capture-admit-result
     #:capture-result-of
     #:capture-wire-op
+    ;; the staged bytes on disk (SPEC-WORK.md:2752-2754, :2759-2760)
+    #:filesystem-capture-stage
+    #:filesystem-capture-stage-p
+    #:filesystem-capture-stage-root
+    #:filesystem-capture-stage-staged
+    #:filesystem-capture-stage-unverified
+    #:open-filesystem-capture-stage
+    #:staged-input-path
+    #:stage-record-p
+    #:make-stage-record
+    #:write-staged-file
+    #:read-staged-file
+    #:stage-source-bytes
+    #:staged-content
+    #:staged-bytes-on-disk
+    #:reconcile-capture-stage
+    #:admit-staged-result
     ;; E02 `session export --state --at` (SPEC-WORK.md:3197-3223): the flag
     ;; validation, the pinned revision, the resident one-long-operation form and
     ;; the offline snapshot form.
