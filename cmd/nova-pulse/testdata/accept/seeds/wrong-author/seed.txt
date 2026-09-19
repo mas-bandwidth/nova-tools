@@ -1,0 +1,3 @@
+kind=author
+want=identity
+author=Stranger <stranger@elsewhere.example>

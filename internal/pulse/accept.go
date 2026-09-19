@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -52,6 +53,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -71,11 +73,25 @@ type AcceptInput struct {
 	Identities []hyg.Identity
 	// Sandbox is the nova-sandbox binary; empty looks the tool's own name up on PATH.
 	Sandbox string
+	// Fixtures is the selftest fixture tree (§1 rule 8): with no passing selftest on
+	// file for this control id, accept runs one over these and refuses OK without them.
+	Fixtures fs.FS
+	// Root is the swarm root that <root>/accept/control/<id> hangs under; empty derives
+	// it from the job's slot.
+	Root string
+	// Build is the gate binary's build identity, part of control=<id>; empty asks the
+	// running binary.
+	Build   string
 	Timeout time.Duration
 	Max     int
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Now     func() time.Time
+
+	// control and noControlCheck are the selftest's own: the inner runs that PUT the
+	// control on file are told the id and not to look for it.
+	control        string
+	noControlCheck bool
 }
 
 // acceptStop is the first failure, in the words the verdict line prints.
@@ -101,6 +117,8 @@ type acceptGate struct {
 	job, slot, runDir, wt, baseWt string
 	head, base                    string
 	certID                        string
+	control                       string
+	root                          string
 	sandbox                       string
 	reads, writes                 []string
 
@@ -179,6 +197,23 @@ func (g *acceptGate) run() int {
 	}
 	g.certID = id
 
+	// The control id is computed as soon as its three inputs are known, so every line
+	// this run prints -- REJECT included -- carries the id an OK would have needed.
+	g.control = g.in.control
+	if g.control == "" {
+		build := g.in.Build
+		if build == "" {
+			build = buildinfo.Version("")
+		}
+		digest := "-"
+		if g.in.Fixtures != nil {
+			if d, err := FixtureDigest(g.in.Fixtures); err == nil {
+				digest = d
+			}
+		}
+		g.control = ControlID(build, digest, g.certID)
+	}
+
 	job, err := filepath.Abs(g.in.Job)
 	if err != nil {
 		return g.refused(fmt.Sprintf("--job %s: %v", g.in.Job, err), "pass the job directory")
@@ -214,7 +249,7 @@ func (g *acceptGate) run() int {
 	}
 	defer g.cleanup()
 
-	for _, step := range []func() *acceptStop{g.hygiene, g.survey, g.shape, g.buildVet, g.weakened, g.headTests, g.mutate} {
+	for _, step := range []func() *acceptStop{g.hygiene, g.survey, g.shape, g.buildVet, g.weakened, g.headTests, g.gateWeakened, g.mutate} {
 		if g.ctx.Err() != nil {
 			return g.abstain("timeout")
 		}
@@ -273,6 +308,10 @@ func (g *acceptGate) makeRun() error {
 	g.slot = filepath.Dir(g.job)
 	if filepath.Base(g.slot) == "jobs" {
 		g.slot = filepath.Dir(g.slot)
+	}
+	g.root = g.in.Root
+	if g.root == "" {
+		g.root = filepath.Dir(g.slot)
 	}
 	acceptDir := filepath.Join(g.slot, "accept")
 	if err := os.MkdirAll(acceptDir, 0o755); err != nil {
@@ -859,6 +898,9 @@ func (g *acceptGate) took() string {
 
 func (g *acceptGate) finish(stop *acceptStop) int {
 	if stop == nil {
+		if abstain := g.requireControl(); abstain != "" {
+			return g.abstain(abstain)
+		}
 		return g.ok()
 	}
 	if stop.verdict == "ABSTAIN" {
@@ -869,8 +911,8 @@ func (g *acceptGate) finish(stop *acceptStop) int {
 
 func (g *acceptGate) ok() int {
 	g.flushNotes()
-	fmt.Fprintf(g.in.Stdout, "ACCEPT OK label=%s kind=%s head=%s base=%s tests=%d red_without=%d edits=- control=- bench=%s cert=%s took=%s\n",
-		oneline.Field(g.label), oneline.Field(g.kind.Name), sha12(g.head), sha12(g.base), g.tests, g.red,
+	fmt.Fprintf(g.in.Stdout, "ACCEPT OK label=%s kind=%s head=%s base=%s tests=%d red_without=%d edits=- control=%s bench=%s cert=%s took=%s\n",
+		oneline.Field(g.label), oneline.Field(g.kind.Name), sha12(g.head), sha12(g.base), g.tests, g.red, g.controlField(),
 		oneline.Field(g.in.Bench), oneline.Field(g.certID), g.took())
 	return 0
 }
@@ -888,8 +930,9 @@ func (g *acceptGate) reject(reason, at string) int {
 	if cert == "" {
 		cert = "-"
 	}
-	fmt.Fprintf(g.in.Stdout, "ACCEPT REJECT label=%s kind=%s head=%s reason=%s at=%s control=- bench=%s cert=%s took=%s\n",
+	fmt.Fprintf(g.in.Stdout, "ACCEPT REJECT label=%s kind=%s head=%s reason=%s at=%s control=%s bench=%s cert=%s took=%s\n",
 		oneline.Field(g.label), oneline.Field(g.kind.Name), head, oneline.Field(reason), oneline.Field(at),
+		g.controlField(),
 		oneline.Field(g.in.Bench), oneline.Field(cert), g.took())
 	return 1
 }
@@ -904,4 +947,132 @@ func (g *acceptGate) abstain(reason string) int {
 func (g *acceptGate) refused(reason, remedy string) int {
 	fmt.Fprintf(g.in.Stderr, "ACCEPT REFUSED: %s (%s)\n", oneline.Escape(reason), oneline.Escape(remedy))
 	return 2
+}
+
+func (g *acceptGate) controlField() string {
+	if g.control == "" {
+		return "-"
+	}
+	return g.control
+}
+
+// requireControl is §1 rule 8: no ACCEPT OK without a passing selftest for this control
+// id on file. With none there and a fixture tree to hand, the gate runs the selftest
+// itself, here, and its lines print before the verdict; with none and no fixtures it
+// abstains control-stale, because a green nobody saw red first is not a green.
+func (g *acceptGate) requireControl() string {
+	if g.in.noControlCheck {
+		return ""
+	}
+	if controlOnFile(g.root, g.control) {
+		return ""
+	}
+	if g.in.Fixtures == nil {
+		g.note(fmt.Sprintf("no passing selftest on file for control=%s under %s, and no fixtures to run one", g.control, oneline.Field(filepath.Join(g.root, controlDir))))
+		return "control-stale"
+	}
+	code := Selftest(SelftestInput{
+		Fixtures: g.in.Fixtures, Root: g.root, Bench: g.in.Bench, Cert: g.in.Cert, Sandbox: g.in.Sandbox,
+		Build: g.in.Build, Timeout: g.in.Timeout, Max: g.in.Max, Stdout: g.in.Stdout, Stderr: g.in.Stderr, Now: g.in.Now,
+	})
+	if code != 0 {
+		return "control-red"
+	}
+	if !controlOnFile(g.root, g.control) {
+		// The selftest computed a different id than this run did: the same three
+		// inputs should agree, and when they do not the green is not this run's.
+		g.note("the selftest passed under another control id; the inputs disagree")
+		return "control-stale"
+	}
+	return ""
+}
+
+// gateWeakened is the eligibility rule's 10: a card whose diff touches the gate's own
+// sources, seeds or fixtures has the BASE's selftest seeds run against the HEAD's gate.
+// The head's nova-pulse is built in the gate's worktree, inside the wall; the base's
+// fixture tree is taken from the base commit; the head's binary runs `accept --selftest`
+// over it, inside the wall. Any seed that no longer draws its token is gate-weakened.
+func (g *acceptGate) gateWeakened() *acceptStop {
+	touched := false
+	for _, c := range g.changed {
+		if TouchesGate(c.path) {
+			touched = true
+			break
+		}
+	}
+	if !touched {
+		return nil
+	}
+	binDir := filepath.Join(g.runDir, "gate-bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return g.toolchain(err)
+	}
+	out, err := g.wall(g.wt, "go", "build", "-o", binDir, "./cmd/nova-pulse")
+	if err != nil {
+		if acceptToolchainRed(out, err) {
+			g.note("gate build: " + acceptFirstLine(out))
+			return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
+		}
+		return &acceptStop{verdict: "REJECT", reason: "gate-weakened", at: "build:" + acceptFirstLine(out)}
+	}
+	bin, err := acceptOneBinary(binDir)
+	if err != nil {
+		return &acceptStop{verdict: "REJECT", reason: "gate-weakened", at: "build:" + err.Error()}
+	}
+	baseFx := filepath.Join(g.runDir, "base-fixtures")
+	if err := os.MkdirAll(baseFx, 0o755); err != nil {
+		return g.toolchain(err)
+	}
+	const fixturePath = "cmd/nova-pulse/testdata/accept"
+	archive := exec.CommandContext(g.ctx, "git", "archive", "--format=tar", g.base, fixturePath)
+	archive.Dir = g.job
+	archive.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	tarBytes, err := archive.Output()
+	if err != nil {
+		g.note("the base carries no " + fixturePath + "; the base's seeds cannot be run against the head's gate")
+		return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
+	}
+	untar := exec.CommandContext(g.ctx, "tar", "-x", "-C", baseFx)
+	untar.Stdin = strings.NewReader(string(tarBytes))
+	if out, err := untar.CombinedOutput(); err != nil {
+		return g.toolchain(fmt.Errorf("could not unpack the base's fixtures: %v: %s", err, acceptFirstLine(string(out))))
+	}
+	gwRoot := filepath.Join(g.runDir, "gw")
+	args := []string{"accept", "--selftest", "--fixtures", filepath.Join(baseFx, filepath.FromSlash(fixturePath)), "--root", gwRoot,
+		"--bench", g.in.Bench, "--cert", g.in.Cert, "--sandbox", g.sandbox, "--timeout", fmt.Sprint(int(g.in.Timeout / time.Second))}
+	out, err = g.wall(g.wt, bin, args...)
+	if err == nil {
+		return nil
+	}
+	if acceptToolchainRed(out, err) {
+		g.note("head's gate selftest: " + acceptFirstLine(out))
+		return &acceptStop{verdict: "ABSTAIN", reason: "toolchain"}
+	}
+	at := "-"
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "ACCEPT SEED ") && strings.HasSuffix(strings.TrimRight(line, "\r"), " WRONG") {
+			at = fieldOf(line, "name=")
+			break
+		}
+	}
+	g.note("the base's seeds against the head's gate: " + acceptFirstLine(out))
+	return &acceptStop{verdict: "REJECT", reason: "gate-weakened", at: at}
+}
+
+// acceptOneBinary is the one file `go build -o <dir>` left there.
+func acceptOneBinary(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
+	}
+	if len(files) != 1 {
+		return "", fmt.Errorf("go build left %d files, want one binary", len(files))
+	}
+	return files[0], nil
 }

@@ -1,0 +1,4 @@
+kind=file
+want=stray-file
+file=sign/RESULT.md
+text=the worker's own report

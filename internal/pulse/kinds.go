@@ -1,5 +1,7 @@
 package pulse
 
+import hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
+
 // The kinds table: a card kind is a template PLUS the gate that judges it and the control
 // that proves the gate (SPEC-TOOLWORK.md §5 rules 2-3, PR #1637). The template is text
 // for the worker; this is code in the tool the worker never sees and cannot edit, chosen
@@ -77,6 +79,29 @@ func (k Kind) Gated() bool { return len(k.Steps) > 0 }
 func (k Kind) Step(name string) bool {
 	for _, s := range k.Steps {
 		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+// GateSources are the paths whose change means the card touched its own judge (the
+// eligibility rule, 10): the gate's package, the two packages it calls, the wall, and
+// the fixture the selftest is seen red on. A card whose diff matches one is judged as
+// every card is AND has the base's seeds run against the head's gate (gate-weakened).
+var GateSources = []string{
+	"internal/pulse/**",
+	"internal/hygiene/**",
+	"internal/review/**",
+	"internal/sandbox/**",
+	"cmd/nova-pulse/**",
+	"cmd/nova-sandbox/**",
+}
+
+// TouchesGate says whether a repo-relative path is one of the gate's own sources.
+func TouchesGate(p string) bool {
+	for _, g := range GateSources {
+		if hyg.Match(g, p) {
 			return true
 		}
 	}

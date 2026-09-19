@@ -45,6 +45,10 @@ func ValidatePaths(paths []string) error {
 	return nil
 }
 
+// Match answers whether a repo-relative path matches one PATHS:-style glob, for a caller
+// that bounds something else by the same grammar (the accept gate's own-sources list).
+func Match(glob, p string) bool { return matchGlob(glob, p) }
+
 // matchGlob answers whether a repo-relative path matches one glob. `*` stays inside one
 // segment, as path.Match has it; `**` spans any number of segments, which path.Match
 // does not do at all and which is why this is written out rather than delegated.

@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
@@ -30,6 +32,8 @@ const (
 
 type acceptLab struct {
 	root, slot, job, cards, cert string
+	noControl                    bool  // leave no control on file
+	fixtures                     fs.FS // hand the gate fixtures to run a selftest with
 }
 
 func acceptGit(t *testing.T, dir string, env []string, args ...string) string {
@@ -124,9 +128,14 @@ func (l *acceptLab) run(t *testing.T, card string, sandbox *fakeSpec) acceptRun 
 		spec.Log = log
 	}
 	fakeTool(t, specs, "nova-sandbox", spec)
+	if !l.noControl {
+		// A passing selftest for this build, these (absent) fixtures and this cert is
+		// on file, as the harvest that ran one would have left it (§1 rule 8).
+		writeControlFile(t, l.root, ControlID(buildinfo.Version(""), "-", "hand"))
+	}
 	var out, errb bytes.Buffer
 	code := Accept(AcceptInput{
-		Job: l.job, Card: card, Base: "main", Bench: "lab", Cert: l.cert,
+		Job: l.job, Card: card, Base: "main", Bench: "lab", Cert: l.cert, Fixtures: l.fixtures, Root: l.root,
 		Identities: []hyg.Identity{{Name: "Rowan", Email: "rowan@example.com"}},
 		Timeout:    3 * time.Minute, Max: 20, Stdout: &out, Stderr: &errb, Now: time.Now,
 	})
@@ -170,7 +179,10 @@ func TestAcceptOKOnAGoodFix(t *testing.T) {
 	l := newAcceptLab(t)
 	l.goodFix(t)
 	r := l.run(t, l.card(t, fixRedHeader), nil)
-	v := wantVerdict(t, r, 0, "ACCEPT OK label=CARD-7 kind=fix-red ", " base=", " edits=- control=- bench=lab cert=hand took=")
+	v := wantVerdict(t, r, 0, "ACCEPT OK label=CARD-7 kind=fix-red ", " base=", " edits=- control=", " bench=lab cert=hand took=")
+	if !regexp.MustCompile(` control=[0-9a-f]{12} `).MatchString(v) {
+		t.Fatalf("no sha12 control on %q", v)
+	}
 	if !regexp.MustCompile(` head=[0-9a-f]{12} `).MatchString(v) {
 		t.Fatalf("no sha12 head on %q", v)
 	}
@@ -575,5 +587,16 @@ func TestAcceptRunsAnUntouchedRedInAnUnchangedFileOnceAtBase(t *testing.T) {
 	}
 	if baseRuns != 1 || headRuns != 1 {
 		t.Fatalf("head runs %d (want 1), base runs %d (want 1): once each, never a rerun\n%s", headRuns, baseRuns, r.wall)
+	}
+}
+
+func writeControlFile(t *testing.T, root, id string) {
+	t.Helper()
+	dir := filepath.Join(root, "accept", "control")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id), []byte("ACCEPT SELFTEST control="+id+" PASS\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

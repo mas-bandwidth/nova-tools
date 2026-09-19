@@ -1,0 +1,13 @@
+diff --git a/sign/sign.go b/sign/sign.go
+index 61ff89b..72bdd6e 100644
+--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -8,7 +8,7 @@ func Describe(n int) string { return fmt.Sprintf("sign(%d)", n) }
+ // Sign is 0 at zero and 1 elsewhere.
+ func Sign(n int) int {
+ 	if n == 0 {
+-		return 0
++		return 1
+ 	}
+ 	return 1
+ }
