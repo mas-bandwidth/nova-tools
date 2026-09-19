@@ -5,6 +5,15 @@
 // are never both active: the mode is chosen once and every read follows it.
 //
 // PULL (slice 4 of SPEC-JOBS, section 4). A card carries a kind and a repo; pull prefers
+//
+// It is also `nova-swarm pull` per-bench queues with work stealing (docs/SPEC-JOBS.md
+// section 2): it lists a bench's queue/ directory and takes one card by
+// rename(<name>.card, taken/<worker>-<name>.card) -- atomic within the directory, so two
+// workers cannot take one card. It drains the worker's own taken/ before it reaches for
+// another bench. A worker with no owned card and an empty home queue may steal from the
+// fullest bench named by --steal, never below that victim's --capacity line, and only on
+// the mirror's five-minute timer.
+//
 // the card whose repo the bench already holds in a kept worktree under
 // <slot>/worktrees/<owner>/<name>, so the clone is reused and cache warmth is kept. With
 // no warm card it falls back to the first card and a fetch from the bench mirror. Every
@@ -33,13 +42,15 @@ import (
 var pullLanes = []string{"red", "green", "small", "next"}
 
 // pullStreamFlags are the flags that select the SPEC-STATE stream worker; any one of them
-// present means the caller asked for the stream, not the warm-worktree prefer.
-var pullStreamFlags = []string{"stream", "bench", "redis", "dir", "lane", "wait"}
+// present means the caller asked for the stream, not one of the SPEC-JOBS pulls. --bench is
+// not among them: it names the consumer there and the bench directory in section 2's pull,
+// so the stream is chosen by a flag only the stream has.
+var pullStreamFlags = []string{"stream", "redis", "dir", "lane", "wait"}
 
-// cmdPull reads at most one card for one bench and prints one line. The mode is chosen at
-// start from the flags: --redis is the instance and --dir is the directory fallback. With
-// the SPEC-JOBS flags it instead prefers the card whose repo the bench already holds.
-func cmdPull(args []string, stdout, stderr io.Writer) int {
+// cmdPull dispatches the three pull shapes by the flags the caller named: a slot, a queue
+// or a mirror is section 4's affinity pull; a stream flag is SPEC-STATE's stream worker;
+// and everything else is section 2's per-bench queue pull.
+func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("pull")
 	stream := f.fs.String("stream", "", "")
 	bench := f.fs.String("bench", "", "")
@@ -50,8 +61,15 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 	slot := f.fs.String("slot", "", "")
 	queue := f.fs.String("queue", "", "")
 	mirror := f.fs.String("mirror", "", "")
+	worker := f.fs.String("worker", "", "")
+	steal := f.fs.String("steal", "", "")
+	capacity := f.fs.Int("capacity", 0, "")
+	lastSteal := f.fs.String("last-steal", "", "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *slot != "" || *queue != "" || *mirror != "" {
+		return pullWarm(f, *slot, *queue, *mirror, stdout, stderr)
 	}
 	if pullWantsStream(f) {
 		f.want(*stream, "stream", "the card kind this bench pulls, from nova:queue:<kind>:<lane>")
@@ -75,17 +93,27 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 		}
 		return pullDirectory(*dir, *stream, *bench, lanes, stdout, stderr)
 	}
-	f.want(*slot, "slot", "the bench slot whose kept worktrees live under <slot>/worktrees/<owner>/<name>")
-	f.want(*queue, "queue", "the bench's queue directory of cards")
-	f.want(*mirror, "mirror", "the bench mirror a cold clone fetches from")
+	return pullBench(f, *bench, *worker, *steal, *capacity, *lastSteal, stdout, stderr, now)
+}
+
+// pullWarm is PULL (slice 4 of SPEC-JOBS, section 4). A card carries a kind and a repo; pull prefers
+// the card whose repo the bench already holds in a kept worktree under
+// <slot>/worktrees/<owner>/<name>, so the clone is reused and cache warmth is kept. With
+// no warm card it falls back to the first card and a fetch from the bench mirror. Every
+// path comes from a flag; there is no default slot, queue or mirror.
+func pullWarm(f *flags, slot, queue, mirror string, stdout, stderr io.Writer) int {
+	f.want(slot, "slot", "the bench slot whose kept worktrees live under <slot>/worktrees/<owner>/<name>")
+	f.want(queue, "queue", "the bench's queue directory of cards")
+	f.want(mirror, "mirror", "the bench mirror a cold clone fetches from")
 	if f.refused(stderr) {
 		return 2
 	}
-	cards, err := swarm.ReadCardDir(*queue)
+
+	cards, err := swarm.ReadCardDir(queue)
 	if err != nil {
 		return refusePull(stderr, oneline.Err(err))
 	}
-	got, err := swarm.Prefer([]swarm.PullBench{{Name: "local", Slot: *slot, Mirror: *mirror, Queue: cards}})
+	got, err := swarm.Prefer([]swarm.PullBench{{Name: "local", Slot: slot, Mirror: mirror, Queue: cards}})
 	if err != nil {
 		return refusePull(stderr, oneline.Err(err))
 	}
@@ -181,8 +209,105 @@ func pullDirectory(root, kind, bench string, lanes []string, stdout, stderr io.W
 	return 0
 }
 
+// pullBench is section 2's per-bench queue pull.
+func pullBench(f *flags, bench, worker, steal string, capacity int, lastSteal string, stdout, stderr io.Writer, now time.Time) int {
+	f.want(bench, "bench", "the bench directory holding queue/ and taken/")
+	f.want(worker, "worker", "the worker name written into taken/<worker>-<name>.card")
+	if capacity < 0 {
+		f.add(fmt.Sprintf("--capacity is the victim's capacity line and is 0 or more, got %d; refusing to guess", capacity))
+	}
+	last := time.Time{}
+	if s := strings.TrimSpace(lastSteal); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			f.add(fmt.Sprintf("--last-steal wants an RFC3339 stamp such as 2026-09-18T00:00:00Z, got %q", lastSteal))
+		} else {
+			last = t
+		}
+	}
+	if f.refused(stderr) {
+		fmt.Fprintln(stderr, "nova-swarm pull: run: nova-swarm help")
+		return 2
+	}
+
+	queue, err := swarm.QueueCards(bench)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm pull: %s\n", oneline.Err(err))
+		return 2
+	}
+	owned, err := swarm.OwnedCards(bench, worker)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm pull: %s\n", oneline.Err(err))
+		return 2
+	}
+
+	// Drain the worker's own taken/ first: a card already owned needs no queue scan
+	// and no other bench.
+	if len(owned) > 0 {
+		writePull(stdout, "taken", bench, worker, owned[0], len(queue), len(owned))
+		return 0
+	}
+
+	// Otherwise take one card from this bench's queue by the atomic rename.
+	name, ok, err := swarm.TakeCard(bench, worker)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm pull: %s\n", oneline.Err(err))
+		return 2
+	}
+	if ok {
+		writePull(stdout, "queue", bench, worker, name, len(queue)-1, 1)
+		return 0
+	}
+
+	// Idle: steal from the fullest bench on the mirror's five-minute timer, never
+	// below that victim's capacity line.
+	if victims := splitList(steal); len(victims) > 0 && swarm.MirrorDue(last, now) {
+		victim, queued, found, ferr := swarm.FullestBench(victims)
+		if ferr != nil {
+			fmt.Fprintf(stderr, "nova-swarm pull: %s\n", oneline.Err(ferr))
+			return 2
+		}
+		if found {
+			stolen, serr := swarm.Steal(victim, worker, capacity)
+			if serr != nil {
+				fmt.Fprintf(stderr, "nova-swarm pull: %s\n", oneline.Err(serr))
+				return 2
+			}
+			if len(stolen) > 0 {
+				fmt.Fprintf(stdout, "PULL bench=%s worker=%s card=%s source=steal victim=%s queue=%d taken=%d\n",
+					oneline.Field(bench), oneline.Field(worker), oneline.Field(stolen[0]),
+					oneline.Field(victim), queued, len(stolen))
+				return 0
+			}
+		}
+	}
+
+	fmt.Fprintf(stdout, "PULL bench=%s worker=%s card=- source=none queue=%d taken=%d\n",
+		oneline.Field(bench), oneline.Field(worker), len(queue), len(owned))
+	return 0
+}
+
 // refusePull writes the one line a pull that could not run owes its caller.
 func refusePull(w io.Writer, reason string) int {
 	fmt.Fprintf(w, "PULL REFUSED: %s\n", oneline.Escape(reason))
 	return 2
+}
+
+// writePull prints the one line a pull that took a card writes: the bench, the
+// worker, the card, and where the card came from.
+func writePull(w io.Writer, source, bench, worker, card string, queue, taken int) {
+	fmt.Fprintf(w, "PULL bench=%s worker=%s card=%s source=%s queue=%d taken=%d\n",
+		oneline.Field(bench), oneline.Field(worker), oneline.Field(card),
+		oneline.Field(source), queue, taken)
+}
+
+// splitList reads a comma-separated flag value into its non-empty items.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
