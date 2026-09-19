@@ -512,7 +512,9 @@ here that has one points at it.
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
 next card: a rule lands with its sweep of the tree, or it does not land
-(pit-stop ledger item 20, 2026-09-17).
+(pit-stop ledger item 20, 2026-09-17, which lives in the `rowan-new`
+repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
+this one, so the citation is deliberately prose and not a link).
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier
