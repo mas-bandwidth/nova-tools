@@ -88,4 +88,5 @@
                 (:file "tests/replays-785-gate")
                 (:file "tests/request-line")
                 (:file "tests/replays-concurrency-witness")
-                (:file "tests/replays-restart-and-recovery")))
+                (:file "tests/replays-restart-and-recovery")
+                (:file "tests/replays-validator-rule-witnesses")))
