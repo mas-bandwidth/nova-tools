@@ -20,8 +20,9 @@ import (
 // file -- and names each defect by check, line and excerpt before any spend. The checks are
 // the shape the card deaths taught (docs/WORKER-CARDS.md practices 17, 18, 23, 25).
 
-// cardMaxBytes is the ceiling a card may not reach: a card past it is not read in one
-// window, and the lint says so before any spend.
+// cardMaxBytes is the advisory ceiling a model reads a card within: a card past it is not
+// read in one window, and the lint says so before any spend -- but nothing is cut, so a card
+// past it still ships (issue #1494).
 const cardMaxBytes = 12000
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
@@ -63,7 +64,7 @@ var cardLintRemedies = map[string]string{
 	"no-parent-path":   "the wall refuses every path above the job: put the worktree, the scratch and the notes under the working directory instead of reaching through `../` (practice 25)",
 	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
 	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
-	"size":             "cut the card under the ceiling so a model reads it in one window: point at a file instead of pasting it, and drop quoted source",
+	"size":             "the ceiling is advisory, not a limit: a card over it still ships, so trim only to keep a model reading in one window; point at a file instead of pasting it, and drop quoted source",
 }
 
 // cardLintRuleNames is every rule token in one order, so the listing is byte-stable.
@@ -120,6 +121,14 @@ func cardSteps(lines []string) []cardStep {
 		}
 	}
 	return steps
+}
+
+// fenceLine reports whether a line is a fenced-code-block delimiter: a run of three or more
+// backticks or tildes, optionally followed by an info string. A line inside such a block
+// quotes code rather than instructs the worker, so the path checks skip it (issue #1494).
+func fenceLine(l string) bool {
+	t := strings.TrimSpace(l)
+	return len(t) >= 3 && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"))
 }
 
 // lintCard returns every mechanical defect in one card's text. It reads nothing but the
@@ -206,9 +215,15 @@ func lintCard(raw []byte) []cardFinding {
 		}
 	}
 
-	// 9. no `../` path anywhere: the wall refuses a path above the job.
+	// 9. no `../` path anywhere: the wall refuses a path above the job -- unless the line is
+	// inside a fenced code block, which quotes code rather than instructs a path (issue #1494).
+	inFence := false
 	for i, l := range lines {
-		if strings.Contains(l, "../") {
+		if fenceLine(l) {
+			inFence = !inFence
+			continue
+		}
+		if !inFence && strings.Contains(l, "../") {
 			add("no-parent-path", i+1, l)
 		}
 	}
@@ -237,9 +252,9 @@ func lintCard(raw []byte) []cardFinding {
 		}
 	}
 
-	// 12. the card is under the ceiling.
+	// 12. the card is under the advisory ceiling; past it is reported, never truncated.
 	if len(raw) >= cardMaxBytes {
-		add("size", 1, fmt.Sprintf("card is %d bytes, at or over the %d-byte ceiling", len(raw), cardMaxBytes))
+		add("size", 1, fmt.Sprintf("card is %d bytes, at or over the %d-byte advisory ceiling that keeps a model reading the card in one window", len(raw), cardMaxBytes))
 	}
 
 	return out

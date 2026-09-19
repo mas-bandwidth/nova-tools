@@ -167,3 +167,63 @@ func TestLintRefusesAnOversizeCard(t *testing.T) {
 		t.Fatalf("the size finding names the check: %q", stdout)
 	}
 }
+
+// A card past the 12000-byte ceiling still ships -- the ceiling is advisory, not a hard input
+// limit -- and the size finding says so in its message, names what the ceiling protects (a
+// model reading the card in one window), and carries the remedy line every listing promises
+// (issue #1494).
+func TestLintSizeNamesTheAdvisoryCeiling(t *testing.T) {
+	body := lintGoodCard() + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
+	card := writeLintCard(t, "big.card", body)
+	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
+	if exit != 2 {
+		t.Fatalf("an oversize card drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	}
+	var sizeLine string
+	for _, l := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+		if strings.Contains(l, " size: ") {
+			sizeLine = l
+			break
+		}
+	}
+	if sizeLine == "" {
+		t.Fatalf("the size finding names the check: %q", stdout)
+	}
+	excerpt, remedy, ok := strings.Cut(sizeLine, " remedy=")
+	if !ok || strings.TrimSpace(remedy) == "" {
+		t.Fatalf("the size finding carries a remedy line: %q", sizeLine)
+	}
+	if !strings.Contains(excerpt, "advisory") {
+		t.Fatalf("the size finding says the ceiling is advisory: %q", excerpt)
+	}
+	if !strings.Contains(excerpt, "one window") {
+		t.Fatalf("the size finding says what the ceiling protects -- a model reading the card in one window: %q", excerpt)
+	}
+}
+
+// A `../` inside a fenced code block is a quotation of code, not an instruction to reach a
+// path above the job, so it must not fire no-parent-path (issue #1494).
+func TestLintNoParentPathSkipsAFencedBlock(t *testing.T) {
+	body := strings.Join([]string{
+		"RESULT: CARD-3333 do the thing",
+		"You are a Go engineer. Work in $(pwd).",
+		"STEP 1. pwd && { [ -d repo ] || git clone -q https://example.invalid/mas-bandwidth/nova-tools.git repo; } && cd repo && git log --oneline -1",
+		"STEP 2. Read docs/SPEC-SWARM.md first.",
+		"STEP 3. Write a red test named TestCardLintPasses, run go test ./internal/swarm/, and record the failing output in <working directory>/scratch/red.txt using that absolute path.",
+		"STEP 4. The card quotes the harness line the probe must reproduce:",
+		"```",
+		`serialize, _ := filepath.Abs("../../../../serialize")`,
+		"```",
+		"STEP 5. finish within 20 minutes.",
+		"STEP 6. Write RESULT.md: line 1 is the RESULT: line above.",
+		"",
+	}, "\n")
+	card := writeLintCard(t, "fenced.card", body)
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
+	if exit != 0 {
+		t.Fatalf("a card whose only ../ sits inside a fenced block lints clean, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if strings.Contains(stdout, "no-parent-path") {
+		t.Fatalf("a quoted ../ inside a fenced block is not an instruction to reach it: %q", stdout)
+	}
+}
