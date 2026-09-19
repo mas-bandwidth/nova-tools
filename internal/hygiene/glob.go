@@ -1,7 +1,6 @@
 package hygiene
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -19,9 +18,15 @@ const maxPaths = 8
 //
 // No `..`, because a glob that climbs out of the repository bounds nothing. No absolute
 // path, for the same reason and because a card's paths are repo-relative by definition.
-// No bare `**`, because it matches every file there is and a card whose declared paths
-// are "everything" has declared nothing -- the check would run and always pass, which
-// is worse than not running, because the row would say it ran.
+// No glob that matches every file there is, because a card whose declared paths are
+// "everything" has declared nothing -- the check would run and always pass, which is
+// worse than not running, because the row would say it ran.
+//
+// That last rule is not a list of spellings. `**` and `**/` were refused by name, and
+// `**/*`, `*/**` and a bare `*` walked straight past them and matched everything just
+// the same. What bounds a glob is a LITERAL character somewhere in it that a path has
+// to carry, so that is what is asked for: one segment holding something that is not a
+// wildcard. `sign/**`, `*.go` and `**/*.go` all clear it; `**/*` and `*/**` do not.
 func ValidatePaths(paths []string) error {
 	if len(paths) > maxPaths {
 		return fmt.Errorf("PATHS: has %d entries, at most %d", len(paths), maxPaths)
@@ -33,8 +38,8 @@ func ValidatePaths(paths []string) error {
 		if strings.HasPrefix(p, "/") {
 			return fmt.Errorf("PATHS: %q is absolute; the globs are repo-relative", p)
 		}
-		if p == "**" || p == "**/" {
-			return errors.New(`PATHS: a bare ** matches every file there is; a card whose paths are "everything" has declared nothing`)
+		if boundsNothing(p) {
+			return fmt.Errorf(`PATHS: %q matches every file there is; a card whose paths are "everything" has declared nothing`, p)
 		}
 		for _, seg := range strings.Split(p, "/") {
 			if seg == ".." {
@@ -43,6 +48,18 @@ func ValidatePaths(paths []string) error {
 		}
 	}
 	return nil
+}
+
+// boundsNothing answers whether a glob holds any literal character at all. A segment
+// made only of `*` and `?` constrains nothing about that segment, and a glob whose
+// every segment is like that constrains nothing about anything.
+func boundsNothing(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if strings.Trim(seg, "*?") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // matchGlob answers whether a repo-relative path matches one glob. `*` stays inside one

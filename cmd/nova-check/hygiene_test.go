@@ -126,3 +126,39 @@ func TestHygieneUsageNamesTheVerb(t *testing.T) {
 		t.Fatalf("the help does not carry the hygiene line:\n%s", out.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The cold read of 2026-09-19 (#1717, finding 9).
+
+// hygWrite and hygGit run with the bench's config blanked, so a fixtureKey built here
+// is the only key-SHAPED string anywhere near this test. It is built by parts, at test
+// time, so no valid key for any provider is written into this repository.
+func hygFixtureKey() string { return "gh" + "p_" + strings.Repeat("A", 36) }
+
+// hygiene-never-prints-the-secret, at the VERB, which is the surface that matters: a
+// finding travels into a gate's stdout, a PR body and whatever a coordinator pastes
+// into a chat, and the package's own test can only prove that the Finding struct is
+// clean. This one runs the verb and searches BOTH streams -- the finding line, the
+// verdict line, the refusal path -- for the fixture string.
+func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
+	dir := hygLab(t)
+	key := hygFixtureKey()
+	hygWrite(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n")
+	hygGit(t, dir, "add", "-A")
+	hygGit(t, dir, "commit", "-q", "-m", "oops")
+	var out, errb bytes.Buffer
+	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	// The finding must be there: a verb that printed nothing at all would pass the
+	// search below and have proved nothing.
+	if !strings.Contains(out.String(), "HYGIENE FINDING reason=secret at=sign/sign.go:3") {
+		t.Fatalf("stdout = %q, want the secret named by path and line", out.String())
+	}
+	for name, stream := range map[string]string{"stdout": out.String(), "stderr": errb.String()} {
+		if strings.Contains(stream, key) {
+			t.Fatalf("the matched text reached %s: %q", name, stream)
+		}
+	}
+}
