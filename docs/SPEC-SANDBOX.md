@@ -512,7 +512,23 @@ What the verb does, in order, and there is no other order:
    not make, and it deletes the place on the way out.
 2. **Create.** One volume, with the quota `--size` names. `--size` is
    **required**: a disposable place with no ceiling can fill the boot disk,
-   which is the failure a disposable place exists to prevent.
+   which is the failure a disposable place exists to prevent. A volume that comes
+   up with **no mount point** is a different failure from one that could not be
+   made, and the refusal says which of the two it is: the volume was created, the
+   mount was denied or never happened, and the volume has been deleted again. The
+   usual cause is the **caller**, because a process that is itself inside an OS
+   sandbox may not mount a volume, so the line names both remedies — a shell that
+   is not sandboxed, or the bare wall form, which needs no volume at all. Both
+   failures are `reason=volume_failed`.
+
+   That cause has a **second face one step earlier**: under a seatbelt wall
+   `diskutil` cannot reach DiskArbitration at all and fails every call with
+   *"framework being unavailable due to being booted in single-user mode"*, which
+   is neither what happened nor anywhere to look. Wherever that phrase is in a
+   disk failure, the refusal carries the same cause-and-remedy sentence as the
+   unmounted volume — one sentence, written once, so the faces cannot drift — and
+   the container refusal (`reason=no_container`) drops its `--container` advice,
+   because a container named by hand fails the same way one call later.
 3. **Run.** The volume is the run's **only `--write`**, so the seatbelt profile
    of the darwin section allows writes there and nowhere else; rule 8's temp
    directory defaults inside it, which puts `TMPDIR` on the volume too. The
@@ -973,7 +989,7 @@ range, and this is a deliberate, recorded departure from the conventions
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`) and a volume that could not be made (`reason=volume_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`) and a volume that could not be made, or that was made and not mounted (`reason=volume_failed`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
