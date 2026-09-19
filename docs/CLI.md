@@ -2142,6 +2142,22 @@ config file says it is, a `baseURL` can point a local-looking name at a metered 
 and a reported `0` is a measurement, not a licence. So the caller says a number or says
 `unmetered`, every time, and the tool infers neither.
 
+**A budget needs a source the tool can read, and that is checked before anything is made.**
+A native card's usage source is its worker description's `usage`, and `opencode` when there
+is no `--worker`. A numeric `--tokens` beside `usage: none`, or on a bench with no
+`sqlite3` on `PATH`, is `NATIVE REFUSED` at exit 2 **before any directory is made** — for
+rule 13's own reason: a budget nothing can observe is a promise the tool cannot keep. The
+same refusal meets a description that sets `max_cache_read` or `max_turns` under either
+condition, **whatever `--tokens` says**, because the card's own budget is read from the
+same source; so `--tokens unmetered` beside a `max_turns` on a `usage: none` bench is
+refused too. `--tokens unmetered` with no such description runs under both, as it does
+today.
+
+**`--usage-interval <s>`** is how often a live sample reads that source, default 5, the
+same flag `run` takes. On `native` an interval **under one second**, or one **not shorter
+than `--deadline`**, is exit 2: under the first, three quick failed reads would end an
+honest card `budget-unverifiable`; under the second no sample would ever run.
+
 **Every caller passes the word along.** `batch --cards` takes `--tokens <n>|unmetered`,
 required, and refuses the whole batch before any card starts:
 

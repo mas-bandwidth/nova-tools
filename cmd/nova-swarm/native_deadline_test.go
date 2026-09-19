@@ -33,6 +33,10 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 	}
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "deadline", "--card", cardPath, "--slot", slot, "--root", root,
+		// A DEADLINE SHORTER THAN THE DEFAULT SAMPLE INTERVAL NAMES ITS OWN (rule 13d, this
+		// repo's slice 2): `native` refuses an interval that is not shorter than the
+		// deadline, and 5s is the default, so a 3s card says 1s.
+		"--usage-interval", "1s",
 		"--deadline", "3s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
 	start := time.Now()

@@ -542,6 +542,42 @@ NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0
 Both refusals exit 2 and make no directory: `<slot>/jobs`, `<slot>/data` and `<slot>/tmp`
 do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
 
+### A budget nothing can observe, refused before anything is made
+
+A budget wants a source this tool can read (rule 13d). The source is the worker
+description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
+
+```
+$ nova-swarm native --tokens 100000 --worker ./usage-none.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+
+$ PATH=./empty nova-swarm native --tokens 100000 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens is read from the harness's own database with `sqlite3 -readonly`, and sqlite3 is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install sqlite3 on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+The card's own budget is read from the same source, so it meets the same refusal whatever
+`--tokens` says — `unmetered` included:
+
+```
+$ nova-swarm native --tokens unmetered --worker ./usage-none-max-turns.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: this worker description's max_turns wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+`--tokens unmetered` with no such description runs under both conditions, as it does today.
+After every refusal above, `<slot>` is empty: nothing was made.
+
+### The sample interval's floor and ceiling
+
+```
+$ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
+! nova-swarm native: --usage-interval is at least 1s, got 900ms; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering
+
+$ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
+! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
+```
+
+`1s` exactly is accepted — the floor is inclusive — and the ceiling is exclusive.
+
 ### First run
 
 ```
