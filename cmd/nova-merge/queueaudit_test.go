@@ -46,13 +46,14 @@ func (f *fakeAudit) run(t *testing.T, args ...string) (int, string, string) {
 	return exit, out.String(), errb.String()
 }
 
-// Every auto-merge found is taken off, each one named, and the counts are one line.
+// Every auto-merge found is taken off, each one named, and the counts are one line. The
+// taking off is --apply's: since dogfood round 5 a bare `queue audit` READS (edge 1).
 func TestQueueAuditDisablesEveryAutoMergeAndNamesThem(t *testing.T) {
 	f := &fakeAudit{open: []merge.AutoMergePR{
 		{Number: 1301, HeadRef: "rowan/impl-a", Title: "a card"},
 		{Number: 1307, HeadRef: "rowan/impl-b", Title: "another card"},
 	}}
-	exit, stdout, stderr := f.run(t, "queue", "audit", "--repo", "mas-bandwidth/nova-tools")
+	exit, stdout, stderr := f.run(t, "queue", "audit", "--repo", "mas-bandwidth/nova-tools", "--apply")
 	if exit != 0 {
 		t.Fatalf("queue audit: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -61,7 +62,7 @@ func TestQueueAuditDisablesEveryAutoMergeAndNamesThem(t *testing.T) {
 	}
 	contains(t, stdout, "QUEUE AUDIT entry=1301 branch=rowan/impl-a")
 	contains(t, stdout, "QUEUE AUDIT entry=1307 branch=rowan/impl-b")
-	contains(t, stdout, "QUEUE AUDIT repo=mas-bandwidth/nova-tools found=2 disabled=2 failed=0 dry_run=false\n")
+	contains(t, stdout, "QUEUE AUDIT repo=mas-bandwidth/nova-tools found=2 disabled=2 failed=0 mode=apply\n")
 	if f.repo != "mas-bandwidth/nova-tools" {
 		t.Fatalf("the fake forge was handed repo=%q", f.repo)
 	}
@@ -75,7 +76,7 @@ func TestQueueAuditOnACleanRepositorySaysSoInOneLine(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit %d\n%s\n%s", exit, stdout, stderr)
 	}
-	contains(t, stdout, "found=0 disabled=0 failed=0 dry_run=false\n")
+	contains(t, stdout, "found=0 disabled=0 failed=0 mode=dry-run\n")
 	if lines := strings.Count(stdout, "\n"); lines != 1 {
 		t.Fatalf("a clean audit is one line; got %d:\n%s", lines, stdout)
 	}
@@ -91,7 +92,7 @@ func TestQueueAuditDryRunWritesNothing(t *testing.T) {
 	if len(f.disabled) != 0 {
 		t.Fatalf("a dry run wrote to the forge: %v", f.disabled)
 	}
-	contains(t, stdout, "found=1 disabled=0 failed=0 dry_run=true\n")
+	contains(t, stdout, "found=1 disabled=0 failed=0 mode=dry-run\n")
 }
 
 // One pull request the forge will not clear does not end the pass: the others are cleared,
@@ -101,7 +102,7 @@ func TestQueueAuditNamesWhatItCouldNotClear(t *testing.T) {
 		open:   []merge.AutoMergePR{{Number: 1}, {Number: 2}, {Number: 3}},
 		failOn: map[int]error{2: errors.New("gh: not authorized")},
 	}
-	exit, stdout, stderr := f.run(t, "queue", "audit", "--repo", "o/n")
+	exit, stdout, stderr := f.run(t, "queue", "audit", "--repo", "o/n", "--apply")
 	if exit != 1 {
 		t.Fatalf("exit %d, want 1 (the verb ran and some work did not get done)\n%s\n%s", exit, stdout, stderr)
 	}

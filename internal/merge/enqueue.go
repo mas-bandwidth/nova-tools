@@ -140,6 +140,44 @@ func (e *Enqueuer) Enqueue(ctx context.Context, pr EnqueuePR, jump bool) error {
 	return nil
 }
 
+// Admissible is the rule as a function any caller can ask, with everything it knows. The
+// door asks it again on the way through -- it is still the one place the rule lives -- but
+// `land` asks it as soon as the forge has named the head branch, so that a pull request
+// this rule will refuse never costs the SECOND forge read (its whole check rollup).
+//
+// Dogfood round 5, edge 3: the answer "this is not a batch" is a fact of a branch NAME,
+// and it was arriving after a rollup read that exists to answer a different question.
+func Admissible(pr EnqueuePR) error { return admissible(pr) }
+
+// RuleBeforeTheForge is the part of the rule that is a fact of the INVOCATION: a receipt
+// the caller presented either parses and names a batch that landed something, or it does
+// not, and no forge read can change that. It is asked FIRST, with the host untouched.
+//
+// A caller who presented no receipt is undecided here and gets nil: the head branch is the
+// other half of the rule, and only the forge can name it. That read is then the only one a
+// refusal costs.
+func RuleBeforeTheForge(pr int, receipt string) error {
+	if strings.TrimSpace(receipt) == "" {
+		return nil
+	}
+	return receiptAdmissible(pr, strings.TrimSpace(receipt))
+}
+
+// receiptAdmissible is everything a receipt says on its own, with no head to compare it
+// against: that it is a BATCH OK line at all, and that the batch it reports landed
+// something. The head comparison needs the pull request and lives in admissible.
+func receiptAdmissible(pr int, receipt string) error {
+	rec, err := ParseBatchReceipt(receipt)
+	if err != nil {
+		return &EnqueueRefusal{PR: pr, Why: err.Error()}
+	}
+	if rec.Members == batchNoMembers || strings.TrimSpace(rec.Members) == "" {
+		return &EnqueueRefusal{PR: pr, Why: fmt.Sprintf(
+			"the receipt's members=%s: that batch dropped every member, so its head is the base and it lands nothing", batchNoMembers)}
+	}
+	return nil
+}
+
 // admissible is the whole of the rule, decided BEFORE the forge is reached: a refused
 // enqueue asks the host nothing at all, so a refusal costs no call and leaves no trace on
 // the forge to explain later.
@@ -157,13 +195,12 @@ func admissible(pr EnqueuePR) error {
 			"its head branch is %q, and the queue takes a batch: a head under %s*, or a --batch receipt (the BATCH OK line) for this very head. Build one: nova-merge batch --name integration-<n> --pr <list> --repo <owner>/<name> --root <dir>",
 			oneline.Field(pr.HeadRef), BatchBranchPrefix)}
 	}
+	if err := receiptAdmissible(pr.Number, receipt); err != nil {
+		return err
+	}
 	rec, err := ParseBatchReceipt(receipt)
 	if err != nil {
 		return &EnqueueRefusal{PR: pr.Number, Why: err.Error()}
-	}
-	if rec.Members == batchNoMembers || strings.TrimSpace(rec.Members) == "" {
-		return &EnqueueRefusal{PR: pr.Number, Why: fmt.Sprintf(
-			"the receipt's members=%s: that batch dropped every member, so its head is the base and it lands nothing", batchNoMembers)}
 	}
 	// THE RECEIPT IS ABOUT A TREE, and the tree it is about is the one it names. A receipt
 	// that does not name this head is evidence about a commit nobody is landing -- the gate

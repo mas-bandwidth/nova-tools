@@ -22,8 +22,15 @@ import (
 // hand twice becomes a verb.
 //
 // So this verb reads every open pull request carrying an auto-merge and takes it off, one
-// line each, and one line of counts. --dry-run reads and writes nothing, for the caller who
-// wants to see the list first.
+// line each, and one line of counts.
+//
+// THE READ IS THE DEFAULT (dogfood round 5, edge 1). "Audit" is a reading word, and the
+// verb took --dry-run defaulting to FALSE: a non-author typed `queue audit --repo o/n` to
+// SEE what was armed and disarmed the whole forge instead, learning it from the counts
+// afterwards. A verb whose name promises a look does not write unless it is asked to, so
+// --apply is the act and the safe reading is what a bare invocation does. --dry-run is
+// kept, and is now a spelling of the default, so a script carrying it means what it always
+// meant; asking for both is two answers to one question and is refused.
 //
 // It is a subverb of `queue` because it is about the queue's own admissions, and it names
 // its repository outright rather than reading a lane's: a forge's standing instructions are
@@ -31,10 +38,14 @@ import (
 func cmdQueueAudit(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f := newFlags("queue audit")
 	repo := f.fs.String("repo", "", "")
+	apply := f.fs.Bool("apply", false, "")
 	dry := f.fs.Bool("dry-run", false, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *apply && *dry {
+		f.problem("--apply and --dry-run are two answers to one question; --dry-run is the default, and --apply is what performs the disable")
 	}
 	f.require("repo", *repo, "the repository whose open pull requests are read for auto-merges, as <owner>/<name>")
 	if *repo != "" {
@@ -48,7 +59,7 @@ func cmdQueueAudit(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if !f.done(stderr) {
 		return 2
 	}
-	res, err := merge.Audit(context.Background(), deps.NewAuditHost(*repo, time.Duration(*timeout)*time.Second), *dry)
+	res, err := merge.Audit(context.Background(), deps.NewAuditHost(*repo, time.Duration(*timeout)*time.Second), !*apply)
 	if err != nil {
 		return queueRefuse(stderr, fmt.Sprintf("the repository's auto-merges could not be read: %s", oneline.Err(err)))
 	}
@@ -58,8 +69,15 @@ func cmdQueueAudit(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprintf(stdout, "QUEUE AUDIT entry=%d branch=%s title=%s\n",
 			pr.Number, oneline.Field(pr.HeadRef), oneline.Field(oneline.Cap(pr.Title, 80)))
 	}
-	fmt.Fprintf(stdout, "QUEUE AUDIT repo=%s found=%d disabled=%d failed=%d dry_run=%t\n",
-		oneline.Field(*repo), res.Found, res.Disabled, res.Failed, *dry)
+	// THE MODE IS A WORD, not a boolean whose polarity a reader has to remember. `dry_run=
+	// false` and `mode=apply` say the same thing, and only one of them says it to somebody
+	// scanning a log for the run that disarmed the forge.
+	mode := "dry-run"
+	if *apply {
+		mode = "apply"
+	}
+	fmt.Fprintf(stdout, "QUEUE AUDIT repo=%s found=%d disabled=%d failed=%d mode=%s\n",
+		oneline.Field(*repo), res.Found, res.Disabled, res.Failed, mode)
 	// A refusal the forge made is exit 1 -- the verb ran and some of the work did not get
 	// done -- and the pull requests it could not clear are named, because those are the ones
 	// still armed.

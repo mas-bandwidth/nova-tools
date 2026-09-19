@@ -367,15 +367,22 @@ func TestBatchDropsAMemberWhoseOwnHeadIsNotGreen(t *testing.T) {
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-checks", "--pr", "1,3",
 		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
-	if exit != 0 {
-		t.Fatalf("a batch whose members were all dropped still runs its gate: exit %d\n%s\n%s", exit, stdout, stderr)
+	// DOGFOOD ROUND 5, EDGE 5 OVERTURNED THIS TEST'S OLD ANSWER. It asserted exit 0 -- "a
+	// batch whose members were all dropped still runs its gate" -- and that is the two
+	// minutes a dogfooder spent on vision watching build, vet, vet-windows and test prove
+	// that the base is green, over a head that IS the base, ending in a BATCH OK receipt
+	// `land` then refused. An empty batch is a FAIL, and it is said before the first step.
+	if exit != 1 {
+		t.Fatalf("a batch with no members is exit 1, got %d\n%s\n%s", exit, stdout, stderr)
 	}
 	contains(t, stderr, "BATCH DROP #1 reason=\"head "+l.heads[1]+" has no green ci-ok (state=failure)\"")
 	contains(t, stderr, "BATCH DROP #3 reason=\"head "+l.heads[3]+" has no green ci-ok (state=none)\"")
 	contains(t, stdout, "members=none")
 	contains(t, stdout, "dropped=1,3")
 	contains(t, stdout, "checks=required")
+	contains(t, stdout, `reason="every member dropped"`)
 	absent(t, stderr, "BATCH MERGED")
+	absent(t, stderr, "BATCH STEP")
 }
 
 // EDGE 25, the override: --no-require-checks merges whatever the caller named and SAYS
