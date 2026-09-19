@@ -739,9 +739,19 @@ exit 2 before anything is written.
 ### Refusals
 
 ```text
+$ nova-work
+WORK REFUSED: a verb is required; run: nova-work help
+
 $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
 ```
+
+Both exit 2 and print one line on stderr, and the two spellings are deliberate
+rather than a drift: `WORK REFUSED:` is what the client spec gives an invocation
+that could not run at all, and `nova-work <verb>:` is what a verb that ran and read
+its input says about the input. `cmd/nova-work/firstrun_test.go` executes this
+block as well as the one above; until 2026-09-19 it executed neither refusal, and
+what that cost is written below.
 
 ### The card-result record
 
@@ -770,24 +780,27 @@ $ nova-work results --postgres postgres://space/nova --bench space --failed
 RESULT id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results pr=- done=2026-09-18T12:00:00Z result=RESULT: CARD-9347 card results in Postgres
 ```
 
-## nova-work
+### The event bridge
 
-`nova-work` is the work layer's event bridge. Its one shipped verb, `events`, publishes
-the pub/sub messages `nova-merge react` subscribes to (docs/SPEC-JOBS.md, "Events, not
-ticks"). It makes no model call and writes no record: the bus is a signal, git is the
-record. The relay needs a local Redis — `--redis <addr>` — and the gh fallback is off
-unless `--repo` names the repository, so a test drives a miniredis and a fake forge and
-reaches no network.
+`nova-work events` publishes the pub/sub messages `nova-merge react` subscribes to
+(docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call and writes no
+record: the bus is a signal, git is the record.
 
-### First run
+It has no `$` line above because it cannot have one. The relay needs a local Redis
+(`--redis <addr>`), and naming the repository with `--repo` switches ON a
+`gh pr list` fallback that reaches the forge — without `--repo` only the stream is
+bridged. `cmd/nova-work/events_log_test.go` drives it against a miniredis and a
+fake forge, and the usage banner's `example:` block runs it without `--repo`. That
+is where a line needing a running service belongs: every `$` line in this file is
+one a stranger can type on a fresh bench.
 
-```text
-$ nova-work
-nova-work: no verb given; run: nova-work help
-
-$ nova-work events --redis 127.0.0.1:6379 --repo mas-bandwidth/nova-tools --once
-EVENTS OK once=true card-done=0 published=1
-```
+This description used to head a SECOND `## nova-work` section further down this
+file. Because `onboarding.Section` reads the first match of a name, no test ever
+executed it, and it drifted into a refusal sentence the binary had stopped printing
+(`nova-work: no verb given`) and an `events` line carrying `--repo`. Both
+reproduced as DEFECT on space and on hulk in the 2026-09-18 two-bench run while
+every test in this repository was green. `internal/ci/onboarding_test.go` now
+refuses a repeated `## ` heading here.
 
 ## nova-ci
 

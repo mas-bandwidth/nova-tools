@@ -77,20 +77,7 @@ func FirstRun(md, tool string) ([]string, error) {
 	if !found {
 		return nil, fmt.Errorf("the document's `## %s` has no `%s` subsection; it is what a stranger reads before anything else here", tool, FirstRunHeading)
 	}
-	var lines []string
-	fenced := false
-	for _, line := range strings.Split(tail, "\n") {
-		if strings.HasPrefix(line, "### ") && !fenced {
-			break
-		}
-		if strings.HasPrefix(line, "```") {
-			fenced = !fenced
-			continue
-		}
-		if fenced {
-			lines = append(lines, line)
-		}
-	}
+	lines := fencedLines(tail)
 	if len(lines) == 0 {
 		return nil, fmt.Errorf("`%s` under `## %s` holds no fenced transcript", FirstRunHeading, tool)
 	}
@@ -119,4 +106,85 @@ func Shape(line string) string {
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+// SectionNames returns every top-level `## <name>` heading in a markdown
+// document, in the order they appear and with repeats kept. Section() reads the
+// FIRST match of a name and stops there, which is correct for a document where a
+// name appears once and silently wrong for one where it appears twice: the second
+// section is then read by nobody and drifts unwatched. Callers that mean "this
+// document names each tool once" ask here rather than inferring it from a lookup
+// that cannot fail.
+func SectionNames(md string) []string {
+	var names []string
+	for _, line := range strings.Split(md, "\n") {
+		name, ok := strings.CutPrefix(line, "## ")
+		if !ok {
+			continue
+		}
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// RepeatedSections returns the names that head more than one `## ` section, in
+// first-appearance order. An empty return is the only healthy answer: a repeated
+// name means every reader of that document -- Section, FirstRun, and the person
+// who opened it looking for one place to change -- sees a different half of it.
+func RepeatedSections(md string) []string {
+	seen := map[string]int{}
+	var repeated []string
+	for _, name := range SectionNames(md) {
+		seen[name]++
+		if seen[name] == 2 {
+			repeated = append(repeated, name)
+		}
+	}
+	return repeated
+}
+
+// Transcript returns the lines of the fenced block under `### <heading>` inside a
+// tool's own `## <tool>` section. FirstRun is this with the one heading every tool
+// carries; a caller that wants another subsection -- `### Refusals`, whose lines
+// are as much a promise about what the tool prints as the first run's are -- names
+// it here. The heading is given without its `### `.
+func Transcript(md, tool, heading string) ([]string, error) {
+	section, ok := Section(md, tool)
+	if !ok {
+		return nil, fmt.Errorf("the document has no `## %s` section", tool)
+	}
+	_, tail, found := strings.Cut(section, "### "+heading+"\n")
+	if !found {
+		return nil, fmt.Errorf("the document's `## %s` has no `### %s` subsection", tool, heading)
+	}
+	lines := fencedLines(tail)
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("`### %s` under `## %s` holds no fenced transcript", heading, tool)
+	}
+	return lines, nil
+}
+
+// fencedLines returns the lines inside the fenced block that opens next in tail,
+// stopping at the next `### ` heading outside a fence. Both FirstRun and
+// Transcript read a transcript the same way; only the heading they cut to and the
+// sentence they fail with differ, and those are the parts a reader of an error
+// message cares about.
+func fencedLines(tail string) []string {
+	var lines []string
+	fenced := false
+	for _, line := range strings.Split(tail, "\n") {
+		if strings.HasPrefix(line, "### ") && !fenced {
+			break
+		}
+		if strings.HasPrefix(line, "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
