@@ -219,3 +219,167 @@ PATH is bound too, so a case can reopen the same journal and replay it."
       (ok third-id "the second register wrote no event id")
       (ok (not (string= first-id third-id))
           "two registers of one machine share one event id, so the id is a function of the subject: ~A" first-id))))
+
+;;; ------------------------------------------------------------------
+;;; 6. A restart over a reconstructed state keeps the fleet
+;;;    (MEDIUM 2: make-kernel seeded CONFIG unconditionally, on whatever
+;;;    state it was handed, so it threw away the fleet reconstruct-state
+;;;    had just replayed)
+;;; ------------------------------------------------------------------
+
+(deftest "a-restart-over-a-reconstructed-state-keeps-the-fleet"
+    "docs/SPEC-WORK.md:1578"
+    "expected=reconstruction-replays-the-machine;restart-keeps-the-fleet;limits-permits-excludes-facts-and-allocator"
+  (with-machine-journal (k j :name "machine-restart")
+    (multiple-value-bind (okp line code)
+        (submit k (machine-durability-request
+                   :request "mreq-restart"
+                   :limits '(:concurrent 4 :cores 8)
+                   :permits '("go-test")
+                   :excludes '("bench:schema")
+                   :facts '(:arch "arm64" :os "macos" :declared-by "glenn")))
+      (declare (ignore code))
+      (ok okp "the register was refused: ~A" line))
+    ;; Reconstruct exactly as src/transport.lisp:1095-1097 does, then hand THAT
+    ;; state to a fresh make-kernel. Every seed state already carries a config,
+    ;; so the reconstructed config is the one the restart must keep.
+    (let* ((rebuilt (reconstruct-state
+                     (canonical-string (state-canonical-form (kernel-state k)))))
+           (k2 (make-kernel :state rebuilt :friends '("glenn" "rowan"))))
+      (let ((m (fleet-member (kernel-fleet k2) "m-a1"))
+            (alloc (gethash "m-a1"
+                            (fleet-registry-allocators (kernel-allocations k2)))))
+        (ok m "make-kernel threw away the reconstructed fleet: no member m-a1")
+        (check-equal '(:concurrent 4 :cores 8) (machine-limits m)
+                     "the declared limits did not survive the restart")
+        (check-equal '("go-test") (machine-permits m)
+                     "the declared permits did not survive the restart")
+        (check-equal '("bench:schema") (machine-excludes m)
+                     "the declared excludes did not survive the restart")
+        (check-equal '(:arch "arm64" :os "macos" :declared-by "glenn")
+                     (machine-facts m)
+                     "the declared facts did not survive the restart")
+        (ok alloc "the rebuilt allocator is missing")
+        (check-equal 8 (fleet-allocator-cores alloc)
+                     "the allocator's declared cores did not survive the restart")
+        (check-equal 4 (fleet-allocator-concurrent alloc)
+                     "the allocator's declared concurrency did not survive the restart")))))
+
+;;; ------------------------------------------------------------------
+;;; 7. The CONFIG deep copy (MEDIUM 1). These two are GREEN from the moment
+;;;    they are written: they are the missing COVERAGE for a guarantee that
+;;;    already holds, and control C1 (copy-work-config returning its argument)
+;;;    is what crosses their bound.
+;;; ------------------------------------------------------------------
+
+(deftest "copy-work-config-shares-no-record-with-its-argument"
+    "docs/SPEC-WORK.md:307"
+    "expected=no-shared-machine-no-shared-allocator-no-shared-allocation-record-no-shared-container;mutation-isolated"
+  (with-machine-journal (k j :name "machine-deep-copy")
+    (ok (submit k (machine-durability-request :id "m-a1" :request "copy-m1"))
+        "the first register was refused")
+    (ok (submit k (machine-durability-request :id "m-a2" :name "lab" :connect "profile:lab"
+                                              :owner "rowan" :request "copy-m2"))
+        "the second register was refused")
+    (ok (submit k (list :verb :take :machine "m-a1" :node "N1" :slots 1
+                        :offer "offer-1" :attempt "attempt-1" :generation 1
+                        :request-ref "op-1" :batch "batch-1" :request "copy-take-1"
+                        :holder "rowan" :allocation-id "alloc-copy-1"))
+        "the take was refused")
+    (let* ((orig (nova-work::wstate-config (kernel-state k)))
+           (copy (copy-work-config orig)))
+      ;; The three containers are distinct objects.
+      (ok (not (eq (work-config-fleet orig) (work-config-fleet copy)))
+          "the fleet container is shared with the copy")
+      (ok (not (eq (work-config-routes orig) (work-config-routes copy)))
+          "the routes container is shared with the copy")
+      (ok (not (eq (work-config-allocations orig) (work-config-allocations copy)))
+          "the allocations container is shared with the copy")
+      ;; No machine OBJECT is shared. A one-level copy that shares the member
+      ;; still satisfies a container-only check; this is on the objects.
+      (let ((shared nil))
+        (dolist (m (fleet-members (work-config-fleet orig)))
+          (let ((c (fleet-member (work-config-fleet copy) (machine-id m))))
+            (when (or (null c) (eq m c)) (setf shared t))))
+        (ok (not shared) "a machine object is shared with the copy"))
+      ;; No allocator OBJECT is shared.
+      (let ((shared nil))
+        (maphash (lambda (id a)
+                   (let ((c (gethash id (fleet-registry-allocators
+                                         (work-config-allocations copy)))))
+                     (when (or (null c) (eq a c)) (setf shared t))))
+                 (fleet-registry-allocators (work-config-allocations orig)))
+        (ok (not shared) "an allocator object is shared with the copy"))
+      ;; No allocation-record OBJECT is shared.
+      (let ((orig-records '()) (copy-records '()) (shared nil))
+        (maphash (lambda (id a)
+                   (declare (ignore id))
+                   (setf orig-records (append orig-records
+                                              (fleet-allocator-allocations a))))
+                 (fleet-registry-allocators (work-config-allocations orig)))
+        (maphash (lambda (id a)
+                   (declare (ignore id))
+                   (setf copy-records (append copy-records
+                                              (fleet-allocator-allocations a))))
+                 (fleet-registry-allocators (work-config-allocations copy)))
+        (dolist (r orig-records)
+          (when (member r copy-records :test #'eq) (setf shared t)))
+        (ok orig-records
+            "no allocation record was written, so the record copy is unverified")
+        (ok (not shared) "an allocation record is shared with the copy"))
+      ;; A copy that shares nothing but is never written to proves less than
+      ;; one that is: writing the copied machine leaves the original alone.
+      (let ((c (fleet-member (work-config-fleet copy) "m-a1")))
+        (setf (machine-name c) "changed-in-the-copy")
+        (check-equal "studio"
+                     (machine-name (fleet-member (work-config-fleet orig) "m-a1"))
+                     "writing the copy's machine changed the original's")))))
+
+(deftest "a-failed-apply-after-the-machine-event-leaves-the-installed-fleet-untouched"
+    "docs/SPEC-WORK.md:307"
+    "expected=all-or-none;candidate-discarded;no-member-no-count-no-revision-no-history;installed-object-same"
+  (with-machine-journal (k j :name "machine-atomic-apply")
+    (ok (submit k (machine-durability-request :id "m-a1" :request "atomic-m1"))
+        "the register was refused")
+    (let* ((count (fleet-member-count (kernel-fleet k)))
+           (rev (state-revision (kernel-state k)))
+           (hist (length (state-history (kernel-state k))))
+           (installed (fleet-member (kernel-fleet k) "m-a1"))
+           ;; Event 1 mutates the CANDIDATE's CONFIG; event 2 makes apply-event
+           ;; raise, so the candidate is discarded before it is installed.
+           (machine-event
+             (nova-work::%machine-canonical-event
+              k (machine-durability-request :id "m-b2" :name "lab"
+                                            :connect "profile:lab"
+                                            :request "atomic-m2")
+              :register))
+           (bad-event
+             (make-work-event
+              :kind :revive :node "acme/work/f1/t1" :by "rowan"
+              :fields (list :reason "atomic-bad")
+              :stamp "2026-09-15T01:05:00Z" :clock :tool
+              :request "atomic-bad" :generation-owner "gen-1"
+              :rev (1+ (work-event-rev machine-event))
+              :session-written-p nil))
+           (condition nil))
+      (handler-case
+          (nova-work::%install-envelope k "atomic-rid-1" "atomic-digest-1"
+                                        "MACHINE OK machine=m-b2"
+                                        (list machine-event bad-event))
+        (unsupported-input (c) (setf condition c)))
+      ;; Anti-vacuity, as replays-lease-durability.lisp:160-164 does: without
+      ;; this the case passes wherever nothing was applied at all.
+      (ok condition
+          "the two-event envelope did not signal, so no candidate was built and this case proves nothing")
+      (ok (search "rule 18" (princ-to-string condition))
+          "the refusal was not the second event's: ~A" (princ-to-string condition))
+      (check-equal nil (fleet-member (kernel-fleet k) "m-b2")
+                   "the discarded candidate leaked its machine into the installed fleet")
+      (check-equal count (fleet-member-count (kernel-fleet k))
+                   "the discarded candidate moved the installed fleet count")
+      (check-equal rev (state-revision (kernel-state k))
+                   "the discarded candidate moved the installed revision")
+      (check-equal hist (length (state-history (kernel-state k)))
+                   "the discarded candidate wrote a history record")
+      (ok (eq installed (fleet-member (kernel-fleet k) "m-a1"))
+          "the installed machine object was replaced"))))

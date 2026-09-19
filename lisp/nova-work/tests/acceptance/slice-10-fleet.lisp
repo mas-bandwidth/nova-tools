@@ -32,10 +32,15 @@
 (deftest "fleet-is-static-config" "docs/SPEC-WORK.md:3585"
     "expected=machine-event-moves-no-count-no-roadmap;heartbeat-observe-probe-change-no-member"
   (let* ((k (machine-kernel))
+         ;; One preceding envelope, so the record this case reads is not also
+         ;; the only one: with two records, reading the wrong end is detectable.
+         (pre (submit k (edit-request "acme/work/f1/t1" :request "pre-1"
+                                      :title '(:set "t"))))
          (before-open (state-open-count (kernel-state k)))
          (before-rev (state-revision (kernel-state k)))
          (before-history (length (state-history (kernel-state k))))
          (before-rows (length (state-closed-rows (kernel-state k)))))
+    (declare (ignorable pre))
     (multiple-value-bind (okp line code) (submit k (register-request))
       (ok okp "machine register refused: ~A" line)
       (check-equal 0 code "machine register exit code")
@@ -48,7 +53,9 @@
                  "the revision advanced by exactly one")
     ;; The CONFIG envelope grows the work-tree history like every other
     ;; envelope (apply-envelope, state.lisp:697-700), and its single event
-    ;; names no containment node: `:node` is `(:absent)`.
+    ;; names no containment node: `:node` is `(:absent)`. `state-history` is
+    ;; oldest-first (it reverses the push-ordered `wstate-history`), so the
+    ;; record just added is the LAST one, not the first.
     (let* ((history (state-history (kernel-state k)))
            (record (car (last history)))
            (event (first (getf record :events))))

@@ -75,10 +75,19 @@ below the state's revision is refused rather than silently reissued."
                            rev-base (state-revision state))))
     ;; The fleet, the routes and the ACTIVE allocations ride on the state so
     ;; the one writer applies and the one journal replays (SPEC-WORK.md:1056-1058).
-    (setf (wstate-config state)
-          (%make-work-config :fleet (make-fleet :friends friends)
-                             :routes (make-route-registry)
-                             :allocations (make-fleet-registry)))
+    ;; Seed CONFIG only when the state has none: a reconstructed state already
+    ;; holds the fleet its journal replayed, and overwriting it here throws that
+    ;; reconstruction away. Otherwise keep it and union :friends into its fleet.
+    (let ((config (wstate-config state)))
+      (if config
+          (let ((fleet (work-config-fleet config)))
+            (setf (slot-value fleet 'friends)
+                  (remove-duplicates (append (slot-value fleet 'friends) friends)
+                                     :test #'string=)))
+          (setf (wstate-config state)
+                (%make-work-config :fleet (make-fleet :friends friends)
+                                   :routes (make-route-registry)
+                                   :allocations (make-fleet-registry)))))
     (let ((k (%make-kernel :state state
                            :journal (or journal (make-ordering-journal))
                            :next-rev (or rev-base (1+ (state-revision state)))

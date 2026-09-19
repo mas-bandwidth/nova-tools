@@ -180,9 +180,14 @@
     "expected=machine-is-fleet-config;node-absent;counts-unchanged;settle-refused;done-refused;never-completion-evidence"
   (let* ((kernel (make-kernel :state (make-seed-state *seed*)
                               :friends '("glenn" "rowan")))
+         ;; One preceding envelope, so the record this case reads is not also
+         ;; the only one: with two records, reading the wrong end is detectable.
+         (pre (submit kernel (edit-request "acme/work/f1/t1" :request "pre-1"
+                                           :title '(:set "t"))))
          (before-open (state-open-count (kernel-state kernel)))
          (before-rev (state-revision (kernel-state kernel)))
          (before-history (length (state-history (kernel-state kernel)))))
+    (declare (ignorable pre))
     ;; The real `machine --register` verb writes one CONFIG member through
     ;; `submit`, with `:node (:absent)`, and moves no work-tree count.
     (multiple-value-bind (ok line code envelope)
@@ -204,6 +209,8 @@
                  "|O| is unchanged")
     (check-equal (1+ before-rev) (state-revision (kernel-state kernel))
                  "the revision advanced by exactly one")
+    ;; `state-history` is oldest-first (it reverses the push-ordered
+    ;; `wstate-history`), so the record just added is the LAST one.
     (let* ((history (state-history (kernel-state kernel)))
            (record (car (last history))))
       (check-equal (1+ before-history) (length history)
