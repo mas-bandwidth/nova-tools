@@ -54,7 +54,7 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
-  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <<email>>"
+  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"
         [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
                                                      the four mechanical checks the accept
                                                      gate runs, on a branch, before you ask

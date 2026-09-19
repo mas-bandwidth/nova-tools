@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -90,4 +91,71 @@ func parseKeyShapes(data string) ([]keyShape, error) {
 		out = append(out, keyShape{name: name, re: re})
 	}
 	return out, nil
+}
+
+//go:embed kinds.txt
+var kindData string
+
+var (
+	kindOnce  sync.Once
+	kindNames []string
+	kindSet   map[string]bool
+)
+
+func loadKinds() ([]string, map[string]bool) {
+	kindOnce.Do(func() {
+		kindSet = map[string]bool{}
+		for _, line := range strings.Split(kindData, "\n") {
+			line = strings.TrimRight(line, "\r")
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			name := strings.TrimSpace(strings.SplitN(line, "\t", 2)[0])
+			if name == "" || kindSet[name] {
+				continue
+			}
+			kindSet[name] = true
+			kindNames = append(kindNames, name)
+		}
+	})
+	return kindNames, kindSet
+}
+
+// Kinds is the card kinds this toolchain declares, in the spec's order. A caller that
+// refuses an unknown kind prints this, because a refusal a reader cannot act on is a
+// refusal that sends them to the source.
+func Kinds() []string {
+	names, _ := loadKinds()
+	return append([]string(nil), names...)
+}
+
+// KindDeclared says whether the KIND: line names a shape of work the tool declares.
+// SPEC-TOOLWORK §5 rule 3: there is no default kind, and a kind the table does not hold
+// is refused. It was accepted silently and unlocked nothing, so a card carrying a kind
+// nobody had ever implemented came back clean (#1848).
+func KindDeclared(name string) bool {
+	_, set := loadKinds()
+	return set[name]
+}
+
+// StrayKinds is every kind named in the stray list's exception column, so a test can
+// hold the two files to each other: an exception granted to a kind that does not exist
+// is an exception granted to nobody, and nothing used to notice.
+func StrayKinds() []string {
+	rules, _, err := load()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range rules {
+		for k := range r.except {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

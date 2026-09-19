@@ -2,8 +2,11 @@ package pulse
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -73,9 +76,10 @@ func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr=%s", code, errs)
 	}
-	want := "RESULT: CARD-1 nova-tools #601 fixed with its red test first: sweep never revisits a queued check"
-	if got := strings.SplitN(card, "\n", 2)[0]; got != want {
-		t.Errorf("line 1 = %q\nwant      %q", got, want)
+	wantRE := regexp.MustCompile(`^RESULT: CARD-1 sha=[0-9a-f]{12} nova-tools #601 fixed with its red test first: sweep never revisits a queued check$`)
+	line1 := strings.SplitN(card, "\n", 2)[0]
+	if !wantRE.MatchString(line1) {
+		t.Errorf("line 1 = %q\nwant to match %s", line1, wantRE.String())
 	}
 	if !strings.Contains(card, "Prior attempts: card-590 abstained: reason=idle=300") {
 		t.Errorf("the fix card carries no Prior attempts line:\n%s", card)
@@ -91,6 +95,31 @@ func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
 	})
 	if strings.Contains(plain, "Prior attempts:") {
 		t.Errorf("a first attempt carries a Prior attempts line:\n%s", plain)
+	}
+}
+
+// cut-kind-fix-hash: a fix card's line 1 carries the sha-12 of every line below it, the
+// same binding renderValidated gives a validated card, so the contract line cannot drift
+// from the steps it names (#1852 item 1).
+func TestCutKindFixContractLineIsHashedOverEverythingBelowIt(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 601, Title: "sweep never revisits a queued check",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	m := regexp.MustCompile(`^RESULT: CARD-1 sha=([0-9a-f]{12}) `).FindStringSubmatch(card)
+	if m == nil {
+		t.Fatalf("line 1 carries no sha=<sha12> token, so the contract line is unhashed:\n%s", card)
+	}
+	lines := strings.Split(card, "\n")
+	sum := sha256.Sum256([]byte(strings.Join(lines[1:], "\n")))
+	want := hex.EncodeToString(sum[:])[:12]
+	if m[1] != want {
+		t.Errorf("sha=%s, want %s (the sha-12 of every line below line 1)", m[1], want)
 	}
 }
 

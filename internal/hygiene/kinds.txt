@@ -1,0 +1,29 @@
+# The card kinds this toolchain DECLARES, one per line, in SPEC-TOOLWORK.md §5 rule 2's
+# order, with the spec's own one-line description after a tab.
+#
+# This file is DATA, not code, and it is embedded into the binary, for the same reason
+# stray.txt is: a list a reader can open and diff is auditable and a list spelled out in
+# a function is not.
+#
+# WHY IT IS HERE AND NOT IN internal/pulse. §5 rule 3 says the kinds TABLE -- name,
+# gate steps, control, reject tokens -- lives in `internal/pulse/kinds.go`, and that is
+# right: `accept` cannot run a kind's gate without it. This is not that table. It is the
+# NAME SET, which three tools need and which is the only part `nova-check hygiene` and
+# `nova-merge batch` can use: they check a branch, they do not run a gate. internal/pulse
+# is above internal/hygiene (§3 rule 7's one implementation, three callers), so the table
+# can read its names from here; the reverse would invert the dependency and put a gate's
+# step list inside the check that the gate calls.
+#
+# There is no default kind. A kind that is not in this file is refused by name.
+#
+# Format: <kind><TAB><what the card does>
+
+fix-red	fixes one defect, red test first
+transcript-test	makes one docs/TESTS.md section executed line for line
+rebase	replays one of our own open PRs onto the base, changing nothing
+sweep	applies one mechanical class fix at every site the class test names
+mutation-kill	writes the test that kills one surviving mutant
+read	read and report
+probe	read and report
+text	read and report
+tone	read and report
