@@ -20,7 +20,13 @@ func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 
 	t.Run("nova-pulse-pool", func(t *testing.T) {
 		bin := buildTool(t, root, "nova-pulse")
-		transcript := outputAfterCommand(md, "nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root")
+		transcript, found := outputAfterCommand(md, "nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root")
+		if !found {
+			t.Fatalf("TESTS.md missing command %q", "nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root")
+		}
+		if len(transcript) == 0 {
+			t.Fatalf("TESTS.md has empty transcript for nova-pulse pool")
+		}
 		_, stdout, stderr := runBare(t, root, "nova-pulse", bin,
 			[]string{"pool", "--sources", "cmd/nova-pulse/testdata/sources.tsv", "--root", t.TempDir()})
 		assertShape(t, "nova-pulse pool", transcript, stdout, stderr)
@@ -34,7 +40,13 @@ func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 			"nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev",
 		}
 		for _, cmd := range commands {
-			transcript := outputAfterCommand(md, cmd)
+			transcript, found := outputAfterCommand(md, cmd)
+			if !found {
+				t.Fatalf("TESTS.md missing command %q", cmd)
+			}
+			if len(transcript) == 0 {
+				t.Fatalf("TESTS.md has empty transcript for %q", cmd)
+			}
 			args := strings.Fields(strings.TrimPrefix(cmd, "nova-decide "))
 			_, stdout, stderr := runBare(t, root, "nova-decide", bin, args)
 			assertShape(t, cmd, transcript, stdout, stderr)
@@ -43,15 +55,37 @@ func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 
 	t.Run("nova-work-refusal", func(t *testing.T) {
 		bin := buildTool(t, root, "nova-work")
-		transcript := outputAfterCommand(md, "nova-work")
-		_, stdout, stderr := runBare(t, root, "nova-work", bin, nil)
+		transcript, found := outputAfterCommand(md, "nova-work")
+		if !found {
+			t.Fatalf("TESTS.md missing command %q", "nova-work")
+		}
+		if len(transcript) == 0 {
+			t.Fatalf("TESTS.md has empty transcript for nova-work")
+		}
+		code, stdout, stderr := runBare(t, root, "nova-work", bin, nil)
+		if code == 0 {
+			t.Fatalf("nova-work bare must exit non-zero on refusal, got 0")
+		}
 		assertShape(t, "nova-work", transcript, stdout, stderr)
 	})
 
 	t.Run("nova-review-version", func(t *testing.T) {
 		bin := buildTool(t, root, "nova-review")
-		transcript := outputAfterCommand(md, "nova-review version")
-		_, stdout, _ := runBare(t, root, "nova-review", bin, []string{"version"})
+		transcript, found := outputAfterCommand(md, "nova-review version")
+		if !found {
+			t.Fatalf("TESTS.md missing command %q", "nova-review version")
+		}
+		if len(transcript) == 0 {
+			t.Fatalf("TESTS.md has empty transcript for nova-review version")
+		}
+		code, stdout, stderr := runBare(t, root, "nova-review", bin, []string{"version"})
+		if code != 0 {
+			t.Fatalf("nova-review version exit = %d, want 0; stderr=%s", code, stderr)
+		}
+		stdoutLine := strings.TrimSpace(stdout)
+		if !isVersionLine(stdoutLine, "nova-review") {
+			t.Fatalf("nova-review version stdout is not a valid version line: %q", stdoutLine)
+		}
 		for _, line := range transcript {
 			if !isVersionLine(line, "nova-review") {
 				t.Errorf("TESTS.md nova-review version transcript line\n  %s\nis not the one version line (<tool> <identity> <goos>/<goarch> <go version>); the built binary prints:\n%s", line, stdout)
@@ -79,23 +113,24 @@ func isVersionLine(line, tool string) bool {
 
 // outputAfterCommand returns the transcript's output lines for the given `$`
 // command line: the lines that follow it until a blank line or the next `$`.
-func outputAfterCommand(md, command string) []string {
-	lines := strings.Split(md, "\n")
-	for i, ln := range lines {
+// If the command is not present in md, found is false.
+func outputAfterCommand(md, command string) (lines []string, found bool) {
+	allLines := strings.Split(md, "\n")
+	for i, ln := range allLines {
 		if !strings.HasPrefix(ln, "$ ") || strings.TrimPrefix(ln, "$ ") != command {
 			continue
 		}
-		var out []string
-		for j := i + 1; j < len(lines); j++ {
-			nxt := lines[j]
+		found = true
+		for j := i + 1; j < len(allLines); j++ {
+			nxt := allLines[j]
 			if strings.TrimSpace(nxt) == "" || strings.HasPrefix(nxt, "$ ") || strings.HasPrefix(nxt, "```") {
 				break
 			}
-			out = append(out, nxt)
+			lines = append(lines, nxt)
 		}
-		return out
+		return lines, true
 	}
-	return nil
+	return nil, false
 }
 
 // assertShape compares the promise of every transcript output line against the
@@ -103,6 +138,9 @@ func outputAfterCommand(md, command string) []string {
 // because a refusal is a stderr line).
 func assertShape(t *testing.T, name string, transcript []string, stdout, stderr string) {
 	t.Helper()
+	if len(transcript) == 0 {
+		t.Fatalf("TESTS.md %s transcript has no expected output lines", name)
+	}
 	printed := append(strings.Split(stdout, "\n"), strings.Split(stderr, "\n")...)
 	for _, tl := range transcript {
 		promised := promise(tl)
@@ -138,5 +176,55 @@ func promise(line string) string {
 		return f[0]
 	default:
 		return f[0] + " " + f[1]
+	}
+}
+
+// TestFirstRunTranscriptsNegativeControls tests that the helpers reject
+// missing commands, empty transcript blocks, and malformed version outputs.
+func TestFirstRunTranscriptsNegativeControls(t *testing.T) {
+	fixture := `$ command-empty
+$ command-with-output
+OUTPUT OK val=1
+`
+	// 1. Missing command returns found=false
+	if _, found := outputAfterCommand(fixture, "command-nonexistent"); found {
+		t.Errorf("outputAfterCommand found nonexistent command")
+	}
+
+	// 2. Command with empty output block returns found=true but len == 0
+	lines, found := outputAfterCommand(fixture, "command-empty")
+	if !found {
+		t.Errorf("outputAfterCommand failed to find command-empty")
+	}
+	if len(lines) != 0 {
+		t.Errorf("expected empty lines for command-empty, got %v", lines)
+	}
+
+	// 3. Command with output returns lines
+	lines, found = outputAfterCommand(fixture, "command-with-output")
+	if !found || len(lines) != 1 || lines[0] != "OUTPUT OK val=1" {
+		t.Errorf("expected ['OUTPUT OK val=1'], got found=%v, lines=%v", found, lines)
+	}
+
+	// 4. isVersionLine negative controls
+	badVersions := []struct {
+		name string
+		line string
+		tool string
+	}{
+		{"empty", "", "nova-review"},
+		{"single-token", "nova-review", "nova-review"},
+		{"two-tokens", "nova-review devel", "nova-review"},
+		{"three-tokens", "nova-review devel darwin/arm64", "nova-review"},
+		{"wrong-tool", "nova-pulse devel darwin/arm64 go1.26.1", "nova-review"},
+		{"no-arch-slash", "nova-review devel darwinarm64 go1.26.1", "nova-review"},
+		{"empty-os", "nova-review devel /arm64 go1.26.1", "nova-review"},
+		{"empty-arch", "nova-review devel darwin/ go1.26.1", "nova-review"},
+		{"non-go-runtime", "nova-review devel darwin/arm64 rustc1.80.0", "nova-review"},
+	}
+	for _, tc := range badVersions {
+		if isVersionLine(tc.line, tc.tool) {
+			t.Errorf("isVersionLine(%q, %q) returned true, want false (%s)", tc.line, tc.tool, tc.name)
+		}
 	}
 }
