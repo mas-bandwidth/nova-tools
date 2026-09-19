@@ -453,7 +453,7 @@ LOG OK rows=1 kinds=1 escalations=0 coverage=0/1
 
 ## nova-pulse
 
-Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
+Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv, answers `version` as the real binary does — `launch` asks which nova-swarm it got before handing one a batch (#1760), and refuses a binary that cannot say — and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
 
 A first sitting is three runs: one refusal (three cards into two slots), one whole pulse (three into three), and the queued form (three into two with `--queue`).
 
