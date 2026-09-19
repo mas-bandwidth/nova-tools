@@ -527,3 +527,55 @@ func TestMutateRunsALispSuiteAndCountsItRed(t *testing.T) {
 		t.Fatalf("lisp suite not red without the change: pass=%v red=%d green=%d skips=%+v", res.Pass, res.Red, res.Green, res.Skips)
 	}
 }
+
+// THE BUDGET IS NOT A VERDICT. A run the caller's deadline killed printed no result for
+// any unit, and the rule underneath it -- exited non-zero, named no failing test, so every
+// unit it was asked for is red -- turned that into one. The answer then belonged to the
+// bench: the same range said `red=1 green=1` on an idle machine and `red=2 green=0` on a
+// loaded one, which is the same wrong pair of counts three legs of integration-4 got from
+// GOFLAGS=-json, arriving by the other road.
+//
+// Reproduced by hand on hulk, 2026-09-18, with cmd/nova-review built from this tree and
+// the fixture its own mutate tests build:
+//
+//	nova-review mutate --repo $LAB --base main --head HEAD
+//	  -> MUTATE 06b87135 red=1 green=1 PASS
+//	GOCACHE=$(mktemp -d) nova-review mutate --repo $LAB --base main --head HEAD --timeout 1
+//	  -> MUTATE 06b87135 red=2 green=0 PASS
+//
+// There is no clock and no subprocess in this test: runVerdict is handed the four things a
+// finished run leaves behind, so what it pins is the rule.
+func TestARunTheBudgetEndedIsASkipAndNeverARedUnit(t *testing.T) {
+	units := []unit{
+		{name: "TestSignPositive", file: "sign/sign_test.go", pkg: "sign"},
+		{name: "TestSignZero", file: "sign/sign_test.go", pkg: "sign"},
+	}
+	// The end a run has when the deadline killed it, and the end it has when a test
+	// failed: os/exec gives the caller the same TYPE for both, which is the whole reason
+	// the counts below cannot be read off it.
+	killed := error(&exec.ExitError{})
+	// What a killed run leaves behind: a context that is done, whatever it managed to
+	// print, and a non-zero end. Not one unit of it may be counted.
+	for _, ctxErr := range []error{context.DeadlineExceeded, context.Canceled} {
+		failed, skip := runVerdict(ctxErr, "=== RUN   TestSignPositive\n", killed, units)
+		if skip == "" {
+			t.Fatalf("%v: a run the budget ended reported a verdict: %v", ctxErr, failed)
+		}
+		if len(failed) != 0 {
+			t.Fatalf("%v: a run the budget ended counted units red: %v", ctxErr, failed)
+		}
+	}
+	if reason := budgetEnded(context.DeadlineExceeded); !strings.Contains(reason, "budget") {
+		t.Fatalf("the skip must name the budget, got %q", reason)
+	}
+
+	// And the run that really did report keeps answering exactly as before: the live
+	// context is not an excuse to stop reading the output.
+	failed, skip := runVerdict(nil, "--- PASS: TestSignPositive (0.00s)\n--- FAIL: TestSignZero (0.00s)\n", killed, units)
+	if skip != "" {
+		t.Fatalf("a run that reported was skipped: %s", skip)
+	}
+	if !failed["TestSignZero"] || failed["TestSignPositive"] {
+		t.Fatalf("the FAIL lines were not read: %v", failed)
+	}
+}

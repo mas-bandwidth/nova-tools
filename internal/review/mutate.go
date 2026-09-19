@@ -414,6 +414,9 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 		cmd := exec.CommandContext(ctx, "sh", script)
 		cmd.Dir = wt
 		err := cmd.Run()
+		if reason := budgetEnded(ctx.Err()); reason != "" {
+			return nil, reason
+		}
 		var ee *exec.ExitError
 		if err != nil && !errors.As(err, &ee) {
 			return nil, fmt.Sprintf("the lisp suite could not be run: %v", err)
@@ -441,13 +444,28 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	// match below, and the unit that stayed green would be counted red.
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
-	if err != nil {
+	return runVerdict(ctx.Err(), string(out), err, units)
+}
+
+// runVerdict is what ONE FINISHED RUN MEANS, and it is a pure function of the four things
+// a run leaves behind: whether the caller's context was still live, what the run printed,
+// how it ended, and which units it was asked about. It is separated from the running so
+// that the rule can be pinned without a subprocess and without a clock -- the shapes below
+// are the ones that were seen in CI, and each one is an argument here.
+func runVerdict(ctxErr error, text string, ran error, units []unit) (failed map[string]bool, skip string) {
+	// THE BUDGET IS ASKED ABOUT BEFORE THE OUTPUT IS. A run the caller's deadline killed
+	// printed no verdict about anything, and the inference at the bottom -- exited
+	// non-zero, named no failing test, so every unit is red -- would turn that into one.
+	if reason := budgetEnded(ctxErr); reason != "" {
+		return nil, reason
+	}
+	failed = map[string]bool{}
+	if ran != nil {
 		var ee *exec.ExitError
-		if !errors.As(err, &ee) {
-			return nil, fmt.Sprintf("go test could not be run: %v", err)
+		if !errors.As(ran, &ee) {
+			return nil, fmt.Sprintf("go test could not be run: %v", ran)
 		}
 	}
-	text := string(out)
 	// A package that fails to compile prints no per-test result at all. Every unit in
 	// it is red: the test file cannot even build with the change reverted.
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
@@ -469,13 +487,37 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	}
 	// A run that exited non-zero with no FAIL line at all (a panic before any result,
 	// a timeout inside the binary) is evidence the package's tests do not pass, and
-	// every unit it was asked for counts red rather than silently green.
-	if err != nil && len(failed) == 0 {
+	// every unit it was asked for counts red rather than silently green. A run the
+	// CALLER'S budget killed never reaches here -- budgetEnded above returned a skip --
+	// because that one is evidence about the bench and not about the tests.
+	if ran != nil && len(failed) == 0 {
 		for _, u := range units {
 			failed[u.name] = true
 		}
 	}
 	return failed, ""
+}
+
+// budgetEnded names the one thing a finished run can never be asked about: a run the
+// CALLER'S BUDGET ended. The verdict is a property of the range, never of the bench --
+// the same rule goenv.Clean holds for the environment -- and a killed run is evidence
+// about the machine and about nothing else.
+//
+// Measured on hulk, 2026-09-18, against the fixture cmd/nova-review's mutate tests build:
+// the same range answers `MUTATE 06b87135 red=1 green=1 PASS` with the default budget and
+// `MUTATE 06b87135 red=2 green=0 PASS` with a cold GOCACHE and `--timeout 1`, because the
+// inner `go test` was killed mid-compile, printed no `--- PASS:` line, and every unit it
+// was asked for was counted red. That is the same wrong answer GOFLAGS=-json produced on
+// three legs of integration-4, arriving by the other road: a loaded shard's share of the
+// wall clock. A named skip is the honest answer, and a skip never makes a verdict PASS.
+func budgetEnded(ctxErr error) string {
+	switch {
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return "the budget ended the run before it reported a result; nothing it printed is a verdict. Give --timeout more seconds, or run it on a quieter bench"
+	case ctxErr != nil:
+		return fmt.Sprintf("the run was cancelled before it reported a result (%v); nothing it printed is a verdict", ctxErr)
+	}
+	return ""
 }
 
 func revParse(ctx context.Context, repo, ref string) (string, error) {
