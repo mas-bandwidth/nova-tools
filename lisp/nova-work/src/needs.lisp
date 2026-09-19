@@ -318,7 +318,11 @@ verb keyword, FORM the spelling of the gated form, GATE one of :REFUSES,
    (list :heartbeat   'fleet-heartbeat-submit        nil               nil       nil)
    (list :release     'fleet-release-submit          nil               nil       nil)
    (list :probe       'fleet-probe-submit            nil               nil       nil)
-   (list :take-node   '%take-node-submit             :lease            :refuses  nil))
+   (list :take-node   '%take-node-submit             :lease            :refuses  nil)
+   ;; `dep` is a WRITER verb and NOT an admission verb: rule 6 says scope edits
+   ;; are ungated (SPEC-WORK.md:5018). It is in this table because the table is
+   ;; what `%submit` routes by, not because it admits anything.
+   (list :dep         '%dep-submit                   nil               nil       nil))
   "THE DISPATCH TABLE `%submit` routes by, and the one source of truth for what
 each dispatched verb can ADMIT.
 

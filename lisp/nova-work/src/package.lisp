@@ -1974,6 +1974,10 @@
     #:ready-row-holder
     #:ready-row-responsible
     #:make-ready-row
+    ;; rule 6: the edge as a verb (SPEC-WORK.md:4993-5031)
+    #:dep-edit
+    #:%dep-submit
+    #:node-structure-log
     ;; the COW root partition, the whole walk that reads nothing of :deps
     #:cow-load-findings
     #:cow-partition-holds-p
