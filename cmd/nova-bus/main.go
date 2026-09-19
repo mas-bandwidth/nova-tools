@@ -82,6 +82,7 @@ usage:
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
         [--quiet-beats]
+        [--max-commits <n>]
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -365,13 +366,21 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 		fmt.Fprintf(stderr, "nova-bus %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
 		return false
 	}
+	var missing []string
 	for name, value := range required {
 		if strings.TrimSpace(*value) == "" {
-			fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
-			return false
+			missing = append(missing, name)
 		}
 	}
-	return true
+	for i := 1; i < len(missing); i++ {
+		for j := i; j > 0 && strings.Compare(missing[j], missing[j-1]) < 0; j-- {
+			missing[j], missing[j-1] = missing[j-1], missing[j]
+		}
+	}
+	for _, name := range missing {
+		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess\n", f.verb, name)
+	}
+	return len(missing) == 0
 }
 
 // gitArgs checks the two flags that become git's own argv. A --remote or --branch
@@ -1317,8 +1326,11 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
+	// closed= COUNTS NOTES, not receipts. Since #1540 one receipt closes every note one
+	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
+	// and would be a different, smaller and quite surprising number here.
 	if *dryRun {
-		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", len(plan.Prepared), plan.Kept)
+		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", plan.Closed, plan.Kept)
 		return 0
 	}
 	if len(plan.Prepared) == 0 {
@@ -1333,14 +1345,30 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
+	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND (#1540). The collision this fix
+	// removes used to stop the loop at its second Save, with the first receipt written into
+	// the working tree, no commit, and the cursor where it started -- so the next run met a
+	// file it had not committed and the lane had to be cleaned by hand. Whatever stops the
+	// loop now, the files this run wrote go back out of the tree before it returns.
+	written := make([]string, 0, len(plan.Prepared))
+	undo := func() {
+		for i := len(written) - 1; i >= 0; i-- {
+			if err := os.Remove(filepath.Join(*busDir, filepath.FromSlash(written[i]))); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(stderr, "CLOSE NOTE %s was written and could not be taken back: %s\n", oneline.Escape(written[i]), oneline.Err(err))
+			}
+		}
+	}
 	paths := make([]string, 0, len(plan.Prepared)+1)
 	for i := range plan.Prepared {
 		p := &plan.Prepared[i]
 		if err := p.Save(*busDir); err != nil {
+			undo()
 			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
+		written = append(written, p.Path)
 		if err := p.AppendIndex(*busDir); err != nil {
+			undo()
 			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
@@ -1367,7 +1395,11 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(sha8) > 8 {
 		sha8 = sha8[:8]
 	}
-	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=%s\n", len(plan.Prepared), plan.Kept, oneline.Field(sha8))
+	// receipts= is new with #1540 and is the one number that changed shape: closed= counts
+	// notes, as it always did and as the dry run above already did, and receipts= says how
+	// many notes it took to close them -- one per sender lane. A reader who wants to know
+	// whether a close collapsed 2964 files into a handful reads it here.
+	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d receipts=%d commit=%s\n", plan.Closed, plan.Kept, len(plan.Prepared), oneline.Field(sha8))
 	return 0
 }
 
@@ -2813,6 +2845,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
+	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
+	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a
+	// wait has always been bounded -- it simply had no way to say a bigger number. Johnny's
+	// loop ran for days behind a cursor the bus had left far behind, printing the bounded
+	// line's `remedy="raise --max-commits"` at a verb that refused the flag.
+	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
@@ -2833,6 +2871,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.count("open-max", *openMax, stderr) {
+		return 2
+	}
+	if !f.count("max-commits", *maxCommits, stderr) {
 		return 2
 	}
 	if !f.atLeastZero("open-warn", *openWarn, stderr) {
@@ -2953,11 +2994,33 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
+		maxCommits:  *maxCommits,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
 	// inbox already refuses it in.
 	held, _ := bus.ReadCursor(*busDir, me.Lane)
+	// A WAIT THAT CANNOT SEE THE BUS IS NOT A WAIT, AND IT SAYS SO BEFORE IT BLOCKS (#1518).
+	//
+	// The distance from a cursor to HEAD only GROWS while a wait runs -- the cursor moves
+	// on --advance, at the end, and never during -- so a walk that is over the bound now is
+	// over it on every poll this call will make. Every one of those polls reads nothing,
+	// and the call then prints the same WAIT TIMEOUT as a wait over a quiet bus. Johnny's
+	// loop did exactly that, once a minute, for hours, at exit 0:
+	//
+	//	INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
+	//	WAIT TIMEOUT after=1m2.926s polls=2 cursor=8cd06f5a...
+	//
+	// So it is asked ONCE, here, before anything blocks, and it is a REFUSAL rather than a
+	// note: a loop that is green and deaf is worse than one that stops, because nobody goes
+	// to look at the one that is green. The bounded walk's own remedy is carried word for
+	// word, and --max-commits above is now one of the two things it names.
+	if over, err := waitWalkOverBound(*busDir, held.Commit, *maxCommits); err == nil && over {
+		fmt.Fprintf(stderr, "WAIT BLIND commits=%d %s\n", *maxCommits, boundedWalkRemedy)
+		fmt.Fprintf(stderr, "WAIT REFUSED: as=%s cursor=%s is further behind than this walk may cross, so every poll of this wait would read nothing and it would end saying `nothing yet`; raise the bound or close the backlog, then wait again\n",
+			oneline.Field(me.Name), oneline.Field(dash(held.Commit)))
+		return 2
+	}
 	// One line at the start, before anything is waited on, so that a transcript shows the
 	// call began and what it was told to do. A tool call that prints nothing for twenty
 	// minutes and then prints everything is, while it runs, indistinguishable from one
@@ -2989,6 +3052,26 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// same one argument after a paste, not split in two.
 	next := rearmCommand(args)
 	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now)
+}
+
+// waitWalkOverBound answers whether this lane's cursor is further behind HEAD than the
+// walk's bound, which is the one condition under which a wait can see nothing whatever
+// happens (#1518).
+//
+// IT FAILS OPEN, in both directions that matter. A lane with no cursor at all is not over
+// any bound -- it reads from the beginning of the switch-day line, which is what a first
+// wait does -- and an error asking git is NOT a refusal: a wait that cannot measure the
+// distance is a wait whose first poll's listing will refuse in inbox's own sentence, and
+// this check exists to name a silence, never to invent a new way to fail.
+func waitWalkOverBound(busDir, cursor string, limit int) (bool, error) {
+	if cursor == "" || limit <= 0 {
+		return false, nil
+	}
+	_, over, err := bus.CommitsSinceBounded(busDir, cursor, limit)
+	if err != nil {
+		return false, err
+	}
+	return over, nil
 }
 
 // maxIdleExit is the highest code --idle-exit will take. 126 and 127 are the shell's own --

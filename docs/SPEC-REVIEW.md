@@ -659,6 +659,10 @@ into the repo it is pointed at, removes its worktree on every path, and forms no
 about the code: the harvest runs it before any reader is spawned, and the reader then
 judges spec fit and nothing else.
 
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1 rule 9 (draft, 2026-09-19):** the range form
+prints `reverted=<n>`, and a `--seed` form applies one patch whose edit count is asserted to be
+exactly 1. At `dev@31e35195` no harvest calls this verb; SPEC-TOOLWORK §1 is the step that does.
+
 **A new binary, not verbs on nova-merge, for one reason with three faces.**
 nova-merge is the tool with the mutation guard: one function publishes to the
 base, and its whole spec is built so nothing else can. Its own words are "it

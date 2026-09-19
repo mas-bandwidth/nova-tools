@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -484,4 +485,59 @@ func fileURL(path string) string {
 		p = "/" + p
 	}
 	return "file://" + p
+}
+
+// #1607, AT THE FIXTURE. The two refusal tests above passed their assertions and then
+// failed in `t.TempDir RemoveAll cleanup: unlinkat .../work/.git/objects: directory not
+// empty`, because the fixture's own `git commit` and `git push` each fork
+// `git maintenance run --auto --quiet --detach` and return without it: that child is still
+// inside `work/.git` -- it creates objects/maintenance.lock there -- while t.TempDir
+// removes the directory under it. A refusal test is where it shows, because a refusal
+// returns in milliseconds and the longer tests outlive their own strays by accident.
+//
+// So: building the fixture starts no git that the fixture does not wait for. This reads
+// git's own trace2 stream, which records every child a git starts.
+func TestTheFixtureStartsNoGitItDoesNotWaitFor(t *testing.T) {
+	// No t.Parallel: it sets GIT_TRACE2_EVENT for the process, and Go runs the
+	// sequential tests with every parallel one paused.
+	trace := t.TempDir()
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+	batchRepo(t)
+
+	entries, err := os.ReadDir(trace)
+	if err != nil {
+		t.Fatalf("reading the trace directory: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Skip("this git wrote no trace2 events, so this bench cannot see the children git starts")
+	}
+	var background []string
+	for _, e := range entries {
+		raw, err := os.ReadFile(filepath.Join(trace, e.Name()))
+		if err != nil {
+			t.Fatalf("reading a trace file: %v", err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if !strings.Contains(line, `"child_start"`) {
+				continue
+			}
+			var ev struct {
+				Event string   `json:"event"`
+				Argv  []string `json:"argv"`
+			}
+			if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.Event != "child_start" {
+				continue
+			}
+			for _, word := range ev.Argv {
+				if word == "maintenance" || word == "gc" || word == "fsmonitor--daemon" {
+					background = append(background, strings.Join(ev.Argv, " "))
+					break
+				}
+			}
+		}
+	}
+	if len(background) > 0 {
+		t.Errorf("the fixture started %d background git(s) nothing waits for:\n\t%s\nthey are still writing into this test's own t.TempDir when it is removed (#1607); the fixture runs git through merge.NoBackgroundGit",
+			len(background), strings.Join(background, "\n\t"))
+	}
 }
