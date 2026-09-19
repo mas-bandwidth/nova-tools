@@ -132,9 +132,11 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 // reader must not be invited to run a binary no bench has (#1510). An entry
 // added here names issues that are genuinely open, and it comes off the list
 // the day the tool ships.
-var notYetInTheFleetBuild = map[string]string{
-	"nova-play": "#221/#222/#223",
-}
+//
+// It is EMPTY today, and an empty list is the honest state rather than an
+// oversight: nova-play was the last entry and it ships (#1510). The mechanism
+// stays because the next tool with open design work will want it.
+var notYetInTheFleetBuild = map[string]string{}
 
 // shipsInNoFleetBuild is the note a not-yet-shipped tool's docs/TESTS.md
 // section must carry beside its transcript.
@@ -249,4 +251,29 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+// TestNoToolIsWrittenTwiceInTheTranscripts is the guard the two-bench dogfood run
+// bought. docs/TESTS.md carried `## nova-work` twice: the first section is the one
+// every test reads, because onboarding.Section cuts to the first match, and the
+// second was executed by nothing. It drifted, unwatched, into two sentences the
+// binary no longer prints -- a bare-command refusal in the old spelling, and an
+// `events` line carrying `--repo`, which switches ON the gh forge fallback that
+// the section's own prose says is off -- and both reproduced as DEFECT on space
+// and on hulk while every test in this repository was green.
+//
+// The reading a second section gets is nobody's. So the document names each tool
+// ONCE, and a tool that needs two things said about it says them in two `###`
+// subsections of its one section, where FirstRun and Transcript can both find
+// them.
+func TestNoToolIsWrittenTwiceInTheTranscripts(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "docs", "TESTS.md")
+	repeated := onboarding.RepeatedSections(readFile(t, path))
+	if len(repeated) == 0 {
+		return
+	}
+	t.Errorf("docs/TESTS.md heads more than one `## ` section with each of these names: %s\n"+
+		"Only the FIRST is read -- by onboarding.Section, by every firstrun_test.go, and by a\n"+
+		"person looking for the one place to change. Fold each repeat into that tool's one\n"+
+		"section, as `### ` subsections if it has more than one thing to say.", strings.Join(repeated, ", "))
 }

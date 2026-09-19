@@ -1197,6 +1197,34 @@ without it.
 **Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
 under `src/` and `tests/`. It reads the component list, not the load: whether the
 system as named *loads* is `make test-lisp`'s business.
+### `one section` — docs/TESTS.md names each tool exactly once
+
+**The rule.** No two `## ` headings in `docs/TESTS.md` carry the same name. A
+tool with more than one thing to say says it in `###` subsections of its one
+section.
+**The hurt.** `docs/TESTS.md` carried `## nova-work` twice. `onboarding.Section`
+cuts to the FIRST match and cannot fail, so `cmd/nova-work/firstrun_test.go`
+executed the first section and the second was read by no test at all. It drifted
+into two sentences the binary no longer printed — a bare-command refusal in the
+retired spelling (`nova-work: no verb given`, against the shipped
+`WORK REFUSED: a verb is required`) and an `events` line carrying `--repo`, the
+flag that switches ON the `gh pr list` fallback that section's own prose says is
+off. Both reproduced as DEFECT on space AND on hulk in the 2026-09-18 two-bench
+dogfood run while every test in this repository was green, which is `#1506`
+read from its other end: the drift was not a test that was too weak, it was a
+document half of which no test could see.
+**The test.** `TestNoToolIsWrittenTwiceInTheTranscripts`
+(`internal/ci/onboarding_test.go`), over the parse in
+`onboarding.RepeatedSections`.
+**Its allowlist.** None. A repeated heading has no good case: the second copy's
+readership is nobody.
+**Its remedy line.** The finding names every repeated heading and says only the
+first is read — by `onboarding.Section`, by every `firstrun_test.go`, and by a
+person looking for the one place to change.
+**Its narrowings.** Only `docs/TESTS.md` and only `## ` headings; a repeated
+`###` inside one tool's section is that section's business, and `cmd/nova-work`'s
+own `TestTESTSRefusalsAreWhatTheToolPrints` is what holds a second subsection to
+what the tool prints.
 
 ### `version` — every tool prints the one version line
 
