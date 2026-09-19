@@ -1957,7 +1957,7 @@ never forms an opinion about code and never merges anything.
 
 ```
 nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
-nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+nova-review mutate --repo <dir> --base <ref> --head <ref> [--test <name>] [--timeout <seconds>] [--max <n>]
 nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
 nova-review version
 nova-review help
@@ -1991,6 +1991,43 @@ does not resolve at that head, a named suite already red at the unseeded head, a
 a `--timeout` deadline that killed the run mid-flight. Neither form writes anything
 into the repo it is pointed at, on any path. Full grammar in
 [docs/SPEC-REVIEW.md](SPEC-REVIEW.md).
+
+`--test <name>` is optional and range-only, and asks SPEC-TOOLWORK §1 rule 4(d)'s
+own question: does THAT test detect the reverted change. The default verdict is
+per FILE, which is stricter and a different question — a card that also touched a
+second test file whose tests are correctly insensitive to the change came back
+`FAIL` with its named `TEST:` red (#1849). Given, the verdict is that unit's, and
+the line carries `test=<resolved name>` beside the usual counts:
+
+```
+MUTATE <head8> reverted=<n> red=<n> green=<n> test=<name> <PASS|FAIL>
+```
+
+The name is resolved among the test units of the files THIS RANGE CHANGED and
+nowhere else, and may be qualified `<file>:<name>` where two of them declare it.
+One that resolves to none of them, to more than one, or to a unit whose suite
+could not be run is `MUTATE REFUSED`, exit 2 — never a vacuous `PASS`, never an
+inferred `FAIL`, and never a guess at which test was meant. The co-touched units
+are still counted and still listed; another test's result no longer answers the
+question that was asked. Every `MORE` remedy carries `--test`, so rerunning it
+asks the same question. The singular `--test` is the range form's unit and the
+seed form's plural `--tests` is its package selector: together they are malformed.
+
+A range that changes ONLY test files does not refuse — it ABSTAINS, on stdout,
+still exit 2 (#1850).
+
+```
+MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
+```
+
+Reverting nothing runs the head's own suite, so the control cannot be PROVED,
+which is not the same as a run that broke and is not acceptance either: it is
+never a `PASS`, never a `REJECT` and never permission to push. Every
+`internal/docs` and `internal/ci` doc-rule repair has this shape, and each one
+used to be sent to the seed form by hand. A range that changes NO test file is a
+different condition and still refuses, `MUTATE <head8> no-tests-changed`: it can
+be an ordinary production fix missing the red test it was required to have, and
+calling that harmless is the inference this verb must not make.
 
 The other verbs are `packet`, `version` and `help`. `packet` is the one that works:
 it reads one entry on a lane at one head and writes one bounded file, capped at
