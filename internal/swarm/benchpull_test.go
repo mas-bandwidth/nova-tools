@@ -253,6 +253,7 @@ func TestPullScoresBenchUnreachable(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2",
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 		PullWait: 150 * time.Millisecond, PullPoll: 50 * time.Millisecond,
 		Stdout: &out, Stderr: &errb,
 	})

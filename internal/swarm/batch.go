@@ -82,9 +82,22 @@ type BatchInput struct {
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
 	PullWait time.Duration
 	PullPoll time.Duration
-	Benches  string // path to the benches table; empty means no table is read
-	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
-	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// SlotsStore and SlotOwner are the bench slot store a card's `nova-swarm native` takes
+	// its one lease from, and the owner whose share it counts against (nova-tools#1546).
+	// They are REQUIRED of any batch that launches native -- which is every batch without
+	// a --runner of its own -- and the refusal is NoSlotsStoreRefusal, said once before a
+	// card runs rather than once per card.
+	//
+	// THE PATH IS ON THE MACHINE THAT RUNS THE CARD. For a local card that is this
+	// machine; for a bench row it is the bench, reached over ssh, and the path must exist
+	// THERE. One batch spanning local and remote benches therefore wants a store path that
+	// means the same thing on each, which today means naming the same absolute path on
+	// every bench. Said plainly here because it is the seam a reader will meet.
+	SlotsStore string
+	SlotOwner  string
+	Benches    string // path to the benches table; empty means no table is read
+	Bench      string // comma-separated bench names to allocate the cards across; empty means local only
+	Then       string // a follow-on command, run with sh -c only when every card is done; "" means none
 	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
 	// it is set, the model a card is dispatched with is the ladder's answer --
 	// which MIND does this unit of work -- and not the string the fill script
@@ -200,6 +213,19 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 	}
+	// A LAUNCH WITHOUT A LEASE IS REFUSED (nova-tools#1546). Every path out of this
+	// function that starts a card starts it through `nova-swarm native` -- selfNative
+	// locally, remoteRun on a bench -- and native now refuses without a slot store. The
+	// batch says so ONCE, here, before a single card runs, rather than letting every card
+	// fail one at a time with the same sentence. The remedy is the one native prints, word
+	// for word: a caller who greps for it finds the same string wherever it came from.
+	//
+	// A batch with its own --runner launches no native and is not held to this: the runner
+	// is somebody else's program and the bench cannot speak for what it takes.
+	if in.Runner == "" && (in.SlotsStore == "" || in.SlotOwner == "") {
+		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
+		return 2
+	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
 	// THE PUBLIC-CLASS GATE (CARD-8390) runs here too, after the shape and repo
@@ -311,7 +337,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -1415,6 +1441,12 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 	if err != nil {
 		return nil, err
 	}
+	// The bench slot lease travels with the launch (nova-tools#1546): native refuses
+	// without it, and Batch has already refused the whole batch if it is not here, so a
+	// missing store at THIS point would be a plumbing bug and not a caller error.
+	if in.SlotsStore == "" || in.SlotOwner == "" {
+		return nil, fmt.Errorf("%s", NoSlotsStoreRefusal)
+	}
 	argv := []string{"native",
 		"--harness", in.Harness,
 		"--model", c.model,
@@ -1423,6 +1455,8 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 		"--slot", filepath.Join(in.Root, strconv.Itoa(c.slot)),
 		"--root", in.Root,
 		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
+		"--slots-store", in.SlotsStore,
+		"--owner", in.SlotOwner,
 	}
 	if in.Auth != "" {
 		argv = append(argv, "--auth", in.Auth)

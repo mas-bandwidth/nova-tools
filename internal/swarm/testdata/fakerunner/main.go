@@ -91,7 +91,7 @@ func main() {
 // nativeRunner reads the arguments a runnerless batch hands the self when it runs the card
 // through its own native verb (issue #636):
 //
-//	native --harness <h> --model <m> --label <l> --card <c> --slot <slotdir> --root <r> --deadline <d> [--auth <a>]
+//	native --harness <h> --model <m> --label <l> --card <c> --slot <slotdir> --root <r> --deadline <d> --slots-store <s> --owner <o> [--auth <a>]
 //
 // `--slot` is the SLOT DIRECTORY, unlike a `--runner` invocation's slot number, so the job
 // sits directly under it. Parsing the flags, rather than running with empty fields, keeps a
@@ -107,6 +107,12 @@ func nativeRunner(args []string) (*runner, error) {
 	root := fs.String("root", "", "the batch root")
 	_ = fs.String("deadline", "", "the card's deadline")
 	_ = fs.String("auth", "", "the auth profile")
+	// The bench slot lease (nova-tools#1546) travels with every native launch, so the
+	// fixture standing in for nova-swarm must accept it or a runnerless batch cannot run
+	// here at all. The fixture takes no lease: it is not nova-swarm, and a test that let it
+	// pretend to would be testing the fixture.
+	_ = fs.String("slots-store", "", "the bench slot store")
+	_ = fs.String("owner", "", "whose share the lease counts against")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}

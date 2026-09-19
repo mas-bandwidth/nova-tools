@@ -847,10 +847,10 @@ meaning of "pull the intelligence up, push down to machinery."
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
-nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
 nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
@@ -869,7 +869,7 @@ nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
 nova-swarm lint      --card <file> [--max <n>] | --rules
 nova-swarm quickstart --pool <dir>
-nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
 nova-swarm help
@@ -1693,7 +1693,7 @@ today's behaviour. On a remote bench `--runner` is not used: the batch builds
 the `native` command itself from the bench row and the card row, and the run is
 
 ```
-ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n> --root <root> --deadline <s> --tokens <n|unmetered> --auth <auth> [--no-wall]
+ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n> --root <root> --deadline <s> --tokens <n|unmetered> --slots-store <store> --owner <owner> --auth <auth> [--no-wall]
 ```
 
 whose first output line is `RUN pgid=<n>`, the remote process group `native`
@@ -2116,9 +2116,19 @@ takes a lease per card before it runs and releases it after. The seven rules:
 3. The broker verbs are the only way to hold a slot:
 
    ```
+   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
    nova-swarm slots list --store <dir>
    ```
+
+   `init` MAKES a store: the directory, its `slots/` and one `shares.tsv` with the
+   given capacity, a reserve of 0 and one owner's share. It creates and never updates --
+   a store that already has a `shares.tsv` is refused and not touched, because the leases
+   under it belong to processes that are running now and a capacity edited underneath them
+   is a bench that overcommits without saying so. Changing a live store is a hand edit of
+   `shares.tsv`. It exists because rule 2 refuses a launch without a lease, and a refusal
+   whose remedy is "pass --slots-store <dir>" is no remedy on a bench that has never had one.
 
    `take` grants by the owner's share from the registry file `<store>/shares.tsv`
    (columns bench, owner, share). It refuses with the holder list when the share is spent,
@@ -2139,6 +2149,46 @@ takes a lease per card before it runs and releases it after. The seven rules:
 A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all]` frees them, and `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
 
 **The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
+
+**`native` requires a lease, and there is no way to ask it not to** (nova-tools#1546).
+`nova-swarm native --slots-store <dir> --owner <name>` are REQUIRED flags: the run takes
+exactly one lease before any job directory is made, holds it for the run's deadline plus
+two minutes of grace, and releases it on every exit path including a run that failed. A
+take that grants nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=…
+holders=…` line and exits 2, having started nothing.
+
+**A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
+ids it granted — not a count — and a holder hands exactly those back to
+`ReleaseSlotLeasesByID(store, ids, pid)`, which re-reads each lease and leaves it alone
+unless the pid is still the holder's. An owner is a bench and a label is a card's name, and
+two runs that share both — two slots, two benches, a retry — would otherwise each give away
+the other's live seat; a run that refused before it started, on a missing harness say, would
+delete a lease it never took. An id that is already gone is not an error: a release is
+allowed to be late.
+
+`slots release --store <dir> --owner <o> (--label <text> | --all)` is unchanged and stays
+by owner and label, because that is what a PERSON at a prompt means by it and a person can
+see the store. A deferred cleanup cannot, so it does not get that verb.
+
+Asked without either flag, `native` prints exactly one line and exits 2:
+
+```
+NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
+```
+
+There is no default store, no store invented under `--root` or `--slot`, no owner guessed
+from the host or the label, no `shares.tsv` created on the way past, and **no `--no-lease`
+flag**. The first cut of this made the store optional, so a `native` without it ran exactly
+as before and took nothing — which leaves rule 2 unmet, because a launch that took no lease
+is one the bench cannot see, cannot count and cannot refuse. That is a hole, not a default.
+
+The same rule reaches every caller that launches `native`. `nova-swarm batch` without a
+`--runner` of its own launches `native` for every card — locally and on a bench — so it
+takes the two flags and **refuses the whole batch with the same line, before any card
+runs**, rather than letting each card fail with it in turn. A batch that names its own
+`--runner` launches no `native` and is not held to this: the runner is somebody else's
+program and the bench cannot speak for what it takes. **The store path is resolved on the
+machine that runs the card**, which for a bench row is the bench.
 
 **The store is the authority.** A launcher reads it before it runs and releases
 its lease after; the broker is the only writer. No owner keeps a private count

@@ -236,6 +236,7 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
@@ -309,6 +310,7 @@ func TestBatchRefusesMoreSlotsThanCores(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
 	if code != 2 {
 		t.Fatalf("16 slots on 15 cores is a refusal, got exit %d; stderr: %s", code, errb.String())
@@ -338,6 +340,7 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
@@ -376,6 +379,7 @@ func TestRemoteRunSlotIsTheSlotDir(t *testing.T) {
 	code := Batch(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
