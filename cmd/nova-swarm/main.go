@@ -66,7 +66,7 @@ usage:
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>] [--slots-store <dir> --owner <name>]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -1635,6 +1635,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
+	// THE BENCH SLOT LEASE (nova-tools#1546): --slots-store names the store and --owner
+	// whose share the one lease per run counts against. Without a store native is unchanged.
+	slotsStore := f.fs.String("slots-store", "", "")
+	slotOwner := f.fs.String("owner", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1680,6 +1684,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*slot, "slot", "the slot directory this run executes in")
 	f.want(*root, "root", "the configured root the slot directory must sit under")
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
+	if *slotsStore != "" {
+		f.want(*slotOwner, "owner", "whose bench slot share the lease counts against; it is required with --slots-store")
+	} else if *slotOwner != "" {
+		f.add("--owner wants --slots-store: without a store there is no bench share for an owner to hold")
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -1733,6 +1742,32 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	if workerGiven {
 		cfg.worker = &w
+	}
+	// THE BENCH SLOT LEASE (nova-tools#1546). With --slots-store, native takes ONE lease
+	// before the run starts and holds it for the run's deadline plus two minutes of grace,
+	// the same shape the dispatcher uses (internal/swarm/run.go). A take that grants nothing
+	// is a refusal, not a run, and no worker starts. The lease is released on every exit
+	// path, including a run that fails.
+	if *slotsStore != "" {
+		dur := d + 2*time.Minute
+		_, held, share, free, holders, granted, lerr := swarm.TakeSlotLeases(*slotsStore, *slotOwner, 1, dur, lbl, time.Now().UTC(), os.Getpid())
+		if lerr != nil {
+			fmt.Fprintf(stderr, "nova-swarm native: the slot store could not be read: %s\n", oneline.Err(lerr))
+			return 2
+		}
+		if !granted {
+			if holders == "" {
+				holders = "-"
+			}
+			fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s\n",
+				oneline.Field(*slotOwner), 1, held, share, free, oneline.Escape(holders))
+			return 2
+		}
+		defer func() {
+			if _, _, err := swarm.ReleaseSlotLeases(*slotsStore, *slotOwner, lbl, false); err != nil {
+				fmt.Fprintf(stderr, "nova-swarm native: releasing the slot lease: %s\n", oneline.Err(err))
+			}
+		}()
 	}
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 {
