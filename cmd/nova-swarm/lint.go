@@ -57,8 +57,8 @@ const cardLintChecks = 16
 // remedy cannot drift from the rule it explains, and a check added without one is caught by
 // the count above before it ships.
 var cardLintRemedies = map[string]string{
-	"result-first":     "line 1 IS the contract and begins `RESULT: ` -- `RESULT: <CARD-id> <one line of what done looks like>`. A title, a heading or a `#` comment on line 1 is this drift, however right the words are (WORKER-CARDS.md practice 1)",
-	"clone-step":       "STEP 1 enters the repository from the working directory: `git clone -q <url> repo && cd repo`, or a `cd` into a checkout that may already be there (practices 17, 25)",
+	"result-first":     "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are (WORKER-CARDS.md practice 1; the two forms and why there are two are in internal/swarm/lintcontract.go)",
+	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule (practices 17, 25)",
 	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift (practice 17)",
 	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words (practice 23)",
 	"test-command":     "write the gate verbatim, exactly as the card is to run it (`go test ./internal/x/ -run TestY -count=1`), or say in words that there are no tests (practice 5)",
@@ -155,8 +155,11 @@ func lintCard(raw []byte) []cardFinding {
 		first = lines[0]
 	}
 
-	// 1. line 1 is the contract and starts with `RESULT: `.
-	if !strings.HasPrefix(first, "RESULT: ") {
+	// 1. line 1 is the contract, in either of the two forms the tools write today. The
+	// two are swarm.CardContractPrefixes, and the reason there are two -- `cut` writes
+	// one, WORKER-CARDS practice 1 the other -- is written out there, with the class test
+	// beside it that holds this lint, `cut` and `gather` to one line.
+	if !swarm.IsCardContractLine(first) {
 		add("result-first", 1, first)
 	}
 
@@ -175,7 +178,12 @@ func lintCard(raw []byte) []cardFinding {
 		add("clone-step", steps[0].line, steps[0].text)
 	case stepOne < 0:
 		add("clone-step", 1, first)
-	case !cardCloneRE.MatchString(steps[stepIndex(steps, 1)].text):
+	case !cardCloneRE.MatchString(cardStepBody(lines, steps, stepIndex(steps, 1))):
+		// THE STEP IS ITS LINE AND ITS BODY. Matching the `STEP 1.` line alone made this
+		// a check on wording: a step that reads `STEP 1. Get the tree.` and then clones
+		// and cds on the line under it drew a drift for the verb it chose, while the
+		// command the rule is actually about was right there. The rule is what the step
+		// DOES, so the whole step is read, down to the next STEP line.
 		add("clone-step", stepOne, steps[stepIndex(steps, 1)].text)
 	}
 
@@ -264,6 +272,25 @@ func lintCard(raw []byte) []cardFinding {
 	return out
 }
 
+// cardStepBody is one step's whole text: its own `STEP <n>.` line and every line under
+// it up to the next STEP line, or to the end of the card. A step's command usually sits
+// on the line below the sentence that introduces it, and a check on what a step DOES has
+// to read there.
+func cardStepBody(lines []string, steps []cardStep, i int) string {
+	if i < 0 || i >= len(steps) {
+		return ""
+	}
+	from := steps[i].line - 1 // the STEP line itself, 0-based
+	to := len(lines)
+	if i+1 < len(steps) {
+		to = steps[i+1].line - 1
+	}
+	if from < 0 || from > len(lines) || to < from {
+		return ""
+	}
+	return strings.Join(lines[from:to], "\n")
+}
+
 // stepIndex is the index of the first step whose number is n, or 0.
 func stepIndex(steps []cardStep, n int) int {
 	for i, s := range steps {
@@ -332,7 +359,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// by name rather than as a drift.
 	if tmpl := matchingTemplate(raw); tmpl != "" {
 		if swarm.IsCardTemplate(tmpl) {
-			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
+			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
 			return 0
 		}
 		fmt.Fprintf(stdout, "LINT NOT-A-CARD card=%s template=%s remedy=%s\n",
@@ -353,8 +380,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 	}
+	// THE CEILING IS NEVER A SILENT BOUND. A card writer learned of the 12000-byte cap by
+	// hitting it: a card at 11k looked exactly like a card at 2k. Every lint says how big
+	// this card is and what the cap is, on the OK line and, below, on the drift path.
 	if len(findings) == 0 {
-		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d\n", oneline.Field(name), cardLintChecks)
+		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
 		return 0
 	}
 	printed := findings
@@ -375,5 +405,8 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "LINT MORE card=%s findings=%d remedy=nova-swarm lint --card %s --max 0\n",
 			oneline.Field(name), len(findings), oneline.Field(*card))
 	}
+	// A drifting card gets the size too: a writer cutting a card down to fix a drift is
+	// exactly the writer who needs to know how close to the ceiling the card already is.
+	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d\n", oneline.Field(name), len(raw), cardMaxBytes)
 	return 2
 }
