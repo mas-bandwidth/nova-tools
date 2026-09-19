@@ -612,6 +612,11 @@ refusal-for-absence is about the paths the *caller* named.
 Without it, a card names both by hand in every argv, which is a step that will be
 forgotten. `--read $(go env GOROOT)` remains the manual equivalent.
 
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §2 (draft, 2026-09-19; #1557, #1465):** `--toolchain
+<leg>` is the same idea for `cc`, `make`, `sbcl` and `sqlite3`, each leg's narrowest measured
+roots asked of the toolchain and never guessed, and a bench is certified leg by leg inside the
+wall before a card's result from it is trusted.
+
 ### `SANDBOX DENIED` — the wall says what it refused
 
 When a contained command exits **non-zero**, the tool asks the operating system
