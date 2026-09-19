@@ -487,3 +487,249 @@ func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The cold read of 2026-09-19 (#1717, findings 1-8 and 10).
+//
+// The theme of the first three is one sentence: this check reads a repository the
+// SUBJECT controls. gitOut already blanks the global and system git config, because a
+// bench's configuration is not evidence -- but a job clone's own `.git/config` and its
+// own committed `.gitattributes` are the WORKER's, and both of them change what `git
+// diff` prints. Every finding below was reproduced as HYGIENE OK findings=0 over a
+// range that carries a key.
+
+// hygiene-ignores-the-subject-repos-diff-config: `diff.noprefix` in the checked repo
+// drops the `a/` and `b/` from every header, so the parser never learns a file name and
+// skips every added line in the range.
+func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "config", "diff.noprefix", "true")
+	git(t, dir, "checkout", "-q", "-b", "card")
+	key := fixtureKey()
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("the subject repo's diff.noprefix hid the key: %v", tokens(fs))
+	}
+	if f.At != "sign/sign.go:3" {
+		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
+	}
+}
+
+// hygiene-reads-a-diff-the-subject-repo-marked-binary: a committed `.gitattributes`
+// saying `*.go -diff` makes git print "Binary files a/... and b/... differ" instead of
+// the lines, so nothing reaches the shapes and `--check` has nothing to look at either.
+// It is committable inside the range, and at batch there is no PATHS: line to stop it.
+func TestHygieneReadsADiffTheSubjectRepoMarkedBinary(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/.gitattributes", "*.go -diff\n")
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "nothing to see here")
+	fs := check(t, dir, Options{})
+	if has(fs, "secret") == nil {
+		t.Fatalf("a `-diff` attribute in the range hid the key: %v", tokens(fs))
+	}
+}
+
+// The conflict-marker half of the same defect: `--check` reads the same attribute, and
+// unlike the unified diff it stays silent whatever `--text` says. Only
+// `--attr-source=<empty tree>` reaches it, and that is git 2.42 and later.
+func TestHygieneChecksMarkersInADiffTheSubjectRepoMarkedBinary(t *testing.T) {
+	dir := lab(t)
+	// The skip is decided by what THIS git takes, read here rather than from the
+	// package's own helper: a helper that stopped returning the option would
+	// otherwise skip this test instead of failing it.
+	if !gitTakesAttrSource(t, dir) {
+		t.Skip("this git does not take --attr-source (2.42 and later), and --text alone does not make `diff --check` read a file the subject marked -diff")
+	}
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/.gitattributes", "*.go -diff\n")
+	write(t, dir, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "nothing to see here either")
+	fs := check(t, dir, Options{})
+	found := false
+	for _, f := range fs {
+		if strings.Contains(f.Why, "conflict marker") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a `-diff` attribute in the range hid the conflict marker: %v", fs)
+	}
+}
+
+// hygiene-reads-a-path-git-would-quote: one non-ASCII byte in a name and git quotes the
+// whole header -- `+++ "b/sign/k\303\251y.go"` -- which the parser read as a file it
+// could not name, so every added line in that file was skipped.
+func TestHygieneReadsAPathGitWouldQuote(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/kéy.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("a quoted path hid the key: %v", tokens(fs))
+	}
+	if f.At != "sign/kéy.go:3" {
+		t.Fatalf("at=%q, want sign/kéy.go:3", f.At)
+	}
+}
+
+// hygiene-refuses-when-the-marker-check-cannot-run: `diff --check` exits 2 when it has
+// something to say, which is why its stdout is read directly -- but the error was
+// dropped with it, so a cancelled context and an exit 128 both came back as an empty
+// answer, which reads as a range with no markers in it. A check that could not run has
+// found nothing, and must never say clean.
+func TestHygieneRefusesWhenTheMarkerCheckCannotRun(t *testing.T) {
+	dir := lab(t)
+	head := git(t, dir, "rev-parse", "HEAD")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := conflictMarkers(ctx, dir, head, head, nil); err == nil {
+		t.Fatal("a cancelled context reported a range with no conflict markers")
+	}
+
+	absent := strings.Repeat("0", len(head))
+	if _, err := conflictMarkers(context.Background(), dir, absent, head, nil); err == nil {
+		t.Fatal("a ref git could not resolve reported a range with no conflict markers")
+	}
+}
+
+// paths-line-refuses-a-glob-that-bounds-nothing: `**` was refused by spelling, so
+// `**/*` and `*/**` walked straight past it and matched every file there is. The rule
+// is not the spelling; it is that SOMEWHERE in the glob there is a literal character
+// the path has to carry.
+func TestValidatePathsRefusesAGlobThatBoundsNothing(t *testing.T) {
+	for _, bad := range []string{"**", "**/", "**/*", "*/**", "*", "*/*", "**/**", "?", "*/*/**"} {
+		if err := ValidatePaths([]string{bad}); err == nil {
+			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: it matches every file there is", bad)
+		}
+	}
+	for _, ok := range []string{"sign/**", "*.go", "**/*.go", "sign/*", "internal/*/doc.go", "a/**/b"} {
+		if err := ValidatePaths([]string{ok}); err != nil {
+			t.Errorf("ValidatePaths([%q]) = %v, want nil", ok, err)
+		}
+	}
+}
+
+// hygiene-reads-full-blob-ids: `--raw` abbreviates the blob id, and an abbreviation is
+// ambiguous sooner or later -- at which point `git cat-file -s` refuses and the WHOLE
+// Check returns an error over a range that was fine. The id is read in full.
+func TestHygieneReadsFullBlobIds(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "one change")
+	base := git(t, dir, "rev-parse", "main")
+	head := git(t, dir, "rev-parse", "HEAD")
+	entries, err := rawDiff(context.Background(), dir, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("the raw diff read no entry")
+	}
+	for _, e := range entries {
+		if len(e.newBlob) < len(head) {
+			t.Fatalf("%s: blob id %q is abbreviated; an abbreviation is ambiguous sooner or later", e.path, e.newBlob)
+		}
+	}
+}
+
+// hygiene-sizes-added-files-only: §3 rule 5 is about what a card ADDED. A file that was
+// already over a mebibyte at the base and that this card merely edited is not this
+// card's finding, and charging it makes every later card in that repository unfixable
+// by anybody.
+func TestHygieneSizesAddedFilesOnly(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "go.mod", "module fixture\n\ngo 1.26\n")
+	write(t, dir, "sign/big.txt", strings.Repeat("a", 1024*1024+1)+"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "the base already carries it")
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/big.txt", strings.Repeat("a", 1024*1024+1)+"\nb\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "one line into a file that was already big")
+	if f := has(check(t, dir, Options{}), "stray-file"); f != nil {
+		t.Fatalf("a file the card did not add was charged to it: %v", *f)
+	}
+}
+
+// hygiene-refuses-a-log-row-it-cannot-read: a row that does not carry all six fields
+// was skipped, and a skipped row is a commit that went through the identity check
+// without being checked. There is no safe way to read half a row.
+func TestHygieneRefusesALogRowItCannotRead(t *testing.T) {
+	const sep = "\x1f"
+	good := strings.Join([]string{"abc123", "Rowan", "rowan@example.com", "Rowan", "rowan@example.com", ""}, sep)
+	if _, err := identityFindings(good, rowan()); err != nil {
+		t.Fatalf("a whole row was refused: %v", err)
+	}
+	short := strings.Join([]string{"abc123", "Rowan", "rowan@example.com"}, sep)
+	if _, err := identityFindings(short, rowan()); err == nil {
+		t.Fatal("a row with three fields was read as a commit that passed")
+	}
+}
+
+// gitTakesAttrSource asks the git on THIS bench, not the package, whether it has
+// `--attr-source` (2.42 and later).
+func gitTakesAttrSource(t *testing.T, dir string) bool {
+	t.Helper()
+	empty := git(t, dir, "hash-object", "-t", "tree", os.DevNull)
+	cmd := exec.Command("git", "--attr-source="+empty, "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	return cmd.Run() == nil
+}
+
+// hygiene-reads-a-file-git-calls-binary: one NUL byte anywhere in a file and git
+// prints "Binary files … differ" instead of its lines, whatever the attributes say --
+// so a key added below that byte reached nothing. This is the half `--attr-source`
+// does not cover, and the reason `--text` is passed as well as it.
+func TestHygieneReadsAFileGitCallsBinary(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/blob.go", "package sign\n\x00\nconst token = \""+fixtureKey()+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("a NUL byte in the file hid the key: %v", tokens(fs))
+	}
+	if f.At != "sign/blob.go:3" {
+		t.Fatalf("at=%q, want sign/blob.go:3", f.At)
+	}
+}
+
+// hygiene-reads-a-path-git-must-quote: `core.quotePath` governs NON-ASCII names only.
+// A name holding a double quote is quoted whatever that setting says, so the header
+// has to be unquoted rather than merely kept unquoted.
+func TestHygieneReadsAPathGitMustQuote(t *testing.T) {
+	name := "sign/k\"y.go"
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte("package sign\n\nconst token = \""+fixtureKey()+"\"\n"), 0o644); err != nil {
+		t.Skipf("this platform cannot hold a quote in a file name: %v", err)
+	}
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("a name git had to quote hid the key: %v", tokens(fs))
+	}
+	if f.At != name+":3" {
+		t.Fatalf("at=%q, want %q", f.At, name+":3")
+	}
+}
