@@ -185,6 +185,25 @@ func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
 	return out, nil
 }
 
+// SlotHoldings reports how many leases owner holds and the share it holds them
+// within. It is the read `status` prints; it never reaps or grants.
+func SlotHoldings(store, owner string, now time.Time) (held, share int, err error) {
+	_, _, shares, err := loadSlotShares(store)
+	if err != nil {
+		return 0, 0, err
+	}
+	leases, err := ListSlotLeases(store, now)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, l := range leases {
+		if l.Owner == owner {
+			held++
+		}
+	}
+	return held, shares[owner], nil
+}
+
 // MakeSlotLease writes one lease directory by Mkdir (atomic) for tests and
 // for fixtures: the pid and until are the caller's, not the taker's.
 func MakeSlotLease(store, id, owner string, pid int, label string, until time.Time) error {
