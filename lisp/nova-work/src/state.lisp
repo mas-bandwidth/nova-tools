@@ -597,7 +597,10 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     ;; no containment node, so they advance the revision and move no node, no
     ;; count, no roadmap and no required set (SPEC-WORK.md:1054-1058, replay
     ;; new-verbs-have-a-kind-and-a-field-order).
-    (when (member kind '(:undo :redo :friend :model :observe :config))
+    (when (member kind '(:undo :redo :friend :model :observe :config
+                         ;; A receipt and its seal are CONFIG-shaped too: they
+                         ;; name no containment node (SPEC-WORK.md:3857-3862).
+                         :receipt :receipt-seal))
       (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
       (return-from apply-event state)))
   (let* ((id (work-event-node event))
