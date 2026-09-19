@@ -186,20 +186,35 @@ KERNEL OK bytes=771 budget=4000
 ## nova-self-talk
 
 Fixture: `cmd/nova-self-talk/testdata/example-pages`.
+The test's copy of it is `./pages`, which is what the lines below type.
+
+A line below opening `! ` is one this tool writes to standard ERROR: the
+findings go there and the protocol lines go to standard output, and the order a
+terminal interleaves the two in is not the same twice — the second block's last
+finding arrived after the `NOTE` line on one bench and before it on another.
+That is why the block cannot be read as one stream (#1549, and the marker is
+#1570's). `# Stderr: whole` on a command line says the marked lines are ALL it
+writes there: these are findings, not narration, and a transcript that quietly
+lost one would be hiding the thing the tool exists to say.
 
 ### First run
 
 ```
-$ nova-self-talk ./pages/journal.md
-SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
-SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+$ nova-self-talk ./pages/journal.md   # Stderr: whole
+! SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
 SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
-$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+! SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK DATED n=1 files=2
+SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
+SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 ```
 
 ## nova-fuse
