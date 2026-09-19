@@ -30,6 +30,15 @@ type ManagerInput struct {
 	Roots  string // comma-separated swarm roots, the benches this shift harvests
 	Bus    string // the nova-bus clone this shift is the single waiter on
 	As     string // the name this shift waits and receipts as
+	// Bench turns the remote read on: comma-separated ssh targets, positionally paired with
+	// Roots (the i'th entry is the ssh target for the i'th --roots entry). Empty -- true of
+	// every existing test and invocation today -- leaves the harvest local-only.
+	Bench string
+	// SSH is the ssh program the shipped shell runs; "" is "ssh". It is ignored when Shell
+	// is set.
+	SSH string
+	// Shell is the BenchShell seam harvest --bench already uses; nil means local-only.
+	Shell  BenchShell
 	Hours  float64
 	Max    int
 	Stdout io.Writer
@@ -127,10 +136,12 @@ func splitList(s string) []string {
 
 // manager is one shift's state: the policy, the benches, the counters the SHIFT END line ends with.
 type manager struct {
-	in    ManagerInput
-	pol   policy
-	roots []string
-	now   func() time.Time
+	in      ManagerInput
+	pol     policy
+	roots   []string
+	benches []string
+	shell   BenchShell
+	now     func() time.Time
 
 	// per-shift
 	cycles      int
@@ -170,7 +181,11 @@ func Manager(in ManagerInput) int {
 	if err != nil {
 		return refusal(in.Stderr, "MANAGER", err)
 	}
-	m := &manager{in: in, pol: pol, roots: splitList(in.Roots), now: in.Now}
+	shell := in.Shell
+	if shell == nil && strings.TrimSpace(in.Bench) != "" {
+		shell = sshShell{Program: in.SSH}
+	}
+	m := &manager{in: in, pol: pol, roots: splitList(in.Roots), benches: splitList(in.Bench), shell: shell, now: in.Now}
 	for _, d := range []string{"pending", "launched", "done", "failed"} {
 		if err := os.MkdirAll(filepath.Join(in.Queue, d), 0o755); err != nil {
 			return refusal(in.Stderr, "MANAGER", fmt.Errorf("cannot make %s: %s", filepath.Join(in.Queue, d), oneline.Err(err)))
@@ -278,15 +293,20 @@ func (m *manager) harvest() {
 	done := map[string][]string{} // root -> finished jobs, appended to the status index once
 	for _, card := range m.cardsIn("launched") {
 		job, root := m.jobFor(card)
-		if job == "" {
+		var lines []string
+		if job != "" {
+			result, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+			if err != nil {
+				continue // still in flight; launch owns the slot, not this tier
+			}
+			lines = strings.Split(strings.ReplaceAll(string(result), "\r\n", "\n"), "\n")
+		} else if remote, rroot, ok := m.remoteJobFor(card); ok {
+			root = rroot
+			lines = remote
+		} else {
 			continue
 		}
-		result, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-		if err != nil {
-			continue // still in flight; launch owns the slot, not this tier
-		}
 		m.harvested++
-		lines := strings.Split(strings.ReplaceAll(string(result), "\r\n", "\n"), "\n")
 		switch {
 		case abstainReason(lines) != "":
 			m.triageAbstain(card, root, abstainReason(lines))
@@ -295,7 +315,9 @@ func (m *manager) harvest() {
 		default:
 			m.openPR(card, job, lines)
 		}
-		done[root] = append(done[root], job)
+		if job != "" {
+			done[root] = append(done[root], job)
+		}
 	}
 	// The finished jobs join their roots' status indexes, so status answers the next tick
 	// without opening a job's usage.tsv (#1088).
@@ -861,6 +883,34 @@ func (m *manager) jobFor(card string) (job, root string) {
 		}
 	}
 	return "", ""
+}
+
+// remoteJobFor lists a card's job on the shift's own benches over the ssh seam
+// `nova-pulse harvest --bench` already uses (harvestbench.go's BenchShell, sshShell,
+// benchListScript and parseBenchJobs) -- reused here verbatim, never copied. The i'th
+// --bench entry is the ssh target for the i'th --roots entry; a root with no paired bench,
+// or a shift with no shell at all, is never ssh'd into.
+func (m *manager) remoteJobFor(card string) (lines []string, root string, ok bool) {
+	if m.shell == nil {
+		return nil, "", false
+	}
+	label := strings.TrimSuffix(card, ".md")
+	for i, bnch := range m.benches {
+		if i >= len(m.roots) {
+			break
+		}
+		r := m.roots[i]
+		out, err := m.shell.Run(bnch, benchListScript([]string{r}))
+		if err != nil {
+			continue
+		}
+		for _, j := range parseBenchJobs(out) {
+			if filepath.Base(j.Dir) == label && len(j.Result) > 0 {
+				return j.Result, r, true
+			}
+		}
+	}
+	return nil, "", false
 }
 
 func (m *manager) move(card, to string) {
