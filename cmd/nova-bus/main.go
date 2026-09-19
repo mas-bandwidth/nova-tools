@@ -261,6 +261,10 @@ instants can assign different Date values and IDs even when the original draft
 is identical. send --prepared confirms or publishes that exact saved artifact
 with bounded recovery.
 
+Copy the example bus out first; every line below runs against it.
+
+  cp -R cmd/nova-bus/testdata/example-bus ./bus
+
 example:
   nova-bus names --bus ./bus
   nova-bus check --bus ./bus --full
