@@ -101,3 +101,55 @@ func stepBody(src, name string) string {
 	}
 	return ""
 }
+
+// internal/docs has internal/ci's blind spot for the same reason: it reads
+// AGENTS.md, docs/SPEC-CI.md and the rest of docs/ as text and scans the tree
+// rather than importing what it guards, so no *.go diff can ever name it. A
+// pull request that adds a class rule to docs/SPEC-CI.md's index without naming
+// it on AGENTS.md therefore passes its own CI and turns every integration batch
+// that carries it red: #1364 (rule `toolchainroots`) and #1409 (rule
+// `hostseam`), one gate round each on 2026-09-18/19. #1409's receipt:
+//
+//	BATCH FAIL name=integration-11g ... packages=github.com/mas-bandwidth/nova-tools/internal/docs
+//	tests=TestAgentsPageNamesEveryClassRule
+//
+// Both selection points must name ./internal/docs on every run, exactly as they
+// already name ./internal/ci. A docs-only change selects no *.go dirname at all,
+// so keying the append on the diff would leave the package that holds the
+// contract unrun on precisely the change that breaks it.
+var (
+	// selectDocsAppendRe is the top-level line (no leading whitespace) that adds
+	// ./internal/docs to the script's `want` set, outside any `if`.
+	selectDocsAppendRe = regexp.MustCompile(`(?m)^want="\$want \./internal/docs"\s*$`)
+
+	// mergeDocsAppendRe is the append to the merge gate's `$pkgs`. A `case` arm
+	// and a trailing `;;` are allowed for the same reason mergeAppendRe allows
+	// them: a guard that only prevents a DUPLICATE keeps "unconditionally in
+	// scope".
+	mergeDocsAppendRe = regexp.MustCompile(`(?m)^\s*(\*\)\s*)?pkgs="\$pkgs \./internal/docs"\s*(;;)?\s*$`)
+)
+
+// TestSelectPackagesAlwaysAddsInternalDocs pins the script: ./internal/docs is
+// added to `want` on every selection, so a change to AGENTS.md or
+// docs/SPEC-CI.md pays for the package that holds the contract over them.
+func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
+	if !selectDocsAppendRe.MatchString(src) {
+		t.Errorf("select-packages.sh does not add ./internal/docs to want unconditionally; internal/docs scans docs/ and AGENTS.md as text instead of importing what it guards, so a docs-only change (#1364, #1409) selects no shard to run TestAgentsPageNamesEveryClassRule and the batch that carries it goes red instead")
+	}
+}
+
+// TestMergeGateAlwaysAppendsInternalDocs pins ci.yml's independent inline
+// selection: internal/docs is appended to $pkgs on every group.
+func TestMergeGateAlwaysAppendsInternalDocs(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	step := stepBody(src, "select the packages this group changes")
+	if strings.TrimSpace(step) == "" {
+		t.Fatal("no `select the packages this group changes` step in ci.yml; the merge gate's selection moved and this test is looking in the wrong place")
+	}
+	if !mergeDocsAppendRe.MatchString(step) {
+		t.Errorf("the merge gate's selection does not always append ./internal/docs to $pkgs; a docs-only group selects no *.go dirname at all, so the AGENTS.md class-rule contract never runs on the group that breaks it (#1364, #1409)")
+	}
+}

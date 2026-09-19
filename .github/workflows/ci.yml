@@ -772,6 +772,18 @@ jobs:
             *" ./internal/ci "*|*"/internal/ci "*) ;;
             *) pkgs="$pkgs ./internal/ci" ;;
           esac
+          # internal/docs has the same blind spot for the same reason: it reads
+          # AGENTS.md, docs/SPEC-CI.md and the rest of docs/ as text, so no *.go
+          # diff can name it -- and a docs-only group names no dirname at all, so
+          # it selects nothing. A group that added a class rule to SPEC-CI.md's
+          # index without naming it on AGENTS.md was green on its own PR and then
+          # turned the batch red on TestAgentsPageNamesEveryClassRule: #1364
+          # (toolchainroots) and #1409 (hostseam), one gate round each. Appended
+          # ONCE, like internal/ci above.
+          case " $pkgs " in
+            *" ./internal/docs "*|*"/internal/docs "*) ;;
+            *) pkgs="$pkgs ./internal/docs" ;;
+          esac
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
