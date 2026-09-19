@@ -48,6 +48,11 @@ version 2 has no VERSION line; it is still read, and the next successful
 annotate or reply rewrites it as version 2 in place, keeping every value it
 just read. See docs/SPEC-PLAY.md.
 
+A first run writes the source it annotates first; these three lines hold the
+example's passage once:
+
+  printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
+
 example:
   nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
   nova-play read --source story.txt

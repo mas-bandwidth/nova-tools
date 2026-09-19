@@ -2874,6 +2874,8 @@ Shared reading annotations at the **margin layer**. Participants anchor notes to
 Three lines: annotate a passage, read the notes back, reply to a friend. Every path is a flag — there is no default source, no default author, and no default annotation file.
 
 ```
+$ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
+
 $ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
 ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
 
