@@ -146,16 +146,27 @@ func claimPath(takenDir, cardName string) string {
 	return filepath.Join(takenDir, cardName+".claim")
 }
 
-func cardLockPath(takenDir, cardName string) string {
+// ErrCardLockTimeout is returned when takeCardLock cannot acquire an exclusive advisory flock
+// within the allotted wait duration due to lock contention from another process.
+var ErrCardLockTimeout = errors.New("timeout waiting for card lock")
+
+func cardLockPath(takenDir, cardName string) (string, error) {
 	locksDir := filepath.Join(filepath.Dir(takenDir), ".locks")
-	_ = os.MkdirAll(locksDir, 0o755)
-	return filepath.Join(locksDir, cardName+".lock")
+	if err := os.MkdirAll(locksDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir card lock dir %s: %w", locksDir, err)
+	}
+	return filepath.Join(locksDir, cardName+".lock"), nil
 }
 
 // takeCardLock takes an exclusive advisory flock on <cardName>.lock in .locks.
 // It synchronizes card claiming, renaming, and claim release across all processes.
+// On contention timeout, it returns an error wrapping ErrCardLockTimeout.
+// On filesystem or setup failure, it returns the unwrapped system error.
 func takeCardLock(takenDir, cardName string, wait time.Duration) (func(), error) {
-	path := cardLockPath(takenDir, cardName)
+	path, err := cardLockPath(takenDir, cardName)
+	if err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open card lock %s: %w", path, err)
@@ -180,7 +191,7 @@ func takeCardLock(takenDir, cardName string, wait time.Duration) (func(), error)
 		}
 		if !time.Now().Before(deadline) {
 			_ = f.Close()
-			return nil, fmt.Errorf("timeout waiting for card lock %s", path)
+			return nil, fmt.Errorf("%w: %s", ErrCardLockTimeout, path)
 		}
 		time.Sleep(lockPoll)
 	}
@@ -332,7 +343,10 @@ func claimCard(takenDir, cardName, worker string) (string, bool, error) {
 	}
 	unlock, err := takeCardLock(takenDir, cardName, cardLockWait)
 	if err != nil {
-		return "", false, nil
+		if errors.Is(err, ErrCardLockTimeout) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	defer unlock()
 	return claimCardLocked(takenDir, cardName, worker)
@@ -433,7 +447,10 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 	for _, name := range names {
 		unlock, err := takeCardLock(taken, name, cardLockWait)
 		if err != nil {
-			continue // card lock held by another process
+			if errors.Is(err, ErrCardLockTimeout) {
+				continue // card lock held by another process
+			}
+			return "", false, err
 		}
 		token, claimed, err := claimCardLocked(taken, name, worker)
 		if err != nil {
@@ -524,21 +541,29 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 	queue := QueueDir(victimDir)
 	taken := TakenDir(victimDir)
 	var stolen []string
-	for {
-		names, err := QueueCards(victimDir)
-		if err != nil {
-			return stolen, err
+
+	names, err := QueueCards(victimDir)
+	if err != nil {
+		return stolen, err
+	}
+	toSteal := len(names) - capacity
+	if toSteal <= 0 {
+		return stolen, nil
+	}
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		return stolen, err
+	}
+
+	for _, name := range names {
+		if len(stolen) >= toSteal {
+			break
 		}
-		if len(names) <= capacity {
-			return stolen, nil
-		}
-		if err := os.MkdirAll(taken, 0o755); err != nil {
-			return stolen, err
-		}
-		name := names[0]
 		unlock, err := takeCardLock(taken, name, cardLockWait)
 		if err != nil {
-			continue
+			if errors.Is(err, ErrCardLockTimeout) {
+				continue // card lock held by another process; advance to next candidate card
+			}
+			return stolen, err // lock setup or filesystem failure; propagate immediately
 		}
 		token, claimed, cErr := claimCardLocked(taken, name, worker)
 		if cErr != nil {
@@ -547,7 +572,7 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 		}
 		if !claimed {
 			unlock()
-			continue
+			continue // claimed by another worker; advance to next candidate card
 		}
 		if betweenClaimAndRenameHook != nil {
 			betweenClaimAndRenameHook()
@@ -565,6 +590,7 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 		}
 		stolen = append(stolen, name)
 	}
+	return stolen, nil
 }
 
 // MirrorDue reports whether an idle worker's steal is due: the bench mirror fetches

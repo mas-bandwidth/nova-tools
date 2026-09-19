@@ -237,3 +237,45 @@ func TestPullWorkerIdleExitsZero(t *testing.T) {
 		t.Fatalf("stdout missing PULL IDLE:\n%s", stdout)
 	}
 }
+
+// TestPullCLIExitsNonZeroOnLockDirError verifies Stella's witness 1: if victim/.locks is a
+// regular file, pull exits 2 with an error on stderr rather than silently exiting 0 with source=none.
+func TestPullCLIExitsNonZeroOnLockDirError(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "one")
+
+	locksPath := filepath.Join(bench, ".locks")
+	if err := os.WriteFile(locksPath, []byte("regular file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exit, stdout, stderr := runSwarm(t, "pull", "--bench", bench, "--worker", "stella-review")
+	if exit != 2 {
+		t.Fatalf("pull exit = %d, want 2 (stdout=%q stderr=%q)", exit, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "nova-swarm pull:") {
+		t.Fatalf("stderr = %q, want 'nova-swarm pull:' error prefix", stderr)
+	}
+}
+
+// TestPullCLIStealExitsNonZeroOnLockDirError verifies Stella's witness 2: if victim/.locks is a
+// regular file, stealing from that victim exits 2 promptly with an error rather than hanging or being killed.
+func TestPullCLIStealExitsNonZeroOnLockDirError(t *testing.T) {
+	local := t.TempDir()
+	victim := t.TempDir()
+	plantCard(t, victim, "one")
+
+	locksPath := filepath.Join(victim, ".locks")
+	if err := os.WriteFile(locksPath, []byte("regular file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exit, stdout, stderr := runSwarm(t, "pull", "--bench", local, "--worker", "stella-review",
+		"--steal", victim, "--capacity", "0")
+	if exit != 2 {
+		t.Fatalf("stealing pull exit = %d, want 2 (stdout=%q stderr=%q)", exit, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "nova-swarm pull:") {
+		t.Fatalf("stderr = %q, want 'nova-swarm pull:' error prefix", stderr)
+	}
+}

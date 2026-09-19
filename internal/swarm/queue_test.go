@@ -685,3 +685,97 @@ func TestCheckToActionReplacementBlocked(t *testing.T) {
 		t.Fatalf("interloper was not blocked by takeCardLock during check-to-action window")
 	}
 }
+
+// TestTakeCardFailsOnLockDirError verifies that if .locks is a regular file (or cannot be
+// initialized), TakeCard returns the filesystem error rather than swallowing it as contention.
+func TestTakeCardFailsOnLockDirError(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "one")
+
+	// Make victim/.locks a regular file
+	locksPath := filepath.Join(bench, ".locks")
+	if err := os.WriteFile(locksPath, []byte("regular file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name, ok, err := TakeCard(bench, "stella-review")
+	if err == nil {
+		t.Fatalf("TakeCard on corrupt lock dir returned err=nil, want error (name=%q, ok=%t)", name, ok)
+	}
+	if ok || name != "" {
+		t.Fatalf("TakeCard on corrupt lock dir took card (%q, %t), want empty/false", name, ok)
+	}
+
+	// Card remains queued
+	cards, qErr := QueueCards(bench)
+	if qErr != nil || len(cards) != 1 || cards[0] != "one" {
+		t.Fatalf("queue cards = %v, qErr = %v, want ['one'] preserved", cards, qErr)
+	}
+}
+
+// TestStealFailsOnLockDirError verifies that if victim/.locks is a regular file,
+// Steal propagates the error immediately without hanging or retrying indefinitely.
+func TestStealFailsOnLockDirError(t *testing.T) {
+	victim := t.TempDir()
+	plantCard(t, victim, "one")
+
+	locksPath := filepath.Join(victim, ".locks")
+	if err := os.WriteFile(locksPath, []byte("regular file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stolen, err := Steal(victim, "stella-review", 0)
+	if err == nil {
+		t.Fatalf("Steal on corrupt lock dir returned err=nil, want error (stolen=%v)", stolen)
+	}
+	if len(stolen) != 0 {
+		t.Fatalf("Steal on corrupt lock dir returned stolen=%v, want none", stolen)
+	}
+
+	// Card remains queued
+	cards, qErr := QueueCards(victim)
+	if qErr != nil || len(cards) != 1 || cards[0] != "one" {
+		t.Fatalf("queue cards = %v, qErr = %v, want ['one'] preserved", cards, qErr)
+	}
+}
+
+// TestStealAdvancesPastContinuouslyHeldCardLock proves that if the first card is continuously
+// locked by another process, Steal advances to steal subsequent candidate cards boundedly
+// without retrying the first card in place.
+func TestStealAdvancesPastContinuouslyHeldCardLock(t *testing.T) {
+	victim := t.TempDir()
+	plantCard(t, victim, "first")
+	plantCard(t, victim, "second")
+
+	origWait := cardLockWait
+	cardLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { cardLockWait = origWait })
+
+	// Pre-create taken/ and continuously hold the lock on "first"
+	taken := TakenDir(victim)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlockFirst, err := takeCardLock(taken, "first", cardLockWait)
+	if err != nil {
+		t.Fatalf("takeCardLock for first failed: %v", err)
+	}
+	t.Cleanup(unlockFirst)
+
+	// Steal with capacity 0: victim has 2 cards, so 2 cards are wanted.
+	// Because "first" is continuously held, Steal advances past it, steals "second",
+	// and finishes boundedly.
+	stolen, err := Steal(victim, "thief", 0)
+	if err != nil {
+		t.Fatalf("Steal failed: %v", err)
+	}
+	if len(stolen) != 1 || stolen[0] != "second" {
+		t.Fatalf("Steal = %v, want ['second'] (first was skipped due to lock contention)", stolen)
+	}
+
+	// "first" remains queued in victim
+	cards, qErr := QueueCards(victim)
+	if qErr != nil || len(cards) != 1 || cards[0] != "first" {
+		t.Fatalf("victim queue = %v, want ['first'] preserved", cards)
+	}
+}
