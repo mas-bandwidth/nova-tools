@@ -755,7 +755,7 @@ written in order, absent `(:absent)`."
 
 (defun write-node-add-value (value stream)
   "Serializer two's own writer, independent of `canonical-print`, over the same
-restricted spellings: `(:absent)`, `()`, `""` and `false` remain distinct."
+restricted spellings: `(:absent)`, `()`, `\"\"` and `false` remain distinct."
   (typecase value
     (null (write-string "()" stream))
     (cons (write-char #\( stream)

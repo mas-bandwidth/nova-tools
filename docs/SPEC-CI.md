@@ -1432,6 +1432,46 @@ Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
 Cellar prefix is read off the launcher rather than guessed by
 `TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
 
+### `lispduplicate` — the kernel defines each name once, and loads each slice once
+
+**The rule.** Two halves of one class: a definition the Lisp kernel makes twice.
+Within ONE file that `lisp/nova-work/nova-work.asd` names, a top-level `defun`,
+`defmacro`, `defgeneric`, `defparameter`, `defvar` or `defstruct` defines a name
+once; and `lisp/nova-work/tests/acceptance.lisp`'s `*acceptance-slices*` names
+each slice file once.
+**The hurt.** nova-tools #1612, on dev `11aa07a7`. Three duplicate definitions
+stood in the kernel and the class had no register at all, because the only gate
+the kernel had — `lisp/nova-work/run-tests.sh` — loaded under
+`(handler-bind ((warning #'muffle-warning)) ...)` and so could not see the
+failure it was causing: `sbcl --eval '(asdf:load-system :nova-work)'` printed
+`Duplicate definition for COPY-MACHINE found in one file`, ended in an unhandled
+`COMPILE-FILE-ERROR` on `src/fleet`, and exited 1 — while the suite reported
+`total=327 pass=327 fail=0` over a system that did not load. The second half was
+measured on the same tree: `*acceptance-slices*` held
+`slice-09-state-export-replays.lisp` three times and `slice-10-fleet.lisp`
+twice, so `total=335` was 314 distinct cases and 21 repeat runs of sixteen of
+them.
+**The test.** `TestNoKernelFileDefinesTheSameNameTwice` and
+`TestNoAcceptanceSliceIsLoadedTwice`
+(`internal/ci/lispduplicate_class_test.go`). Both are Go, in the fast tier, and
+need no SBCL: they read the same text the reader reads, and so catch the class
+BEFORE the load rather than after it.
+**Its allowlist.** None, in either half. The set of files read is the set
+`nova-work.asd` names through `(:file "…")`, so a file added tomorrow is held on
+the day it appears, and an unread file cannot break a load and is not read.
+**Its remedy line.** `… — SBCL reports this as "Duplicate definition ... found
+in one file", a full WARNING, which makes compile-file fail and
+`(asdf:load-system :nova-work)` exit 1. Keep one definition.`, and for the
+slices, `tests/acceptance.lisp lists <file> <n> times (entries …): the file is
+loaded that many times, every deftest in it is registered that many times, and
+the suite's total= counts each of its cases that many times. List it once.`
+**Its narrowings.** A redefinition ACROSS files is SBCL's style-warning, not a
+`COMPILE-FILE-ERROR` — the later file simply wins — so it is not this rule's
+business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` beside
+`#-sbcl (defun f …)` is one definition in any one build (`src/transport.lisp`
+has four such pairs), so a definition whose preceding non-blank line opens with
+`#+` or `#-` is skipped.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with

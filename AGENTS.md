@@ -59,7 +59,7 @@ with its sweep of the tree or it does not land.
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
 `benchname`, `nightly-tags`, `selection`, `toolchainroots`, `hostseam`,
-`kernel-components`, `one section`. Every entry — the ten above too — is written out in
+`kernel-components`, `lispduplicate`, `one section`. Every entry — the ten above too — is written out in
 [docs/SPEC-CI.md](docs/SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.
