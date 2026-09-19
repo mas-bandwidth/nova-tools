@@ -74,23 +74,33 @@ func LoadStore(source string) (*Store, error) {
 		return nil, err
 	}
 
-	lines := strings.Split(string(b), "\n")
+	content := strings.ReplaceAll(string(b), "\r\n", "\n")
+	if strings.HasSuffix(content, "\n") {
+		content = content[:len(content)-1]
+	}
+	lines := strings.Split(content, "\n")
 	s := &Store{Version: 1}
-	if len(lines) < 2 || !strings.HasPrefix(lines[0], "ANCHOR ") {
+	if len(lines) < 1 || !strings.HasPrefix(lines[0], "ANCHOR ") {
 		return s, nil
 	}
 	rest := strings.TrimPrefix(lines[0], "ANCHOR ")
-	parts := strings.SplitN(rest, " ", 2)
-	if len(parts) == 2 {
-		s.Anchor.SourcePath = parts[0]
-		s.Anchor.SourceHash = parts[1]
+	if idx := strings.LastIndex(rest, " "); idx >= 0 {
+		s.Anchor.SourcePath = rest[:idx]
+		s.Anchor.SourceHash = rest[idx+1:]
+	} else {
+		s.Anchor.SourcePath = rest
 	}
 
 	var currentNote *Note
 	var currentReply *Reply
+	var currentField *string
+	hasPassage := false
+	hasBody := false
+	hasReplyBody := false
+
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
-		if line == "" || strings.HasPrefix(line, "#") {
+		if currentField == nil && (line == "" || strings.HasPrefix(line, "#")) {
 			continue
 		}
 		switch {
@@ -99,16 +109,44 @@ func LoadStore(source string) (*Store, error) {
 			s.Notes = append(s.Notes, n)
 			currentNote = &s.Notes[len(s.Notes)-1]
 			currentReply = nil
-		case strings.HasPrefix(line, "PASSAGE ") && currentNote != nil:
-			currentNote.Passage = strings.TrimPrefix(line, "PASSAGE ")
-		case strings.HasPrefix(line, "BODY ") && currentNote != nil:
-			currentNote.Note = strings.TrimPrefix(line, "BODY ")
-		case strings.HasPrefix(line, "REPLY "):
+			currentField = nil
+			hasPassage = false
+			hasBody = false
+			hasReplyBody = false
+		case !hasPassage && (line == "PASSAGE" || strings.HasPrefix(line, "PASSAGE ")) && currentNote != nil:
+			if len(line) > len("PASSAGE") {
+				currentNote.Passage = line[len("PASSAGE")+1:]
+			} else {
+				currentNote.Passage = ""
+			}
+			currentField = &currentNote.Passage
+			hasPassage = true
+		case !hasBody && (line == "BODY" || strings.HasPrefix(line, "BODY ")) && currentNote != nil:
+			if len(line) > len("BODY") {
+				currentNote.Note = line[len("BODY")+1:]
+			} else {
+				currentNote.Note = ""
+			}
+			currentField = &currentNote.Note
+			hasBody = true
+		case strings.HasPrefix(line, "REPLY ") && currentNote != nil:
 			r := parseReplyLine(line)
 			currentNote.Replies = append(currentNote.Replies, r)
 			currentReply = &currentNote.Replies[len(currentNote.Replies)-1]
-		case strings.HasPrefix(line, "REPLY_BODY ") && currentReply != nil:
-			currentReply.Note = strings.TrimPrefix(line, "REPLY_BODY ")
+			currentField = nil
+			hasReplyBody = false
+		case !hasReplyBody && (line == "REPLY_BODY" || strings.HasPrefix(line, "REPLY_BODY ")) && currentReply != nil:
+			if len(line) > len("REPLY_BODY") {
+				currentReply.Note = line[len("REPLY_BODY")+1:]
+			} else {
+				currentReply.Note = ""
+			}
+			currentField = &currentReply.Note
+			hasReplyBody = true
+		default:
+			if currentField != nil {
+				*currentField += "\n" + line
+			}
 		}
 	}
 	return s, nil
@@ -283,6 +321,22 @@ func ReplyTo(source, noteID, author, note string) (Reply, error) {
 	s, err := LoadStore(source)
 	if err != nil {
 		return Reply{}, err
+	}
+
+	// Check anchor consistency.
+	if s.Anchor.SourceHash != "" {
+		currentHash, err := HashSource(source)
+		if err != nil {
+			return Reply{}, fmt.Errorf("source: %w", err)
+		}
+		if currentHash != s.Anchor.SourceHash {
+			return Reply{}, fmt.Errorf("ANCHOR STALE source=%s stored=%s current=%s",
+				source, s.Anchor.SourceHash, currentHash)
+		}
+	} else {
+		if _, err := HashSource(source); err != nil {
+			return Reply{}, fmt.Errorf("source: %w", err)
+		}
 	}
 
 	// Find the note.
