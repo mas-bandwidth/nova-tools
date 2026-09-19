@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -190,11 +191,39 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 
+	// (3a) THE LABEL IS A NAME, NOT A PATH (issue #1923). The slot is checked against the
+	// root above, and that check used to be the whole of it -- but the directories this run
+	// then makes, leases and hands the wall as write roots are <slot>/jobs/<label> and
+	// <slot>/tmp/<label>, and a label is a string a card's own TSV row can spell. A label of
+	// `../../../OUTSIDE` makes both of those joins a path OUTSIDE the swarm root: MkdirAll
+	// makes it, StartJobLease publishes and then os.Remove's `.lease` inside it, and
+	// nativeSandboxArgv passes it to the wall as --write. within(root, slotDir) is true of
+	// that launch; nobody asked within(root, jobDir). So the name is judged as a NAME, by
+	// the same safepath.NameOK the hygiene verbs already use on a job name, before it is
+	// joined into anything.
+	// An empty label is the callers' own shape, not a walk: cmdNative fills it from the
+	// card's basename and a test that leaves it empty joins nothing. It is judged by the
+	// two within checks below like any other derivation.
+	if cfg.label != "" && !safepath.NameOK(cfg.label) {
+		refuseNative(errOut, fmt.Sprintf("the label %s is not a job name: use letters, digits, dot, dash or underscore, with no path separator, no leading dash and no %s -- the label is joined into the job directory, the temp directory and the wall's write set, so a label that walks names a directory outside the root",
+			oneline.Field(cfg.label), oneline.Field("..")))
+		return nativeRunResult{}, 2
+	}
+
 	// The job directory is where the child runs and writes: <slot>/jobs/<label>, made here
 	// before the child starts, so the card's cwd exists and the card is told its place by
 	// that cwd (SPEC-SWARM rule 13). HOME is a data directory under the slot directory; the
 	// child is pointed at it and nothing above it.
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
+	// The join is checked as well as the name (#1923): NameOK above makes this true by
+	// construction, and a derivation that decides where a card writes is checked anyway,
+	// because the cost of the two being out of step once is a MkdirAll and a --write
+	// outside the swarm root.
+	if !within(cfg.root, jobDir) || !strictlyWithin(cfg.slotDir, jobDir) {
+		refuseNative(errOut, fmt.Sprintf("the job directory %s is not strictly below the slot %s and the root %s",
+			oneline.Field(jobDir), oneline.Field(cfg.slotDir), oneline.Field(cfg.root)))
+		return nativeRunResult{}, 2
+	}
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the job directory %s could not be made: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
@@ -245,6 +274,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// directory is never a repo, so a temp file made here sits outside every repository the
 	// card's work could touch. It is made here so the child's TMPDIR exists before it starts.
 	tmpDir := filepath.Join(cfg.slotDir, "tmp", cfg.label)
+	if !within(cfg.root, tmpDir) || !strictlyWithin(cfg.slotDir, tmpDir) {
+		refuseNative(errOut, fmt.Sprintf("the temp directory %s is not strictly below the slot %s and the root %s",
+			oneline.Field(tmpDir), oneline.Field(cfg.slotDir), oneline.Field(cfg.root)))
+		return nativeRunResult{}, 2
+	}
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
@@ -1161,6 +1195,17 @@ func providerOf(model string) (string, bool) {
 		return "", false
 	}
 	return provider, true
+}
+
+// strictlyWithin is within with the root itself excluded: a label of ".." makes
+// Join(slot, "jobs", "..") the slot, which is inside the root and is still not a job
+// directory of this run's own (#1923).
+func strictlyWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // within reports whether path sits at or under root, lexically, without touching the

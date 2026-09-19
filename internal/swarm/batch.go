@@ -39,6 +39,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
@@ -1300,6 +1301,16 @@ func readCards(path string) ([]batchCard, error) {
 				}
 				slot = n
 			}
+		}
+		// THE LABEL IS A NAME (issue #1923). Every consumer of this column joins it into a
+		// path: batch makes <root>/<scratch>/jobs/<label>, selfNative passes it to `native`
+		// as --label, and native joins it again into the job directory, the temp directory
+		// and the wall's write set. A TSV row spelling `../../../OUTSIDE` is a card naming
+		// a directory outside the swarm root, so the name is judged here, at the parse,
+		// where the line number can be named -- not per card at admission, because a label
+		// that is a path is a malformed table rather than a card that abstains.
+		if !safepath.NameOK(parts[0]) {
+			return nil, fmt.Errorf("--cards line %d wants a label that is a name: letters, digits, dot, dash or underscore, no path separator and no \"..\", got %q", i+1, parts[0])
 		}
 		cardPath := parts[3]
 		cardRaw, err := os.ReadFile(cardPath)
