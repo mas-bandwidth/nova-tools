@@ -73,6 +73,31 @@ expands its arguments, so a shell would be visible in the witness."
 case can assert the child was killed and reaped."
   (format nil "printf '%s' \"$$\" > '~A'~%~A" pid-file body))
 
+(defun %verify-resolver-seconds-since (start)
+  "Seconds of real time elapsed since START, an INTERNAL-REAL-TIME stamp."
+  (/ (- (get-internal-real-time) start)
+     (float internal-time-units-per-second)))
+
+(defun %verify-resolver-await-pid (pid-file bound)
+  "Poll PID-FILE until it holds a positive integer, for at most BOUND seconds,
+and return that integer. The wait is observed, never slept for: a bounded poll
+whose own bound is not the deadline under test, and BOUND zero gives up at
+once. When the child has not written its pid inside BOUND the case fails naming
+that the child never started -- a finding, never a silent pass."
+  (let ((start (get-internal-real-time)))
+    (loop
+      (when (>= (%verify-resolver-seconds-since start) bound)
+        (fail "the resolver child never started: no pid written to ~A within ~,2F s"
+              pid-file bound))
+      (let* ((present (ignore-errors (probe-file pid-file)))
+             (text (and present
+                        (ignore-errors
+                          (uiop:read-file-string (namestring present))))))
+        (when (and text (plusp (length text)))
+          (let ((pid (ignore-errors (parse-integer text :junk-allowed t))))
+            (when pid (return pid)))))
+      (sleep 0.01))))
+
 (defmacro %signals-unreachable (&body body)
   `(handler-case (progn ,@body
                        (fail "expected verification-unreachable but none was signalled"))
@@ -239,28 +264,48 @@ case can assert the child was killed and reaped."
 
 (deftest "a-resolver-past-the-deadline-is-unreachable-and-its-child-is-reaped"
     "docs/SPEC-WORK.md:1251-1266"
-    "expected=deadline-signals-unreachable;elapsed-under-3s;child-reaped"
+    "expected=deadline-signals-unreachable;elapsed-under-7s;child-reaped"
   (let* ((dir (%verify-resolver-dir))
          (pid-file (merge-pathnames "deadline.pid" dir))
+         ;; The child is a real /bin/sh that only writes a tiny pid file before
+         ;; `exec sleep 10'. Two seconds is a generous readiness bound even on a
+         ;; loaded bench; the five-second deadline is comfortably longer than
+         ;; it, so readiness is observed before the deadline, yet half the
+         ;; child's own ten-second sleep, so a deadline that never fired is
+         ;; caught by the elapsed assertion.
+         (readiness-bound 2.0)
+         (deadline 5.0)
          (body (%verify-resolver-pid-body pid-file "exec sleep 10")))
     (unwind-protect
          (let* ((script (%verify-resolver-script dir 1 body))
                 (resolver (make-command-resolver "test" script))
-                (start (get-internal-real-time)))
-           (%signals-unreachable
-            (fetch-resolver-fact resolver "test:pkg/name@sha-1" "pkg/name"
-                                 :timeout 0.25))
-           (let ((elapsed (/ (- (get-internal-real-time) start)
-                             (float internal-time-units-per-second))))
-             (ok (< elapsed 3)
-                 "a 0.25 s deadline against a 10 s child answered in ~,3F s"
-                 elapsed))
-           (let ((pid (parse-integer
-                       (uiop:read-file-string (namestring pid-file)))))
-             (let ((reaped nil))
-               (handler-case (progn (sb-posix:kill pid 0) nil)
-                 (error () (setf reaped t)))
-               (ok reaped "the resolver child ~D was not reaped" pid))))
+                (outcome nil)
+                (thread (sb-thread:make-thread
+                         (lambda ()
+                           (setf outcome
+                                 (handler-case
+                                     (progn
+                                       (fetch-resolver-fact
+                                        resolver "test:pkg/name@sha-1" "pkg/name"
+                                        :timeout deadline)
+                                       :returned)
+                                   (verification-unreachable () :unreachable)))))))
+           (unwind-protect
+                (let ((pid (%verify-resolver-await-pid pid-file readiness-bound))
+                      (start (get-internal-real-time)))
+                  (sb-thread:join-thread thread)
+                  (check-equal :unreachable outcome
+                               "the deadline makes the fetch unreachable")
+                  (let ((elapsed (%verify-resolver-seconds-since start)))
+                    (ok (< elapsed 7)
+                        "a ~,2F s deadline against a 10 s child answered in ~,3F s"
+                        deadline elapsed))
+                  (let ((reaped nil))
+                    (handler-case (progn (sb-posix:kill pid 0) nil)
+                      (error () (setf reaped t)))
+                    (ok reaped "the resolver child ~D was not reaped" pid)))
+             (ignore-errors
+               (sb-thread:join-thread thread :timeout 15 :default nil))))
       (%verify-resolver-clean dir))))
 
 ;;; ------------------------------------------------------------------
