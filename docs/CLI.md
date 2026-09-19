@@ -3087,8 +3087,7 @@ contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 ### Gate a seat pull request
 
 ```sh
-nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" \
-  --machines ./queue/control/machines.tsv
+nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" --machines ./queue/control/machines.tsv
 ```
 
 The store's own review, as a verb: run it in CI on every pull request against the
