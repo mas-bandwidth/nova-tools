@@ -52,7 +52,8 @@
                (:file "src/decide")
                (:file "src/request-line")
                (:file "src/replays-verdict-state")
-               (:file "src/replays-notes")))
+               (:file "src/replays-notes")
+               (:file "src/dedup-root")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
