@@ -71,7 +71,7 @@ usage:
                             --notes <text> [--issue <n>] --receipts <dir>
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all]
+  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
                                                      the line the release lane calls
@@ -167,6 +167,16 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
+// refuseRan is what a check that RAN and answered NO costs: ONE line naming the
+// verdict and its remedy, and no door. The door is for an unusable invocation
+// (refuse), where a reader mis-spelled something and needs the usage; pointing a
+// reader at `nova-check help` after a gate has run is noise, and it sends them to
+// look up a shape that was never the problem.
+func refuseRan(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-check%s: %s\n", oneline.Escape(where), oneline.Escape(what))
+	return 1
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -252,7 +262,8 @@ func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*strin
 	ok := true
 	for _, name := range names {
 		if *required[name] == "" {
-			fmt.Fprintf(stderr, "nova-check %s: --%s is required; refusing to guess\n%s", fs.Name(), name, hintFor(name))
+			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
+			fmt.Fprint(stderr, hintFor(name))
 			ok = false
 		}
 	}
@@ -269,7 +280,7 @@ func addFailMax(fs *flag.FlagSet) *int {
 // checkFailMax refuses a negative ceiling, naming the verb.
 func checkFailMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
 	if max < 0 {
-		fmt.Fprintf(stderr, "nova-check %s: --fail-max must be a line ceiling of zero or more (got %d); 0 means print them all\n", fs.Name(), max)
+		refuse(stderr, " "+fs.Name(), fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", max))
 		return false
 	}
 	return true
@@ -326,8 +337,7 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	}
 	att, failures, err := check.Attest(*home, *manifest)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check attest: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " attest", oneline.Err(err))
 	}
 	if len(failures) > 0 {
 		list := bounded.Capped(stderr, *failMax, "ATTEST", "entry", failMaxRemedy)
@@ -366,8 +376,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		res, err = check.LinksExcluding(*dir, exclude)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check links: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " links", oneline.Err(err))
 	}
 	if len(res.Broken) > 0 {
 		list := bounded.Capped(stderr, *failMax, "LINKS", "broken", failMaxRemedy)
@@ -413,14 +422,17 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	switch {
 	case given["max-bytes"] && given["max-tokens"]:
-		fmt.Fprintf(stderr, "nova-check kernel: give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick\n  %s\n", budgetHint)
+		refuse(stderr, " kernel", "give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick")
+		fmt.Fprintf(stderr, "  %s\n", budgetHint)
 		ok = false
 	case !given["max-bytes"] && !given["max-tokens"]:
-		fmt.Fprintf(stderr, "nova-check kernel: --max-bytes or --max-tokens is required; refusing to guess\n  %s\n", budgetHint)
+		refuse(stderr, " kernel", "--max-bytes or --max-tokens is required; refusing to guess")
+		fmt.Fprintf(stderr, "  %s\n", budgetHint)
 		ok = false
 	}
 	if given["bytes-per-token"] && given["max-bytes"] {
-		fmt.Fprintf(stderr, "nova-check kernel: --bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant\n  %s\n", budgetHint)
+		refuse(stderr, " kernel", "--bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant")
+		fmt.Fprintf(stderr, "  %s\n", budgetHint)
 		ok = false
 	}
 	if !ok {
@@ -432,14 +444,17 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		// budget and forgot the divisor has two things wrong with it.
 		unit := true
 		if !given["bytes-per-token"] {
-			fmt.Fprintf(stderr, "nova-check kernel: --max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess\n  %s\n", budgetHint)
+			refuse(stderr, " kernel", "--max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess")
+			fmt.Fprintf(stderr, "  %s\n", budgetHint)
 			unit = false
 		} else if *bytesPerToken <= 0 {
-			fmt.Fprintf(stderr, "nova-check kernel: --bytes-per-token must be a positive ratio (got %g); refusing to guess\n  %s\n", *bytesPerToken, budgetHint)
+			refuse(stderr, " kernel", fmt.Sprintf("--bytes-per-token must be a positive ratio (got %g); refusing to guess", *bytesPerToken))
+			fmt.Fprintf(stderr, "  %s\n", budgetHint)
 			unit = false
 		}
 		if *maxTokens <= 0 {
-			fmt.Fprintf(stderr, "nova-check kernel: --max-tokens must be a positive token budget (got %d); refusing to guess\n  %s\n", *maxTokens, budgetHint)
+			refuse(stderr, " kernel", fmt.Sprintf("--max-tokens must be a positive token budget (got %d); refusing to guess", *maxTokens))
+			fmt.Fprintf(stderr, "  %s\n", budgetHint)
 			unit = false
 		}
 		if !unit {
@@ -447,8 +462,7 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		}
 		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check kernel: %s\n", oneline.Err(err))
-			return 2
+			return refuse(stderr, " kernel", oneline.Err(err))
 		}
 		if len(failures) > 0 {
 			for _, f := range failures {
@@ -464,13 +478,11 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *maxBytes <= 0 {
-		fmt.Fprintf(stderr, "nova-check kernel: --max-bytes must be a positive byte budget (got %d); refusing to guess\n", *maxBytes)
-		return 2
+		return refuse(stderr, " kernel", fmt.Sprintf("--max-bytes must be a positive byte budget (got %d); refusing to guess", *maxBytes))
 	}
 	measured, failures, err := check.Kernel(*file, *maxBytes)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check kernel: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " kernel", oneline.Err(err))
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
@@ -520,8 +532,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " nocode", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if *denyExt != "" && *denyExtAdd != "" {
-		fmt.Fprintln(stderr, "nova-check nocode: --deny-ext and --deny-ext-add are mutually exclusive")
-		return 2
+		return refuse(stderr, " nocode", "--deny-ext and --deny-ext-add are mutually exclusive")
 	}
 	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
@@ -531,8 +542,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// a guard that cannot say what it forbids must refuse, not pass.
 	deny, source, err := effectiveDenyList(*denyExt, *denyExtAdd)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " nocode", oneline.Err(err))
 	}
 
 	if *printList {
@@ -542,8 +552,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		// the deny-list is defended against being.
 		names, prefixes, nerr := check.FloorDenyNames()
 		if nerr != nil {
-			fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(nerr))
-			return 2
+			return refuse(stderr, " nocode", oneline.Err(nerr))
 		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", oneline.Field(source), len(deny))
 		for _, e := range deny {
@@ -560,7 +569,8 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *dir == "" {
-		fmt.Fprintf(stderr, "nova-check nocode: --dir is required; refusing to guess\n%s", hintFor("dir"))
+		refuse(stderr, " nocode", "--dir is required; refusing to guess")
+		fmt.Fprint(stderr, hintFor("dir"))
 		return 2
 	}
 
@@ -568,8 +578,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 
 	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " nocode", oneline.Err(err))
 	}
 	if len(findings) > 0 {
 		list := bounded.Capped(stderr, *failMax, "NOCODE", "file", failMaxRemedy)
@@ -636,8 +645,7 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	}
 	floors, failures, err := check.Floors(*core, *source)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check floors: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " floors", oneline.Err(err))
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
@@ -665,10 +673,12 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	switch {
 	case !given["min-anchors"]:
-		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess\n  %s\n", anchorsHint)
+		refuse(stderr, " corpus", "--min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess")
+		fmt.Fprintf(stderr, "  %s\n", anchorsHint)
 		ok = false
 	case *minAnchors <= 0:
-		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess\n  %s\n", *minAnchors, anchorsHint)
+		refuse(stderr, " corpus", fmt.Sprintf("--min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess", *minAnchors))
+		fmt.Fprintf(stderr, "  %s\n", anchorsHint)
 		ok = false
 	}
 	if !checkFailMax(fs, *failMax, stderr) {
@@ -680,15 +690,13 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	// --root is validated BEFORE any finding is printed: a FAIL line from a
 	// run that then exits 2 reports findings from a run that did not happen.
 	if _, _, rootErr := check.ResolveRoot(*root); rootErr != nil {
-		fmt.Fprintf(stderr, "nova-check corpus: %s\n", oneline.Err(rootErr))
-		return 2
+		return refuse(stderr, " corpus", oneline.Err(rootErr))
 	}
 	raw, err := os.ReadFile(*ledger)
 	if err != nil {
 		// Nothing was checked, so this is a refusal rather than a pass —
 		// the one outcome a protection check must never confuse.
-		fmt.Fprintf(stderr, "nova-check corpus: the ledger %s cannot be read (%s); NOTHING was checked, which is not a pass\n", oneline.Escape(*ledger), oneline.Err(err))
-		return 2
+		return refuse(stderr, " corpus", fmt.Sprintf("the ledger %s cannot be read (%s); NOTHING was checked, which is not a pass", oneline.Escape(*ledger), oneline.Err(err)))
 	}
 	anchors, malformed, parseErr := check.ParseLedger(raw)
 	// Malformed rows print whether or not any good row survived: a ledger
@@ -709,13 +717,11 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 				rows.Total(), rows.Shown(), oneline.Field(*ledger))
 			return 1
 		}
-		fmt.Fprintf(stderr, "nova-check corpus: %s: %s\n", oneline.Escape(*ledger), oneline.Err(parseErr))
-		return 2
+		return refuse(stderr, " corpus", fmt.Sprintf("%s: %s", oneline.Escape(*ledger), oneline.Err(parseErr)))
 	}
 	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check corpus: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " corpus", oneline.Err(err))
 	}
 	if len(failures) > 0 || len(malformed) > 0 {
 		list := bounded.Capped(stderr, *failMax, "CORPUS", "anchor", failMaxRemedy)

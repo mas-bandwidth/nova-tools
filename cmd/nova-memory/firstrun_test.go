@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
 // A first run by someone who has never seen this tool hits three refusals in a
@@ -702,4 +706,179 @@ func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 	if !strings.Contains(stdout, "$ nova-memory search ") || !strings.Contains(stdout, "SEARCH OK query=-glazing") {
 		t.Errorf("quickstart did not complete search step with dash-leading word:\n%s", stdout)
 	}
+}
+
+// TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine runs the whole
+// `## nova-memory` `### First run` section and compares every command's output
+// with the block written under it: same number of lines, same lines, same
+// order. It is the comparator cmd/nova-ci already uses, applied to a section
+// the set-of-shapes test above only compares by event shape.
+//
+// THE SECTION IS TWO BLOCKS, and they are two different promises:
+//
+//   - The first block is the whole stdout of `nova-memory quickstart`, which
+//     ECHOES the three commands it runs as `$ nova-memory ...` lines and prints
+//     each one's output beneath. onboarding.Steps cannot cut this block, because
+//     it would read every echoed `$` line as a command of the sitting. So the
+//     block is executed as the single command it is -- its first `$` line --
+//     with every following line, echoes included, as that command's output.
+//   - The second block is a genuine two-command sitting (a `search`, then a
+//     `check` of a draft on disk) and is handed to onboarding.Steps whole.
+//
+// ONE NORM IS DECLARED, and it is the only value in the section the document
+// cannot pin: the `build=<duration>` field on the STATS line is the index build
+// time of the run, not a fact about the transcript. The document was recorded
+// at build=384.875µs and a fresh run prints a different duration, so
+// buildTimeNorm elides exactly that field. Every other value -- the six files,
+// the scores, the snippets, the ids -- reproduces and is compared as written.
+// The second block declares no norm at all.
+func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	// Resolve the document and the checkout root from the package directory,
+	// before the sitting moves this test somewhere else: the document is a
+	// fixed file, while the commands run where `./corpus` and `draft.md`
+	// resolve as written.
+	blocks := readmeFirstRun(t)
+	root := repoRoot(t)
+
+	// Prove this file and onboarding.FirstRun read the same section: the blocks
+	// flattened are the lines FirstRun returns, in the same order. If they ever
+	// disagree, the section is being read two ways and one reader drifts
+	// unwatched.
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRun, err := onboarding.FirstRun(string(raw), "nova-memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flat []string
+	for _, b := range blocks {
+		flat = append(flat, b...)
+	}
+	if strings.Join(flat, "\n") != strings.Join(firstRun, "\n") {
+		t.Fatalf("the two readers of `### First run` disagree:\nblocks:\n%s\nFirstRun:\n%s",
+			strings.Join(flat, "\n"), strings.Join(firstRun, "\n"))
+	}
+
+	if len(blocks) != 2 {
+		t.Fatalf("`### First run` holds %d fenced blocks, want 2: the quickstart transcript and the two-verb sitting", len(blocks))
+	}
+	if !strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart ") {
+		t.Fatalf("the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
+	}
+
+	// The transcript WRITES a draft beside the corpus, so it runs against a
+	// copy of the fixture in t.TempDir(), never against what ships. Standing in
+	// the copy is also what makes the documented paths (`--root ./corpus`,
+	// `draft.md`) resolve as written, so no path norm is declared.
+	sit := firstRunSitting(t)
+	t.Chdir(sit)
+	run := runDocumented(t)
+	norms := []onboarding.Norm{buildTimeNorm(t)}
+
+	var problems []onboarding.Problem
+
+	// The first block: one command, all of its output.
+	quickstart, err := onboarding.Steps("nova-memory", blocks[0][:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	quickstart[0].Want = blocks[0][1:]
+	problems = append(problems, onboarding.Execute(quickstart, run, norms...)...)
+
+	// The second block: every `$` line is a command.
+	steps, err := onboarding.Steps("nova-memory", blocks[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Errorf("the second `### First run` block runs %d commands, want 2: a search and a check of the draft", len(steps))
+	}
+	problems = append(problems, onboarding.Execute(steps, run, norms...)...)
+
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
+
+// buildTimeNorm elides the one run-owned value in the section: the
+// `build=<duration>` field the STATS line prints for the index build of THIS
+// run. The pattern matches only a Go duration, so a STATS line that stopped
+// printing one is left on the line and compared.
+func buildTimeNorm(t *testing.T) onboarding.Norm {
+	t.Helper()
+	n, err := onboarding.Elide(
+		"build= (the index build time of this run)",
+		`build=[0-9]+(?:\.[0-9]+)?(?:ns|µs|ms|s)\b`,
+		"build=<the index build time of this run>",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// firstRunSitting materializes the directory the documented commands are typed
+// in: `corpus/` is a writable copy of the fixture, so the sitting never touches
+// what ships, and `draft.md` is the candidate paragraph the second block checks.
+func firstRunSitting(t *testing.T) string {
+	t.Helper()
+	sit := t.TempDir()
+	dst := filepath.Join(sit, "corpus")
+	src := filepath.Join("..", "..", "cmd", "nova-memory", "testdata", "corpus")
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sit, "draft.md"), []byte(firstRunDraft), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return sit
+}
+
+func runDocumented(t *testing.T) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		stdin := io.Reader(strings.NewReader(""))
+		if s.Stdin != "" {
+			f, err := os.Open(s.Stdin)
+			if err != nil {
+				return onboarding.Result{}, err
+			}
+			defer f.Close()
+			stdin = f
+		}
+		var out, errb bytes.Buffer
+		code := run(s.Args, stdin, &out, &errb)
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
+		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
+	}
+	return root
 }

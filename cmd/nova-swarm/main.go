@@ -1971,7 +1971,7 @@ func termSuffix(terminated bool) string {
 // usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a
 // store answered, otherwise ` usage=none reason=<r> path=<looked>` with the looked path put
 // through oneline.Field inside itself before returning, so the tail it adds is one safe token.
-// The reason is the literal one of no-rows, no-store or no-sqlite3 the reader reported.
+// The reason is the literal one of no-rows, no-store, no-sqlite3 or query-failed the reader reported.
 func usageSuffix(reason, path string) string {
 	if reason == "" {
 		return ""

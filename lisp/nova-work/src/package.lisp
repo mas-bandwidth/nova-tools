@@ -1674,6 +1674,12 @@
     #:savepoint-load-gap
     #:savepoint-cut-sequence
     #:savepoint-content-ok-p
+    ;; the dedup root a savepoint's boundary record names (src/dedup-root.lisp,
+    ;; SPEC-WORK.md:7155-7164)
+    #:dedup-root-entries
+    #:write-dedup-root
+    #:read-dedup-root
+    #:dedup-root-holds-p
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite
@@ -1986,6 +1992,15 @@
     #:fetch-resolver-fact
     #:verify-qualifies-p
     #:verify
+    ;; the verification cache file (SPEC-WORK.md:1294-1325)
+    #:verification-fact-form
+    #:write-verification-cache
+    #:read-verification-cache
+    #:resolver-identities
+    #:persist-verification-cache
+    #:session-cache
+    #:session-verification
+    #:verification-session-cache-path
     ;; the needs-met predicate and its five reason tokens (nova-tools #785,
     ;; SPEC-WORK.md:4740-4866)
     #:needs-view

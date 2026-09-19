@@ -169,14 +169,24 @@ func expandNode(file string, n Node) (Card, error) {
 	c.Needs = parseStringList(n.Fields["needs"])
 	c.Blocks = parseStringList(n.Fields["blocks"])
 
+	var missing []string
 	if c.Kind == "" {
-		return Card{}, refuse(file, fmt.Sprintf(":node %s has no :kind; refusing to guess", id))
+		missing = append(missing, fmt.Sprintf(":node %s has no :kind; refusing to guess", id))
 	}
 
 	out, ok := n.Fields["output"]
 	if !ok || out.Kind != List {
-		return Card{}, refuse(file, fmt.Sprintf(":node %s has no :output; refusing to guess", id))
+		missing = append(missing, fmt.Sprintf(":node %s has no :output; refusing to guess", id))
 	}
+
+	budget, ok := n.Fields["budget"]
+	if !ok || budget.Kind != List {
+		missing = append(missing, fmt.Sprintf(":node %s has no :budget; a budget-less plan refuses", id))
+	}
+	if len(missing) > 0 {
+		return Card{}, refuse(file, strings.Join(missing, "; "))
+	}
+
 	result, branch, green, err := parseOutput(file, id, out)
 	if err != nil {
 		return Card{}, err
@@ -186,10 +196,6 @@ func expandNode(file string, n Node) (Card, error) {
 	}
 	c.Result, c.Branch, c.Green = result, branch, green
 
-	budget, ok := n.Fields["budget"]
-	if !ok || budget.Kind != List {
-		return Card{}, refuse(file, fmt.Sprintf(":node %s has no :budget; a budget-less plan refuses", id))
-	}
 	b, err := parseBudget(file, id, budget)
 	if err != nil {
 		return Card{}, err

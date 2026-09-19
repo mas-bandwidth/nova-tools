@@ -25,7 +25,7 @@ The fold scripts wrote two intermediate tables and a collator merged them. `nova
 ```
 nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
-nova-check links  --dir <dir> [--file <path>]      # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree
+nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]   # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree; --exclude (repeatable) keeps a path prefix out of the scan and out of the check
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
 nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
 nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (the self/machinery separation)
@@ -230,13 +230,17 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 ## nova-memory
 
 ```
-nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>]  the first run: stats, one search, one check, each with the line that ran it
-nova-memory stats  --root <dir>...                                       measure m: files, chunks, bytes, vocab, build time, classes
-nova-memory search --root <dir>... --channels <list> --k <n> <words>...  one query, k receipted hits (for work retrieval)
-nova-memory check  --root <dir>... --channels <list> --k <n> <file|->    do I already know this? k receipts per candidate paragraph
-nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--fail-max <n>]
+nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
+                                                                        the first run: stats, one search, one check, each with the line that ran it
+nova-memory stats  --root <dir>... [--exclude <glob>]...
+                                                                        measure m: files, chunks, bytes, vocab, build time, classes
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
+                                                                        one query, k receipted hits (for work retrieval)
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+                                                                        do I already know this? k receipts per candidate paragraph
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]...
                                                                         coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--fail-max <n>] <gold.tsv>
+nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
 ```
@@ -304,7 +308,7 @@ MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=note
 
 ## nova-bus
 
-A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is seven verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
+A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is ten verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
 
 ### First run
 
@@ -379,7 +383,7 @@ cd ~/my-bus && git init -b main && git add -A && git commit -m 'the bus'
 nova-bus check --bus ~/my-bus --full
 ```
 
-### The seven verbs
+### The ten verbs
 
 Every input comes from a flag: no default bus, remote, branch or receipt word count, and a missing one is exit 2 and `refusing to guess`. Three flags do have defaults, because none is a fact about your bus that only you can supply: `--attempts` is 25 (how many times a push retries against a remote moving under it; five lines sending three notes each at once landed 6 of 15 under 3 attempts and 15 of 15 under 25), `--git-timeout` is 60 seconds (the budget one git subprocess gets before it is killed and named), and `wait --interval` is 10 seconds. `wait --timeout` has no default, because a wait with no deadline is a line that is stuck, and nobody outside can tell that from waiting.
 
@@ -2021,7 +2025,7 @@ never forms an opinion about code and never merges anything.
 
 ```
 nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
-nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+nova-review mutate --repo <dir> --base <ref> --head <ref> [--test <name>] [--timeout <seconds>] [--max <n>]
 nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
 nova-review version
 nova-review help
@@ -2055,6 +2059,43 @@ does not resolve at that head, a named suite already red at the unseeded head, a
 a `--timeout` deadline that killed the run mid-flight. Neither form writes anything
 into the repo it is pointed at, on any path. Full grammar in
 [docs/SPEC-REVIEW.md](SPEC-REVIEW.md).
+
+`--test <name>` is optional and range-only, and asks SPEC-TOOLWORK §1 rule 4(d)'s
+own question: does THAT test detect the reverted change. The default verdict is
+per FILE, which is stricter and a different question — a card that also touched a
+second test file whose tests are correctly insensitive to the change came back
+`FAIL` with its named `TEST:` red (#1849). Given, the verdict is that unit's, and
+the line carries `test=<resolved name>` beside the usual counts:
+
+```
+MUTATE <head8> reverted=<n> red=<n> green=<n> test=<name> <PASS|FAIL>
+```
+
+The name is resolved among the test units of the files THIS RANGE CHANGED and
+nowhere else, and may be qualified `<file>:<name>` where two of them declare it.
+One that resolves to none of them, to more than one, or to a unit whose suite
+could not be run is `MUTATE REFUSED`, exit 2 — never a vacuous `PASS`, never an
+inferred `FAIL`, and never a guess at which test was meant. The co-touched units
+are still counted and still listed; another test's result no longer answers the
+question that was asked. Every `MORE` remedy carries `--test`, so rerunning it
+asks the same question. The singular `--test` is the range form's unit and the
+seed form's plural `--tests` is its package selector: together they are malformed.
+
+A range that changes ONLY test files does not refuse — it ABSTAINS, on stdout,
+still exit 2 (#1850).
+
+```
+MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
+```
+
+Reverting nothing runs the head's own suite, so the control cannot be PROVED,
+which is not the same as a run that broke and is not acceptance either: it is
+never a `PASS`, never a `REJECT` and never permission to push. Every
+`internal/docs` and `internal/ci` doc-rule repair has this shape, and each one
+used to be sent to the seed form by hand. A range that changes NO test file is a
+different condition and still refuses, `MUTATE <head8> no-tests-changed`: it can
+be an ordinary production fix missing the red test it was required to have, and
+calling that harmless is the inference this verb must not make.
 
 The other verbs are `packet`, `version` and `help`. `packet` is the one that works:
 it reads one entry on a lane at one head and writes one bounded file, capped at
@@ -2191,7 +2232,44 @@ nova-swarm cost     --pool <dir> [--max <n>]                                    
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
+nova-swarm lint     --card <file> [--typed] [--trust <file>] [--max <n>] | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
 ```
+
+### The card lint
+
+`lint --card <file>` reads the one file it was handed and names every mechanical
+defect by check, line and excerpt **before a token is spent**. No model, no probe,
+no network. The checks are `docs/WORKER-CARDS.md`'s rule table and the four typed
+header tokens of `docs/SPEC-TOOLWORK.md` §5 rule 1.
+
+| flag | what it does |
+| --- | --- |
+| `--card <file>` | the card to read. Required unless `--rules` is given |
+| `--rules` | print `LINT RULE <check> remedy=<what it wants>` for every check and exit 0. It takes no card, because the question is asked before there is one, and it is the one listing a bench with a clone months behind its binary can still read (#1464) |
+| `--typed` | apply the typed-header tokens to a card that declares **no** typed line at all. Without it a card with no header is left to the older rules, which is what every card written before §5 is |
+| `--trust <file>` | a file of `TRUST kind=<kind> … state=<trial\|trusted\|paused>` lines in the shape `nova-pulse trust` prints; it is what the `paused` token reads. With no file there is no paused kind and the lint says nothing rather than guessing |
+| `--max <n>` | bound the printed drifts, default 20, `0` for all. Over the bound it adds one `LINT MORE` line naming the remedy; it never changes the verdict |
+
+Output, and what a caller does with it:
+
+```
+LINT OK    card=<name> checks=<n> bytes=<n> cap=<n>                      # exit 0: admitted to the wall
+LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what it wants> # exit 2: a caller refuses to admit it
+LINT NOTE  card=<name> <check>: <line>: <excerpt> remedy=<…>             # advice; it changes NO verdict
+LINT MORE  card=<name> findings=<n> remedy=<…>                           # more drifts than --max printed
+LINT SIZE  card=<name> bytes=<n> cap=<n> advisory=true                   # every drifting card's size, and that the cap is advice
+LINT NOT-A-CARD card=<name> template=<name> remedy=<…>                   # exit 1: a shipped template piped in, answered by name
+```
+
+**`DRIFT` is a defect and `NOTE` is advice.** The 12000-byte ceiling is the only
+advisory check today: it is a reading budget, not an input limit, so a card over
+it is never refused and never truncated, draws a `LINT NOTE`, and exits 0
+(#1494, #1527). A card whose only findings are advisory is a clean card.
+
+**Every drift names its remedy on the same line** (#1464), and the `DRIFT` line and
+the `--rules` listing read one table, so a remedy cannot drift from the rule it
+explains. The rule tokens and what each wants are in `docs/WORKER-CARDS.md`; the
+`../` rule and the ceiling are written out in `docs/SPEC-SWARM.md`'s lint section.
 
 ### native and batch
 
@@ -2818,7 +2896,7 @@ measurement.
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all seven verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
 
 `check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines.
 
@@ -2837,7 +2915,7 @@ What a first run gets wrong, and what each one wants:
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
-There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` ends in five lines a stranger can paste instead, and `sources` is the one verb that only looks.
+There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead — six under its first `example:` and one under the `session` example, and `sources` is the one verb that only looks.
 
 ### Worker-pool usage
 
@@ -3461,8 +3539,7 @@ See [SPEC-CAIRN.md](SPEC-CAIRN.md).
 
 ```sh
 nova-cairn open --store ./checkpoints --session session-1 --publish never
-nova-cairn append --store ./checkpoints --session session-1 --entry note-1 \
-  --file ./checkpoint.md --publish never
+nova-cairn append --store ./checkpoints --session session-1 --entry note-1 --text "the words to keep" --publish never
 nova-cairn index --store ./checkpoints --max 20
 nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1
 ```
@@ -3479,9 +3556,9 @@ directly under the store — `cairns/<session>.md`, the shape a friend appending
 by hand already has — and is read as it stands:
 
 ```sh
-# cairns/b9395d11.md exists, written by hand
-nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 \
-  --publish manual --file -
+# cairns/b9395d11.md exists, written by hand; this lays down the fixture the tests use
+mkdir -p cairns && cp internal/cairn/testdata/bench-b9395d11.md cairns/b9395d11.md
+nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 --publish manual --text "the words to keep"
 ```
 
 `open` on such a record is a no-op (it never writes a second record under

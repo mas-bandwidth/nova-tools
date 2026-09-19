@@ -132,10 +132,16 @@ jobs:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -222,10 +228,16 @@ jobs:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -405,8 +417,18 @@ jobs:
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
     # 12 s — keep the 2 they always had.
     # The Studio at load 55 ran a double-size shard in 6-7 min (2026-09-16 05:16Z);
-    # the cap stays 6 by the two-minute law (internal/ci); the shards got smaller instead.
-    timeout-minutes: 6
+    # the cap stayed 6 by the two-minute law (internal/ci) and the shards got
+    # smaller instead. On 2026-09-19 six started cancelling honest work again:
+    # #1700 (2/4 studio, superman-nova-1) and #1714 (3/4 studio, superman-nova-2)
+    # were CANCELLED at 6:23 and 6:07 with every test PASS and
+    # `ok cmd/nova-merge 342.360s` in the log. Twelve is TWICE the slowest GREEN
+    # shard of the last twenty green runs (348 s, superman-nova-7, run
+    # 35457289611) — three seconds under the old cap. `studio` is a GROUP over
+    # air, batman, studio and superman, and superman is an Intel Xeon W-2191B
+    # carrying ten runners while the Studio is an M3 Ultra: one ceiling over a
+    # 2x spread censors the slower machine. The reason lives beside the number
+    # in internal/ci/ci_budget_test.go.
+    timeout-minutes: 12
     steps:
       - name: nothing to test for this change
         # test-packages emits one leg with an empty package list when the change
@@ -422,10 +444,16 @@ jobs:
         if: matrix.entry.packages != ''
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1033,10 +1061,16 @@ jobs:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1078,10 +1112,16 @@ jobs:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1124,10 +1164,16 @@ jobs:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
