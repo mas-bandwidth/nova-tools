@@ -90,4 +90,5 @@
                 (:file "tests/replays-concurrency-witness")
                 (:file "tests/replays-restart-and-recovery")
                 (:file "tests/replays-validator-rule-witnesses")
-                (:file "tests/replays-fleet-stale-tokens")))
+                (:file "tests/replays-fleet-stale-tokens")
+                (:file "tests/replays-new-verb-door")))
