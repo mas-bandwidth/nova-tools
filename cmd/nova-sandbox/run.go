@@ -88,6 +88,10 @@ func sandboxedCallerCause(err error) string {
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), diskServiceDeniedPhrase) {
 		return ""
 	}
+	// diskutil ends its own sentence with a period; the join adds one only where it is missing.
+	if strings.HasSuffix(strings.TrimSpace(err.Error()), ".") {
+		return " " + sandboxedCallerRemedy
+	}
 	return ". " + sandboxedCallerRemedy
 }
 
