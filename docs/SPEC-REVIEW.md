@@ -657,7 +657,37 @@ that changes only test files is refused too — there is nothing to revert, so n
 green run nor a red one would be about the change. It records nothing, writes nothing
 into the repo it is pointed at, removes its worktree on every path, and forms no opinion
 about the code: the harvest runs it before any reader is spawned, and the reader then
-judges spec fit and nothing else.
+judges spec fit and nothing else. The verdict line carries `reverted=<n>`, the number of
+non-test hunks it put back, so "every non-test hunk" is a number a caller can gate on
+rather than a sentence in this file: a `PASS` with `reverted=0` is a control that never
+ran.
+
+**The `--seed` form is the other half, and it is the one every negative control is
+built from** (SPEC-TOOLWORK.md §1 rules 7 and 9, nova-tools#1646). The range form asks
+"is this change's test red without the change"; the seed form asks "here is one
+deliberate defect — does the suite catch it". `nova-review mutate --repo <dir> --head
+<ref> --seed <patch> --tests <package>[,<package>...]` applies one unified diff in a
+throwaway worktree at the head and runs the named packages' suites there; the verdict is
+`PASS` when at least one of them goes red. Its line is `MUTATE <head8> seed=<hex8>
+edits=<n> red=<n> green=<n> <PASS|FAIL>`, where `seed=` is the first 8 hex of the patch's
+SHA-256, so a report names **which** control ran. The two forms are exclusive: `--seed`
+takes `--tests` and no `--base`, the range form takes `--base` and no `--tests`.
+
+The edit count is **asserted, not reported**: exactly one, else `MUTATE REFUSED`, exit 2,
+before the seeded run. A seed that changed nothing proves a suite red on nothing, and a
+seed that changed two things does not say which one the suite caught. The count is taken
+from the worktree after `git apply` (git's own per-file `--numstat`), never from the
+patch file's `@@` header, which is arithmetic the seed's author wrote. One edit is one
+line changed, added, removed, or moved.
+
+Three things are refused at exit 2 rather than answered, all of them for the same
+reason — they kill every seed, so a `PASS` under them is not about the seed at all. A
+package `go list` does not resolve at that head is a typo in `--tests`. A named suite
+that is already red at the **unseeded** head has nothing left for a mutant to break, so
+the suites are listed and run once before the patch goes in. And a `--timeout` deadline
+that kills the run mid-flight is a could-not-run: a non-zero exit counts as the mutant
+dying only when the output says so — a `--- FAIL:` unit, a package-level `FAIL	<pkg>`,
+or a `panic:`.
 
 **A new binary, not verbs on nova-merge, for one reason with three faces.**
 nova-merge is the tool with the mutation guard: one function publishes to the
@@ -815,7 +845,8 @@ PACKET REFUSED: the lane does not hold this entry; add it with nova-merge add --
 PACKET REUSE asked=<hex12> found=<hex12> file=<path>: that packet was built for another (entry, head, range); build this reader's own
 PACKET FOLD file=<path>: <reason>
 PACKET REFUSED: <reason>
-MUTATE <head8> red=<n> green=<n> <PASS|FAIL>
+MUTATE <head8> reverted=<n> red=<n> green=<n> <PASS|FAIL>
+MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>
 MUTATE GREEN test=<name> file=<path>: green with the change reverted; it proves nothing
 MUTATE SKIP file=<path>: <reason>
 MUTATE MORE kind=<green|skip> shown=<n> total=<t> nova-review mutate --repo <dir> … --max 0

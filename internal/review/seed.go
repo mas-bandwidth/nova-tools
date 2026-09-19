@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
@@ -122,6 +123,33 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	if _, err := gitLine(ctx, repo, "worktree", "add", "--detach", wt, head); err != nil {
 		return nil, fmt.Errorf("could not add a worktree at %s: %v", Short(head), err)
 	}
+
+	pkgs := append([]string(nil), opts.Tests...)
+	sort.Strings(pkgs)
+
+	// Two preconditions, both read at the UNSEEDED head, and both could-not-run
+	// rather than verdicts.
+	//
+	// A package name `go list` does not resolve is a typo, and every seed "kills" it:
+	// `go test ./nosuch/` exits non-zero having run nothing at all. A suite that is
+	// already red is the same failure one step further in -- it kills every seed for
+	// a reason that has nothing to do with the seed -- and the PASS printed under it
+	// is the head's own failure wearing the control's name.
+	for _, pkg := range pkgs {
+		if err := listPackage(ctx, wt, pkg); err != nil {
+			return res, err
+		}
+	}
+	for _, pkg := range pkgs {
+		red, _, err := runPackage(ctx, wt, pkg)
+		if err != nil {
+			return res, err
+		}
+		if red > 0 {
+			return res, fmt.Errorf("the suite in %s is already red at %s without the seed: a seed proves nothing against a suite that was not green first", cleanPkg(pkg), Short(head))
+		}
+	}
+
 	if _, err := gitOut(ctx, wt, "apply", "--whitespace=nowarn", seedPath); err != nil {
 		return res, fmt.Errorf("%w: %v", ErrSeedDoesNotApply, err)
 	}
@@ -132,7 +160,7 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
 		return res, fmt.Errorf("could not stage the seeded worktree: %v", err)
 	}
-	applied, err := gitOut(ctx, wt, "diff", "--cached", "--no-ext-diff", "--no-renames", "-U0")
+	applied, err := gitOut(ctx, wt, "diff", "--cached", "--no-ext-diff", "--no-renames", "--numstat")
 	if err != nil {
 		return res, fmt.Errorf("could not read the applied seed: %v", err)
 	}
@@ -141,12 +169,10 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 		return res, &SeedCountError{Edits: res.Edits}
 	}
 
-	pkgs := append([]string(nil), opts.Tests...)
-	sort.Strings(pkgs)
 	for _, pkg := range pkgs {
-		red, green, reason := runPackage(ctx, wt, pkg)
-		if reason != "" {
-			return res, errors.New(reason)
+		red, green, err := runPackage(ctx, wt, pkg)
+		if err != nil {
+			return res, err
 		}
 		res.Red += red
 		res.Green += green
@@ -165,17 +191,36 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 // another, which git reports exactly as a changed line does. All four are one removed
 // line or fewer and one added line or fewer, so the count is the larger of the two
 // sides. Two changed lines are two, and a seed that changed nothing is zero.
-func countEdits(diff string) int {
+//
+// The count comes from `--numstat`, which is git's own arithmetic per file, rather
+// than from reading the unified diff line by line: a removed Markdown rule is `----`
+// in that text and a removed `-- x` SQL comment is `--- x`, and both read as the
+// `---` file header they are not. A seed whose one edit was on such a line was
+// refused as a control that changed nothing.
+func countEdits(numstat string) int {
 	added, removed := 0, 0
-	for _, line := range strings.Split(diff, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
-			// A file header, not a line of content.
-		case strings.HasPrefix(line, "+"):
-			added++
-		case strings.HasPrefix(line, "-"):
-			removed++
+	for _, line := range strings.Split(numstat, "\n") {
+		f := strings.SplitN(strings.TrimRight(line, "\n"), "\t", 3)
+		if len(f) < 3 {
+			continue
 		}
+		// A binary file is `-\t-\t<path>`: git will not count its lines, so it
+		// counts as one edit and a seed that touches two of them is two.
+		if f[0] == "-" || f[1] == "-" {
+			added++
+			removed++
+			continue
+		}
+		a, err := strconv.Atoi(f[0])
+		if err != nil {
+			continue
+		}
+		d, err := strconv.Atoi(f[1])
+		if err != nil {
+			continue
+		}
+		added += a
+		removed += d
 	}
 	if added > removed {
 		return added
@@ -183,11 +228,43 @@ func countEdits(diff string) int {
 	return removed
 }
 
+// listPackage is the first precondition: the package the caller named must exist at
+// this head. `go test ./nosuch/` exits non-zero having run nothing, which every
+// later count reads as a suite that died -- so a typo in --tests was a control that
+// held, every time, for any seed.
+func listPackage(ctx context.Context, wt, pkg string) error {
+	pkg = cleanPkg(pkg)
+	cmd := exec.CommandContext(ctx, "go", "list", "./"+pkg+"/")
+	if pkg == "." {
+		cmd = exec.CommandContext(ctx, "go", "list", "./")
+	}
+	cmd.Dir = wt
+	cmd.Env = goenv.Clean(os.Environ())
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return deadlineErr(pkg)
+	}
+	if err != nil {
+		return fmt.Errorf("--tests names %s, which is not a package at this head: %s", pkg, firstLine(string(out)))
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return fmt.Errorf("--tests names %s, which is not a package at this head", pkg)
+	}
+	return nil
+}
+
 // runPackage runs one package's whole suite in the worktree and counts the units that
 // failed and passed. A package that cannot build with the mutant in it is the
 // strongest red there is, and it counts as one kill rather than as a run that could
 // not happen: the defect was caught by the compiler.
-func runPackage(ctx context.Context, wt, pkg string) (red, green int, skip string) {
+//
+// A non-zero exit is NOT by itself a kill. `go test` exits non-zero for every reason
+// it has, including reasons that are the caller's and not the seed's, and a verb that
+// read all of them as red would report PASS for a deadline, a missing toolchain or a
+// module that would not load. The kill is the run saying so: a `--- FAIL:` unit, a
+// package-level `FAIL\t<pkg>` line, or a `panic:`. Anything else non-zero is a
+// could-not-run and leaves this verb with no verdict to print.
+func runPackage(ctx context.Context, wt, pkg string) (red, green int, err error) {
 	pkg = cleanPkg(pkg)
 	cmd := exec.CommandContext(ctx, "go", "test", "-count=1", "-v", "./"+pkg+"/")
 	if pkg == "." {
@@ -198,16 +275,21 @@ func runPackage(ctx context.Context, wt, pkg string) (red, green int, skip strin
 	// started in: CI's `make test` exports GOFLAGS=-json, and under it no
 	// `--- PASS:` line is printed at all.
 	cmd.Env = goenv.Clean(os.Environ())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
+	out, runErr := cmd.CombinedOutput()
+	// The deadline is the caller's, never the seed's: the run was killed mid-flight
+	// and nothing at all was proved about the mutant.
+	if ctx.Err() != nil {
+		return 0, 0, deadlineErr(pkg)
+	}
+	if runErr != nil {
 		var ee *exec.ExitError
-		if !errors.As(err, &ee) {
-			return 0, 0, fmt.Sprintf("go test could not be run in %s: %v", pkg, err)
+		if !errors.As(runErr, &ee) {
+			return 0, 0, fmt.Errorf("go test could not be run in %s: %v", pkg, runErr)
 		}
 	}
 	text := string(out)
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
-		return 1, 0, ""
+		return 1, 0, nil
 	}
 	for _, line := range strings.Split(text, "\n") {
 		m := goResult.FindStringSubmatch(line)
@@ -221,13 +303,41 @@ func runPackage(ctx context.Context, wt, pkg string) (red, green int, skip strin
 			green++
 		}
 	}
-	// A run that exited non-zero with no FAIL line at all -- a panic before any
-	// result, a timeout inside the binary -- is the mutant killing the package, not a
-	// package that quietly passed.
-	if err != nil && red == 0 {
-		red = 1
+	if runErr == nil || red > 0 {
+		return red, green, nil
 	}
-	return red, green, ""
+	// No `--- FAIL:` line and a non-zero exit. A package-level FAIL (a guard in
+	// TestMain that exits the binary itself) or a panic before any result is still
+	// the mutant dying; anything else is a run that could not happen.
+	if packageFailed(text) || strings.Contains(text, "panic:") {
+		return 1, green, nil
+	}
+	return 0, 0, fmt.Errorf("go test in %s exited non-zero with no failure in its output, so nothing was proved either way: %s", pkg, firstLine(text))
+}
+
+// packageFailed looks for go test's own package-level verdict, `FAIL\t<pkg>`, which
+// it prints for a test binary that exited non-zero without failing a unit.
+func packageFailed(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "FAIL\t") && strings.TrimSpace(strings.TrimPrefix(line, "FAIL\t")) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func deadlineErr(pkg string) error {
+	return fmt.Errorf("the --timeout deadline passed while %s was running, so the run was killed and nothing was proved either way", pkg)
+}
+
+// firstLine keeps a refusal to one line, as every line this package prints is.
+func firstLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			return s
+		}
+	}
+	return "no output"
 }
 
 func cleanPkg(pkg string) string {
