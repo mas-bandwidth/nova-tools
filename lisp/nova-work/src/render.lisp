@@ -92,6 +92,14 @@ resolving PATH through one of them lands outside ROOT (SPEC-WORK.md:3141)."
 ;;; The target store seam: the session's mapping reads and writes bytes
 ;;; ------------------------------------------------------------------
 
+(defgeneric render-target-escape-p (session target root symlinks)
+  (:documentation "True when TARGET escapes ROOT. The pure session takes the
+links as a handed-in alist; a session whose store is the filesystem resolves
+TARGET and ROOT through the OS instead (SPEC-WORK.md:3151-3154)."))
+
+(defmethod render-target-escape-p ((session render-session) target root symlinks)
+  (render-symlink-escape-p target root symlinks))
+
 (defgeneric render-target-read (session target)
   (:documentation "The stored target's bytes, or NIL when it is missing. The
 resident session implements this against the filesystem; the in-process method
@@ -199,7 +207,7 @@ the old and new hashes and the render revision."
            (cond
              ((not (path-within-p target (getf mapping :directory)))
               (refuse "a path outside its root"))
-             ((render-symlink-escape-p target (getf mapping :directory) symlinks)
+             ((render-target-escape-p session target (getf mapping :directory) symlinks)
               (refuse "symlink escape"))
              (t
               (let ((content (render-target-read session target)))
