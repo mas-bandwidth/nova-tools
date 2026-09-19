@@ -488,10 +488,32 @@ leg.**
 2. **`nova-sandbox` grows a named toolchain set, not a wider wall.** `--toolchain
    <leg>[,<leg>...]` adds, per leg and per platform, the narrowest roots that leg was
    measured to need, asked of the toolchain the way `--go` asks `go env` and never
-   guessed: for `cc` on darwin, `DEVELOPER_DIR` set for the child to what
-   `xcode-select -p` prints **outside** the wall, plus read on that directory — the
-   narrower of #1557's two fixes, and the one the cargo workaround on that issue already
-   proves; for `sbcl`, `SBCL_HOME` and the core; for `sqlite3`, nothing but the binary.
+   guessed. **The roots, as measured** (2026-09-19, the wall lane, on this Studio: macOS
+   26.6.2, `go1.27.1 darwin/arm64`, `backend=sandbox-exec`; logs `t18-measure.log`,
+   `t18-legs.log`, `t18-fix.log`, `t18-fix2.log`, `t18-narrow.log` in that lane's
+   scratchpad, summarised in its HANDOFF):
+   - `cc` on darwin: **draft 5's fix was not sufficient.** `DEVELOPER_DIR` set from
+     `xcode-select -p` plus read on that directory still dies: `cc` fails on `couldn't
+     stat Xcode's Info.plist (errno=Operation not permitted)` and dyld refuses
+     `DVTSystemPrerequisites.framework … (blocked by sandbox)`, both **above** `Developer`
+     in the `.app`'s `Contents/`; `cc_rc=71`. The narrowest roots that work are, in this
+     order: `DEVELOPER_DIR=/Library/Developer/CommandLineTools` with `--read` on it, when
+     the Command Line Tools are installed (silent, and far narrower than an `.app`); else
+     `--read` on the whole `.app` that `xcode-select -p` names (noisy). `--toolchain cc`
+     probes for the first and falls to the second, and prints which on `toolchain=`. The
+     rule's earlier claim that the cargo workaround on #1557 proved the `Developer`-only
+     read is withdrawn: it was not measured inside this wall.
+   - `go`: `--read $(go env GOROOT)` and `--read-noexec $(go env GOMODCACHE)`, nothing
+     under `/opt/homebrew`; `dev` already carries this as `swarm.ToolchainRoots`, and
+     `go test ./internal/sandbox/` inside the wall is `ok` on a cold cache with it.
+   - `sbcl`: `--read` on its Cellar prefix alone (`/opt/homebrew/Cellar/sbcl/<version>`;
+     `SBCL_HOME` and the core live under it).
+   - `sqlite3`: no extra root at all.
+   - `make`: dies with `cc` and lives with it (`xcode-select: error: unable to read data
+     link at '/var/db/xcode_select_link'` inside the wall, #1557); it has no roots of its
+     own beyond `cc`'s.
+   A wall widening is a judgment and not a measurement: the `cc` roots above are wider
+   than draft 5 promised, and Stella's word on them is owed before T18 writes the flag.
    Each resolved root is printed on the `SANDBOX OK` line's `toolchain=` field so the
    wall a card ran behind is a fact on its record. An unknown leg is `SANDBOX REFUSED
    reason=bad_toolchain`. This is a sandbox change, a security kind: the unit and its read are the designated
