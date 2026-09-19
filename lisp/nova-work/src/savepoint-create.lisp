@@ -236,6 +236,7 @@ step returns the previous one unchanged."
              (dir (savepoint-directory root id))
              (state-path (merge-pathnames "state" dir))
              (replies-path (merge-pathnames "local-replies" dir))
+             (dedup-root-path (merge-pathnames "dedup-root" dir))
              (manifest-path (merge-pathnames "manifest" dir))
              (temp-path (merge-pathnames "manifest.candidate" dir)))
         (when (eq fail-stage :capture)
@@ -247,7 +248,9 @@ step returns the previous one unchanged."
             (progn
               (%savepoint-write-object state-path image)
               (when (eq fail-stage :image) (error "injected image failure"))
-              (%savepoint-write-object replies-path (canonical-string replies)))
+              (%savepoint-write-object replies-path (canonical-string replies))
+              ;; the dedup root the boundary record names (SPEC-WORK.md:7160-7161)
+              (write-dedup-root dedup-root-path (dedup-root-entries scan)))
           (error ()
             (return-from savepoint-create
               (%savepoint-fail store id rev :image "the image write failed"))))
@@ -255,11 +258,20 @@ step returns the previous one unchanged."
         ;; identities read back off the disk.
         (let* ((state-ref (%savepoint-object-reference "state" state-path))
                (replies-ref (%savepoint-object-reference "local-replies" replies-path))
+               (dedup-root-ref (%savepoint-object-reference "dedup-root" dedup-root-path))
+               (entries (dedup-root-entries scan))
+               ;; clip boundary, distinct from the cut, from the root's LAST entry (:7155-7164)
+               (boundary (if entries
+                             (let ((last (car (last entries))))
+                               (list :sequence (getf last :sequence)
+                                     :sha256 (getf last :record-sha256)
+                                     :dedup-root (getf dedup-root-ref :sha256)))
+                             +absent+))
                (manifest (list :schema schema
                                :journal (journal-file-identity journal)
                                :local-revision rev
                                :replay-cut cut
-                               :boundary +absent+
+                               :boundary boundary
                                :state state-ref
                                :local-replies replies-ref)))
           (unless (and (%savepoint-reference-holds-p state-ref state-path)
@@ -290,7 +302,7 @@ step returns the previous one unchanged."
                  (sp (make-savepoint
                       :id id :schema schema
                       :journal-id (journal-file-identity journal)
-                      :local-revision rev :replay-cut cut :boundary +absent+
+                      :local-revision rev :replay-cut cut :boundary boundary
                       :manifest manifest :manifest-sha manifest-sha
                       :image state-ref :local-replies replies-ref :age age
                       :failed-backup nil)))

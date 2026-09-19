@@ -1674,6 +1674,12 @@
     #:savepoint-load-gap
     #:savepoint-cut-sequence
     #:savepoint-content-ok-p
+    ;; the dedup root a savepoint's boundary record names (src/dedup-root.lisp,
+    ;; SPEC-WORK.md:7155-7164)
+    #:dedup-root-entries
+    #:write-dedup-root
+    #:read-dedup-root
+    #:dedup-root-holds-p
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite
