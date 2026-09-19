@@ -37,8 +37,18 @@ import (
 //
 // Platform and toolchain constraints are NOT opt-in tags and are not in scope:
 // `//go:build darwin` does not hide a test, it says where it runs, and the
-// three-OS matrices already cover that. Nor is a negation (`!windows`), which
+// hosted matrices already cover that. Nor is a negation (`!windows`), which
 // is on by default everywhere else.
+//
+// ONE PLATFORM IS THE EXCEPTION, named here so nobody has to find it twice.
+// Since 2026-09-18 the CL tier runs no native Windows leg at all (Glenn: "drop
+// the native windows CI runners. WSL only from now on."), so a `//go:build
+// windows` test file is COMPILED on every change — the lint job's `make
+// vet-windows` type-checks the whole tree, test files included, for GOOS=windows
+// — and RUN only by the certification tier's `test-windows`. That is a stated
+// trade, not a tag falling quietly out of CI, and it is why `windows` stays in
+// implicitTags below: it is a GOOS, it hides nothing from `go test` on a Windows
+// machine, and a `-tags windows` leg was never what ran those tests.
 
 // implicitTags are the constraints the toolchain sets by itself: the operating
 // systems and architectures `go test` already fans out over, plus the ones set

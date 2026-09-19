@@ -3,6 +3,7 @@ package swarm
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-SWARM rule 12, rule 13).
@@ -33,6 +36,36 @@ const SQLiteBinary = "sqlite3"
 
 // OpenCodeDB is the database's path inside the job's data home (XDG_DATA_HOME).
 const OpenCodeDB = "opencode/opencode.db"
+
+// ErrNoSQLite is the class of a usage source whose one program is not on PATH. It carries
+// the literal refusal line so every caller that surfaces the error says the same thing and
+// a missing reader is never a dash nobody explained.
+var ErrNoSQLite = errors.New("USAGE REFUSED reason=no_sqlite")
+
+// usageSettleWait is how long a read waits for a write-ahead log to be checkpointed. It is
+// a property of this tool, like the sample interval, and never a fact about anybody's data.
+const usageSettleWait = 5 * time.Second
+
+// usageSettlePause is the gap between attempts while a -wal is still beside the database.
+const usageSettlePause = 50 * time.Millisecond
+
+// OpenCodeStoreLocations are the paths OpenCode may keep its database at inside ONE job's
+// data home, in the order the reader tries them: the XDG_DATA_HOME spelling this tool
+// exports, then the HOME/.local/share spelling OpenCode derives from HOME on Linux -- the
+// bench carries its auth.json there. Both are joined to the job's own data home, so both are
+// this job's database and never another job's.
+func OpenCodeStoreLocations(dataHome string) []string {
+	return []string{
+		filepath.Join(dataHome, filepath.FromSlash(OpenCodeDB)),
+		filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db"),
+	}
+}
+
+// UsageRefusalLine is the one line a usage read that did not answer leaves on the record, so
+// that a row of dashes is never silent about the reader it needed.
+func UsageRefusalLine(id string, err error) string {
+	return fmt.Sprintf("%s id=%s", oneline.Escape(redactedReason(err)), oneline.Field(id))
+}
 
 // usageTimeout is how long this tool waits for one query before saying so. It is a property
 // of the tool, like a deadline, and never a fact about anybody's data: the supervisor
@@ -65,18 +98,20 @@ const messagesSQL = `SELECT ` +
 // BUDGET-UNVERIFIABLE on the third such sample, because a numeric budget the tool has
 // stopped being able to see is a budget the caller believes is enforced and is not.
 func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
-	path := filepath.Join(dataHome, filepath.FromSlash(OpenCodeDB))
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return ProviderUsage{Values: map[string]string{}}, nil
-		}
-		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
+	path, err := findOpenCodeStore(dataHome)
+	if err != nil {
+		return ProviderUsage{}, err
+	}
+	if path == "" {
+		// The harness has written no database at either standard location yet: it has
+		// reported nothing, which is an absence and not a failure.
+		return ProviderUsage{Values: map[string]string{}}, nil
 	}
 	if _, err := exec.LookPath(SQLiteBinary); err != nil {
-		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
-			path, SQLiteBinary, SQLiteBinary)
+		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
+			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCode(path)
+	rows, err := queryOpenCodeWaiting(path)
 	if err != nil {
 		return ProviderUsage{}, err
 	}
@@ -86,6 +121,51 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
 	return foldOpenCodeRows(rows)
+}
+
+// findOpenCodeStore is the first of the standard locations that holds a database, or an
+// empty path when none does. A location that exists but cannot be stat'd is an error, not a
+// silent absence: the path is this tool's own and a read that stopped is a fact.
+func findOpenCodeStore(dataHome string) (string, error) {
+	for _, path := range OpenCodeStoreLocations(dataHome) {
+		st, err := os.Stat(path)
+		if err == nil {
+			if st.IsDir() {
+				continue
+			}
+			return path, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
+		}
+	}
+	return "", nil
+}
+
+// queryOpenCodeWaiting runs the one statement, and while a write-ahead log sits beside the
+// database it waits for the writer to checkpoint it, up to usageSettleWait. The read lands
+// in the window between the harness spending and its connection closing, when the `-wal` is
+// present and `sqlite3 -readonly` answers `database is locked`; recording a dash for that
+// window loses tokens the harness really spent.
+func queryOpenCodeWaiting(path string) ([][]string, error) {
+	deadline := time.Now().Add(usageSettleWait)
+	for {
+		rows, err := queryOpenCode(path)
+		if err == nil {
+			return rows, nil
+		}
+		if !walPending(path) || !time.Now().Before(deadline) {
+			return nil, err
+		}
+		time.Sleep(usageSettlePause)
+	}
+}
+
+// walPending says whether the database has a write-ahead log beside it that sqlite3 cannot
+// replay read-only. That file, and not the error text, is what a retry waits on.
+func walPending(path string) bool {
+	_, err := os.Stat(path + "-wal")
+	return err == nil
 }
 
 // queryOpenCode runs the one statement, read-only, under the timeout. The database is the

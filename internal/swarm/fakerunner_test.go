@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -163,4 +164,23 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 // "{job}/repo" for one that published in its clone (issue #594).
 func publishCard(into string) runnerStep {
 	return runnerStep{Op: "write", Path: into + "/RESULT.md", Body: "{line1}\n{line2}\n"}
+}
+
+// TestFakeRunnerRecordsItsArgv: the `record` step writes the runner's whole argv, one element
+// per line, which is how a fixture proves WHICH command the batch ran and with what arguments
+// -- a `--runner`'s five, or the self's `native` verb (issue #636).
+func TestFakeRunnerRecordsItsArgv(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "argv")
+	runner := runnerDoing(t, dir, "recorder", runnerStep{Op: "record", Path: out})
+	card := filepath.Join(dir, "card.md")
+	root := filepath.Join(dir, "root")
+	cmd := exec.Command(runner, "card-f", "1", "m", card, root)
+	if got, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the recording runner: %v\n%s", err, got)
+	}
+	want := strings.Join([]string{runner, "card-f", "1", "m", card, root}, "\n") + "\n"
+	if got := string(readTestFile(t, out)); got != want {
+		t.Fatalf("the recorded argv is %q, want %q", got, want)
+	}
 }

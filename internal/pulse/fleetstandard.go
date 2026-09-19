@@ -95,6 +95,30 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 			Probe: `bad=""; for p in "$HOME"/runner-nova-tools-*/.path; do [ -f "$p" ] || continue; case "$(head -n 1 "$p")" in /usr/bin:*|/usr/bin) bad="$p";; esac; done; [ -n "$bad" ] && echo "$bad" || echo ok`,
 		},
 		{
+			Name: "go", OS: "windows", Match: MatchContains, Want: goWant,
+			Probe: `for g in "C:/sdk/go/bin/go.exe" "$HOME/sdk/go*/bin/go.exe" "$(command -v go 2>/dev/null)"; do [ -x "$g" ] || continue; "$g" version; break; done`,
+		},
+		{
+			Name: "git", OS: "windows", Match: MatchContains, Want: "windows",
+			Probe: `git version 2>/dev/null`,
+		},
+		{
+			Name: "no-wsl", OS: "windows", Match: MatchEquals, Want: "ok",
+			Probe: `[ -z "$WSL_DISTRO_NAME" ] && [ -z "$WSL_INTEROP" ] && echo ok`,
+		},
+		{
+			Name: "features", OS: "windows", Match: MatchContains, Want: "Containers",
+			Probe: `powershell.exe -NoProfile -Command '$h = (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -ErrorAction SilentlyContinue).State; $c = (Get-WindowsOptionalFeature -Online -FeatureName Containers -ErrorAction SilentlyContinue).State; if ($h -eq "Enabled" -and $c -eq "Enabled") { Write-Output "Hyper-V+Containers" } else { Write-Output "disabled" }'`,
+		},
+		{
+			Name: "runner-service", OS: "windows", Match: MatchContains, Want: "Running (nova)",
+			Probe: `powershell.exe -NoProfile -Command '$s = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "actions.runner.*" -and $_.State -eq "Running" -and ($_.StartName -match "(?i)(^|\\)nova$") }; if ($s) { Write-Output "Running (nova)" } else { Write-Output "stopped" }'`,
+		},
+		{
+			Name: "wol", OS: "windows", Match: MatchEquals, Want: "enabled",
+			Probe: `powershell.exe -NoProfile -Command '$w = Get-NetAdapterAdvancedProperty -DisplayName "*Wake*" -ErrorAction SilentlyContinue | Where-Object { $_.DisplayValue -match "Enabled" }; if ($w) { Write-Output "enabled" } else { Write-Output "disabled" }'`,
+		},
+		{
 			Name: "nova-stamp", Match: stampMatch, Want: stampWant,
 			Probe: `"$HOME/.local/bin/nova-swarm" version 2>/dev/null`,
 		},
@@ -190,11 +214,13 @@ func FleetStandard(in FleetStandardInput) int {
 		if err != nil {
 			return fleetUnreachable(in.Stdout, bench.Name, fleetReason(out, err))
 		}
-		switch strings.ToLower(strings.TrimSpace(lastLine(out))) {
-		case "linux":
+		switch v := strings.ToLower(strings.TrimSpace(lastLine(out))); {
+		case v == "linux":
 			goos = "linux"
-		case "darwin":
+		case v == "darwin":
 			goos = "darwin"
+		case strings.HasPrefix(v, "mingw") || strings.HasPrefix(v, "msys") || strings.HasPrefix(v, "cygwin") || strings.HasPrefix(v, "windows"):
+			goos = "windows"
 		default:
 			return fleetUnreachable(in.Stdout, bench.Name, "uname said "+oneline.Field(strings.TrimSpace(lastLine(out))))
 		}

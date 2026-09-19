@@ -46,7 +46,11 @@ it, and a tool that pretended to would be the most dangerous thing in the pool.
 **A job's records are regular files: a `RESULT.md`, `harness.log`, `exit.json`
 or `note` that is a symlink or a FIFO is no record at all — read as `no-result`
 and never followed or waited on — and every record this tool writes into a job
-directory goes through a temporary whose name the worker cannot predict.**
+directory goes through a temporary whose name the worker cannot predict.** The
+batch gather makes that refusal explicit rather than folding it into a missing
+result: a `RESULT.md` that is not a regular file scores `ABSTAIN reason=refused`,
+with the one refusal line naming the path and the kind (`symlink`, `fifo`) after
+the token, so a coordinator reads the planted path off the packet (issue #233).
 
 ## Freddy's swarm is frozen production, and this tool does not touch it
 
@@ -259,9 +263,22 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     distinct from reporting no rows yet — on three consecutive samples ends
     the job: `RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3: <reason>`,
     `end=budget-unverifiable`, findings kept, files to `failed/`, because a
-    numeric budget the tool has stopped being able to see is a budget the
-    caller believes is enforced and is not. A worker
-    is handed a task file and the files the task names, never a conversation
+     numeric budget the tool has stopped being able to see is a budget the
+     caller believes is enforced and is not. The database is read under the
+     job's **own data home**, at either spelling OpenCode may give it there:
+     `$XDG_DATA_HOME/opencode/opencode.db`, and the `$HOME/.local/share/
+     opencode/opencode.db` a Linux harness derives from `HOME` — the two point
+     at the same per-job directory, because the dispatcher exports `HOME` and
+     `XDG_DATA_HOME` beside each other, and a reader that knew only the XDG
+     spelling found no database and wrote an all-dash row for a run that spent
+     real tokens (measured on hulk, vision, mini and space). A read that lands
+     while a write-ahead log is still beside the database waits up to **5
+     seconds** for the writer to checkpoint it, because the harness closes its
+     connection as it exits and the read lands in that window. And a bench
+     without the reader is a **named refusal**, never a silent dash:
+     `USAGE REFUSED reason=no_sqlite`, the literal line the final read leaves
+     on the record when `sqlite3` is not on `PATH`. A worker
+     is handed a task file and the files the task names, never a conversation
     and never a repository to wander: the task template's file list is the
     reading list, `--files` is its ceiling, and a job that reads past it is
     the refusal rule 1 already names. (2026-09-11: 21 children spent 2.4M
@@ -651,7 +668,7 @@ meaning of "pull the intelligence up, push down to machinery."
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> (--runner <cmd> | --harness <path> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--worker <file>]
@@ -1178,6 +1195,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `refused` | published a `RESULT.md` that is not a regular file — a symlink or a FIFO — so it is no result at all; the refusal line naming the path and the kind follows (issue #233) |
 | `fence` | was stopped by the HARNESS'S OWN permission fence: it auto-rejected a path and the model stopped there, so the card never got to publish (issue #644). The path follows as `path=<p>` |
 | `wall` | was stopped by the WALL — the harness's permission auto-reject line, or the sandbox's own `SANDBOX REFUSED` / `Operation not permitted` on a path outside the write set — and published no `RESULT.md`. The refused path and the last `STEP <n>` the card reached follow as `path=<p> step=<n>`, and one `WALL task=<id> path=<p> step=<n> [commits=<n> branch=<name>]` report line is printed on the notes so a harvester can still push the commits the dead card left (issue #644's follow-up) |
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
@@ -1204,7 +1222,8 @@ token off the line rather than guessing from files a batch creates itself.
 
 **The order:** the result is read first, and a matching result decides — `done`,
 or `result-after-deadline` at the deadline — before `card-abstain` (line 1 or
-line 2 beginning `ABSTAIN`) and `line1-mismatch`. With no matching result: the
+line 2 beginning `ABSTAIN`) and `line1-mismatch`. A path that is not a regular
+file is `refused` ahead of all of those, because it is never opened at all. With no matching result: the
 kill classes the machinery watched itself — `idle=<s>`, `input-limit` — and
 `admission`, then `fence`, then `wall`, then `harness-silent`, then `deadline`, then the pair `no-result`
 (ended clean) and `rc=<n>` (ended non-zero), which are one slot split by the exit
@@ -1257,7 +1276,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1343,6 +1362,19 @@ reads, prints or copies `auth`; it names the path on the bench's `native`
 command line and checks that it exists with mode `0600` (`stat`, never a
 read). Rule 6 seen from a bench: the key is data, and here not even data this
 tool holds.
+
+**`--harness <path>` on `batch --cards`** runs every local card through this same
+binary's own `native`, with no runner script at all (#636: `native` lives in the
+binary that was demanding an external command to reach it, and every caller wrote
+the same eight-line shim). `--auth` names the harness's auth file; a `local` row in
+`--benches` supplies both when neither flag is given.
+
+**`--slots <lo>-<hi>` on `batch --cards`** is the range allocation comes from: a card
+whose slot column is `-` takes the lowest free slot in the range, and a hand slot outside
+it is that card's own `ADMIT REFUSED slot=<n> range=<lo>-<hi>` at admission rather than an
+`rc=2` with no log inside a runner (#618). Free means the slot's own `BATCH` lock is absent
+or its holder pid is dead — never a process probe, which disagrees with the lock for the
+whole of a card's clone.
 
 **`--bench <name>[,<name>...]` on `batch --cards`** allocates the cards across
 the named benches. The cards file's `slot` column is `<n>` (local slot n, as
@@ -1581,7 +1613,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1595,6 +1627,7 @@ RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
 RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
+RUN WAIT slots owner=<owner> holders=<owner:count,...>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -1805,6 +1838,10 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
 - a launch without a lease is refused by the launcher.
+
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all]` frees them, and `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+
+**The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
 **The store is the authority.** A launcher reads it before it runs and releases
 its lease after; the broker is the only writer. No owner keeps a private count
@@ -3244,3 +3281,38 @@ stamp, so a local job never runs beside a benchmark; the separate
 | ideas #275 | refutation rate as a health metric | already, rule 8: `accurate`/`wrong` per batch is that rate; a falling `wrong` share is the reader's to notice |
 | ideas #273 | cleanup arriving before its notification | already, rule 18: `exit.json` before the slot is freed, and the nonce ties the evidence to its launch |
 | ideas #357 | reason about a report, never execute | already, the data paragraph at the top |
+
+## Efficiency: lessons absorbed 2026-09-12 *(Glenn; Stella's measurements)*
+
+Measured 2026-09-12 on the live pool and the worker homes. Correctness is the
+rest of this spec; this section records what `nova-swarm` costs the coordinator
+and the bench, and the rules that bound that cost. Three operations are the
+widest, and each has one rule.
+
+| the operation, measured | the measurement | the rule that bounds it |
+|---|---|---|
+| **REPEATS: one full clone of the repository per job** | 21 clones, 307 MB and 36 s of wall clock for one object graph; 1,128,320 cache-read tokens over 13 tool calls, 86,794 cache-read tokens per tool call, with the clone and the `gh pr checkout` two of them — about 174K per job and 3.6M across the 21 | the reference clone |
+| **COORDINATOR READ: `triage` is the widest listing of the seven** | `status` 22 lines/3,174 B; `cost --max 0` 22/3,698 B; `triage` 45 lines/15,490 B with 20 of 47 at the default; `triage --all --max 0` 71/24,810 B — the counts on `TRIAGE OK` are 27 B of it | counts first, findings capped |
+| **WAITS ON: a deadline, a sampler, and a person** | a job's own clock is `--deadline` (40m in `deepseek.json`); the usage budget is read by the sampler at `--usage-interval` (default 5 s); a verdict waits on a person | one owner per wait, one line back |
+
+1. **The reference clone.** A job's clone is its own (rule 7) and is taken with
+   `git clone --reference-if-able <the shared on-disk checkout> --dissociate`,
+   so the object graph is shared with a checkout already on the bench and the
+   job directory holds only its own objects; `--dissociate` keeps the job's
+   clone independent of a reference it does not own. The task template names
+   the reference checkout and the clone, so every job clones the same way and
+   the network is touched once per object graph, never once per job.
+   (`bin/child-clone.sh:111` already knows the shape.)
+2. **Counts first; a finding's prose is the second read.** The narrow return of
+   `triage` is the counts: `TRIAGE BATCH` and `TRIAGE OK` are the lines a
+   coordinator reads, and a `TRIAGE FINDING` line carries the finding's own
+   prose, bounded by `--max` and capped by `internal/oneline`, with `TRIAGE
+   MORE kind=finding shown=<n> total=<t> at=<path>` naming the page that holds
+   the rest. `status` and `cost` stay one line per task, and `triage` is never
+   wider than the question it answers: 20 finding bodies to learn counts that
+   cost 27 B is the cost this rule removes.
+3. **One owner per wait, and one line back.** A job's own clock is the deadline
+   held by the machinery; the usage budget is read by the sampler at
+   `--usage-interval` and never by a second poll; and a verdict waits on a
+   person, never on a scan. No wait loop scans for its own name (the races
+   below) and no listing polls a person on the coordinator's behalf.

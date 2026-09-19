@@ -160,9 +160,20 @@ func TestBenchProbeNeverReadsAuth(t *testing.T) {
 	if !strings.Contains(log, "stat -c %a "+f.auth) {
 		t.Errorf("the probe stats the auth path:\n%s", log)
 	}
+	// THE READING COMMAND IS A WORD OF THE LINE, NEVER A SUBSTRING OF THE PATH. This
+	// checked `strings.Contains(line, "cp")` and went red on darwin CI against a probe that
+	// had read nothing: macOS hands out temp directories like
+	// /var/folders/vk/dgdj_cpn55177y7hyx0qyx_r0000gn/T/..., and `_cpn` carries "cp". The
+	// fixture's own path must never be able to answer a question about the fixture's argv.
 	for _, line := range strings.Split(log, "\n") {
-		if strings.Contains(line, f.auth) && (strings.Contains(line, "cat") || strings.Contains(line, "head") || strings.Contains(line, "cp")) {
-			t.Errorf("the probe read the auth file: %s", line)
+		if !strings.Contains(line, f.auth) {
+			continue
+		}
+		for _, word := range strings.Fields(line) {
+			switch word {
+			case "cat", "head", "cp":
+				t.Errorf("the probe read the auth file: %s", line)
+			}
 		}
 	}
 }

@@ -1506,15 +1506,19 @@ that acts on a machine, resolve `--bench` through this file and refuse a machine
 lack `bench`, **by name and before any ssh**:
 
 ```
-FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, space"
+FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, threadripper-wsl, space"
 ```
 
 The reason is one of `runner-host`, `coordination-host`, `services-host`, `not-a-bench` or
 `unknown-machine`. A machine that is **both** `runner` and `bench` is the exception and must
-say so in its notes, with the day it was made: `allow-shared=<YYYY-MM-DD> <why>`. hulk and
-vision carry one today because the pull worker still runs a card in the bench's own home;
-when it runs cards in containers the runner role comes off both lines and the exception goes
-with it. A shared line without the dated note is a refusal, and so is an unknown role, a
+say so in its notes, with the day it was made: `allow-shared=<YYYY-MM-DD> <why>`. hulk,
+vision and threadripper-wsl carry one today because the pull worker still runs a card in the
+bench's own home; when it runs cards in containers the runner role comes off those lines and
+the exception goes with it. There is **no `windows` line** and there is not meant to be
+(Glenn 2026-09-18: "drop the native windows CI runners. WSL only from now on."): the
+Threadripper Pro joins as `threadripper-wsl`, a `linux/x64` machine under WSL2 with CI
+runners labelled `linux,X64,threadripper`, and `internal/fleet`'s example test refuses any
+machine whose `os` is `windows`. A shared line without the dated note is a refusal, and so is an unknown role, a
 name twice, a missing column or cores that are not a number — the registry is read whole or
 not at all, because the half that reads is the half that lets a card through.
 
@@ -1919,9 +1923,10 @@ check-then-add pair with this board's own values in it, quoted so it can be past
 `cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
 transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
 
-`quickstart` makes the directory if it is not there — `created=` on its first line says
-whether this run made it — and every other verb refuses one that is missing rather than
-making it, so a wrong path is a refusal and not an empty board:
+`quickstart`, and the first `add`, make the directory if it is not there — `created=` on
+`quickstart`'s first line says whether that run made it — while `list`, `check`, `take` and
+`close` refuse one that is missing rather than making it, so a wrong path is a refusal and
+not an empty board:
 
 ```
 $ nova-board quickstart --dir ./board --stale 10m
@@ -1941,10 +1946,11 @@ QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in 
 ```
 
 **What a first run gets wrong.** `--dir` naming a directory that is not there: `quickstart`
-makes it, because a first run has nowhere to write yet, but every other verb refuses — a
-`list` or a `take` against a directory that is not there is a path typed wrong, and making
-it would answer the typo with an empty board. That refusal names the `mkdir -p` that fixes
-it, quoted so a `--dir` with a space in it pastes. `--stale` missing: it wants how long a card may go without
+and the first `add` make it, because a first run has nowhere to write yet and a board is an
+append-only log, so an empty directory is a valid empty ledger; `list`, `check`, `take` and
+`close` refuse — a read or a take against a directory that is not there is a path typed
+wrong, and making it would answer the typo with an empty board. That refusal names the
+`mkdir -p` that fixes it, quoted so a `--dir` with a space in it pastes. `--stale` missing: it wants how long a card may go without
 an event before it lists as takeable again, and the family's number is 10m — the tool will
 not guess one. No backend, or both: name exactly one, because a board written to two places
 is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
@@ -2473,6 +2479,34 @@ ledger for each pool: the aggregate key does not contain a pool ID.
 This ledger is distinct from the `sum --swarm-root` daily ledger above. See
 `nova-tokens help` for `profiles`, `session` and ledger-reporting options.
 
+## nova-play
+
+Shared reading annotations at the **margin layer**. Participants anchor notes to exact passages in a source text, reply to each other's notes, and resume across sessions. A changed source produces an explicit anchor conflict rather than silently moving notes. The contract is [docs/SPEC-PLAY.md](SPEC-PLAY.md).
+
+### First run
+
+Three lines: annotate a passage, read the notes back, reply to a friend. Every path is a flag — there is no default source, no default author, and no default annotation file.
+
+```
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+
+$ nova-play read --source story.txt
+READ OK source=story.txt notes=1
+NOTE id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+  PASSAGE The lantern room held a brass fitting.
+  BODY I wonder what alloy this is.
+
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
+```
+
+**What the flags want.** `--source` is the text being annotated; `--author` is who is speaking; `--passage` is the exact passage text to anchor to (must appear verbatim in the source); `--note` is the annotation text; `--id` is the note to reply to; `--body` is the reply text.
+
+**When the source changes.** Edit the source file between sessions and the next `read` says `ANCHOR STALE`, naming both the stored hash and the current hash. A new annotation is refused until the operator decides whether to migrate notes, discard them, or revert the source.
+
+**What this deliberately is not.** Not a reader or viewer — the source stays where it is, opened in whatever reader the participants choose. Not a publishing platform — notes are local to the machine that creates them. Not a notification system — participants check for new notes by running `read`.
+
 ## nova-update
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
@@ -2557,6 +2591,22 @@ per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` ask
 it holds and installs nothing.
 
 ```sh
+nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64
+```
+
+A **windows** bench is a target like any other. The build names every artifact for it — a
+`windows-amd64` release is a directory of `.exe` files and a `SHA256SUMS` that lists them — and the
+adopt sends and runs `nova-update.exe` there. `--bin`, `--dest`, `--retire` and the `--machines`
+columns take the drive-absolute form as well (`C:\Users\nova\.local\bin`, which is what
+[BENCH-WINDOWS.md](BENCH-WINDOWS.md) puts in that bench's runner `.path`); every backslash is folded
+to a forward slash before a command is composed, because the far side's ssh shell is Git Bash and a
+backslash there is an escape. The drive form is refused for a non-windows target, and a drive-relative
+(`C:Users\nova`) or UNC (`\\server\share`) path is refused everywhere. A cross-built windows artifact
+cannot be run by the host that built it, so the build claims nothing about having done so; see
+[SPEC-RELEASE.md](SPEC-RELEASE.md) §11.
+
+```sh
 nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/nova-release' --reason "shipped a key"
 ```
 
@@ -2629,6 +2679,26 @@ or a larger `--budget`; never remove a lock file to break a live lock.
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
 contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
+
+### Gate a seat pull request
+
+```sh
+nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" \
+  --machines ./queue/control/machines.tsv
+```
+
+The store's own review, as a verb: run it in CI on every pull request against the
+secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
+`GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
+`GATE REFUSE rule=<n> file=<f>: <why>` line at exit 2.
+
+`--machines` is the fleet's machines registry, and its `seat` column is what
+vouches for a recipient key the diff introduces: a new key is permitted only for
+a seat some machine in the registry carries, so adding a seat needs no human
+approval and still cannot grant a key to a machine the fleet does not have. A row
+whose seat reads `-` vouches for nothing. Leave `--machines` off and that rule
+does not run — the approval line then says `machines=-`, so an APPROVE is never
+mistaken for the fleet having vouched.
 
 ### Seal a replacement value
 

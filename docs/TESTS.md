@@ -553,6 +553,28 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 ```
 
 
+## nova-play
+
+Fixture: a source text in a temp directory, annotated and read back. The notes
+live beside the source; every path is a flag.
+
+### First run
+
+```text
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+
+$ nova-play read --source story.txt
+READ OK source=story.txt notes=1
+NOTE id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+  PASSAGE The lantern room held a brass fitting.
+  BODY I wonder what alloy this is.
+
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
+```
+
+
 ## nova-update
 
 ### First run

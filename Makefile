@@ -12,39 +12,17 @@ GO ?= go
 PKGS ?= ./...
 CL_PKGS := ./cmd/... ./internal/...
 
-# WINDOWS_TIMEOUT is the per-package ceiling on EVERY hosted Windows leg — the PR
-# leg and the merge group's windows leg both — and it is a
-# MEASUREMENT, not the Linux number copied across. The leg carried the hosted
-# convention of 100 s until 2026-09-18, when its first real run (#1332,
-# integration-4) found four git-fixture packages ON that ceiling even under
-# -short: cmd/nova-bus 100.1 s, cmd/nova-merge 100.0 s, cmd/nova-review 100.1 s,
-# cmd/nova-wake 100.1 s. Those are censored numbers — the true sizes are at least
-# 100 s and unknown above — so a ceiling of 100 s was not naming a hang, it was
-# the hang. 180 s is the answer: it is above every size this tree has been seen
-# to have on Windows, it is a third of a suite that must now be dealt over three
-# shards rather than run whole, and it still fires well inside the leg's
-# six-minute job cap, so Go names the slow package instead of the runner killing
-# the job silently. testdata/ci/package-sizes-windows.tsv carries the
-# measurements this number comes from. It reached the merge group's windows leg
-# on 2026-09-18 too, when that leg's shard 0 of 3 for cmd/nova-bus was killed at
-# 100 s running the package FULL: the same ceiling, the same cause, one tier
-# later.
+# WINDOWS_TIMEOUT LIVED HERE, and it is gone with the legs it bounded (Glenn
+# 2026-09-18: "drop the native windows CI runners. WSL only from now on."). It
+# was the per-package ceiling on the hosted Windows PR leg and the merge group's
+# windows leg, 300 s, measured rather than carried over — the number and the
+# measurements behind it (testdata/ci/package-sizes-windows.tsv, #1332,
+# integration-4, run 35354900090) are in git at dev 65e86175 if a Windows leg
+# ever comes back. What stays is `vet-windows` below: a cross-vet that needs no
+# Windows machine and no ceiling at all.
 #
-# THREE HUNDRED since run 35354900090, and 180 was not wrong so much as thin.
-# That run's merge legs proved it works — cmd/nova-bus's shard 3 of 6 ran
-# 149.9 s in ONE `go test` and passed, where the old 100 s would have killed it
-# a second time — and in doing so showed how little room was left: 149.9 s under
-# a 180 s ceiling is 20%. The mean share of that package is 50 s (300.1 s dealt
-# six ways); the shard that got three times the mean is not an outlier but the
-# ordinary result of dealing by test NAME instead of by time. 300 s is twice the
-# largest single invocation ever measured here, and also the whole of the largest
-# package, so no honest invocation can exceed it. Both job caps (ten minutes on
-# the PR leg, twelve on the merge windows leg) still fire above it, so a real
-# hang is still named by Go rather than by the runner.
-WINDOWS_TIMEOUT ?= 300s
-
 # DARWIN_TIMEOUT is the per-package ceiling on the merge group's darwin leg, and
-# like WINDOWS_TIMEOUT it is a MEASUREMENT and not a convention carried over from
+# it is a MEASUREMENT and not a convention carried over from
 # another platform. That leg used the linux 100 s until 2026-09-18, when
 # merge-group run 35369433950 (batch 7, PR #1360) had its darwin shards 0 and 1
 # CANCELLED at the five-minute leg cap on superman.
@@ -74,25 +52,24 @@ WINDOWS_TIMEOUT ?= 300s
 DARWIN_TIMEOUT ?= 300s
 
 # MERGE_TIMEOUT is the per-package ceiling on the merge group's legs. 100 s is
-# the linux number and is what that leg has always used; the windows and darwin
-# legs export MERGE_TIMEOUT=$(make -s windows-timeout) and
-# MERGE_TIMEOUT=$(make -s darwin-timeout), so each platform's ceiling lives in ONE
-# place — WINDOWS_TIMEOUT and DARWIN_TIMEOUT above — instead of being written
-# again in the workflow. `?=` is what makes that environment value win.
+# the linux number and is what that leg has always used; the darwin leg exports
+# MERGE_TIMEOUT=$(make -s darwin-timeout), so that platform's ceiling lives in ONE
+# place — DARWIN_TIMEOUT above — instead of being written again in the workflow.
+# `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet lint test test-full test-short test-pr test-merge test-race test-e2e test-lisp check clean windows-timeout darwin-timeout
+.PHONY: help build fmt vet vet-windows lint test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
 
 help:
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
+	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
-	@echo "make test-pr     go test -short -count=1 -timeout WINDOWS_TIMEOUT -run RUN PKGS (the hosted PR legs)"
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
@@ -113,6 +90,26 @@ fmt:
 
 vet:
 	$(GO) vet $(PKGS)
+
+# THE ONE WINDOWS GUARD ON THE CL PATH, since the native windows runners were
+# dropped (Glenn 2026-09-18: "drop the native windows CI runners. WSL only from
+# now on."). `GOOS=windows go vet ./...` builds the Windows standard library
+# into the cache and then type-checks every package AND every _test.go for
+# Windows — which is what catches the class a cross-platform Go tree actually
+# breaks: a *_windows.go that stopped compiling, a syscall used without a build
+# tag, a constant that only exists on unix. It runs on a Linux runner in seconds
+# and needs no Windows machine.
+#
+# ALWAYS ./..., never $(PKGS): a shard of the tree cross-vetted is not the
+# guard. It is the whole tree or it is nothing, and it is cheap enough to be the
+# whole tree. CGO_ENABLED=0 because there is no Windows C toolchain here and
+# none is wanted; GOARCH=amd64 is the platform the release builds.
+#
+# It is the same step nova-merge's batch gate runs under the name `vet-windows`
+# (cmd/nova-merge/batch.go, docs/SPEC-MERGE.md edge 25), so a GOOS=windows break is
+# refused by the gate before the batch and by ci.yml's lint job on the PR.
+vet-windows:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
 lint: fmt vet
 
@@ -143,35 +140,20 @@ test-full:
 test-short:
 	$(GO) test -short -count=1 -timeout 12m $(PKGS)
 
-# The hosted legs a PULL REQUEST gets, and every flag is deliberate. -short keeps
-# the multi-process and thousand-note fixtures (cmd/nova-bus measured 439 s on
-# windows-latest before its -short gate, #682) out of a leg whose budget is two
-# minutes; the Windows-only breakages this leg is here for — an execute-bit
-# assertion, a backslash in an expected path, an unsuffixed fake .exe — are
-# ordinary unit tests and are not gated behind testing.Short(). RUN is the
-# shard's test-name regex, empty meaning every test in PKGS, exactly as
-# test-merge takes it: -short alone was not enough, and #1332 measured four
-# packages that must be dealt across shards rather than run whole. WINDOWS_TIMEOUT is
-# the measured ceiling above. The merge group still runs these same packages FULL
-# (test-merge), so nothing is traded away, only moved earlier.
-test-pr:
-	$(GO) test -short -count=1 -timeout $(WINDOWS_TIMEOUT) -run "$(RUN)" $(PKGS)
+# `test-pr` LIVED HERE, the sharded hosted PR leg's entry, and it went with
+# test-windows-pr on 2026-09-18: it had exactly one caller, and the caller is
+# gone. The hosted PR leg that remains — test-hosted-pr's Linux sandbox entry —
+# runs `make test-short`, which it always did.
 
 # The merge-group hosted legs: full tests (no -short) for the packages the group
 # changes, one shard at a time. RUN is the shard's test-name regex; empty means
 # every test in PKGS. MERGE_TIMEOUT is the per-package ceiling — 100 s for linux,
-# WINDOWS_TIMEOUT on the windows leg and DARWIN_TIMEOUT on the darwin leg, each of
-# which exports it.
+# and DARWIN_TIMEOUT on the darwin leg, which exports it.
 test-merge:
 	$(GO) test -count=1 -timeout $(MERGE_TIMEOUT) -run "$(RUN)" $(PKGS)
 
-# windows-timeout prints WINDOWS_TIMEOUT and nothing else, so the workflow's
-# windows legs can take the ceiling FROM HERE rather than carry a second copy of
-# the number. `make -s windows-timeout` is the whole interface.
-windows-timeout:
-	@echo $(WINDOWS_TIMEOUT)
-
-# darwin-timeout is the same interface for the darwin merge leg. One target, one
+# darwin-timeout is the interface for the darwin merge leg: the workflow takes
+# the ceiling FROM HERE rather than carrying a second copy of the number. One target, one
 # number, read by the workflow: a ceiling written twice is a ceiling that drifts.
 darwin-timeout:
 	@echo $(DARWIN_TIMEOUT)
