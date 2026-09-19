@@ -3668,3 +3668,59 @@ widest, and each has one rule.
    `--usage-interval` and never by a second poll; and a verdict waits on a
    person, never on a scan. No wait loop scans for its own name (the races
    below) and no listing polls a person on the coordinator's behalf.
+
+## One live run per job directory
+
+*(Issue #1585, Stella's finding and her HOLD on the first repair. This section is
+APPENDED rather than written into **Slots** above, where it belongs by subject,
+because this repository cites this file by line — `SPEC-SWARM.md:80`,
+`:982`, `:1253` and two dozen more, in Go comments and in review packets — and an
+insertion higher up moves every one of them.)*
+
+**A job directory has one live run.** `<slot-dir>/jobs/<label>` is the worker's
+own working directory, its own data home and its own logs (**Slots**, above),
+and two workers on one data home is the 2026-09-10 `database is locked`
+failure this document already closes (**the races, taken out**). Two concurrent
+`nova-swarm native` invocations pointed at one physical `<slot>/jobs/<label>`
+are therefore **not lawful**, whatever the bench's slot store says about their
+seats: the seats are capacity, and the directory is ownership.
+
+**Ownership is a file, and the file is the reaper's word too.** `<job>/.lease`
+carries `pid=`, `host=`, `label=`, `nonce=` and `started=`, its mtime is the
+heartbeat, and `scripts/bench-hygiene.sh` reads it to decide that a job is live
+and must not be swept. Five rules bind it:
+
+1. **The take is exclusive.** A launcher takes the lease before the child
+   starts. A take that finds a **live** holder is refused, and the launcher
+   exits 2 with one line naming the holder, having written nothing into the
+   directory it does not own.
+2. **Ownership is published whole.** The record is written to a temporary file
+   beside the lease, flushed, and **linked** into place, so the name `.lease`
+   never exists holding a partial record. Creating the name and writing it
+   afterwards is not enough: a reader in that window sees an empty record.
+3. **An incomplete record is never evidence of a dead owner.** A lease that
+   cannot be parsed — empty, truncated, half a line — is **held by an unknown
+   owner** and stays held until its heartbeat is older than the stale bound
+   (ten minutes, the reaper's `HYGIENE_LEASE_STALE_MIN`). The same holds for a
+   lease written on another host, whose pid this kernel cannot be asked about.
+   A lease whose pid **can** be asked about is judged by the kernel alone, so a
+   crashed launcher costs the next run of that card nothing.
+4. **Failing to establish ownership is a refusal, never a silent success.** A
+   `.lease` that is not a regular file, a job directory that cannot be written,
+   a record that cannot be read, and a claim lost repeatedly to another taker
+   are all refusals: the launcher exits 2 with a remedy. A launcher that cannot
+   prove it owns its job directory does not start. (This replaces the earlier
+   best-effort rule, which was defensible while the lease was only advice to a
+   reaper and is not defensible now that it is the admission to a shared
+   directory: under it, `.lease` as a directory let **both** of two launchers
+   proceed.)
+5. **The release is fenced and joined.** A run removes the lease only while the
+   file is still the record it published — pid **and** nonce — and only after
+   its heartbeat has stopped, so a tick already in flight cannot write the
+   lease back after the run that owned it has ended. A heartbeat whose lease
+   has gone missing publishes it again, under rule 2, and leaves another run's
+   lease alone if one has arrived.
+
+**What this does not change.** The bench slot store (`slots take` / `slots
+release`, above) is capacity accounting and is untouched: a run can hold a seat
+and still be refused its job directory, and that refusal is the correct answer.

@@ -125,3 +125,57 @@ func awaitLease(t *testing.T, path string) string {
 		}
 	}
 }
+
+// STELLA'S SECOND P1 AT THE VERB (#1585, her HOLD on 6146897a). With `.lease` a path the
+// launcher cannot establish ownership at -- an owned directory, here -- the take used to
+// answer "no lease, carry on", and BOTH of two runs were told they held the job directory.
+// A run that cannot prove it owns its job directory now does not start, and it says so in
+// one line with a remedy, BEFORE it has written anything into the shared place: no data
+// home, no temp directory, no harness output, no argv for the wall.
+func TestANativeRunThatCannotEstablishOwnershipRefusesBeforeItWritesAnything(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	const label = "unownable"
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := os.MkdirAll(filepath.Join(jobDir, swarm.JobLeaseName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card:    []byte("a card\n"),
+		slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
+	}, &errOut)
+
+	if code != 2 {
+		t.Fatalf("a run that cannot take its job lease exits 2, got %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Errorf("the refusal is one REFUSED line, got:\n%s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "cannot prove it owns its job directory") {
+		t.Errorf("the refusal does not say what it could not establish:\n%s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "run it again") {
+		t.Errorf("the refusal carries no remedy:\n%s", errOut.String())
+	}
+	if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
+		t.Errorf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
+	}
+
+	// NOTHING WAS WRITTEN. The job directory holds what the test put there and not one
+	// thing more, and the slot has no data home or temp directory for this label.
+	entries, err := os.ReadDir(jobDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != swarm.JobLeaseName {
+			t.Errorf("the refused run wrote %q into a job directory it does not own", e.Name())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(slot, "tmp", label)); !os.IsNotExist(err) {
+		t.Errorf("the refused run made its temp directory anyway: %v", err)
+	}
+}

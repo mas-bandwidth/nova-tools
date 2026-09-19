@@ -225,7 +225,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 				oneline.Field(held.Label), oneline.Field(held.Started)))
 			return nativeRunResult{}, 2
 		}
-		refuseNative(errOut, fmt.Sprintf("the job lease on %s could not be taken: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
+		// RULE 3 (#1585, Stella's second P1): a take that establishes nothing used to hand
+		// back a do-nothing release and the launch went on -- with `.lease` an owned
+		// directory, BOTH of two runs were told they held the place. A run that cannot
+		// prove it owns its job directory does not start.
+		refuseNative(errOut, fmt.Sprintf("the job lease on %s could not be taken, so this run cannot prove it owns its job directory and will not start: %s; clear or repair %s and run it again",
+			oneline.Field(jobDir), oneline.Escape(err.Error()), oneline.Field(filepath.Join(jobDir, swarm.JobLeaseName))))
 		return nativeRunResult{}, 2
 	}
 	defer releaseLease()
