@@ -2115,6 +2115,39 @@ transition log is not a counting row. Every other ask prints the counting row. A
 
 **Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted, that is, settled in C after having merged and gone green, and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent is cut but held in the tree and never launched before ready, and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading and the revert flag only: it has no separate PR or evidence-record reference kind, no roadmap critical-path or width (ready-now versus blocked) view, no cost/estimate rollup along needs, and no held-in-tree launch gate — those remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
 
+
+**Every hand action has a verb (nova-tools #854 item 7, #828 class F).** A hand action is any
+change to the work an operator makes outside the tool: a card launched from a shell, a PR enqueued
+in the forge's own UI, a runner killed by `ssh`, a lease cleared with `redis-cli`, a file moved into
+a queue directory. Each of those is a real change to real state, and today none of them writes
+anything the tree can read, so the tree's account of the fleet is true only while nobody helps.
+Class F of pit stop 3 is the standing cost: state changed, nothing recorded, and the next reader
+believes the tree.
+
+So: **every hand action has a verb that writes it to the tree, and a hand action taken without one
+is a finding filed the same hour.** Three rules:
+
+1. **The verb exists before the action is allowed.** An operator who needs to do something the tool
+   cannot express has found a missing verb, not a reason to reach past the tool. The missing verb is
+   itself the finding, and it is filed against the tool rather than worked around; `#617`'s shape
+   — the help block and the code disagreeing about which verbs exist — is what a fleet looks like
+   when that rule is not kept.
+2. **The record names the hand, not just the change.** A hand action's event carries `by=<operator>`,
+   `at=<stamp>`, `reason=<one line>` and `instead-of=<the verb that could not do it, or `-`>`. The
+   reason is required and is not a free-text afterthought: it is what makes the next reader able to
+   tell a considered override from a habit.
+3. **Hand actions are counted, and the count is a health signal.** `query ready` and the one-line
+   `status` of item 6 report hand actions in the window beside the work, because a rising count is
+   the tool falling behind the fleet. Zero is not the target — a fleet where nobody ever reaches
+   past the tool is a fleet that has stopped trying things — but an *unrecorded* hand action is
+   always a defect, and that is the number the gate reads.
+
+The replays are `a-hand-action-without-a-verb-is-a-finding-the-same-hour`,
+`a-hand-action-records-by-at-reason-and-instead-of`, `a-hand-action-with-no-reason-is-refused` and
+`the-window-counts-hand-actions-beside-the-work`. This slice covers the record and the count only:
+it does not detect a hand action nobody reported — nothing here reads `ssh` or the forge's audit
+log — and that detection is the rest of item 7.
+
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
 This is the query that produced the root refinement, written out whole, and it is the replay
