@@ -1986,6 +1986,9 @@
     #:report-submit
     #:%report-submit
     #:state-reports
+    #:report-subject-node
+    #:node-report-engaged-p
+    #:query-reports
     #:kind-session-fields
     #:record-form->event
     #:kernel-applied

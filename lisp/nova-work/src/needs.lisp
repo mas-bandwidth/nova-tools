@@ -426,6 +426,51 @@ the verb's own `FAIL` line on a refusal, so every existing caller reads the same
     by))
 
 ;;; ------------------------------------------------------------------
+;;; a report of a launch engages a node          SPEC-WORK.md:5114-5140
+;;; ------------------------------------------------------------------
+;;;
+;;; Rule 9: a hand launch, told afterwards, "is recorded and never refused,
+;;; because refusing the record would make the tree false twice". The record is
+;;; evidence of a breach and never an override: it grants no lease, adds nothing
+;;; to W, moves no state, and the next admission verb for the node still
+;;; refuses. What it does do is engage the node -- "a node carrying a report of
+;;; a launch is engaged, by the words above, exactly as one carrying an
+;;; `:attempt` is" -- so from that event the node reads `needs-broken=true` for
+;;; as long as a need is unmet, and nothing at all once it is met.
+;;;
+;;; The engagement runs "until a `report --act stopped` on the same node or the
+;;; node's next `:correct`, whichever comes first" -- the approved follow-up
+;;; #1580 at 191b9ab7, whose rule 8 says a `:launched` report begins an
+;;; engagement and a `:stopped` report on that node ends it, "and neither
+;;; touches a lease, a state or a count". `correct` has no verb in this kernel,
+;;; so the generation half reaches this through the view.
+
+(defun state-reports (state)
+  "Every `:report` event in the journal, oldest first. A read: it visits no node
+and writes nothing."
+  (loop for record in (state-history state)
+        append (remove-if-not (lambda (e) (eq :report (getf e :kind)))
+                              (getf record :events))))
+
+(defun report-subject-node (event)
+  "The node id a `:report`'s selector names, or NIL for every other subject."
+  (let ((subject (getf event :subject)))
+    (when (and (consp subject) (eq :node (first subject)))
+      (second subject))))
+
+(defun node-report-engaged-p (state id)
+  "True when ID carries a report of a launch followed by no report of a stop on
+that node (SPEC-WORK.md:5137). Reports are read oldest first, so the newest of
+the two wins."
+  (let ((engaged nil))
+    (dolist (e (state-reports state) engaged)
+      (when (equal id (report-subject-node e))
+        (case (getf e :act)
+          (:launched (setf engaged t))
+          (:stopped (setf engaged nil))
+          (t nil))))))
+
+;;; ------------------------------------------------------------------
 ;;; `needs-broken`, the reading                  SPEC-WORK.md:4965-4988
 ;;; ------------------------------------------------------------------
 ;;;
@@ -449,17 +494,19 @@ state is `:doing` or `:review`.
 
 The spec's full list also names a pending or accepted offer, a live allocation,
 an `:attempt` of the node's current generation, and a report of a launch with no
-report of a stop after it. None of those lives on the node in this kernel --
-offers and attempts are `src/control.lisp`'s, allocations `src/fleet.lisp`'s,
-and `:report` is not built at all -- so VIEW carries them when a session has
-them: its ENGAGED entry, when present, is consulted beside the two facts the
-tree itself holds. A view naming none adds none."
+report of a stop after it. The report half IS read here, by
+`node-report-engaged-p`. Offers, allocations and attempts are
+`src/control.lisp`'s and `src/fleet.lisp`'s and do not live on the node, so VIEW
+carries them when a session has them: its ENGAGED entry, when present, is
+consulted beside the facts the tree itself holds. A view naming none adds none."
   (let ((n (%node-quiet state id)))
     (and n
          (or (and (wnode-holder n) t)
              (member (wnode-state n) '(:doing :review))
+             ;; a report of a launch with no report of a stop after it
+             (node-report-engaged-p state id)
              (and view
-                  (member id (needs-view-engaged view) :test #'equal)
+                  (member id (needs-view-engaged view) :test (function equal))
                   t))
          t)))
 
@@ -588,3 +635,4 @@ which are *Priority*'s and are not this slice's."
           (or (ready-row-resolver row) "-")
           (or (ready-row-responsible row) "-")
           (or (ready-row-holder row) "unowned")))
+
