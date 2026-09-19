@@ -30,6 +30,8 @@ type ManagerInput struct {
 	Roots  string // comma-separated swarm roots, the benches this shift harvests
 	Bus    string // the nova-bus clone this shift is the single waiter on
 	As     string // the name this shift waits and receipts as
+	Remote string // the git remote nova-bus wait fetches the bus from
+	Branch string // the branch the bus lives on
 	Hours  float64
 	Max    int
 	Stdout io.Writer
@@ -232,7 +234,7 @@ func (m *manager) waitBus() []string {
 		d = 3 * time.Minute
 	}
 	out, err := m.sh("", d+time.Minute, "nova-bus", "wait", "--bus", m.in.Bus, "--as", m.in.As,
-		"--timeout", m.pol.WaitTimeout, "--advance")
+		"--timeout", m.pol.WaitTimeout, "--advance", "--remote", m.in.Remote, "--branch", m.in.Branch)
 	if err != nil {
 		m.event("MANAGER NOTE bus wait failed: %s", oneline.Cap(strings.TrimSpace(out), 120))
 		return nil
