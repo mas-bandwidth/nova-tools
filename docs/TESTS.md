@@ -379,6 +379,21 @@ a missing key and an unreadable questions file are each one line on stderr at
 exit 2. Below the floor the answer is still one line, and the exit is 3 — a
 suggestion, never an authorization.
 
+**The keyed line is NOT in the block below, and that is deliberate.** Asking a
+model is the one thing in this section that needs a key and a network, so a
+test can only run it by reaching a model from `go test` — which this repository
+does not do — or by skipping it, which is a step that never runs at all wearing
+the clothes of one that does. What it prints, when you run it yourself with a
+key in your environment, is `DECIDE gate=go conf=0.94 floor=0.90 below=-` from
+`nova-decide --questions ./questions.json --state ./state.md --floor 0.9`. Every
+line in the blocks below is executed by `cmd/nova-decide/firstrun_test.go`.
+
+Two parts of the `version` line belong to the run and not to the document, and
+the test declares both: the `<goos>/<goarch> go<version>` tail is whichever
+machine runs it, and the version word is what the build stamped itself with --
+the stamp shown here in a build you make, and `devel` in the unstamped binary
+`go test` builds.
+
 ### First run
 
 ```
@@ -386,10 +401,7 @@ $ nova-decide
 DECIDE REFUSED reason=no-arguments --questions is required, refusing to guess; run: nova-decide help
 
 $ nova-decide version
-nova-decide devel linux/amd64 go1.26.5
-
-$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9   # Requires: JEV_API_KEY
-DECIDE gate=go conf=0.94 floor=0.90 below=-
+nova-decide v0.16.0-dev.c839379e.0.20260919154525-3c3efc0e155c darwin/arm64 go1.27.1
 ```
 
 ### The ladder of minds
