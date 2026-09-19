@@ -183,6 +183,43 @@ on free text."
           (unless (%report-rfc3339-p now)
             (refuse2 "--now is not an RFC 3339 UTC stamp"))
           ;; ---- exit 1: the session's own refusals (SPEC-WORK.md:5090) ------
+          ;; ---- the durable replay answer, before any mutable state --------
+          ;;
+          ;; Stella's [P2] on 1a11652d, applied to EVERY command on this path:
+          ;; an identical recorded payload answers its original receipt whatever
+          ;; the set has done since, and a different payload under the same id
+          ;; is refused. The digest covers the SIX payload fields only --
+          ;; `:unmet` and `:need` are the session's own half and are outside it
+          ;; (SPEC-WORK.md:5071) -- so it can be taken before the state is read
+          ;; at all, which is what makes this ordering possible here.
+          (unless (%report-text-p as) (refuse2 "refusing to guess: --as"))
+          (let ((digest (payload-digest
+                         (list (make-work-event
+                                :kind :report :node +absent+ :by as
+                                :fields (list :act act :subject (list kind value)
+                                              :what what :acted-at acted-at
+                                              :instead-of instead-of :reason reason)
+                                :stamp now :clock clock :request request
+                                :generation-owner (or as "rowan") :rev 0)))))
+            (multiple-value-bind (verdict recorded)
+                (%request-replay-verdict kernel request digest)
+              (case verdict
+                (:unavailable
+                 (return-from %report-submit-1
+                   (values nil (format nil "REPORT FAIL subject=~A page=~A: dedup unavailable"
+                                       selector recorded)
+                           1 nil)))
+                (:replay
+                 (return-from %report-submit-1
+                   (values t recorded 0
+                           (list :request request :digest digest
+                                 :events (list) :replayed t))))
+                (:conflict
+                 (return-from %report-submit-1
+                   (values nil (format nil "REPORT FAIL subject=~A: reused with a different payload"
+                                       selector)
+                           1 nil))))))
+          ;; ---- and only now the mutable state -----------------------------
           (when (and expect (/= expect (state-revision state)))
             (return-from %report-submit-1
               (values nil (format nil "REPORT FAIL subject=~A expect=~D current=~D: stale"
@@ -192,7 +229,6 @@ on free text."
             (refuse1 selector (format nil "no such ~(~A~)" kind)))
           ;; `--as` is caller text and the tool authenticates nobody, but it
           ;; must name a registered friend of `friends` (SPEC-WORK.md:5079).
-          (unless (%report-text-p as) (refuse2 "refusing to guess: --as"))
           (let ((friends (and (kernel-fleet kernel) (fleet-friends (kernel-fleet kernel)))))
             (unless (and friends (member as friends :test #'string=))
               (refuse1 selector "unknown reporter")))
@@ -235,25 +271,7 @@ on free text."
                                  (if node-subject-p need "-")
                                  holder
                                  (work-event-rev event))))
-              ;; the two-part dedup test, asked of the journal
-              (multiple-value-bind (found recorded-digest recorded-line)
-                  (journal-lookup (kernel-journal kernel) request)
-                (cond
-                  ((eq found :unavailable)
-                   (return-from %report-submit-1
-                     (values nil (format nil "REPORT FAIL subject=~A page=~A: dedup unavailable"
-                                         selector recorded-digest)
-                             1 nil)))
-                  (found
-                   (if (string= digest recorded-digest)
-                       (return-from %report-submit-1
-                         (values t recorded-line 0
-                                 (list :request request :digest digest
-                                       :events '() :replayed t)))
-                       (return-from %report-submit-1
-                         (values nil (format nil "REPORT FAIL subject=~A: reused with a different payload"
-                                             selector)
-                                 1 nil))))))
+              ;; The dedup answer was given above, before any state was read.
               (let ((envelope (list :request request :digest digest :events (list event))))
                 (multiple-value-bind (accepted refusal)
                     (journal-accept (kernel-journal kernel) envelope)

@@ -302,3 +302,103 @@
                  "the refusal took no revision")
     (check-equal '() (state-reports (kernel-state k))
                  "and left no event")))
+
+;;; ------------------------------------------------------------------
+;;; the report's replay answer, and its ONE durable record
+;;;    Stella's [P2] on 1a11652d applied here, and her [P1] on 1a558076
+;;;    checked for before she reads this slice
+;;; ------------------------------------------------------------------
+
+(defun report-file-kernel (path &key (seed *report-seed*))
+  (let* ((state (make-seed-state seed))
+         (k (make-kernel :state state
+                         :journal (open-file-journal
+                                   path :initial-state-hash (root-digest state))
+                         :rev-base 1
+                         :friends (list "rowan" "emma"))))
+    (submit k (list :verb :machine :change :register :machine "space"
+                    :name "space" :owner "rowan" :connect "profile:space"
+                    :roles (list :build :test) :permits (list "go-test")
+                    :excludes '() :limits (list :concurrent 4)
+                    :facts nil :declared-by "rowan"
+                    :request "reg-space" :stamp "2026-09-16T10:00:00Z"
+                    :clock :tool :generation-owner "gen-1"))
+    k))
+
+(deftest "a-report-replays-before-any-state-is-read-and-records-once"
+    "docs/SPEC-WORK.md:315"
+    "expected=one-record-per-report-and-an-identical-retry-answers-it-whatever-moved"
+  ;; Stella asked that this path not repeat the receipt-after-apply pattern she
+  ;; found in `dep`, and that the replay answer come before mutable state on
+  ;; EVERY command on this path. Both checked here, against the REAL file
+  ;; journal, before she reads the slice.
+  (let* ((path (test-journal-path "report-file-journal"))
+         (k (report-file-kernel path)))
+    (unwind-protect
+         (progn
+           ;; an ordinary report: one record, the complete receipt
+           (multiple-value-bind (okp original code)
+               (report-submit k :subject "node:acme/work/d" :act :launched
+                                :what "started a worker from a shell"
+                                :acted-at "2026-09-16T12:00:00Z" :instead-of "-"
+                                :reason "the card was already cut" :as "rowan"
+                                :request "file-report"
+                                :stamp "2026-09-16T12:00:30Z")
+             (ok okp "the report is written against a real journal: ~A" original)
+             (check-equal 0 code "at exit 0")
+             (ok (search "REPORT OK" original) "with the complete receipt: ~A" original)
+             (ok (search "unmet=1" original) "and its node half: ~A" original)
+             (ok (not (search "MUTATION FAIL" original)) "and no mutation failure")
+             ;; the state moves: the need settles, so a FRESH report would read
+             ;; unmet=0 -- but an identical replay must answer the ORIGINAL
+             (submit k (list :verb :state-to-doing :node "acme/work/n" :by "rowan"
+                             :reason "start" :request "n-doing"
+                             :stamp "2026-09-16T12:10:00Z" :clock :tool
+                             :generation-owner "gen-1"))
+             (submit k (list :verb :state-to-done :node "acme/work/n" :by "rowan"
+                             :reason "merged" :evidence (list "ev-1")
+                             :request "n-done" :stamp "2026-09-16T12:20:00Z"
+                             :clock :tool :generation-owner "gen-1"))
+             (let ((events (length (state-reports (kernel-state k))))
+                   (rev (state-revision (kernel-state k))))
+               (multiple-value-bind (okp replayed code)
+                   (report-submit k :subject "node:acme/work/d" :act :launched
+                                    :what "started a worker from a shell"
+                                    :acted-at "2026-09-16T12:00:00Z" :instead-of "-"
+                                    :reason "the card was already cut" :as "rowan"
+                                    :request "file-report"
+                                    :stamp "2026-09-16T12:00:30Z")
+                 (ok okp "the identical request replays")
+                 (check-equal 0 code "at exit 0")
+                 (check-string= original replayed
+                                "to the original receipt, with its original unmet="))
+               (check-equal events (length (state-reports (kernel-state k)))
+                            "and writes no second event")
+               (check-equal rev (state-revision (kernel-state k))
+                            "and takes no second revision")))
+           ;; a different payload under the same id is refused
+           (multiple-value-bind (okp line code)
+               (report-submit k :subject "node:acme/work/d" :act :stopped
+                                :what "something else"
+                                :acted-at "2026-09-16T12:00:00Z" :instead-of "-"
+                                :reason "different" :as "rowan"
+                                :request "file-report"
+                                :stamp "2026-09-16T12:00:30Z")
+             (ok (not okp) "a different payload under the same id is refused")
+             (check-equal 1 code "at exit 1")
+             (ok (search "reused with a different payload" line) "by name: ~A" line))
+           ;; close, reopen, replay: the reports come back
+           (close-file-journal (kernel-journal k))
+           (let* ((state (make-seed-state *report-seed*))
+                  (j2 (open-file-journal path :initial-state-hash (root-digest state))))
+             (unwind-protect
+                  (let* ((k2 (make-kernel :state state :journal j2 :rev-base 1))
+                         (replayed (progn (replay-journal j2 k2) (kernel-state k2))))
+                    (check-equal 1 (length (state-reports replayed))
+                                 "the report replays from the durable record")
+                    (let ((e (first (state-reports replayed))))
+                      (check-equal :launched (getf e :act) "with its act")
+                      (check-equal 1 (getf e :unmet)
+                                   "and the session half it was written with")))
+               (close-file-journal j2))))
+      (ignore-errors (close-file-journal (kernel-journal k))))))
