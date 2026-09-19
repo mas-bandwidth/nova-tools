@@ -179,7 +179,9 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `budget`, `budget-unverifiable` (rule 13), `violation`, `failed`, `unknown`
     (no completion evidence, rule
     17), `launch-failed` (rule 18), and `rc` is the worker's exit code, `-`
-    for `unknown` and `launch-failed`. A
+    for `unknown` and `launch-failed`, and `-` for a native launch the
+    machinery ended itself (its deadline, a TERM from outside, a budget of
+    rule 13d), which has no exit code of its own to report. A
     field the provider did not report is the literal `-`, never `0`; `0` is
     written only when the provider reported zero. For OpenCode the source is
     the SQLite database in the data home the dispatcher exported for that job
@@ -246,7 +248,8 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     can observe is a promise the tool cannot keep. Otherwise; the supervisor samples the provider's usage as the job runs
     (OpenCode's data dir, per job, read-only, every `--usage-interval`
     seconds, default 5, a tool property like a timeout) and ends the job when
-    the observed sum passes the budget, recording `RUN BUDGET id=<id>
+    the observed sum reaches the budget, `spent >= n`, so a sum exactly
+    equal to the budget ends the job, recording `RUN BUDGET id=<id>
     spent=<n> of=<n>`; a job that ends this way keeps the findings it
     appended so far (rule 3). **The observed sum is
     `tokens_in + tokens_out + reasoning`** of rule 12's columns: what the job
@@ -306,9 +309,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     budget, and when the observed `cache_read` exceeds `max_cache_read` or the
     harness log's assistant turns (counted the way usage counts assistant rows,
     or the usage row count where the log has fewer) exceed `max_turns`, it stops
-    the task on the deadline's stop path: the job moves to `failed/` with
-    `end=budget` in `usage.tsv`, findings kept, and the task's report carries
-    `PROMPT-DEFECT task=<id> reason=budget cache_read=<n> max=<m> turns=<t>`.
+    the task with a terminate, a wait and a kill of the group: the job moves
+    to `failed/` with `end=budget` in `usage.tsv`, findings kept, and the
+    task's report carries
+    `PROMPT-DEFECT task=<id> reason=budget cache_read=<n> max=<m> turns=<t>`,
+    which the supervisor appends to `<job>/RESULT.md` once the group is
+    dead, creating the file where the worker published none; it is the one
+    line this tool ever writes into a report.
     (2026-09-17: one Flash card ran 16 minutes and 3.2M cache-read tokens for
     one fix; the average card is 1.6M cache-read for 40-60k of prompt.)
 13c. **A card budget below the harness's measured startup cost is refused at
@@ -349,26 +356,37 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     nothing to the sum, and is never a reason to drop the budget, to skip a
     sample or to print `unmetered`.
 
-    **A number needs a source the tool can read, and that is checked before
+    **A budget needs a source the tool can read, and that is checked before
     anything is made.** A native card's usage source is its worker
     description's `usage`, and `opencode` when there is no `--worker`. A
     numeric `--tokens` beside `usage: none`, or on a bench with no `sqlite3`
-    on `PATH` (rule 13's literal line, `USAGE REFUSED reason=no_sqlite`), is
-    refused at exit 2 before any directory is made, for rule 13's own
-    reason: a budget nothing can observe is a promise the tool cannot keep.
-    `--tokens unmetered` runs under either, as it does today.
+    on `PATH`, is `NATIVE REFUSED` at exit 2, naming the source or the
+    missing reader, before any directory is made, for rule 13's own reason:
+    a budget nothing can observe is a promise the tool cannot keep. The same
+    refusal meets a description that sets `max_cache_read` or `max_turns`
+    under either condition, whatever `--tokens` says, because the card's own
+    budget is read from the same source. `--tokens unmetered` with no such
+    description runs under either, as it does today.
 
     **`native` samples, in the process that holds the card's deadline.**
     There is no supervisor on this route and none is spawned. While a launch
     runs, `native` reads the harness's own database under the job's data
     home (rule 13's source, at both spellings, read-only) every
     `--usage-interval` seconds, default 5, a flag `native` takes as `run`
-    does. It never samples `usage.tsv`: that row is written after a launch's
-    process group is dead, so it is the record of a stop and cannot be the
-    cause of one. And a sample is never in the deadline's way: a read is
-    given at most one interval, a read still unanswered then is abandoned
-    and counted as a failed read, and the deadline and a TERM from outside
-    end the card at their own instants whatever a read is doing.
+    does. On `native` an interval under one second, or one not shorter than
+    `--deadline`, is refused at exit 2: the first could end an honest card
+    on three quick reads, and under the second no sample would ever run. It
+    never samples `usage.tsv`: that row is written after a launch's process
+    group is dead, so it is the record of a stop and cannot be the cause of
+    one. A sample reads what the database holds through whatever
+    write-ahead log lies beside it, which is the ordinary state of a
+    database a live harness has open, and it waits for no checkpoint; rule
+    13's five-second wait belongs to the final read, made when the harness
+    is gone. And a sample is never in the deadline's way: a read is given 5
+    seconds whatever the interval, no sample starts while one is unanswered,
+    a read still unanswered at its limit is abandoned and counted as a
+    failed read, and the deadline and a TERM from outside end the card at
+    their own instants whatever a read is doing.
 
     **The budget is the job's, across every launch, and a stop is the end.**
     A native job is one invocation of `native`: up to three launches when a
@@ -376,26 +394,45 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     usage row per launch. The observed sum is over the whole job, every
     launch counted from the first launch's start, so a retry begins with
     what the earlier launches spent and no retry resets anything. The stop
-    is `spent >= n`, the comparison both routes make, tested at every sample
-    and once more before any relaunch. When it is true `native` ends the
-    card the way it ends one on a TERM from outside: a terminate to the
-    card's whole process group, a wait, then a kill of the group, after
-    which no process of that group is alive, grandchildren and a harness
-    that ignores the terminate included. Then comes the final read and the
-    launch's usage row, with `end=budget`, `rc` a dash, and the true final
-    sum. What the card had published stays where it is: a `RESULT.md` is
-    kept, and a `RESULT.md.tmp` is left as data (rule 16). Nothing is
-    launched again, by `native` or by a batch, and running the card once
-    more is a person's act with a number of their own. `native` exits 1: it
-    ran, and the answer is no.
+    is rule 13's `spent >= n`, tested at every sample and once more before
+    any relaunch. When it is true `native` ends the card the way it ends one
+    on a TERM from outside: a terminate to the card's whole process group, a
+    wait, then a kill of the group, after which no process of that group is
+    alive, grandchildren and a harness that ignores the terminate included.
+    What the card had published stays where it is: a `RESULT.md` is kept
+    byte for byte, a `RESULT.md.tmp` is left as data (rule 16), and on this
+    route the tool writes nothing into a report. Nothing is launched again,
+    by `native` or by a batch, and running the card once more is a person's
+    act with a number of their own. `native` exits 1: it ran, and the answer
+    is no.
 
-    **The line says which.** `NATIVE OK` always carries `budget=`. It is
-    `budget=unmetered`, or rule 13's three spellings against the number:
+    **Two numbers, kept apart: the row is the launch's and the line is the
+    job's.** After every launch, once its group is dead, comes the final
+    read and that launch's usage row, and the row carries what THAT LAUNCH
+    is finally reported to have used, from its own start to its own end,
+    and never the job's running sum: a job's rows are disjoint, so that
+    adding them counts each launch once. The launch a budget ended has
+    `end=budget` in its row, and `rc` is a dash there (rule 12), while the
+    line prints `rc=-1` as it does for a deadline and for a TERM. The job's
+    figure is on the line: `NATIVE OK` always carries `budget=`, which is
+    `budget=unmetered`, or rule 13's three spellings against the number,
     `budget=<spent>/<n>`, `budget=-/<n>` for a job whose usage was never
     observed, and `budget=<spent>+/<n>` for a partial observation. `<spent>`
-    is the final sum, never the sum at the stop. A card its budget ended
-    carries `rc=-1` and `reason=budget`, in the place where a TERM from
-    outside puts `reason=terminated`.
+    is the sum over every launch at the final read, never the sum at the
+    stop. Two launches finally reported at 40 and 70 under `--tokens 100`
+    print `budget=110/100`, and their rows hold 40 and 70, never 40 and 110.
+    "Final" means the last thing the harness reported and nothing more: a
+    final read that cannot be made leaves a dash in every column of the row
+    it could not fill, the line then prints the last sum a sample saw with
+    the plus, and nowhere does the tool say that all that was spent was
+    seen.
+
+    **The line says what stopped the card.** A card the machinery stopped
+    under this rule carries one more field, and its value names the budget:
+    `stopped=tokens`, `stopped=max_turns`, `stopped=max_cache_read`, or
+    `stopped=unverifiable`. It is a key of its own. `reason=terminated`
+    stays what a TERM from outside prints, and the `reason=` inside the
+    `usage=none` group stays the usage read's.
 
     **When the source cannot be read** the three cases are rule 13's, and
     they stay apart. *Nothing observed* (no database yet, no rows, a harness
@@ -405,18 +442,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     can reach the budget and stop the card, and it can never show that the
     card stayed under it, which is what the plus says. *A read that fails*
     (the database unreadable, the query erroring, the read abandoned at its
-    interval) on three consecutive samples ends the card exactly as the
-    budget does, with `end=budget-unverifiable` in the row,
-    `reason=budget-unverifiable` on the line and exit 1; two failures and
-    then an answer end nothing.
+    limit) on three consecutive samples ends the card exactly as the budget
+    does, with `end=budget-unverifiable` in the row, `stopped=unverifiable`
+    on the line and exit 1; two failures and then an answer end nothing.
 
     **The card's own budget comes along.** When `--worker` names a
     description with `max_cache_read` or `max_turns`, the same samples
-    enforce them as rule 13b says, and they are this route's cap on cache
-    reads and on model calls. The stop is the one above: `end=budget`,
-    `reason=budget`, and the `PROMPT-DEFECT` line in the card's report. Rule
-    13c already refuses such a budget at load when it is too small to be
-    one.
+    enforce them as rule 13b says, over the whole job as the token sum is,
+    and they are this route's cap on cache reads and on model calls; a
+    `native` with no description has neither, and `--tokens` is its only
+    budget. Turns are counted as rule 13b counts them, with
+    `<job>/harness-output.log` as the log, since `native` never writes
+    `harness.log`. The stop is the one above, with `end=budget` in the row
+    and `stopped=max_turns` or `stopped=max_cache_read` on the line. The
+    `PROMPT-DEFECT` line of rule 13b is printed on `native`'s own stdout,
+    after `NATIVE OK`, and is written into no file: the card's `RESULT.md`
+    is the card's, and a card that published nothing has no report to
+    carry it. Rule 13c already refuses such a budget at load when it is too
+    small to be one.
 
     **Every caller of `native` passes the word, and none invents it.**
     `batch --cards` takes `--tokens <n>|unmetered`, required, exit 2 naming
@@ -428,12 +471,16 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     once per card with the label, the slot, the model, the card's path and
     the root; it is handed the word as a sixth argument after those five,
     and a runner that reaches `native` without passing it on meets
-    `native`'s own refusal. In the packet a card with a matching `RESULT.md`
-    is `done` as always, because the contract decides, and its line carries
-    `stopped=budget` or
-    `stopped=budget-unverifiable`, read off its `NATIVE OK` line, so that a
-    report cut short is not read as a finished one. A card stopped with no
-    matching result is `ABSTAIN reason=budget` or
+    `native`'s own refusal. `bench probe` gains one check, `usage`, which
+    says whether `sqlite3` is on the bench's `PATH`; it is reported on
+    `BENCH OK` as `usage=<sqlite3|none>` and is never by itself a refusal,
+    because a bench that runs only `unmetered` cards needs no reader. In the
+    packet a card with a matching `RESULT.md` is `done` as always, because
+    the contract decides, and its line carries the `stopped=` field copied
+    from its `NATIVE OK` line, so that a report cut short is not read as a
+    finished one; and a batch that holds such a card does not run its
+    `--then` follow-on, printing `BATCH THEN SKIPPED` with `stopped=<b>`. A
+    card stopped with no matching result is `ABSTAIN reason=budget`, or
     `ABSTAIN reason=budget-unverifiable`, and never `rc=<n>`.
 
     **What this rule does not reach.** There is no dollar budget: `usd` is
@@ -1281,7 +1328,7 @@ handled the same way rather than a silent exit: the tree is reaped, `usage.tsv` 
 and the `NATIVE OK` line carries `reason=terminated`. A harness that ignores `SIGTERM` is
 still gone at the deadline, because the wall is a kill of the group, not a request it may
 decline. A token budget reached is the third end of a native card, and it is the
-TERM's cleanup with `reason=budget` on the line (rule 13d).
+TERM's cleanup with `stopped=tokens` on the line (rule 13d).
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
@@ -1406,11 +1453,12 @@ rules below still decide. The fold itself is:
 - usage per card and the batch total;
 - bytes bounded: counts, not lists; the packet does not grow with the batch.
 - `--then <command>` (optional) names a follow-on that runs only when every
-  card is done and none stalled or idle-killed: the command runs once, with
+  card is done and none stalled, idle-killed or stopped under rule 13d: the
+  command runs once, with
   `sh -c`, in the batch's root, with `BATCH_ID`, `BATCH_DONE` and `BATCH_N`
   in its environment, and the packet prints `BATCH THEN rc=<n>`. A batch that
   is not all done prints `BATCH THEN SKIPPED done=<d> n=<n> abstain=<a>
-  stalled=<s>` and exits 3, so the follow-on never runs on an abstain.
+  stalled=<s> stopped=<b>` and exits 3, so the follow-on never runs on an abstain or on a stopped card.
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
@@ -1519,7 +1567,7 @@ are the thing the packet replaced.
 ```
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<budget|budget-unverifiable>]
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
@@ -1752,12 +1800,13 @@ bench equals this binary's own `version` line, refused on a mismatch naming
 both; `cores` valid against `nproc --all` there, or `-`; pin, `pin=taskset`
 when `taskset` is on the bench's `PATH` and `pin=none` when not, a refusal only
 when `cores` is a list and `pin=none`; `auth` present with mode `0600`, never
-read; the wall as `nova-sandbox check` reports there. It ends with one line,
+read; the wall as `nova-sandbox check` reports there; and `usage`, whether `sqlite3` is on
+the bench's `PATH`, reported and never by itself a refusal (rule 13d). It ends with one line,
 exit 0 or 1:
 
 ```
-BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
-BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
+BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall|usage> ok=<true|false> [<one bounded value>]
+BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none> usage=<sqlite3|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 ```
 
@@ -1856,18 +1905,18 @@ BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
-BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s> stopped=<b>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<budget|budget-unverifiable>]
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 HOLD: <one bounded quoted line>
-BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
-BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
+BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall|usage> ok=<true|false> [<one bounded value>]
+BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none> usage=<sqlite3|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
@@ -1894,7 +1943,7 @@ RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
-NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=<terminated|budget|budget-unverifiable>]
+NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -3219,40 +3268,61 @@ be seen red before it is trusted.
     `RUN BUDGET-UNVERIFIABLE … samples=3` with `end=budget-unverifiable`,
     the findings kept, and one that errors twice then answers does not;
     `requeue` without `--files` or `--tokens` is exit 2 naming the flag; a
+    fake harness whose sum is exactly `--tokens` is ended; a
     fake harness whose `cache_read` alone passes `--tokens` is not ended,
     because the sum is `tokens_in`, `tokens_out` and `reasoning`.
 13d. `TestNativeBudgetEndsTheCardAndKeepsFindings` (issue #1545, open):
     `native` without `--tokens` is exit 2 naming the flag and makes no
     directory, `--tokens 0` is refused, and `batch --cards` without it is
-    exit 2 before any card starts; a fake harness that publishes a
-    `RESULT.md`, forks a grandchild, ignores the terminate and writes usage
-    rows past `--tokens` is ended with no process of its group alive, the
-    `RESULT.md` intact, exactly one launch, exit 1, a usage row with
-    `end=budget` whose three summed columns are at least the budget and
-    equal the database's final sum rather than the sum at the stop, and a
-    `NATIVE OK` line carrying `budget=<spent>/<n>` and `reason=budget`; a
-    fake harness whose `cache_read` alone passes the number is not stopped;
-    one whose first launch dies on a provider 5xx inside the launch grace
-    after reporting usage, and whose second reports more, is stopped when
-    the two together reach the budget, and a first launch that reached it
-    alone is never launched again; one that writes no usage runs to its
-    deadline and prints `budget=-/<n>`; one that reports only `tokens_in`
-    prints `budget=<n>+/<n>`; `--tokens unmetered` prints
+    exit 2 before any card starts; `native` accepts `--usage-interval`, and
+    refuses at exit 2 one under a second and one not shorter than
+    `--deadline`; a fake harness that publishes a `RESULT.md`, forks a
+    grandchild, ignores the terminate and writes usage rows past `--tokens`
+    is ended with no process of its group alive, the `RESULT.md` byte for
+    byte what it published, exactly one launch, exit 1, a usage row with
+    `end=budget` and `rc` a dash whose columns equal the database's final
+    figures rather than the figures at the stop, and a `NATIVE OK` line
+    carrying `rc=-1`, `budget=<spent>/<n>` with `spent` at least `n`, and
+    `stopped=tokens`; a fake harness whose sum is exactly `--tokens` is
+    ended, and one whose `cache_read` alone passes the number is not;
+    **the two-launch accounting**: under `--tokens 100`, a first launch that
+    reports 40 and dies on a provider 5xx inside the launch grace, then a
+    second that reports 70, is stopped in the second launch, the line
+    prints `budget=110/100`, `usage.tsv` holds two rows whose summed
+    columns are 40 and 70, never 40 and 110, the second row alone has
+    `end=budget`, and the rows add to the line's 110; a first launch that
+    reached the budget alone is never launched again; a final read that
+    fails after a stop leaves dashes in that launch's row and the last
+    sampled sum with the plus on the line; a fake harness that writes no
+    usage runs to its deadline and prints `budget=-/<n>`; one that reports
+    only `tokens_in` prints `budget=<n>+/<n>`; `--tokens unmetered` prints
     `budget=unmetered` and runs to its deadline; a usage reader that errors
     on three consecutive samples ends the card with
-    `end=budget-unverifiable`, `reason=budget-unverifiable` and exit 1, and
-    one that errors twice then answers does not; a usage reader that never
+    `end=budget-unverifiable`, `stopped=unverifiable` and exit 1, and one
+    that errors twice then answers does not; a usage reader that never
     returns does not move the deadline, and the run still ends inside the
-    bound the deadline's own test holds (issue #779); a numeric budget
-    beside `usage: none`, or with no `sqlite3` on `PATH`, is exit 2 before
-    any directory is made, and `unmetered` runs under both; token columns
-    and a `usd` that all report `0` print `budget=0/<n>` and never
-    `unmetered`; a description's `max_turns` passed ends the card with
-    `end=budget` and the `PROMPT-DEFECT` line; the batch's local and remote
+    bound the deadline's own test holds (issue #779); a database with a
+    write-ahead log beside it for the whole run is sampled and its reads
+    are answers, never failures; a numeric budget beside `usage: none`, or
+    with no `sqlite3` on `PATH`, is `NATIVE REFUSED` at exit 2 before any
+    directory is made, so is `--tokens unmetered` beside a description
+    that sets `max_turns` under either condition, and `unmetered` with no
+    such description runs under both; token columns and a `usd` that all
+    report `0` print `budget=0/<n>` and never `unmetered`; a description's
+    `max_turns` passed, and in a second case its `max_cache_read`, ends the
+    card with `end=budget`, `stopped=max_turns` or `stopped=max_cache_read`,
+    the `PROMPT-DEFECT` line on `native`'s stdout after `NATIVE OK`, and a
+    published `RESULT.md` unchanged by a byte; the batch's local and remote
     `native` argv both carry `--tokens` with the batch's own word, and a
-    `--runner` receives it as its sixth argument; and the packet scores a
-    stopped card with no matching result `ABSTAIN reason=budget`, and one
-    with a matching result as done with `stopped=budget` on its line.
+    `--runner` receives it as its sixth argument; the packet scores a
+    stopped card with no matching result `ABSTAIN reason=budget`, or
+    `ABSTAIN reason=budget-unverifiable`, ahead of `harness-silent` and
+    behind `wall`, and one with a matching result as done with the
+    `stopped=` field of its `NATIVE OK` line, `stopped=unverifiable`
+    included; a batch holding such a done card prints `BATCH THEN SKIPPED`
+    with `stopped=1` and does not run its follow-on; and `bench probe`
+    prints a `usage` check and `usage=none` on `BENCH OK` for a bench with
+    no `sqlite3`, without refusing it.
 14. `TestOneCommandUpOneLineDown`: `batch --tasks` over three template
     tasks queues three jobs from files with no prompt text on the command
     line, `BATCH OK tasks=3`, every sidecar carrying the one batch id, and a
