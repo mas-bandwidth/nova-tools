@@ -54,7 +54,12 @@
     ;; the containment forest.
     (:receipt      :change :offer :attempt :reply :stage :provenance
                    :provenance-sha256 :reason)
-    (:receipt-seal :offer :reply :sender :receipt-digest :effect))
+    (:receipt-seal :offer :reply :sender :receipt-digest :effect)
+    ;; `take` and `release` on a node: the lease, as an EVENT, so the mutation
+    ;; is one journaled command in the single writer's total order and comes
+    ;; back with `replay-journal` (nova-tools #1612 lane; src/take-verb.lisp).
+    ;; :CHANGE is :TAKE or :RELEASE and :HOLDER is the name that claimed it.
+    (:lease      :change :holder))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")
