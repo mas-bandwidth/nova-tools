@@ -34,8 +34,18 @@ func TestAcceptKindsPrintsTheTableWithoutABench(t *testing.T) {
 		}
 	}
 	for _, l := range lines {
-		if !strings.HasPrefix(l, "KIND name=") {
-			t.Errorf("a printed row is not a KIND line: %q", l)
+		if !strings.HasPrefix(l, "KIND name=") && !strings.HasPrefix(l, "DRIFT name=") {
+			t.Errorf("a printed row is neither a KIND nor a DRIFT line: %q", l)
+		}
+	}
+	// The two commonest names the cutters write are shown with the table's nearest, so a
+	// person holding a card that says `KIND: fix-with-red-test` is told what to write.
+	for _, want := range []string{
+		"DRIFT name=fix-with-red-test nearest=fix-red gate=none",
+		"DRIFT name=dogfood nearest=fix-red gate=none",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the printed table has no %q:\n%s", want, out.String())
 		}
 	}
 }

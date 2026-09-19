@@ -3,6 +3,7 @@ package pulse
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -103,6 +104,57 @@ func (k Kind) ControlBuilt() bool {
 	return !k.Gated()
 }
 
+// PrintKinds is `nova-pulse accept --kinds` (SPEC-TOOLWORK §5 rule 3): the table above,
+// one line per kind, in the table's own order. A person asking what a kind's gate is
+// reads it from the tool that runs the gate rather than from a document that may have
+// drifted, and the class test holds the two to each other.
+//
+// One line of `key=value` tokens, like every other line this tool prints: a value with a
+// space in it is quoted by oneline.Field, so a row stays one line and stays greppable.
+func PrintKinds(w io.Writer) int {
+	for _, k := range Kinds {
+		gate := "none"
+		if k.Gated() {
+			gate = strings.Join(k.Steps, ",")
+		}
+		control := k.Control
+		if control == "" {
+			control = "none"
+		}
+		tokens := "-"
+		if len(k.Tokens) > 0 {
+			tokens = strings.Join(k.Tokens, ",")
+		}
+		// The machine tokens are bare; the three prose fields are QUOTED rather than
+		// oneline-escaped, because a table a person runs the tool to read should be
+		// readable, and %q keeps the row one line and one parse either way.
+		fmt.Fprintf(w, "KIND name=%s gate=%s tokens=%s built=%v does=%q paths=%q control=%q\n",
+			oneline.Field(k.Name), oneline.Field(gate), oneline.Field(tokens), k.ControlBuilt(),
+			k.Does, k.Paths, control)
+	}
+	// And what the CUTTERS actually write that the table does not hold. A person
+	// reading the table wants to know why the name on the card in front of them is not
+	// in it, and the tool knows: 35 of the 91 cards measured on 2026-09-19 carry one of
+	// these. It assigns no gate -- accept still abstains on every one of them.
+	for _, name := range sortedDriftNames() {
+		fmt.Fprintf(w, "DRIFT name=%s nearest=%s gate=none reason=%q\n",
+			oneline.Field(name), oneline.Field(KindDrift[name]),
+			"cut by a cutter, not in SPEC-TOOLWORK \u00a75; accept abstains on it")
+	}
+	return 0
+}
+
+// sortedDriftNames is KindDrift's keys in one order, so the printed table is the same
+// table twice running and a class test can hold it.
+func sortedDriftNames() []string {
+	out := make([]string, 0, len(KindDrift))
+	for k := range KindDrift {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // The kinds the CUTTERS actually write, and the nearest name the table holds.
 //
 // Measured 2026-09-19 over the 91 cards under tmp/session-0919b (`grep -h '^KIND:'`):
@@ -151,35 +203,4 @@ func UnknownKindRemedy(name string) string {
 			oneline.Field(name), oneline.Field(near), oneline.Field(name))
 	}
 	return fmt.Sprintf("the kinds table does not hold %s, and there is no default kind (run `nova-pulse accept --kinds` for the table)", oneline.Field(name))
-}
-
-// PrintKinds is `nova-pulse accept --kinds` (SPEC-TOOLWORK §5 rule 3): the table above,
-// one line per kind, in the table's own order. A person asking what a kind's gate is
-// reads it from the tool that runs the gate rather than from a document that may have
-// drifted, and the class test holds the two to each other.
-//
-// One line of `key=value` tokens, like every other line this tool prints: a value with a
-// space in it is quoted by oneline.Field, so a row stays one line and stays greppable.
-func PrintKinds(w io.Writer) int {
-	for _, k := range Kinds {
-		gate := "none"
-		if k.Gated() {
-			gate = strings.Join(k.Steps, ",")
-		}
-		control := k.Control
-		if control == "" {
-			control = "none"
-		}
-		tokens := "-"
-		if len(k.Tokens) > 0 {
-			tokens = strings.Join(k.Tokens, ",")
-		}
-		// The machine tokens are bare; the three prose fields are QUOTED rather than
-		// oneline-escaped, because a table a person runs the tool to read should be
-		// readable, and %q keeps the row one line and one parse either way.
-		fmt.Fprintf(w, "KIND name=%s gate=%s tokens=%s built=%v does=%q paths=%q control=%q\n",
-			oneline.Field(k.Name), oneline.Field(gate), oneline.Field(tokens), k.ControlBuilt(),
-			k.Does, k.Paths, control)
-	}
-	return 0
 }

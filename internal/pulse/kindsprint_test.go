@@ -60,9 +60,43 @@ func TestKindsPrintsOneLinePerKindAndNamesTheSameTable(t *testing.T) {
 	if code := PrintKinds(&out); code != 0 {
 		t.Fatalf("--kinds exited %d", code)
 	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	all := strings.Split(strings.TrimSpace(out.String()), "\n")
+	var lines, drift []string
+	for _, l := range all {
+		if strings.HasPrefix(l, "DRIFT ") {
+			drift = append(drift, l)
+			continue
+		}
+		lines = append(lines, l)
+	}
 	if len(lines) != len(specKinds) {
-		t.Fatalf("--kinds printed %d lines for %d kinds:\n%s", len(lines), len(specKinds), out.String())
+		t.Fatalf("--kinds printed %d KIND lines for %d kinds:\n%s", len(lines), len(specKinds), out.String())
+	}
+	// The DRIFT block is the names the CUTTERS write that the table does not hold: it
+	// comes last, it never claims a gate, and every row names a kind the table DOES hold
+	// as its nearest.
+	if len(drift) != len(KindDrift) {
+		t.Fatalf("--kinds printed %d DRIFT lines for %d drifted names:\n%s", len(drift), len(KindDrift), out.String())
+	}
+	if len(all) != len(lines)+len(drift) || !strings.HasPrefix(all[len(lines)], "DRIFT ") {
+		t.Errorf("the DRIFT block is not last:\n%s", out.String())
+	}
+	for _, d := range drift {
+		if !strings.Contains(d, " gate=none ") {
+			t.Errorf("a drifted name claims a gate: %q", d)
+		}
+		name := strings.TrimPrefix(strings.Fields(d)[1], "name=")
+		near, ok := NearestKind(name)
+		if !ok {
+			t.Errorf("%q is printed as drift but NearestKind does not know it", name)
+			continue
+		}
+		if !strings.Contains(d, "nearest="+near) {
+			t.Errorf("%q does not print its nearest name %q", d, near)
+		}
+		if _, held := KindNamed(near); !held {
+			t.Errorf("%q points at %q, which the table does not hold either", d, near)
+		}
 	}
 	for i, want := range specKinds {
 		line := lines[i]
