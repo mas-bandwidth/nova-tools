@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NATIVE OPENCODE PATH (issue #296, slice 2). A frozen run configuration is executed
@@ -2068,5 +2069,46 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(slot, "jobs", "space-label", "RESULT.md")); err != nil {
 		t.Fatalf("RESULT.md is written under a job path with a space: %v", err)
+	}
+}
+
+// TestNativeHoldsAJobLease: the launcher takes <job>/.lease BEFORE the child starts and
+// releases it when the run ends (issue #1499). The child itself is the witness -- it reads
+// the lease from inside the job and reports its length -- because the file's whole purpose
+// is to exist WHILE the card runs: that is what the bench's hygiene pass reads instead of
+// guessing from how long the capture has been quiet. A card in one long model call is
+// silent and alive, and the reaper that could not tell the difference deleted two certify
+// trees, and a running card's HOME and TMPDIR, on 2026-09-19.
+func TestNativeHoldsAJobLease(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "lease-card"
+	jobDir := filepath.Join(slot, "jobs", label)
+	card := []byte("FAKE-CAT " + filepath.Join(jobDir, swarm.JobLeaseName) + "\n")
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
+		noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+	if err != nil {
+		t.Fatalf("the run wrote no harness output log: %v", err)
+	}
+	want := "cat " + filepath.Join(jobDir, swarm.JobLeaseName) + ": ok len="
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("the child could not read a lease at %s while it ran; the capture says:\n%s",
+			filepath.Join(jobDir, swarm.JobLeaseName), raw)
+	}
+	if strings.Contains(string(raw), want+"0\n") {
+		t.Errorf("the lease was empty while the child ran; it must name the launcher's pid:\n%s", raw)
+	}
+	if _, err := os.Lstat(filepath.Join(jobDir, swarm.JobLeaseName)); !os.IsNotExist(err) {
+		t.Errorf("the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
 	}
 }

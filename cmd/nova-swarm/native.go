@@ -179,6 +179,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the job directory %s could not be made: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// THE LEASE (issue #1499). The bench's hygiene pass reaps job directories, and it used
+	// to decide a card was dead because its capture had been quiet for fifteen minutes --
+	// which is what one long model call looks like. The launcher knows better and says so:
+	// <job>/.lease carries this process's pid and a heartbeat for as long as the child runs,
+	// and the reaper never touches a leased job or the slot's data/ and tmp/ around it. It
+	// is released, and the file removed, when this run returns by any path.
+	releaseLease := swarm.StartJobLease(jobDir, cfg.label)
+	defer releaseLease()
 	dataHome := filepath.Join(cfg.slotDir, "data")
 	if err := os.MkdirAll(dataHome, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
