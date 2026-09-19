@@ -31,7 +31,7 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-BACKGROUND-SLEEP 30\nFAKE-IGNORE-TERM\nFAKE-SLEEP 60\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "deadline", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "3s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
@@ -81,7 +81,7 @@ func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-SLEEP 60\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(tool, "native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	cmd := exec.Command(tool, "native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "termed", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "60s", "--no-wall")
 	var stdout, stderr bytes.Buffer

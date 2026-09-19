@@ -203,6 +203,33 @@ var BudgetColumns = []string{"tokens_in", "tokens_out", "reasoning"}
 // Budget is rule 13's observed spend: the same arithmetic as Sum over BudgetColumns.
 func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add(BudgetColumns) }
 
+// BudgetWord is rule 13's ceiling and what was observed under it, in the four spellings
+// the document names, and it is the ONE place either route renders them:
+//
+//	unmetered   the caller said this provider has no live accounting
+//	-/<n>       nothing was observed, so the run is never reported as under budget
+//	<s>+/<n>    a PARTIAL observation: some columns were dashes, so it can show that the
+//	            budget was reached and can never show that the job stayed under it
+//	<s>/<n>     a whole observation
+//
+// THE POOL'S `RUN DONE`/`RUN KILLED` AND `native`'s `NATIVE OK` BOTH COME THROUGH HERE
+// (rule 13d: "Everything rule 13 says about the word, the sum, the stop, the record and a
+// source that cannot be read holds for a native card"). Two renderings of one field is how
+// one of them drifts, and a reader who learned the field on one line would misread it on
+// the other.
+func BudgetWord(unmetered bool, tokens, spent int, observed, partial bool) string {
+	if unmetered {
+		return "unmetered"
+	}
+	switch {
+	case !observed:
+		return fmt.Sprintf("%s/%d", Dash, tokens)
+	case partial:
+		return fmt.Sprintf("%d+/%d", spent, tokens)
+	}
+	return fmt.Sprintf("%d/%d", spent, tokens)
+}
+
 // Sum adds the token columns that are present, and says whether any were missing, so that a
 // partial observation prints `budget=<n>+/<n>` with the plus rather than passing for a
 // whole one.

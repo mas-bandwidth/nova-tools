@@ -41,6 +41,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// NoBatchTokensRefusal is the ONE line a batch of cards prints when it was given no budget
+// word (SPEC-SWARM rule 13d, issue #1545). Like NoSlotsStoreRefusal beside it, it is a
+// constant so that the batch's refusal and `native`'s own say the same thing and a caller
+// who greps for one finds the other.
+//
+// IT NAMES BOTH SPELLINGS, because a caller running a local model has no accounting to read
+// and `unmetered` is the only honest thing they can say; and it says whose budget the word
+// is, because the first question a reader asks of a batch-wide flag is whether ten cards
+// share it.
+const NoBatchTokensRefusal = "BATCH REFUSED reason=no_tokens: --tokens is required; it wants a token budget for EACH card in this batch, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; it is never divided among the cards and never a total for the batch; refusing to guess"
+
 // admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
 // <label> <why>, where <why> is the reason the card alone was refused -- a card shape
 // against docs/WORKER-CARDS.md practice 17, or a repository it could not reach.
@@ -95,9 +106,21 @@ type BatchInput struct {
 	// every bench. Said plainly here because it is the seam a reader will meet.
 	SlotsStore string
 	SlotOwner  string
-	Benches    string // path to the benches table; empty means no table is read
-	Bench      string // comma-separated bench names to allocate the cards across; empty means local only
-	Then       string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// Tokens is the budget word this batch carries for EVERY card (SPEC-SWARM rule 13d,
+	// issue #1545): a number, or the literal `unmetered`. It is REQUIRED -- a batch without
+	// it is exit 2 before any card starts -- and it is carried as the caller TYPED it,
+	// never parsed here, because rule 13d says the batch puts it "verbatim into every
+	// `native` argv it builds" and `native` is the one verb that decides what a budget word
+	// means.
+	//
+	// IT IS EACH CARD'S OWN BUDGET, NOT THE BATCH'S. The same word goes to every card, the
+	// shape `batch --tasks` already has: it is never divided among the cards and never a
+	// total for the batch. Ten cards under `--tokens 100000` may spend a million tokens
+	// between them, and that is what the caller said.
+	Tokens  string
+	Benches string // path to the benches table; empty means no table is read
+	Bench   string // comma-separated bench names to allocate the cards across; empty means local only
+	Then    string // a follow-on command, run with sh -c only when every card is done; "" means none
 	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
 	// it is set, the model a card is dispatched with is the ladder's answer --
 	// which MIND does this unit of work -- and not the string the fill script
@@ -226,6 +249,17 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
 		return 2
 	}
+	// THE BUDGET WORD IS REQUIRED OF EVERY BATCH OF CARDS (rule 13d, "Every caller of
+	// `native` passes the word, and none invents it"). It is said ONCE, here, before a
+	// single card starts -- not once per card as each `native` refuses in turn -- and it
+	// binds a `--runner` batch too: the runner is handed the word as its sixth argument,
+	// and a runner that reaches `native` without passing it on meets `native`'s own
+	// refusal. There is no default, because a supplied default is exactly the guess rule
+	// 13 forbids.
+	if strings.TrimSpace(in.Tokens) == "" {
+		fmt.Fprintln(in.Stderr, NoBatchTokensRefusal)
+		return 2
+	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
 	// THE PUBLIC-CLASS GATE (CARD-8390) runs here too, after the shape and repo
@@ -337,7 +371,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -352,7 +386,11 @@ func Batch(in BatchInput) int {
 				return 2
 			}
 		} else {
-			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
+			// THE SIXTH ARGUMENT (rule 13d). A runner is somebody else's program reading argv
+			// by index, so the budget word goes AFTER the five that were already there --
+			// label, slot, model, card path, root -- and never among them: every runner
+			// written before this rule is still correct about its first five.
+			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root, in.Tokens)
 			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
@@ -1457,6 +1495,10 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
 		"--slots-store", in.SlotsStore,
 		"--owner", in.SlotOwner,
+		// VERBATIM (rule 13d). The batch neither parses the word nor divides it: whatever
+		// the caller typed is what this card's own `native` reads, and `native` is the one
+		// verb that decides what it means.
+		"--tokens", in.Tokens,
 	}
 	if in.Auth != "" {
 		argv = append(argv, "--auth", in.Auth)

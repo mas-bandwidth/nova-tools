@@ -67,7 +67,7 @@ usage:
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --slots-store <dir> --owner <name> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -537,7 +537,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile, *tokens,
 			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
 				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
@@ -692,8 +692,14 @@ func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	return in
 }
 
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile string, route routeFlags, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile, tokens string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
+	// THE BUDGET WORD (SPEC-SWARM rule 13d, issue #1545), read by the SAME f.tokens that
+	// reads `add`'s and `batch --tasks`'s, so a missing word, a non-number and a zero are
+	// refused in the same sentence wherever a caller meets them. What is CARRIED is the
+	// word as typed: rule 13d puts it "verbatim into every `native` argv", and `native` is
+	// the verb that decides what it means.
+	f.tokens(tokens)
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
 	// #636: --runner is one of two ways to run a local card; --harness (or a `local` row in
@@ -739,6 +745,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
 		SlotsStore: slotsStore, SlotOwner: slotOwner,
+		Tokens: tokens,
 		Route:  routed,
 		Worker: w,
 		Stdout: stdout, Stderr: stderr,
@@ -1650,6 +1657,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// swarm.NoSlotsStoreRefusal for why there is no optional mode and no default.
 	slotsStore := f.fs.String("slots-store", "", "")
 	slotOwner := f.fs.String("owner", "", "")
+	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). "`native` takes `--tokens <n>` or
+	// `--tokens unmetered`; without it the verb is exit 2 naming the flag, and `0` is
+	// refused, exactly as on `add`." It is read by the SAME f.tokens that reads `add`'s,
+	// `batch --tasks`'s and `requeue`'s, so the three verbs refuse a missing word, a
+	// non-number and a zero in the same sentence: a card launched by `native` and a job
+	// launched by `run` can spend the same key, so they answer to the same rule.
+	tokensWord := f.fs.String("tokens", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1695,6 +1709,12 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*slot, "slot", "the slot directory this run executes in")
 	f.want(*root, "root", "the configured root the slot directory must sit under")
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
+	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM (rule 13d). It sits in
+	// the collector so a caller who left out the budget AND the deadline is told both in
+	// one run; and it sits HERE, above every line below that touches the disk -- the slot
+	// store's lease take, and nativeRun's own job directory, data home and temp directory
+	// -- because 13d refuses "before any directory is made".
+	budgetTokens, budgetUnmetered := f.tokens(*tokensWord)
 	if f.refused(stderr) {
 		return 2
 	}
@@ -1763,6 +1783,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		sandbox:        *sandbox,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
+		tokens:         budgetTokens,
+		unmetered:      budgetUnmetered,
 	}
 	if workerGiven {
 		cfg.worker = &w
@@ -1806,8 +1828,16 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
+	//
+	// AND SO IS budget= (rule 13d: "`NATIVE OK` always carries `budget=`"). It sits
+	// immediately after harness= and ahead of every optional tail, where the output
+	// grammar puts it (docs/SPEC-SWARM.md, "Output grammar", the NATIVE OK line), so the
+	// fixed part of the line stays one fixed part. It is the JOB's figure -- the sum over
+	// every launch at the final read -- and never a launch's row.
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
+		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {

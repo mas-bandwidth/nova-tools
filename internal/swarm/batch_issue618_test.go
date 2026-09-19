@@ -20,7 +20,8 @@ func runBatchSlots(t *testing.T, cards, root, runner, slots string, deadline tim
 	t.Helper()
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
 		Slots: slots, Stdout: &out, Stderr: &errb,
 	})
 	return code, out.String(), errb.String()

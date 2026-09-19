@@ -31,7 +31,7 @@ func TestNativeRefusesWhenSlotShareIsFullyHeld(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall",
 		"--slots-store", store, "--owner", "fake-1"},
@@ -84,7 +84,7 @@ func TestNativeTakesOneSlotLeaseAndReleasesIt(t *testing.T) {
 		}()
 
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "30s", "--no-wall",
 			"--slots-store", store, "--owner", "fake-1"},
@@ -113,7 +113,7 @@ func TestNativeTakesOneSlotLeaseAndReleasesIt(t *testing.T) {
 		store := slotShares(t, "capacity\t2\nreserve\t0\nfake-1\t2\n")
 
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "30s", "--no-wall",
 			"--slots-store", store, "--owner", "fake-1"},
@@ -155,7 +155,7 @@ func TestNativeWithoutASlotsStoreRefuses(t *testing.T) {
 			write(t, cardPath, "a card\n")
 			store := slotShares(t, "capacity\t2\nreserve\t0\nfake-1\t2\n")
 
-			argv := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+			argv := []string{"native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
 				"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 				"--deadline", "30s", "--no-wall"}
 			for _, a := range tc.args {

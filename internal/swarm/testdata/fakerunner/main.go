@@ -69,7 +69,10 @@ func main() {
 	// runner arguments. The steps are the same; parsing the flags keeps the self's `{label}`,
 	// `{root}` and guards as exact as a `--runner` fixture's. A native invocation is never
 	// exactly five positional arguments, which is what separates it from the runner contract.
-	if len(os.Args) > 1 && os.Args[1] == "native" && len(os.Args) != 6 {
+	// SIX RUNNER ARGUMENTS SINCE RULE 13d (issue #1545): label, slot, model, card, root and
+	// the budget word. The count is what separates a `--runner` invocation from a `native`
+	// one, so it moved with the contract.
+	if len(os.Args) > 1 && os.Args[1] == "native" && len(os.Args) != 7 {
 		n, err := nativeRunner(os.Args[2:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "fakerunner: %v\n", err)
@@ -77,11 +80,11 @@ func main() {
 		}
 		r = n
 	} else {
-		if len(os.Args) != 6 {
-			fmt.Fprintf(os.Stderr, "fakerunner: want 5 arguments (label slot model card root), got %d\n", len(os.Args)-1)
+		if len(os.Args) != 7 {
+			fmt.Fprintf(os.Stderr, "fakerunner: want 6 arguments (label slot model card root tokens), got %d\n", len(os.Args)-1)
 			os.Exit(2)
 		}
-		r = &runner{label: os.Args[1], slot: os.Args[2], model: os.Args[3], card: os.Args[4], root: os.Args[5]}
+		r = &runner{label: os.Args[1], slot: os.Args[2], model: os.Args[3], card: os.Args[4], root: os.Args[5], tokens: os.Args[6]}
 		r.job = filepath.Join(r.root, r.slot, "jobs", r.label)
 	}
 	r.line1, r.line2 = cardLines(r.card)
@@ -113,18 +116,25 @@ func nativeRunner(args []string) (*runner, error) {
 	// pretend to would be testing the fixture.
 	_ = fs.String("slots-store", "", "the bench slot store")
 	_ = fs.String("owner", "", "whose share the lease counts against")
+	// The budget word (rule 13d) travels with every native launch, so the fixture standing
+	// in for nova-swarm must accept it or a runnerless batch cannot run here at all.
+	tokens := fs.String("tokens", "", "the card's token budget, or `unmetered`")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	r := &runner{label: *label, slot: filepath.Base(*slotDir), model: *model, card: *card, root: *root}
+	r := &runner{label: *label, slot: filepath.Base(*slotDir), model: *model, card: *card, root: *root, tokens: *tokens}
 	r.job = filepath.Join(*slotDir, "jobs", *label)
 	return r, nil
 }
 
 type runner struct {
 	label, slot, model, card, root string
-	job                            string
-	line1, line2                   string
+	// tokens is the budget word the batch hands a runner as its sixth argument, and `native`
+	// as --tokens (SPEC-SWARM rule 13d). The fixture only carries it: deciding what a budget
+	// word means is `native`'s, and a fixture that decided would be testing itself.
+	tokens       string
+	job          string
+	line1, line2 string
 }
 
 // load reads the step list written beside this executable. A fixture with no file behind it

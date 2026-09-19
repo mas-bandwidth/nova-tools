@@ -234,7 +234,8 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
@@ -308,7 +309,8 @@ func TestBatchRefusesMoreSlotsThanCores(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
@@ -338,7 +340,8 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})
@@ -377,7 +380,8 @@ func TestRemoteRunSlotIsTheSlotDir(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 	})

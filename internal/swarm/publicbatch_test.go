@@ -38,7 +38,8 @@ func TestBatchPublicGateListedRunsUnlistedRefused(t *testing.T) {
 	runner := fakeRunner(t, dir)
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 20 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 20 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Worker: Worker{Name: "muse", Class: "public"},
 		Stdout: &out, Stderr: &errb,
 	})

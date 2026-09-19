@@ -2121,6 +2121,41 @@ refusing before it started — a missing harness, say — deletes a lease it nev
 behaviour, because that is what a person at a prompt means by it.
 
 
+**`native` carries a token budget, and the word is required (rule 13d, #1545).**
+`--tokens <n>` or `--tokens unmetered` on **every** launch. Without it the verb is exit 2
+naming the flag and makes no directory; `--tokens 0` is refused. `unmetered` is the
+caller's statement that this provider has no live accounting and the deadline is the only
+stop, and it is printed on the line:
+
+```
+NATIVE OK label=card-a job=… harness=ok budget=unmetered
+NATIVE OK label=card-a job=… harness=ok budget=-/200000
+```
+
+`budget=` always follows `harness=`. It is `unmetered`, or the number with what was
+observed against it: `<spent>/<n>`, `<spent>+/<n>` when some token column was a dash, and
+`-/<n>` when nothing was observed at all — so a card that ran under an unobservable budget
+is visible as such and is never reported as under budget.
+
+**There is no test for a provider that costs money.** A provider's name is whatever a
+config file says it is, a `baseURL` can point a local-looking name at a metered endpoint,
+and a reported `0` is a measurement, not a licence. So the caller says a number or says
+`unmetered`, every time, and the tool infers neither.
+
+**Every caller passes the word along.** `batch --cards` takes `--tokens <n>|unmetered`,
+required, and refuses the whole batch before any card starts:
+
+```
+BATCH REFUSED reason=no_tokens: --tokens is required; it wants a token budget for EACH card in this batch, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; it is never divided among the cards and never a total for the batch; refusing to guess
+```
+
+It is **each card's own budget** — the same word for every card, never divided among them
+and never a total for the batch — and the batch puts it verbatim into every `native` argv
+it builds, the local one under `--harness` and the remote one over ssh. A `--runner` is
+handed it as a **sixth** argument after the five it already gets (label, slot, model, card
+path, root), and a runner that reaches `native` without passing it on meets `native`'s own
+refusal.
+
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
 `baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.
