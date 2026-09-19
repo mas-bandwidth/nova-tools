@@ -1088,6 +1088,24 @@
     #:receipt-verifier-verify
     #:verifier-result
     #:verifier-result-valid-p
+    ;; the verifier result a receipt needs, admitted by the one writer
+    ;; (src/receipt-admission.lisp, SPEC-WORK.md:3857-3868)
+    #:verifier-registry
+    #:make-verifier-registry
+    #:verifier-registry-member
+    #:verifier-registry-count
+    #:parse-verifier-line
+    #:run-verifier-command
+    #:configure-verifier
+    #:kernel-verifier
+    #:kernel-verifiers
+    #:provenance-pointer-path
+    #:read-provenance-bytes
+    #:stage-receipt
+    #:staged-input-p
+    #:receipt-submit
+    #:admitted-receipts
+    #:admitted-receipt
     #:session-written-field
     #:assignment-offer
     #:assignment-acknowledge
