@@ -1620,6 +1620,12 @@ the bench, and the unread measurement is still printed:
 FILL UNMEASURED bench=<name> cores=<n|unreadable> load1=<unreadable> note="..."
 ```
 
+The load formula's own terms are Linux — `/proc/meminfo` and `df -BG` — so on a bench
+where they cannot be measured, a bench with no store row is a **named refusal** rather
+than a formula computed over readings nobody took. The number such a bench answered
+before was zero anyway; it is loud now. Give that bench a share and it is sized by its
+store like any other.
+
 The only number the probe still floors is the load formula's own result, which is
 computed rather than measured: a formula that comes out negative is a bench with no
 room, and that was always its meaning. The swarm root still falls back to `$HOME`, which

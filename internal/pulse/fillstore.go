@@ -183,9 +183,15 @@ func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
 	var err error
 	switch kind {
 	case "unreadable":
+		// The reason TOKEN leads, so `FILL UNREADABLE ... reason=<token>` reads as one
+		// word a person can grep for and a runbook can name.
+		token := seen["reason"]
+		if token == "" {
+			token = "unreadable"
+		}
 		return CapacityAnswer{}, fmt.Errorf(
-			"the bench could not read its slot store (%s); refusing a capacity nobody read, rather than calling a full bench empty",
-			oneLineAnswer(strings.Join(rest, " ")))
+			"%s: the bench could not read its slot store (%s); refusing a capacity nobody read, rather than calling a full bench empty",
+			oneline.Field(token), oneLineAnswer(strings.Join(rest, " ")))
 	case "store":
 		a.FromStore = true
 		if a.Share, err = count("share"); err != nil {

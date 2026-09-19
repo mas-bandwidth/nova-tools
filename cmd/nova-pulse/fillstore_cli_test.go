@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -212,11 +213,24 @@ func TestFillStillFallsBackToTheFormulaWithNoRowForTheOwner(t *testing.T) {
 	if code == 2 {
 		t.Fatalf("a store with no row for the owner was a refusal, not the documented fallback; stderr=%q", errb)
 	}
-	if !strings.Contains(errb, "FILL FORMULA bench=bench-a why=no-row-for-owner") {
-		t.Fatalf("the fallback was silent or unnamed: %q", errb)
-	}
 	if !strings.Contains(out, "FILL tick=1") {
 		t.Fatalf("no tick ran: %q %q", out, errb)
+	}
+	if strings.Contains(errb, "slots-list") {
+		t.Fatalf("the no-row case was blamed on the lease read: %q", errb)
+	}
+	if runtime.GOOS != "linux" {
+		// The formula's own terms are Linux: `/proc/meminfo` and `df -BG`. On a bench
+		// where they cannot be measured the fallback is a NAMED refusal -- free=0 --
+		// and not a formula computed over empty strings that shell arithmetic reads as
+		// zero. The number such a bench used to answer was zero anyway; it is loud now.
+		if !strings.Contains(errb, "FILL UNREADABLE bench=bench-a free=0 reason=formula-") {
+			t.Fatalf("an unmeasurable formula was not refused by name: %q", errb)
+		}
+		return
+	}
+	if !strings.Contains(errb, "FILL FORMULA bench=bench-a why=no-row-for-owner") {
+		t.Fatalf("the fallback was silent or unnamed: %q", errb)
 	}
 }
 
