@@ -1237,13 +1237,23 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
 ```
 
 `batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
 `--root`, merges each `--pr` head onto `--base` in the order given on a branch
 `rowan/<name>`, drops a head that will not merge and says so, then runs the suite —
 `build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
+
+**Exactly one of `--reviewers <file>` and `--no-require-holds --reason <text>` is
+required**, and neither or both is exit 2: a gate that cannot say whose reads it
+honoured is not a gate. `--reviewers` names the reviewers file, and under it
+`--lane <dir>` is required too -- the lane directory the typed read records are
+read from, which may not be the literal `none`. `--no-require-holds` lands over
+an unlifted hold and says so on the verdict line, which is why it demands a
+`--reason`. `--untyped-comments ignore` sets aside untyped comments on the same
+terms and demands the same `--reason` (SPEC-DECIDE reading 3, *No flag ignores a
+hold*; nova-tools #1748).
 
 ```
 BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
