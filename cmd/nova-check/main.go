@@ -62,7 +62,7 @@ usage:
                             --notes <text> [--issue <n>] --receipts <dir>
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all]
+  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
                                                      the line the release lane calls
