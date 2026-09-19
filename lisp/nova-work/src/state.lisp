@@ -329,6 +329,9 @@ own id would not be the same counting rule one level down. Decision for review."
 (defun state-closed-count (state) (wstate-closed state))
 (defun state-revision (state) (wstate-revision state))
 (defun state-history (state) (reverse (wstate-history state)))
+(defun state-node-ids (state)
+  "Every id the set holds, in seed order. A read."
+  (copy-list (wstate-order state)))
 (defun state-closed-rows (state) (reverse (wstate-rows state)))
 
 ;;; Reads of one node. These do visit.
@@ -380,10 +383,104 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-needs-broken n)))
 
-(defun %need-terminal-p (state id)
-  "A need is terminal accepted when its node has settled into C."
+;;; ------------------------------------------------------------------
+;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
+;;; ------------------------------------------------------------------
+;;;
+;;; src/needs.lisp holds the one predicate, `need-met-p`, which adds rule 1's
+;;; verified half over a NEEDS-VIEW. It cannot live here: it reads the
+;;; verification cache, and src/verifier.lisp loads after this file. What lives
+;;; here is what the write path itself needs -- the closed-index row that says
+;;; how a need settled, the `:revive` that says it was reopened, and the
+;;; container clause -- so that `ready-p` and the settle/revive recheck read the
+;;; same recorded facts `need-met-p` does.
+
+(defun %need-settle-row (state id)
+  "The newest `:settle` row of ID in the closed index, or NIL when the page that
+says how it settled cannot be read. Rows are newest first."
+  (find-if (lambda (row)
+             (and (eq :settle (getf row :kind))
+                  (equal id (getf row :node))))
+           (wstate-rows state)))
+
+(defun %need-revived-p (state id)
+  "True when ID's closed-index rows hold a `:revive`: it settled and was
+reopened (rule 2, row 2, SPEC-WORK.md:4820)."
+  (and (find-if (lambda (row)
+                  (and (eq :revive (getf row :kind))
+                       (equal id (getf row :node))))
+                (wstate-rows state))
+       t))
+
+(defparameter *need-container-types* '(:work-set :epic :feature :roadmap)
+  "The container kinds of rule 2's container clause (SPEC-WORK.md:4849). A
+container has no evidence of its own and is met with its direct required
+members.")
+
+(defun %need-container-p (node)
+  (and node (member (wnode-type node) *need-container-types*) t))
+
+(defparameter *need-unaccepted-dispositions* '(:cancelled :superseded :removed)
+  "The three closed-and-not-accepted dispositions of rule 2, row 4
+(SPEC-WORK.md:4820). A need carrying one is never met and never becomes met.")
+
+(defun %need-closed-unaccepted-p (state id)
+  "True when ID carries one of the three unaccepted dispositions, whichever
+branch this kernel left it in.
+
+A COMPATIBILITY READING, stated so nobody has to infer it. Rule 2 row 4
+(SPEC-WORK.md:4820) says such a need is \"in C\"; this kernel puts only one of
+the three there. `node remove` settles into C with disposition `removed`
+(src/kernel.lisp:480), while `event --kind cancel` writes a `:terminal` event
+that sets the disposition and leaves the node in O (src/edit-undo.lisp:248-253),
+and `superseded` has no verb at all. So the DISPOSITION and not the branch is
+what is read here, which preserves the safety property :4841 names -- \"never
+met and never becomes met\" -- under both spellings.
+
+This predicate deliberately does NOT change the cancel or undo lifecycle: no
+new settle transition is introduced, no branch is moved, and nothing else in
+this kernel reads a cancelled node differently than it did before. The O/C
+discrepancy itself is tracked as its own issue, on Stella's read of #1584."
   (let ((n (%node-quiet state id)))
-    (and n (eq :c (wnode-branch n)))))
+    (and n
+         (or (member (wnode-state n) *need-unaccepted-dispositions*)
+             (let ((row (%need-settle-row state id)))
+               (and row (member (getf row :disposition)
+                                *need-unaccepted-dispositions*))))
+         t)))
+
+(defun %need-required-members (state node)
+  "The direct required members of a container, in seed order."
+  (remove-if-not (lambda (child)
+                   (let ((c (%node-quiet state child)))
+                     (and c (wnode-required c))))
+                 (wnode-children node)))
+
+(defun %need-terminal-p (state id)
+  "The recorded half of rule 1: a need is terminal accepted when it is in C with
+disposition `done` -- never merely in C.
+
+A `cancelled`, `superseded` or `removed` need is never met and never becomes
+met (SPEC-WORK.md:4841); a need in C whose closed-index row cannot be read is
+*unavailable*, and incomplete is not green (:4839); a container is met with its
+direct required members, and an empty required set never settles (:4849).
+
+Rule 1's other half -- that every evidence event the standing `:to :done` names
+is verified from the session's cache -- is `need-met-p` in src/needs.lisp, which
+this predicate does not call: the write path holds no verification cache, so a
+settle's own recheck reads the recorded facts and the candidate gate reads
+both."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (eq :c (wnode-branch n))
+         (let ((row (%need-settle-row state id)))
+           (and row
+                (eq :done (getf row :disposition))
+                (if (%need-container-p n)
+                    (let ((members (%need-required-members state n)))
+                      (and members
+                           (every (lambda (m) (%need-terminal-p state m)) members)))
+                    t))))))
 
 (defun ready-p (state id)
   "Open leaf work whose every need is terminal accepted and which no reverted
