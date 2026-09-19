@@ -79,4 +79,5 @@
                 (:file "tests/decide")
                 (:file "tests/replays-8682")
                 (:file "tests/replays-notes")
-                (:file "tests/replays-785-gate")))
+                (:file "tests/replays-785-gate")
+                (:file "tests/replays-new-verb-door")))
