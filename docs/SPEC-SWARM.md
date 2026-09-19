@@ -971,13 +971,38 @@ with `cd`; the `STEP` lines are numbered `1, 2, 3, …` in order; the card names
 a reproducing test, or says `probe`/`read` when it only reads; it names a test
 command (`go test`, `pytest`, …) or states `no tests`; it carries a deadline or
 the words `finish within`; it names a file or a package; scratch is named
-absolutely, never as a bare relative path; no `../` path appears anywhere,
-because the wall refuses a path above the job; it never invokes `nova-sandbox`;
+absolutely, never as a bare relative path; the card walks no path above the job,
+because the wall refuses one; it never invokes `nova-sandbox`;
 its final step writes `RESULT.md` with the `RESULT: ` line first; and the card
-is under 12000 bytes. A card that satisfies all of them prints one line,
-`LINT OK card=<name> checks=<n>`, and exits 0; a card that drifts prints
+is under the advisory 12000-byte ceiling. A card that satisfies all of them
+prints one line, `LINT OK card=<name> checks=<n> bytes=<n> cap=<n>`, and exits
+0; a card that drifts prints
 `LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what the rule wants>`
 for each finding and exits 2, so a caller can refuse to admit it.
+
+**`no-parent-path` reads what the card WALKS, not every `../` in its text.** The
+rule is the wall's: a worktree, a scratch or a notes file above the job root
+dies on its first write. A parent path handed to a command that walks it — a
+`cd`, a `pushd`, a `mkdir`, a `cp`, a `mv`, a `rm`, a `git -C`, a redirect, a
+`--root` — is that drift wherever it is written, inside a fenced block as much
+as outside one, because a card's commands live in fences. A `../` the card
+merely **quotes** is not: a fenced block, an inline backtick span, a markdown
+link target, and a `go test` ellipsis such as `ok .../internal/pulse` are
+quotations, not instructions. Measured across five managers' cards on
+2026-09-19, every `no-parent-path` finding the text rule produced was one of
+those four, and the rule that is wrong on every card is the rule whose true
+finding on the next card goes unread (issues #1494, #1527).
+
+**The 12000-byte ceiling is advice and the output says so.** It is a reading
+budget — past it a model stops reading the card in one window — and not an
+input limit: a 12422-byte card was measured through the harness untruncated. A
+card over it is never refused, never truncated and still ships, so it draws
+`LINT NOTE card=<name> size: …`, never a `LINT DRIFT`, and the note changes no
+verdict: a card whose only findings are advisory exits 0. Every lint carries the
+size, on the `LINT OK` line and on a closing
+`LINT SIZE card=<name> bytes=<n> cap=<n> advisory=true`, so the question two
+managers answered differently on one day is answered in the bytes (#1494,
+#1527).
 
 **Every drift carries its remedy, and the binary prints the whole table** (issue
 #1464). A rule token and a quoted line are not an instruction: three of the five

@@ -2127,7 +2127,44 @@ nova-swarm cost     --pool <dir> [--max <n>]                                    
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
+nova-swarm lint     --card <file> [--typed] [--trust <file>] [--max <n>] | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
 ```
+
+### The card lint
+
+`lint --card <file>` reads the one file it was handed and names every mechanical
+defect by check, line and excerpt **before a token is spent**. No model, no probe,
+no network. The checks are `docs/WORKER-CARDS.md`'s rule table and the four typed
+header tokens of `docs/SPEC-TOOLWORK.md` §5 rule 1.
+
+| flag | what it does |
+| --- | --- |
+| `--card <file>` | the card to read. Required unless `--rules` is given |
+| `--rules` | print `LINT RULE <check> remedy=<what it wants>` for every check and exit 0. It takes no card, because the question is asked before there is one, and it is the one listing a bench with a clone months behind its binary can still read (#1464) |
+| `--typed` | apply the typed-header tokens to a card that declares **no** typed line at all. Without it a card with no header is left to the older rules, which is what every card written before §5 is |
+| `--trust <file>` | a file of `TRUST kind=<kind> … state=<trial\|trusted\|paused>` lines in the shape `nova-pulse trust` prints; it is what the `paused` token reads. With no file there is no paused kind and the lint says nothing rather than guessing |
+| `--max <n>` | bound the printed drifts, default 20, `0` for all. Over the bound it adds one `LINT MORE` line naming the remedy; it never changes the verdict |
+
+Output, and what a caller does with it:
+
+```
+LINT OK    card=<name> checks=<n> bytes=<n> cap=<n>                      # exit 0: admitted to the wall
+LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what it wants> # exit 2: a caller refuses to admit it
+LINT NOTE  card=<name> <check>: <line>: <excerpt> remedy=<…>             # advice; it changes NO verdict
+LINT MORE  card=<name> findings=<n> remedy=<…>                           # more drifts than --max printed
+LINT SIZE  card=<name> bytes=<n> cap=<n> advisory=true                   # every drifting card's size, and that the cap is advice
+LINT NOT-A-CARD card=<name> template=<name> remedy=<…>                   # exit 1: a shipped template piped in, answered by name
+```
+
+**`DRIFT` is a defect and `NOTE` is advice.** The 12000-byte ceiling is the only
+advisory check today: it is a reading budget, not an input limit, so a card over
+it is never refused and never truncated, draws a `LINT NOTE`, and exits 0
+(#1494, #1527). A card whose only findings are advisory is a clean card.
+
+**Every drift names its remedy on the same line** (#1464), and the `DRIFT` line and
+the `--rules` listing read one table, so a remedy cannot drift from the rule it
+explains. The rule tokens and what each wants are in `docs/WORKER-CARDS.md`; the
+`../` rule and the ceiling are written out in `docs/SPEC-SWARM.md`'s lint section.
 
 ### native and batch
 
