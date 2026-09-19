@@ -374,3 +374,16 @@ func TestSplitShellRefusesQuotingItCannotRead(t *testing.T) {
 		t.Errorf("the documented remote = %q, want %q; SplitShell expands nothing", last, "$PWD/rehearsal.git")
 	}
 }
+
+// The build triple belongs to the machine; the version word before it does not,
+// and a tool that started answering something else about itself is the kind of
+// drift a `version` line is in the transcript to catch.
+func TestGoBuildCoversTheMachineAndNotTheVersionWord(t *testing.T) {
+	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
+	if problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 0 {
+		t.Errorf("a declared build triple was not normalised: %v", problems)
+	}
+	if problems := Compare(step, Result{Stdout: "nova-alpha v0.16.0 darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 1 {
+		t.Errorf("GoBuild swallowed the version word too: %v", problems)
+	}
+}

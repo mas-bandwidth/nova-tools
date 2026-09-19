@@ -459,3 +459,19 @@ func Block(lines []string) string {
 	}
 	return "  " + strings.Join(lines, "\n  ")
 }
+
+// GoBuild declares the tail of a `version` line -- `<goos>/<goarch> go<version>`
+// -- which is the machine the transcript was recorded on rather than anything
+// the document promises. The version word before it is NOT covered: whether a
+// build says `devel` or a tag is the tool's own answer and is compared.
+//
+// Several sections already paste a real triple (`devel linux/amd64 go1.26.5`),
+// so this reduces both sides to the same sentence rather than asking the
+// document to carry a placeholder it has no convention for.
+func GoBuild() Norm {
+	return Norm{
+		Name: "<goos>/<goarch> go<version> (the machine this run is on)",
+		Re:   regexp.MustCompile(`[a-z0-9]+/[a-z0-9]+ go[0-9]+(\.[0-9]+)*`),
+		As:   "<the machine this run is on>",
+	}
+}

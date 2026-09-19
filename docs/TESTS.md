@@ -309,9 +309,13 @@ WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default 
 `nova-merge`; it has no state-creating quickstart. Its first safe command only
 identifies the binary:
 
+The build triple below is the Mac this line was recorded on (2026-09-19);
+`<goos>/<goarch> go<version>` is whichever machine runs it, and is the one part
+of the line `cmd/nova-review/firstrun_test.go` does not compare.
+
 ```
 $ nova-review version
-nova-review devel
+nova-review devel darwin/arm64 go1.27.1
 ```
 
 A packet needs the lane, one selector, a reader and a new relative output
