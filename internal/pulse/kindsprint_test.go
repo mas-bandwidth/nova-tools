@@ -12,8 +12,11 @@ package pulse
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
+
+	hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
 // specKinds is §5 rule 2's table, row for row, in the spec's order.
@@ -211,4 +214,47 @@ func TestDeclaredKindsAreTheOneNameSet(t *testing.T) {
 	if strings.Join(notBuilt, ",") != "rebase,sweep,mutation-kill" {
 		t.Errorf("declared and not built here = %v, want rebase,sweep,mutation-kill (T13, #1658)", notBuilt)
 	}
+}
+
+// TestDeclaredKindsIsNotASecondList holds the ONE LIST ruling by its mechanism rather
+// than by its result. The transcription test above compares two lists and goes green
+// whenever they happen to agree; this one goes red while a second list EXISTS to
+// disagree, which is the state #1781's body promised to end once #1842 was on dev
+// (internal/hygiene/kinds.txt, landed in integration-16am).
+//
+// It reads this package's own source: no kind name may appear as a literal inside
+// DeclaredKinds. The names live in the data file, and the function fetches them.
+func TestDeclaredKindsIsNotASecondList(t *testing.T) {
+	raw, err := os.ReadFile("kinds.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := funcBody(string(raw), "func DeclaredKinds() []string {")
+	if !ok {
+		t.Fatal("DeclaredKinds is not in kinds.go under that signature")
+	}
+	for _, name := range hyg.Kinds() {
+		if strings.Contains(body, `"`+name+`"`) {
+			t.Fatalf("DeclaredKinds spells %q itself:\n%s\none list: the names are internal/hygiene/kinds.txt's, and this function returns hygiene.Kinds()", name, body)
+		}
+	}
+	// And the one list is still the list: the swap must not quietly empty it.
+	if got := strings.Join(DeclaredKinds(), ","); got != strings.Join(hyg.Kinds(), ",") {
+		t.Fatalf("DeclaredKinds() = %s, hygiene.Kinds() = %s", got, strings.Join(hyg.Kinds(), ","))
+	}
+}
+
+// funcBody returns the text between the brace that opens the named function and the
+// first line that is a bare closing brace: enough to say what a one-line function body
+// holds, and never a parser this test does not need.
+func funcBody(src, signature string) (string, bool) {
+	i := strings.Index(src, signature)
+	if i < 0 {
+		return "", false
+	}
+	rest := src[i+len(signature):]
+	if j := strings.Index(rest, "\n}"); j >= 0 {
+		return rest[:j], true
+	}
+	return "", false
 }

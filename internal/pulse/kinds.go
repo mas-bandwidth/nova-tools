@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -227,25 +228,14 @@ func UnknownKindRemedy(name string) string {
 // reverse would invert the dependency and put a gate's step list inside the check the
 // gate calls. That is the way chosen here.
 //
-// It is not wired yet for one reason, said out loud rather than left as a surprise:
-// #1842 is an OPEN PR on another lane's branch, 852 lines across `internal/review/seed.go`,
-// `cmd/nova-check` and the docs. Merging it into this stack to reach one data file would
-// bury this change under someone else's work in a reader's diff. The swap is one
-// function body -- `DeclaredKinds` returns `hygiene.Kinds()` -- and it happens when
-// #1842 is on dev, before this PR leaves draft. The class test below is what turns red
-// the moment the two lists disagree.
+// IT IS NOW WIRED. #1842 landed on dev in integration-16am (2026-09-19), so the promise
+// this PR's body made -- "the swap is one function body, and it happens when #1842 is on
+// dev, before this PR leaves draft" -- is kept here: the names are read from the embedded
+// data file and this package spells none of them. TestDeclaredKindsIsNotASecondList holds
+// the mechanism (no kind name may be a literal in this function) and
+// TestDeclaredKindsAreTheOneNameSet holds the file to §5 rule 2's order.
 func DeclaredKinds() []string {
-	return []string{
-		"fix-red",
-		"transcript-test",
-		"rebase",
-		"sweep",
-		"mutation-kill",
-		"read",
-		"probe",
-		"text",
-		"tone",
-	}
+	return hyg.Kinds()
 }
 
 // KindDeclaredNotBuilt says the name is one §5 declares and THIS BINARY does not build a
