@@ -94,3 +94,42 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 		t.Fatalf("a refusal is announced whether or not anything acts on it:\n%s", stderr.String())
 	}
 }
+
+// HOLD on #1831 (johnny-b9716b436e56): "Idle kill is `KillGroup` (`native.go:533`), not
+// `swarm.Reap` (TERM-wait-KILL). The TERM path three lines later already Reaps. Batch idle
+// already Reaps so native can fold usage."
+//
+// A bare KillGroup is a SIGKILL, which no process is given the chance to handle: the
+// harness never flushes the turn it was in and never writes the usage row, and the run
+// then scores with dashes what the card had already spent. The deadline path shoots on
+// purpose -- a card that ignored its whole deadline has had its grace -- but an idle end
+// is the machinery stopping a card early, the same ending the TERM path gives, and it
+// gets the same terminate-wait-kill.
+//
+// The observable is the one thing that tells the two signals apart from outside the
+// process: FAKE-NOTE-ON-TERM writes `termed` into the job directory on SIGTERM. Under
+// KillGroup that file CANNOT exist. It is not a timing assertion -- the run has already
+// returned before it is read.
+func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	card := "FAKE-NOTE-ON-TERM\nFAKE-SLEEP 60\n"
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
+		"--model", "fake/fake-model", "--label", "politecard", "--card", cardPath, "--slot", slot,
+		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
+	var stdout, stderr bytes.Buffer
+	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	// The watch, not the deadline, is what ended it: only the idle path writes the report.
+	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
+		t.Fatalf("the idle watch is what ended this card:\n%s\n%s", stdout.String(), stderr.String())
+	}
+	job := filepath.Join(slot, "jobs", "politecard")
+	if _, err := os.Stat(filepath.Join(job, "termed")); err != nil {
+		t.Fatalf("a card the watch ended is terminated before it is killed, so its harness can flush: %v\n%s", err, stdout.String())
+	}
+}

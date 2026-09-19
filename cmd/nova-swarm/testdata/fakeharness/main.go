@@ -292,6 +292,21 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-IGNORE-TERM"); ok {
 		signal.Ignore(syscall.SIGTERM)
 	}
+	// FAKE-NOTE-ON-TERM is THE POLITE CHILD, and the one observable that tells a TERM from
+	// a KILL from outside the process: on SIGTERM it writes `termed` into its own job
+	// directory and stops. A group ended with swarm.Reap -- terminate, wait, kill -- leaves
+	// the file behind; a group ended with a bare KillGroup cannot, because SIGKILL is not a
+	// signal any process gets to handle. It is what a harness flushing its turn and its
+	// usage row looks like to a test.
+	if _, ok := directive(prompt, "FAKE-NOTE-ON-TERM"); ok && job != "" {
+		termed := make(chan os.Signal, 1)
+		signal.Notify(termed, syscall.SIGTERM)
+		go func() {
+			<-termed
+			_ = os.WriteFile(filepath.Join(job, "termed"), []byte("term\n"), 0o644)
+			os.Exit(0)
+		}()
+	}
 	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(d)
 	}

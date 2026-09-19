@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,19 +132,85 @@ func TestWatchIdleDoesNotCallAWorkingSilenceIdle(t *testing.T) {
 
 // TestWatchIdleKeepsACardWhoseLogIsGrowing: the other reading. A card that is still talking
 // is never idle, whatever its tree is doing.
+//
+// RE-AIMED for the HOLD on #1831. This used to append thirteen bytes a poll and assert
+// "a card that is still writing is never idle, whatever its tree is doing" -- which is the
+// sentence Johnny held on, because the card chooses what it writes and thirteen bytes is
+// not evidence of anything. The card here does what a stepping harness does instead: it
+// writes a page at a time, comfortably past nativeLogDribble within the window, and IT is
+// still never idle. The old sentence is now the next test's subject.
 func TestWatchIdleKeepsACardWhoseLogIsGrowing(t *testing.T) {
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+	page := strings.Repeat("a harness step, printed\n", 256) // ~6 KiB per poll
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
-		f, err := os.OpenFile(b.log, os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = f.WriteString("another line\n")
-		f.Close()
+		appendTo(t, b.log, page)
 		if end, ended := b.tick(t, at); ended {
-			t.Fatalf("a card that is still writing is not idle: %+v at %v", end, at)
+			t.Fatalf("a card writing a page a poll is not idle: %+v at %v", end, at)
 		}
 	}
+}
+
+// appendTo adds body to the card's log, the way the card's own harness would.
+func appendTo(t *testing.T, path, body string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// HOLD on #1831 (johnny-b9716b436e56): "The idle watch treats any log-size change as work
+// (nativeidle.go:147). A child that writes one byte a minute, or truncates
+// `harness-output.log` (job dir is `--write`), never looks idle."
+//
+// Both halves of that sentence, and they are the same bug: the watch asked whether the
+// SIZE CHANGED, and the card is what changes it. The job directory is `--write`, so a card
+// that appends a character, or rewrites its own log shorter, fed the liveness signal for
+// free and held a bench slot to its deadline with a dead tree behind it. A signal the
+// watched thing can feed is not a signal.
+func TestWatchIdleEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
+	t.Run("one byte at a time", func(t *testing.T) {
+		b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+		var ended bool
+		var end IdleEnd
+		for at := time.Second; at <= 40*time.Second; at += time.Second {
+			appendTo(t, b.log, ".")
+			if end, ended = b.tick(t, at); ended {
+				break
+			}
+		}
+		if !ended {
+			t.Fatal("a card appending one byte a poll into a --write job directory is still a still card; the watch must end it")
+		}
+		if end.Idle < 10*time.Second {
+			t.Fatalf("the end names how long the card was still, got %v", end.Idle)
+		}
+	})
+
+	t.Run("rewriting the log shorter", func(t *testing.T) {
+		b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
+		appendTo(t, b.log, strings.Repeat("x", 64*1024))
+		var ended bool
+		for at := time.Second; at <= 40*time.Second; at += time.Second {
+			// The card truncates its own capture a little further each poll: every read
+			// is a different size, and none of it is work.
+			if err := os.Truncate(b.log, int64(64*1024)-int64(at/time.Second)*512); err != nil {
+				t.Fatal(err)
+			}
+			if _, ended = b.tick(t, at); ended {
+				break
+			}
+		}
+		if !ended {
+			t.Fatal("a card truncating its own harness-output.log is not working; the watch must end it")
+		}
+	})
 }
 
 // TestWatchIdleLeavesACardThatAlreadyPublished: issue #916's rule, kept. A card whose

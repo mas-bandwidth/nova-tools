@@ -57,6 +57,25 @@ const NoIdleWindow = time.Duration(0)
 // them measured, not with one.
 const nativeBusyShare = 10
 
+// nativeLogDribble is how many bytes a card's own log must gain WITHIN ONE IDLE WINDOW
+// before the log alone counts as progress.
+//
+// The watch used to read any change in the file's size as work (`size != lastSize`), and
+// the job directory is `--write`: what lands in harness-output.log is chosen by the card's
+// own harness. So a child that appended one character a minute, or that rewrote the file,
+// reset the still-clock forever and held its slot to the deadline with nothing behind it
+// (johnny-b9716b436e56, HOLD #1831: "A child that writes one byte a minute, or truncates
+// `harness-output.log` (job dir is `--write`), never looks idle"). A signal the watched
+// thing can feed for free is not a signal.
+//
+// Four kilobytes per window is the same shape of floor as nativeBusyShare: a card that is
+// really stepping writes its banners, its model turn and its tool output by the page, which
+// is orders of magnitude above this, and a card that cannot manage one page in a whole
+// window is not being carried by its log. It is not a silence rule -- a card working in
+// silence is held by the tree's CPU, which is read separately below and resets the clock on
+// its own reading.
+const nativeLogDribble = 4096
+
 // nativeIdlePoll is how often the log's size is re-read, batch's idlePollInterval by the
 // same reasoning: short enough that the end lands near the window rather than a tick past
 // it, and cheap because it is one stat of one file.
@@ -133,6 +152,10 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		defer stopTicker()
 		lastGrow := now()
 		lastSize := logSize(w.Log)
+		// growFrom is the length the log had when the still-clock last moved. Progress is
+		// measured from THERE rather than from the previous poll, so a byte at a time can
+		// never add up to a reset it did not earn.
+		growFrom := lastSize
 		var lastSample time.Time
 		var cpu uint64
 		var haveCPU bool
@@ -144,9 +167,21 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				if at.IsZero() {
 					at = now()
 				}
-				if size := logSize(w.Log); size != lastSize {
-					lastSize, lastGrow = size, at
+				switch size := logSize(w.Log); {
+				case size < lastSize:
+					// A SHORTER LOG IS NOT A BUSIER CARD. A truncation or a rewrite is a
+					// change, and the old test read every change as work. The new length
+					// becomes the floor the next window's progress is measured from, and
+					// the still-clock keeps running through it.
+					lastSize, growFrom = size, size
+				case size-growFrom >= nativeLogDribble:
+					lastSize, growFrom, lastGrow = size, size, at
 					continue
+				default:
+					// Growth too small to be progress. It is not nothing -- it is kept in
+					// lastSize so a later truncation is still seen -- but the card must
+					// answer the tree's CPU reading below like any other quiet card.
+					lastSize = size
 				}
 				// A silent log is not a silent card (issue #593). The tree's CPU is read on
 				// the coarse poll batch uses, and the same one-percent-of-the-interval share

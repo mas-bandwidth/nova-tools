@@ -529,8 +529,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		case end := <-idleC:
 			// The card is still and its tree is spending nothing. It is ended HERE, with
 			// what the watch saw, instead of at the deadline with nothing at all.
+			//
+			// AND IT IS REAPED, NOT SHOT (johnny-b9716b436e56, HOLD #1831: "Idle kill is
+			// `KillGroup`, not `swarm.Reap` (TERM-wait-KILL) ... Batch idle already Reaps
+			// so native can fold usage"). A bare KillGroup is a SIGKILL no process can
+			// handle: the harness never flushes the turn it was in and never writes the
+			// usage row this run then has to score with dashes. The TERM path three lines
+			// below already Reaps, and an idle end is the same kind of ending -- the
+			// machinery stopping a card that is not going to finish -- so it gets the same
+			// grace. The kill still happens; it happens second.
 			deadline.Stop()
-			swarm.KillGroup(pgid, started)
+			swarm.Reap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
