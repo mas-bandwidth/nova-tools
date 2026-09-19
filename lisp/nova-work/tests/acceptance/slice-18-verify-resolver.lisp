@@ -68,6 +68,11 @@ expands its arguments, so a shell would be visible in the witness."
 (defun %fact-disagreeing-body (fact)
   (format nil "printf '~A <stamp>\\n'~%exit 0" fact))
 
+(defun %verify-resolver-pid-body (pid-file body)
+  "BODY for a resolver that first records its own process id in PID-FILE, so a
+case can assert the child was killed and reaped."
+  (format nil "printf '%s' \"$$\" > '~A'~%~A" pid-file body))
+
 (defmacro %signals-unreachable (&body body)
   `(handler-case (progn ,@body
                        (fail "expected verification-unreachable but none was signalled"))
@@ -225,4 +230,110 @@ expands its arguments, so a shell would be visible in the witness."
                           "an unreachable answer is an unverified row")
              (check-equal 1 exit "the verb answers FAIL"))
            (check-equal 0 (verification-cache-size cache) "the cache is still empty after"))
+      (%verify-resolver-clean dir))))
+
+;;; ------------------------------------------------------------------
+;;; a-resolver-past-the-deadline-is-unreachable-and-its-child-is-reaped
+;;; SPEC-WORK.md:1251-1266
+;;; ------------------------------------------------------------------
+
+(deftest "a-resolver-past-the-deadline-is-unreachable-and-its-child-is-reaped"
+    "docs/SPEC-WORK.md:1251-1266"
+    "expected=deadline-signals-unreachable;elapsed-under-3s;child-reaped"
+  (let* ((dir (%verify-resolver-dir))
+         (pid-file (merge-pathnames "deadline.pid" dir))
+         (body (%verify-resolver-pid-body pid-file "exec sleep 10")))
+    (unwind-protect
+         (let* ((script (%verify-resolver-script dir 1 body))
+                (resolver (make-command-resolver "test" script))
+                (start (get-internal-real-time)))
+           (%signals-unreachable
+            (fetch-resolver-fact resolver "test:pkg/name@sha-1" "pkg/name"
+                                 :timeout 0.25))
+           (let ((elapsed (/ (- (get-internal-real-time) start)
+                             (float internal-time-units-per-second))))
+             (ok (< elapsed 3)
+                 "a 0.25 s deadline against a 10 s child answered in ~,3F s"
+                 elapsed))
+           (let ((pid (parse-integer
+                       (uiop:read-file-string (namestring pid-file)))))
+             (let ((reaped nil))
+               (handler-case (progn (sb-posix:kill pid 0) nil)
+                 (error () (setf reaped t)))
+               (ok reaped "the resolver child ~D was not reaped" pid))))
+      (%verify-resolver-clean dir))))
+
+;;; ------------------------------------------------------------------
+;;; a-flooding-resolver-is-refused-and-its-output-is-never-drained
+;;; SPEC-WORK.md:1251-1266
+;;; ------------------------------------------------------------------
+
+(deftest "a-flooding-resolver-is-refused-and-its-output-is-never-drained"
+    "docs/SPEC-WORK.md:1251-1266"
+    "expected=over-max-bytes-signals-unreachable;flood-not-drained;child-reaped"
+  (let* ((dir (%verify-resolver-dir))
+         (pid-file (merge-pathnames "flood.pid" dir))
+         (marker (merge-pathnames "flood-drained" dir))
+         (line (make-string 64 :initial-element #\x))
+         (body (%verify-resolver-pid-body
+                pid-file
+                (format nil "printf 'holds 2026-09-13T18:00:00Z\\n'~%i=0~%while [ $i -lt 65536 ]; do printf '%s\\n' '~A'; i=$((i+1)); done~%printf 'drained' > '~A'~%exit 0"
+                        line marker))))
+    (unwind-protect
+         (let* ((script (%verify-resolver-script dir 1 body))
+                (resolver (make-command-resolver "test" script :max-bytes 4096))
+                (start (get-internal-real-time)))
+           (%signals-unreachable
+            (fetch-resolver-fact resolver "test:pkg/name@sha-1" "pkg/name"))
+           (let ((elapsed (/ (- (get-internal-real-time) start)
+                             (float internal-time-units-per-second))))
+             (ok (< elapsed 3)
+                 "a bounded read against a 4 MiB flood answered in ~,3F s"
+                 elapsed))
+           (ok (not (probe-file marker))
+               "the reader drained the flood all the way to ~A" marker)
+           (let ((pid (parse-integer
+                       (uiop:read-file-string (namestring pid-file)))))
+             (let ((reaped nil))
+               (handler-case (progn (sb-posix:kill pid 0) nil)
+                 (error () (setf reaped t)))
+               (ok reaped "the flooding resolver child ~D was not reaped" pid))))
+      (%verify-resolver-clean dir))))
+
+;;; ------------------------------------------------------------------
+;;; output-after-the-one-agreed-line-is-refused  SPEC-WORK.md:1251-1266
+;;; ------------------------------------------------------------------
+
+(deftest "output-after-the-one-agreed-line-is-refused"
+    "docs/SPEC-WORK.md:1251-1266"
+    "expected=a-valid-first-line-plus-extra-output-is-unreachable"
+  (let ((dir (%verify-resolver-dir)))
+    (unwind-protect
+         (let* ((script (%verify-resolver-script
+                         dir 1 "printf 'holds 2026-09-13T18:00:00Z\\nunexpected second line\\n'~%exit 0"))
+                (resolver (make-command-resolver "test" script)))
+           (%signals-unreachable
+            (fetch-resolver-fact resolver "test:pkg/name@sha-1" "pkg/name")))
+      (%verify-resolver-clean dir))))
+
+;;; ------------------------------------------------------------------
+;;; max-bytes-counts-utf8-bytes-not-characters  SPEC-WORK.md:1251-1266
+;;; ------------------------------------------------------------------
+
+(deftest "max-bytes-counts-utf8-bytes-not-characters"
+    "docs/SPEC-WORK.md:1251-1266"
+    "expected=seven-characters-eight-utf8-bytes;refused-at-7;accepted-at-8"
+  (let ((dir (%verify-resolver-dir)))
+    (unwind-protect
+         (let* ((script (%verify-resolver-script
+                         dir 1 (format nil "printf 'holds ~A\\n'~%exit 0"
+                                       (string (code-char #xe9))))))
+           (%signals-unreachable
+            (run-resolver-command script "test:pkg/name@sha-1" "pkg/name"
+                                  :max-bytes 7))
+           (multiple-value-bind (fact stamp)
+               (run-resolver-command script "test:pkg/name@sha-1" "pkg/name"
+                                     :max-bytes 8)
+             (check-equal :holds fact "eight UTF-8 bytes is under the 8-byte bound")
+             (check-string= (string (code-char #xe9)) stamp "the stamp it answered")))
       (%verify-resolver-clean dir))))

@@ -1952,7 +1952,8 @@
     #:make-command-resolver
     #:command-resolver-p
     #:command-resolver-max-bytes
-    #:parse-resolver-line
+    #:command-resolver-timeout
+    #:parse-resolver-output
     #:run-resolver-command
     ;; the needs-met predicate and its five reason tokens (nova-tools #785,
     ;; SPEC-WORK.md:4740-4866)
