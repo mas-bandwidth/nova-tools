@@ -3,10 +3,12 @@ package swarm
 // Bench slot leases: a bench-wide lease store with shares, reserve, expiry and
 // live-pid fencing (docs/SPEC-SWARM.md, "Bench slot leases").
 //
-// The store is <store>/slots with one directory per lease. The directory is
-// made by os.Mkdir, which is atomic: two takers racing for the last slot
-// cannot both win the same name, and a lease is never inferred from a count
-// but from the directories on disk. Each lease directory holds a file `lease`
+// The store is <store>/slots with one directory per lease. A lease directory
+// is published by renaming a fully-written staging directory into place, so a
+// directory in the store always arrives WITH its `lease` file already inside:
+// a concurrent take scanning the store can never meet a half-written take and
+// reap it (nova-tools#1868). A lease is never inferred from a count but from
+// the directories on disk. Each lease directory holds a file `lease`
 // with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`. Shares live in
 // <store>/shares.tsv with rows `capacity\t<n>`, `reserve\t<n>` and
 // `<owner>\t<n>`.
@@ -204,7 +206,41 @@ func SlotHoldings(store, owner string, now time.Time) (held, share int, err erro
 	return held, shares[owner], nil
 }
 
-// MakeSlotLease writes one lease directory by Mkdir (atomic) for tests and
+// publishSlotLease stages a complete lease directory beside the slot store
+// and renames it into place, so a directory in slots/ always arrives WITH
+// its lease file already inside. The staging directory lives beside slots/,
+// never inside it, so no take scanning the store ever sees it, and the rename
+// is one atomic step on the store's filesystem.
+//
+// An id that is already held is reported as an existence error for the
+// caller's retry loop: the look-then-rename cannot claim the atomicity a bare
+// Mkdir had, but the id carries the owner's nanosecond stamp plus 32 random
+// bits, so a clash is a retry, never a silent replace.
+func publishSlotLease(store, id, body string) error {
+	if err := os.MkdirAll(slotStoreDir(store), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp(store, ".slot-tmp-*")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "lease"), []byte(body), 0o644); err != nil {
+		_ = safepath.RemoveUnder(store, tmp)
+		return err
+	}
+	dest := filepath.Join(slotStoreDir(store), id)
+	if _, err := os.Lstat(dest); err == nil {
+		_ = safepath.RemoveUnder(store, tmp)
+		return &os.PathError{Op: "publish", Path: dest, Err: os.ErrExist}
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = safepath.RemoveUnder(store, tmp)
+		return err
+	}
+	return nil
+}
+
+// MakeSlotLease writes one lease directory by publish (atomic) for tests and
 // for fixtures: the pid and until are the caller's, not the taker's.
 func MakeSlotLease(store, id, owner string, pid int, label string, until time.Time) error {
 	if strings.TrimSpace(owner) == "" {
@@ -213,20 +249,9 @@ func MakeSlotLease(store, id, owner string, pid int, label string, until time.Ti
 	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") {
 		return fmt.Errorf("owner and label are one line")
 	}
-	dir := filepath.Join(slotStoreDir(store), id)
-	if err := os.MkdirAll(slotStoreDir(store), 0o755); err != nil {
-		return err
-	}
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		return err
-	}
 	body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n",
 		owner, pid, label, until.UTC().Format(time.RFC3339))
-	if err := os.WriteFile(slotLeaseFile(store, id), []byte(body), 0o644); err != nil {
-		_ = safepath.RemoveUnder(slotStoreDir(store), dir)
-		return err
-	}
-	return nil
+	return publishSlotLease(store, id, body)
 }
 
 func slotLeaseID(owner string, now time.Time) string {
@@ -336,8 +361,10 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 		}
 		l, rerr := readSlotLease(store, e.Name())
 		if rerr != nil {
-			// A half-written take: no lease file, no owner, no hold.
-			// Reap it so garbage never accumulates.
+			// Garbage, never a take in flight: new takes publish complete
+			// directories (publishSlotLease), so a directory with no lease
+			// file in it holds no lease and no hold. Reap it so garbage
+			// never accumulates.
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
@@ -361,15 +388,11 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	for i := 0; i < k; i++ {
 		for tries := 0; ; tries++ {
 			id := slotLeaseID(owner, now)
-			if err := os.Mkdir(filepath.Join(slotStoreDir(store), id), 0o755); err != nil {
+			body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n", owner, pid, label, until)
+			if err := publishSlotLease(store, id, body); err != nil {
 				if os.IsExist(err) && tries < 20 {
 					continue
 				}
-				return nil, 0, 0, 0, "", false, err
-			}
-			body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n", owner, pid, label, until)
-			if err := os.WriteFile(slotLeaseFile(store, id), []byte(body), 0o644); err != nil {
-				_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), id))
 				return nil, 0, 0, 0, "", false, err
 			}
 			ids = append(ids, id)
