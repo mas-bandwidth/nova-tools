@@ -16,21 +16,28 @@ import (
 // STELLA'S HOLD ON PR #1562, and it is a real ownership defect: `cmdNative`'s deferred
 // cleanup released by OWNER AND LABEL, not by the lease this invocation took.
 // `ReleaseSlotLeases(store, owner, label, false)` removes EVERY lease matching the owner
-// and the label, so two `native` invocations that share an owner and a label do not hold a
-// seat each — they hold a seat each that the other is free to give away.
+// and the label — so two `native` invocations that share an owner and a label do not hold a
+// seat each, they hold a seat each that the other is free to give away.
 //
 // An owner and a label are not an identity. A bench has ONE owner by design, and a label is
 // the card's name, which two slots, two benches and two retries reuse on purpose. This is
 // not an exotic race; it is the ordinary case.
 //
-// Stella's own reproduction, with the built CLI, is the simplest one and is the first
-// subtest below: a MISSING HARNESS makes `native` exit 2 without ever starting a job — and
-// the cleanup still deletes a pre-existing, live, unrelated lease. No goroutines, no sleeps,
-// no timing: the lease is planted, one command is run, the lease is gone.
+// Stella's own reproduction with the built CLI is the simplest and is the first case below:
+// a MISSING HARNESS makes `native` exit 2 without ever starting a job, and the cleanup still
+// deletes a pre-existing, live, unrelated lease.
 //
-// The damage is what the store is FOR. A seat released out from under a live run makes the
-// bench answer "that slot is free" while a card is still burning it.
+// NOTHING HERE IS TIMED. The overlap between two live runs is held open by a BARRIER the
+// fake harness blocks on — `FAKE-AWAIT-NOTE`, which waits for `<job>/note` to exist — and
+// released by the test when it has finished looking. The repository's own note beside that
+// directive is the rule being followed: "A WORKER THAT IS WAITED ON WAITS FOR THE THING
+// ITSELF, NEVER FOR A CLOCK (#122)." Every wait below waits for a FILE the run creates, so
+// a slow bench makes this test slow and never makes it wrong.
 const identityOwner = "fake-1"
+
+// barrierCard blocks the fake harness until the test writes `<job>/note`. The 60 is the
+// harness's own outer bound, not this test's schedule: nothing here waits for it to expire.
+const barrierCard = "FAKE-AWAIT-NOTE 60\n"
 
 // plantLease puts a live lease in the store that this invocation does NOT own: the pid is
 // this test process, so it is alive and cannot be reaped, and the until is an hour out.
@@ -68,41 +75,73 @@ func identityStore(t *testing.T) string {
 	return store
 }
 
-// The four in-process exit paths, each with two bystander leases planted first. Stella
-// requires proof for every one of them, because the release is a `defer` and a `defer`
-// fires on paths a reader does not think about.
+// jobFile is a path inside the job directory a run makes for `shared-label`.
+func jobFile(slot, name string) string {
+	return filepath.Join(slot, "jobs", "shared-label", name)
+}
+
+// waitForFile is recovery_test.go's, reused deliberately: it waits on an OBSERVABLE the
+// run creates rather than on a clock, which is the same rule this file follows throughout.
+// A timeout in it here means the bench is slow, not that the lease contract is wrong.
+
+// waitForSeats waits for the store to hold n leases. Same rule: a timeout is the bench.
+func waitForSeats(t *testing.T, store string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if slotLeaseCountNow(store) == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waited 60s for %d seats and saw %d; this is the bench being slow, not the lease contract", n, slotLeaseCountNow(store))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// releaseBarrier lets a blocked fake harness finish, by writing the note it waits on.
+func releaseBarrier(t *testing.T, slot string) {
+	t.Helper()
+	if err := os.WriteFile(jobFile(slot, "note"), []byte("go on\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// nativeArgs is one native launch against a store, as every case here runs it.
+func nativeArgs(harness, card, slot, root, store, deadline string) []string {
+	return []string{"native", "--harness", harness, "--model", "fake/fake-model",
+		"--label", "shared-label", "--card", card, "--slot", slot, "--root", root,
+		"--deadline", deadline, "--no-wall",
+		"--slots-store", store, "--owner", identityOwner}
+}
+
+// The three exit paths that need no coordination, each with two bystander leases planted
+// first. The deadline and the TERM are NOT here: they have their own tests, because each
+// has an outcome to prove by name and a table that accepted any return code would pass on a
+// refusal that never reached the thing it is named for.
 func TestUnrelatedLeasesSurviveEveryNativeExitPath(t *testing.T) {
 	realHarness := nativeHarness(t)
 
 	for _, tc := range []struct {
-		name     string
-		harness  string
-		card     string
-		deadline string
-		wantRC   func(int) bool
-		why      string
+		name    string
+		harness string
+		card    string
+		wantRC  int
+		why     string
 	}{
 		{
 			// STELLA'S REPRODUCTION, and the simplest red in this file.
 			name: "a_missing_harness_refuses_before_any_job", harness: "/nonexistent/harness/binary",
-			card: "a card\n", deadline: "30s",
-			wantRC: func(rc int) bool { return rc == 2 },
-			why:    "a missing harness exits 2 with no job started",
+			card: "a card\n", wantRC: 2,
+			why: "a missing harness exits 2 with no job started",
 		},
 		{
-			name: "normal_completion", harness: realHarness, card: "FAKE-SLEEP 1\n", deadline: "60s",
-			wantRC: func(rc int) bool { return rc == 0 },
-			why:    "a run that finished",
+			name: "normal_completion", harness: realHarness, card: "a card\n", wantRC: 0,
+			why: "a run that finished",
 		},
 		{
-			name: "the_run_fails", harness: realHarness, card: "FAKE-RC 3\n", deadline: "60s",
-			wantRC: func(rc int) bool { return rc != 0 },
-			why:    "a run whose card failed",
-		},
-		{
-			name: "the_deadline_cuts_it", harness: realHarness, card: "FAKE-SLEEP 60\n", deadline: "2s",
-			wantRC: func(int) bool { return true },
-			why:    "a run cut at its deadline",
+			name: "the_run_fails", harness: realHarness, card: "FAKE-RC 3\n", wantRC: 3,
+			why: "a run whose card failed",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,17 +151,13 @@ func TestUnrelatedLeasesSurviveEveryNativeExitPath(t *testing.T) {
 			write(t, cardPath, tc.card)
 
 			var stdout, stderr bytes.Buffer
-			rc := run([]string{"native", "--harness", tc.harness, "--model", "fake/fake-model",
-				"--label", "shared-label", "--card", cardPath, "--slot", slot, "--root", root,
-				"--deadline", tc.deadline, "--no-wall",
-				"--slots-store", store, "--owner", identityOwner},
+			rc := run(nativeArgs(tc.harness, cardPath, slot, root, store, "60s"),
 				strings.NewReader(""), &stdout, &stderr, time.Now())
-			if !tc.wantRC(rc) {
-				t.Fatalf("%s: unexpected exit %d:\n%s%s", tc.why, rc, stdout.String(), stderr.String())
+			if rc != tc.wantRC {
+				t.Fatalf("%s: exit %d, want %d:\n%s%s", tc.why, rc, tc.wantRC, stdout.String(), stderr.String())
 			}
 
 			assertBystandersSurvive(t, store, tc.why)
-			// And the run gave its OWN seat back: two bystanders, nothing else.
 			if got := slotLeaseCount(t, store); got != 2 {
 				t.Errorf("%s: the store holds %d leases and should hold exactly the 2 bystanders; the run kept or took a seat it should not have", tc.why, got)
 			}
@@ -130,42 +165,89 @@ func TestUnrelatedLeasesSurviveEveryNativeExitPath(t *testing.T) {
 	}
 }
 
-// The fifth exit path needs a real process to signal, so it is its own test: a TERM from
-// outside, the path a manager takes when a run overruns.
-func TestUnrelatedLeasesSurviveATermFromOutside(t *testing.T) {
-	windowsIsNotABench(t)
-	tool, _ := builtBinaries(t)
-	bin := nativeHarness(t)
+// THE DEADLINE, PROVED RATHER THAN ASSUMED. This case used to sit in the table above with a
+// return code check of `func(int) bool { return true }` — it accepted anything, so a run
+// that refused in preflight and never reached a deadline at all would have passed it. Stella
+// held the PR on exactly that.
+//
+// So it asserts, in order: the real harness STARTED (it wrote its argv into the job), the
+// run ended AT THE DEADLINE and not some other way (the `NATIVE OK` line, `rc=-1`, and NO
+// `reason=terminated`, which is what separates this path from a TERM), the process's own
+// exit code, that the run gave back ITS OWN seat, and that the bystanders are untouched.
+func TestUnrelatedLeasesSurviveTheDeadline(t *testing.T) {
 	store := identityStore(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	write(t, cardPath, "FAKE-SLEEP 60\n")
+	// The barrier is never released: the harness is blocked in it when the deadline fires,
+	// which is the only way to be sure the deadline is what ended this run.
+	write(t, cardPath, barrierCard)
 
-	cmd := exec.Command(tool, "native", "--harness", bin, "--model", "fake/fake-model",
-		"--label", "shared-label", "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "60s", "--no-wall",
-		"--slots-store", store, "--owner", identityOwner)
+	var stdout, stderr bytes.Buffer
+	rc := run(nativeArgs(nativeHarness(t), cardPath, slot, root, store, "3s"),
+		strings.NewReader(""), &stdout, &stderr, time.Now())
+
+	if _, err := os.Stat(jobFile(slot, "argv")); err != nil {
+		t.Fatalf("the harness never started, so this test never reached a deadline: %v\n%s%s", err, stdout.String(), stderr.String())
+	}
+	if rc != 1 {
+		t.Errorf("a run cut at its deadline exits 1, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "NATIVE OK") {
+		t.Fatalf("a run cut at its deadline still prints the NATIVE OK line:\n%s", out)
+	}
+	if !strings.Contains(out, " rc=-1 ") {
+		t.Errorf("a run cut at its deadline reports rc=-1 for the child it killed:\n%s", out)
+	}
+	if strings.Contains(out, "reason=terminated") {
+		t.Errorf("reason=terminated is the TERM path's word; a DEADLINE must not claim it:\n%s", out)
+	}
+
+	assertBystandersSurvive(t, store, "a run cut at its deadline")
+	if got := slotLeaseCount(t, store); got != 2 {
+		t.Errorf("a run cut at its deadline: the store holds %d leases and should hold exactly the 2 bystanders; the deadline path must give back its own seat and only its own", got)
+	}
+}
+
+// The fifth exit path needs a real process to signal, so it is its own test: a TERM from
+// outside, the path a manager takes when a run overruns. Its end reason is proved BY NAME —
+// `reason=terminated`, which the deadline path above must not print and this one must.
+func TestUnrelatedLeasesSurviveATermFromOutside(t *testing.T) {
+	windowsIsNotABench(t)
+	tool, _ := builtBinaries(t)
+	store := identityStore(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	write(t, cardPath, barrierCard)
+
+	cmd := exec.Command(tool, nativeArgs(nativeHarness(t), cardPath, slot, root, store, "120s")...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting native: %v", err)
 	}
-	argv := filepath.Join(slot, "jobs", "shared-label", "argv")
-	waitFor := time.Now().Add(20 * time.Second)
-	for {
-		if _, err := os.Stat(argv); err == nil {
-			break
-		}
-		if time.Now().After(waitFor) {
-			_ = cmd.Process.Kill()
-			t.Fatalf("the harness never started (no argv); this is the bench being slow, not the lease contract:\n%s", stderr.String())
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	// The harness has STARTED and is blocked in the barrier: both are files it wrote.
+	waitForFile(t, jobFile(slot, "argv"), "the harness never started (a wait here is the bench, not the lease contract)")
+	waitForSeats(t, store, 3) // two bystanders and this run's own seat
+
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("sending SIGTERM: %v", err)
 	}
-	_ = cmd.Wait()
+	err := cmd.Wait()
+	if err == nil {
+		t.Errorf("a TERMed run exits non-zero, got 0:\n%s", stdout.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "reason=terminated") {
+		t.Errorf("a TERM from outside ends the run with reason=terminated, and it is the word that separates this path from the deadline:\n%s", out)
+	}
+	if !strings.Contains(out, " rc=-1 ") {
+		t.Errorf("a TERMed run reports rc=-1 for the child it reaped:\n%s", out)
+	}
+	if _, serr := os.Stat(filepath.Join(slot, "usage.tsv")); serr != nil {
+		t.Errorf("usage.tsv absent after a TERM from outside: %v\n%s", serr, stderr.String())
+	}
 
 	assertBystandersSurvive(t, store, "a run TERMed from outside")
 	if got := slotLeaseCount(t, store); got != 2 {
@@ -176,10 +258,15 @@ func TestUnrelatedLeasesSurviveATermFromOutside(t *testing.T) {
 // Two live invocations sharing an owner and a label, in both directions, because they are
 // different bugs wearing one cause: the second FAILS and its cleanup takes the first's live
 // seat, or the first FINISHES and its cleanup takes the second's.
+//
+// THE OVERLAP IS HELD BY A BARRIER, NOT A SLEEP. Each run blocks in the fake harness until
+// this test writes its note, so "both are running at once" is something the test ARRANGES
+// and then ends, rather than something it hopes is still true.
 func TestTwoNativeRunsSharingAnOwnerAndLabelKeepTheirOwnSeats(t *testing.T) {
 	bin := nativeHarness(t)
 
-	start := func(t *testing.T, store, card string) <-chan int {
+	// start launches one barrier-blocked run and returns its exit channel and its slot.
+	start := func(t *testing.T, store, card string) (<-chan int, string) {
 		t.Helper()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
@@ -187,48 +274,43 @@ func TestTwoNativeRunsSharingAnOwnerAndLabelKeepTheirOwnSeats(t *testing.T) {
 		out := make(chan int, 1)
 		go func() {
 			var stdout, stderr bytes.Buffer
-			out <- run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
-				"--label", "shared-label", "--card", cardPath, "--slot", slot, "--root", root,
-				"--deadline", "90s", "--no-wall",
-				"--slots-store", store, "--owner", identityOwner},
+			out <- run(nativeArgs(bin, cardPath, slot, root, store, "120s"),
 				strings.NewReader(""), &stdout, &stderr, time.Now())
 		}()
-		return out
+		return out, slot
 	}
 
-	// A timeout here is the BENCH being slow, not the contract being wrong, and it says so.
-	waitForSeats := func(t *testing.T, store string, n int) {
+	// stillRunning refuses to let a subtest pass by accident: if the run that is supposed
+	// to be holding a seat has already finished, nothing was measured.
+	stillRunning := func(t *testing.T, ch <-chan int, who string) {
 		t.Helper()
-		deadline := time.Now().Add(30 * time.Second)
-		for {
-			if slotLeaseCountNow(store) == n {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("waited 30s for %d seats and saw %d; this is the bench being slow, not the lease contract", n, slotLeaseCountNow(store))
-			}
-			time.Sleep(5 * time.Millisecond)
+		select {
+		case code := <-ch:
+			t.Fatalf("the %s run finished (exit %d) before the other released; the window closed and nothing was measured", who, code)
+		default:
 		}
 	}
 
 	t.Run("the_failing_second_leaves_the_first_running", func(t *testing.T) {
 		store := slotShares(t, "capacity\t4\nreserve\t0\nfake-1\t4\n")
-		first := start(t, store, "FAKE-SLEEP 20\n")
+		first, firstSlot := start(t, store, barrierCard)
+		waitForFile(t, jobFile(firstSlot, "argv"), "the first run's harness never started (a wait here is the bench, not the lease contract)")
 		waitForSeats(t, store, 1)
 
-		if rc := <-start(t, store, "FAKE-RC 3\n"); rc == 0 {
-			t.Fatalf("the second run is the failing one; it exited 0")
+		// The second shares the owner and the label and FAILS after acquiring its seat.
+		second, _ := start(t, store, "FAKE-RC 3\n")
+		if rc := <-second; rc != 3 {
+			t.Fatalf("the second run is the failing one; it exited %d, want 3", rc)
 		}
-		select {
-		case code := <-first:
-			t.Fatalf("the first run finished (exit %d) before the second released; the window closed and nothing was measured", code)
-		default:
-		}
+
+		stillRunning(t, first, "first")
 		if got := slotLeaseCountNow(store); got != 1 {
-			t.Fatalf("after the failing second run released, the store holds %d leases, want 1: the first run is STILL RUNNING and its seat must still be there", got)
+			t.Fatalf("after the failing second run released, the store holds %d leases, want 1: the first run is STILL BLOCKED IN ITS BARRIER and its seat must still be there", got)
 		}
+
+		releaseBarrier(t, firstSlot)
 		if code := <-first; code != 0 {
-			t.Errorf("the first run exits 0, got %d", code)
+			t.Errorf("the first run exits 0 once released, got %d", code)
 		}
 		if left := slotLeaseCount(t, store); left != 0 {
 			t.Errorf("both runs are done and %d leases are left", left)
@@ -237,24 +319,27 @@ func TestTwoNativeRunsSharingAnOwnerAndLabelKeepTheirOwnSeats(t *testing.T) {
 
 	t.Run("the_first_to_finish_leaves_the_second_running", func(t *testing.T) {
 		store := slotShares(t, "capacity\t4\nreserve\t0\nfake-1\t4\n")
-		long := start(t, store, "FAKE-SLEEP 20\n")
+		long, longSlot := start(t, store, barrierCard)
+		waitForFile(t, jobFile(longSlot, "argv"), "the long run's harness never started (a wait here is the bench, not the lease contract)")
 		waitForSeats(t, store, 1)
-		short := start(t, store, "FAKE-SLEEP 1\n")
+		short, shortSlot := start(t, store, barrierCard)
+		waitForFile(t, jobFile(shortSlot, "argv"), "the short run's harness never started (a wait here is the bench, not the lease contract)")
 		waitForSeats(t, store, 2)
 
+		// Both are blocked and both hold a seat. Let ONE of them finish.
+		releaseBarrier(t, shortSlot)
 		if code := <-short; code != 0 {
-			t.Fatalf("the short run exits 0, got %d", code)
+			t.Fatalf("the short run exits 0 once released, got %d", code)
 		}
-		select {
-		case code := <-long:
-			t.Fatalf("the long run finished (exit %d) before the short one released; the window closed and nothing was measured", code)
-		default:
-		}
+
+		stillRunning(t, long, "long")
 		if got := slotLeaseCountNow(store); got != 1 {
-			t.Fatalf("after the short run released, the store holds %d leases, want 1: the long run is STILL RUNNING and its seat must still be there", got)
+			t.Fatalf("after the short run released, the store holds %d leases, want 1: the long run is STILL BLOCKED IN ITS BARRIER and its seat must still be there", got)
 		}
+
+		releaseBarrier(t, longSlot)
 		if code := <-long; code != 0 {
-			t.Errorf("the long run exits 0, got %d", code)
+			t.Errorf("the long run exits 0 once released, got %d", code)
 		}
 		if left := slotLeaseCount(t, store); left != 0 {
 			t.Errorf("both runs are done and %d leases are left", left)
