@@ -118,6 +118,12 @@ type BatchInput struct {
 	// deepseek-flash on the same bench in the same second answered in 11 s. Zero leaves a
 	// card to its deadline, which is today's behaviour.
 	StallAfter time.Duration
+	// Stagger is the minimum gap between two launches naming the same bench (nova-tools
+	// #1785), enforced on the launch and on the pull that brings a bench card's files back.
+	// A route and a bench are different axes: two benches can share one key while each opens
+	// its own ssh session, and the per-route cap does not bound how many of those sessions
+	// open in the same second. Zero is off, which is today's behaviour byte for byte.
+	Stagger time.Duration
 	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
 	// it is set, the model a card is dispatched with is the ladder's answer --
 	// which MIND does this unit of work -- and not the string the fill script
@@ -380,6 +386,9 @@ func Batch(in BatchInput) int {
 	// be a pass that never runs.
 	gate := newInflight(in.MaxInflight)
 	defer gate.close()
+	// THE STAGGER (nova-tools#1785): a minimum gap between two launches -- or two
+	// bench-pulls -- naming the same bench. A zero gap is off and the gate never sleeps.
+	stagger := NewBenchStagger(in.Stagger, clk.Now, time.Sleep)
 	var wg sync.WaitGroup
 	// One count held for the whole launch loop, so `allDone` cannot close on the first card
 	// finishing while later cards are still held at the gate.
@@ -617,6 +626,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
+			stagger.Wait(c.bench)
 			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, logFile)
 			if err != nil {
 				_ = logFile.Close()
@@ -740,6 +750,7 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		b := benches[c.bench]
+		stagger.Wait(c.bench)
 		err := pullFromBench(benchPull{
 			host:       b.Host,
 			remoteSlot: b.Root + "/" + strconv.Itoa(c.slot),

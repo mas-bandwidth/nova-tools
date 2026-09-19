@@ -513,6 +513,11 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	stallAfter := f.fs.Int("stall-after", 0, "")
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
+	// THE STAGGER (nova-tools#1785): a minimum gap between two launches naming the same
+	// bench. It is a duration and defaults to 3s; a bench is the ssh target, and two
+	// benches sharing one key each open their own session, which the per-route cap does not
+	// bound. `--stagger 0` is off.
+	stagger := f.fs.Duration("stagger", 3*time.Second, "")
 	then := f.fs.String("then", "", "")
 	// The card form's own three: the harness a runnerless batch runs native with (#636),
 	// its auth file, and the slot range it allocates from (#618).
@@ -543,7 +548,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *stagger, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
 			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
 				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
@@ -698,7 +703,7 @@ func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	return in
 }
 
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile string, route routeFlags, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, stagger time.Duration, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
@@ -743,6 +748,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 		Idle:        time.Duration(idle) * time.Second,
 		MaxInflight: maxInflight,
 		StallAfter:  time.Duration(stallAfter) * time.Second,
+		Stagger:     stagger,
 		Cards:       cards, Root: root, Runner: runner,
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
@@ -1771,6 +1777,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		sandbox:        *sandbox,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
+		// THE JITTERED START (nova-tools#1785): a uniform-random 0-2s, set only here, in a
+		// live run. Twelve simultaneous launches tripped sshd MaxStartups; a refused card is
+		// never delayed because the pause sits after every refusal, immediately before start.
+		jitter: swarm.NativeStartJitter,
+		sleep:  time.Sleep,
 	}
 	if workerGiven {
 		cfg.worker = &w

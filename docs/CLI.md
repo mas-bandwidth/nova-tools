@@ -1318,7 +1318,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>] [--stagger <d>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1337,6 +1337,11 @@ unchanged, and only when they are given: one pulse fills every bench the caller 
 — the Studio and the Space in one tick, as SPEC-SWARM's **Benches** section allows —
 instead of a pulse being one bench (issue #637). Neither flag is read by `launch`
 itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
+
+`--stagger <d>` is likewise handed through to `nova-swarm batch --stagger <d>` and
+defaults to `3s`: the minimum gap between two launches naming the same bench, so a
+wave of twelve simultaneous launches cannot trip `sshd` `MaxStartups` (nova-tools
+#1785). `--stagger 0` is off.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
 no launch flag supplies, so launch never calls it (issue #630). `--runner` is
@@ -1466,7 +1471,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--stagger <d>] [--max-inflight <n>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1557,6 +1562,21 @@ FILL REFUSED ready=<dir> file=<name> more=<n> remedy="fill reads card-<n>.md and
 One bench takes at most 30 cards in a tick, whatever its capacity says, because the
 rest of the machine is not the fill's to spend.
 
+**`--stagger <d>` paces two launches to the same bench** (nova-tools#1785) and
+defaults to `3s`: the minimum gap between two launches naming one bench, enforced
+right before each launch, so twelve simultaneous launches cannot trip `sshd`
+`MaxStartups`. `--stagger 0` is off. **`--max-inflight <n>`** (default `32`) caps how
+many cards fill keeps live against one route at a time — where a route is the
+`fill`'s own `fill@<bench>` key, one model pinned per bench by the launcher — and a
+card at or above the cap is held exactly like a lane hold, staying `--ready` for the
+next tick:
+
+```
+FILL HELD card=card-<n>.md route=fill@<bench> inflight=<n> max=<n>
+```
+
+`--max-inflight 0` is off, today's behaviour byte for byte.
+
 **`--only <glob>` is the whitelist of cards this run may launch**, repeatable and
 comma-separated, matched against the card's filename with or without the `card-`
 prefix and the `.md` suffix — `--only 96*`, `--only card-9601.md` and `--only 9601`
@@ -1646,7 +1666,7 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 
 ```
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--stagger <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 ```
 
 The first form folds one pulse's cards under a local root: it pushes and opens a PR for
@@ -1677,6 +1697,11 @@ by-hand run against a bench not in the file yet wants; name it on every real inv
 
 **A bench harvest wants no `--id`, no `--sources` and no `--templates`**: there is no pulse
 packet to name and no relaunch to feed, and a `cut --rows` produces none of the three.
+
+**`--stagger <d>` paces two bench-reads to the same bench** (nova-tools#1785) and
+defaults to `3s`: the minimum gap between two jobs' fetch over `ssh://<bench>`, which
+also covers the `mark-harvested` touches that follow in the same job. `--stagger 0` is
+off.
 
 **The filter is the session and the branch prefix, never an age alone.** `--session` takes
 only jobs whose `RESULT.md` carries that `SESSION` line, `--branch-prefix` (default
@@ -2264,6 +2289,14 @@ BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
 `--stall-after <seconds>` is the **first-token** deadline and is **not** `--idle`. Every signal the idle window has needs a first sample to compare against, so a card that never speaks once is invisible to it and burns its whole deadline. A card that has produced **nothing at all** since it launched is ended at `--stall-after` and scored `ABSTAIN reason=stalled`; a card that spoke once and went quiet is `--idle`'s business and this never fires for it, and a card burning CPU in silence has moved and is not stalled (#593).
 
 Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contributor-free key the tail latency goes to infinity — hulk and vision returned zero results in thirteen minutes at load 0.5–2.0 — while `deepseek-flash` on the same bench in the same second answered in 11 s. A launcher with no cap turns a free tier's queue into spend.
+
+**`--stagger <d>` paces two launches to the same bench (nova-tools#1785).** A route and a bench are different axes: two benches can share one key while each opens its own `ssh` session, so the per-route cap above does not bound how many of those sessions open in the same second — twelve simultaneous launches tripped `sshd` `MaxStartups`, with 119 cards starting within one minute against a single key. `--stagger` is the minimum gap between two launches naming the same bench, enforced on the launch and on the pull that brings a bench card's files back, and defaults to `3s`; `--stagger 0` is off. `nova-pulse launch` threads its own `--stagger` through to it.
+
+```
+nova-swarm batch --cards <tsv> ... [--stagger <d>]
+```
+
+**`native` starts jittered, always.** Immediately before it starts the child — and only after every refusal, so a refused card is never delayed — a live run pauses a uniform-random 0–2s, the same answer to the `MaxStartups` trip: a wave of native launches no longer lands on the bench in one instant. A hand-built run configuration (a test) carries no jitter and starts at once.
 
 **`native` takes a bench slot lease, and refuses a launch it cannot lease (#1546).**
 `--slots-store <dir>` and `--owner <name>` are **required**. The run takes exactly one

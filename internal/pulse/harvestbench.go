@@ -43,6 +43,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -140,6 +141,10 @@ func harvestBench(in HarvestInput) int {
 	if fallbackBase == "" {
 		fallbackBase = DefaultBase
 	}
+	// THE STAGGER (nova-tools#1785): a minimum gap between two bench-reads naming this
+	// bench. One Wait covers the fetch and the mark-harvested touches that follow it in the
+	// same job, since they are the same job's traffic to the same bench.
+	stagger := swarm.NewBenchStagger(in.Stagger, in.Now, time.Sleep)
 
 	raw, err := shell.Run(in.Bench, benchListScript(splitList(in.Root)))
 	if err != nil {
@@ -201,6 +206,7 @@ func harvestBench(in HarvestInput) int {
 
 		url := benchRepoURL(in.Bench, j.Dir)
 		ref := "refs/harvest/" + branch
+		stagger.Wait(in.Bench)
 		if out, err := gitIn(clone, "fetch", url, "+"+branch+":"+ref); err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST FETCH-FAIL bench=%s label=%s branch=%s: %s",

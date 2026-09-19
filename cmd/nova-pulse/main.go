@@ -404,6 +404,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	floor := f.fs.Float64("floor", 0.9, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
+	stagger := f.fs.Duration("stagger", 3*time.Second, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -429,7 +430,8 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
 		Benches: *benches, Bench: *bench,
 		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
-		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
+		Stagger: *stagger,
+		Stdout:  stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,
 	})
 }
@@ -453,6 +455,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	branchPrefix := f.fs.String("branch-prefix", pulse.DefaultBranchPrefix, "")
 	base := f.fs.String("base", "", "")
 	since := f.fs.String("since", "", "")
+	stagger := f.fs.Duration("stagger", 3*time.Second, "")
 	launched := f.fs.String("launched", "", "")
 	doneDir := f.fs.String("done", "", "")
 	failedDir := f.fs.String("failed", "", "")
@@ -539,6 +542,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		BranchPrefix: *branchPrefix,
 		Base:         *base,
 		Since:        age,
+		Stagger:      *stagger,
 		Launched:     *launched,
 		Done:         *doneDir,
 		Failed:       *failedDir,

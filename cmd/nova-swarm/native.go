@@ -63,6 +63,12 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// jitter and sleep are the always-on staggered start (nova-tools#1785): a uniform-random
+	// 0-2s pause inserted immediately before the child starts, so twelve simultaneous
+	// launches do not trip sshd MaxStartups. They are nil for every hand-built config (the
+	// tests), which means no jitter; cmdNative is the only caller that sets them.
+	jitter func() time.Duration
+	sleep  func(time.Duration)
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -492,6 +498,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		cmd.Stdout = capture
 		cmd.Stderr = io.MultiWriter(capture, &wallOut)
 		attemptStart := time.Now()
+		// THE JITTERED START (nova-tools#1785), always on in a live run and nil -- no pause
+		// at all -- for every hand-built config. It is inserted only after every refusal, so a
+		// card that was refused is never delayed.
+		if cfg.jitter != nil {
+			sleep := cfg.sleep
+			if sleep == nil {
+				sleep = time.Sleep
+			}
+			sleep(cfg.jitter())
+		}
 		if err := cmd.Start(); err != nil {
 			log.Close()
 			harnessOut.Close()

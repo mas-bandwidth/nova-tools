@@ -51,6 +51,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // FillCap is the most cards one bench may take in a tick: fill-loop.sh holds this reserve
@@ -136,6 +137,15 @@ type FillInput struct {
 	Sleep    func(time.Duration)
 	Launcher CardLauncher
 	Capacity Capacity
+	// Stagger is the minimum gap between two launches naming the same bench (nova-tools
+	// #1785): a launch to a bench that already launched within this gap waits the
+	// remainder before it starts. Zero is off, which is today's behaviour byte for byte.
+	Stagger time.Duration
+	// MaxInflight caps how many cards fill keeps live against one route at once, where a
+	// route is the fill's own RouteKey("fill", bench). A card past the cap is held, not
+	// refused: it keeps its place in --ready and is tried again next tick. Zero is off,
+	// which is today's behaviour byte for byte.
+	MaxInflight int
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -206,8 +216,12 @@ func Fill(in FillInput) int {
 		}
 	}
 
+	// THE STAGGER (nova-tools#1785): one gate for the whole fill, built from the fill's
+	// own clock and sleep seams, so two launches to the same bench are never closer than
+	// --stagger. A zero gap is off and the gate never sleeps.
+	stagger := swarm.NewBenchStagger(in.Stagger, in.Now, in.Sleep)
 	for tick := 1; ; tick++ {
-		lines, res := fillTick(in, tick)
+		lines, res := fillTick(in, tick, stagger)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
 		}
@@ -247,7 +261,7 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // move out of ready is the claim, so a card another hand already took is skipped and never
 // launched twice; a launcher that fails moves its card back and releases its lane. It
 // returns the FILL line first and then one FILL HELD line per held card.
-func fillTick(in FillInput, tick int) ([]string, tickResult) {
+func fillTick(in FillInput, tick int, stagger *swarm.BenchStagger) ([]string, tickResult) {
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
@@ -311,6 +325,20 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				}
 			}
 			base := filepath.Base(card)
+			// THE MAX-INFLIGHT CAP (nova-tools#1785). Fill never learns a card is DONE --
+			// harvest does, by reading RESULT.md -- so it cannot acquire/release a semaphore
+			// the way batch's per-route gate does. It reuses its own idiom instead: a card
+			// is "in flight" while a live marker under --launched names this route and no
+			// drain has removed it. At or above the cap the card is held exactly like a
+			// lane hold and stays --ready for the next tick.
+			if in.MaxInflight > 0 {
+				route := swarm.RouteKey("fill", bench)
+				if n := liveRouteCount(in, route); n >= in.MaxInflight {
+					held = append(held, fmt.Sprintf("FILL HELD card=%s route=%s inflight=%d max=%d",
+						oneline.Field(base), oneline.Field(route), n, in.MaxInflight))
+					continue
+				}
+			}
 			moved := filepath.Join(in.Launched, base)
 			if err := os.Rename(card, moved); err != nil {
 				// Another tick or another hand took it first: the card is in exactly
@@ -322,6 +350,9 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				live[lane] = base
 			}
 			want[i]--
+			// THE STAGGER: a minimum gap between two launches naming the same bench, right
+			// before the launch itself.
+			stagger.Wait(bench)
 			if err := in.Launcher.Launch(bench, moved); err != nil {
 				failed[i]++
 				failLaunch(in, moved, base, lane, live, err)
@@ -500,6 +531,21 @@ func liveLanes(launched string) map[string]string {
 // under --launched. It is never a card-<n>.md, so every glob over the queue steps past it.
 func launchedMarker(dir, base string) string {
 	return filepath.Join(dir, base+".launched")
+}
+
+// liveRouteCount is how many CURRENTLY LIVE markers under --launched name the given route:
+// the count the fill's own --max-inflight cap reads before it launches a card. A marker
+// whose bench field is empty (a card launched before markers) is not counted, exactly as
+// liveLanes falls back rather than guessing.
+func liveRouteCount(in FillInput, route string) int {
+	n := 0
+	for _, card := range readyCards(in.Launched) {
+		bench := readLaunchedMarker(in.Launched, filepath.Base(card))["bench"]
+		if bench != "" && swarm.RouteKey("fill", bench) == route {
+			n++
+		}
+	}
+	return n
 }
 
 // writeLaunchedMarker records what the card took the moment it became live: the lane it

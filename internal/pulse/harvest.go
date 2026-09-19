@@ -43,6 +43,11 @@ type HarvestInput struct {
 	// wants no --sources, no --templates and no --id -- which a `cut --rows`
 	// never produces -- and never relaunches: it folds what is there.
 	Bench string
+	// Stagger is the minimum gap between two bench-reads naming the same bench
+	// (nova-tools#1785): the fetch over ssh://<bench> and the mark-harvested touches are the
+	// same job's traffic to one bench, so one Wait covers both. Zero is off, which is
+	// today's behaviour byte for byte.
+	Stagger time.Duration
 	// Machines is the machines registry --bench is held against before the first ssh
 	// (Glenn's lock of 2026-09-18: runner hosts are CI-only). An empty path leaves the
 	// verb unguarded, which is what a test and a by-hand run want; cmd/nova-pulse names

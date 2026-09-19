@@ -62,6 +62,8 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	swarmRoot := f.fs.String("swarm-root", defaultSwarmRoot, "")
 	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
 	grace := f.fs.String("launch-grace", defaultLaunchGrace.String(), "")
+	stagger := f.fs.Duration("stagger", 3*time.Second, "")
+	maxInflight := f.fs.Int("max-inflight", 32, "")
 	var benches benchFlag
 	var only benchFlag
 	f.fs.Var(&benches, "bench", "")
@@ -77,6 +79,9 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *deadline <= 0 {
 		f.add(fmt.Sprintf("--deadline is the card's deadline in whole seconds, 1 or more, got %d", *deadline))
 	}
+	if *maxInflight < 0 {
+		f.add(fmt.Sprintf("--max-inflight is 0 or more, got %d; 0 is off and leaves the fill uncapped", *maxInflight))
+	}
 	f.want(*ready, "ready", "the directory holding the card-<n>.md ready to launch")
 	f.want(*launched, "launched", "the directory the launched cards are moved into")
 	f.want(*machines, "machines", "the machines registry: which hosts are benches and which serve the merge group's shards")
@@ -91,19 +96,21 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		reader = fixedCapacity(*capacity)
 	}
 	return pulse.Fill(pulse.FillInput{
-		Ready:    *ready,
-		Launched: *launched,
-		Lanes:    *lanes,
-		Machines: *machines,
-		Session:  *session,
-		Benches:  []string(benches),
-		Only:     []string(only),
-		Once:     *once,
-		Stdout:   stdout,
-		Stderr:   stderr,
-		Now:      func() time.Time { return now },
-		Capacity: reader,
-		Launcher: flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Ready:       *ready,
+		Launched:    *launched,
+		Lanes:       *lanes,
+		Machines:    *machines,
+		Session:     *session,
+		Benches:     []string(benches),
+		Only:        []string(only),
+		Once:        *once,
+		Stdout:      stdout,
+		Stderr:      stderr,
+		Now:         func() time.Time { return now },
+		Stagger:     *stagger,
+		MaxInflight: *maxInflight,
+		Capacity:    reader,
+		Launcher:    flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
 	})
 }
 

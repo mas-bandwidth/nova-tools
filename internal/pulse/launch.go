@@ -33,6 +33,10 @@ type LaunchInput struct {
 	// batch runs on this machine exactly as before (issue #637).
 	Benches string // the benches table file
 	Bench   string // the benches to fill, comma separated
+	// Stagger is the minimum gap between two launches naming the same bench, handed to
+	// nova-swarm batch as --stagger when it is set (nova-tools#1785). Zero passes nothing,
+	// which is today's behaviour byte for byte.
+	Stagger time.Duration
 	// Routes is the routes.tsv the typed decision reads to pick each card's worker. Empty
 	// means no routing: the cards group by their own model column, exactly as before.
 	Routes  string
@@ -215,6 +219,9 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 	}
 	if in.Bench != "" {
 		cmd.Args = append(cmd.Args, "--bench", in.Bench)
+	}
+	if in.Stagger > 0 {
+		cmd.Args = append(cmd.Args, "--stagger", in.Stagger.String())
 	}
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
