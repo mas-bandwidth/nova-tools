@@ -32,7 +32,7 @@ nova-check nocode --dir <dir>                      # no code, executables, scrip
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <<email>>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
@@ -151,6 +151,54 @@ renamed, so two benches recording at once never interleave. `record` refuses a
 does, so a receipt is stranded at the moment it is written rather than found
 months later in a count. Keep the directory in a repository: it is the record,
 and it should outlive the bench.
+
+### hygiene
+
+The four mechanical checks the accept gate runs, on a branch, before you ask a
+friend for a read: **identity** (every commit authored and committed by the
+pool), **out-of-path** (every changed file inside the card's `PATHS:`),
+**stray-file** (no `RESULT.md` and the rest of the stray list), **secret** (no
+key-shaped string in the diff). One implementation, three callers — `nova-pulse
+accept` at harvest, `nova-merge batch` on every member, and this, for a hand.
+It decides nothing: 0 clean, 1 findings, 2 could not run.
+
+`--identity` is `Name <email>`, ONE pair of angle brackets, repeatable with
+commas. There is no default: a range checked against nobody would admit
+anybody, so the flag is required and the repository's own config is never a
+fallback. An email spelled with a bracket still inside it is refused rather
+than quietly matched against no one (#1805).
+
+`--kind` is a card kind this toolchain DECLARES, and there is no default one
+(SPEC-TOOLWORK §5 rules 3 and 6). It unlocks an allowlisted stray exception and
+nothing else, so a kind the tool does not hold used to unlock nothing and print
+`HYGIENE OK` — a clean answer about a shape of work that does not exist. It is
+now refused by name, listing the kinds there are (#1848):
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+```
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+HYGIENE OK base=main head=card paths=sign/** findings=0
+```
+
+With no `--paths` the line says `paths=-` and out-of-path is SKIPPED — printed
+rather than omitted, because a line that left the field out would read as a
+bound that held.
+
+Findings are capped like every listing here, and the `MORE` line carries the
+command that prints the rest — the same run with the cap lifted, quoted so it
+can be pasted (#1804):
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE NO base=main head=card paths=sign/** findings=4
+```
 
 ## nova-self-talk
 
@@ -2064,11 +2112,15 @@ MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>
 `seed=` is the first 8 hex of the patch's SHA-256, so a report names which control
 ran. The edit count is asserted, not reported: exactly one, counted from the
 worktree after `git apply` and never from the patch's own `@@` header, else
-`MUTATE REFUSED` and exit 2 before the seeded run. Four more things refuse rather
+`MUTATE REFUSED` and exit 2 before the seeded run. Five more things refuse rather
 than answer, because each of them kills every seed and would print a `PASS` that
 is not about the seed: a patch that does not apply, a `--tests` package `go list`
-does not resolve at that head, a named suite already red at the unseeded head, and
-a `--timeout` deadline that killed the run mid-flight. Neither form writes anything
+does not resolve at that head, a named suite already red at the unseeded head, a
+seeded tree that does not BUILD (a control that did not compile is the `broken`
+seed of SPEC-TOOLWORK §1 rule 6, whose want is the token `build` and not a kill,
+and it kills every suite it is pointed at: `MUTATE REFUSED: seed does not build:
+<the compiler's own line>`), and a `--timeout` deadline that killed the run
+mid-flight. Neither form writes anything
 into the repo it is pointed at, on any path. Full grammar in
 [docs/SPEC-REVIEW.md](SPEC-REVIEW.md).
 

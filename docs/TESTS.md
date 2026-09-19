@@ -185,6 +185,52 @@ $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
+### hygiene, on a branch
+
+The four checks the accept gate runs, over a two-commit lab: `main` with one
+file, `card` with the fix on it and then a commit by somebody outside the pool
+that also strays outside the card's paths.
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+HYGIENE OK base=main head=card paths=sign/** findings=0
+
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE NO base=main head=card paths=sign/** findings=4
+```
+
+The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
+back (#1804) — it is the command that prints the rest, and it carries the
+`--identity`, `--paths` and `--kind` without which it would not run at all:
+
+```
+$ nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS:
+HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
+HYGIENE NO base=main head=card paths=sign/** findings=4
+```
+
+`--identity` takes ONE pair of angle brackets. The second pair the help used to
+show is refused rather than matched against nobody (#1805):
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <<rowan@mas-bandwidth.com>>"
+nova-check hygiene: --identity "Rowan <<rowan@mas-bandwidth.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+```
+
+`--kind` is a card kind the toolchain declares, and there is no default one. One
+it does not hold is refused by name rather than left to unlock nothing (#1848):
+
+```
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+```
+
 ## nova-self-talk
 
 Fixture: `cmd/nova-self-talk/testdata/example-pages`.
