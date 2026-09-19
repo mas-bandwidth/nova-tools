@@ -117,11 +117,6 @@ func Check(ctx context.Context, o Options) ([]Finding, error) {
 		base = mb
 	}
 
-	// Read once, and used by both textual diffs: the subject repo's own committed
-	// .gitattributes is the worker's file, and it changes what git is willing to
-	// print about the worker's own diff.
-	attr := attrSource(ctx, repo)
-
 	var findings []Finding
 	id, err := checkIdentity(ctx, repo, base, head, o.Identities)
 	if err != nil {
@@ -136,17 +131,19 @@ func Check(ctx context.Context, o Options) ([]Finding, error) {
 	if len(o.Paths) > 0 {
 		findings = append(findings, checkPaths(raw, o.Paths)...)
 	}
-	stray, err := checkStray(ctx, repo, base, head, attr, raw, rules, o.Kind)
+	stray, err := checkStray(ctx, repo, raw, rules, o.Kind)
 	if err != nil {
 		return nil, err
 	}
 	findings = append(findings, stray...)
 
-	sec, err := checkSecrets(ctx, repo, base, head, attr, shapes)
+	// The added lines answer two questions in one pass: the key shapes and the
+	// conflict markers.
+	added, err := checkAddedLines(ctx, repo, base, head, shapes)
 	if err != nil {
 		return nil, err
 	}
-	findings = append(findings, sec...)
+	findings = append(findings, added...)
 
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].Token != findings[j].Token {
@@ -293,7 +290,7 @@ const oneMiB = 1024 * 1024
 // checkStray: nothing was added that does not belong in a repository, nothing carries a
 // mode or a type git should not be asked to keep, and no changed file holds a conflict
 // marker.
-func checkStray(ctx context.Context, repo, base, head string, attr []string, entries []entry, rules []strayRule, kind string) ([]Finding, error) {
+func checkStray(ctx context.Context, repo string, entries []entry, rules []strayRule, kind string) ([]Finding, error) {
 	var findings []Finding
 	for _, e := range entries {
 		if e.status == "D" {
@@ -329,11 +326,6 @@ func checkStray(ctx context.Context, repo, base, head string, attr []string, ent
 			}
 		}
 	}
-	marks, err := conflictMarkers(ctx, repo, base, head, attr)
-	if err != nil {
-		return nil, err
-	}
-	findings = append(findings, marks...)
 	return findings, nil
 }
 
@@ -352,47 +344,40 @@ func blobSize(ctx context.Context, repo, blob string) (int64, error) {
 	return n, nil
 }
 
-var conflictLine = regexp.MustCompile(`^(.*?):(\d+): leftover conflict marker`)
-
-// conflictMarkers runs git's own check. card-16 left `<<<<<<< HEAD` inside a fenced
-// block and it reached a pull request, because nothing between the worker and the forge
-// ever looked at the bytes.
-func conflictMarkers(ctx context.Context, repo, base, head string, attr []string) ([]Finding, error) {
-	// `--check` exits 2 when it finds something, so the output is taken from the
-	// command directly: a helper that discards stdout on a non-zero exit would read
-	// every dirty range as clean, which is the one way this check can fail. Exit 2 is
-	// the ANSWER; anything else non-zero is an error out of Check.
-	out, err := gitAnswer(ctx, repo, 2, diffCmd(attr, "--check", base, head)...)
-	if err != nil {
-		return nil, fmt.Errorf("could not read the conflict markers between %s and %s: %v", short(base), short(head), err)
-	}
-	var findings []Finding
-	for _, line := range strings.Split(out, "\n") {
-		m := conflictLine.FindStringSubmatch(strings.TrimRight(line, "\r"))
-		if m == nil {
-			continue
-		}
-		findings = append(findings, Finding{Token: "stray-file", At: m[1] + ":" + m[2],
-			Why: "a leftover conflict marker in a changed file"})
-	}
-	return findings, nil
-}
-
 var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
-// checkSecrets matches every ADDED line against the key shapes, and reports the path,
-// the line and the shape's NAME. It never reports the text.
+// conflictMarker is git's own spelling of one: exactly seven of the character, then a
+// space or the end of the line. Eight is not a marker and neither is `"<<<<<<<"` inside
+// a string, which is why this is anchored rather than a substring search.
+var conflictMarker = regexp.MustCompile(`^(<{7}|={7}|>{7})( |$)`)
+
+// checkAddedLines is the one pass over what this range ADDED, and it answers two of the
+// four questions: does any added line have the SHAPE of a key, and did anybody leave a
+// conflict marker behind.
 //
-// A range is judged by what it added: a shape already in the base is somebody else's
-// finding and charging it here would make every card in a repository that once carried
-// one unfixable by anybody.
+// A range is judged by what it added: a shape or a marker already in the base is
+// somebody else's finding, and charging it here would make every card in a repository
+// that once carried one unfixable by anybody.
 //
 // The matched text is not printed, ever, and that is not politeness. A finding travels:
 // into a gate's stdout, into a PR body, into a harvest log, into whatever a coordinator
 // pastes into a chat. A finding that quotes the key has copied the key into every one
 // of those places, and the check meant to contain a leak has published it.
-func checkSecrets(ctx context.Context, repo, base, head string, attr []string, shapes []keyShape) ([]Finding, error) {
-	out, err := gitOut(ctx, repo, diffCmd(attr, "--unified=0", base, head)...)
+//
+// The markers used to be `git diff --check`'s answer, and that was a check the SUBJECT
+// could switch off. `--check` honours a `-diff` attribute whatever `--text` says, and
+// the attribute reaches git from three places: a committed `.gitattributes`,
+// `.git/info/attributes`, and a local `core.attributesFile`. `--attr-source` covers the
+// first and is git 2.42 and later; it covers neither of the others on any version, and
+// the gate's worktree shares the job clone's `.git` (§1 rule 3), so both are the
+// worker's to write. Reading the lines this function already holds has no version to
+// depend on, no skip, and nothing for the subject to turn off: `--text` is what makes
+// the lines appear, and `--text` is not optional here.
+//
+// card-16 left `<<<<<<< HEAD` inside a fenced block and it reached a pull request,
+// because nothing between the worker and the forge ever looked at the bytes.
+func checkAddedLines(ctx context.Context, repo, base, head string, shapes []keyShape) ([]Finding, error) {
+	out, err := gitOut(ctx, repo, append(append([]string(nil), diffOpts...), "--unified=0", base, head)...)
 	if err != nil {
 		return nil, fmt.Errorf("could not read the added lines between %s and %s: %v", short(base), short(head), err)
 	}
@@ -416,10 +401,14 @@ func checkSecrets(ctx context.Context, repo, base, head string, attr []string, s
 			continue
 		}
 		added := line[1:]
+		at := fmt.Sprintf("%s:%d", file, lineNo)
+		if conflictMarker.MatchString(added) {
+			findings = append(findings, Finding{Token: "stray-file", At: at,
+				Why: "a leftover conflict marker in a changed file"})
+		}
 		for _, s := range shapes {
 			if s.re.MatchString(added) {
-				findings = append(findings, Finding{Token: "secret",
-					At:  fmt.Sprintf("%s:%d", file, lineNo),
+				findings = append(findings, Finding{Token: "secret", At: at,
 					Why: fmt.Sprintf("an added line with the shape of a %s; the text is not printed", oneline.Field(s.name))})
 				break
 			}
@@ -450,54 +439,28 @@ var configOpts = []string{"-c", "core.quotePath=false"}
 // them is here because the repository being CHECKED controls what git prints.
 //
 // gitCmd already blanks the global and system config -- a bench's configuration is not
-// evidence -- but a job clone's own `.git/config` and its own committed
-// `.gitattributes` belong to the worker, and both change the output:
+// evidence -- but a job clone's own `.git/config`, its own `.git/info/attributes` and
+// its own committed `.gitattributes` all belong to the worker, and every one of them
+// changes the output:
 //
 //	--src-prefix/--dst-prefix  `diff.noprefix` in the subject repo drops the `a/` and
 //	                           `b/` and the parser never learns a file name;
 //	                           `diff.mnemonicPrefix` and `diff.dstPrefix` rename them.
-//	--text                     a committed `.gitattributes` saying `*.go -diff` makes
-//	                           git print "Binary files differ" instead of the lines,
-//	                           so nothing reaches the shapes and `--check` sees
-//	                           nothing either.
+//	--text                     a `-diff` attribute -- from any of the three places one
+//	                           can be written, and a NUL byte needs no attribute at
+//	                           all -- makes git print "Binary files differ" instead of
+//	                           the lines, and nothing then reaches the shapes or the
+//	                           marker scan. This is the option the whole of
+//	                           checkAddedLines rests on.
 //	--no-textconv              a `diff` driver in the same file would run a program of
 //	                           the worker's choosing and diff ITS output.
 //
-// A check whose subject can choose what it is shown is not a check.
+// A check whose subject can choose what it is shown is not a check. There is
+// deliberately no `--attr-source` here: it reads only the committed `.gitattributes`,
+// it is git 2.42 and later, and the one check that needed it -- `git diff --check` --
+// is gone, because `--check` honours the attribute whatever `--text` says and the
+// markers are now read off these same lines.
 var diffOpts = []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--text", "--src-prefix=a/", "--dst-prefix=b/"}
-
-// attrSource is the rest of the same sentence, and the half `--text` does not reach.
-//
-// `--text` forces the LINES to be printed for a file the subject marked `-diff`, which
-// is what the shape matcher needs -- but `git diff --check` stays silent on that file
-// whatever `--text` says, so a `.gitattributes` committed inside the range hid every
-// conflict marker in it. `--attr-source=<the empty tree>` is the answer to both: git
-// reads the diff attributes from a tree with no `.gitattributes` in it, so the
-// worker's file is not consulted at all.
-//
-// It is git 2.42 and later. The probe is one command, because the alternative is
-// parsing a version string; an older git keeps `--text` and `--no-textconv`, which
-// leaves the marker check blind to a `-diff` attribute and nothing else. `hash-object`
-// rather than the constant because the empty tree's name is the repository's hash
-// algorithm's.
-func attrSource(ctx context.Context, repo string) []string {
-	empty, err := gitLine(ctx, repo, "hash-object", "-t", "tree", os.DevNull)
-	if err != nil || empty == "" {
-		return nil
-	}
-	opt := "--attr-source=" + empty
-	if _, err := gitLine(ctx, repo, opt, "rev-parse", "--is-inside-work-tree"); err != nil {
-		return nil
-	}
-	return []string{opt}
-}
-
-// diffCmd is diffOpts with the subject's attributes taken out of the picture.
-func diffCmd(attr []string, args ...string) []string {
-	out := append([]string(nil), attr...)
-	out = append(out, diffOpts...)
-	return append(out, args...)
-}
 
 // diffPath reads the file name off a `+++ ` header: the unquoting first, because git
 // wraps the PREFIX inside the quotes, then the `b/` off the result. A `/dev/null`
@@ -547,6 +510,12 @@ func verb(args []string) string {
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := gitCmd(ctx, dir, args...)
 	out, err := cmd.Output()
+	// A cancelled or expired context is a could-not-run whatever the process did on
+	// its way out, and this package has exactly one rule about could-not-run: it is
+	// never an empty answer, because an empty answer reads as a clean range.
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("git %s: %v", verb(args), ctx.Err())
+	}
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
@@ -555,33 +524,6 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
-}
-
-// gitAnswer is for the git commands whose non-zero exit is an ANSWER and not a failure:
-// `diff --check` exits 2 exactly when it has something to say, and gitOut throws stdout
-// away in that case, which would turn every finding into silence.
-//
-// Exactly ONE non-zero code is an answer, and it is named by the caller. Every other
-// non-zero exit -- a cancelled context, a ref git could not resolve (128), a killed
-// process -- is an error, because the alternative is an empty string that reads as a
-// range with nothing wrong in it. A check that could not run has found nothing.
-func gitAnswer(ctx context.Context, dir string, answer int, args ...string) (string, error) {
-	cmd := gitCmd(ctx, dir, args...)
-	out, err := cmd.Output()
-	if ctx.Err() != nil {
-		return "", fmt.Errorf("git %s: %v", verb(args), ctx.Err())
-	}
-	if err == nil {
-		return string(out), nil
-	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) && ee.ExitCode() == answer {
-		return string(out), nil
-	}
-	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-		return "", fmt.Errorf("git %s: %v: %s", verb(args), err, strings.TrimSpace(string(ee.Stderr)))
-	}
-	return "", fmt.Errorf("git %s: %v", verb(args), err)
 }
 
 // modeFinding judges one entry's TYPE and MODE, and it is a function of its own so it
