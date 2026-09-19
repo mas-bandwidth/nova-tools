@@ -815,9 +815,13 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    documentation has not released the parser. A forge `APPROVED` review, the forge's dismissal
    of a review, a comment typed or untyped, a decider's answer and a push each release nothing.
    A `who=unknown` hold is released only by a `may-hold` reader's verb naming it.
-5. **What no flag does** is reading 3, *No flag ignores a hold*: there is no `--ignore-hold`.
-   `--no-require-holds --reason <text>` is the one waiver, of the forge sources whole and never
-   of the lane's records, XOR `--reviewers`, printed on every line. The escape for a holder who
+5. **What no flag does** is reading 3, *No flag ignores a hold* and *An untyped comment is
+   pending, and pending stops*: there is no `--ignore-hold`. An untyped comment from a
+   `may-hold` reviewer's login is **pending** by default and stops the member until that reader
+   types a line or releases (Q10). Two per-run waivers exist, each printed on every line with its
+   reason and neither touching the lane's records: `--no-require-holds --reason <text>` waives
+   the forge sources whole, XOR `--reviewers`; `--untyped-comments=ignore --reason <text>` makes
+   untyped comments not a hold for that run. The escape for a holder who
    cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, and the
    receipt names the commit and not the reader.
 6. **Where the fold runs** is reading 3, *The inputs* and *The lines*: at `batch`, at the point
@@ -864,7 +868,10 @@ fixture draft 1 failed open on); `the-authors-note-line-is-not-scanned-and-the-a
 login naming the current head; still held); `a-forge-approved-review-releases-nothing`;
 `a-dismissal-releases-nothing`; `only-the-holder-releases`;
 `an-unknown-hold-is-released-only-by-a-readers-verb-naming-it`; `two-names-one-login-fold-separately`;
-`there-is-no-flag-that-ignores-one-hold`; `no-require-holds-waives-the-forge-sources-only-and-is-printed`;
+`there-is-no-flag-that-ignores-one-hold`; `an-untyped-comment-from-a-may-hold-login-is-pending`;
+`a-pending-comment-is-cleared-by-a-typed-line-or-a-release`;
+`untyped-comments-ignore-is-per-run-printed-and-carries-a-reason`;
+`no-require-holds-waives-the-forge-sources-only-and-is-printed`;
 `reviewers-xor-no-require-holds`; `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
 `land-refuses-a-hold-posted-after-batch-ok` (the receipt is #1572's timeline);
 `sweep-and-react-never-enqueue-a-held-pr`. A class test, `toolwork-names-only-tests-reading-3-demands`,
@@ -1019,11 +1026,16 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
   said yes on 2026-09-19 and have since. It is not load-bearing: the forge only adds holds
   and fails closed on an untyped one, and only the verb lifts or approves, so the typed
   line buys attribution (a hold under a name instead of `who=unknown`) and nothing else.
-- **Q10. The one point the join did not settle:** the baseline for a scanned comment that
-  carries neither a typed line nor the word HOLD is *not a hold* in reading 3, with
-  `--strict-comments` as the lane's opt-in. Stella asked for the strict reading by
-  default; Johnny called the flag the right door. The coordinator carries the ruling;
-  either answer is one sentence in reading 3 and none here.
+- **Q10. An untyped comment from a may-hold reviewer. — RULED, Rowan and Stella,
+  2026-09-19, in reading 3, *An untyped comment is pending, and pending stops*:** a scanned
+  comment carrying neither a typed `DISPOSITION` line nor the word HOLD is **pending** by
+  default; it neither approves nor releases, and the member is not landable until a
+  `may-hold` reader types a line naming it or releases it with the verb. The opt-out is per
+  run, printed and reasoned: `--untyped-comments=ignore --reason <text>`, the same shape as
+  `--no-require-holds --reason`, so Johnny's unread door announces itself on the record.
+  There is no opt-in strict flag. Reason for the record: the house default is fail-closed
+  (a guard that cannot decide refuses; a HOLD never expires into approval), and the cost
+  falls on the reviewer typing one line, which is what the spec wants anyway.
 - **Q5. nova-post's quickstart documents `--channel fake`, which the tool refuses.**
   Default: re-cut the block; a fake channel does not ship. nova-post's T8 card waits on
   that re-cut.
