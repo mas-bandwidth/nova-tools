@@ -45,6 +45,7 @@
                (:file "src/roadmap")
                (:file "src/savepoint")
                (:file "src/savepoint-create")
+               (:file "src/dedup-root")
                (:file "src/savepoint-restore")
                (:file "src/compaction")
                (:file "src/new-verbs")

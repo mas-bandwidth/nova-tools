@@ -122,17 +122,29 @@
                                 "the image lost |C|"))
 
                  ;; The cut names one COMPLETE journal record, and its hash is
-                 ;; that record's own (SPEC-WORK.md:7135-7147).
+                 ;; that record's own (SPEC-WORK.md:7135-7147). The boundary
+                 ;; record is distinct from the cut and also names the dedup
+                 ;; root, the last being the digest of the object on disk
+                 ;; (SPEC-WORK.md:7155-7164).
                  (let* ((scan (scan-journal-file journal-path))
                         (records (journal-scan-records scan))
                         (last (car (last records)))
-                        (cut (getf manifest :replay-cut)))
+                        (cut (getf manifest :replay-cut))
+                        (boundary (getf manifest :boundary)))
                    (check-equal nil (journal-scan-torn-p scan) "the journal tail is torn")
                    (check-equal 2 (length records) "the journal holds two records")
                    (check-equal (getf last :sequence) (getf cut :sequence)
                                 "the cut is not the last complete record")
                    (check-equal (getf last :record-sha256) (getf cut :sha256)
                                 "the cut's hash is not that record's own")
+                   (check-equal (getf last :sequence) (getf boundary :sequence)
+                                "the boundary is not the root's last entry")
+                   (check-equal (getf last :record-sha256) (getf boundary :sha256)
+                                "the boundary hash is not that record's own")
+                   (check-equal (sha256-hex (savepoint-file-text
+                                             (merge-pathnames "dedup-root" dir)))
+                                (getf boundary :dedup-root)
+                                "the boundary does not name the dedup root on disk")
                    (check-equal (format nil "~D" (getf cut :sequence))
                                 (savepoint-token line "boundary")
                                 "boundary= is not the cut the image reflects")
