@@ -8,6 +8,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -39,19 +40,34 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	}
 
 	type invocation struct {
-		what string
-		args []string
+		what   string
+		args   []string
+		want   int    // the exit code the invocation owes
+		remedy string // a fragment an exit-1 refusal must still name
 	}
-	cases := []invocation{{"bare invocation", nil}}
+
+	// The exit-1 engine case needs a drafts directory that exists but an
+	// allowlist that does not, so the engine reaches RequireAllowlisted.
+	drafts := t.TempDir()
+	missingAllow := filepath.Join(t.TempDir(), "absent")
+
+	cases := []invocation{{"bare invocation", nil, 2, ""}}
 	for _, v := range verbs {
-		cases = append(cases, invocation{"bare " + v, []string{v}})
+		cases = append(cases, invocation{"bare " + v, []string{v}, 2, ""})
 	}
 	cases = append(cases,
-		invocation{"unknown verb", []string{"no-such-verb"}},
+		invocation{"unknown verb", []string{"no-such-verb"}, 2, ""},
 		// The door-less half: refusals fail builds from an engine error, and
 		// the flag parser's own errors. These have no hand-written door.
-		invocation{"engine bad-channel", []string{"draft", "--channel", "bogus", "--target", "x", "--drafts", "d", "--allowlist", "a"}},
-		invocation{"engine bad-flag", []string{"draft", "--no-such-flag"}},
+		invocation{"engine bad-channel", []string{"draft", "--channel", "bogus", "--target", "x", "--drafts", "d", "--allowlist", "a"}, 2, ""},
+		invocation{"engine bad-flag", []string{"draft", "--no-such-flag"}, 2, ""},
+		// The exit-1 half: the verb ran and the gate said NO, so the line names
+		// its remedy and carries no door (#1451).
+		invocation{"engine allowlist-absent",
+			[]string{"draft", "--channel", "ghost", "--target", "example.test",
+				"--file", filepath.Join(drafts, "body.md"),
+				"--drafts", drafts, "--allowlist", missingAllow},
+			1, "is unreadable"},
 	)
 
 	for _, tc := range cases {
@@ -65,11 +81,11 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 				}
 				return
 			}
-			if got != 2 {
-				t.Fatalf("%s exits %d, want 2; stdout=%q stderr=%q", tc.what, got, stdout, stderr)
+			if got != tc.want {
+				t.Fatalf("%s exits %d, want %d; stdout=%q stderr=%q", tc.what, got, tc.want, stdout, stderr)
 			}
 			if strings.TrimSpace(stderr) == "" {
-				t.Fatalf("%s exited 2 with no refusal on stderr", tc.what)
+				t.Fatalf("%s exited %d with no refusal on stderr", tc.what, got)
 			}
 			for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
 				if strings.TrimSpace(line) == "" {
@@ -77,6 +93,19 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 				}
 				if !strings.Contains(line, "POST REFUSED") {
 					t.Errorf("%s: stderr line is not a refusal: %q", tc.what, line)
+					continue
+				}
+				// The split exists because refuseLine appends the door only at
+				// exit 2: an exit-2 line is an unusable invocation and ends in
+				// the door exactly once, while an exit-1 line is a verdict that
+				// carries no door and must still name its remedy.
+				if tc.want == 1 {
+					if strings.Contains(line, doorWord) {
+						t.Errorf("%s: an exit-1 refusal carries the door: %q", tc.what, line)
+					}
+					if tc.remedy != "" && !strings.Contains(line, tc.remedy) {
+						t.Errorf("%s: the exit-1 refusal does not name its remedy %q: %q", tc.what, tc.remedy, line)
+					}
 					continue
 				}
 				if !strings.HasSuffix(line, door) {

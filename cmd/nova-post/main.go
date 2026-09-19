@@ -210,10 +210,16 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 }
 
 // refuseLine prints one refusal line on stderr: the token, the reason and the
-// remedy. It never prints a credential.
+// remedy. It never prints a credential. The door `; run: nova-post help` names
+// the usage only when the tool could not run (exit 2); an exit-1 line is a
+// verdict -- the verb ran and answered NO -- so it carries no door.
 func refuseLine(stderr io.Writer, reason, remedy string, code int) int {
-	fmt.Fprintf(stderr, "POST REFUSED reason=%s %s; run: nova-post help\n",
-		oneline.Field(reason), oneline.Cap(oneline.Escape(remedy), oneline.TailBytes))
+	door := ""
+	if code == 2 {
+		door = "; run: nova-post help"
+	}
+	fmt.Fprintf(stderr, "POST REFUSED reason=%s %s%s\n",
+		oneline.Field(reason), oneline.Cap(oneline.Escape(remedy), oneline.TailBytes), door)
 	return code
 }
 
