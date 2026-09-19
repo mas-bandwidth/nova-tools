@@ -1920,6 +1920,22 @@
     #:fetch-resolver-fact
     #:verify-qualifies-p
     #:verify
+    ;; the needs-met predicate and its five reason tokens (nova-tools #785,
+    ;; SPEC-WORK.md:4740-4866)
+    #:needs-view
+    #:make-needs-view
+    #:needs-view-p
+    #:needs-view-session
+    #:needs-view-evidence
+    #:needs-view-generations
+    #:needs-view-responsible
+    #:needs-view-node-evidence
+    #:needs-view-node-generation
+    #:needs-view-node-responsible
+    #:needs-reason-token
+    #:need-met-p
+    #:node-needs-status
+    #:node-needs-met-p
     ;; the kernel `decide` protocol and its one in-process fake (SPEC-DECIDE)
     #:decision
     #:make-decision
