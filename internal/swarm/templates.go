@@ -138,6 +138,7 @@ const templateWorker = `{
   "env_var": "<the NAME of the variable the provider reads>",
   "key_file": "<the path of a file holding one line, mode 0600, OUTSIDE worker_dir>",
   "usage": "opencode",
+  "class": "paid",
   "harness": "<the harness command on PATH>",
   "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
   "worker_dir": "<the home copy of this worker's own directory>",
@@ -379,6 +380,18 @@ func TemplateNames() []string {
 	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity"}
 	sort.Strings(names)
 	return names
+}
+
+// IsCardTemplate reports whether name is one of the task templates a card is built from
+// (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
+// setup, capacity -- are not cards: result is the report's shape, worker is a JSON worker
+// description, and setup and capacity are forms, all printed verbatim for their own purpose.
+func IsCardTemplate(name string) bool {
+	switch name {
+	case "read-pr", "probe-row", "fix-card":
+		return true
+	}
+	return false
 }
 
 // WrapTemplate puts a task's own text under its template's conditions, with the file budget

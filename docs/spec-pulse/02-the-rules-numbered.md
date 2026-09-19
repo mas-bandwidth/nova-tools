@@ -42,7 +42,7 @@
    a card never sets, never `/tmp`, `~` or `..`, no stdlib or toolchain source, the deadline
    held by the machinery). `STEP 1` is `mkdir -p scratch`, the https clone, `git checkout -b
    <branch>`, and no `TMPDIR` of its own: the runner exports `TMPDIR=<slot>/tmp/<label>`,
-   outside every repo ([SPEC-SWARM.md](SPEC-SWARM.md), #460), and a card that sets its own
+   outside every repo ([SPEC-SWARM.md](../SPEC-SWARM.md), #460), and a card that sets its own
    puts its temp dir inside the job's repo; every step is numbered with one check; the final
    step writes `RESULT.md` with line 1 equal to the card's line 1, line 2 the verdict, then
    a `BRANCH <name>` line and a `REPO <owner>/<name>` line. Scratch notes live in the repo
@@ -130,6 +130,9 @@
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
     name the contract, the `RESULT.md`'s own line 1 is the contract, and the refusal stands
     only when neither the file nor a job dir is there.
+    **Amended by `docs/SPEC-TOOLWORK.md` §1 (draft, 2026-09-19):** between this rule's
+    verify and its push stands `nova-pulse accept` — the card's claim is executed, its test is seen
+    red without its change, and a rejected card pushes nothing.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
@@ -147,7 +150,7 @@
     bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
     rewritten, the row's `seen.tsv` state becomes `retry`, and only then does `pool` pick
     the item up again (rule 2). An abstain is a prompt defect
-    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
+    ([WORKER-CARDS.md](../WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
     and `launch` in that order, with `queue.tsv` rows first, then `next.tsv`, then
     the sources, and prints the next `PULSE` line as its own last line. When the pool and the

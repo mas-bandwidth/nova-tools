@@ -5,13 +5,9 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"testing"
 	"time"
-
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
 )
@@ -41,46 +37,7 @@ func TestReactRefusesMissingRedis(t *testing.T) {
 	}
 }
 
-// TestReactOnceEnqueuesAGreenPR: a pr-checks-done message lands the PR in the merge queue
-// set. The producer is not subscribed until the verb is running, so the test republishes
-// until it is consumed, which is what a durable bus would do with the message instead.
-func TestReactOnceEnqueuesAGreenPR(t *testing.T) {
-	mr := miniredis.RunT(t)
-	ctx := context.Background()
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer rdb.Close()
-
-	deps := Deps{
-		Now:  func() time.Time { return time.Now().UTC() },
-		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
-		Forge: func(_, _ string, _ time.Duration) ci.Forge {
-			return &reactFakeForge{}
-		},
-	}
-	var out, errb bytes.Buffer
-	done := make(chan int, 1)
-	go func() {
-		done <- run([]string{"react", "--redis", mr.Addr(), "--once", "--deadline", "60"}, &out, &errb, deps)
-	}()
-
-	payload := `{"number":42,"head":"a1b2","conclusion":"SUCCESS"}`
-	wait := reactWait()
-	deadline := time.After(wait)
-	for {
-		if rdb.SIsMember(ctx, "merge:queue", "42").Val() {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("react never enqueued PR 42 within %s", wait)
-		default:
-		}
-		if err := rdb.Publish(ctx, ci.ChannelPRChecksDone, payload).Err(); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if code := <-done; code != 0 {
-		t.Fatalf("react --once exit = %d, stderr=%s", code, errb.String())
-	}
-}
+// The enqueue path itself is TestReactEnqueuesIntoTheLanesQueueWhereQueueStatusCanSeeIt
+// in dogfood_test.go. It used to live here and assert that PR 42 landed in the redis set
+// `merge:queue` -- which is exactly what edge 17 turned out to be: a set nothing in this
+// tree reads. A test that pins the wrong door pins the bug.

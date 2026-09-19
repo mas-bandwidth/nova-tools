@@ -18,6 +18,19 @@ import (
 // should not need this tool to do it.
 const SumsFile = "SHA256SUMS"
 
+// DigestFile holds the sha256 OF SumsFile, written beside it by `release build`.
+//
+// It exists because of the fourth release dogfood (2026-09-18). `adopt` fetching
+// a release from another machine must check it against a digest that did NOT
+// travel with the bits, and the two ways to have one -- the annotated tag and
+// the CHANGELOG entry -- both belong to a TAGGED release. A dev build has no
+// tag, so the digest had to be computed on the machine being adopted FROM,
+// which is that machine vouching for its own bytes and is not evidence at all.
+// This file is written where the build ran, on the coordinator, out of the
+// SHA256SUMS the build had just verified; `adopt --expect-sums-from` reads it
+// from there and never asks any machine to hash anything.
+const DigestFile = "SUMS.digest"
+
 // Platform is the goos-goarch an artifact directory is named for. A release
 // built here for this host is the fleet's common case -- hulk builds for hulk,
 // the Studio builds for the Studio -- and --platform is the flag for the other
@@ -104,6 +117,34 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		targets = append(targets, target{goos, goarch})
 	}
+	tc := deps.Toolchain
+	if tc == nil {
+		tc = GoBuild{}
+	}
+	// AND EVERY PAIR IS ONE THE COMPILER KNOWS, asked of the compiler. The
+	// fourth dogfood's `--platform darwin-arm64,darwin-amd64` reached a build
+	// that took --platform as one string, failed at tool 1 of 21 with the
+	// compiler's own `unsupported GOOS/GOARCH pair`, and left an empty
+	// directory of that name in the release tree. A pair nobody can build is a
+	// refusal here, before a directory exists to be left behind.
+	supported, err := tc.Platforms(ctx)
+	if err != nil {
+		return refusal(errs, "BUILD", fmt.Errorf("cannot ask the Go toolchain which platforms it supports: %w (is `go` on PATH?)", err))
+	}
+	known := make(map[string]bool, len(supported))
+	for _, p := range supported {
+		known[strings.ReplaceAll(strings.TrimSpace(p), "/", "-")] = true
+	}
+	var unsupported []string
+	for _, tgt := range targets {
+		if name := tgt.goos + "-" + tgt.goarch; !known[name] {
+			unsupported = append(unsupported, name)
+		}
+	}
+	if len(unsupported) > 0 {
+		return refusal(errs, "BUILD", refuse("name a pair `go tool dist list` prints, as <goos>-<goarch>",
+			"this toolchain cannot build %s: %s", plural(len(unsupported), "platform"), strings.Join(unsupported, ", ")))
+	}
 	tools, err := Tools(o.source)
 	// A --source with no cmd/ at all is the same mistake as one with no
 	// cmd/nova-*: somebody named a directory that is not a nova-tools
@@ -116,15 +157,16 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "BUILD", refuse("name a nova-tools checkout with --source",
 			"%s holds no cmd/nova-* directory, so this build would ship an empty set", o.source))
 	}
-	tc := deps.Toolchain
-	if tc == nil {
-		tc = GoBuild{}
-	}
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
 	// .github/scripts/release-ldflags.sh composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
 	// that stamps nothing, and nothing downstream notices (#118).
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}
+	// What the summary line names: every platform built, and every platform's
+	// digest, in the order they were asked for. A release half a platform
+	// short used to print one cheerful line and say nothing about the half
+	// that was never made.
+	var names, digests []string
 	for _, tgt := range targets {
 		goos, goarch := tgt.goos, tgt.goarch
 		dir := ArtifactDir(o.out, o.version, goos, goarch)
@@ -161,9 +203,29 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if err != nil {
 			return refusal(errs, "BUILD", fmt.Errorf("the %s just written does not describe what was built: %w", SumsFile, err))
 		}
-		fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d verified=%d out=%s sums=%s\n",
-			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(sums))
+		// THE DIGEST OF THE CHECKSUM FILE, computed HERE and written HERE.
+		// It is the one number `adopt` needs about a release that has no tag,
+		// and the one place it can be got honestly is the machine that built
+		// the bits rather than the machine holding a copy of them.
+		digest, err := fileSum(sums)
+		if err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("cannot hash the %s just written: %w", SumsFile, err))
+		}
+		digestPath := filepath.Join(dir, DigestFile)
+		if err := os.WriteFile(digestPath, []byte(digest+"\n"), 0o644); err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("cannot write %s: %w (name a writable --out)", digestPath, err))
+		}
+		names = append(names, goos+"-"+goarch)
+		digests = append(digests, digest)
+		fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d verified=%d out=%s sums=%s digest=%s\n",
+			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(digest), field(digestPath))
 	}
+	// ONE LINE THAT NAMES EVERY PLATFORM. The repeated --platform used to keep
+	// the LAST flag and print one green receipt, which is how a release ends
+	// up half a platform short with nobody the wiser. `platforms=` and `sums=`
+	// are the same list in the same order, one token each.
+	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s out=%s\n",
+		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), field(o.out))
 	return 0
 }
 
@@ -177,7 +239,11 @@ func writeSums(dir string) (string, error) {
 	}
 	var lines []string
 	for _, e := range entries {
-		if e.IsDir() || e.Name() == SumsFile {
+		// Neither the checksum file nor its own digest: a checksum over a
+		// file being written is a number nobody can reproduce, and a checksum
+		// over the digest OF the checksum file is a number that depends on
+		// the last time this directory was built.
+		if e.IsDir() || e.Name() == SumsFile || e.Name() == DigestFile {
 			continue
 		}
 		sum, err := fileSum(filepath.Join(dir, e.Name()))

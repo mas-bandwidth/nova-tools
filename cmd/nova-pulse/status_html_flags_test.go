@@ -143,3 +143,53 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(raw)
 }
+
+// --machines reaches the verb: the benches read are the registry's `bench` rows, and the
+// page carries the registry. The fleet's truth is one file, and this is the flag that makes
+// the status page read it rather than a four-column file invented beside it.
+func TestStatusHTMLMachinesFlagReachesTheVerb(t *testing.T) {
+	var handed []pulse.FleetBench
+	withFleetReader(t, func(list []pulse.FleetBench, _ time.Time) []pulse.BenchReading {
+		handed = list
+		out := make([]pulse.BenchReading, len(list))
+		for i, b := range list {
+			out[i] = pulse.BenchReading{Name: b.Name, Live: 1, Cores: 4, Load: 1, FreeGB: 90, MemGB: 30, Allowed: 2}
+		}
+		return out
+	})
+	machines := filepath.Join(t.TempDir(), "machines.tsv")
+	write(t, machines, "studio\tstudio\tdarwin/arm64\tcoordination\tstudio\t32\tnever a card bench\n"+
+		"hulk\thulk\tlinux/x64\tbench\tswarm-hulk\t64\t-\n"+
+		"mini\tmini\tlinux/x64\trunner\t-\t4\tone CI runner\n")
+	dir := t.TempDir()
+	out := filepath.Join(dir, "index.html")
+	exit, _, stderr := invokePulse(t, "status", "--queue", t.TempDir(), "--machines", machines, "--html", out)
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", exit, stderr)
+	}
+	if len(handed) != 1 || handed[0].Name != "hulk" {
+		t.Fatalf("the benches read = %v, want hulk alone (the one row with role bench)", handed)
+	}
+	page, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"mini", "runner", "coordination"} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("the page never names %q, so it does not say what the fleet is:\n%s", want, page)
+		}
+	}
+}
+
+// Neither fleet file is a refusal that names --machines first: the retired flag is not the
+// one a person reading the refusal should reach for.
+func TestStatusHTMLWithNoFleetFileRefusesNamingMachines(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "index.html")
+	exit, _, stderr := invokePulse(t, "status", "--queue", t.TempDir(), "--html", out)
+	if exit != 2 {
+		t.Fatalf("exit = %d, want 2; stderr=%s", exit, stderr)
+	}
+	if !strings.Contains(stderr, "--machines") {
+		t.Errorf("the refusal does not name --machines: %s", stderr)
+	}
+}

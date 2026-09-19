@@ -91,12 +91,23 @@ near the end.
    directory, the login keychain (`~/Library/Keychains`) and the shell history
    (`~/.zsh_history`, `~/.bash_history`) are outside every root list, and a
    caller that adds one back has done so in its own argv.
-4. **Both lists are explicit and are never guessed.** `--read <dir>` and
-   `--write <dir>` are each repeatable and have **no default**. Zero `--write`
+4. **Every list is explicit and is never guessed.** `--read <dir>`,
+   `--read-noexec <dir>` and `--write <dir>` are each repeatable and have **no
+   default**. Zero `--write`
    is exit 125 and `refusing to guess`: a command with no writable directory is
    a misconfiguration, not a tighter sandbox. Zero `--read` is legal — the
    roots are the floor. A `--write` path is readable as well as writable; a
-   path given to both is a refusal naming both flags, not a silent merge. A
+   path given to both is a refusal naming both flags, not a silent merge.
+   **`--read` CARRIES EXECUTE and `--read-noexec` does not**: landlock's read
+   subset is `EXECUTE|READ_FILE|READ_DIR` and the darwin profile grants
+   `process-exec*` globally, so under `--read` a program anywhere under the
+   root runs. `--read-noexec` is the same read grant with the execute taken
+   back — on darwin a last-wins `deny process-exec*` emitted after the global
+   grant, on linux the read subset minus `fsExecute` — and it is what a cache
+   or a data tree this user can write to is named with: a module cache, a
+   `node_modules/.bin`, a `pip --user` tree. A path in both read lists, or in
+   `--read-noexec` and `--write`, is a refusal naming both flags: one asks for
+   execute and the other takes it away, and `--write` carries both. A
    default write set would be a guess about somebody else's job. **The two
    named exceptions**, and there are no others: rule 8 puts the temp directory
    under the **first** `--write` and rule 13 defaults the `--cwd` to the
@@ -105,7 +116,7 @@ near the end.
    `--write`" stop contradicting each other. The order of `--write` flags is
    therefore meaningful and the callers below pass the job directory first.
 5. **Paths are resolved, absolute and existing.** Each `--read`, each
-   `--write`, the `--cwd`, the `--tmp` and each root is resolved with
+   `--read-noexec`, each `--write`, the `--cwd`, the `--tmp` and each root is resolved with
    `filepath.EvalSymlinks` and `filepath.Abs` before it reaches a policy,
    because macOS's `/tmp` is a symlink to `/private/tmp` and a sandbox profile
    written against the link grants nothing. A path that does not exist is
@@ -246,7 +257,41 @@ near the end.
    thing end to end through the binary. `profiles/darwin-check.sh`'s
    `env_no_ssh_auth_sock` builds the child environment by its **own** filter
    before `sandbox-exec` runs, so it can only agree with itself. The credential
-   the caller deliberately passed by environment (rule 6) must arrive. But an inherited `HOME` names a directory that is in no list and
+   the caller deliberately passed by environment (rule 6) must arrive.
+
+   **And it arrives for the CHILD, which is not the same as arriving for
+   everything the child spawns (nova-tools #1814).** "Not a secrets tool" is
+   meant literally, and it was read too generously: because the wall passes the
+   credential through, an agent harness under the wall handed that same
+   environment to the shell it gives its model, and the model could read the
+   seat's provider key. The wall does not change — a wall that decided which of
+   the caller's variables were secret would be guessing, which is rule 4's
+   refusal — and the scrub of the TOOL SUBPROCESS belongs to the caller that
+   knows which name is the credential. `nova-swarm native` does it: a `bash` and
+   an `sh` wrapper in `<slot>/shim`, first on the child's `PATH` and pinned as
+   `SHELL`, unsetting every `KEY`/`TOKEN`/`SECRET` name before exec'ing the real
+   shell. The rule and its tests are in **docs/SPEC-SWARM.md, "The card's shell
+   never sees a secret"**; the wall's own contribution is that `<slot>` is a
+   `--read` and never a `--write`, so the card can run a wrapper and cannot
+   replace one.
+
+   **And the wall cannot finish the job, for a reason this rule's own
+   `/proc` note already measured.** On linux the child can read its PARENT's
+   environment through `/proc/<pid>/environ` — same uid, and Yama's
+   `ptrace_scope` does not apply to `PTRACE_MODE_READ` — so the harness's key
+   is reachable whatever the child's own environment holds (measured inside
+   the wall on `space`, 2026-09-19: the read succeeds and carries one
+   secret-named entry; the probe reported a yes/no and a count, never a value).
+   The read roots below name `/proc` and not `/proc/self` **because a
+   `/proc/self` opened `O_PATH` resolves to the pid that opened it**, which is
+   the same fact from the other side: Landlock's rules are inode-based and
+   resolved when the ruleset is built, before the descendants' pids exist, and
+   it has no "the directory whose name is my own pid". The wall may therefore
+   allow all of `/proc` or none of it, and none of it kills every toolchain a
+   card runs. **Landlock cannot path-restrict procfs by pid**, so this is not
+   a wall defect and no wall change closes it; the closures are `hidepid=2` on
+   the bench or a harness that takes its credential by something other than
+   the environment, both named in docs/SPEC-SWARM.md. But an inherited `HOME` names a directory that is in no list and
    is therefore denied, and almost every tool a worker runs derives a path
    from it. Measured on this Mac under the profile below: with the caller's
    `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to
@@ -410,7 +455,7 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
@@ -419,6 +464,10 @@ nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox check   [--max <n>]
 nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
 nova-sandbox reap    [--dry-run]
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
+nova-sandbox egress apply --plan <file> --run <id>
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop  --run <id>
 nova-sandbox version
 nova-sandbox help
 ```
@@ -498,7 +547,23 @@ What the verb does, in order, and there is no other order:
    not make, and it deletes the place on the way out.
 2. **Create.** One volume, with the quota `--size` names. `--size` is
    **required**: a disposable place with no ceiling can fill the boot disk,
-   which is the failure a disposable place exists to prevent.
+   which is the failure a disposable place exists to prevent. A volume that comes
+   up with **no mount point** is a different failure from one that could not be
+   made, and the refusal says which of the two it is: the volume was created, the
+   mount was denied or never happened, and the volume has been deleted again. The
+   usual cause is the **caller**, because a process that is itself inside an OS
+   sandbox may not mount a volume, so the line names both remedies — a shell that
+   is not sandboxed, or the bare wall form, which needs no volume at all. Both
+   failures are `reason=volume_failed`.
+
+   That cause has a **second face one step earlier**: under a seatbelt wall
+   `diskutil` cannot reach DiskArbitration at all and fails every call with
+   *"framework being unavailable due to being booted in single-user mode"*, which
+   is neither what happened nor anywhere to look. Wherever that phrase is in a
+   disk failure, the refusal carries the same cause-and-remedy sentence as the
+   unmounted volume — one sentence, written once, so the faces cannot drift — and
+   the container refusal (`reason=no_container`) drops its `--container` advice,
+   because a container named by hand fails the same way one call later.
 3. **Run.** The volume is the run's **only `--write`**, so the seatbelt profile
    of the darwin section allows writes there and nowhere else; rule 8's temp
    directory defaults inside it, which puts `TMPDIR` on the volume too. The
@@ -581,6 +646,11 @@ refusal-for-absence is about the paths the *caller* named.
 
 Without it, a card names both by hand in every argv, which is a step that will be
 forgotten. `--read $(go env GOROOT)` remains the manual equivalent.
+
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §2 (draft, 2026-09-19; #1557, #1465):** `--toolchain
+<leg>` is the same idea for `cc`, `make`, `sbcl` and `sqlite3`, each leg's narrowest measured
+roots asked of the toolchain and never guessed, and a bench is certified leg by leg inside the
+wall before a card's result from it is trusted.
 
 ### `SANDBOX DENIED` — the wall says what it refused
 
@@ -815,6 +885,121 @@ measured by a non-author dogfooding the verb): one for the missing `--name`, one
 for the missing `--size`, one for `--help` not being a flag of the verb, one for
 the missing `--`. ONBOARDING.md point 2 puts the banner behind `help` rather than
 in front of every mistake — and asking how to use a verb is not a mistake.
+## The egress verbs — the card's outbound wall, on linux
+
+```
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
+nova-sandbox egress apply --plan <file> --run <id>
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop  --run <id>
+```
+
+Every other verb in this document says what a command may **read and write**.
+These four say what it may **talk to**. The design is Johnny's page of
+2026-09-18, and its first sentence is the one that fixes the shape: the wall is
+*nftables on the bench*, applied to the card's own traffic — **not an env list
+the worker applies, because the worker is the adversary**, and **not
+`--network=host`**, which would hand a card the bench's whole namespace.
+
+**The allowlist is a file in git**: `infra/image/egress.txt`, one hostname per
+line, `#` comments, **default deny**. A card reaches those names on **TCP 443**
+and nothing else. Adding a name is **a PR to that file, reviewed by the security
+lane — never a runtime flag**.
+
+What a run allows, and it is the whole list:
+
+| | |
+|---|---|
+| `github.com`, `api.github.com`, `objects.githubusercontent.com` | TCP 443, to the addresses they resolved to **at plan time**, pinned for the run |
+| the **one** model host `--model-host` names | TCP 443, pinned the same way |
+| the resolver `--resolver` names | **UDP 53 only** |
+| everything else | dropped |
+
+Denied outright, before any allow is considered: `169.254.169.254/32` (the
+metadata address, **by name**, so a reader finds it without arithmetic), the rest
+of `169.254.0.0/16`, `127.0.0.0/8` as a destination, `::1/128` and `fe80::/10`,
+and every `--bench-cidr` — the other benches.
+
+**Three silences in the page, read the safer way**, and said here because a
+silence read the loose way is a hole:
+
+1. **`--model-host` may only name a host the policy file already carries.** The
+   page says an update is "a PR to `egress.txt` … Not a runtime flag", and a flag
+   that could name *any* host would be exactly that flag. The file is the
+   reviewed universe; the flag picks the one model host out of it for this run,
+   so a file that grows a second model host does not widen any existing run.
+2. **A pinned address inside a denied range refuses the whole plan**
+   (`reason=bad_address`). The answer came from a resolver, the resolver is not
+   ours, and a name that resolves to `127.0.0.1` or to a bench is a poisoned
+   answer or a rebinding. Fail closed; the same holds for a `--resolver` that is
+   itself inside a denied range (`reason=bad_resolver`), which would otherwise
+   leave DNS silently dropped by a rule above it.
+3. **Every rule is scoped to the card's own traffic** — `meta skuid <n>` for
+   rootless podman's slirp/pasta, `iifname "<veth>"` for the forward path — and a
+   plan with neither selector **refuses** (`reason=no_selector`). The chain's base
+   policy stays `policy accept` and the **default deny is the bare selector
+   `drop` at the bottom of the chain**: an unscoped `policy drop` in the output
+   hook would firewall the bench itself, which is a worse failure than the one it
+   prevents.
+
+**The shape of a plan.** One table per run, `nova_egress_<run>`, denies first,
+then the one DNS allow and the pinned TCP 443 allows, then the default deny:
+
+```
+table inet nova_egress_j1 {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		meta skuid 10001 ip daddr 169.254.169.254/32 drop
+		meta skuid 10001 ip daddr 127.0.0.0/8 drop
+		meta skuid 10001 ip daddr 10.1.0.0/24 drop
+		meta skuid 10001 ip daddr 10.9.0.53 udp dport 53 accept
+		meta skuid 10001 ip daddr 140.82.121.4 tcp dport 443 accept
+		meta skuid 10001 drop
+	}
+}
+```
+
+**`check` is the test of the tests.** It parses a plan back — it does not trust
+the renderer that wrote it — and asserts: exactly one `nova_egress_` table, every
+chain based on `policy accept` in the output or forward hook, **every** rule
+carrying that chain's selector, **every** `accept` naming ONE address (a prefix
+is how a wall becomes a suggestion) and port 443/TCP or 53/UDP, the metadata
+address denied by name, and the **last** rule of every chain the bare selector
+`drop`. Anything the grammar does not cover is a refusal, not a shrug: a line
+whose effect the audit cannot judge is a line nobody has checked. `plan` runs the
+same audit over what it just rendered, and **`apply` runs it before nft ever sees
+the file** — a plan that cannot pass it is never applied, whoever wrote it.
+
+**A blocked destination.** The card is told in exactly one line on **its own
+stdout**, and the run exits non-zero — fail closed, and **no retry to a different
+host**:
+
+```
+EGRESS DENIED host=<name>
+```
+
+**Who calls what, and when.** The card runner, on the bench, around one
+`podman run`: `egress plan` → `egress apply` → the run → `egress drop`, with the
+drop on **every** path out, the way the `run` verb deletes its volume. `drop`
+names one table — the one this tool made — and touches nothing else on the
+bench's ruleset.
+
+**`apply` and `drop` are linux's**, because nftables is: on darwin they refuse
+with `reason=not_linux` and the refusal says where the outbound wall is there
+instead — the seatbelt profile this binary already generates, with `--net-deny`
+for a card that needs no network at all. **`plan` and `check` run everywhere**: a
+plan is text and an audit is a read, so a reviewer on a Mac builds and checks the
+ruleset a bench will apply. A bench with no `nft` refuses `reason=no_nft` with one
+remedy line, and nothing is applied and nothing is dropped.
+
+**No root, one binary.** The privileged step is `sudo -n nft …` — `-n` because a
+card runner's shell has no tty and a password prompt there is a hang nobody sees.
+It is the one command these verbs execute, behind one interface, which is why the
+whole contract above is unit-tested with **no packet, no `nft` and no `sudo`**:
+the resolver is a fake table and the privileged command is a recorder. Johnny's
+page asks for exactly that ("unit test feeds a fake resolver + a fake connect"),
+and the one real probe — `github.com:443` connects, `example.com:443` is denied —
+is nightly, on a bench, never in this suite.
 
 ## The worktree verb
 
@@ -907,7 +1092,7 @@ range, and this is a deliberate, recorded departure from the conventions
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
@@ -952,10 +1137,14 @@ remedy is printed where it can be printed on all three — the usage banner and
 the `--read` paragraph of the roots section — and a reader diagnosing a `126`
 compares it with the same command run without the wrap.
 
-The `probe`, `policy`, `fence` and `check` verbs are not wrappers and use
-SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
+The `probe`, `policy`, `fence`, `check` and `egress` verbs are not wrappers and
+use SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
 and said NO, **2** could not run (a missing flag, an unreadable path,
-`--secret` inside a named path, bad invocation).
+`--secret` inside a named path, bad invocation). For the egress verbs the split
+is: a plan whose invariants fail, and an `nft` that refused the ruleset, are
+**1** — the verb ran and the answer is no; a flag that cannot be read, a policy
+file that is not there, a plan that belongs to another run, a bench with no `nft`
+and a platform with no nftables are **2**.
 
 ## Output grammar
 
@@ -963,7 +1152,7 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
+SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
@@ -976,10 +1165,16 @@ SANDBOX REAP OK volumes=<n>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise> gpu=<none|metal>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
-POLICY OK backend=<name> read=<n> write=<n> bytes=<n> gpu=<none|metal>
+POLICY OK backend=<name> read=<n> read-noexec=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 nova-sandbox <build identity> <goos>/<goarch> <go version> backend=<name> platform=<os>
+EGRESS PLAN run=<id> allow=<n> deny=<n> names=<name,name,...>
+EGRESS CHECK table=<nova_egress_<run>> chains=<n> rules=<n> allow=<n> deny=<n>
+EGRESS OK verb=<apply|drop> run=<id> table=<nova_egress_<run>>
+EGRESS STEP name=<resolve|apply|drop> state=<start|done> [ms=<n>]
+EGRESS REFUSED reason=<bad_policy|bad_model_host|bad_resolver|bad_cidr|bad_address|bad_uid|bad_veth|bad_out|bad_plan|bad_table|bad_chain|bad_rule|no_name|no_selector|no_command|no_nft|not_linux|resolve_failed|plan_mismatch|allow_any|allow_port|unscoped_rule|no_default_deny|no_metadata_deny|nft_failed>: <text>
+EGRESS DENIED host=<name>
 ```
 
 `version` is SPEC.md's Conventions line, not a shape of its own: the four tokens
@@ -1015,6 +1210,19 @@ wall, on any platform.
 `net=nopromise` is rule 7: the caller did not ask for network denial and the
 tool is not implying one. There is no `net=unenforced`; a denial that cannot be
 enforced is a refusal, not a word in a line.
+
+**`EGRESS DENIED host=<name>` is the card's line, not the tool's**, and it is the
+one place in this grammar where the line goes to **stdout** — the card's own,
+where the worker's transcript is — because it is what the card is told when it
+reaches for a destination the wall denies. Everything else the egress verbs print
+is the bench's and goes to stderr like every other line here. A card that sees it
+exits non-zero and does **not** try another host.
+
+`EGRESS PLAN` is one plan's receipt: `allow=` and `deny=` are the accept and drop
+rules the file actually holds (the default deny counted among the drops), and
+`names=` is the allow set in order, so the receipt and the ruleset can be
+compared without reading the ruleset. `EGRESS CHECK` is the same shape read back
+out of a file by the audit.
 
 `SANDBOX STEP`, `SANDBOX DONE`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run`
 verb's alone. `SANDBOX DENIED` is the one line this tool prints about a failure

@@ -163,7 +163,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
      admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
      is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card
      ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
-     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
+     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued. `launch` takes
+     an optional `--routes <routes.tsv>`: with it, every card's worker is a typed decision —
+     the shared core behind `nova-swarm route`, [SPEC-DECIDE.md](SPEC-DECIDE.md) rule 8 —
+     over the four questions, with `--floor` (default 0.9), `--key-env` (default
+     `JEV_API_KEY`) and `--base-url`, and one batch runs per chosen worker description. Below
+     the floor the card keeps its own model column as the default worker, and the line says
+     so. Every decision appends one `ROUTE` line to `<queue>/ROUTES.log` beside the card's
+     label and the time, so the floor is re-tuned from rows and never from a feeling. With no
+     `--routes` the cards group by their model column exactly as before, and no `ROUTES.log`
+     is written.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
 10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
     `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s
@@ -207,6 +216,9 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
     name the contract, the `RESULT.md`'s own line 1 is the contract, and the refusal stands
     only when neither the file nor a job dir is there.
+    **Amended by `docs/SPEC-TOOLWORK.md` §1 (draft, 2026-09-19):** between this rule's
+    verify and its push stands `nova-pulse accept` — the card's claim is executed, its test is seen
+    red without its change, and a rejected card pushes nothing.
 13. *SPEC-AHEAD: #467.* **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
@@ -232,7 +244,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
     rewritten, the row's `seen.tsv` state becomes `retry`, and only then does `pool` pick
     the item up again (rule 2). An abstain is a prompt defect
-    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
+    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*). When
+    `nova-pulse run` is given `--decide`, each harvest makes one typed decision per newly
+    finished task before it disposes of it: a task whose `needs_human` is at or above
+    `--floor` is appended to `<queue>/HUMAN` as one line
+    `HUMAN task=<id> reason=<r> conf=<c> card=<label>` and is not auto-retried, so a person
+    reads the inbox instead of the loop retrying a task that needs them; a
+    `provider_error` above the floor is requeued once by rule 14's own path; below the
+    floor nothing changes and the pool's own class stands. The decision is the core of
+    `nova-swarm triage --decide` (`internal/swarm.DecideFinished`), and the loop makes no
+    model call of its own.
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
     and `launch` in that order, with `queue.tsv` rows first, then `next.tsv`, then
     the sources, and prints the next `PULSE` line as its own last line. When the pool and the
@@ -389,6 +410,15 @@ builds `nova-sandbox` from the checkout and runs the network fetch inside it,
 failing unless the fetch answers 200, so a bench enters the loop only after the
 SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
 one passed while every sandboxed card died.
+
+The sandbox network probe is Linux only and runs after the toolchain checks: it
+makes a temp dir under `$HOME/nova-bench`, then runs `$HOME/.local/bin/nova-sandbox
+--read $HOME/nova-bench --write <tmp> --cwd <tmp> -- curl -s -o /dev/null -w
+'%{http_code}' https://models.opencode.ai/api.json` with `HOME=<tmp>/home`,
+expecting `200`; any other code, including an empty reply, is `DRIFT
+sandbox-network: curl inside nova-sandbox got http=<code> (want 200)`.
+`NOVA_PROBE_URL` overrides the URL, so the test fakes the sandbox and the `curl`
+behind it and no test touches the network.
 
 The hurts, one line each: tonight's 97 ssh turns in the window is the cost
 this section exists to remove; the bins drift Stella found is what `fleet
@@ -580,23 +610,69 @@ both idempotent: a second `--install` rewrites nothing that already matches.
 One line per run, every field named:
 
 ```
-HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> cache=<kept|dropped>(<size>G) free <a> -> <b>
+HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> dead=<n> diag-deleted=<n> diag-freed=<bytes> cache=<kept|kept-lease|dropped>(<size>G) free <a> -> <b>
 ```
 
-`host` is `hostname -s`; `slots` the slot directories the run saw; `reaped` the slot `data`
-homes, `tmp` dirs and scratch it deleted; `jobs-deleted` the jobs it deleted whole;
-`slots-deleted` the empty slots it removed; `cache` is `kept` or `dropped` with the build
-cache's size in GB; `free <a> -> <b>` is disk free space before and after. `--dry-run` walks
-the same trees and prints one `WOULD rm -rf <path>` line per deletion it would make, deleting
-nothing, so a bench's first run is read before it is felt.
+`host` is `hostname -s`; `slots` the directories the run RECOGNISED as slots; `reaped` the
+slot `data` homes, `tmp` dirs and scratch it deleted; `jobs-deleted` the jobs it deleted
+whole; `slots-deleted` the empty slots it removed; `dead` the unleased jobs it took that had
+left no `RESULT.md`, which is a different fact from a job somebody read; `diag-deleted` and
+`diag-freed` the runner `_diag` files it took and the bytes they held; `cache` is `kept`,
+`kept-lease` (a lease was live) or `dropped`, with the build cache's size in GB;
+`free <a> -> <b>` is disk free space before and after. `--dry-run` walks the same trees and
+prints one `WOULD <verb> <path>` line per deletion it would make, deleting nothing, so a
+bench's first run is read before it is felt.
 
-The liveness rule decides every touch: a job whose `harness-output.log` is under fifteen
-minutes old with no `RESULT.md`, or that any process names in its command line or its cwd, is
-live and never touched, and a slot any live process's cwd sits in is live the same way. A
-harvested job (a `.harvested` marker) is deleted whole; a finished job nobody read goes after
-six hours; an empty slot goes; runner `_work/_temp` entries older than a day go; and the Go
-build cache is dropped when disk free is below 25 GB or the cache itself is above 20 GB. A
-live job is never reaped, however old its neighbours are.
+**The reaper deletes on a lease and an age, never on a shape** (issue #1499, after it ate a
+certify tree, corpus and all, on two benches mid-pass; and issue #1512, which is the same
+three rules reaching the Go verb that replaces the script). `scripts/bench-hygiene.sh` -- the
+script the benches run today, and the one `--install` writes -- and `nova-pulse hygiene run`
+both ask three questions, in this order. **Is it a slot?** A slot is the shape the launcher
+makes, `<slot>/jobs`; a directory under either root without one is somebody's work and is
+skipped whole, at any age, and is not even counted as a slot. **Is it leased?** `nova-swarm native` writes `<job>/.lease` before the child starts,
+carrying its pid and a heartbeat it bumps every 30 s while the child runs, and removes it
+when the run ends; a job whose lease names a live pid or whose heartbeat is under ten minutes
+old is live and is never touched, and neither are the slot's `data` (the card's HOME) and
+`tmp` (its TMPDIR) around it. `pgrep` and a process cwd stay as a second reason to KEEP; no
+silence is ever a reason to delete, because one long model call and one long compile are both
+silent. **Is it old?** An unleased job goes when it is harvested, or when nothing in it has
+changed for six hours; an emptied slot goes only once it too has been quiet six hours, read
+before the pass deletes anything under it. The build cache is never dropped while any lease
+is live (`cache=kept-lease`). Replay: `scripts/bench-hygiene_test.sh`, and the same class
+ported onto the Go verb in `cmd/nova-pulse/hygiene_reaper_class_test.go` (#1512).
+
+**The Go verb reads the launcher's own lease record, not a second spelling of it.**
+`nova-pulse hygiene run` asks `internal/swarm`'s `ReadJobLease` and `JobLease.Live`, which is
+the judgement `nova-swarm native` itself makes about another run's lease: the pid wherever
+this kernel can be asked, and the heartbeat against `swarm.JobLeaseStale` where it cannot. A
+reaper that re-spells that rule is a reaper that can disagree with the launcher, and the way
+it disagrees is by deleting a running card's directory. A `.lease` this process cannot read
+at all -- a directory, or unreadable -- names an owner it cannot establish, so the job is
+KEPT.
+
+**The runner `_diag` prune is two rules, and one of them is a size cap.** Each
+`$HOME/runner-*/_diag` is bounded by an age window, `--diag-days` (**two** days by default),
+and then by a per-runner-directory cap, `--diag-max-bytes` (**2 GiB** by default), which
+deletes the oldest file until the directory is at or below it. Only regular files directly
+inside `_diag` count: a symlink is skipped by the `Lstat`, never followed, never counted and
+never removed, and the newest file of a runner is never deleted by either rule, because the
+runner process holds it open. Each deletion is `delete-diag <path>` in the action log and goes
+through `internal/safepath` below that runner's own `_diag`.
+
+The mistake that rule removes, measured on hulk on 2026-09-18: **24 runner directories held
+3.5 GB of `_diag`, 18,296 files, and the oldest file on the whole bench was two days old.** A
+runner rolls its own diagnostics at a rate nobody chose, so the **seven-day window the bench
+ran with took nothing, ever**, and neither would three days. The two rules divide the job. On
+a busy bench the window is what bites day by day: a `--dry-run` on hulk at `--diag-days 1`
+selects 10,391 files and 1.95 GB. The cap is the backstop for a burst, or for a runner that
+starts writing faster than anyone watches: a `--dry-run` at `--diag-max-bytes 104857600`
+selects 6,374 files and 1.198 GB, oldest first, from the oldest file on the bench. The shipped
+2 GiB takes nothing on hulk today, because no runner directory there is over 220 MB, and that
+is what a ceiling is for.
+
+The general lesson, and the one to carry to the next cleaner written: *a window over a tree
+that rotates itself is not a bound. Set the window from the rate the tree actually rotates at,
+and put a size ceiling behind it for the day the rate changes.*
 
 Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
 (run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
@@ -628,6 +704,13 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 10. `hygiene-status-prints-the-last-line-and-free-space-per-bench`: a fake `ssh` answering a stored `HYGIENE` line and a `df` output yields one `FLEET <name>` line per bench with the last counts and free space now.
 11. `hygiene-refuses-studio`: any hygiene act with `studio` in `--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fake ssh log is empty.
 12. `hygiene-status-without-benches-refuses`: `--status` with no `--benches` is `refusing to guess`, exit 2, and no bench is contacted.
+13. `hygiene-prunes-diag-older-than-two-days`: with a fake clock, a `_diag` log three days old goes, one a day old stays, and a runner whose whole directory is stale still keeps its newest file. The counts land in `diag-deleted` and `diag-freed`.
+14. `hygiene-diag-size-cap-deletes-oldest-first`: four logs written today, every one inside the window, against `--diag-max-bytes 250`: the two oldest go, the run stops at or below the cap, and it takes no more than it has to.
+15. `hygiene-diag-cap-is-per-runner-directory`: two runner directories each under the cap and together over it lose nothing, because the cap bounds a runner and not a bench.
+16. `hygiene-diag-dry-run-prints-would-and-deletes-nothing`: `--dry-run` names the file it would take as `WOULD delete-diag <path>`, every byte survives and no action log is written.
+17. `hygiene-diag-never-follows-a-symlink-out`: a symlink inside `_diag` pointing at a file outside the runner directory survives with its target, while a cap of one byte proves the prune did delete something.
+18. `hygiene-diag-flags-refuse-nonsense`: `--diag-days` and `--diag-max-bytes` each refuse a non-number and a negative, exit 2, naming the flag; a prune never runs on a guess.
+19. `hygiene-diag-default-cap-is-two-gibibytes`: the shipped defaults are pinned at two days and 2 GiB, so a change to either is a change to this test.
 
 `fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
 2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
@@ -649,8 +732,9 @@ runner name and the run id on the line.
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
@@ -814,10 +898,11 @@ coordinator must act on, like `PULSE UNDER-WIDTH`.
 
 ### The fleet page
 
-`nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>]
-[--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
-[--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]` is the fleet page as a verb
-(`bin/status-page.sh`). It reads every bench in `--benches` over `ssh <target> bash -s`, in
+`nova-pulse status --html <out> --machines <registry> [--benches <file>, retired]
+[--queue <dir>] [--ssh <path>] [--timeout <s|duration>] [--publish <host:dir>]
+[--self <name>] [--loop <label>=<pattern>]... [--branch <name>] [--day-start <HH:MMZ>]
+[--gh-config <dir>]` is the fleet page as a verb
+(`bin/status-page.sh`). It reads every bench over `ssh <target> bash -s`, in
 parallel and bounded by `--timeout`, counting live cards from running card processes — a
 process whose command line names a job directory, or whose cwd is under the slot, the
 authoritative shape `bench-hygiene.sh`'s `live_slot` uses — and never from log age, which
@@ -835,11 +920,38 @@ been learned twice. A bench that does not answer is `DOWN (no answer over ssh)`,
 a dash in the metrics row, it adds nothing to `live`, and it is counted in `down=`: a row of
 zeros reads as a bench with nothing to do, which is how a fleet nobody could see looked
 healthy on 2026-09-17. An answer that cannot be parsed is no answer and says DOWN too. With
-no `<queue>/REPO` there is nobody to ask the forge, so `merged`, `opened` and the merge
-queue read as a dash on the page, in the series and on the STATUS HTML line, and the chart
-plots a gap rather than a flat line at zero — a flat line is a claim.
+no `<queue>/REPO` **and no origin on the clone the queue sits in** there is nobody to ask the
+forge, so `merged`, `opened` and the merge queue read as a dash on the page, in the series
+and on the STATUS HTML line, and the chart plots a gap rather than a flat line at zero — a
+flat line is a claim. "Nobody to ask" and "asked and got nothing" are DIFFERENT facts and
+the page says which: a queue that named a repo and got no answer is a forge to go and look
+at, not a fleet file to go and edit.
 
-The rule was learned a third time by probing the real fleet: a `--benches` home that is not
+**The fleet comes from the machines registry.** `--machines <file>` is the registry of
+**The machines registry** above — seven columns and roles, the file `fleet registry` prints
+and every fill refusal names. The benches read over ssh are its rows carrying the role
+`bench`, in file order; a registry no machine of which carries `bench` is a refusal, because
+a fleet with nowhere to put a card is not a page of nothing. The page also carries a
+**machines** table — name, os/arch, roles, cores, notes — so it answers the question people
+were answering by hand ("can I fill batman?") and shows each machine's own word about
+itself: the Air is a fleet machine WHILE UP, and a bare `DOWN` row every time a laptop is
+shut is a page people learn to ignore. A DOWN bench's row carries its registry note beside
+the ssh reason for the same reason.
+
+The registry carries no home column and needs none: with no home the liveness script leaves
+`HOME` alone and uses the login home, which is the home ssh lands in.
+
+`--benches` is the retired four-column file (`name`, ssh target, home, mac). It reads for
+one more release and every run of it prints one `STATUS NOTE` line naming `--machines`.
+Given both, the registry decides and the run names the file it did not read: two files that
+disagree about what the fleet IS is how a runner host quietly becomes a bench. Replays:
+`status-machines-reads-the-registry`, `status-machines-shows-the-runners`,
+`status-machines-shows-the-air-while-up-note`,
+`status-machines-refuses-a-registry-with-no-bench`,
+`status-benches-is-deprecated-for-one-release`, `status-machines-wins-over-benches`,
+`status-derives-the-repo-from-the-queue-origin`, `status-repo-file-wins-over-the-origin`.
+
+The rule was learned a third time by probing the real fleet: a fleet-file home that is not
 a directory on the bench — a typo, a user renamed, a machine reinstalled — let `df` answer
 nothing, and every row read `0 GB free, allowed 0` from benches that had answered perfectly.
 So the home is checked first, before any of the work it would make pointless, and the row
@@ -1054,8 +1166,32 @@ an issue (`--issue <repo>#<n>`, title and body verbatim), a table of rows (`--ro
 by hand becomes a flag and the script retires. The verb line, as help will print it:
 
 ```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 ```
+
+**Amended 2026-09-18, from a non-author's dogfood run.** Four things the section above
+did not say, and the verb now does. `--repo <clone>` is required of the three validated
+forms and every `git` call runs with `-C <repo>`: a command never depends on the working
+directory. `--root` is the pool form's alone — the validated forms wrote nothing under it
+and asked for it anyway. The branch check begins with `git check-ref-format --branch`
+semantics applied in process, because `rowan/has a space` was `CUT OK`. Every card is
+written as `card-<label>.md`, the one filename contract the queue directories keep and the
+one `nova-pulse fill` globs, and a second cut into the same `--out` appends to `cards.tsv`
+rather than overwriting it. One example of each template ships at
+`cmd/nova-pulse/testdata/templates/{issue,rows,branch-from}.md`, and a test cuts a card
+from each.
+
+**Amended again the same day, from the schema dogfood loop (rows 9601-9603).** A label
+never carries the queue's `card-` prefix — it belongs to the filename, and carrying it in
+both rendered `CARD-card-9601` into a RESULT line and from there into a PR title. A
+`--rows` table carries two more columns, `lane` (field 6, filling the `<lane>` slot) and
+`template` (field 7, naming another `<templates>/<name>.md`), so one cut fills as many
+lanes as it has rows and one table cuts N different tasks. `--base <branch>` is the
+default base for a source that names none, because `dev` was hardcoded and a repo without
+a `dev` branch had to spell it in every row. `--cards <file.tsv>` names where the
+`cards.tsv` goes, because `--out` is a queue directory in real use and the table is not a
+card.
 
 **It reads one source and one template, and writes only cards.** `--issue` reads title and
 body verbatim through `gh issue view --json title,body`; `--rows` reads a tab-separated file,
@@ -1940,3 +2076,90 @@ Red tests, one per rule, each faking the network, the bench or the clock:
 8. `harvest-working-classes-are-the-five` — one fixture job per class prints exactly the five classes and an `HARVEST OK` whose counts sum, through fixture `gh`, `git` and clock.
 9. `harvest-working-timer-install` — a fixture `systemctl` records `daemon-reload` and `enable --now`, both unit files carry the harvest flags, and an unknown action is exit 2 with one remedy.
 10. `harvest-working-output-is-bounded` — 200 fixture jobs print at most `--max` lines plus one `HARVEST MORE`, every value one token, with fixture `gh`, `git` and `systemctl`.
+
+## Harvest, from a bench
+
+Glenn, 2026-09-17: *"every script and hand step sketched on the bench becomes an official
+verb"*. `~/rowan-working/bin/harvest-bench.sh` was the working reference on 2026-09-18 — one
+`ssh` loop over a bench's job directories, a push from the Studio, a PR per job — and a
+dogfood loop of three schema cards on hulk found six edges in it and in the local harvest
+beside it. This section is what shipped; the **Harvest on the working layout** section above
+is the wider layout the same verb grows into. The lines, as `nova-pulse help` prints them:
+
+```
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+```
+
+1. **`--bench` reads the jobs where they are.** The verb lists every
+   `<root>/<slot>/jobs/<label>` on the bench over the ssh seam and reads each `RESULT.md`
+   from there. Without it, harvest read those paths *locally*, found nothing, and reported a
+   card that had finished green with a committed branch as `retry=1` — a success reported as
+   a retry. The one remote script lists directories and copies `RESULT.md` bodies; every
+   decision — the session, the prefix, the base, the age — is taken here, because half the
+   defects of the hand loop were the shell itself.
+
+2. **A card with no job directory under the root ran somewhere else, and is not an
+   abstain.** The local fold counts it under `elsewhere=<n>`, writes no `retry.tsv` row and
+   rewrites no card, and one `HARVEST NOTE` names the remedy: harvest it from its bench.
+
+3. **A bench harvest wants no `--id`, no `--sources` and no `--templates`.** There is no
+   pulse packet to name and no relaunch to feed, and a `cut --rows` produces none of the
+   three. It wants `--clone`, because the branch is pushed from here.
+
+4. **The branch is pushed from the coordinator, never from the bench.** The job's clone is
+   fetched over `ssh://<bench><job>/repo` into `refs/harvest/<branch>` in the local clone
+   `--clone` names and pushed from there by explicit refspec. A bench holds no forge
+   credential and never will (*Secrets never copied between machines*). `--clone <dir>` is
+   the clone for any repo; `--clone <owner>/<name>=<dir>` binds one, which is the two-repo
+   table the script hardcoded.
+
+5. **The filter is the session and the branch prefix, never an age alone.** `--session <id>`
+   takes only jobs whose `RESULT.md` names that session, `--branch-prefix` (default
+   `rowan/`) only branches under it, and `--since` is an optional extra bound rather than
+   the whole filter. The script took *every* `rowan/*` job under six hours, whoever cut it.
+   A job passed over is one line naming its reason: `session`, `branch-prefix`, `age`,
+   `no-repo`, `no-clone`.
+
+6. **The base is the card's, in both places it is used.** The `RESULT.md`'s `BASE` line,
+   else `--base`, else `dev`. The no-commit guard is `git rev-list --count
+   origin/<base>..refs/harvest/<branch>` — the script hardcoded `origin/dev` — and a job
+   that committed nothing is **not pushed**, is marked `.harvested` and prints
+   `HARVEST NO-COMMIT`. The PR's base is that same base; the script hardcoded schema's to
+   `main`.
+
+7. **The PR title is cut at a word boundary and keeps its suffix.** The whole title,
+   ` (<label>, <bench>)` included, is at most 110 bytes; the head is cut back to the last
+   space and closed with `...`. The script cut the `RESULT` line at 110 mid-word and then
+   appended the suffix on top of it, so the title lost a word *and* ran past the cap.
+
+8. **`harvest` drains `--launched`, so a lane is released by the verb that folds it.**
+   Nothing but `manager` drained it, and a lane taken by a card that finished hours ago
+   stayed occupied forever. A launched card whose job is done (a `RESULT.md`) moves to
+   `--done`, one whose job directory is gone moves to `--failed`, each with a marker naming
+   the lane, the bench and why; one still running is left alone. The lane comes from the
+   `<card>.launched` marker `fill` writes beside the card — `lane`, `bench`, `label`,
+   `session`, `at` — so the release is by lane name and never by parsing the card again.
+
+```
+HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
+HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
+HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
+HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+```
+
+Exit 0, 1 when a fetch, a push or the forge failed for any job, 2 on a refusal that never
+started. Red tests, one per edge, each against the fake shell, the fake forge and the fake
+git on PATH — no test opens a connection:
+
+1. `TestHarvestBenchReadsResultsOverTheShellSeamAndOpensThePR` — rules 1, 3 and 4.
+2. `TestHarvestDoesNotCountAMissingJobDirAsARetry` — rule 2.
+3. `TestHarvestBenchFiltersBySessionAndBranchPrefix` — rule 5.
+4. `TestHarvestBenchMarksANoCommitJobAgainstTheCardsBase` — rule 6, the guard.
+5. `TestHarvestBenchOpensThePRAgainstTheCardsBase` — rule 6, the PR.
+6. `TestHarvestPRTitleCutsAtAWordBoundaryAndKeepsTheSuffix` and
+   `TestHarvestBenchHandsTheForgeTheCutTitle` — rule 7.
+7. `TestHarvestReleasesTheLaneOfAFinishedCard` — rule 8.
+8. `TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession`,
+   `TestFillReadsTheLiveLaneFromTheMarkerNotTheCard` and
+   `TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails` — rule 8's marker.

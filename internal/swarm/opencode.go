@@ -3,6 +3,7 @@ package swarm
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-SWARM rule 12, rule 13).
@@ -33,6 +36,36 @@ const SQLiteBinary = "sqlite3"
 
 // OpenCodeDB is the database's path inside the job's data home (XDG_DATA_HOME).
 const OpenCodeDB = "opencode/opencode.db"
+
+// ErrNoSQLite is the class of a usage source whose one program is not on PATH. It carries
+// the literal refusal line so every caller that surfaces the error says the same thing and
+// a missing reader is never a dash nobody explained.
+var ErrNoSQLite = errors.New("USAGE REFUSED reason=no_sqlite")
+
+// usageSettleWait is how long a read waits for a write-ahead log to be checkpointed. It is
+// a property of this tool, like the sample interval, and never a fact about anybody's data.
+const usageSettleWait = 5 * time.Second
+
+// usageSettlePause is the gap between attempts while a -wal is still beside the database.
+const usageSettlePause = 50 * time.Millisecond
+
+// OpenCodeStoreLocations are the paths OpenCode may keep its database at inside ONE job's
+// data home, in the order the reader tries them: the XDG_DATA_HOME spelling this tool
+// exports, then the HOME/.local/share spelling OpenCode derives from HOME on Linux -- the
+// bench carries its auth.json there. Both are joined to the job's own data home, so both are
+// this job's database and never another job's.
+func OpenCodeStoreLocations(dataHome string) []string {
+	return []string{
+		filepath.Join(dataHome, filepath.FromSlash(OpenCodeDB)),
+		filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db"),
+	}
+}
+
+// UsageRefusalLine is the one line a usage read that did not answer leaves on the record, so
+// that a row of dashes is never silent about the reader it needed.
+func UsageRefusalLine(id string, err error) string {
+	return fmt.Sprintf("%s id=%s", oneline.Escape(redactedReason(err)), oneline.Field(id))
+}
 
 // usageTimeout is how long this tool waits for one query before saying so. It is a property
 // of the tool, like a deadline, and never a fact about anybody's data: the supervisor
@@ -65,18 +98,20 @@ const messagesSQL = `SELECT ` +
 // BUDGET-UNVERIFIABLE on the third such sample, because a numeric budget the tool has
 // stopped being able to see is a budget the caller believes is enforced and is not.
 func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
-	path := filepath.Join(dataHome, filepath.FromSlash(OpenCodeDB))
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return ProviderUsage{Values: map[string]string{}}, nil
-		}
-		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
+	path, err := findOpenCodeStore(dataHome)
+	if err != nil {
+		return ProviderUsage{}, err
+	}
+	if path == "" {
+		// The harness has written no database at either standard location yet: it has
+		// reported nothing, which is an absence and not a failure.
+		return ProviderUsage{Values: map[string]string{}}, nil
 	}
 	if _, err := exec.LookPath(SQLiteBinary); err != nil {
-		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
-			path, SQLiteBinary, SQLiteBinary)
+		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
+			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCode(path)
+	rows, err := queryOpenCodeWaiting(path)
 	if err != nil {
 		return ProviderUsage{}, err
 	}
@@ -88,11 +123,127 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 	return foldOpenCodeRows(rows)
 }
 
+// findOpenCodeStore is the first of the standard locations that holds a database, or an
+// empty path when none does. A location that exists but cannot be stat'd is an error, not a
+// silent absence: the path is this tool's own and a read that stopped is a fact.
+func findOpenCodeStore(dataHome string) (string, error) {
+	for _, path := range OpenCodeStoreLocations(dataHome) {
+		st, err := os.Stat(path)
+		if err == nil {
+			if st.IsDir() {
+				continue
+			}
+			return path, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
+		}
+	}
+	return "", nil
+}
+
+// queryOpenCodeWaiting runs the one statement, and while a write-ahead log sits beside the
+// database it waits for the writer to checkpoint it, up to usageSettleWait. The read lands
+// in the window between the harness spending and its connection closing, when the `-wal` is
+// present and `sqlite3 -readonly` answers `database is locked`; recording a dash for that
+// window loses tokens the harness really spent.
+func queryOpenCodeWaiting(path string) ([][]string, error) {
+	return walWait{
+		first:  usageTimeout,
+		settle: usageSettleWait,
+		pause:  usageSettlePause,
+		query:  queryOpenCode,
+		now:    time.Now,
+		sleep:  time.Sleep,
+	}.read(path)
+}
+
+// walWait is that retry with its clock and its read named, so the waiting itself can be
+// held by a test that turns on no clock of its own and starts no process. `first` is what
+// the first read is allowed; every retry is allowed what is left of the window.
+type walWait struct {
+	first  time.Duration
+	settle time.Duration
+	pause  time.Duration
+	query  func(path string, limit time.Duration) ([][]string, error)
+	now    func() time.Time
+	sleep  func(time.Duration)
+}
+
+// read takes one reading and, while the refusal came with a -wal still beside the
+// database, waits for the writer to checkpoint it.
+//
+// THE WINDOW BOUNDS THE WAITING AND NEVER THE FIRST READ. The deadline is taken AFTER the
+// first attempt returns, because usageSettleWait is how long this tool waits for a
+// checkpoint -- not how long the whole read may take. Taken before the attempt, a slow
+// first open spends the budget that exists to outlast the writer: on a loaded macOS bench
+// the first `sqlite3` is a Mach-O the machine has never seen and the kernel assesses it on
+// that first exec, which cost the reader its every retry and recorded `database is locked`
+// for a writer that checkpointed a moment later. So a refusal with a -wal beside it always
+// buys at least one more look, and the window measures the looking.
+//
+// AND EVERY RETRY IS BOUNDED BY WHAT IS LEFT OF THE WINDOW. A retry is a `sqlite3` run,
+// and handing it the tool's whole query timeout made the window a floor instead of a
+// ceiling: two slow queries spent ~40s in one sample. The caller is why that matters --
+// `supervise` calls ReadProviderUsage synchronously in its select loop, so a read that
+// overruns is a stretch of time in which the worker's own deadline and budget cases cannot
+// run. A retry is given exactly the remaining window, and one that has nothing left is not
+// started at all.
+//
+// THE WORST CASE, STATED AND TRUE:
+//
+//	first read     usageTimeout                       20s
+//	  its drain    usageWaitDelay, if it is killed     2s
+//	the waiting    usageSettleWait                     5s   (all retries share it)
+//	  its drain    usageWaitDelay, at most once        2s
+//	                                                  ---
+//	                                                   29s
+//
+// The second drain is paid at most once because a drain spends the window too: `now` is
+// real time, so whatever a retry spends being killed and drained is time the next
+// deadline check sees, and the loop ends as soon as the window is gone. The last retry is
+// therefore the only one that can finish past the deadline, and it can overshoot by at
+// most one usageWaitDelay. That holds however the drain arises -- a child killed at its
+// deadline or one that exited leaving a pipe open -- so the bound does not rest on
+// `sqlite3` spawning no children.
+func (w walWait) read(path string) ([][]string, error) {
+	rows, err := w.query(path, w.first)
+	if err == nil {
+		return rows, nil
+	}
+	deadline := w.now().Add(w.settle)
+	for {
+		if !walPending(path) {
+			return nil, err
+		}
+		if !w.now().Before(deadline) {
+			return nil, err
+		}
+		w.sleep(w.pause)
+		// The pause spent part of the window, so the retry is allowed what is left AFTER
+		// it -- never the figure taken before it, and never a fresh query timeout.
+		remaining := deadline.Sub(w.now())
+		if remaining <= 0 {
+			return nil, err
+		}
+		if rows, err = w.query(path, remaining); err == nil {
+			return rows, nil
+		}
+	}
+}
+
+// walPending says whether the database has a write-ahead log beside it that sqlite3 cannot
+// replay read-only. That file, and not the error text, is what a retry waits on.
+func walPending(path string) bool {
+	_, err := os.Stat(path + "-wal")
+	return err == nil
+}
+
 // queryOpenCode runs the one statement, read-only, under the timeout. The database is the
 // job's own and this tool never writes it: `-readonly` is that promise kept by the program
 // that opens it, and `-tabs` is the shape the rows come back in.
-func queryOpenCode(path string) ([][]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+func queryOpenCode(path string, limit time.Duration) ([][]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, messagesSQL)
 	var out, errb bytes.Buffer
@@ -100,8 +251,8 @@ func queryOpenCode(path string) ([][]string, error) {
 	cmd.WaitDelay = usageWaitDelay
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("the usage source %s could not be read: %s did not answer within %ds",
-			path, SQLiteBinary, int(usageTimeout/time.Second))
+		return nil, fmt.Errorf("the usage source %s could not be read: %s did not answer within %s",
+			path, SQLiteBinary, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("the usage source %s could not be read: %s: %v: %s",

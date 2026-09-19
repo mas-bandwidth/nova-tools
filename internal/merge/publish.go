@@ -224,7 +224,12 @@ func (p *Pass) survey(res *Result) *Result {
 	list := bounded.Capped(p.Stdout, p.Max, "DRY", "entry", fmt.Sprintf("nova-merge dry-run --lane %s --max 0", p.Lane))
 	would := "-"
 	pos := 0
-	for _, e := range p.State.Entries() {
+	// EDGE 6: THE SURVEY WALKS THE ORDER THE PASS WALKS. This read p.State.Entries()
+	// while `walk` read p.ordered(), so `dry-run` -- the verb whose whole job is to print
+	// what a pass would do -- listed the entries in the LANE's order, skip set and parks
+	// and all, and showed a skipped pull request at position 2. A survey that surveys
+	// something else is worse than no survey.
+	for _, e := range p.ordered() {
 		pos++
 		st := p.plan(e, baseSHA)
 		list.Line(fmt.Sprintf("DRY PLAN pos=%d entry=%s admitted=%s gate=%s read=%s",

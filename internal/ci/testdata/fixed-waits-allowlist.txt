@@ -10,6 +10,7 @@
 # clock, or a wall-clock measurement asserted on. The allowed shape is a poll up
 # to NOVA_TEST_WAIT (default 30s) or a fake clock.
 cmd/nova-bus/timing_test.go:122 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
+cmd/nova-swarm/native_deadline_test.go:41 elapsed 2026-09-18 the bound is the assertion -- the deadline must cut the tree at 3s, and without the fix the run blocks on the surviving grandchild; carries a // wall-ok: reason of its own
 cmd/nova-swarm/native_test.go:147 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/native_test.go:210 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/native_test.go:219 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
@@ -30,7 +31,6 @@ internal/swarm/launch_bound_test.go:61 elapsed 2026-09-17 a wall-clock measureme
 internal/swarm/launch_bound_test.go:66 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/regular_size_test.go:116 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/result_collision_test.go:236 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/swarm/revision_test.go:257 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/delivery_test.go:70 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/rules_test.go:208 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/slow_test.go:135 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker

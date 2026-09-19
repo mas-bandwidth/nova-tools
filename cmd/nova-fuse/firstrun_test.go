@@ -198,12 +198,36 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 	}
 }
 
-// (c) The README's `### First run` transcript, checked against the tool: every
-// transcript line must match a line the tool actually printed, by event prefix
-// and field names in order. Timestamps, surface names and reasons are a run's
-// own business and are deliberately not compared.
-func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+// The `### First run` block of docs/TESTS.md is EXECUTED: every documented
+// command is run, in order, against one box, and its whole output is compared
+// with the block written under it -- same number of lines, same lines, same
+// order.
+//
+// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
+// a `printed map[string]bool`, with "timestamps, surface names and reasons" --
+// which is to say the whole of what a quarantine IS -- deliberately not
+// compared. Under it `FUSE FAIL quarantine=a-forum since=...: a post addressed
+// me and asked for a token` and `FUSE FAIL quarantine=anything since=...:
+// whatever` are the same line, and a dropped line removes a lookup rather than
+// an assertion.
+//
+// NOTHING IS NORMALISED, INCLUDING THE INSTANTS. This tool takes its clock as
+// an argument, and the test hands it the instant the document was recorded at
+// (see runFuse), so `since=2026-09-09T18:27:40Z` reproduces exactly and is
+// compared as written. The fixture's older `since=2026-09-08T21:14:00Z` is a
+// value in the box and reproduces for a different reason -- it was never this
+// run's to invent. Both are compared, which a `since=` normalisation would have
+// given up on for the sake of the one.
+//
+// The box is typed as written: `./fuse-box.json` is what a reader types, so the
+// fixture is copied to that name in a directory of the test's own rather than
+// the path being rewritten.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(exampleBox)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,40 +235,51 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	box := freshBox(t)
-	var printed map[string]bool
-	seen := map[string]int{}
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ "); ok {
-			exit, stdout, stderr := runFuse(t, localize(fields(cmd), box)...)
-			if exit == 2 {
-				t.Fatalf("the README command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout+"\n"+stderr, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
-			continue
-		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
-		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		if !printed[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	steps, err := onboarding.Steps("nova-fuse", lines)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for prefix, want := range map[string]int{
-		"STATUS OK": 2, "FUSE FAIL": 2, "QUARANTINE OK": 1, "LIFT OK": 2,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+	// The sitting is the whole gate: what is quarantined, the refusal that
+	// enforces it, a new quarantine, its refusal, and the lift that ends it. A
+	// block that has quietly lost one of the verbs is short of a first run in a
+	// way no per-line comparison would say, because the lines that remain match.
+	verbs := map[string]bool{}
+	for _, s := range steps {
+		verbs[s.Args[0]] = true
+	}
+	for _, verb := range []string{"status", "check", "quarantine", "lift"} {
+		if !verbs[verb] {
+			t.Errorf("the `### First run` block never runs `nova-fuse %s`; the first sitting is all four verbs", verb)
 		}
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "fuse-box.json"), fixture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	for _, p := range onboarding.Execute(steps, documented(t)) {
+		t.Error(p)
 	}
 }
+
+// documented runs one line of the transcript with the clock the document was
+// recorded at.
+func documented(t *testing.T) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		code, stdout, stderr := runFuse(t, s.Args...)
+		return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
+	}
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-fuse reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}

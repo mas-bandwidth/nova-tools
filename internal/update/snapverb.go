@@ -14,10 +14,37 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
-// snapshotChildTimeout is the deadline one binary's `version` gets. It is a
-// package seam so a test can be bounded by a short clock rather than the
-// machine's default.
-var snapshotChildTimeout = 5 * time.Second
+// snapshotChildTimeout is the default deadline one binary's `version` gets, and
+// `--timeout` is how a caller changes it. It is also a package seam so a test
+// can be bounded by a short clock rather than the machine's default.
+//
+// THIRTY SECONDS, NOT FIVE, BECAUSE THIS VERB'S FIRST EXEC IS ALWAYS A COLD ONE.
+// Every other verb in this package probes tools a person has been running for
+// days; `snapshot` reads a directory that was written a command ago -- the
+// documented sequence is `go install ./cmd/...` and then `nova-version
+// snapshot` -- so every binary in it is one this machine has never executed,
+// and the platform's one-time assessment of a never-seen executable is charged
+// to that first exec. Measured on the darwin/arm64 Studio over fresh
+// executables: 164-571 ms cold against 5 ms warm at load 121-151 on 32 cores,
+// and 140 ms median cold with a 7.03 s maximum while the tree compiled beside
+// it -- which is precisely the state `go install ./cmd/...` leaves the machine
+// in. A five-second bound therefore refused healthy binaries and sent the
+// person to repair a build that was fine (#890, and #1554 for the class).
+//
+// A warm-up exec outside the bound was the other candidate and was measured and
+// rejected: an exec killed at 40 ms leaves the assessment unpaid (the next exec
+// of that same file still cost 101 ms against a 140 ms cold and a 7 ms warm),
+// so a warm-up bounded by the same `--timeout` buys nothing, and one bounded by
+// `--budget` would turn a genuinely broken binary's prompt refusal into a
+// whole-budget wait. One honest bound, reachable by flag, is the smaller thing.
+var snapshotChildTimeout = 30 * time.Second
+
+// snapshotBudget is the default deadline for the WHOLE run, and `--budget` is
+// how a caller changes it. A per-binary bound alone is no bound on a directory:
+// sixteen tools at thirty seconds each is eight minutes, which is not an
+// inventory anybody waits for. It is the same pair -- per-child `--timeout`,
+// per-run `--budget` -- that `check`, `report` and `watch` already take.
+var snapshotBudget = 60 * time.Second
 
 // snapshotHeader is the TSV shape `snapshot` writes and `diff` reads. It is one
 // string so the writer and the reader cannot drift.
@@ -69,8 +96,11 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var bin, outPath string
+	timeout, budget := snapshotChildTimeout, snapshotBudget
 	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
 	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
+	fs.DurationVar(&timeout, "timeout", timeout, "one binary's read deadline")
+	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
 	}
@@ -82,7 +112,16 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 		missing = append(missing, "--out")
 	}
 	if len(missing) > 0 {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
+		// NEITHER PATH IS GUESSED, and the refusal now says so with a line
+		// somebody can paste. `--bin <dir>` reads as a complete command and is
+		// not one; the fourth release dogfood met that as `missing --out` with
+		// no example of what --out should be. SPEC-UPDATE rule 1 -- no search
+		// of the cwd, no $HOME -- is why there is no default to fall back on.
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing %s; refusing to guess (both paths are the caller's to name, for example: %s snapshot --bin ./bin --out ./before.tsv; run: %s help)",
+			strings.Join(missing, ", "), name, name))
+	}
+	if timeout <= 0 || budget <= 0 {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("invalid bound (use positive --timeout/--budget)"))
 	}
 	if len(fs.Args()) != 0 {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
@@ -91,6 +130,11 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	if err != nil {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read --bin %s (supply a readable --bin: a directory of nova-* executables)", bin))
 	}
+	// The run's own deadline. Every child hangs off it, so a directory of
+	// binaries cannot cost more than `--budget` however many of them there are
+	// and however long each one is allowed.
+	run, cancelRun := context.WithTimeout(context.Background(), budget)
+	defer cancelRun()
 	var rows []snapRow
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "nova-") {
@@ -101,15 +145,34 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 			continue
 		}
 		path := filepath.Join(bin, e.Name())
-		ctx, cancel := context.WithTimeout(context.Background(), snapshotChildTimeout)
+		ctx, cancel := context.WithTimeout(run, timeout)
 		p := process(ctx, []string{path, "version"}, nil, ChildCap)
 		cancel()
 		if p.Reason != "" {
-			reason := p.Reason
-			if reason == "timeout" {
-				reason = "timeout after " + snapshotChildTimeout.String()
+			reason, remedy := p.Reason, "repair the build there: go build ./cmd/"+e.Name()
+			// A child killed because the RUN ran out reports `timeout` like any
+			// other, since all it can see is its own cancelled context. The run's
+			// context is the one that knows which bound was spent, so it is asked
+			// first and a spent budget is never reported as a slow binary.
+			if run.Err() != nil {
+				reason = "budget"
 			}
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (%s) (repair the build there: go build ./cmd/%s)", e.Name(), reason, e.Name()))
+			switch reason {
+			case "timeout":
+				// NAME BOTH READINGS OF A TIMEOUT. A binary that does not answer
+				// inside its bound is usually broken, and was the only reading
+				// this line offered; the other is that the bound was spent on the
+				// platform's one-time assessment of an executable this machine has
+				// never run, which is what every binary in a freshly installed
+				// --bin is (#890). Sending somebody to `go build` a package that
+				// builds cleanly is a dead end, so the flag is named too.
+				reason = "timeout after " + timeout.String()
+				remedy = "repair the build there (go build ./cmd/" + e.Name() + "), or raise --timeout: the first run of a newly installed binary is assessed by the platform and that cost is charged to this deadline"
+			case "budget":
+				reason = "the run's " + budget.String() + " budget was spent before this binary was read"
+				remedy = "raise --budget, or snapshot fewer binaries per --bin"
+			}
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (%s) (%s)", e.Name(), reason, remedy))
 		}
 		stamp, revision, platform, ok := parseVersionLine(p.Stdout)
 		if !ok {

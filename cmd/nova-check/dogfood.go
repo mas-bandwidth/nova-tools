@@ -94,8 +94,8 @@ func addDogfoodSourceFlags(fs *flag.FlagSet) *dogfoodSources {
 // half-built directory should cost that tool's rows and not the whole ledger.
 func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([]dogfood.Verb, int) {
 	if s.cli == "" && s.tools == "" {
-		fmt.Fprintf(stderr, "nova-check dogfood %s: %s\n  %s\n  %s\n",
-			oneline.Escape(verb), sourceRemedy, cliHint, toolsHint)
+		refuse(stderr, " dogfood "+verb, sourceRemedy)
+		fmt.Fprintf(stderr, "  %s\n  %s\n", cliHint, toolsHint)
 		return nil, 2
 	}
 	var fromTools []dogfood.Verb
@@ -110,8 +110,7 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 		})
 		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, nil, progress)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check dogfood %s: %s\n", oneline.Escape(verb), oneline.Err(err))
-			return nil, 2
+			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
 		list := bounded.Capped(stderr, failMax, "DOGFOOD", "binary", failMaxRemedy)
 		for _, f := range failures {
@@ -125,15 +124,13 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 	if s.cli != "" {
 		verbs, err := dogfood.ParseCLI(s.cli)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check dogfood %s: %s\n", oneline.Escape(verb), oneline.Err(err))
-			return nil, 2
+			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
 		fromCLI = verbs
 	}
 	merged := dogfood.MergeVerbs(fromTools, fromCLI)
 	if len(merged) == 0 {
-		fmt.Fprintf(stderr, "nova-check dogfood %s: the sources named declare no verbs at all; a ledger over no verbs would say OK about nothing\n", oneline.Escape(verb))
-		return nil, 2
+		return nil, refuse(stderr, " dogfood "+verb, "the sources named declare no verbs at all; a ledger over no verbs would say OK about nothing")
 	}
 	return merged, 0
 }
@@ -157,8 +154,7 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 	receipts, failures, err := dogfood.ReadReceipts(receiptsDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check dogfood %s: %s\n", oneline.Escape(verb), oneline.Err(err))
-		return read, 2
+		return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 	}
 	if len(failures) > 0 {
 		list := bounded.Capped(stderr, failMax, "DOGFOOD", "record", failMaxRemedy)
@@ -182,8 +178,7 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 		})
 		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, nil, progress)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check dogfood %s: %s\n", oneline.Escape(verb), oneline.Err(err))
-			return read, 2
+			return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
 		for key, name := range fromGit {
 			authors.Set(key, name)
@@ -194,8 +189,7 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 		// wherever both have an opinion.
 		fromFile, err := dogfood.ParseAuthors(authorsFile)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check dogfood %s: %s\n", oneline.Escape(verb), oneline.Err(err))
-			return read, 2
+			return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
 		for key, name := range fromFile {
 			authors.Set(key, name)
@@ -266,6 +260,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
 	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
+	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty receipt set; without it, no receipts is a refusal and not a green line")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
@@ -276,6 +271,13 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
 	if code != 0 {
 		return code
+	}
+	// No receipts read is an empty evidence set, not a pass: the gate's whole
+	// question is whether the verbs in the list have been dogfooded, and with
+	// nothing read there is nothing to answer it. The release lane asks for
+	// this refusal by name so it cannot go green on nothing.
+	if len(read.receipts) == 0 && !*allowEmpty {
+		return refuseRan(stderr, " dogfood gate", fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(*receipts)))
 	}
 	// The discarded receipts are said FIRST, and on every outcome.
 	reportStranded(read, *failMax, stderr)
@@ -316,12 +318,10 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	// The verdict is stated, never defaulted: a receipt whose ok= came from the
 	// absence of a flag would be a record of what somebody forgot to type.
 	if *ok == *notOK {
-		fmt.Fprintln(stderr, "nova-check dogfood record: state the verdict exactly once: --ok when the verb did what the run needed, --not-ok when it did not; refusing to guess")
-		return 2
+		return refuse(stderr, " dogfood record", "state the verdict exactly once: --ok when the verb did what the run needed, --not-ok when it did not; refusing to guess")
 	}
 	if *issue < 0 {
-		fmt.Fprintf(stderr, "nova-check dogfood record: --issue must be an issue number, got %d; leave it out when no edge was filed\n", *issue)
-		return 2
+		return refuse(stderr, " dogfood record", fmt.Sprintf("--issue must be an issue number, got %d; leave it out when no edge was filed", *issue))
 	}
 	// The spelling is checked against the same list the ledger will read it
 	// against. This verb had the flag and used it for nothing, so a receipt for
@@ -338,9 +338,8 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		if nearest := dogfood.Nearest(verbs, *tool, *verb); nearest != "" {
 			remedy = "did you mean: " + nearest
 		}
-		fmt.Fprintf(stderr, "nova-check dogfood record: %s %s is not a verb the list declares; %s\n",
-			oneline.Field(*tool), oneline.Field(*verb), oneline.Escape(remedy))
-		return 2
+		return refuse(stderr, " dogfood record", fmt.Sprintf("%s %s is not a verb the list declares; %s",
+			oneline.Field(*tool), oneline.Field(*verb), oneline.Escape(remedy)))
 	}
 	receipt := dogfood.Receipt{
 		Tool:  *tool,
@@ -353,8 +352,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	}
 	path, err := dogfood.Record(*receipts, receipt)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check dogfood record: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " dogfood record", oneline.Err(err))
 	}
 	fmt.Fprintln(stdout, oneline.Escape(receipt.RecordLine(path)))
 	return 0
