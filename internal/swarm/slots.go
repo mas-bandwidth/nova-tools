@@ -291,6 +291,47 @@ func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free
 	return capacity, reserve, held, free, heldBy, shares, nil
 }
 
+// takeSlotsLock takes the exclusive take.lock beside shares.tsv, waiting up to
+// wait, and returns the release. It serialises the whole read-count-write
+// region of TakeSlotLeases, so two concurrent takes cannot both read the same
+// pre-grant count, both pass the check and both grant. The lock file lives
+// OUTSIDE slotStoreDir(store) so nothing that walks <store>/slots ever mistakes
+// it for a lease directory.
+func takeSlotsLock(store string, wait time.Duration) (func(), error) {
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		return nil, fmt.Errorf("the lock at %s could not be opened: %w", filepath.Join(store, "take.lock"), err)
+	}
+	path := filepath.Join(store, "take.lock")
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		ok, lockErr := tryLockFile(f)
+		if lockErr != nil {
+			f.Close()
+			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
+		}
+		if ok {
+			released := false
+			return func() {
+				if released {
+					return
+				}
+				released = true
+				unlockFile(f)
+				f.Close()
+			}, nil
+		}
+		if !time.Now().Before(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("another nova-swarm holds %s and this run waited %s for it", path, wait)
+		}
+		time.Sleep(lockPoll)
+	}
+}
+
 // TakeSlotLeases grants k leases to owner when both caps hold after reaping:
 // the owner's held+k stays within its share, and the total held+k stays
 // within capacity-reserve. Expired leases with a dead pid are reaped first;
@@ -319,6 +360,11 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("owner and label are one line")
 	}
+	release, lerr := takeSlotsLock(store, SlotsWait)
+	if lerr != nil {
+		return nil, 0, 0, 0, "", false, lerr
+	}
+	defer release()
 	capacity, reserve, shares, err := loadSlotShares(store)
 	if err != nil {
 		return nil, 0, 0, 0, "", false, err
