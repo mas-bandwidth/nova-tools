@@ -596,3 +596,160 @@ func TestQuotedAuthorAndTextRoundTrip(t *testing.T) {
 		t.Errorf("REPLY_BODY line:\ngot  %q\nwant %q", lines[6], want)
 	}
 }
+
+// copyFixture copies one file from testdata into dir under the given name.
+func copyFixture(t *testing.T, src, dir, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", src, err)
+	}
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		t.Fatalf("write fixture copy %s: %v", p, err)
+	}
+	return p
+}
+
+// A version-1 sidecar (no VERSION header) is read with the legacy rules, and
+// the next write upgrades it in place to version 2 without changing a single
+// stored value. This is the behaviour documented in docs/SPEC-PLAY.md under
+// "Reading a legacy sidecar".
+func TestLegacySidecarReadThenUpgradeOnNextWrite(t *testing.T) {
+	dir := t.TempDir()
+	fixtureDir := filepath.Join("testdata", "legacy-v1")
+	src := copyFixture(t, filepath.Join(fixtureDir, "story.txt"), dir, "story.txt")
+	sidecar := copyFixture(t, filepath.Join(fixtureDir, "story.txt.notes"), dir, "story.txt.notes")
+
+	before, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	if strings.Contains(string(before), "VERSION ") {
+		t.Fatalf("fixture is not a legacy sidecar:\n%s", before)
+	}
+
+	// 1. The legacy read. Continuation lines belong to the field above them,
+	//    a multi-word author runs on to the next key=value token, and a literal
+	//    backslash is not reinterpreted as an escape.
+	s, err := LoadStore(src)
+	if err != nil {
+		t.Fatalf("LoadStore on legacy fixture: %v", err)
+	}
+	if s.Version != 1 {
+		t.Errorf("legacy store version = %d, want 1", s.Version)
+	}
+	if len(s.Notes) != 1 {
+		t.Fatalf("legacy notes = %d, want 1", len(s.Notes))
+	}
+	wantAuthor := "Test Reader"
+	wantPassage := "The lantern room held a brass fitting."
+	wantBody := "First line\nSecond line with a literal backslash C:\\ships\\brass"
+	wantReplyAuthor := "Second Reviewer"
+	wantReplyBody := "A legacy reply\nwith its own continuation line"
+
+	n := s.Notes[0]
+	if n.Author != wantAuthor {
+		t.Errorf("legacy note author:\ngot  %q\nwant %q", n.Author, wantAuthor)
+	}
+	if n.Passage != wantPassage {
+		t.Errorf("legacy passage:\ngot  %q\nwant %q", n.Passage, wantPassage)
+	}
+	if n.Note != wantBody {
+		t.Errorf("legacy body:\ngot  %q\nwant %q", n.Note, wantBody)
+	}
+	if len(n.Replies) != 1 {
+		t.Fatalf("legacy replies = %d, want 1", len(n.Replies))
+	}
+	if n.Replies[0].Author != wantReplyAuthor {
+		t.Errorf("legacy reply author:\ngot  %q\nwant %q", n.Replies[0].Author, wantReplyAuthor)
+	}
+	if n.Replies[0].Note != wantReplyBody {
+		t.Errorf("legacy reply body:\ngot  %q\nwant %q", n.Replies[0].Note, wantReplyBody)
+	}
+
+	// A read alone never rewrites the file.
+	if _, _, err := ReadNotes(src); err != nil {
+		t.Fatalf("ReadNotes on legacy fixture: %v", err)
+	}
+	afterRead, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar after read: %v", err)
+	}
+	if !bytes.Equal(before, afterRead) {
+		t.Errorf("read rewrote the legacy sidecar:\nbefore:\n%s\nafter:\n%s", before, afterRead)
+	}
+
+	// 2. The next write upgrades the whole file to version 2.
+	newReplyAuthor := `Ada "The Reader" Lovelace`
+	if _, err := ReplyTo(src, "aaaaaaaaaaaa", newReplyAuthor, "A version 2 reply."); err != nil {
+		t.Fatalf("ReplyTo on legacy store: %v", err)
+	}
+
+	after, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar after write: %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(after), "\n"), "\n")
+	if len(lines) < 2 || lines[1] != "VERSION 2" {
+		t.Fatalf("upgraded sidecar missing VERSION 2 on line 2:\n%s", after)
+	}
+	// The ANCHOR line is carried over unchanged: an upgrade is not a re-anchor.
+	if lines[0] != strings.Split(string(before), "\n")[0] {
+		t.Errorf("ANCHOR line changed on upgrade:\ngot  %q\nwant %q", lines[0], strings.Split(string(before), "\n")[0])
+	}
+	// Every text record is now a single escaped physical line.
+	if want := "BODY " + escapeText(wantBody); lines[4] != want {
+		t.Errorf("upgraded BODY line:\ngot  %q\nwant %q", lines[4], want)
+	}
+	// The legacy multi-word author is now quoted.
+	if !strings.Contains(lines[2], "author="+strconv.Quote(wantAuthor)+" ") {
+		t.Errorf("upgraded NOTE line does not quote the author:\n%s", lines[2])
+	}
+
+	// 3. Every stored value survives the upgrade byte for byte.
+	s2, err := LoadStore(src)
+	if err != nil {
+		t.Fatalf("LoadStore after upgrade: %v", err)
+	}
+	if s2.Version != 2 {
+		t.Errorf("upgraded store version = %d, want 2", s2.Version)
+	}
+	if len(s2.Notes) != 1 {
+		t.Fatalf("notes after upgrade = %d, want 1", len(s2.Notes))
+	}
+	got := s2.Notes[0]
+	if got.Author != wantAuthor {
+		t.Errorf("author after upgrade:\ngot  %q\nwant %q", got.Author, wantAuthor)
+	}
+	if got.Passage != wantPassage {
+		t.Errorf("passage after upgrade:\ngot  %q\nwant %q", got.Passage, wantPassage)
+	}
+	if got.Note != wantBody {
+		t.Errorf("body after upgrade:\ngot  %q\nwant %q", got.Note, wantBody)
+	}
+	if len(got.Replies) != 2 {
+		t.Fatalf("replies after upgrade = %d, want 2", len(got.Replies))
+	}
+	if got.Replies[0].Author != wantReplyAuthor {
+		t.Errorf("legacy reply author after upgrade:\ngot  %q\nwant %q", got.Replies[0].Author, wantReplyAuthor)
+	}
+	if got.Replies[0].Note != wantReplyBody {
+		t.Errorf("legacy reply body after upgrade:\ngot  %q\nwant %q", got.Replies[0].Note, wantReplyBody)
+	}
+	if got.Replies[1].Author != newReplyAuthor {
+		t.Errorf("new reply author:\ngot  %q\nwant %q", got.Replies[1].Author, newReplyAuthor)
+	}
+
+	// 4. A second write is a no-op on the format: already version 2, stable.
+	if err := SaveStore(src, s2); err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	stable, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar after resave: %v", err)
+	}
+	if !bytes.Equal(after, stable) {
+		t.Errorf("version-2 sidecar not stable across a rewrite:\nfirst:\n%s\nsecond:\n%s", after, stable)
+	}
+}
