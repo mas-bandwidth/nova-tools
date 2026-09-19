@@ -618,6 +618,22 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                    (%apply-patch (wnode-field node field) patch))))))
       (:terminal
        (setf (wnode-state node) (getf (work-event-fields event) :disposition)))
+      ;; `take` and `release` on a node (nova-tools #1612 lane). Applied HERE,
+      ;; inside the single writer, in the same total order as every other
+      ;; event -- which is what makes a lease survive `replay-journal` and what
+      ;; a raw `(setf (wnode-holder n) by)` on the caller's thread could not do.
+      ;; The log row carries the CHANGE as its kind, so it reads `:take` and
+      ;; `:release` exactly as the settle path already writes `:release`.
+      (:lease
+       (let ((change (getf (work-event-fields event) :change))
+             (holder (getf (work-event-fields event) :holder)))
+         (setf (wnode-holder node) (when (eq change :take) holder))
+         (push (list :kind change :node id
+                     :by (work-event-by event)
+                     :holder holder
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wstate-lease-log state))))
       (:transition
        (setf (wnode-state node) (getf (work-event-fields event) :to)))
       (:reopen
@@ -738,32 +754,13 @@ set, and replay the history over it."
 transition log (SPEC-WORK.md:5055)."
   (reverse (wstate-lease-log state)))
 
-(defun take-lease (kernel id by)
-  "`take`: one live lease per node; a second `take` is refused and names the
-holder (SPEC-WORK.md:135)."
-  (let* ((state (kernel-state kernel))
-         (n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (unless (eq :o (wnode-branch n))
-      (error 'unsupported-input :what (format nil "~A is in C and takes no lease" id)))
-    (when (wnode-holder n)
-      (error 'unsupported-input
-             :what (format nil "LEASE FAIL node=~A holder=~A: held" id (wnode-holder n))))
-    (setf (wnode-holder n) by)
-    by))
-
-(defun release-lease (kernel id by)
-  "`release`: a claim is ended by the one who made it, never a third name
-reaching in (SPEC-WORK.md:1354-1357)."
-  (let* ((state (kernel-state kernel))
-         (n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (unless (equal by (wnode-holder n))
-      (error 'unsupported-input
-             :what (format nil "LEASE FAIL node=~A holder=~A live: held" id
-                           (or (wnode-holder n) "unowned"))))
-    (setf (wnode-holder n) nil)
-    by))
+;;; `take-lease` and `release-lease` MOVED to src/take-verb.lisp (nova-tools
+;;; #1612 lane). They lived here and did `(setf (wnode-holder n) by)` on the
+;;; live kernel state, on the CALLER's thread, with no event, no journal record
+;;; and no request id -- exactly the mutation outside the command loop that
+;;; SPEC-WORK.md:2603-2616 rule 6 calls a defect. A lease so taken was invisible
+;;; to the journal's total order and did not survive `replay-journal`. They are
+;;; `:lease` events on the single writer now; the callers' contract is unchanged.
 
 (defun working-count (kernel)
   "|W|: the O items that hold a live lease. W is a view of O and never a third
