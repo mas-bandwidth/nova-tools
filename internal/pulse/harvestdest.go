@@ -152,7 +152,9 @@ func managerDispatch(record string, clones []string) (dispatch, error) {
 func theOneCoordinatorDispatch(clones []string) (dispatch, error) {
 	var named, bare []string
 	for _, c := range clones {
-		name, dir, ok := strings.Cut(c, "=")
+		// The DIRECTORY half is not read on this path: a --working job pushes from its
+		// own clone, so all the coordinator has to supply is the repository's NAME.
+		name, _, ok := strings.Cut(c, "=")
 		if !ok {
 			if d := strings.TrimSpace(c); d != "" {
 				bare = append(bare, d)
@@ -161,7 +163,6 @@ func theOneCoordinatorDispatch(clones []string) (dispatch, error) {
 		}
 		if r := normalizeRepo(strings.TrimSpace(name)); r != "" {
 			named = append(named, r)
-			_ = dir
 		}
 	}
 	switch {
