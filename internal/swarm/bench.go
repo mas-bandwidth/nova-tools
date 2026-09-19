@@ -270,7 +270,7 @@ func scratchName(c batchCard) string {
 // remoteRun copies the card to the bench -- the card only, nothing else -- then builds the
 // ssh command that runs native there: ssh <host> [taskset -c <core>] <root>/bin/nova-swarm
 // native ..., with the ssh child in a process group of its own.
-func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore, slotOwner string, logFile *os.File) (*exec.Cmd, error) {
+func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore, slotOwner, tokens string, logFile *os.File) (*exec.Cmd, error) {
 	// The bench slot lease travels with the launch (nova-tools#1546). The store path is
 	// resolved ON THE BENCH, not here: this argv is what ssh runs there.
 	if slotsStore == "" || slotOwner == "" {
@@ -300,6 +300,12 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore,
 		"--deadline", strconv.Itoa(deadline),
 		"--slots-store", slotsStore,
 		"--owner", slotOwner,
+		// THE BUDGET WORD CROSSES TO THE BENCH VERBATIM (SPEC-SWARM rule 13d): "the batch
+		// puts it verbatim into every `native` argv it builds, the local one under
+		// `--harness` and the remote one under **Benches**". A bench's `native` refuses
+		// without it exactly as the local one does, so a word dropped here would fail every
+		// remote card one at a time.
+		"--tokens", tokens,
 	)
 	testguard.RefuseHosts(argv[0], argv[1:]...)
 	cmd := exec.Command(argv[0], argv[1:]...)

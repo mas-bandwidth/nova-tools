@@ -55,7 +55,8 @@ func TestCard8909BatchRunsNativeWithNoRunner(t *testing.T) {
 	tsv := card636(t, dir, "card-f")
 	var out, errb bytes.Buffer
 	Batch(BatchInput{
-		ID: "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: root,
+		Tokens: "unmetered",
+		ID:     "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: root,
 		Harness: harness, Self: self636(t, dir),
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 		Stdout: &out, Stderr: &errb,
@@ -85,7 +86,8 @@ func TestCard8909BatchRefusesWithNeitherRunnerNorHarness(t *testing.T) {
 	tsv := card636(t, dir, "card-g")
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: filepath.Join(dir, "root"),
+		Tokens: "unmetered",
+		ID:     "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: filepath.Join(dir, "root"),
 		Stdout: &out, Stderr: &errb,
 	})
 	if code != 2 {

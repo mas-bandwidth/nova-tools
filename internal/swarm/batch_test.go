@@ -77,7 +77,8 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	t.Helper()
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
 		Stdout: &out, Stderr: &errb,
 	})
 	return code, out.String(), errb.String()
@@ -273,7 +274,8 @@ func TestBatchKillsAtDeadline(t *testing.T) {
 	runner := runnerDoing(t, dir, "slow", runnerStep{Op: "sleep", Ms: 30000})
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitDeadline()
 		clk.advance(30 * time.Second)
@@ -300,7 +302,8 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	runner := runnerDoing(t, dir, "idle", runnerStep{Op: "sleep", Ms: 30000})
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		clk.advance(testIdleBudget)
@@ -338,7 +341,8 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	log := filepath.Join(root, "1", "jobs", "a", "harness.log")
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForLog(t, log, 1)
@@ -376,7 +380,8 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	// for --idle. No sleep: the readiness wait is the assertion's event.
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForFile(t, filepath.Join(root, "2", "jobs", "b", "RESULT.md"))
@@ -417,7 +422,8 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	log := filepath.Join(root, "1", "native.log")
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForLog(t, log, 1)
@@ -458,7 +464,8 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	// old test raced the runner's first write against a real four-second window.
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForLog(t, filepath.Join(root, "1", "native.log"), 3)
@@ -925,7 +932,8 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	runner := fakeRunner(t, dir)
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
 		Stdout: &out, Stderr: &errb,
 	})
@@ -947,7 +955,8 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	out.Reset()
 	var out2, errb2 bytes.Buffer
 	code = Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `exit 0`,
 		Stdout: &out2, Stderr: &errb2,
 	})
@@ -1024,7 +1033,8 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot {
 			round.Add(1)
 			return sampler
@@ -1079,7 +1089,8 @@ func TestIdleWatchTopologyChangeKeepsCardAlive(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B-TOPO", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B-TOPO", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot {
 			round.Add(1)
 			return sampler
@@ -1127,7 +1138,8 @@ func TestIdleWatchSub1PercentJitterKilled(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B-JITTER", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B-JITTER", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot {
 			round.Add(1)
 			return sampler
@@ -1173,7 +1185,8 @@ func TestIdleWatchUnknownSampleReliesOnLog(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B-UNK", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B-UNK", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot { return sampler },
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "line1"))

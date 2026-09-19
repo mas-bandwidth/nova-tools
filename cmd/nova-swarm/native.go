@@ -63,6 +63,21 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). Every native launch carries the word:
+	// `tokens` is the number the caller named and `unmetered` is the caller's statement
+	// that this provider has no live accounting and the deadline is the only stop. There
+	// is no default and no third state -- cmdNative refuses a launch that named neither,
+	// before any directory is made -- so a zero `tokens` beside a false `unmetered` cannot
+	// reach this struct from the command line.
+	//
+	// THE TOOL INFERS NEITHER FROM THE PROVIDER. Rule 13d: "there is no test for a
+	// provider that costs money, because this document has no such predicate and cannot
+	// have one: a provider's name is whatever a config file says it is, a `baseURL` can
+	// point a local-looking name at a metered endpoint". Nor from usage: a reported `0` is
+	// a measurement that adds nothing to the sum and is never a reason to print
+	// `unmetered`.
+	tokens    int
+	unmetered bool
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -83,6 +98,16 @@ type nativeRunResult struct {
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	// THE JOB'S OWN FIGURE (rule 13d, "Two numbers, kept apart: the row is the launch's and
+	// the line is the job's"). These three are the JOB's -- the sum over every launch of
+	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
+	// renders. The per-launch usage ROW is written elsewhere (writeNativeUsage) and carries
+	// that launch's own figures, never these: a job's rows are disjoint, so that adding
+	// them counts each launch once, and two launches reported at 40 and 70 under
+	// `--tokens 100` keep 40 and 70 in their rows while the line prints 110/100.
+	spent    int  // the observed sum over the whole job at the final read
+	observed bool // any budget column was a number at all
+	partial  bool // some budget column was a dash: the plus on the line
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and

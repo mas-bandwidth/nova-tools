@@ -526,20 +526,12 @@ func maxInputWord(sc Sidecar) string {
 	return strconv.Itoa(sc.MaxInput)
 }
 
-// budgetWord is rule 13's ceiling and what was observed under it: a dash for no observation,
-// a plus for a partial one, so a job that ran under an unobservable budget is visible as
-// such and never reported as under budget.
+// budgetWord is this job's sidecar and exit record read through the ONE spelling both
+// routes share (BudgetWord, usage.go): the pool's RUN lines and `native`'s own NATIVE OK
+// line print the same three shapes, because rule 13d holds the native route to rule 13 and
+// two renderings of one field would drift.
 func budgetWord(sc Sidecar, rec ExitRecord) string {
-	if sc.Unmetered {
-		return "unmetered"
-	}
-	switch {
-	case !rec.Observed:
-		return fmt.Sprintf("-/%d", sc.Tokens)
-	case rec.Partial:
-		return fmt.Sprintf("%d+/%d", rec.Spent, sc.Tokens)
-	}
-	return fmt.Sprintf("%d/%d", rec.Spent, sc.Tokens)
+	return BudgetWord(sc.Unmetered, sc.Tokens, rec.Spent, rec.Observed, rec.Partial)
 }
 
 // remedy is RUN NOTE: EXACTLY ONE line, naming the one thing to do next.

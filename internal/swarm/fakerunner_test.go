@@ -175,11 +175,11 @@ func TestFakeRunnerRecordsItsArgv(t *testing.T) {
 	runner := runnerDoing(t, dir, "recorder", runnerStep{Op: "record", Path: out})
 	card := filepath.Join(dir, "card.md")
 	root := filepath.Join(dir, "root")
-	cmd := exec.Command(runner, "card-f", "1", "m", card, root)
+	cmd := exec.Command(runner, "card-f", "1", "m", card, root, "unmetered")
 	if got, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the recording runner: %v\n%s", err, got)
 	}
-	want := strings.Join([]string{runner, "card-f", "1", "m", card, root}, "\n") + "\n"
+	want := strings.Join([]string{runner, "card-f", "1", "m", card, root, "unmetered"}, "\n") + "\n"
 	if got := string(readTestFile(t, out)); got != want {
 		t.Fatalf("the recorded argv is %q, want %q", got, want)
 	}
