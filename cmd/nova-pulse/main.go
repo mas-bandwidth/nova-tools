@@ -17,7 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
-const usage = `nova-pulse — one tool, five verbs, no model call
+const usage = `nova-pulse — one tool, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]

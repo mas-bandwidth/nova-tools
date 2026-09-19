@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,79 @@ func mainGhFixture(t *testing.T, dir, jsonBody string) string {
 	log := filepath.Join(dir, "gh-argv.log")
 	fakeTool(t, specs, "gh", fakeSpec{Log: log, Default: fakeRule{StdoutFile: jsonBody}})
 	return log
+}
+
+// help-banner-verb-count (issue #1459): the banner line that `nova-pulse help` opens with
+// claims a verb count, and the usage block right under it declares far more. The banner may
+// state the true count or none at all, but it may not name a number the usage contradicts.
+func TestHelpBannerDoesNotMiscountVerbs(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
+		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
+	}
+	lines := strings.Split(out.String(), "\n")
+	if len(lines) == 0 {
+		t.Fatal("help printed nothing")
+	}
+	banner := lines[0]
+
+	declared := map[string]bool{}
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nova-pulse" {
+			continue
+		}
+		declared[fields[1]] = true
+	}
+	count := len(declared)
+
+	claimed, hasCount, err := parseVerbCount(banner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCount && claimed != count {
+		t.Errorf("banner %q claims %d verbs but the usage block declares %d distinct verbs", banner, claimed, count)
+	}
+}
+
+var verbCountRe = regexp.MustCompile(`\b([a-zA-Z]+(?:-[a-zA-Z]+)?|\d+)\s+verbs\b`)
+
+var numberWords = map[string]int{
+	"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+	"seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+	"thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+	"eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40,
+	"fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+
+func numberWord(s string) (int, bool) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, true
+	}
+	low := strings.ToLower(s)
+	if n, ok := numberWords[low]; ok {
+		return n, true
+	}
+	if tens, ones, ok := strings.Cut(low, "-"); ok {
+		if t, ok := numberWords[tens]; ok && t >= 20 {
+			if o, ok := numberWords[ones]; ok && o < 10 {
+				return t + o, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func parseVerbCount(banner string) (int, bool, error) {
+	m := verbCountRe.FindStringSubmatch(banner)
+	if m == nil {
+		return 0, false, nil
+	}
+	n, ok := numberWord(m[1])
+	if !ok {
+		return 0, true, fmt.Errorf("banner %q claims a verb count in %q that cannot be parsed", banner, m[0])
+	}
+	return n, true, nil
 }
 
 func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
