@@ -10,10 +10,12 @@
 // rule is that VALUES may differ between a card's run and the page; the page's
 // own promise is that they do not, and that is what this file holds.
 //
-// TWO PRECONDITIONS ARE STATED, PER STEP, IN THE DOCUMENT ITSELF. The third line
-// of `### First run` asks a model and carries `# Requires: JEV_API_KEY`; a bench
-// that has no key skips that one line by name instead of reading it as drift,
-// which is how the same run mis-scored it. Everything else in both blocks runs
+// THE KEYED LINE IS NOT IN EITHER BLOCK, and the section's prose says so. Asking
+// a model is the one thing here that needs a key and a network; a test can only
+// run that by reaching a model from `go test`, which this repository does not
+// do, or by skipping it -- and the skipped form could never have passed anyway,
+// because no questions file and no state file were ever written for it. A
+// precondition may not hide an unrunnable step. Everything in both blocks runs
 // with `--no-jev` and reaches no network.
 package main
 
@@ -67,7 +69,7 @@ func executeTranscript(t *testing.T, heading string) {
 	}
 	t.Chdir(dir)
 
-	problems, skips := onboarding.ExecuteWith(steps, runDocumented, conditions(), onboarding.GoBuild())
+	problems, skips := onboarding.ExecuteWith(steps, runDocumented, conditions(), onboarding.Version(), onboarding.GoBuild())
 	for _, p := range problems {
 		t.Error(p)
 	}
@@ -81,22 +83,22 @@ func executeTranscript(t *testing.T, heading string) {
 	}
 }
 
-// conditions is what this bench can offer. The key is read from the environment
-// and NEVER from a file, a flag or this test: the only question asked here is
-// whether the launcher already put it in the environment, and its value is not
-// read, printed or copied.
+// conditions is what this bench can offer: the platform, and NOTHING ELSE.
+//
+// It used to answer for `JEV_API_KEY` too, because the `### First run` block
+// carried a `# Requires: JEV_API_KEY` step. That step could never pass -- no
+// questions file and no state file were ever written, so with a key it failed
+// on `bad-questions` and without one it was skipped, which is how it looked
+// green. It has been taken out of the block and put in the section's prose
+// instead, where a reader can still see what the keyed line prints and nobody
+// mistakes it for a line a test runs. There is no `Requires:` left here, so a
+// Have that answers about a key would be a promise nothing asks for.
+//
+// This is still ExecuteWith rather than Execute, deliberately: this test wants
+// to say for itself what it does with a skip, and to keep its own all-skipped
+// check next to the block it is about.
 func conditions() onboarding.Conditions {
-	return onboarding.Conditions{
-		GOOS: runtime.GOOS,
-		Have: func(requirement string) bool {
-			switch requirement {
-			case "JEV_API_KEY", "TYPESAFE_API_KEY":
-				_, set := os.LookupEnv(requirement)
-				return set
-			}
-			return false
-		},
-	}
+	return onboarding.Conditions{GOOS: runtime.GOOS}
 }
 
 // runDocumented calls this binary's own entry point with the documented
