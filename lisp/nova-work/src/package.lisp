@@ -65,6 +65,11 @@
    #:state-closed-rows
    ;; indexes: the write-maintained counters and indexes and their reconstruction
    #:reconstruct-state-index
+   #:cow-load-findings
+   #:cow-candidate-gate
+   #:cow-partition-holds-p
+   #:hand-write-closed-row
+   #:wstate-rows
    #:state-holder-index
    #:state-index-mismatches
    #:node-open-count
@@ -580,6 +585,11 @@
     #:session-server-stop
     #:serve-session-request
     #:default-session-request-handler
+    ;; the request line the CLI speaks, answered in the output grammar
+    ;; (src/request-line.lisp; SPEC-WORK.md:2642-2708)
+    #:request-line-verb
+    #:serve-request-line
+    #:session-fail-line
     #:session-identity-line
     ;; session status, stop and handoff (SPEC-WORK.md:304-308, :814-828)
     #:session-status-line
@@ -1132,6 +1142,24 @@
     #:receipt-verifier-verify
     #:verifier-result
     #:verifier-result-valid-p
+    ;; the verifier result a receipt needs, admitted by the one writer
+    ;; (src/receipt-admission.lisp, SPEC-WORK.md:3857-3868)
+    #:verifier-registry
+    #:make-verifier-registry
+    #:verifier-registry-member
+    #:verifier-registry-count
+    #:parse-verifier-line
+    #:run-verifier-command
+    #:configure-verifier
+    #:kernel-verifier
+    #:kernel-verifiers
+    #:provenance-pointer-path
+    #:read-provenance-bytes
+    #:stage-receipt
+    #:staged-input-p
+    #:receipt-submit
+    #:admitted-receipts
+    #:admitted-receipt
     #:session-written-field
     #:assignment-offer
     #:assignment-acknowledge

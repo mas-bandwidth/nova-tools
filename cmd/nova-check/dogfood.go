@@ -266,6 +266,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
 	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
+	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty receipt set; without it, no receipts is a refusal and not a green line")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
@@ -276,6 +277,14 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
 	if code != 0 {
 		return code
+	}
+	// No receipts read is an empty evidence set, not a pass: the gate's whole
+	// question is whether the verbs in the list have been dogfooded, and with
+	// nothing read there is nothing to answer it. The release lane asks for
+	// this refusal by name so it cannot go green on nothing.
+	if len(read.receipts) == 0 && !*allowEmpty {
+		fmt.Fprintf(stderr, "nova-check dogfood gate: no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate\n", oneline.Escape(*receipts))
+		return 1
 	}
 	// The discarded receipts are said FIRST, and on every outcome.
 	reportStranded(read, *failMax, stderr)
