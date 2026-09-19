@@ -19,7 +19,7 @@ func headerCard(t *testing.T, header ...string) []byte {
 	body := append([]string{"RESULT: CARD-1 sha=0123456789ab"}, header...)
 	body = append(body,
 		"",
-		"STEP 1. git clone -q https://github.com/mas-bandwidth/nova-tools.git repo && cd repo",
+		"STEP 1. git clone -q https://example.invalid/nova-tools.git repo && cd repo",
 		"STEP 2. finish within 20 minutes; run go test ./internal/x/ -run TestA",
 		"STEP 3. Write RESULT.md, whose line 1 is the RESULT: line above.",
 		"")
