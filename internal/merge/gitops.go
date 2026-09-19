@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -61,6 +62,44 @@ type Runner interface {
 // deadline.
 type Exec struct{}
 
+// noBackgroundGit is the configuration every git this tool starts carries, and it is one
+// sentence: NO GIT THIS TOOL RUNS LEAVES A GIT BEHIND IT.
+//
+// Since git 2.30 `git commit`, `git fetch`, `git merge` and `git receive-pack` end by
+// forking `git maintenance run --auto --quiet --detach`. `--detach` is git's own word for
+// "do not wait for this one": the command the tool waited for has exited while a git
+// nobody asked for is still inside the repository. Traced on git 2.53, that child creates
+// <gitdir>/objects/maintenance.lock after its parent is gone -- a new entry in a directory
+// the tool, or the test that called the tool, may already be removing.
+//
+// This tool removes such directories by design. `batch` rebuilds its own working directory
+// with safepath.RemoveUnder at the start of every run, and the tests remove theirs with
+// t.TempDir; a removal that races that child loses, and says `directory not empty` about a
+// directory whose entries it had all just removed. That is #1607, on two tests whose
+// assertions had already passed.
+//
+// The settings are refused nowhere: `-c` is a global option, so it goes in front of any
+// subcommand, and none of the four is one of rule 4's four spellings (guard reads the
+// tool's own argument list, before this).
+var noBackgroundGit = []string{
+	// No `maintenance run --auto --detach` after commit, fetch, merge or receive-pack.
+	"-c", "maintenance.auto=false",
+	// And nothing for an auto gc to decide either, wherever one is still reached.
+	"-c", "gc.auto=0",
+	// A gc asked for BY NAME is waited for rather than daemonised, so even that one
+	// cannot outlive the command this tool ran.
+	"-c", "gc.autoDetach=false",
+	// And no fsmonitor--daemon left holding the work tree after the command returns.
+	"-c", "core.fsmonitor=false",
+}
+
+// NoBackgroundGit puts those settings in front of a git argument list. Exec.Run applies
+// them to every git the tool itself starts; this is for the fixtures, which run their own
+// git into a directory a test is about to remove and have the same race (#1607).
+func NoBackgroundGit(args ...string) []string {
+	return append(append([]string{}, noBackgroundGit...), args...)
+}
+
 // execOutputCap is the ceiling on one subprocess's captured output, in bytes. It is the
 // same 64 KiB this repo already holds a child to (internal/update.ChildCap), reused rather
 // than invented: a hostile or runaway gh/git must not be able to fill memory. A result
@@ -76,6 +115,13 @@ const execOutputCap = 64 * 1024
 // reached. A result that was cut says so, because a prefix read as the whole answer is
 // worse than a marked prefix.
 func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+	// EVERY GIT THIS TOOL STARTS CARRIES noBackgroundGit. It is here rather than in
+	// Git.Run so that what the guard reads, and what a test's fake Runner is handed, is
+	// still the tool's own command -- and so that the one place that really starts a
+	// subprocess is the one place that has to remember (#1607).
+	if filepath.Base(name) == "git" {
+		args = NoBackgroundGit(args...)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := bounded.NewCapture(execOutputCap, cancel)
