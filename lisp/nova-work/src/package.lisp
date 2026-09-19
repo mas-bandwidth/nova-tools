@@ -1939,6 +1939,23 @@
     #:standing-done-evidence
     #:*need-default-generation*
     #:state-node-ids
+    ;; the candidate gate at the admission verbs (SPEC-WORK.md:4867-4973)
+    #:admission-verb
+    #:make-admission-verb
+    #:admission-verb-p
+    #:admission-verb-name
+    #:admission-verb-form
+    #:admission-verb-gate
+    #:admission-verb-reason
+    #:*kernel-admission-verbs*
+    #:needs-refusal-tail
+    #:needs-gate-refusal
+    #:kernel-needs-view
+    ;; the COW root partition, the whole walk that reads nothing of :deps
+    #:cow-load-findings
+    #:cow-partition-holds-p
+    #:cow-candidate-gate
+    #:unsupported-input-what
     ;; the kernel `decide` protocol and its one in-process fake (SPEC-DECIDE)
     #:decision
     #:make-decision

@@ -277,3 +277,81 @@ were its own gate (:4755). This reads and writes nothing."
 (defun node-needs-met-p (state id &key view)
   "True when every need of ID is met, so a node with no `:deps` is needs-met."
   (zerop (node-needs-status state id :view view)))
+
+;;; ------------------------------------------------------------------
+;;; the candidate gate                           SPEC-WORK.md:4869-4962
+;;; ------------------------------------------------------------------
+;;;
+;;; Rule 3: every admission verb refuses a node that is not needs-met, by one
+;;; predicate, at exit 1, and no flag buys a way past. The needs check is a
+;;; precondition of the candidate gate and is no validator rule (:4885): the
+;;; whole walk at load and at every clip reads nothing of `:deps` but rule 2's
+;;; existence and rule 3's cycle, so a node that went `:doing` while its need
+;;; was met, and whose need is then reopened, leaves every load as green as it
+;;; was. The built slice's `rule 10` label on its refusal was a defect against
+;;; that sentence, because a rule number on the line is what would send the
+;;; whole walk looking; it is gone.
+;;;
+;;; The order of refusals is fixed (:4894): an invocation that cannot be read,
+;;; exit 2; then the fence; then a stale `--expect`; then a node the session
+;;; does not hold, by that verb's existing line; then a scheduling hold; then
+;;; needs-met; and only then the verb's other preconditions -- a lease already
+;;; held, capacity, a missing edge of the transition table.
+
+(defstruct (admission-verb
+            (:constructor make-admission-verb (name form gate &key reason)))
+  "One entry of the register rule 3's coverage test reads. NAME is the kernel's
+verb keyword, FORM the spelling of the gated form, GATE one of :REFUSES,
+:WITHHOLDS or :EXEMPT, and REASON is required of :EXEMPT."
+  name form gate reason)
+
+(defparameter *kernel-admission-verbs*
+  (list (make-admission-verb :take-node "take --node" :refuses)
+        (make-admission-verb :state-to-doing "state --to doing" :refuses))
+  "The admission verbs this kernel has, each marked as rule 3 requires. Rule 3's
+list is written for the whole grammar -- `release --handed`, `reassign`,
+`offer`, `acknowledge --stage accepted`, `take --machine`, `goal update
+--progress`, `task packet`, `execution reconcile`, `undo` and `redo` -- and
+those verbs have no form in this kernel yet. A verb that arrives able to write
+a `:lease` or a `:to :doing` transition and is not named here fails the
+coverage case in tests/replays-785-gate-verbs.lisp.")
+
+(defun needs-refusal-tail (need reason)
+  "The one tail every admission verb's refusal carries (:4901)."
+  (format nil "unmet need ~A ~A" need (needs-reason-token reason)))
+
+(defun needs-gate-refusal (state id &key view)
+  "The candidate gate's needs precondition. Answers NIL when ID is needs-met,
+or (values TAIL UNMET NEED REASON) when it is not. Evaluated for the node the
+verb names, inside the single writer, at the revision the request is applied
+at, so there is no window between the check and the write (:4892)."
+  (multiple-value-bind (unmet need reason) (node-needs-status state id :view view)
+    (when (plusp unmet)
+      (values (needs-refusal-tail need reason) unmet need reason))))
+
+;;; `take --node` (rule 3's first admitting verb). The lease mechanics are
+;;; `%take-lease-unchecked` in src/state.lisp; the gate is here, because it
+;;; reads the verification cache and src/verifier.lisp is its neighbour.
+
+(defun take-lease (kernel id by &key view dry-run)
+  "`take`: one live lease per node; a second `take` is refused and names the
+holder (SPEC-WORK.md:135). Refused before that when the node is not needs-met:
+
+    LEASE FAIL node=<id> unmet=<n>: unmet need <need-id> <reason>
+
+exit 1, and nothing is written -- no lease, no lease-log entry, no W entry.
+`--dry-run` is how a caller asks without writing: it prints the same refusal or
+the projected receipt and journals nothing (:4934). No flag buys a way past a
+need; the only override is rule 6's `dep --remove`, an edit of the edge on the
+record."
+  (let* ((state (kernel-state kernel))
+         (n (%node state id)))
+    ;; a node the session does not hold, by this verb's existing line, before
+    ;; any need is read (:4929)
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    ;; then needs-met, before the verb's other preconditions (:4894)
+    (multiple-value-bind (tail unmet) (needs-gate-refusal state id :view view)
+      (when tail
+        (error 'unsupported-input
+               :what (format nil "LEASE FAIL node=~A unmet=~D: ~A" id unmet tail))))
+    (%take-lease-unchecked kernel id by :dry-run dry-run)))

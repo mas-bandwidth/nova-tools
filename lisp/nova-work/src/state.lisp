@@ -735,9 +735,13 @@ set, and replay the history over it."
 transition log (SPEC-WORK.md:5055)."
   (reverse (wstate-lease-log state)))
 
-(defun take-lease (kernel id by)
-  "`take`: one live lease per node; a second `take` is refused and names the
-holder (SPEC-WORK.md:135)."
+(defun %take-lease-unchecked (kernel id by &key dry-run)
+  "The lease mechanics of `take`, with no dependency gate: one live lease per
+node; a second `take` is refused and names the holder (SPEC-WORK.md:135).
+
+The gated verb is `take-lease` in src/needs.lisp, which runs rule 3's needs
+precondition first (SPEC-WORK.md:4869). Nothing calls this directly but that
+verb: a caller reaching past it would be the `--force` rule 6 refuses to have."
   (let* ((state (kernel-state kernel))
          (n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
@@ -746,7 +750,8 @@ holder (SPEC-WORK.md:135)."
     (when (wnode-holder n)
       (error 'unsupported-input
              :what (format nil "LEASE FAIL node=~A holder=~A: held" id (wnode-holder n))))
-    (setf (wnode-holder n) by)
+    ;; `--dry-run` prints the projected receipt and writes nothing.
+    (unless dry-run (setf (wnode-holder n) by))
     by))
 
 (defun release-lease (kernel id by)

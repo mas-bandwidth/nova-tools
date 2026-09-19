@@ -22,6 +22,11 @@
 
 (defstruct (kernel (:constructor %make-kernel))
   state journal next-rev fleet routes allocations
+  ;; SPEC-WORK.md:4780 -- the read-time needs view the candidate gate consults:
+  ;; the evidence records a node's standing done names, the verification
+  ;; session whose cache holds the raw facts, and each node's generation. It is
+  ;; the session's, never payload, and no event carries it.
+  needs-view
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -47,7 +52,7 @@ the answer back to the caller; BEFORE-APPLY-HOOK is the captured dynamic value
 of *BEFORE-APPLY-HOOK* at submit time, since special bindings are thread-local."
   request before-apply-hook results error done-p lock cvar)
 
-(defun make-kernel (&key state journal rev-base (friends '()))
+(defun make-kernel (&key state journal rev-base (friends (quote ())) needs-view)
   "REV-BASE defaults to one past the state's own revision, so a kernel opened
 over a reconstructed state issues no id the history already holds
 (SPEC-WORK.md:1216-1218 keys a closed row <event-rev>:<id>; :1578 allows
@@ -72,6 +77,7 @@ below the state's revision is refused rather than silently reissued."
                            ;; never CONFIG; see src/fleet.lisp.
                            :allocations (make-fleet-registry)
                            :controls (make-ctl)
+                           :needs-view needs-view
                            :queue '()
                            :q-lock (sb-thread:make-mutex)
                            :q-cvar (sb-thread:make-waitqueue)
@@ -168,8 +174,11 @@ reason or evidence; done/deferred leave only via reopen, never state.")
      :rev (kernel-next-rev kernel)
      :session-written-p nil)))
 
-(defun %validate (state verb event)
-  "Answer NIL when the candidate is admissible, or (values rule reason)."
+(defun %validate (state verb event &optional view)
+  "Answer NIL when the candidate is admissible, or (values RULE REASON).
+
+RULE is a validator rule number, or the keyword :NEEDS for rule 3's dependency
+refusal, which carries no rule number on its line (SPEC-WORK.md:4890)."
   (let* ((id (work-event-node event))
          (node (%node-quiet state id)))
     (unless node
@@ -180,6 +189,14 @@ reason or evidence; done/deferred leave only via reopen, never state.")
                            id (string-downcase (symbol-name (wnode-type node))))))
     (ecase verb
       (:state-to-doing
+       ;; SPEC-WORK.md:4869 rule 3 -- needs-met is a precondition of the
+       ;; candidate gate and is no validator rule, and it is read BEFORE the
+       ;; verb's other preconditions, the transition table's own edge among
+       ;; them (:4894). The refusal carries NO rule number (:4890): a rule
+       ;; number on the line is what would send the whole walk looking, and the
+       ;; whole walk reads nothing of `:deps` but existence and cycle.
+       (multiple-value-bind (tail) (needs-gate-refusal state id :view view)
+         (when tail (return-from %validate (values :needs tail))))
        (unless (and (eq :o (wnode-branch node))
                     (member (wnode-state node) *doing-edges*))
          (return-from %validate
@@ -200,13 +217,7 @@ reason or evidence; done/deferred leave only via reopen, never state.")
                     (not (and (stringp reason) (plusp (length reason))))
                     (or (absentp evidence) (null evidence)))
            (return-from %validate (values 10 "unknown to doing requires evidence or a reason"))))
-       ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
-       ;; dependent: a node with a need that is not terminal accepted cannot be
-       ;; taken into doing, and the refusal names the blocking node.
-       (let ((blocker (%dependency-blocker state id)))
-         (when blocker
-           (return-from %validate
-             (values 10 (format nil "~A needs ~A, which is not settled" id blocker))))))
+)
       (:state-to-done
        (unless (eq :o (wnode-branch node))
          (return-from %validate (values 10 (format nil "~A is in C" id))))
@@ -391,11 +402,17 @@ command loop is a defect)."
                                      word rid)
                          1 nil))))))
       ;; Validate against the current state as it would be with the event applied.
-      (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
+      (multiple-value-bind (rule reason)
+          (%validate (kernel-state kernel) verb requester (kernel-needs-view kernel))
         (when rule
           (return-from %submit
-            (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
-                                word (work-event-node requester) rule reason)
+            (values nil (if (integerp rule)
+                            (format nil "~A FAIL node=~A: rule ~D: ~A"
+                                    word (work-event-node requester) rule reason)
+                            ;; rule 3's dependency refusal: the verb's own FAIL
+                            ;; line with one tail and no rule number (:4901).
+                            (format nil "~A FAIL node=~A: ~A"
+                                    word (work-event-node requester) reason))
                     1 nil))))
       (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
              (session (unless (eq verb :state-to-doing)
