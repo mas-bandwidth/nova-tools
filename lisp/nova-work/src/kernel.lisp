@@ -355,25 +355,22 @@ command loop is a defect)."
     ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
     ;; not a work-tree transition: it shares `submit`'s answer shape but never
     ;; touches the root, its counters or its history.
-    (when (eq verb :machine)
-      (return-from %submit (machine-submit kernel request)))
     ;; The one verb that configures the model routes (SPEC-WORK.md:2289, *Model
     ;; routes*) is CONFIG too: it writes a `:kind :route` member beside the
     ;; fleet and never touches the root, its counters or its history.
-    (when (eq verb :route)
-      (return-from %submit (route-submit kernel request)))
     ;; The fleet's ACTIVE half (SPEC-WORK.md:3592-3731): `take`, `heartbeat`,
     ;; `release` and `probe` are verbs over the one allocator per machine. They
     ;; write ACTIVE allocation records and observations, never CONFIG members
     ;; and never the work tree.
-    (when (eq verb :take)
-      (return-from %submit (fleet-take-submit kernel request)))
-    (when (eq verb :heartbeat)
-      (return-from %submit (fleet-heartbeat-submit kernel request)))
-    (when (eq verb :release)
-      (return-from %submit (fleet-release-submit kernel request)))
-    (when (eq verb :probe)
-      (return-from %submit (fleet-probe-submit kernel request)))
+    ;; Every one of these is routed by *KERNEL-DISPATCH* (src/needs.lisp), which
+    ;; is also what the needs-gate register derives from, so a verb cannot be
+    ;; dispatched here with an admitting effect and be missing from the
+    ;; register -- Stella's [P1b] on 7333349f, where the register was a literal
+    ;; list and could not see `:take`'s allocation bypass.
+    (let ((entry (kernel-dispatch-entry verb)))
+      (when entry
+        (return-from %submit
+          (funcall (kernel-dispatch-handler entry) kernel request))))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"

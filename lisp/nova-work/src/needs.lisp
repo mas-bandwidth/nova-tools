@@ -305,16 +305,60 @@ verb keyword, FORM the spelling of the gated form, GATE one of :REFUSES,
 :WITHHOLDS or :EXEMPT, and REASON is required of :EXEMPT."
   name form gate reason)
 
+(defparameter *kernel-dispatch*
+  (list
+   ;; verb            handler                        admitting effect  gate      gated forms
+   (list :machine     'machine-submit                nil               nil       nil)
+   (list :route       'route-submit                  nil               nil       nil)
+   (list :take        'fleet-take-submit             :allocation       :refuses  (list "--machine --node"))
+   (list :heartbeat   'fleet-heartbeat-submit        nil               nil       nil)
+   (list :release     'fleet-release-submit          nil               nil       nil)
+   (list :probe       'fleet-probe-submit            nil               nil       nil)
+   (list :take-node   '%take-node-submit             :lease            :refuses  nil))
+  "THE DISPATCH TABLE `%submit` routes by, and the one source of truth for what
+each dispatched verb can ADMIT.
+
+Stella's [P1b] on 7333349f: `%submit` dispatched `:take` to `fleet-take-submit`,
+which wrote an ACTIVE allocation with no needs read, and the coverage test
+compared a hand-written registry against the same literal two-name list, so it
+could not see the bypass. An instrument that repeats the promise is a mirror.
+The registry below is DERIVED from this table, so a verb cannot be dispatched
+with an admitting effect and be missing from the register.
+
+Rule 3 names the allocation explicitly among the admission verbs (:4871), which
+is why `:take` carries `:allocation`. The three transition verbs are not here:
+they run through `%submit`'s own tail, and `:state-to-doing` is added to the
+register beside this table.")
+
+(defun kernel-dispatch-entry (verb) (assoc verb *kernel-dispatch*))
+(defun kernel-dispatch-handler (entry) (second entry))
+(defun kernel-dispatch-effect (entry) (third entry))
+(defun kernel-dispatch-gate (entry) (fourth entry))
+(defun kernel-dispatch-forms (entry) (fifth entry))
+
+(defparameter *kernel-admitting-effects* (list :lease :allocation :transition-doing)
+  "The admitting effects this kernel can produce. The spec's closed list of
+admitting kinds is `:lease`, `:handoff`, `:reassign`, `:offer`, `:acknowledge`,
+the allocation, `:packet` and a `:transition` carrying `:to :doing` (:4880); the
+three here are the ones this kernel has a path for.")
+
 (defparameter *kernel-admission-verbs*
-  (list (make-admission-verb :take-node "take --node" :refuses)
-        (make-admission-verb :state-to-doing "state --to doing" :refuses))
-  "The admission verbs this kernel has, each marked as rule 3 requires. Rule 3's
-list is written for the whole grammar -- `release --handed`, `reassign`,
-`offer`, `acknowledge --stage accepted`, `take --machine`, `goal update
---progress`, `task packet`, `execution reconcile`, `undo` and `redo` -- and
-those verbs have no form in this kernel yet. A verb that arrives able to write
-a `:lease` or a `:to :doing` transition and is not named here fails the
-coverage case in tests/replays-785-gate-verbs.lisp.")
+  (append
+   ;; DERIVED from the dispatch table: every dispatched verb with an admitting
+   ;; effect, with no hand-written list to drift from it.
+   (loop for entry in *kernel-dispatch*
+         when (member (third entry) *kernel-admitting-effects*)
+           collect (make-admission-verb (first entry)
+                                        (string-downcase (symbol-name (first entry)))
+                                        (fourth entry)))
+   ;; and the one admitting verb `%submit` routes through its own transition
+   ;; tail rather than through the table.
+   (list (make-admission-verb :state-to-doing "state --to doing" :refuses)))
+  "The admission verbs this kernel has, each marked as rule 3 requires, DERIVED
+from *KERNEL-DISPATCH*. Rule 3's list also names `release --handed`, `reassign`,
+`offer`, `acknowledge --stage accepted`, `goal update --progress`, `task
+packet`, `execution reconcile`, `undo` and `redo`, which have no form in this
+kernel yet.")
 
 (defun needs-refusal-tail (need reason)
   "The one tail every admission verb's refusal carries (:4901)."
@@ -333,25 +377,69 @@ at, so there is no window between the check and the write (:4892)."
 ;;; `%take-lease-unchecked` in src/state.lisp; the gate is here, because it
 ;;; reads the verification cache and src/verifier.lisp is its neighbour.
 
-(defun take-lease (kernel id by &key view dry-run)
-  "`take`: one live lease per node; a second `take` is refused and names the
-holder (SPEC-WORK.md:135). Refused before that when the node is not needs-met:
+(defvar *take-lease-request-counter* 0
+  "A monotonic counter so a caller that names no request id still gets a unique
+one. A real session draws the id; this keeps the convenience wrapper honest.")
 
-    LEASE FAIL node=<id> unmet=<n>: unmet need <need-id> <reason>
+(defun take-lease (kernel id by &key view dry-run request (stamp "2026-09-14T12:00:00Z"))
+  "`take --node`: one live lease per node, gated on needs-met.
 
-exit 1, and nothing is written -- no lease, no lease-log entry, no W entry.
-`--dry-run` is how a caller asks without writing: it prints the same refusal or
-the projected receipt and journals nothing (:4934). No flag buys a way past a
-need; the only override is rule 6's `dep --remove`, an edit of the edge on the
-record."
-  (let* ((state (kernel-state kernel))
-         (n (%node state id)))
-    ;; a node the session does not hold, by this verb's existing line, before
-    ;; any need is read (:4929)
+This is a convenience wrapper and NOT the writer. It submits a `:take-node`
+request, so the gate and the lease write happen together on the kernel's one
+command thread, at the revision the request is applied at (SPEC-WORK.md:4892).
+`%take-node-submit` in src/take-verb.lisp is the verb.
+
+STELLA'S [P1a] ON 7333349f: the first cut read the gate here, on the caller's
+thread, and then called `%take-lease-unchecked` directly. Her barrier witness
+paused take immediately after the predicate read, reopened the need through a
+normal `submit`, and take still granted the lease. There is no window now
+because there is no second thread: a reopen is another command in the same total
+order.
+
+It answers the holder, as it always did, and signals `unsupported-input` carrying
+the verb's own `FAIL` line on a refusal, so every existing caller reads the same."
+  (multiple-value-bind (okp line code)
+      (submit kernel (list :verb :take-node
+                           :node id
+                           :by by
+                           :request (or request
+                                        (format nil "take-~A-~D" id
+                                                (incf *take-lease-request-counter*)))
+                           :stamp stamp
+                           :clock :tool
+                           :dry-run dry-run
+                           :view view))
+    (declare (ignore code))
+    (unless okp (error 'unsupported-input :what line))
+    by))
+
+;;; ------------------------------------------------------------------
+;;; `ready` reads the one predicate                SPEC-WORK.md:4930
+;;; ------------------------------------------------------------------
+;;;
+;;; "The gate is the dependency predicate and not the whole of `ready`": every
+;;; row `ready` prints `ready=true` is needs-met, and the converse is false,
+;;; since `ready` also folds agreed scope, acceptance readiness, ownership,
+;;; availability and resource limits.
+;;;
+;;; It reads `node-needs-status`, the same predicate the candidate gate reads,
+;;; and not the recorded half. Before Stella's repair of the evidence check the
+;;; two answered the same thing; once recorded stopped meaning verified, a
+;;; `ready-p` on the recorded half would have printed `ready=true` over a node
+;;; every admission verb refuses.
+
+(defun ready-p (state id &key view)
+  "Open leaf work that is needs-met."
+  (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    ;; then needs-met, before the verb's other preconditions (:4894)
-    (multiple-value-bind (tail unmet) (needs-gate-refusal state id :view view)
-      (when tail
-        (error 'unsupported-input
-               :what (format nil "LEASE FAIL node=~A unmet=~D: ~A" id unmet tail))))
-    (%take-lease-unchecked kernel id by :dry-run dry-run)))
+    (and (eq :o (wnode-branch n))
+         (member (wnode-type n) '(:task :bug))
+         (not (wnode-needs-broken n))
+         (zerop (node-needs-status state id :view view))
+         t)))
+
+(defun ready-nodes (state &key view)
+  "`query ready`: the ready items, in seed order. This is a read -- it visits
+nodes and mutates none."
+  (loop for id in (wstate-order state)
+        when (ready-p state id :view view) collect id))

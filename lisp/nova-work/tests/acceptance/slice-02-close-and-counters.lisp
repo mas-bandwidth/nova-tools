@@ -535,8 +535,10 @@
     (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1") "the item settled")
     (check-equal nil (node-holder (kernel-state k) "acme/work/f1/t1")
                  "a settled item reads holder=unowned")
-    (let ((rel (first (state-lease-log (kernel-state k)))))
-      (check-equal :release (getf rel :kind) "the settle wrote a release")
+    ;; `take --node` now writes a `:lease` event of its own, so the log holds
+    ;; the take and then the release it ended (nova-tools #785 rule 3).
+    (let ((rel (find :release (state-lease-log (kernel-state k)) :key (lambda (e) (getf e :kind)))))
+      (ok rel "the settle wrote a release")
       (check-equal "rowan" (getf rel :by) "the settling author wrote it")
       (check-equal "emma" (getf rel :holder) "it names the holder it ended"))))
 

@@ -29,7 +29,8 @@
 
 (defun verbs-kernel (&optional (seed *verbs-seed*))
   (make-kernel :state (make-seed-state seed)
-               :journal (make-ordering-journal) :rev-base 1))
+               :journal (make-ordering-journal) :rev-base 1
+               :friends (list "glenn" "rowan" "emma" "sam")))
 
 (defun verbs-doing (k node &key (request (format nil "doing-~A" node))
                                 (stamp "2026-09-16T11:00:00Z"))
@@ -94,11 +95,13 @@
   (let ((k (verbs-kernel)))
     (multiple-value-bind (okp line) (verbs-done k "acme/work/n")
       (ok okp "the need settles: ~A" line))
+    (refresh-needs-view k)
     (ok (null (lease-refusal k "acme/work/d" "emma")) "take --node is admitted")
     (check-string= "emma" (node-holder (kernel-state k) "acme/work/d")
                    "and the lease is written"))
   (let ((k (verbs-kernel)))
     (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
     (multiple-value-bind (okp line) (verbs-doing k "acme/work/d")
       (ok okp "state --to doing is admitted: ~A" line)))
   ;; a `take --node` of an id the session does not hold prints that verb's
@@ -120,9 +123,27 @@
   ;; slice. This is the kernel's half: every verb of `*kernel-admission-verbs*`
   ;; is gated, and the register names every verb this kernel has that can write
   ;; a lease or a `:to :doing` transition.
-  (check-equal '(:take-node :state-to-doing)
-               (mapcar #'admission-verb-name *kernel-admission-verbs*)
-               "the register names the two admitting verbs this kernel has")
+  ;; Stella's [P1b]: the register is DERIVED from *KERNEL-DISPATCH*, so it
+  ;; cannot drift from what `%submit` actually routes. Asserted as a
+  ;; derivation, not as a literal.
+  (check-equal (append (loop for entry in *kernel-dispatch*
+                             when (member (kernel-dispatch-effect entry)
+                                          *kernel-admitting-effects*)
+                               collect (first entry))
+                       (list :state-to-doing))
+               (mapcar (function admission-verb-name) *kernel-admission-verbs*)
+               "the register is derived from the dispatch table")
+  (ok (member :take (mapcar (function admission-verb-name) *kernel-admission-verbs*))
+      "the machine allocation path is in the register: rule 3 names it (:4871)")
+  (ok (member :take-node (mapcar (function admission-verb-name) *kernel-admission-verbs*))
+      "and so is the node lease")
+  ;; every verb `%submit` dispatches with an admitting effect carries a mark
+  (dolist (entry *kernel-dispatch*)
+    (when (member (kernel-dispatch-effect entry) *kernel-admitting-effects*)
+      (ok (find (first entry) *kernel-admission-verbs*
+                :key (function admission-verb-name))
+          "~A is dispatched with an admitting effect and must be registered"
+          (first entry))))
   (dolist (entry *kernel-admission-verbs*)
     (check-equal :refuses (admission-verb-gate entry)
                  (format nil "~A is marked needs-gate: refuses"
@@ -142,6 +163,7 @@
     ;; D goes :doing while N is met
     (multiple-value-bind (okp line) (verbs-done k "acme/work/n")
       (ok okp "N settles: ~A" line))
+    (refresh-needs-view k)
     (multiple-value-bind (okp line) (verbs-doing k "acme/work/d")
       (ok okp "D goes doing under a met need: ~A" line))
     ;; the need is reopened under it
@@ -195,12 +217,14 @@
     ;; `state --to done` on N, and no further command
     (multiple-value-bind (okp line) (verbs-done k "acme/work/n")
       (ok okp "N settles: ~A" line))
+    (refresh-needs-view k)
     (multiple-value-bind (unmet need reason)
-        (node-needs-status (kernel-state k) "acme/work/d")
+        (node-needs-status (kernel-state k) "acme/work/d"
+                           :view (kernel-needs-view k))
       (check-equal 0 unmet "D reads unmet=0 at the first read after the settle")
       (check-string= "-" need "and names no need")
       (ok (null reason) "and carries no reason"))
-    (ok (ready-p (kernel-state k) "acme/work/d")
+    (ok (ready-p (kernel-state k) "acme/work/d" :view (session-needs-view k))
         "and ready=true, with nothing else in the way")
     (check-equal 0 (funcall events-on-d)
                  "and the journal holds no event whose :node is D")))
@@ -215,17 +239,172 @@
     "expected=the-gate-is-the-dependency-predicate-and-not-the-whole-of-ready"
   (let ((k (verbs-kernel)))
     (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
     ;; D is needs-met and leased by another name
     (take-lease k "acme/work/d" "sam")
-    (multiple-value-bind (unmet) (node-needs-status (kernel-state k) "acme/work/d")
+    (multiple-value-bind (unmet)
+        (node-needs-status (kernel-state k) "acme/work/d" :view (kernel-needs-view k))
       (check-equal 0 unmet "D is needs-met"))
     (let ((line (lease-refusal k "acme/work/d" "emma")))
       (ok (search ": held" line) "take prints the ownership refusal: ~A" line)
       (ok (not (search "unmet need" line))
           "and not an unmet need, by the refusal order: ~A" line))
-    ;; across the whole fixture no node is ready beside an unmet need
+    ;; Across the whole fixture no node is ready beside an unmet need. `ready-p`
+    ;; reads the RECORDED half here -- it grows its `:view` in the next slice,
+    ;; with the rest of rule 5's reading -- so the count it is checked against
+    ;; is read the same way.
     (dolist (id (list "acme/work/d" "acme/work/n" "acme/work/x"))
       (when (ready-p (kernel-state k) id)
-        (multiple-value-bind (unmet) (node-needs-status (kernel-state k) id)
+        (multiple-value-bind (unmet)
+            (node-needs-status (kernel-state k) id)
           (check-equal 0 unmet
                        (format nil "~A reads ready=true, so it is needs-met" id)))))))
+
+;;; ------------------------------------------------------------------
+;;; the gate and the write are one act inside the single writer
+;;;    Stella's [P1a] on 7333349f          SPEC-WORK.md:4892
+;;; ------------------------------------------------------------------
+
+(deftest "a-take-and-its-gate-are-one-act-in-the-single-writer"
+    "docs/SPEC-WORK.md:4892"
+    "expected=no-window-between-the-check-and-the-write"
+  ;; "Each verb evaluates needs-met for the node it names inside the single
+  ;; writer, at the revision the request is applied at, so there is no window
+  ;; between the check and the write."
+  ;;
+  ;; The first cut read the gate on the CALLER's thread and then wrote the lease
+  ;; directly. Stella paused it between the two with a semaphore, reopened the
+  ;; need through a normal `submit`, and the paused take still granted the lease.
+  ;;
+  ;; Three assertions, none of them a sleep.
+  ;;
+  ;; 1. STRUCTURAL: the take is a request with an id the journal records before
+  ;;    the apply. A mutation on the caller's thread has no journal record at
+  ;;    all, so this could not have held before.
+  (let ((k (verbs-kernel)))
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (take-lease k "acme/work/d" "emma" :request "writer-take")
+    (multiple-value-bind (found digest line) (journal-lookup (kernel-journal k) "writer-take")
+      (declare (ignore digest))
+      (ok found "the take is in the journal, recorded before it was applied")
+      (ok (search "LEASE OK" line) "with its own OK line: ~A" line))
+    (let ((lease (find :lease (state-lease-log (kernel-state k))
+                       :key (lambda (e) (getf e :kind)))))
+      (ok lease "and it wrote a :lease entry")
+      (check-string= "emma" (getf lease :holder) "naming the holder")
+      (ok (integerp (getf lease :rev)) "at the revision it was applied at"))
+    ;; a retry of the same request id answers the original line and writes once
+    (let ((before (length (state-lease-log (kernel-state k)))))
+      (take-lease k "acme/work/d" "emma" :request "writer-take")
+      (check-equal before (length (state-lease-log (kernel-state k)))
+                   "a retry of the request id writes no second lease")))
+  ;; 2. TOTAL ORDER: a take and a reopen raced from two threads are two commands
+  ;;    in one order, and the lease -- when it is granted at all -- is always
+  ;;    applied at a revision BELOW the revive that unmet the need. Under the
+  ;;    old code the lease was written after the revive and carried no revision
+  ;;    to check it by.
+  (dotimes (round 12)
+    (let* ((k (verbs-kernel))
+           (taken nil))
+      (verbs-done k "acme/work/n")
+      (refresh-needs-view k)
+      (let ((racers
+              (list (sb-thread:make-thread
+                     (lambda ()
+                       (handler-case
+                           (progn (take-lease k "acme/work/d" "emma"
+                                              :request (format nil "race-take-~D" round))
+                                  (setf taken t))
+                         (unsupported-input () nil)))
+                     :name "racing-take")
+                    (sb-thread:make-thread
+                     (lambda ()
+                       (verbs-reopen k "acme/work/n"
+                                     :request (format nil "race-reopen-~D" round)))
+                     :name "racing-reopen"))))
+        (dolist (thread racers) (sb-thread:join-thread thread :default nil)))
+      (let ((lease (find :lease (state-lease-log (kernel-state k))
+                         :key (lambda (e) (getf e :kind))))
+            (revive (find-if (lambda (r)
+                               (and (eq :revive (getf r :kind))
+                                    (equal "acme/work/n" (getf r :node))))
+                             (state-closed-rows (kernel-state k)))))
+        (ok revive "the reopen was applied in round ~D" round)
+        (if taken
+            (progn
+              (ok lease "a granted take wrote its :lease in round ~D" round)
+              (ok (< (getf lease :rev) (getf revive :rev))
+                  "the lease was applied BEFORE the revive that unmet the need (round ~D: lease=~D revive=~D)"
+                  round (getf lease :rev) (getf revive :rev)))
+            (ok (null lease)
+                "a refused take wrote no lease in round ~D" round)))))
+  ;; 3. --dry-run writes nothing at all and journals nothing
+  (let ((k (verbs-kernel)))
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (let ((before (length (state-lease-log (kernel-state k)))))
+      (take-lease k "acme/work/d" "emma" :dry-run t :request "dry-take")
+      (ok (null (node-holder (kernel-state k) "acme/work/d"))
+          "--dry-run grants no lease")
+      (check-equal before (length (state-lease-log (kernel-state k)))
+                   "and writes no lease-log entry")
+      (ok (not (journal-lookup (kernel-journal k) "dry-take"))
+          "and journals nothing"))))
+;;; ------------------------------------------------------------------
+;;; the machine allocation path is an admission verb too
+;;;    Stella's [P1b] on 7333349f          SPEC-WORK.md:4871
+;;; ------------------------------------------------------------------
+
+(defun alloc-machine (k &optional (id "m-review"))
+  "Register a machine and REFUSE to continue if the registration did not take --
+an allocation test whose machine was never registered passes for the wrong
+reason, which is how the first cut of this case would have looked green."
+  (multiple-value-bind (okp line)
+      (submit k (list :verb :machine :change :register :machine id
+                  :name "fixture" :owner "glenn" :connect "profile:fixture"
+                  :roles (list :build :test) :permits (list "go-test")
+                  :excludes '() :limits (list :cores 16 :concurrent 2) :facts nil
+                  :declared-by "glenn" :request (format nil "register-~A" id)
+                  :stamp "2026-09-19T05:30:00Z" :clock :tool
+                  :generation-owner "gen-1"))
+    (ok okp "the fixture machine registered: ~A" line))
+  k)
+
+(deftest "the-allocation-path-refuses-an-unmet-need" "docs/SPEC-WORK.md:4871"
+    "expected=rule-3-names-the-allocation-and-the-register-is-derived-not-written"
+  ;; Rule 3's list of admission verbs names `take --machine`, the allocation.
+  ;; `%submit` dispatches `:take` to `fleet-take-submit`, which wrote one with
+  ;; no needs read: over D with an open need Stella's fixture got
+  ;; `ALLOC OK ... node=acme/work/d ... changed=1`, exit 0.
+  (let* ((k (alloc-machine (verbs-kernel)))
+         (friends '("glenn" "rowan")))
+    (declare (ignore friends))
+    (multiple-value-bind (unmet need reason)
+        (node-needs-status (kernel-state k) "acme/work/d")
+      (check-equal 1 unmet "D has one unmet need")
+      (check-string= "acme/work/n" need "named")
+      (check-equal :need-open reason "and open"))
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb :take :machine "m-review" :node "acme/work/d"
+                        :allocation-id "review-allocation" :holder "rowan"
+                        :request "alloc-1"))
+      (ok (not okp) "the allocation is refused")
+      (check-equal 1 code "at exit 1")
+      (ok (search "ALLOC FAIL" line) "with the ALLOC FAIL line: ~A" line)
+      (ok (search "unmet need acme/work/n need-open" line)
+          "carrying rule 3's one tail: ~A" line)
+      (ok (not (search "ALLOC OK" line)) "and never an OK: ~A" line))
+    ;; nothing was written
+    (check-equal 0 (length (fleet-live-allocations (kernel-allocations k)
+                                                  :machine "m-review"))
+                 "no allocation was written")
+    ;; with the need met, the allocation is admitted
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :take :machine "m-review" :node "acme/work/d"
+                        :allocation-id "review-allocation" :holder "rowan"
+                        :request "alloc-2"))
+      (ok okp "once the need is met the allocation is admitted: ~A" line)
+      (ok (search "ALLOC OK" line) "with the OK line: ~A" line))))

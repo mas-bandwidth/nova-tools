@@ -1950,6 +1950,14 @@
     #:*kernel-admission-verbs*
     #:needs-refusal-tail
     #:needs-gate-refusal
+    #:*kernel-dispatch*
+    #:kernel-dispatch-entry
+    #:kernel-dispatch-handler
+    #:kernel-dispatch-effect
+    #:kernel-dispatch-gate
+    #:kernel-dispatch-forms
+    #:*kernel-admitting-effects*
+    #:%take-node-submit
     #:kernel-needs-view
     ;; the COW root partition, the whole walk that reads nothing of :deps
     #:cow-load-findings

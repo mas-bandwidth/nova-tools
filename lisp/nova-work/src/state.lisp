@@ -482,21 +482,9 @@ both."
                            (every (lambda (m) (%need-terminal-p state m)) members)))
                     t))))))
 
-(defun ready-p (state id)
-  "Open leaf work whose every need is terminal accepted and which no reverted
-need has left needs-broken (SPEC-WORK.md:2110, `query ready`)."
-  (let ((n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (and (eq :o (wnode-branch n))
-         (member (wnode-type n) '(:task :bug))
-         (not (wnode-needs-broken n))
-         (every (lambda (dep) (%need-terminal-p state dep)) (wnode-deps n)))))
-
-(defun ready-nodes (state)
-  "`query ready`: the ready items, in seed order. This is a read -- it visits
-nodes and mutates none."
-  (loop for id in (wstate-order state)
-        when (ready-p state id) collect id))
+;;; `ready-p` and `ready-nodes` moved to src/needs.lisp: after Stella's repair of
+;;; the evidence check they must read the SAME predicate the gate reads, and
+;;; that predicate reads the verification cache, which this file loads before.
 
 (defun %recheck-needs-broken (state id settled-p)
   "Re-evaluate the dependents of ID after it settled (SETTLED-P true, clear the
@@ -615,6 +603,18 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                    (%apply-patch (wnode-field node field) patch))))))
       (:terminal
        (setf (wnode-state node) (getf (work-event-fields event) :disposition)))
+      ;; SPEC-WORK.md:4869 -- `take --node` writes one `:lease` event. It is
+      ;; applied here, inside the single writer, in the same total order as
+      ;; every other event, so no reopen can slip between the gate and the write.
+      (:lease
+       (let ((holder (getf (work-event-fields event) :holder)))
+         (setf (wnode-holder node) holder)
+         (push (list :kind :lease :node id
+                     :by (work-event-by event)
+                     :holder holder
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wstate-lease-log state))))
       (:transition
        (setf (wnode-state node) (getf (work-event-fields event) :to)))
       (:reopen

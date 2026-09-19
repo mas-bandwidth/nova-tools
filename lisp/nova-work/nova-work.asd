@@ -32,6 +32,7 @@
                (:file "src/node-verbs")
                (:file "src/render")
                (:file "src/edit-undo")
+               (:file "src/take-verb")
                (:file "src/undo")
                (:file "src/pricing")
                (:file "src/operations")
