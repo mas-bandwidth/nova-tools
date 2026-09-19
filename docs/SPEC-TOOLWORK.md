@@ -286,7 +286,7 @@ nova-pulse accept --selftest --fixtures <dir> --bench <name> --cert <path> [--ti
 ```
 ACCEPT OK      label=<label> kind=<kind> head=<sha12> base=<sha12> tests=<n> red_without=<n> edits=<n|-> control=<id> bench=<name> cert=<id> took=<d>
 ACCEPT REJECT  label=<label> kind=<kind> head=<sha12|-> reason=<token> at=<path[:line]|test|-> control=<id> bench=<name> cert=<id> took=<d>
-ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|paused|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
+ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|paused|unknown-kind|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
 ACCEPT SELFTEST control=<id> accepted=<n>/<n> rejected=<n>/<n> edits=1 build=<build identity> fixtures=<sha12> bench=<name> <PASS|FAIL>
 ACCEPT SEED    name=<seed> edits=<n> want=<token> got=<token|ACCEPT> <ok|WRONG>
 ACCEPT REFUSED: <reason> (<remedy>)
@@ -737,7 +737,10 @@ the worker never sees and cannot edit.
    `internal/pulse/kinds.go` holds the table above as data; `nova-pulse accept --kinds`
    prints it, one line per kind, and a class test asserts this section's table and
    that output name the same kinds, steps and tokens. A kind the table does not hold is
-   refused by `cut` and abstained by `accept`; there is no default kind.
+   refused by `cut` and abstained by `accept` with `reason=unknown-kind` (the token the
+   gate lane found the §1 grammar had no name for, PR #1721 departure 5; like `paused`
+   it is nobody's bench's fault, writes no `bench.tsv` row, requeues nothing and counts
+   for the track record as neither); there is no default kind.
 4. **What makes a card of a kind eligible for a swarm.** All of: both conditions of the
    eligibility rule hold for its kind over its `PATHS:`; its `SOURCE:` names an issue or a `file:line` the card writer opened at
    the pinned head (WORKER-CARDS 3); its `TEST:` either exists at the pinned head
