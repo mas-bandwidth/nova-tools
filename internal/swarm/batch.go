@@ -297,8 +297,52 @@ func Batch(in BatchInput) int {
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
 		rc         int    // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
+		// pgid and started are the card's OWN process group and the identity retained for
+		// it at launch (issue #640). They are read at `cmd.Start()` and never again from
+		// the process, because a kill that asks a dying child for its group asks too late.
+		pgid    int
+		started string
+		// killed is how many processes the reap of this card's group ended. It is set once,
+		// after the reap, and it is what the ABSTAIN row prints; guarded by doneMu.
+		killed int
 	}
 	var doneMu sync.Mutex
+	// reapCardGroups ends the WHOLE PROCESS TREE of every card named and records how many
+	// processes each reap took with it (issue #640).
+	//
+	// THE OLD KILL WAS `cmd.Process.Kill()`, which is SIGKILL to ONE PROCESS. A card is not
+	// one process: it is the runner, the wall it opened, the harness inside it and whatever
+	// the harness started, and none of those are the pid the batch was holding. So the batch
+	// printed its line and left the tree running -- two nova-sandbox wrappers at 12:30
+	// elapsed and five test binaries burning CPU, five to twelve minutes after
+	// `BATCH TP1 n=6 done=0 abstain=6`, killed by hand.
+	//
+	// `Reap` is the house's own end-a-group: terminate, wait the grace, kill, and confirm.
+	// The TERMINATE FIRST is load-bearing rather than polite -- the child of a runnerless
+	// batch is `nova-swarm native`, which answers a TERM by reaping its own tree and folding
+	// its usage before it goes (cmd/nova-swarm/native.go, nativeTermCh). A SIGKILL alone
+	// would lose that fold.
+	//
+	// THE CARDS ARE REAPED CONCURRENTLY. Serially, the grace would be paid once per card and
+	// a six-card batch would sit through six of them after its deadline had already fired.
+	reapCardGroups := func(victims []*proc) {
+		if len(victims) == 0 {
+			return
+		}
+		var reapWG sync.WaitGroup
+		for _, p := range victims {
+			reapWG.Add(1)
+			go func(p *proc) {
+				defer reapWG.Done()
+				n := groupSize(p.pgid, p.started)
+				Reap(p.pgid, p.started, TerminateGrace)
+				doneMu.Lock()
+				p.killed = n
+				doneMu.Unlock()
+			}(p)
+		}
+		reapWG.Wait()
+	}
 	procs := make([]proc, len(cards))
 	for i, c := range cards {
 		// A card refused at admission never starts: it is already its own ABSTAIN row.
@@ -357,6 +401,13 @@ func Batch(in BatchInput) int {
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
 		}
+		// EVERY CARD'S CHILD IS A GROUP LEADER (issue #640), on all three launch shapes and
+		// not just the two that already asked for it. `selfNative` and `remoteRun` set this
+		// themselves; a `--runner <cmd>` child did not, so the batch had nothing to signal
+		// but one pid -- and one pid is not a card. It is set HERE, at the one place every
+		// shape passes through, so the kill below has one invariant to rely on rather than
+		// three constructors to trust.
+		ownGroup(cmd)
 		if err := cmd.Start(); err != nil {
 			_ = logFile.Close()
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: runner %s could not start for %s: %s\n",
@@ -364,7 +415,20 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
+		// The group and its identity are RETAINED at launch, the way the supervisor retains
+		// its harness's (`jobPgid := cmd.Process.Pid`, supervise.go:159) and `native` its
+		// child's (native.go:469). The group id is the CHILD'S OWN PID and is never read
+		// back with Getpgid: `ownGroup` makes the child the LEADER, so its group id is its
+		// pid by construction, and a Getpgid in the parent can win the race against the
+		// child's own setpgid and answer THIS PROCESS'S group -- which the reap below would
+		// then terminate. Reading it later would also mean asking a process that may already
+		// be a corpse, and on a platform that re-issues pids, signalling a stranger.
+		pgid, started := 0, ""
+		if cmd.Process != nil {
+			pgid, started = cmd.Process.Pid, StartStamp(cmd.Process.Pid)
+		}
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label,
+			lastGrow: clk.Now(), pgid: pgid, started: started}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -418,6 +482,7 @@ func Batch(in BatchInput) int {
 				case now := <-tickC:
 					// The process table is read once per activity poll, outside the lock, and
 					// every card is asked of that one snapshot (issue #593).
+					var toReap []*proc
 					var snap activitySnapshot
 					var sampleSpan time.Duration
 					if now.Sub(lastSample) >= activityInterval(in.Idle) {
@@ -489,12 +554,16 @@ func Batch(in BatchInput) int {
 							}
 							procs[i].idleKilled = true
 							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
-							if procs[i].cmd.Process != nil {
-								_ = procs[i].cmd.Process.Kill()
-							}
+							toReap = append(toReap, &procs[i])
 						}
 					}
 					doneMu.Unlock()
+					// THE REAP IS OUTSIDE THE LOCK, and that is not a tidiness: a reap waits
+					// for the kernel to agree the group is gone, and the goroutine that
+					// would mark this card done takes doneMu to do it. Reaping under the
+					// lock would hold it for the whole grace and report every group as a
+					// survivor.
+					reapCardGroups(toReap)
 				}
 			}
 		}()
@@ -503,17 +572,18 @@ func Batch(in BatchInput) int {
 	select {
 	case <-allDone:
 	case <-clk.After(in.Deadline):
+		var toReap []*proc
 		doneMu.Lock()
 		for i := range procs {
 			if procs[i].done || procs[i].cmd == nil {
 				continue
 			}
 			procs[i].deadKilled = true
-			if procs[i].cmd.Process != nil {
-				_ = procs[i].cmd.Process.Kill()
-			}
+			toReap = append(toReap, &procs[i])
 		}
 		doneMu.Unlock()
+		// Outside the lock, for the reason given at the idle kill above.
+		reapCardGroups(toReap)
 	}
 	close(stopMonitor)
 	monitorWG.Wait()
@@ -572,11 +642,23 @@ func Batch(in BatchInput) int {
 		reason   string // the abstain's one reason token, with its own fields
 		tail     string // one bounded field after log=<n>: the file watched, or the job directory
 		logLines int
+		// killed is issue #640's field: how many processes the batch ended in this card's
+		// own group, and -1 for a card the batch never killed, whose row says nothing about
+		// a kill. A count of 0 is a real answer -- the group was already gone -- and is
+		// printed.
+		killed int
 	}
 	rows := make([]row, len(cards))
+	for i := range rows {
+		// A row says nothing about a kill until the batch has made one (issue #640).
+		rows[i].killed = -1
+	}
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
+		if procs[i].idleKilled || procs[i].deadKilled {
+			rows[i].killed = procs[i].killed
+		}
 		// A card refused at admission never ran: no slot to read, and its reason is the
 		// refusal itself.
 		if c.admitWhy != "" {
@@ -688,6 +770,13 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		line := fmt.Sprintf("%s slot=%d: ABSTAIN reason=%s log=%d", oneline.Field(r.label), r.slot, r.reason, r.logLines)
+		// HOW MANY PROCESSES THE KILL ENDED (issue #640). It is on the rows of cards the
+		// batch killed and on no others, because a field that appears on every row is a
+		// field nobody reads -- and the fault this closes is precisely a coordinator
+		// believing a BATCH line that was not true of the machine.
+		if r.killed >= 0 {
+			line += " killed=" + strconv.Itoa(r.killed)
+		}
 		if r.tail != "" {
 			line += " " + r.tail
 		}
@@ -1819,4 +1908,30 @@ func writeRouteReceipt(jobDir, receipt string) {
 		return
 	}
 	_ = os.WriteFile(filepath.Join(jobDir, "route.txt"), []byte(receipt+"\n"), 0o644)
+}
+
+// groupSize is how many processes are in a card's group at the instant BEFORE it is ended,
+// and it is the `killed=<n>` the ABSTAIN row prints (issue #640). It is read before the reap
+// because after one there is, by construction, nothing left to count.
+//
+// WHAT THE NUMBER IS ON EACH PLATFORM, said here rather than implied. On linux the group is
+// enumerated from /proc and the count is exact (proc_linux.go). On darwin and the BSDs it
+// cannot be enumerated at all, so a group that is alive counts as ONE -- the leader, which
+// is the only member this platform can prove -- and that is a FLOOR and never a guess at a
+// tree's size. A group that is already gone counts as none, which is the honest answer for a
+// deadline that fired on a card that had just finished.
+//
+// `self` is excluded by GroupMembers, and the batch is never in a card's group anyway: the
+// child is the leader of its own.
+func groupSize(pgid int, started string) int {
+	if pgid <= 0 {
+		return 0
+	}
+	if n, ok := GroupMembers(pgid, os.Getpid()); ok {
+		return n
+	}
+	if GroupAlive(pgid, started) {
+		return 1
+	}
+	return 0
 }

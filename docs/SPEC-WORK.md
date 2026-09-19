@@ -2876,14 +2876,14 @@ gate and the hand report* below never admits.
 | `responsible` | `responsible --to` the preimage name | — |
 | `source` | `source --to` the preimage sha | — |
 | `take` | a `release` envelope | the lease has expired or another holder took it |
-| `release` | a `take` envelope restoring the preimage holder and deadline | the node has since been taken by another |
+| `release` | a `take` envelope restoring the preimage holder and deadline | the node has since been taken by another; or the node has an unmet need, `UNDO FAIL … unmet need <need-id> <reason>`, because that envelope is an admission (SPEC-AHEAD: #785) |
 | `offer` | a cancellation of the pending offer, releasing only its untouched reservation | the offer has been handed to transport — a claimed or in-flight send included — a receipt exists, or a successor changed its lineage; the way on is `decline`, a hold or a replacement offer |
 | `acknowledge`, `decline` | — | always: each records a verified receipt, and an acceptance may have created or bound a lease; a later decline, hold, release or reconciliation is a new act |
 | `execution pause`, `execution stop` | a reversal removing only this untouched hold and cancelling its unsent directives | any directive delivered or any target uncertain; the way on is `execution resume --action release-hold` after the control's outcomes reconcile, and no undo claims a worker restarted |
 | `execution resume` | a reversal restoring only the prior untouched hold and cancelling unsent resume directives | a resume delivered, or a running or unknown observation |
 | `execution correct` | a reversal, only before any correction directive leaves the coordinator and only while the old and new generation postimages and the retained instruction identity are unchanged | any delivery or any old- or new-generation uncertainty; a reapply of earlier instructions is a new generation with lineage, never a rewind |
 | `execution reconcile` | — | always: it records validated observations; a later reconciliation records a new set and keeps the earlier one, contradictions included |
-| `state --to <s>` | a `state --to` the preimage state, and where the original settled the item, the `event --kind reopen` envelope that writes its `:revive` | the preimage state is unreachable by the transition table |
+| `state --to <s>` | a `state --to` the preimage state, and where the original settled the item, the `event --kind reopen` envelope that writes its `:revive` | the preimage state is unreachable by the transition table; or the preimage state is `:doing` and the node has an unmet need, refused as the `release` row is (SPEC-AHEAD: #785) |
 | `event --kind baseline` | — | always: a baseline records what the set was at a moment |
 | `event --kind discovery` | a `node require --to false` for each member it added | a member has since closed |
 | `event --kind defer` | `event --kind reopen` | — |
@@ -4880,8 +4880,19 @@ of them.
    its coverage test holds the closed list of admitting kinds — `:lease`, `:handoff`,
    `:reassign`, `:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that can
    carry `:to :doing` — and fails on any verb able to write one, in its own envelope or in one it
-   derives, whose entry carries neither `needs-gate: refuses` nor `needs-gate: exempt` with its
-   reason. **One of these is built**: the kernel slice refuses `state --to doing` over an unmet
+   derives, whose entry carries none of three marks: `needs-gate: refuses`, the verb answers an
+   unmet need with its `FAIL` line and writes nothing; `needs-gate: withholds`, the verb is
+   admitted and records what it records but creates no lease, allocation or transition while a
+   need is unmet, which is `execution reconcile` and no other verb today — `refuses` would be
+   false of it, since a reconcile over an unmet need exits 0; or `needs-gate: exempt` with its
+   reason. **The mark is per verb and the gate is per form, so the entry names its gated
+   forms**: `needs-gate-forms` lists them by the flag that selects each — `--stage accepted` for
+   `acknowledge`, `--to doing` for `state`, `--handed` for `release`, `--progress` for `goal
+   update`, the compensating `take` and `state --to doing` for `undo` and `redo` — and a verb
+   whose every form is gated omits the list; a form not listed is ungated and the mark says
+   nothing of it, and the coverage test fails an entry whose admitting kind can be written by a
+   form the list leaves out.
+   **One of these is built**: the kernel slice refuses `state --to doing` over an unmet
    need today and the others consult no `:deps`. **The needs check is a precondition of the
    candidate gate and is no validator rule**: validator rule 10 is a table of edges, needs are no
    part of it, and the whole walk at load and at every clip reads nothing of `:deps` but rule 2's
@@ -5076,8 +5087,9 @@ of them.
    of a `(:node …)` subject at the revision the report is applied at, `(:absent)` for every
    other subject. **It changes no tree state**: no lease, offer, allocation, transition,
    evidence, attempt, edge, CONFIG member, ACTIVE observation, count, required set or roadmap
-   moves, W is unchanged, and the only thing a `:report` alters is what rule 5's *engaged* reads
-   for a `:launched` report on a node, by rule 9. **Who may run it**: any registered friend of
+   moves, W is unchanged, and the only thing a `:report` alters is what rule 5's *engaged* reads:
+   a `:launched` report on a node begins an engagement and a `:stopped` report on that node ends
+   it, by rule 9, and neither touches a lease, a state or a count. **Who may run it**: any registered friend of
    `friends`; `--as` is caller text as on every verb and the tool authenticates nobody, so a
    report names whoever was typed and the journal keeps that name. **Another tool reports the
    way a friend submits anything**: there is one writer, so a tool that wants its operator's
@@ -5156,8 +5168,10 @@ of them.
     `launched-unmet=` the `:launched` reports whose `:unmet` was above zero. The row prints the
     why beside the what, `reason=` last, so the one read of reports is not a log without its
     reasons. It is an ask like any other, under `--session` or `--snapshot`, and **the privacy
-    floor holds**: a report whose subject is a `:private` node prints `what=-` and `reason=-` on
-    every read but the owning session's, and is still counted. **The range is
+    floor holds, the id included**: a report whose subject is a `:private` node prints
+    `subject=node:-`, `need=-`, `what=-` and `reason=-` on
+    every read but the owning session's, is counted in `reports=` and in the line's `private=`, and
+    names nothing of the node, as every other view of a private node does. **The range is
     counted in revisions, which the session assigns, so a backdated or postdated `--acted-at`
     moves no report into or out of any answer**; `at=` and `clock=` are the event's own, and a
     report written under `--now` prints `clock=given` like every other event. **`no-verb=` is
@@ -5171,7 +5185,8 @@ of them.
     `release` or a `reassign` — reconciles no attempt, and is not the stopped-worker evidence
     `event --kind cancel` requires; the one thing it ends is the engagement an earlier report of
     a launch gave that node, by rule 9. Replays `reports-are-read-in-one-ask`,
-    `a-report-of-a-stop-releases-nothing`.
+    `a-report-of-a-stop-releases-nothing`,
+    `a-report-of-a-stop-ends-the-engagement-a-launch-report-began`.
 
 11. SPEC-AHEAD: #854
     **#854's own list of hand acts, each put through rule 7's line.** Spelled generically,
@@ -5206,6 +5221,16 @@ reference kind* by rule 6, as a node and no new kind. Of #854 it leaves item 2's
 admission, under a scheduling hold, of the one node whose work would lift it — item 11's
 admitted edge and item 12's rule row, none of which is decided here, so today the way to admit
 work under a hold is the hold's own `execution resume --action release-hold`.
+
+**Two implementation tests are owed with the code, and are recorded here so a card carries
+them** (Stella's read of this section): that a report's engagement survives a clip and a fresh
+`session start` — a `:launched` report, a clip, a restart, and the node still reads
+`needs-broken=true`, then a `:stopped` report, a clip, a restart, and it still reads `false` —
+because *engaged* is derived from events and must be rebuilt from them and from nothing held in
+memory; and that a container need's cached readiness moves when **only** the verification
+cache's revision moves — a member's evidence verified by `verify` with no mutation of O, and the
+dependent's row going from `need-unverified` to `unmet=0` on the next read — because the cache
+key *Cost* gives a rollup includes that revision and a fold keyed without it would stay stale.
 
 ## Recursive coordination nodes *(nova-work v2, nova-tools#321; a draft for review)*
 
@@ -6032,7 +6057,7 @@ DEP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<add|r
 REPORT OK id=<event-id> request=<id> subject=<selector> act=<launched|stopped|other> instead-of=<text|-> acted-at=<stamp> lag=<duration> unmet=<n|-> need=<id|-> holder=<name|unowned|-> rev=<n> pushed=<rev|-> emitted=<bytes>   (SPEC-AHEAD: #854: lag= is the event's stamp less acted-at; unmet=, need= and holder= are - unless the subject is a node)
 REPORT FAIL subject=<selector|->: <reason>   (no such <kind>; unknown reporter; acted-at ahead of the clock — each named, exit 1, nothing written; an invocation it cannot read is exit 2 by the exit paragraph below)
 REPORT FAIL subject=<selector> expect=<rev> current=<rev>: stale   (nothing written)
-QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text> reason=<text>   (reports; SPEC-AHEAD: #854; what= and reason= print - for a :private subject on any read but the owning session's)
+QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text> reason=<text>   (reports; SPEC-AHEAD: #854; a :private subject prints subject=node:-, need=-, what=- and reason=- on any read but the owning session's)
 <TOKEN> NOTE <caveat>
 <TOKEN> MORE kind=<rule|row> shown=<n> total=<t> <remedy>
 nova-work <build identity> <goos>/<goarch> <go version>
@@ -6942,8 +6967,9 @@ and no launcher; D is a dependent `:task`, N its one need, and every id is inven
 - **`a-verb-that-can-admit-declares-its-needs-gate`** — the schema file's coverage test, over a
   fixture schema: a verb entry whose event kinds include `:lease` and which carries no
   `needs-gate` fails the test naming the verb; the same entry with `needs-gate: refuses` passes;
-  `needs-gate: exempt` with no reason fails; and the shipped file passes with every verb of rule
-  3's list marked `refuses`.
+  `needs-gate: exempt` with no reason fails; an `acknowledge` entry marked `refuses` whose
+  `needs-gate-forms` omits `--stage accepted` fails; and the shipped file passes with every verb of rule
+  3's list marked `refuses` and `execution reconcile` alone marked `withholds`.
 - **`a-removed-or-corrected-need-is-unmet`** — R removed by `node remove` while no edge names it,
   then `dep --add R` on D: admitted, `DEP OK … met=false`, and D's row prints
   `reason=need-closed-unaccepted need=R`; N met, then `correct --node N`: D's row prints
@@ -7003,6 +7029,12 @@ and no launcher; D is a dependent `:task`, N its one need, and every id is inven
   leased D prints `holder=<name>`; the lease stands and reads held-not-worked once its heartbeat
   leaves `--window`; no attempt is reconciled; and an `event --kind cancel` on D is admitted or
   refused exactly as it was before the report.
+- **`a-report-of-a-stop-ends-the-engagement-a-launch-report-began`** — over an unleased `:todo`
+  D with N open: `report --act launched --subject node:D`, and D's row prints
+  `needs-broken=true`; then `report --act stopped --subject node:D`, and with no other command
+  D's row prints `needs-broken=false unmet=1` and `check` counts one fewer; a second launch
+  report raises it again and a `correct --node D` lowers it; a stop report on a D that is
+  leased leaves `needs-broken=true`, because the lease engages it by itself.
 - **`reports-are-read-in-one-ask`** — three reports, one with `--instead-of -` and one the
   launch of the replay above: `query --ask reports --branch open --since <rev>` prints
   `reports=3 no-verb=1 launched-unmet=1` and three `kind=report` rows, newest last; `--max 1`
