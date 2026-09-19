@@ -1322,18 +1322,19 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
 free slots under `<root>` (`<root>/pool/slots/<n>.json` absent or `state=free`,
-never a log age), fills every free slot in `cards.tsv` order, and queues the
+never a log age — the binary agreed with this sentence only from issue #1822 on,
+having until then also refused any slot whose `native.log` was under 120 s old), fills every free slot in `cards.tsv` order, and queues the
 rest under `<root>/queue.tsv` when `--queue` is set. The admitted cards are
 written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
 `nova-swarm batch` in its **card form** — the only form that runs a card:
 
 ```
-nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner nova-native-runner.sh --root <root> --then "nova-pulse harvest --id <id> --root <root>"
+nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner <runner> --root <root> --files <n> --then "nova-pulse harvest --id <id> --root <root>"
 ```
 
 `--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
@@ -1343,16 +1344,57 @@ instead of a pulse being one bench (issue #637). Neither flag is read by `launch
 itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
-no launch flag supplies, so launch never calls it (issue #630). `--runner` is
-the deployment's native runner on PATH; the one batch is recorded in
-`<root>/pulses/<id>.tsv`. A swarm refusal is relayed as one `PULSE REFUSED`
-line with the swarm's reason.
+no launch flag supplies, so launch never calls it (issue #630). The one batch is
+recorded in `<root>/pulses/<id>.tsv`.
+
+**`--runner <path>` is this deployment's native runner**, and without it launch
+passes the bare name `nova-native-runner.sh` for `nova-swarm batch` to find on
+PATH. A deployment whose runner is not on PATH used to have no remedy inside the
+verb at all, and the only remedy left — putting the runner's directory in front
+of PATH — could put a **stale `nova-swarm` sitting beside it** in front of the
+current one, whose refusal then reads like launch building a bad call. It is not:
+it is a different binary answering (issue #1760). A `--runner` given as a path is
+checked here and passed absolute, so PATH need not be touched.
+
+**`--swarm <path>` names the `nova-swarm` binary launch drives**, and without it
+launch looks it up on PATH. Either way, **whichever binary answers is asked
+`nova-swarm version` before the batch**: launch drives that binary's own flag
+contract, so the two are one build or neither. A binary too old to answer
+`version` at all, one that answers something that is not a version, or one whose
+version differs from this `nova-pulse`'s own, is refused by name —
+`PULSE REFUSED SWARM-VERSION: <path> is nova-swarm <theirs> and this is
+nova-pulse <mine> …` — instead of failing later with a puzzling flag error. The
+comparison is skipped when either side is an unstamped build (`devel`, or a vcs
+stamp), which is not a release for a comparison to mean anything about.
+
+**A refusal names the card, not just an exit code.** When the batch fails after
+the job tree exists, the one line carries what the layers underneath already
+wrote to `<root>/<slot>/jobs/<label>/`: the label, the runner's `rc`, the wall
+clock, the `reason` token and the first telling line of the harness capture, plus
+the job directory to read the whole of it in (issue #1761). Before that — a
+refusal with no job tree — the swarm's own line is relayed unchanged.
+
+**`--max <n>` bounds what this invocation considers** (default 20, `0` all, the repo's own
+convention). It was on this synopsis, was parsed, and was then ignored — `--max 1` admitted
+three cards (issue #1821). The rows beyond it stay in the caller's `cards.tsv`, and a
+truncated pulse says so on a `PULSE NOTE max=` line.
+
+**`--attempts <n>` bounds the start-time retry** (default 3, `1` is no retry).
+A batch that fails within 15 seconds with a provider start failure in the harness
+capture (`Unexpected server error`, `Internal server error`, `Service
+Unavailable`, an `err_xxxxxxxx` reference) is retried with a backoff of 15s then
+25s, printing one `PULSE RETRY` line per attempt. Each attempt is its own batch
+with its own id, and the failed attempt's job directory is **moved** to
+`<job>.attempt<n>`, never deleted, so the evidence of why it was retried outlives
+the retry. A dead API key is deliberately **not** in that signature: it is dead on
+the third call too.
 
 ### cut
 
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
+nova-pulse cut --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 ```
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
@@ -1769,7 +1811,29 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 ```
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --working <dir> [--roots <dirs>] [--clone <o/n>=<dir>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 ```
+
+The first form folds **the pulse `launch` admitted**: `<root>/cards/<id>/cards.tsv`,
+the table launch writes for that `--id`, falling back to `<root>/cards.tsv` for a root
+`cut` wrote and to the job directories themselves for a bare swarm root. Reading only
+`<root>/cards.tsv` meant the `--then` harvest launch chains refused every successful
+pulse, with `run: nova-pulse cut` as the remedy — the wrong door, because launch had
+already written the table (issue #1818).
+
+A card is **this** card when its `RESULT.md` line 1 **begins with** the card's contract
+line, trailing spaces trimmed — the same rule `nova-swarm batch`'s gather applies
+(`docs/SPEC-SWARM.md`), because a card generator can truncate a title. Harvest compared
+for equality and scored a card the gather had already called `done` as `mismatch`, so it
+was never pushed (issue #1823).
+
+**A `RESULT.md` is a report, never an instruction** (`docs/SPEC-SWARM.md`). Before any
+push, the `REPO` line on it is checked against the repository the **card** names, or
+failing that against the job clone's own `origin`; a `REPO` that matches neither, or a
+card and clone that name none, is refused by name and counted `refused`, and nothing is
+pushed or opened. Harvest used to form `https://github.com/<REPO>.git` from the worker's
+line and push there (issue #1824). The branch prefix policy and #1650's `accept` gate are
+not part of that check yet.
 
 The first form folds one pulse's cards under a local root: it pushes and opens a PR for
 every card whose `RESULT.md` line 1 equals its contract line, sends every abstain to
@@ -1789,6 +1853,18 @@ nova-pulse harvest --bench hulk --root '~/rowan-swarm-root' --clone ~/rowan-work
 pushed from there by explicit refspec — a bench holds no forge credential and never will.
 `--clone <dir>` is the clone for any repo and `--clone <owner>/<name>=<dir>` binds one,
 which is the two-repo table the script hardcoded. `--clone` is required with `--bench`.
+
+**Where a harvest pushes comes from what the manager recorded before the worker ran**
+(nova-tools #1824; Johnny's holds on #1809). That is the LAUNCH RECORD — the card file `cut`
+wrote, or the manager queue's `launched/<card>` — and failing that the `--clone` an operator
+typed here. The `RESULT.md`'s `REPO` line is a claim, and so is `git remote get-url origin`
+in the job's own clone: a worker owns that directory and rewrites its origin with one
+`git remote set-url`. Both are compared against the record and neither is ever read as it. A
+disagreement is `HARVEST REFUSED repo-mismatch card=<label> dispatched=<x> origin|claimed=<y>`
+and nothing is pushed; nothing naming a repository at all is `HARVEST REFUSED repo-unknown`.
+So `harvest --working` and a bare swarm root — neither of which carries a launch record —
+want `--clone <owner>/<name>=<dir>`, and on `--working` exactly one, because choosing between
+several would mean reading the worker's own report.
 
 **`--machines` holds `--bench` against the machines registry before the first ssh.**
 A harvest opens a connection to the machine it names, and runner hosts are CI-only, so the
@@ -1996,7 +2072,7 @@ A prune never runs on a guess.
 ### status
 
 ```
-nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 ```
 
 `status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
@@ -3362,12 +3438,84 @@ usage:
                            --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
                            --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
                            [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session export (--session <path> | --journal <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --into <path>
+  nova-work session export (--session <path> | --snapshot <path> --cache <path>) --state --at <revision> --closed-history <none|all|range> [--from <stamp> --to <stamp>] --into <new-directory> --max-bytes <n> --max-depth <n> --max-nodes <n> --max-output-bytes <n>   (a long operation under --session; one finite process under --snapshot)
+  nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
   nova-work session status --session <path>
   nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work session handoff --session <path> --to <name> --git-timeout <seconds> [--attempts <n>]
+  nova-work operation status  --session <path> --id <id>
+  nova-work operation list    --session <path> [--max <n>]
+  nova-work operation wait    --session <path> --id <id> --timeout <duration> [--after <cursor>]
+  nova-work operation cancel  --session <path> <write flags> --id <id> --reason <text>
+  nova-work savepoint list     --session <path> [--max <n>]
+  nova-work savepoint create   --session <path> --as <name> --reason <text>
+  nova-work savepoint verify   --session <path> --id <id>
+  nova-work savepoint compare  --savepoint <path> --against (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) [--max <n>]
+  nova-work undo-plan      --session <path> --request <id> [--max <n>]
+  nova-work undo           --session <path> <write flags> --request-of <id> --reason <text>
+  nova-work redo-plan      --session <path> --request <id> [--max <n>]
+  nova-work redo           --session <path> <write flags> --request-of <id> --reason <text>
+  nova-work friend         --session <path> <write flags> (--register <name> | --retire <name> | --role <name>=<role>[:<scope>] | --participation <name>=<yes|no|withdrawn> | --capability <name>=<capability-id> --group <child|swarm|local|one-shot> --limit <n> | --limit <name>=<n>) --reason <text>
+  nova-work config         --session <path> (--request <name> --base <hash|-> | --export <name> --into <path> | --intake --from <path> <write flags>) [--max <n>]
+  nova-work model          --session <path> <write flags> (--register <id> --provider <name> --route <text> --billing <metered|subscription|local|unknown> | --rate <id>=<pricing-id> --effective <stamp> --source <pointer> | --evidence <id> --task-class <label> --result <pointer> --samples <n>) --reason <text>
+  nova-work observe        --session <path> <write flags> --friend <name> (--state <awake|resting|unavailable|unconfirmed> --source <pointer> | --attempt <id> --observed-model <id> --bench <name> --usage <pointer>) --reason <text>
+  nova-work goal set       --session <path> <write flags> --expect <rev> [--scope <scope>] (--goal <node-id> | --clear) --reason <text>   (--expect required here; --scope defaults to the caller's --as)
+  nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
+  nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
+  nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
+  nova-work route          --session <path> <write flags> (--register <id> --provider <name> --endpoint <url> --key-location (:path "<path>"|:env "<name>") --plan <flat|metered|free|local> [--cost-per-mtok <n>] --capabilities <text=yes|no,code=yes|no,tool-calls=yes|no> --owner <name> | --retire <id> | --probe <id> --card <pointer> --pass <true|false|absent> [--wall <duration> --usd <amount>] --source <pointer>) --reason <text>
+  nova-work offer          --session <path> <write flags> --node <id> --offer <offer-id> --to <name> --profile <capability-id>@<config-revision> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --payload <pointer> --payload-sha256 <hex> --reserve <slots> --until <stamp> [--requested-model <model-id>] [--predecessor-offer <offer-id> --predecessor-attempt <attempt-id>] [--reason <text>]
+  nova-work profile        --session <path> <write flags> (--write <name> --model <id> --harness <id> --work-type <label> --pointer <path> --policy <revision> [--evidence <pointer>] [--expiry <stamp>] [--owner <name>] | --edit <name> (--pointer <path> | --policy <revision> | --evidence <pointer> | --expiry <stamp> | --owner <name>)) --reason <text>   (an edit re-pins the digest when it changes --pointer; a manager session selects one by name at start and never swaps it mid-session)
+  nova-work acknowledge    --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --stage <received|accepted> --provenance <pointer> --provenance-sha256 <hex> [--by <duration|stamp> --default <release|extend-once|escalate:<name>>] [--observed-model <model-id>] [--bench <name>] [--execution <handle>] [--reason <text>]   (--stage accepted: --by and --default, required, create-if-needed; --stage received: both exit 2)
+  nova-work decline        --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --provenance <pointer> --provenance-sha256 <hex> [--reason <text>]
+  nova-work execution pause     --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
+  nova-work execution stop      --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
+  nova-work execution resume    --session <path> <write flags> --control <id> --action <release-hold|resume-workers> --reason <text>
+  nova-work execution correct   --session <path> <write flags> --node <id> --instructions <pointer> --sha256 <hex> --reason <text>
+  nova-work execution reconcile --session <path> <write flags> --control <id> --from <manifest-id> --reason <text>   (a content identity, never a local path)
+  nova-work execution status    --session <path> --control <id> [--max <n>]
+  nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
+  nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
   nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
-                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
-                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
+                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes, reports)
+                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>] [--class <card-class>]
                            [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
+                           (who and stale: --window <duration>, required; percent: --axis <member>, required on a matrix and refused on a zero- or one-axis roadmap;
+                            ready: --order, optional, discovery by default; --order priority on any other ask is exit 2;
+                            --branch closed and --branch root: --from and --to, required, and refused under --branch open;
+                            who, stale, handoffs and reports: --branch open only, the other two exit 2; reports: --since <revision>, required (SPEC-AHEAD: #854);
+                            fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused;
+                             routes: --class optional, the card class whose ordered route list the projection emits, cheapest first; without it the whole registry is listed)
+  nova-work render         --session <path> --view <roadmap-id> (--chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --projection <id> (--file | --check)) [--at <revision>]
+  nova-work node add       --session <path> <write flags> --id <id> --type <work-set|epic|feature|task> (--under <parent-id> | --under-root open --repo <owner/name>) [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] [--link <text> ... | --links-empty | --clear-links] [--private <true|false>] [--version <text>] --reason <text>   (--type roadmap is exit 2 naming 'roadmap create')
+  nova-work node edit      --session <path> <write flags> --node <id> (--title <text> | --clear-title | --category <label> | --clear-category | --link <text> ... | --links-empty | --clear-links | --private <true|false> | --clear-private | --version <text> | --clear-version) ... --reason <text>
+  nova-work node move      --session <path> <write flags> --node <id> --from <parent-id> --under <parent-id> --reason <text>
+  nova-work node remove    --session <path> <write flags> --node <id> --reason <text>
+  nova-work node require   --session <path> <write flags> --node <id> --to <true|false> --reason <text>
+  nova-work decompose      --session <path> <write flags> --node <id> --into <id,...> --acceptance <child-id:id:kind:subject:predicate> ... --reason <text>
+  nova-work accept         --session <path> <write flags> --node <id> (--add <id:kind:subject:predicate> | --remove <id>) --reason <text>
+  nova-work source         --session <path> <write flags> --node <id> --to <sha> --reason <text>
+  nova-work dep            --session <path> <write flags> --node <id> (--add <id> | --remove <id>) --reason <text>
+  nova-work axis           --session <path> <write flags> --roadmap <id> --axis <id> (--add <member> | --remove <member>) --reason <text>
+  nova-work roadmap create --session <path> <write flags> --id <id> --under <parent-id> [--title <text>] --row-kind <feature|epic|work-set> --aggregation <required-members|all-members|leaves> --completion-policy all-required-features (--axes-none | --axis-id <id> ...) [--permit-root <root-id> ...] --reason <text>
+  nova-work roadmap configure --session <path> <write flags> --roadmap <id> [--row-kind <kind>] [--aggregation <policy>] [--completion-policy all-required-features] [--axes-none | --axis-id <id> ...] [--permit-root <root-id> ... | --roots-empty] --reason <text>
+  nova-work roadmap row    --session <path> <write flags> --roadmap <id> (--add <member> | --remove <member>) --reason <text>   (axisless roadmaps only)
+  nova-work roadmap projection --session <path> <write flags> --roadmap <id> (--add <id> --root <root-id> --repo <owner/name> --path <relative-path> --start <marker> --end <marker> --policy markdown-table [--row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --remove <id>) --reason <text>
+  nova-work prioritise     --session <path> <write flags> --node <id> (--set <rank> | --clear) [--context <self|subtree>] --reason <text>
+  nova-work cell           --session <path> <write flags> --roadmap <id> --coord <member,member> (--ref <id|-> | --out-of-scope | --in-scope) --reason <text>   (--ref - clears the mapping)
+  nova-work responsible    --session <path> <write flags> --node <id> --to <name> --reason <text>
+  nova-work take           --session <path> <write flags> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
+  nova-work heartbeat      --session <path> <write flags> --node <id> --evidence <pointer>
+  nova-work release        --session <path> <write flags> --node <id> [--handed <name> --by <duration|stamp> --default <release|extend-once|escalate:<name>>]
+  nova-work heartbeat      --session <path> <write flags> --allocation <id> --generation <n>   (allocation heartbeat: --allocation names the allocation id returned by take, --generation is the machine generation)
+  nova-work release        --session <path> <write flags> --allocation <id> --generation <n> [--handed <name>]   (allocation release: --allocation names exactly one allocation, --generation is the machine generation; frees that allocation's slot only)
+  nova-work attest         --session <path> <write flags> --node <id> --criterion <id> --result <pointer> --against <sha>
+  nova-work attempt        --session <path> <write flags> --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
+  nova-work evidence       --session <path> <write flags> --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
+  nova-work state          --session <path> <write flags> --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
+  nova-work correct        --session <path> <write flags> --node <id> --reason <text>
+  nova-work event          --session <path> <write flags> --kind <baseline|discovery|defer|cancel|reopen|supersede> --node <id> --reason <text> [--member <id,...>] [--superseded-by <id>] [--evidence <pointer>] (baseline and discovery: --member, required, and --kind discovery on a :roadmap is exit 2 naming 'axis --add'; supersede: --superseded-by, required; cancel: --evidence <pointer>, required, and a note: pointer IS admitted here, because it evidences a stopped worker and never a done; --member on any other kind is exit 2)
   nova-work version        print this build identity (--version also accepted)
   nova-work help
   nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
@@ -3394,7 +3542,10 @@ wire:
   for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
   to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
   stderr, exit 2, ending "run: nova-work help". Values travel as given: the
-  session validates every one and refuses with its own naming.
+  session validates every one and refuses with its own naming. An exchange is
+  bounded by a 30-second default; a declared wait keeps a bounded 30-second
+  transport allowance, an explicit --deadline caps the bound, and a deadline
+  already past refuses before anything is dialled.
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)

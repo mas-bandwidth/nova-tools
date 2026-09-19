@@ -117,16 +117,31 @@ func Harvest(in HarvestInput) int {
 	// folds every job dir under it instead: the RESULT.md files are the record, and
 	// their own line 1 is the contract (rule 11). The refusal stands only when
 	// neither the file nor a job dir is there.
-	cardsPath := filepath.Join(in.Root, "cards.tsv")
+	//
+	// THE PULSE TABLE FIRST (issue #1818). `launch` writes the cards it admitted to
+	// <root>/cards/<id>/cards.tsv -- docs/CLI.md and SPEC-PULSE rule 10 both say so, and
+	// the --then launch chains is this exact verb with this exact --id. Harvest read
+	// <root>/cards.tsv and nothing else, so every chained harvest of a successful pulse
+	// refused with "run: nova-pulse cut" -- the wrong door, because launch had already
+	// written the table. The root table stays as the fallback for a root `cut` wrote.
+	cardsPath := pulseCardsPath(in.Root, in.ID)
 	cards, err := readCards(cardsPath)
 	if err != nil {
-		if _, statErr := os.Stat(cardsPath); os.IsNotExist(statErr) {
-			cards = discoverRootCards(in.Root)
-		}
-		if len(cards) == 0 {
-			return refusal(in.Stderr, "HARVEST", err)
+		rootPath := filepath.Join(in.Root, "cards.tsv")
+		if rootCards, rootErr := readCards(rootPath); rootErr == nil {
+			cards, err, cardsPath = rootCards, nil, rootPath
 		}
 	}
+	if err != nil || len(cards) == 0 {
+		if found := discoverRootCards(in.Root); len(found) > 0 {
+			cards, err = found, nil
+		}
+		if len(cards) == 0 {
+			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot read %s, %s or any job directory under %s (harvest folds the pulse launch admitted; check the --id, or run: nova-pulse cut)",
+				oneline.Field(pulseCardsPath(in.Root, in.ID)), oneline.Field(filepath.Join(in.Root, "cards.tsv")), oneline.Field(in.Root)))
+		}
+	}
+	_ = cardsPath
 
 	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
@@ -223,21 +238,57 @@ func Harvest(in HarvestInput) int {
 					continue
 				}
 			}
-			url := pushURL(repo)
-			if err := push(in, jobDir, url, branch); err != nil {
+			// A RESULT.md is a report, never an instruction (SPEC-SWARM:40-44). The
+			// REPO and BRANCH lines on it are a worker's claim about where its work
+			// belongs, and harvest used to form https://github.com/<REPO>.git from
+			// that claim and push there -- a RESULT naming a repo nobody in this
+			// pulse has ever heard of opened a draft PR on it (issue #1824).
+			if err := allowedPush(in, jobDir, c, repo, branch); err != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
+			}
+			// WHERE this pushes is resolveDestination's answer, and the answer is the
+			// LAUNCH RECORD -- c.Card, the card file the pulse cut before this worker
+			// existed -- or, for a bare swarm root that has no card, the `--clone` the
+			// operator typed. The RESULT's REPO line and the job clone's own `origin`
+			// are both things the worker writes, and both are only ever compared
+			// against it (Johnny's HOLDs of #1809 at 8bfa4020 and at 7f692ef6).
+			// Resolved here so the refusal is counted and named; push and openPR
+			// resolve it again for themselves, because a leaf handed a URL is a leaf
+			// with no rule.
+			d, derr := managerDispatch(c.Card, in.Clones)
+			if derr != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED repo-unknown card=%s: %s\n", field(c.Label), oneline.Err(derr))
+				continue
+			}
+			dest, err := resolveDestination(c.Label, d, jobDir, repo)
+			if err != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
+				continue
+			}
+			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
 			pushed++
-			pr, err := openPR(in, jobDir, url, c.Label, branch, resultLines)
+			pr, err := openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
 			if err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
 			prs++
+			// The line and the next-card record name the RESOLVED repository, never
+			// the RESULT's claim: an operator reading HARVEST PR is reading where the
+			// branch actually went.
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
-				field(repo), pr, field(c.Label), field(branch), classTail))
-			appendNext(in.Root, repo, pr, c.Label)
+				field(dest.repo), pr, field(c.Label), field(branch), classTail))
+			appendNext(in.Root, dest.repo, pr, c.Label)
 		}
 	}
 
@@ -395,8 +446,15 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
 	norm := strings.ReplaceAll(body, "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
+	// PREFIX, not equality (issue #1823). The card generator can truncate the issue
+	// title, so the card's contract line may be a PREFIX of the RESULT.md line 1 rather
+	// than the whole of it -- docs/SPEC-SWARM.md:1482-1491, and `nova-swarm batch`'s own
+	// gather has scored it that way all along. Harvest compared with != and called a card
+	// the batch had already scored `done` a mismatch, so it was never pushed. Trailing
+	// spaces are trimmed on both sides first, exactly as the spec words it.
 	line1 := strings.TrimSpace(firstNonEmpty(lines))
-	if line1 != contract {
+	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
+	if want == "" || !strings.HasPrefix(strings.TrimRight(line1, " \t"), want) {
 		return "mismatch", "", "", lines
 	}
 	line2 := ""
@@ -568,22 +626,31 @@ func lastRefusal(logPath string) string {
 	return oneline.Cap(lines[len(lines)-1], 200)
 }
 
-// pushURL is the https clone url for a repo, used for the explicit refspec push.
-func pushURL(repo string) string {
-	if repo == "" {
-		return ""
+// push runs git push <resolved url> <branch>:<branch> from the job's clone; never a bare
+// git push, and never a URL its caller formed.
+//
+// `record` is the launch record (the card file the pulse cut) and it ANSWERS; `dir` is the
+// job's own clone and `claimed` the RESULT.md's REPO line, and those two are the worker's,
+// so they are compared and never read. The leaf resolves rather than taking a URL, so that
+// the rule holds whichever caller reaches it (Johnny's HOLD of #1809: a rule implemented
+// once per caller is as many rules as there are callers).
+func push(in HarvestInput, dir, record, claimed, branch, label string) error {
+	// The branch rule, at the push itself and not only at the caller that decided to
+	// push (Johnny's hold on #1809). One implementation, every path.
+	if err := mustBranchPrefix(branch); err != nil {
+		return err
 	}
-	return "https://github.com/" + repo + ".git"
-}
-
-// push runs git push <url> <branch>:<branch> from the job's clone; never a bare git push.
-func push(in HarvestInput, dir, url, branch string) error {
-	if url == "" {
-		return fmt.Errorf("no REPO line in RESULT.md")
+	d, derr := managerDispatch(record, in.Clones)
+	if derr != nil {
+		return derr
+	}
+	dest, err := resolveDestination(label, d, dir, claimed)
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "push", url, branch+":"+branch)
+	cmd := exec.CommandContext(ctx, "git", "push", dest.url, branch+":"+branch)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -594,7 +661,22 @@ func push(in HarvestInput, dir, url, branch string) error {
 
 // openPR opens a draft PR (or updates an existing one) whose body is the RESULT.md lines,
 // capped at MaxBodyBytes. It returns the PR number.
-func openPR(in HarvestInput, dir, url, label, branch string, resultLines []string) (int, error) {
+func openPR(in HarvestInput, dir, record, claimed, label, branch string, resultLines []string) (int, error) {
+	if err := mustBranchPrefix(branch); err != nil {
+		return 0, err
+	}
+	// The repository the pull request is opened on is the resolver's answer -- the launch
+	// record's, not the job clone's and not the RESULT's -- named explicitly with -R
+	// rather than left to whatever remote gh infers from the working directory, which on
+	// this path IS the worker's clone.
+	d, derr := managerDispatch(record, in.Clones)
+	if derr != nil {
+		return 0, derr
+	}
+	dest, err := resolveDestination(label, d, dir, claimed)
+	if err != nil {
+		return 0, err
+	}
 	body := strings.Join(resultLines, "\n")
 	if len(body) > in.MaxBodyBytes {
 		body = body[:in.MaxBodyBytes]
@@ -602,17 +684,17 @@ func openPR(in HarvestInput, dir, url, label, branch string, resultLines []strin
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 
-	update := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number")
+	update := exec.CommandContext(ctx, "gh", "pr", "view", branch, "-R", dest.repo, "--json", "number")
 	update.Dir = dir
 	if _, err := update.CombinedOutput(); err == nil {
 		// An existing PR is updated in place; the number is re-read from the view output.
-		edit := exec.CommandContext(ctx, "gh", "pr", "edit", branch, "--body-file", "-")
+		edit := exec.CommandContext(ctx, "gh", "pr", "edit", branch, "-R", dest.repo, "--body-file", "-")
 		edit.Dir = dir
 		edit.Stdin = strings.NewReader(body)
 		if _, err := edit.CombinedOutput(); err != nil {
 			return 0, err
 		}
-		view2 := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number")
+		view2 := exec.CommandContext(ctx, "gh", "pr", "view", branch, "-R", dest.repo, "--json", "number")
 		view2.Dir = dir
 		out, err := view2.CombinedOutput()
 		if err != nil {
@@ -621,7 +703,7 @@ func openPR(in HarvestInput, dir, url, label, branch string, resultLines []strin
 		return parsePRNumber(string(out)), nil
 	}
 
-	create := exec.CommandContext(ctx, "gh", "pr", "create", "--draft", "--title", label, "--body-file", "-")
+	create := exec.CommandContext(ctx, "gh", "pr", "create", "-R", dest.repo, "--draft", "--head", branch, "--title", label, "--body-file", "-")
 	create.Dir = dir
 	create.Stdin = strings.NewReader(body)
 	out, err := create.CombinedOutput()

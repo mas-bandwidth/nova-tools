@@ -535,19 +535,69 @@ func (h *hygiene) pruneDiagDir(dir string) (int, int64) {
 
 // reapSlot is the reap verb's body: <slot>/data, <slot>/tmp and each job's
 // scratch. It never removes a job directory.
+//
+// Every path here is the join of a directory this tool made and a LITERAL
+// suffix, and the removal is rooted at that directory -- the slot for the slot's
+// own subdirectories, the job for a job's scratch -- not at the two hygiene
+// roots. Rooting at the roots was #1921: a card that plants <job>/repo as a
+// symlink to another tree under the same swarm root made this loop delete THAT
+// tree's scratch, because "is the resolved path under one of the two roots?" is
+// a question a sibling job, a certify tree and the cache all answer yes to. The
+// path a reaper deletes must still be inside the thing it is reaping.
+//
+// realDirBelow is the other half: it walks the suffix one element at a time with
+// Lstat, so an intermediate symlink is never followed in the first place. A
+// missed element is still refused by safepath, which resolves before it removes.
 func (h *hygiene) reapSlot(slot string) {
 	for _, name := range []string{"data", "tmp"} {
-		if p := filepath.Join(slot, name); dirExists(p) {
-			h.remove("reap", p)
+		p := filepath.Join(slot, name)
+		if !realDirBelow(slot, p) {
+			h.noteNotOwnTree(p)
+			continue
 		}
+		h.removeUnder("reap", p, slot)
 	}
 	for _, job := range h.jobDirs(slot) {
 		for _, sub := range []string{"scratch", ".nova-sandbox-tmp", filepath.Join("repo", "scratch")} {
-			if p := filepath.Join(job, sub); dirExists(p) {
-				h.remove("reap", p)
+			p := filepath.Join(job, sub)
+			if !realDirBelow(job, p) {
+				h.noteNotOwnTree(p)
+				continue
 			}
+			h.removeUnder("reap", p, job)
 		}
 	}
+}
+
+// noteNotOwnTree is said only when something IS there under that name and it is
+// not a plain directory of this tree's own: a missing path is the ordinary case
+// and says nothing.
+func (h *hygiene) noteNotOwnTree(p string) {
+	if _, err := os.Lstat(p); err != nil {
+		return
+	}
+	fmt.Fprintf(h.in.Stderr, "HYGIENE NOTE %s was not reaped: a path element is a symlink, so it is not this tree's own\n", oneline.Field(p))
+}
+
+// realDirBelow reports whether p is a directory strictly below root reached
+// without following a single symlink: each element from root down is Lstat'd, so
+// an intermediate link (the #1921 plant) fails here rather than resolving into
+// somebody else's tree. A root that is itself a link is resolved once, by the
+// caller's construction of it; below that, nothing is followed.
+func realDirBelow(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || rel == "." || rel == "" || safepath.HasDotDot(rel) {
+		return false
+	}
+	cur := root
+	for _, el := range strings.Split(rel, string(os.PathSeparator)) {
+		cur = filepath.Join(cur, el)
+		info, err := os.Lstat(cur)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *hygiene) jobDirs(slot string) []string {

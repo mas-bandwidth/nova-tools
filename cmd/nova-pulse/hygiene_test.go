@@ -395,3 +395,59 @@ func TestHygieneLogPrintsTail(t *testing.T) {
 		t.Fatalf("log 2 = %q, want the last two lines", out)
 	}
 }
+
+// #1921: the worker's write set includes the job directory, so a card can plant
+// <job>/repo as a symlink to ANOTHER tree under the same swarm root. reap joined
+// the literal "repo/scratch" onto the job, Stat followed the link, and the
+// removal was rooted at the two hygiene roots -- which a certify tree and a
+// sibling job both sit under. The foreign scratch was deleted. The bound the
+// reaper must hold is not "under a hygiene root", it is "still inside this job":
+// this test crosses it with a link to the certify tree #1679 exists to spare and
+// with a link to a sibling card's job, and the sibling's own honest scratch in
+// the same fixture proves reap still does its job.
+func TestReapRefusesAJobRepoSymlinkToAnotherTreeUnderTheRoot(t *testing.T) {
+	now := time.Date(2026, 9, 19, 18, 0, 0, 0, time.UTC)
+	home := t.TempDir()
+	root := filepath.Join(home, "rowan-swarm-root")
+
+	certify := filepath.Join(root, "certify-tree")
+	hygieneWrite(t, filepath.Join(certify, "scratch", "corpus"), "the corpus\n", time.Time{})
+
+	victimSlot := filepath.Join(root, "2")
+	victimJob := filepath.Join(victimSlot, "jobs", "card-victim")
+	hygieneWrite(t, filepath.Join(victimJob, "scratch", "work"), "the victim's work\n", time.Time{})
+
+	slot := filepath.Join(root, "1")
+	evil := filepath.Join(slot, "jobs", "card-evil")
+	hygieneMkdir(t, evil)
+	if err := os.Symlink(certify, filepath.Join(evil, "repo")); err != nil {
+		t.Skipf("this filesystem does not do symlinks: %v", err)
+	}
+	// The second plant: the slot's own tmp, pointed at the victim's job.
+	if err := os.Symlink(victimJob, filepath.Join(slot, "tmp")); err != nil {
+		t.Fatal(err)
+	}
+	// An honest scratch in the same job, so a fix that refuses everything fails.
+	hygieneMkdir(t, filepath.Join(evil, "scratch"))
+
+	defer swapHygieneEnv(hygieneFakeProcs{busy: map[string]bool{}}, hygieneFakeDisk{freeGB: 40, free: "40G"})()
+
+	code, _, errb := hygieneRun(t, now, "reap", "1", "--home", home)
+	if code != 0 {
+		t.Fatalf("reap exit = %d, stderr=%s", code, errb)
+	}
+	for _, keep := range []string{
+		filepath.Join(certify, "scratch"), filepath.Join(certify, "scratch", "corpus"),
+		filepath.Join(victimJob, "scratch"), filepath.Join(victimJob, "scratch", "work"),
+	} {
+		if !hygieneExists(keep) {
+			t.Errorf("reap deleted %s, which is not inside the job it was reaping", keep)
+		}
+	}
+	if hygieneExists(filepath.Join(evil, "scratch")) {
+		t.Errorf("reap left the job's own scratch; the fix may not refuse the honest path")
+	}
+	if !strings.Contains(errb, "symlink") {
+		t.Errorf("reap said nothing about the planted link; stderr=%q", errb)
+	}
+}

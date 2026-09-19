@@ -1812,10 +1812,32 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
-	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
+	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
+	// `NATIVE OK` for every run that reached it, including a run that produced NOTHING:
+	// card tools12c18 on vision came back rc=1 on both attempts, zero tokens, zero
+	// dollars, no RESULT.md and no repo -- and the launcher's one log line read
+	// `vision tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=...`. A fill
+	// loop or a manager counting in-flight cards by that line counts a card that never
+	// ran as delivered. So the word is earned: the harness has to have answered and the
+	// run has to have left the one artefact a card exists to produce. When it has not,
+	// the line is `NATIVE INCOMPLETE` and carries `why=` naming which of the three it
+	// failed -- every other field is byte-for-byte the same, so a reader that parses
+	// fields still reads them all.
+	verdict, why := "OK", ""
+	switch harnessState := orElse(res.harness, "silent"); {
+	case harnessState == "silent":
+		verdict, why = "INCOMPLETE", "harness-silent"
+	case !nativeLeftAResult(res.job):
+		verdict, why = "INCOMPLETE", "no-result"
+	case res.rc != 0:
+		verdict, why = "INCOMPLETE", "rc"
+	}
+	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s",
+		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
+	if why != "" {
+		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
+	}
+	fmt.Fprintln(stdout)
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
@@ -1895,6 +1917,24 @@ func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("--task %s is empty; it wants the task text", path)
 	}
 	return raw, nil
+}
+
+// nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
+// RESULT.md in its job directory, or in the clone the card worked in. A card that abstains
+// still writes one (it says ABSTAIN on line 2); a run that produced nothing writes none.
+func nativeLeftAResult(job string) bool {
+	if strings.TrimSpace(job) == "" {
+		return false
+	}
+	for _, p := range []string{
+		filepath.Join(job, "RESULT.md"),
+		filepath.Join(job, "repo", "RESULT.md"),
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func dash(s string) string {

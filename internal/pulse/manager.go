@@ -32,6 +32,15 @@ type ManagerInput struct {
 	As     string // the name this shift waits and receipts as
 	Remote string // the git remote nova-bus wait fetches the bus from
 	Branch string // the branch the bus lives on
+	// Bench turns the remote read on: comma-separated ssh targets, positionally paired with
+	// Roots (the i'th entry is the ssh target for the i'th --roots entry). Empty -- true of
+	// every existing test and invocation today -- leaves the harvest local-only.
+	Bench string
+	// SSH is the ssh program the shipped shell runs; "" is "ssh". It is ignored when Shell
+	// is set.
+	SSH string
+	// Shell is the BenchShell seam harvest --bench already uses; nil means local-only.
+	Shell  BenchShell
 	Hours  float64
 	Max    int
 	Stdout io.Writer
@@ -129,10 +138,12 @@ func splitList(s string) []string {
 
 // manager is one shift's state: the policy, the benches, the counters the SHIFT END line ends with.
 type manager struct {
-	in    ManagerInput
-	pol   policy
-	roots []string
-	now   func() time.Time
+	in      ManagerInput
+	pol     policy
+	roots   []string
+	benches []string
+	shell   BenchShell
+	now     func() time.Time
 
 	// per-shift
 	cycles      int
@@ -172,7 +183,11 @@ func Manager(in ManagerInput) int {
 	if err != nil {
 		return refusal(in.Stderr, "MANAGER", err)
 	}
-	m := &manager{in: in, pol: pol, roots: splitList(in.Roots), now: in.Now}
+	shell := in.Shell
+	if shell == nil && strings.TrimSpace(in.Bench) != "" {
+		shell = sshShell{Program: in.SSH}
+	}
+	m := &manager{in: in, pol: pol, roots: splitList(in.Roots), benches: splitList(in.Bench), shell: shell, now: in.Now}
 	for _, d := range []string{"pending", "launched", "done", "failed"} {
 		if err := os.MkdirAll(filepath.Join(in.Queue, d), 0o755); err != nil {
 			return refusal(in.Stderr, "MANAGER", fmt.Errorf("cannot make %s: %s", filepath.Join(in.Queue, d), oneline.Err(err)))
@@ -280,15 +295,20 @@ func (m *manager) harvest() {
 	done := map[string][]string{} // root -> finished jobs, appended to the status index once
 	for _, card := range m.cardsIn("launched") {
 		job, root := m.jobFor(card)
-		if job == "" {
+		var lines []string
+		if job != "" {
+			result, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+			if err != nil {
+				continue // still in flight; launch owns the slot, not this tier
+			}
+			lines = strings.Split(strings.ReplaceAll(string(result), "\r\n", "\n"), "\n")
+		} else if remote, rroot, ok := m.remoteJobFor(card); ok {
+			root = rroot
+			lines = remote
+		} else {
 			continue
 		}
-		result, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-		if err != nil {
-			continue // still in flight; launch owns the slot, not this tier
-		}
 		m.harvested++
-		lines := strings.Split(strings.ReplaceAll(string(result), "\r\n", "\n"), "\n")
 		switch {
 		case abstainReason(lines) != "":
 			m.triageAbstain(card, root, abstainReason(lines))
@@ -297,7 +317,9 @@ func (m *manager) harvest() {
 		default:
 			m.openPR(card, job, lines)
 		}
-		done[root] = append(done[root], job)
+		if job != "" {
+			done[root] = append(done[root], job)
+		}
 	}
 	// The finished jobs join their roots' status indexes, so status answers the next tick
 	// without opening a job's usage.tsv (#1088).
@@ -399,6 +421,24 @@ func (m *manager) openPR(card, job string, lines []string) {
 	dir := filepath.Join(job, "repo")
 	m.called = true
 	switch {
+	case strings.TrimSpace(job) == "":
+		// JOHNNY'S HOLD OF #1885 at 3fa6a99b. The remote read this commit's parent
+		// added harvests a job that exists only on a bench and has NO local job
+		// directory, and handed it straight to this function -- where `job` is ""
+		// and `dir` is therefore the relative string "repo", a path that is either
+		// missing or, worse, some other card's clone in whatever directory the
+		// shift happens to be running in.
+		//
+		// There is nothing here to publish FROM and nothing to check the
+		// destination AGAINST: the repository, the branch and the diff would all
+		// come from the bench's own RESULT.md, which SPEC-SWARM:40-44 says is data
+		// and never an instruction. `harvest --bench` publishes a bench job by
+		// fetching its branch into a real local clone over ssh first, and that is
+		// the verb that may open this PR. This tier reads, counts and stops.
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: no-clone -- this job is only on the bench and has no local clone to push from or to check its REPO line against (publish it with: nova-pulse harvest --bench <name> --root <the bench's swarm root> --clone <owner>/<name>=<dir>)",
+			oneline.Field(card), oneline.Field(branch))
+		return
 	case branch == "" || branch == "main" || branch == "master":
 		m.move(card, "failed")
 		m.event("MANAGER REFUSED card=%s branch=%s: a card never pushes a base branch (name a working branch on the BRANCH line)", oneline.Field(card), oneline.Field(branch))
@@ -412,10 +452,19 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: a fix without its reproducing test is not admitted (add the red: line or a test file to the diff)", oneline.Field(card), oneline.Field(branch))
 		return
 	}
-	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). The manager tier pushes the branch
+	// The manager pushes with a LEADING PLUS -- a forced update -- so it gets the same
+	// branch rule as every other push path (Johnny's hold on #1809).
+	if err := mustBranchPrefix(branch); err != nil {
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Err(err))
+		return
+	}
+	// THE KEY-SHAPE SCAN COMES FIRST OF THE TWO (#1814). The manager tier pushes the branch
 	// and copies the same RESULT.md lines into the PR body, so it passes the one guard
 	// every publishing path passes. A hit refuses, quarantines the job beside its own
-	// jobs/ directory, writes the HUMAN line into the queue, and fails the card.
+	// jobs/ directory, writes the HUMAN line into the queue, and fails the card. It runs
+	// BEFORE the destination is resolved on purpose: a card that leaks a key AND names a
+	// destination nobody dispatched must still be quarantined.
 	findings, scanErr := secretFindings(job, dir, "", lines)
 	if scanErr != nil {
 		m.move(card, "failed")
@@ -431,18 +480,30 @@ func (m *manager) openPR(card, job string, lines []string) {
 			oneline.Cap(strings.TrimSpace(note.String()), 300))
 		return
 	}
-	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
+	// THE DESTINATION, resolved once and used by both the force-push and the PR-open
+	// below. The old `pushURL` of `repo`, and `gh pr create -R repo`, took the destination
+	// off the worker's RESULT.md, which is what Johnny held #1809 for -- and #1885 at
+	// 3fa6a99b is the same family on this same function. The manager's OWN QUEUE holds the
+	// launched record for this card, and that is what answers; the job's clone is the
+	// worker's, `origin` and all, and is only ever compared against it (HOLD at 7f692ef6).
+	dest, err := resolveDestination(card, dispatchFromLaunchRecord(filepath.Join(m.in.Queue, "launched", card)), dir, repo)
+	if err != nil {
+		m.move(card, "failed")
+		m.event("%s", err)
+		return
+	}
+	if out, err := m.sh(dir, 120*time.Second, "git", "push", dest.url, "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return
 	}
-	pr := m.prNumber(repo, branch)
+	pr := m.prNumber(dest.repo, branch)
 	if pr == 0 {
 		title := oneline.Cap(strings.TrimSpace(firstNonEmpty(lines)), 110)
 		body := strings.Join(lines, "\n")
 		if len(body) > 4096 {
 			body = body[:4096]
 		}
-		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
+		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", dest.repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
 		if err != nil {
 			m.event("MANAGER NOTE pr failed card=%s: %s", oneline.Field(card), oneline.Cap(strings.TrimSpace(out), 120))
 			return
@@ -452,8 +513,8 @@ func (m *manager) openPR(card, job string, lines []string) {
 	m.move(card, "done")
 	m.prs++
 	m.decisions++
-	m.event("MANAGER PR repo=%s pr=%d card=%s branch=%s", oneline.Field(repo), pr, oneline.Field(card), oneline.Field(branch))
-	m.cutCard(Candidate{Source: repo, ID: fmt.Sprintf("%s#%d", repo, pr), Kind: "read", Title: fmt.Sprintf("read of %s PR%d and post the verdict line PR%d: APPROVE|HOLD head=<sha>", repo, pr, pr), Template: "read"}, 0)
+	m.event("MANAGER PR repo=%s pr=%d card=%s branch=%s", oneline.Field(dest.repo), pr, oneline.Field(card), oneline.Field(branch))
+	m.cutCard(Candidate{Source: dest.repo, ID: fmt.Sprintf("%s#%d", dest.repo, pr), Kind: "read", Title: fmt.Sprintf("read of %s PR%d and post the verdict line PR%d: APPROVE|HOLD head=<sha>", dest.repo, pr, pr), Template: "read"}, 0)
 }
 
 func (m *manager) prNumber(repo, branch string) int {
@@ -882,6 +943,34 @@ func (m *manager) jobFor(card string) (job, root string) {
 		}
 	}
 	return "", ""
+}
+
+// remoteJobFor lists a card's job on the shift's own benches over the ssh seam
+// `nova-pulse harvest --bench` already uses (harvestbench.go's BenchShell, sshShell,
+// benchListScript and parseBenchJobs) -- reused here verbatim, never copied. The i'th
+// --bench entry is the ssh target for the i'th --roots entry; a root with no paired bench,
+// or a shift with no shell at all, is never ssh'd into.
+func (m *manager) remoteJobFor(card string) (lines []string, root string, ok bool) {
+	if m.shell == nil {
+		return nil, "", false
+	}
+	label := strings.TrimSuffix(card, ".md")
+	for i, bnch := range m.benches {
+		if i >= len(m.roots) {
+			break
+		}
+		r := m.roots[i]
+		out, err := m.shell.Run(bnch, benchListScript([]string{r}))
+		if err != nil {
+			continue
+		}
+		for _, j := range parseBenchJobs(out) {
+			if filepath.Base(j.Dir) == label && len(j.Result) > 0 {
+				return j.Result, r, true
+			}
+		}
+	}
+	return nil, "", false
 }
 
 func (m *manager) move(card, to string) {

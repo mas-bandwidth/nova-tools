@@ -136,6 +136,13 @@ func harvestBench(in HarvestInput) int {
 	if prefix == "" {
 		prefix = DefaultBranchPrefix
 	}
+	// --branch-prefix may NARROW the selection and never escape it: a caller may harvest
+	// only `rowan/spec/`, and no caller may harvest someone else's branches. Without this
+	// the flag was the configuration escape Stella's ruling on #1824 says there is not.
+	if !strings.HasPrefix(prefix, DefaultBranchPrefix) {
+		return refusal(in.Stderr, "HARVEST", fmt.Errorf("--branch-prefix %s is not under %s; this verb harvests this line's own branches and the prefix may be narrowed, never widened",
+			field(prefix), field(DefaultBranchPrefix)))
+	}
 	fallbackBase := in.Base
 	if fallbackBase == "" {
 		fallbackBase = DefaultBase
@@ -238,6 +245,41 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		sha, _ := gitIn(clone, "rev-parse", "--short", ref)
+		// The same branch rule the local path applies. The --branch-prefix filter above
+		// SKIPS a job whose branch is off-prefix, which is a selection, not a guard: it
+		// is the caller's own prefix and a caller could widen it. This refuses.
+		if err := mustBranchPrefix(branch); err != nil {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST PUSH-REFUSED bench=%s label=%s branch=%s: %s",
+				field(in.Bench), field(label), field(branch), oneline.Err(err)))
+			continue
+		}
+		// THE DESTINATION, resolved once for this job and used by both the push below
+		// and the CreatePR further down -- a refusal skips both. `repo` off the
+		// RESULT.md only ever chose the clone and was then handed straight to
+		// `CreatePR(repo, ...)`, so a bench card named the repository its own pull
+		// request opened on (Johnny's HOLD of #1809).
+		//
+		// A bench job carries no launch record to this verb, and its own clone is on
+		// the BENCH -- the worker's machine -- and is never read here: the branch
+		// arrives as a fetched ref. The answer is the COORDINATOR's `--clone`, which
+		// this verb already requires: the `<owner>/<name>` the operator typed, or the
+		// origin of a directory on THIS machine that no worker has been handed.
+		d, derr := dispatchFromCoordinatorClone(in.Clones, clone)
+		if derr != nil {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST REFUSED repo-unknown card=%s: %s", field(label), oneline.Err(derr)))
+			continue
+		}
+		// The worker clone is "" on purpose: no clone HERE was touched by the worker,
+		// and the bench's own copy of `origin` is exactly the claim Johnny's HOLD at
+		// 7f692ef6 is about. The RESULT's `repo` claim is still checked.
+		dest, err := resolveDestination(label, d, "", repo)
+		if err != nil {
+			failed++
+			lines.Line(err.Error())
+			continue
+		}
 		if out, err := gitIn(clone, "push", "origin", ref+":refs/heads/"+branch); err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST PUSH-FAIL bench=%s label=%s branch=%s: %s",
@@ -245,7 +287,7 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		pushed++
-		pr, err := forge.FindPR(repo, branch)
+		pr, err := forge.FindPR(dest.repo, branch)
 		if err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST PR-FAIL bench=%s label=%s branch=%s: %s",
@@ -253,7 +295,7 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		if pr == 0 {
-			pr, err = forge.CreatePR(repo, base, branch, prTitle(line1, label, in.Bench), benchPRBody(in.Bench, j, in.MaxBodyBytes))
+			pr, err = forge.CreatePR(dest.repo, base, branch, prTitle(line1, label, in.Bench), benchPRBody(in.Bench, j, in.MaxBodyBytes))
 			if err != nil {
 				failed++
 				lines.Line(fmt.Sprintf("HARVEST PR-FAIL bench=%s label=%s branch=%s: %s",
@@ -264,7 +306,7 @@ func harvestBench(in HarvestInput) int {
 		prs++
 		markHarvested(shell, in.Bench, j.Dir)
 		lines.Line(fmt.Sprintf("HARVEST JOB bench=%s label=%s branch=%s sha=%s base=%s pr=%s#%d",
-			field(in.Bench), field(label), field(branch), field(sha), field(base), field(repo), pr))
+			field(in.Bench), field(label), field(branch), field(sha), field(base), field(dest.repo), pr))
 	}
 
 	drained := drainLaunched(in, state, lines)
@@ -629,6 +671,12 @@ func (ghForge) FindPR(repo, branch string) (int, error) {
 }
 
 func (ghForge) CreatePR(repo, base, branch, title, body string) (int, error) {
+	// The shipped forge is the last thing between a branch name and a real pull request,
+	// so the rule is here too and not only in its callers. The class test found this one:
+	// I had guarded the four callers and walked past the adapter they all go through.
+	if err := mustBranchPrefix(branch); err != nil {
+		return 0, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "-R", repo, "--base", base,

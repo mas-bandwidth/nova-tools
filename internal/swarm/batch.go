@@ -39,6 +39,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
@@ -1301,6 +1302,16 @@ func readCards(path string) ([]batchCard, error) {
 				slot = n
 			}
 		}
+		// THE LABEL IS A NAME (issue #1923). Every consumer of this column joins it into a
+		// path: batch makes <root>/<scratch>/jobs/<label>, selfNative passes it to `native`
+		// as --label, and native joins it again into the job directory, the temp directory
+		// and the wall's write set. A TSV row spelling `../../../OUTSIDE` is a card naming
+		// a directory outside the swarm root, so the name is judged here, at the parse,
+		// where the line number can be named -- not per card at admission, because a label
+		// that is a path is a malformed table rather than a card that abstains.
+		if !safepath.NameOK(parts[0]) {
+			return nil, fmt.Errorf("--cards line %d wants a label that is a name: letters, digits, dot, dash or underscore, no path separator and no \"..\", got %q", i+1, parts[0])
+		}
 		cardPath := parts[3]
 		cardRaw, err := os.ReadFile(cardPath)
 		if err != nil {
@@ -1403,7 +1414,7 @@ func cardHarnessSilent(job string) bool {
 		return false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(line, "NATIVE OK ") {
+		if !isNativeVerdictLine(line) {
 			continue
 		}
 		for _, tok := range strings.Fields(line) {
@@ -1428,7 +1439,7 @@ func cardFenceRejected(job string) (string, bool) {
 		return "", false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(line, "NATIVE OK ") {
+		if !isNativeVerdictLine(line) {
 			continue
 		}
 		fields := strings.Fields(line)
@@ -1443,6 +1454,16 @@ func cardFenceRejected(job string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// isNativeVerdictLine reports whether a line is `native`'s own verdict line, in either of
+// its two words. `NATIVE OK` used to be the only one; a run that produced nothing now says
+// `NATIVE INCOMPLETE` instead (nova-tools #1844), and the tokens this file reads off that
+// line -- harness=silent, fence=rejected -- are exactly as true on the incomplete one.
+// Reading only "NATIVE OK " would have silently stopped seeing them for failed runs, which
+// is the class of bug the rename exists to end.
+func isNativeVerdictLine(line string) bool {
+	return strings.HasPrefix(line, "NATIVE OK ") || strings.HasPrefix(line, "NATIVE INCOMPLETE ")
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
