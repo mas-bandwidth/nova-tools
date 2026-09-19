@@ -46,6 +46,7 @@
                (:file "src/compaction")
                (:file "src/new-verbs")
                (:file "src/decide")
+               (:file "src/request-line")
                (:file "src/replays-verdict-state")
                (:file "src/replays-notes")))
 
@@ -80,4 +81,5 @@
                 (:file "tests/replays-8682")
                 (:file "tests/replays-notes")
                 (:file "tests/replays-785-gate")
+                (:file "tests/request-line")
                 (:file "tests/replays-concurrency-witness")))

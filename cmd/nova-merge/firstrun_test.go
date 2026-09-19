@@ -61,6 +61,11 @@ func (l *lab) rehearsalRemote() string {
 	path := filepath.Join(l.dir, "rehearsal.git")
 	if _, err := os.Stat(path); err != nil {
 		l.git(l.dir, "init", "-q", "--bare", path)
+		// The rehearsal PUSHES here, and a receive-pack starts with this repository's
+		// own config and none of the caller's -c settings (#1607).
+		for _, kv := range quietRepoSettings() {
+			l.git(path, "config", kv[0], kv[1])
+		}
 	}
 	return path
 }

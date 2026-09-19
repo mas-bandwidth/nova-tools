@@ -1736,6 +1736,22 @@ with the stamp, seat and space checks shared. Left out, `--os` is asked of the b
 `uname -s`. With no `--want` the stamp check reports what the bench has instead of
 demanding one.
 
+The on-host witness, `tools/bench-standard.sh`, asks the space question **with the same
+probe and the same floor** — `df -Pk "$HOME"` in gigabytes against `NOVA_MIN_FREE_G`
+(default 25) — and names the three largest directories under `$HOME` when it drifts, so the
+line says where the space went rather than only that there is none (#1048):
+
+```
+DRIFT disk free=3G want>=25G (both launchers refuse below it); largest under /home/rowan: /home/rowan/rowan-swarm-root 53G; /home/rowan/go 8G; /home/rowan/nova-bench 2G
+```
+
+25 GB is not a round number chosen here: it is a term of the launcher's own capacity
+formula, `allowed = min(cores*1.5 - load - 8, (free_gb - 25)/2, memfree_gb/2)`, so a bench
+below it is a bench nothing will be launched onto — which is a drift however clean the rest
+of the standard finds it. A Go card costs 5–7 GB in its own slot against 330 MB for a Lisp
+card, which is how two benches reached 100% under 120 cards and lost their runners. The
+`du` runs only on the failing path: a green run never pays for a walk of the whole home.
+
 `fleet mirror` creates the bare mirror a card clones from, or fetches the one already
 there, and **deletes nothing**:
 
