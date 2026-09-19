@@ -322,7 +322,11 @@ verb keyword, FORM the spelling of the gated form, GATE one of :REFUSES,
    ;; `dep` is a WRITER verb and NOT an admission verb: rule 6 says scope edits
    ;; are ungated (SPEC-WORK.md:5018). It is in this table because the table is
    ;; what `%submit` routes by, not because it admits anything.
-   (list :dep         '%dep-submit                   nil               nil       nil))
+   (list :dep         '%dep-submit                   nil               nil       nil)
+   ;; `report` records a hand act and changes no tree state, so it admits
+   ;; nothing; it is here because this table is what `%submit` routes by, and
+   ;; because the whole mutation must happen inside the writer.
+   (list :report      '%report-submit                nil               nil       nil))
   "THE DISPATCH TABLE `%submit` routes by, and the one source of truth for what
 each dispatched verb can ADMIT.
 

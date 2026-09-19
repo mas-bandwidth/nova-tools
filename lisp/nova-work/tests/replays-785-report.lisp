@@ -218,3 +218,87 @@
     ;; and in every case: no event, no journal record, no dedup entry
     (check-equal '() (state-reports (kernel-state k))
                  "not one refusal wrote an event")))
+
+;;; ------------------------------------------------------------------
+;;; the whole report mutation happens inside the single writer
+;;;    Stella's [P1] on 12236baa          SPEC-WORK.md:5052
+;;; ------------------------------------------------------------------
+
+(deftest "a-report-is-one-command-in-the-writers-total-order"
+    "docs/SPEC-WORK.md:5052"
+    "expected=unique-monotone-revisions-authoritative-facts-correct-replay-atomic-failure"
+  ;; The first cut prepared the event, took its revision from `kernel-next-rev`
+  ;; and then asked the journal for acceptance -- all on the CALLER's thread.
+  ;; With the prepared report paused before acceptance, a normal `submit`
+  ;; committed revisions 1 and 2; the report then resumed, wrote revision 1
+  ;; again and reset `next-rev` to 2. Its `:unmet` and `:need` were read at the
+  ;; same stale moment.
+  ;;
+  ;; UNIQUE, MONOTONE REVISIONS under concurrency.
+  (let* ((k (report-kernel))
+         (threads '()))
+    (dotimes (i 8)
+      (let ((n i))
+        (push (sb-thread:make-thread
+               (lambda ()
+                 (report-submit k :subject "machine:space" :act :other
+                                  :what (format nil "hand act ~D" n)
+                                  :acted-at "2026-09-16T12:00:00Z" :instead-of "-"
+                                  :reason "concurrency" :as "rowan"
+                                  :request (format nil "conc-~D" n)
+                                  :stamp "2026-09-16T12:01:30Z"))
+               :name (format nil "reporter-~D" n))
+              threads)))
+    (dolist (thread threads) (sb-thread:join-thread thread :default nil))
+    (let* ((events (state-reports (kernel-state k)))
+           (revs (mapcar (lambda (e) (getf e :rev)) events)))
+      (check-equal 8 (length events) "every concurrent report was written")
+      (check-equal 8 (length (remove-duplicates revs))
+                   "each took a revision of its own: no two share one")
+      (check-equal (sort (copy-list revs) #'<) revs
+                   "and the journal holds them in revision order")))
+  ;; FACTS APPLIED AGAINST THE AUTHORITATIVE STATE: a report's node half is read
+  ;; on the writer, so it cannot be stale with respect to a settle that the
+  ;; writer applied before it.
+  (let ((k (report-kernel)))
+    (submit k (list :verb :state-to-doing :node "acme/work/n" :by "rowan"
+                    :reason "start" :request "n-doing"
+                    :stamp "2026-09-16T11:00:00Z" :clock :tool
+                    :generation-owner "gen-1"))
+    (submit k (list :verb :state-to-done :node "acme/work/n" :by "rowan"
+                    :reason "merged" :evidence (list "ev-1") :request "n-done"
+                    :stamp "2026-09-16T11:30:00Z" :clock :tool
+                    :generation-owner "gen-1"))
+    (setf (kernel-needs-view k) (session-needs-view k))
+    (multiple-value-bind (okp line)
+        (report-submit k :subject "node:acme/work/d" :act :launched
+                         :what "started a worker" :acted-at "2026-09-16T12:00:00Z"
+                         :instead-of "-" :reason "after the settle" :as "rowan"
+                         :request "after-settle" :stamp "2026-09-16T12:00:30Z")
+      (ok okp "the report is written: ~A" line)
+      (ok (search "unmet=0 need=-" line)
+          "and its diagnostics are read at the revision it was applied at: ~A" line)))
+  ;; CORRECT REPLAY: a retransmission answers the original receipt and writes
+  ;; no second event or revision.
+  (let ((k (report-kernel)))
+    (multiple-value-bind (okp first-line) (a-report k)
+      (ok okp "the first report: ~A" first-line)
+      (let ((rev (state-revision (kernel-state k))))
+        (multiple-value-bind (okp again) (a-report k)
+          (ok okp "the retransmission is admitted")
+          (check-string= first-line again "and answers the original receipt"))
+        (check-equal rev (state-revision (kernel-state k))
+                     "and takes no second revision")
+        (check-equal 1 (length (state-reports (kernel-state k)))
+                     "and writes no second event"))))
+  ;; ATOMIC FAILURE: a refusal takes no revision and leaves no event.
+  (let* ((k (report-kernel))
+         (rev (state-revision (kernel-state k))))
+    (multiple-value-bind (okp line code) (a-report k :as "stranger")
+      (declare (ignore line))
+      (ok (not okp) "an unknown reporter is refused")
+      (check-equal 1 code "at exit 1"))
+    (check-equal rev (state-revision (kernel-state k))
+                 "the refusal took no revision")
+    (check-equal '() (state-reports (kernel-state k))
+                 "and left no event")))

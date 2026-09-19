@@ -93,7 +93,27 @@ resolution, C included -- `%node` holds both branches."
                    t))
       (:external t))))
 
-(defun report-submit (kernel &key subject act what acted-at instead-of reason
+(defun %report-submit (kernel request)
+  "`report`, run on the kernel's one command thread.
+
+STELLA'S [P1] ON 12236baa: the first cut prepared the event, took the revision
+from `kernel-next-rev` and then asked the journal for acceptance -- all on the
+CALLER's thread. With the prepared report paused before journal acceptance, a
+normal `submit` committed revisions 1 and 2; the report then resumed, wrote
+revision 1 again and reset `next-rev` to 2. Its `:unmet` and `:need` were read
+at the same stale moment.
+
+The whole mutation is now one command: validation, the dedup answer, the
+revision, the node diagnostics, the journal record and the apply all happen
+here, inside the writer, in the one total order -- the same `%oneshot-submit`
+path `take --node` and `dep` take.
+
+Request is the kernel command plist; `report-submit` is the caller's wrapper."
+  (apply (function %report-submit-1) kernel
+         (loop for (key value) on request by (function cddr)
+               unless (eq key :verb) append (list key value))))
+
+(defun %report-submit-1 (kernel &key subject act what acted-at instead-of reason
                                   as request stamp (clock :tool) expect skew view)
   "`report`: one `:report` event recording a hand act, changing nothing.
 
@@ -129,14 +149,15 @@ A report carries no secret: a report about a key names where the key is and
 never its value, which is the reporter's duty and no check this tool can make
 on free text."
   (let* ((state (kernel-state kernel))
+         (view (or view (kernel-needs-view kernel)))
          (selector-text (if (%report-text-p subject) subject "-")))
     (labels ((refuse2 (what)
-               (return-from report-submit
+               (return-from %report-submit-1
                  (values nil (format nil "REPORT FAIL subject=~A: ~A; run: nova-work help"
                                      selector-text what)
                          2 nil)))
              (refuse1 (sel what)
-               (return-from report-submit
+               (return-from %report-submit-1
                  (values nil (format nil "REPORT FAIL subject=~A: ~A" sel what) 1 nil))))
       ;; ---- exit 2: an invocation it cannot read (SPEC-WORK.md:5095) --------
       (unless (%report-text-p subject) (refuse2 "refusing to guess: --subject"))
@@ -163,7 +184,7 @@ on free text."
             (refuse2 "--now is not an RFC 3339 UTC stamp"))
           ;; ---- exit 1: the session's own refusals (SPEC-WORK.md:5090) ------
           (when (and expect (/= expect (state-revision state)))
-            (return-from report-submit
+            (return-from %report-submit-1
               (values nil (format nil "REPORT FAIL subject=~A expect=~D current=~D: stale"
                                   selector expect (state-revision state))
                       1 nil)))
@@ -219,17 +240,17 @@ on free text."
                   (journal-lookup (kernel-journal kernel) request)
                 (cond
                   ((eq found :unavailable)
-                   (return-from report-submit
+                   (return-from %report-submit-1
                      (values nil (format nil "REPORT FAIL subject=~A page=~A: dedup unavailable"
                                          selector recorded-digest)
                              1 nil)))
                   (found
                    (if (string= digest recorded-digest)
-                       (return-from report-submit
+                       (return-from %report-submit-1
                          (values t recorded-line 0
                                  (list :request request :digest digest
                                        :events '() :replayed t)))
-                       (return-from report-submit
+                       (return-from %report-submit-1
                          (values nil (format nil "REPORT FAIL subject=~A: reused with a different payload"
                                              selector)
                                  1 nil))))))
@@ -237,7 +258,7 @@ on free text."
                 (multiple-value-bind (accepted refusal)
                     (journal-accept (kernel-journal kernel) envelope)
                   (unless accepted
-                    (return-from report-submit
+                    (return-from %report-submit-1
                       (values nil (format nil "REPORT FAIL subject=~A: journal refused acceptance: ~A"
                                           selector refusal)
                               1 nil))))
@@ -257,7 +278,22 @@ on free text."
                 (values t line 0 envelope)))))))))
 
 (defun state-reports (state)
-  "Every `:report` event in the journal, oldest first. A read."
-  (loop for record in (reverse (state-history state))
+  "Every `:report` event in the journal, OLDEST FIRST. A read.
+
+`state-history` already answers oldest first; the first cut reversed it again
+and handed back newest first, which the concurrency case below caught."
+  (loop for record in (state-history state)
         append (remove-if-not (lambda (e) (eq :report (getf e :kind)))
                               (getf record :events))))
+
+(defun report-submit (kernel &key subject act what acted-at instead-of reason
+                                  as request stamp (clock :tool) expect skew view)
+  "`report`: the caller's wrapper. It submits one `:report` command, so the
+whole mutation -- validation, dedup, the revision, the node diagnostics, the
+journal record and the apply -- happens on the kernel's one command thread, in
+the one total order (Stella's [P1] on 12236baa)."
+  (submit kernel (list :verb :report
+                       :subject subject :act act :what what :acted-at acted-at
+                       :instead-of instead-of :reason reason :as as
+                       :request request :stamp stamp :clock clock
+                       :expect expect :skew skew :view view)))

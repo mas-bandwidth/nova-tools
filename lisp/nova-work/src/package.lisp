@@ -1984,6 +1984,7 @@
     #:parse-report-subject
     #:report-subject-selector
     #:report-submit
+    #:%report-submit
     #:state-reports
     #:kind-session-fields
     #:record-form->event
