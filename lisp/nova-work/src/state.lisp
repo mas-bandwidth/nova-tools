@@ -25,8 +25,6 @@
   ;; needed, not owned, not counted. DEPENDENTS is the reverse edge, kept so a
   ;; revert reaches the dependents it breaks in one bounded walk.
   deps dependents
-  ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
-  needs-broken
   ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
   ;; They live on the node like every other value and move on write. :repo is
   ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
@@ -185,7 +183,6 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :open-count 0
                           :deps (copy-list (getf spec :deps))
                           :dependents '()
-                          :needs-broken nil
                           :links (getf spec :links +absent+)
                           :title (getf spec :title +absent+)
                           :category (getf spec :category +absent+)
@@ -376,13 +373,6 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (copy-list (wnode-deps n))))
 
-(defun node-needs-broken (state id)
-  "True when a need of this node was reverted after this node landed
-(SPEC-WORK.md:2110, the `needs-broken` flag)."
-  (let ((n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (wnode-needs-broken n)))
-
 ;;; ------------------------------------------------------------------
 ;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
 ;;; ------------------------------------------------------------------
@@ -482,21 +472,13 @@ both."
                            (every (lambda (m) (%need-terminal-p state m)) members)))
                     t))))))
 
-;;; `ready-p` and `ready-nodes` moved to src/needs.lisp: after Stella's repair of
-;;; the evidence check they must read the SAME predicate the gate reads, and
-;;; that predicate reads the verification cache, which this file loads before.
+;;; `ready-p`, `ready-nodes`, `node-needs-broken` and the `ready` row moved to
+;;; src/needs.lisp with rules 2 and 5 (nova-tools #785): they read the five
+;;; reason tokens and the verification cache, and this file loads before both.
+;;; `%recheck-needs-broken` is gone with the slot it maintained -- rule 5 says
+;;; `needs-broken` is derived and "written nowhere as authority"
+;;; (SPEC-WORK.md:4972).
 
-(defun %recheck-needs-broken (state id settled-p)
-  "Re-evaluate the dependents of ID after it settled (SETTLED-P true, clear the
-flag where every need is terminal again) or was reverted (false, raise it)."
-  (dolist (dependent (wnode-dependents (%node-quiet state id)))
-    (let ((d (%node-quiet state dependent)))
-      (when d
-        (setf (wnode-needs-broken d)
-              (if settled-p
-                  (not (every (lambda (dep) (%need-terminal-p state dep))
-                              (wnode-deps d)))
-                  t))))))
 (defun node-estimate (state id)
   "The node's estimate record, or +ABSENT+ when it carries none. A node with an
 estimate of zero is not a node without one."
@@ -646,18 +628,12 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                    :stamp (work-event-stamp event)
                     :revived (wnode-revived node)
                     :settles (wnode-settles node))
-             (wstate-rows state))
-       ;; A settle is a terminal accepted need: re-evaluate the dependents it
-       ;; unblocks, clearing needs-broken where their needs are all terminal.
-       (%recheck-needs-broken state id t))
+             (wstate-rows state)))
       (:revive
        (unless (eq :c (wnode-branch node))
          (error 'unsupported-input :what (format nil "rule 18: ~A is not in C" id)))
        (setf (wnode-branch node) :o)
        (%adjust-counters state id 1)
-       ;; A revert breaks the dependents that had counted on this need: flag
-       ;; them needs-broken so they are re-evaluated, never silently launched.
-       (%recheck-needs-broken state id nil)
        (setf (wnode-revived node) (work-event-rev event))
        (push (list :key (closed-row-key event) :kind :revive :node id
                    :rev (work-event-rev event)
