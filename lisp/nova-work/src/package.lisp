@@ -1104,6 +1104,7 @@
     #:stage-receipt
     #:staged-input-p
     #:receipt-submit
+    #:stage-payload-file
     #:admitted-receipts
     #:admitted-receipt
     #:session-written-field
