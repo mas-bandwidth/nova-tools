@@ -113,7 +113,7 @@ the dispatcher's own `HOME` does not.
 
 ```
 $ nova-sandbox check
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+CHECK OK backend=sandbox-exec abi=- net=enforceable hosts=none note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox probe --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 --secret /Users/me/.config/anthropic/env
 PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-46261
@@ -154,6 +154,8 @@ SECRETS RULE     - path_regex: ^rowan\.yaml$
 SECRETS RULE       age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk,age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
 SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
+Done. Your new key is at /Users/me/.config/nova-secrets/rowan.key. Nothing failed.
+Next: send this public key to whoever seals your seat: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
 $ nova-secrets check --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
 SECRETS CHECK OK  as=other recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9

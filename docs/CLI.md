@@ -35,7 +35,7 @@ nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the materia
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <<email>>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
-nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 ```
 
 ### First run
@@ -661,7 +661,7 @@ nova-secrets exec --store ~/rowan-working/secrets --as studio \
 ### outcome — the other half of the row
 
 ```
-nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked
+nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
 ```
 
 What **happened** to a unit a decision routed. Rule 8 asks for the decision to be logged beside the outcome it predicted, and this is the half nobody was writing: on 2026-09-18 the shared log held 78 rows, 73 escalations and **zero** successes, so `log --summary` had nothing to regenerate a starting rung from.
@@ -673,7 +673,7 @@ $ nova-decide outcome --log ~/rowan-working/queue/decide/route.jsonl --unit-id r
 OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 ```
 
-`green` is `ok` and names the rung that succeeded, `red` is `failed`, `blocked` is `abandoned`. The kind and the rung are read from that unit's last **decision** row rather than retyped, because a caller who has to retype them will eventually retype them wrong; an outcome for a unit no decision routed is a refusal, not a row. It appends a row of its own — the log is append-only and a row written is never rewritten — marked `source: outcome`, which the summary folds into the rung it names without counting a second decision.
+`green` is `ok` and names the rung that succeeded, `red` is `failed`, `blocked` is `abandoned`, and `skipped` is `skipped` — a unit a precondition stopped before it ran, which is no rung's success and no rung's failure, so it moves no floor in either direction while still being a row `coverage` can see. The kind and the rung are read from that unit's last **decision** row rather than retyped, because a caller who has to retype them will eventually retype them wrong; an outcome for a unit no decision routed is a refusal, not a row. It appends a row of its own — the log is append-only and a row written is never rewritten — marked `source: outcome`, which the summary folds into the rung it names without counting a second decision.
 
 ### log — the escalation log
 
@@ -681,12 +681,12 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 nova-decide log --log <path> --summary [--registry <path>]
 ```
 
-`route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, and the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures. A kind with no success keeps the rung the table started from.
+`route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, and the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures. A kind with no success keeps the rung the table started from. The closing line carries `coverage=<outcomes>/<decisions>`, rows against rows: the two halves of rule 8's row, so the share of decisions with an outcome beside them is visible rather than guessed — it was 141 of 412 on 2026-09-19, and a floor tuned on a third of the rows is tuned on the rows somebody remembered.
 
 ```
 $ nova-decide log --log ./decide.jsonl --summary
 LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
-LOG OK rows=1 kinds=1 escalations=0
+LOG OK rows=1 kinds=1 escalations=0 coverage=0/1
 ```
 
 ## Build
