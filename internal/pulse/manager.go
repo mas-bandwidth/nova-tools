@@ -30,6 +30,8 @@ type ManagerInput struct {
 	Roots  string // comma-separated swarm roots, the benches this shift harvests
 	Bus    string // the nova-bus clone this shift is the single waiter on
 	As     string // the name this shift waits and receipts as
+	Remote string // the git remote nova-bus wait fetches the bus from
+	Branch string // the branch the bus lives on
 	// Bench turns the remote read on: comma-separated ssh targets, positionally paired with
 	// Roots (the i'th entry is the ssh target for the i'th --roots entry). Empty -- true of
 	// every existing test and invocation today -- leaves the harvest local-only.
@@ -247,7 +249,7 @@ func (m *manager) waitBus() []string {
 		d = 3 * time.Minute
 	}
 	out, err := m.sh("", d+time.Minute, "nova-bus", "wait", "--bus", m.in.Bus, "--as", m.in.As,
-		"--timeout", m.pol.WaitTimeout, "--advance")
+		"--timeout", m.pol.WaitTimeout, "--advance", "--remote", m.in.Remote, "--branch", m.in.Branch)
 	if err != nil {
 		m.event("MANAGER NOTE bus wait failed: %s", oneline.Cap(strings.TrimSpace(out), 120))
 		return nil
@@ -430,6 +432,25 @@ func (m *manager) openPR(card, job string, lines []string) {
 	case isFixBranch(branch) && !hasRedLine(lines) && !m.hasTestInDiff(dir):
 		m.move(card, "failed")
 		m.event("MANAGER REFUSED card=%s branch=%s: a fix without its reproducing test is not admitted (add the red: line or a test file to the diff)", oneline.Field(card), oneline.Field(branch))
+		return
+	}
+	// THE KEY-SHAPE SCAN COMES BEFORE THE PUSH (#1814). The manager tier pushes the branch
+	// and copies the same RESULT.md lines into the PR body, so it passes the one guard
+	// every publishing path passes. A hit refuses, quarantines the job beside its own
+	// jobs/ directory, writes the HUMAN line into the queue, and fails the card.
+	findings, scanErr := secretFindings(job, dir, "", lines)
+	if scanErr != nil {
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s: %s", oneline.Field(card), secretScanRefusalLine("manager", card, scanErr))
+		return
+	}
+	if len(findings) > 0 {
+		var note strings.Builder
+		secretRefusal{Site: "manager", Label: card, JobDir: job,
+			HumanDir: m.in.Queue, Out: &note}.refuse(findings)
+		m.move(card, "failed")
+		m.event("MANAGER REFUSED card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch),
+			oneline.Cap(strings.TrimSpace(note.String()), 300))
 		return
 	}
 	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {

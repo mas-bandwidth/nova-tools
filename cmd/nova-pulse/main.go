@@ -608,6 +608,8 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	roots := f.fs.String("roots", "", "")
 	bus := f.fs.String("bus", "", "")
 	as := f.fs.String("as", "", "")
+	remote := f.fs.String("remote", "", "")
+	branch := f.fs.String("branch", "", "")
 	hours := f.fs.Float64("hours", -1, "")
 	max := f.fs.Int("max", bounded.Default, "")
 	bench := f.fs.String("bench", "", "")
@@ -621,6 +623,8 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	f.want(*roots, "roots", "the benches this shift harvests, comma separated")
 	f.want(*bus, "bus", "the nova-bus clone this shift is the single waiter on")
 	f.want(*as, "as", "the name this shift waits and receipts as")
+	f.want(*remote, "remote", "the git remote this shift fetches the bus from (required: a wait that cannot fetch cannot notice anything)")
+	f.want(*branch, "branch", "the branch the bus lives on (required)")
 	if *hours < 0 {
 		f.add(fmt.Sprintf("--hours is required and is 0 or more, got %v; 0 runs exactly one cycle", *hours))
 	}
@@ -632,6 +636,7 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	}
 	return pulse.Manager(pulse.ManagerInput{
 		Policy: *policy, Queue: *queue, Roots: *roots, Bus: *bus, As: *as,
+		Remote: *remote, Branch: *branch,
 		Bench: *bench, SSH: *ssh,
 		Hours: *hours, Max: *max, Stdout: stdout, Stderr: stderr,
 	})
