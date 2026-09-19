@@ -53,6 +53,7 @@ type storeProbeConfig struct {
 func storeProbeCapacity(c storeProbeConfig) pulse.Capacity {
 	return pulse.StoreCapacity{
 		Probe:          c.probe,
+		Owner:          c.Owner,
 		MaxLoadPerCore: c.MaxLoad,
 		Stderr:         c.Stderr,
 	}
@@ -89,22 +90,56 @@ func runProbeLocally(script string) (string, error) {
 	return runProbe(exec.Command("/bin/sh", "-c", script))
 }
 
-// runProbe runs the probe and keeps the child's last line, so a probe that failed says why
-// rather than answering a bare exit status.
+// probeAnswerLimit bounds what a bench may say. A bench is the least trusted thing on this
+// wire, and the answer used to land in an unbounded buffer: a bench that printed for ever
+// cost the coordinator its memory. A real store's whole listing is a few hundred lines.
+const probeAnswerLimit = 64 << 10
+
+// runProbe runs the probe, reads a BOUNDED answer, and keeps the child's last line, so a
+// probe that failed says why rather than answering a bare exit status.
 func runProbe(cmd *exec.Cmd) (string, error) {
-	var out bytes.Buffer
+	out := &capped{limit: probeAnswerLimit}
 	said := &tail{}
-	cmd.Stdout, cmd.Stderr = &out, said
+	cmd.Stdout, cmd.Stderr = out, said
 	if err := cmd.Run(); err != nil {
 		return "", said.wrap(err)
 	}
-	return out.String(), nil
+	if out.over {
+		return "", fmt.Errorf(
+			"the bench answered more than %d bytes; refusing to read a capacity off an answer with no end", probeAnswerLimit)
+	}
+	return out.buf.String(), nil
+}
+
+// capped keeps at most limit bytes and remembers that there were more. It never fails the
+// child's write, so the probe is not killed by a broken pipe halfway through.
+type capped struct {
+	buf   bytes.Buffer
+	limit int
+	over  bool
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := c.limit - c.buf.Len(); room > 0 {
+		if len(p) <= room {
+			c.buf.Write(p)
+		} else {
+			c.buf.Write(p[:room])
+			c.over = true
+		}
+	} else if len(p) > 0 {
+		c.over = true
+	}
+	return len(p), nil
 }
 
 // storeScript is what the bench runs. It prints exactly one of
 //
-//	store share=<n> held=<n> cores=<n> load1=<f>
-//	formula capacity=<n> cores=<n> load1=<f>
+//	store share=<n> cores=<n> load1=<f>
+//	leases
+//	<nova-swarm slots list's own output, verbatim, for Go to count>
+//
+//	formula capacity=<n> cores=<n> load1=<f> why=<no-shares-file|no-row-for-owner>
 //	unreadable reason=<why> ...
 //
 // and nothing else, so the caller parses an answer rather than a shell transcript. `nproc`
@@ -115,20 +150,21 @@ func runProbe(cmd *exec.Cmd) (string, error) {
 // `h=$("$B" slots list ... | grep -c ...)`, whose status is grep's: a missing or failing
 // nova-swarm printed nothing, grep counted 0, the script succeeded, and a bench with every
 // slot leased answered `held=0` -- its whole share dealt to a machine with nothing free.
-// The output is captured first and its exit status checked, and the lines are checked
-// against `slots list`'s own contract (one `SLOT ... owner=<o> ... state=<s>` per lease,
-// and nothing else) so noise is not silently read as an empty store. An EMPTY list, which
-// is a bench with its whole share free, stays an empty list.
+// The output is captured first -- a plain command substitution, never a pipeline -- its
+// exit status checked, and then handed back VERBATIM so Go counts it (pulse.countLeases):
+// a shell that counts is a shell whose status belongs to grep. An EMPTY list, which is a
+// bench with its whole share free, stays an empty list.
 //
-// The ONE fallthrough to the formula is the documented no-store-row case: no shares.tsv, or
-// a shares.tsv with no row for this owner. A shares.tsv that is there and cannot be read,
-// and a share that is not a whole number, are refusals -- not a quiet reversion to the
-// number this change exists to stop using.
+// The ONE fallthrough to the formula is the documented no-store-row case: no shares.tsv at
+// all, or a readable shares.tsv with no row for this owner AND a lease read that SUCCEEDED.
+// It carries `why=` so it is never silent. A shares.tsv that is there and cannot be read, a
+// share that is not a whole number and a lease read that failed are refusals -- not a quiet
+// reversion to the number this change exists to stop using.
 func storeScript(store, owner, slotsBin, root string) string {
 	if strings.TrimSpace(slotsBin) == "" {
 		slotsBin = defaultSlotsBin
 	}
-	formula := legacyFormula(root) + `; echo "formula capacity=$a cores=$c load1=$l"; exit 0`
+	formula := legacyFormula(root) + `; echo "formula capacity=$a cores=$c load1=$l why=$w"; exit 0`
 	return strings.Join([]string{
 		`S="` + shellDoubleQuoted(store) + `"`,
 		`O="` + shellDoubleQuoted(owner) + `"`,
@@ -137,22 +173,23 @@ func storeScript(store, owner, slotsBin, root string) string {
 		`[ -n "$c" ] || c=0`,
 		`l=$(cut -d" " -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')`,
 		`[ -n "$l" ] || l=0`,
-		// No store at all: the documented fallback, and the only one.
-		`if [ ! -f "$S/shares.tsv" ]; then ` + formula + `; fi`,
+		// No store on this bench at all: the documented fallback, positively detected,
+		// and it says which case it is.
+		`if [ ! -e "$S/shares.tsv" ]; then w=no-shares-file; ` + formula + `; fi`,
 		`if [ ! -r "$S/shares.tsv" ]; then echo "unreadable reason=shares-unreadable"; exit 0; fi`,
 		`sh=$(awk -F'\t' -v o="$O" '$1==o{print $2}' "$S/shares.tsv" 2>/dev/null)`,
-		// No row for this owner: the same documented fallback.
-		`if [ -z "$sh" ]; then ` + formula + `; fi`,
-		`case "$sh" in ''|*[!0-9]*) echo "unreadable reason=share-not-a-whole-number"; exit 0;; esac`,
-		// THE LEASE READ. Its status is the read's, never a pipeline's.
+		// THE LEASE READ, AND ITS OWN EXIT STATUS. It is a plain command substitution,
+		// never a pipeline, so the status is the reader's and not grep's -- and it runs
+		// BEFORE the no-row fallback, so the one path back to the formula is only ever
+		// taken off a listing that succeeded.
 		`o=$("$B" slots list --store "$S" 2>/dev/null); rc=$?`,
 		`if [ "$rc" -ne 0 ]; then echo "unreadable reason=slots-list-exit rc=$rc"; exit 0; fi`,
-		`n=$(printf '%s\n' "$o" | grep -c '[^[:space:]]')`,
-		`k=$(printf '%s\n' "$o" | grep -c '^SLOT .*owner=.*state=')`,
-		`if [ "$n" -ne "$k" ]; then echo "unreadable reason=slots-list-malformed lines=$n leases=$k"; exit 0; fi`,
-		`h=$(printf '%s\n' "$o" | grep -c "^SLOT .*owner=$O .*state=live")`,
-		`[ -n "$h" ] || h=0`,
-		`echo "store share=$sh held=$h cores=$c load1=$l"`,
+		`if [ -z "$sh" ]; then w=no-row-for-owner; ` + formula + `; fi`,
+		`case "$sh" in ''|*[!0-9]*) echo "unreadable reason=share-not-a-whole-number"; exit 0;; esac`,
+		// The listing goes back VERBATIM; the counting is Go's.
+		`echo "store share=$sh cores=$c load1=$l"`,
+		`echo "leases"`,
+		`printf '%s\n' "$o"`,
 	}, "; ")
 }
 

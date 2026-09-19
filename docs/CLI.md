@@ -1517,7 +1517,7 @@ own answer to "how many more cards may I take", and it is the same number
 `nova-swarm native --slots-store --owner` enforces at launch:
 
 ```
-free = <store>/shares.tsv's <owner> row  -  that owner's live leases
+free = <store>/shares.tsv's <owner> row  -  that owner's held leases (live or DRIFT)
 ```
 
 `--slots-store <path>` is the store on the bench, `$HOME/nova-bench/slots` by default
@@ -1525,9 +1525,7 @@ and expanded by the bench's own shell; `--slots-owner <name>` is the row, `swarm
 by default, the seat the launcher already hands the bench; `--slots-bin <path>` is the
 `nova-swarm` that lists the leases, `$HOME/.local/bin/nova-swarm` by default, because
 a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
-no `nova-swarm` would read zero leases and call a full bench empty. An owner holding
-more than its share -- a share lowered under live work -- is a bench with nothing
-free, never a negative and never a card asked back.
+no `nova-swarm` would read zero leases and call a full bench empty.
 
 **`--max-load-per-core <f>` is the brake, `1.5` by default, `0` for none.** A bench
 whose `load1/cores` is above it is dealt nothing this tick and says so by name, with
@@ -1546,21 +1544,46 @@ against every bench, so a threshold nothing can exceed is a brake that is silent
 off, and both are refusals (exit 2) naming the flag. With the brake on, a bench that
 cannot count its cores is refused rather than filled unbraked.
 
-**A capacity nobody read is a refusal, not an empty bench.** Three things the probe
-can hit are refusals — the bench is dealt nothing, the tick says why in a `FILL NOTE`,
-and a tick where every bench was refused exits 1:
+**FAIL CLOSED: every probe or parse failure is `free=0` on that bench, said by name.**
+A bench is the least trusted thing on this wire — it cannot make the coordinator run
+anything, but it can make it *believe* a free count, and every soft edge read HIGH. So
+a failure is never a deal and never a silent fall-through. The bench is dealt nothing,
+one line names it and the reason, and a tick where every bench failed exits 1:
+
+```
+FILL UNREADABLE bench=<name> free=0 reason=<what went wrong>
+```
+
+Every failing bench gets its own line, not just the first. These are the refusals:
 
 | what happened | why it is not zero-free |
 |---|---|
 | `slots list` could not run, or exited non-zero | a full bench would read `held=0` and be dealt its whole share |
-| `slots list` printed something that is not leases | noise is not the same fact as an empty store |
+| a row of the listing is not a lease, or has no `owner=`/`state=`, or a `state=` this fill does not know | noise is not the same fact as an empty store |
 | `shares.tsv` is there and cannot be read, or its share is not a whole number | the store exists and its answer is unknown |
-| the probe's line does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice | a reading nobody can read one way is not a reading to act on |
+| the owner holds more leases than its share | an owner cannot hold more than its share, so the reading went wrong |
+| the header does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice, or a field this answer has no business carrying | a reading nobody can read one way is not a reading to act on |
+| the bench answered more than 64 KiB | an answer with no end is not an answer |
 
-An **empty** lease list is not one of them: a store whose owner holds nothing is a
-bench with its whole share free, and it fills. The one documented fall-through to the
-load formula is a bench with **no store row** — no `shares.tsv`, or no row for this
-owner.
+**The lease read's exit status is the READ's, and the counting is Go's.** It was
+`slots list ... | grep -c`, whose status belongs to grep: a missing `nova-swarm`
+printed nothing, grep counted `0`, the script exited 0, and a bench with every slot
+leased answered `held=0`. The listing now comes back verbatim and `fill` counts it,
+holding every row to `slots list`'s own contract. **A `DRIFT` lease counts as held** —
+expired by the clock with its process still alive — because that is what
+`nova-swarm native` counts when it grants, and a probe that counts fewer deals cards
+the bench then refuses.
+
+An **empty** lease list is not a failure: a store whose owner holds nothing is a bench
+with its whole share free, and it fills.
+
+**The one fall-through to the load formula is positively detected and never silent.**
+It is a bench with no store row — no `shares.tsv` at all, or a readable `shares.tsv`
+with no row for this owner **and a lease read that succeeded** — and it says so:
+
+```
+FILL FORMULA bench=<name> why=<no-shares-file|no-row-for-owner> capacity=<n> note="..."
+```
 
 **`--local-bench <name>` is a bench that is this machine.** Its store is read by this
 machine's own shell and no `ssh` is opened: there is no `ssh` from the Studio to the

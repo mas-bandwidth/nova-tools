@@ -201,16 +201,19 @@ func TestFillCountsTheOwnersLiveLeasesAndNobodyElses(t *testing.T) {
 func TestFillStillFallsBackToTheFormulaWithNoRowForTheOwner(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
+	// The lease read SUCCEEDS; the store simply has no row for this owner. That is the
+	// one documented path back to the old formula, and it is positively detected.
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
 	dir := t.TempDir()
 	fillReady(t, filepath.Join(dir, "ready"), 2)
 	store := fillStore(t, dir, "somebody-else", 9)
 
-	code, out, errb, _, _ := localFill(t, dir, store, filepath.Join(dir, "no-such-nova-swarm"))
+	code, out, errb, _, _ := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
 	if code == 2 {
 		t.Fatalf("a store with no row for the owner was a refusal, not the documented fallback; stderr=%q", errb)
 	}
-	if strings.Contains(errb, "slots-list") {
-		t.Fatalf("the no-row fallback went through the lease read: %q", errb)
+	if !strings.Contains(errb, "FILL FORMULA bench=bench-a why=no-row-for-owner") {
+		t.Fatalf("the fallback was silent or unnamed: %q", errb)
 	}
 	if !strings.Contains(out, "FILL tick=1") {
 		t.Fatalf("no tick ran: %q %q", out, errb)
@@ -243,17 +246,18 @@ func sshFill(t *testing.T, answer string, extra ...string) (int, string, string,
 // a valid capacity, and the first of them handed a bench MORE than its whole share.
 func TestFillRefusesAMalformedCapacityAnswer(t *testing.T) {
 	for name, answer := range map[string]string{
-		"negative held inflates the share": "store share=64 held=-10 cores=64 load1=1.0\n",
-		"negative share":                   "store share=-4 held=0 cores=64 load1=1.0\n",
-		"cores that is not a number":       "store share=4 held=0 cores=x load1=1.0\n",
-		"load that is not a number":        "store share=4 held=0 cores=64 load1=NaN\n",
-		"infinite load":                    "store share=4 held=0 cores=64 load1=+Inf\n",
-		"missing load":                     "store share=4 held=0 cores=64\n",
-		"missing cores":                    "store share=4 held=0 load1=1.0\n",
-		"duplicate share":                  "store share=4 share=400 held=0 cores=64 load1=1.0\n",
-		"negative formula capacity":        "formula capacity=-3 cores=64 load1=1.0\n",
-		"share out of range":               "store share=99999999999999999999 held=0 cores=64 load1=1.0\n",
-		"the bench could not read it":      "unreadable reason=slots-list-exit rc=127\n",
+		"a held= the bench made up":       "store share=64 held=-10 cores=64 load1=1.0\nleases\n",
+		"negative share":                  "store share=-4 cores=64 load1=1.0\nleases\n",
+		"cores that is not a number":      "store share=4 cores=x load1=1.0\nleases\n",
+		"load that is not a number":       "store share=4 cores=64 load1=NaN\nleases\n",
+		"infinite load":                   "store share=4 cores=64 load1=+Inf\nleases\n",
+		"missing load":                    "store share=4 cores=64\nleases\n",
+		"missing cores":                   "store share=4 load1=1.0\nleases\n",
+		"duplicate share":                 "store share=4 share=400 cores=64 load1=1.0\nleases\n",
+		"negative formula capacity":       "formula capacity=-3 cores=64 load1=1.0\n",
+		"share out of range":              "store share=99999999999999999999 cores=64 load1=1.0\nleases\n",
+		"a share with no lease listing":    "store share=4 cores=64 load1=1.0\n",
+		"the bench could not read it":     "unreadable reason=slots-list-exit rc=127\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, out, errb, ready, launched := sshFill(t, answer)
@@ -277,7 +281,7 @@ func TestFillRefusesAMalformedCapacityAnswer(t *testing.T) {
 // answering no cores cannot be braked at all. Running it unbraked is the brake quietly
 // turning itself off, which is the shape of the whole bug.
 func TestFillRefusesToRunUnbrakedWhenTheBenchCannotCountItsCores(t *testing.T) {
-	code, out, errb, _, launched := sshFill(t, "store share=4 held=0 cores=0 load1=8.0\n", "--max-load-per-core", "1.5")
+	code, out, errb, _, launched := sshFill(t, "store share=4 cores=0 load1=8.0\nleases\n", "--max-load-per-core", "1.5")
 	if code == 0 {
 		t.Fatalf("a bench that could not be braked ran anyway; stdout=%q stderr=%q", out, errb)
 	}
@@ -290,7 +294,7 @@ func TestFillRefusesToRunUnbrakedWhenTheBenchCannotCountItsCores(t *testing.T) {
 // documented "no brake" and it must stay exactly that, cores or no cores. The repair may
 // not take the opt-out with it.
 func TestTheZeroBrakeOptOutStillFillsABenchWithNoCores(t *testing.T) {
-	code, out, errb, _, launched := sshFill(t, "store share=2 held=0 cores=0 load1=8.0\n", "--max-load-per-core", "0")
+	code, out, errb, _, launched := sshFill(t, "store share=2 cores=0 load1=8.0\nleases\n", "--max-load-per-core", "0")
 	if code != 0 {
 		t.Fatalf("the zero-brake opt-out refused; exit = %d stdout=%q stderr=%q", code, out, errb)
 	}

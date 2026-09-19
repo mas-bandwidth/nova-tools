@@ -280,6 +280,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	for i, bench := range in.Benches {
 		if n, err := in.Capacity.Capacity(bench); err != nil {
 			capacityFailed[i] = true
+			// FAIL CLOSED, AND SAY SO, PER BENCH. A probe or parse failure is zero free
+			// slots on THAT bench -- never a deal, never a fall-through -- and every
+			// failing bench gets its own line: the tick used to keep only the first
+			// reason, so a fleet nobody could read named one machine and went quiet.
+			fmt.Fprintf(in.Stderr, "FILL UNREADABLE bench=%s free=0 reason=%s\n",
+				field(bench), oneline.Err(err))
 			if res.err == nil {
 				res.err = fmt.Errorf("capacity on %s: %w", field(bench), err)
 			}

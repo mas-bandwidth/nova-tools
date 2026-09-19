@@ -26,6 +26,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // CapacityAnswer is one bench's capacity probe, parsed. FromStore says which of the two
@@ -38,6 +40,7 @@ type CapacityAnswer struct {
 	Formula   int     // the legacy load formula's number, when not FromStore
 	Cores     int     // the bench's cores, for the brake
 	Load1     float64 // the bench's one-minute load, for the brake
+	Why       string  // why the bench answered the formula rather than its store
 }
 
 // Free is the capacity: the store's free count under the owner's share, never below zero.
@@ -91,8 +94,33 @@ func (a CapacityAnswer) Braked(maxPerCore float64) bool {
 // and never negative, the load is finite and never negative, cores and load are REQUIRED
 // rather than optional, and a field said twice is a refusal -- a line nobody can read one
 // way is not a line to act on.
-func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
-	fields := strings.Fields(strings.TrimSpace(out))
+func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
+	// One header line, then an optional `leases` marker and the listing itself. Anything
+	// between the header and the marker is a probe saying more than its contract allows.
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	head := ""
+	var listing []string
+	hasListing := false
+	for i, line := range lines {
+		if i == 0 {
+			head = line
+			continue
+		}
+		if !hasListing {
+			if strings.TrimSpace(line) == "leases" {
+				hasListing = true
+				continue
+			}
+			if strings.TrimSpace(line) != "" {
+				return CapacityAnswer{}, fmt.Errorf(
+					"the capacity probe said %q before its `leases` marker; a probe answers one header line and nothing else",
+					oneLineAnswer(line))
+			}
+			continue
+		}
+		listing = append(listing, line)
+	}
+	fields := strings.Fields(strings.TrimSpace(head))
 	if len(fields) == 0 {
 		return CapacityAnswer{}, fmt.Errorf("the capacity probe said nothing")
 	}
@@ -109,6 +137,23 @@ func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
 				oneLineAnswer(out), k)
 		}
 		seen[k] = v
+	}
+	// A HEADER FIELD THE PARSER DOES NOT KNOW IS A REFUSAL. `held=` used to be one of
+	// them, read straight off the bench and never checked; the leases are counted here
+	// now, and a bench that still says `held=` is a bench answering a contract that is
+	// gone. An unknown field is not a field to step over.
+	allowed := map[string]map[string]bool{
+		"store":   {"share": true, "cores": true, "load1": true},
+		"formula": {"capacity": true, "cores": true, "load1": true, "why": true},
+	}[kind]
+	if allowed != nil {
+		for k := range seen {
+			if !allowed[k] {
+				return CapacityAnswer{}, fmt.Errorf(
+					"the capacity probe answered %s=%s, which is not a field of a %s answer; refusing a reading nobody wrote down",
+					oneline.Field(k), oneline.Field(seen[k]), kind)
+			}
+		}
 	}
 	a := CapacityAnswer{}
 	// count reads a required whole number that may never be negative: a share, a lease
@@ -139,13 +184,33 @@ func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
 		if a.Share, err = count("share"); err != nil {
 			return CapacityAnswer{}, err
 		}
-		if a.Held, err = count("held"); err != nil {
+		// THE LEASES ARE COUNTED HERE, IN GO. They used to be counted by a shell
+		// `grep -c` whose exit status belonged to grep, so a lease read that failed
+		// counted zero and a full bench answered its whole share; and the pattern was
+		// `state=live`, which misses a DRIFT lease that `nova-swarm native` counts as
+		// held, so the probe read high against the seat that actually grants.
+		if strings.TrimSpace(owner) == "" {
+			return CapacityAnswer{}, fmt.Errorf(
+				"the store's owner is empty, so its leases cannot be told from anybody else's; name it with --slots-owner")
+		}
+		if !hasListing {
+			return CapacityAnswer{}, fmt.Errorf(
+				"the capacity probe answered %q with no `leases` listing after it; refusing a share with no lease count",
+				oneLineAnswer(head))
+		}
+		if a.Held, err = countLeases(strings.Join(listing, "\n"), owner); err != nil {
 			return CapacityAnswer{}, err
+		}
+		if a.Held > a.Share {
+			return CapacityAnswer{}, fmt.Errorf(
+				"the store says %s holds %d leases against a share of %d; an owner cannot hold more than its share, so this reading went wrong",
+				oneline.Field(owner), a.Held, a.Share)
 		}
 	case "formula":
 		if a.Formula, err = count("capacity"); err != nil {
 			return CapacityAnswer{}, err
 		}
+		a.Why = seen["why"]
 	default:
 		return CapacityAnswer{}, fmt.Errorf(
 			"the capacity probe answered %q; wanted `store share=<n> held=<n> cores=<n> load1=<f>`, `formula capacity=<n> cores=<n> load1=<f>` or `unreadable reason=<why>`",
@@ -177,6 +242,56 @@ func ParseCapacityAnswer(out string) (CapacityAnswer, error) {
 	return a, nil
 }
 
+// leaseStateExpired is the one `nova-swarm slots list` state that is NOT held: the lease's
+// clock ran out AND its process is gone. `live` is held, and so is `DRIFT` -- expired by the
+// clock with the process still running -- because that is what `nova-swarm native` counts
+// when it grants, and a probe that counts fewer deals cards the bench then refuses.
+const leaseStateExpired = "expired"
+
+// leaseStates is the vocabulary internal/swarm writes. A state outside it is a refusal
+// rather than a guess about which side of held it falls on.
+var leaseStates = map[string]bool{"live": true, "DRIFT": true, leaseStateExpired: true}
+
+// countLeases reads `nova-swarm slots list`'s own output -- one
+// `SLOT <id> owner=<o> pid=<n> label=<l> until=<t> state=<s>` per lease -- and answers how
+// many of them this owner holds. Every non-empty row must BE a lease: a row that is not is
+// a refusal, because a row nobody matched used to be indistinguishable from a free slot.
+func countLeases(listing, owner string) (int, error) {
+	held := 0
+	for _, line := range strings.Split(listing, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "SLOT ") {
+			return 0, fmt.Errorf(
+				"the lease listing carries a row that is not a lease: %q", oneLineAnswer(line))
+		}
+		var rowOwner, state string
+		for _, f := range strings.Fields(line) {
+			switch k, v, _ := strings.Cut(f, "="); k {
+			case "owner":
+				rowOwner = v
+			case "state":
+				state = v
+			}
+		}
+		if rowOwner == "" || state == "" {
+			return 0, fmt.Errorf(
+				"the lease listing carries a row with no owner= or no state=: %q", oneLineAnswer(line))
+		}
+		if !leaseStates[state] {
+			return 0, fmt.Errorf(
+				"the lease listing carries state=%s, which is not one this fill knows (live, DRIFT, expired); refusing to guess whether it is held",
+				oneline.Field(state))
+		}
+		if rowOwner == owner && state != leaseStateExpired {
+			held++
+		}
+	}
+	return held, nil
+}
+
 // oneLineAnswer bounds what a refusal quotes back, so a bench that printed a megabyte of
 // shell noise still costs one readable line.
 func oneLineAnswer(s string) string {
@@ -193,8 +308,18 @@ func oneLineAnswer(s string) string {
 // canned line.
 type StoreCapacity struct {
 	Probe          func(bench string) (string, error)
+	Owner          string // the store's owner row, whose leases are counted
 	MaxLoadPerCore float64
 	Stderr         io.Writer
+}
+
+// ownerFor is the store row whose leases are this bench's: the one named, or the seat the
+// launcher already hands the bench.
+func (c StoreCapacity) ownerFor(bench string) string {
+	if o := strings.TrimSpace(c.Owner); o != "" {
+		return o
+	}
+	return "swarm-" + bench
 }
 
 func (c StoreCapacity) Capacity(bench string) (int, error) {
@@ -213,9 +338,21 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	a, err := ParseCapacityAnswer(out)
+	a, err := ParseCapacityAnswer(out, c.ownerFor(bench))
 	if err != nil {
 		return 0, err
+	}
+	// THE ONE FALLBACK IS NEVER SILENT. A bench answering the old load formula is a bench
+	// with no row of its own in a store the probe could read, and it says which.
+	if !a.FromStore && c.Stderr != nil {
+		why := a.Why
+		if why == "" {
+			why = "no-store-row"
+		}
+		fmt.Fprintf(c.Stderr,
+			"FILL FORMULA bench=%s why=%s capacity=%d note=%q\n",
+			field(bench), oneline.Field(why), a.Free(),
+			"this bench has no row of its own in the slot store, so its capacity is the old load formula; give it a share to size it by its store")
 	}
 	// The brake is ON and the bench could not count its cores: it cannot be braked at all,
 	// and a bench that runs unbraked because its own reading failed is exactly the silence

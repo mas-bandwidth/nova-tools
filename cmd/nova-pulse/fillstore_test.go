@@ -25,7 +25,8 @@ func TestSlotsStoreProbeAsksTheOwnersShareAndItsLiveLeases(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
 	fakeTool(t, specs, "ssh", fakeSpec{Log: log, Default: fakeRule{
-		Stdout: "store share=64 held=12 cores=64 load1=76.00\n",
+		Stdout: "store share=64 cores=64 load1=76.00\nleases\n" +
+			strings.Repeat("SLOT 1 owner=swarm-bench-a pid=9 label=- until=2026-09-20T00:00:00Z state=live\n", 12),
 	}})
 	n, err := storeProbeCapacity(storeProbeConfig{
 		Store: "$HOME/nova-bench/slots", Owner: "swarm-bench-a",
@@ -56,7 +57,7 @@ func TestSlotsStoreOwnerDefaultsToTheBenchsSeat(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
 	fakeTool(t, specs, "ssh", fakeSpec{Log: log, Default: fakeRule{
-		Stdout: "store share=8 held=1 cores=64 load1=1.00\n",
+		Stdout: "store share=8 cores=64 load1=1.00\nleases\n",
 	}})
 	if _, err := (storeProbeCapacity(storeProbeConfig{Store: "/s"}).Capacity("vision")); err != nil {
 		t.Fatalf("capacity: %v", err)
@@ -77,7 +78,7 @@ func TestALocalBenchIsProbedWithoutSSH(t *testing.T) {
 	specs := fakePATH(t)
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
-	fakeTool(t, specs, "ssh", fakeSpec{Log: log, Default: fakeRule{Stdout: "store share=99 held=0 cores=8 load1=0\n"}})
+	fakeTool(t, specs, "ssh", fakeSpec{Log: log, Default: fakeRule{Stdout: "store share=99 cores=8 load1=0\nleases\n"}})
 	// A REAL lease read that answers an empty list: the store is readable, the owner holds
 	// nothing, and the whole share is free. A slots binary that cannot run is a refusal
 	// (Stella, #1945) and is covered by TestFillRefusesABenchWhoseSlotsBinaryIsMissing.

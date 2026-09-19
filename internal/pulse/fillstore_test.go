@@ -38,10 +38,19 @@ func (p *storeProbe) probe(bench string) (string, error) {
 	return line, nil
 }
 
-// storeLine is the one line a bench's capacity probe prints when it could read the store.
+// storeLine is what a bench's capacity probe prints when it could read the store: the
+// header, the `leases` marker, and the lease listing itself -- which is what Go counts.
 func storeLine(share, held, cores int, load1 float64) string {
-	return fmt.Sprintf("store share=%d held=%d cores=%d load1=%.2f", share, held, cores, load1)
+	b := fmt.Sprintf("store share=%d cores=%d load1=%.2f\nleases\n", share, cores, load1)
+	for i := 0; i < held; i++ {
+		b += fmt.Sprintf("SLOT %d owner=%s pid=%d label=- until=2026-09-20T00:00:00Z state=live\n",
+			i+1, testOwner, 100+i)
+	}
+	return b
 }
+
+// testOwner is the store row every probe in this file answers for.
+const testOwner = "swarm-bench-a"
 
 // TestFillCapacityIsTheStoresFreeCountNotTheLoadFormula is #1914 itself: space at load1 45
 // on 32 cores answered -1 from the formula -- clamped to 0, dealt nothing -- while its own
@@ -64,7 +73,7 @@ func TestFillCapacityIsTheStoresFreeCountNotTheLoadFormula(t *testing.T) {
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
-		Capacity: StoreCapacity{Probe: p.probe, Stderr: &errb},
+		Capacity: StoreCapacity{Probe: p.probe, Owner: testOwner, Stderr: &errb},
 		Launcher: l,
 	})
 	if code != 0 {
@@ -107,7 +116,7 @@ func TestFillTakesUpARaisedShareOnTheNextTick(t *testing.T) {
 		Stop:     stop,
 		Stdout:   &out,
 		Stderr:   &errb,
-		Capacity: StoreCapacity{Probe: p.probe, Stderr: &errb},
+		Capacity: StoreCapacity{Probe: p.probe, Owner: testOwner, Stderr: &errb},
 		Launcher: l,
 		Sleep: func(d time.Duration) {
 			slept++
@@ -172,7 +181,7 @@ func TestFillLoadBrakeDealsNothingAndNeverShrinksBelowTheLiveLeases(t *testing.T
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
-		Capacity: StoreCapacity{Probe: p.probe, MaxLoadPerCore: 1.5, Stderr: &errb},
+		Capacity: StoreCapacity{Probe: p.probe, Owner: testOwner, MaxLoadPerCore: 1.5, Stderr: &errb},
 		Launcher: l,
 	})
 	if code != 0 {
@@ -204,7 +213,7 @@ func TestFillLoadBrakeDealsNothingAndNeverShrinksBelowTheLiveLeases(t *testing.T
 func TestFillBrakeIsOffWhenTheGuardIsZero(t *testing.T) {
 	p := &storeProbe{lines: map[string]string{"bench-a": storeLine(64, 10, 64, 200)}}
 	var errb bytes.Buffer
-	n, err := StoreCapacity{Probe: p.probe, MaxLoadPerCore: 0, Stderr: &errb}.Capacity("bench-a")
+	n, err := StoreCapacity{Probe: p.probe, Owner: testOwner, MaxLoadPerCore: 0, Stderr: &errb}.Capacity("bench-a")
 	if err != nil {
 		t.Fatalf("capacity: %v", err)
 	}
@@ -221,7 +230,7 @@ func TestFillBrakeIsOffWhenTheGuardIsZero(t *testing.T) {
 // adopting the store is not a flag day.
 func TestStoreCapacityFallsBackToTheFormulaWhereThereIsNoStore(t *testing.T) {
 	p := &storeProbe{lines: map[string]string{"bench-a": "formula capacity=12 cores=64 load1=76.00"}}
-	n, err := StoreCapacity{Probe: p.probe, MaxLoadPerCore: 1.5}.Capacity("bench-a")
+	n, err := StoreCapacity{Probe: p.probe, Owner: testOwner, MaxLoadPerCore: 1.5}.Capacity("bench-a")
 	if err != nil {
 		t.Fatalf("capacity: %v", err)
 	}
@@ -234,9 +243,16 @@ func TestStoreCapacityFallsBackToTheFormulaWhereThereIsNoStore(t *testing.T) {
 // refusal naming what it said, never a guessed capacity. A guessed free count puts a card
 // on a full machine.
 func TestStoreCapacityRefusesAnAnswerItCannotRead(t *testing.T) {
-	for _, line := range []string{"", "12", "store share=x held=1 cores=8 load1=1", "store held=1 cores=8 load1=1"} {
+	for _, line := range []string{"", "12",
+		"store share=x cores=8 load1=1\nleases\n",
+		"store cores=8 load1=1\nleases\n",
+		"store share=4 cores=8 load1=1",
+		"store share=4 cores=8 load1=NaN\nleases\n",
+		"store share=4 cores=8 load1=1\nleases\nwhat is this row\n",
+		"unreadable reason=slots-list-exit rc=127",
+	} {
 		p := &storeProbe{lines: map[string]string{"bench-a": line}}
-		n, err := StoreCapacity{Probe: p.probe}.Capacity("bench-a")
+		n, err := StoreCapacity{Probe: p.probe, Owner: testOwner}.Capacity("bench-a")
 		if err == nil {
 			t.Fatalf("the probe answered %q and the capacity was %d, want a refusal", line, n)
 		}
@@ -246,16 +262,20 @@ func TestStoreCapacityRefusesAnAnswerItCannotRead(t *testing.T) {
 	}
 }
 
-// TestStoreCapacityNeverAnswersBelowZero: an owner holding more leases than its share --
-// the share was LOWERED under live work -- is a bench with nothing free, never a negative
-// that some later clamp has to catch, and never a bench asked to give leases back.
-func TestStoreCapacityNeverAnswersBelowZero(t *testing.T) {
+// TestStoreCapacityRefusesMoreHeldThanTheShareAllows: an owner cannot hold more leases than
+// its share. A reading that says it did is a reading that went wrong, and the answer is a
+// refusal with a reason -- fail closed and loudly -- never a share-minus-held for a later
+// clamp to catch. Free() still floors at zero for anything that reaches it.
+func TestStoreCapacityRefusesMoreHeldThanTheShareAllows(t *testing.T) {
 	p := &storeProbe{lines: map[string]string{"bench-a": storeLine(8, 20, 64, 1)}}
-	n, err := StoreCapacity{Probe: p.probe}.Capacity("bench-a")
-	if err != nil {
-		t.Fatalf("capacity: %v", err)
+	n, err := StoreCapacity{Probe: p.probe, Owner: testOwner}.Capacity("bench-a")
+	if err == nil {
+		t.Fatalf("held above share answered capacity %d, want a refusal", n)
 	}
 	if n != 0 {
-		t.Fatalf("capacity = %d, want 0 (held above share is full, not negative)", n)
+		t.Fatalf("a refused read answered capacity %d, want 0", n)
+	}
+	if got := (CapacityAnswer{FromStore: true, Share: 8, Held: 20}).Free(); got != 0 {
+		t.Fatalf("Free() = %d, want 0 (never negative)", got)
 	}
 }
