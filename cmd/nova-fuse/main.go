@@ -212,7 +212,7 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 	}
 	positional = append(fs.Args(), postArgs...)
 	if *boxFlag == "" {
-		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess\n%s", name, hintFor("box"))
+		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
 		return "", positional, false, true
 	}
 	return *boxFlag, positional, true, true
@@ -270,7 +270,7 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		// REFUSE, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as BLOWN, and nothing provable can be lifted
 		// from a box that cannot be read. The corrupt bytes stay put -- they are evidence.
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read\n", oneline.Err(readErr))
+		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read; run: nova-fuse help\n", oneline.Err(readErr))
 		return 2
 	}
 
@@ -346,7 +346,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	}
 	if max < 0 {
 		// Zero already means "all", so a negative ceiling is a typo with two readings.
-		fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all\n", max)
+		fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all; run: nova-fuse help\n", max)
 		ok = false
 	}
 	if !ok {
@@ -355,7 +355,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 	b, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live; run: nova-fuse help\n", oneline.Err(err))
 		return 2
 	}
 
@@ -406,7 +406,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// FAIL CLOSED, and say WHICH fact this is: "could not be read" is deliberately not
 		// "a fuse is blown" -- a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live; run: nova-fuse help\n", oneline.Err(err))
 		return 2
 	}
 
@@ -520,7 +520,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// An unreadable box blocks EVERY surface. Replacing it with a fresh box holding
 		// only this one quarantine would UNBLOCK everything else, so the safety-shaped
 		// action would be a fail-OPEN. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person\n", oneline.Err(readErr), oneline.Escape(box))
+		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
 		return 2
 	}
 
