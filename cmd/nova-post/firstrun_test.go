@@ -102,19 +102,39 @@ func TestTESTSFirstRunIsNotRunnableUntil1631(t *testing.T) {
 // rather than a claim: the documented command is run, in a temp directory
 // holding the body and the allowlist the section's fixture line describes, so
 // the refusal cannot be about a missing file. It is about the channel.
+//
+// BOTH halves of the receipt are READ FROM THE DOCUMENT -- the command and the
+// block written under it. A test that keeps its own copy of the document's line
+// cannot notice the document changing, which is the failure this whole harness
+// exists to catch; it would go on printing a receipt for a line that had been
+// rewritten or deleted. It is read by hand rather than with onboarding.Steps
+// because Steps REFUSES this block until #1631 is decided -- that is the other
+// tripwire, TestTESTSFirstRunIsNotRunnableUntil1631, and the two must not be
+// the same test.
 func TestTESTSFirstRunSaysFakeIsAChannelUntil1631(t *testing.T) {
-	documented := ""
-	for _, line := range firstRunLines(t) {
-		if strings.HasPrefix(line, "$ nova-post draft --channel fake") {
-			documented = strings.TrimPrefix(line, "$ ")
-			break
+	documented, shown := "", []string(nil)
+	lines := firstRunLines(t)
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "$ nova-post draft --channel fake") {
+			continue
 		}
+		documented = strings.TrimPrefix(line, "$ ")
+		for _, under := range lines[i+1:] {
+			if strings.HasPrefix(under, "$ ") || strings.TrimSpace(under) == "" {
+				break
+			}
+			shown = append(shown, under)
+		}
+		break
 	}
 	if documented == "" {
 		t.Fatal("the `### First run` block no longer drafts on `--channel fake`.\n" +
 			"That is issue #1631 being fixed: delete this test and\n" +
 			"TestTESTSFirstRunIsNotRunnableUntil1631, and add the executing\n" +
 			"TestTESTSFirstRunIsWhatTheToolPrints this tool's siblings carry.")
+	}
+	if len(shown) == 0 {
+		t.Fatalf("the document writes nothing under\n  $ %s\nso there is no promise here to hold #1631 against", documented)
 	}
 	args, err := onboarding.SplitShell(documented)
 	if err != nil {
@@ -133,8 +153,9 @@ func TestTESTSFirstRunSaysFakeIsAChannelUntil1631(t *testing.T) {
 	}
 	// The receipt, in the words the document is measured against. It is logged
 	// rather than only asserted so that `go test -v ./cmd/nova-post/` prints
-	// what #1631 was filed on.
-	t.Logf("#1631, still open: the documented command\n  $ %s\nprints\n  %sand the document shows\n  POST DRAFT OK hash=46e16da3d69f... channel=fake target=friends bytes=38 drafts=./drafts", documented, stderr)
+	// what #1631 was filed on -- and the document's side of it is the document's
+	// own block, read above, not a copy of it kept here.
+	t.Logf("#1631, still open: the documented command\n  $ %s\nprints\n  %sand the document shows\n%s", documented, stderr, onboarding.Block(shown))
 }
 
 // firstRunLines is the `### First run` transcript of this tool, as written.

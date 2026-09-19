@@ -357,9 +357,21 @@ type Norm struct {
 	// refuses is LEFT ON THE LINE, so the comparison shows it: a tool printing
 	// `created=2026-99-99T99:99:99Z` is a finding, not a run-owned value.
 	valid func(value string) bool
+	// run says the pattern covers a whole RUN of whitespace-delimited tokens
+	// rather than a `field=value` token, and must begin and end on a token
+	// boundary. It is the same rule as field, for the norms that have no field
+	// name to anchor to: a `version` line's build triple is two tokens and the
+	// version word is one, and neither of them may be matched from the middle
+	// of a longer token. A norm with neither field nor run is a plain
+	// substitution -- Path and Elide, where the caller wrote the pattern and
+	// owns its boundaries.
+	run bool
 }
 
 func (n Norm) apply(line string) string {
+	if n.run {
+		return n.applyRun(line)
+	}
 	if n.field == "" {
 		return n.Re.ReplaceAllString(line, n.As)
 	}
@@ -392,6 +404,38 @@ func (n Norm) replaceToken(token string) string {
 		return token
 	}
 	return n.As
+}
+
+// applyRun replaces every match of Re that begins and ends on a whitespace
+// boundary, and leaves every match that does not -- so a pattern written for a
+// whole token, or a whole run of them, cannot be taken from the middle of a
+// longer one. Everything between the matches is copied through untouched.
+func (n Norm) applyRun(line string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range n.Re.FindAllStringIndex(line, -1) {
+		start, end := m[0], m[1]
+		if !boundary(line, start-1) || !boundary(line, end) {
+			continue
+		}
+		if n.valid != nil && !n.valid(line[start:end]) {
+			continue
+		}
+		out.WriteString(line[last:start])
+		out.WriteString(n.As)
+		last = end
+	}
+	out.WriteString(line[last:])
+	return out.String()
+}
+
+// boundary answers whether index i of line is off the end of it or a space --
+// that is, whether a token may start after it or end before it.
+func boundary(line string, i int) bool {
+	if i < 0 || i >= len(line) {
+		return true
+	}
+	return line[i] == ' ' || line[i] == '\t'
 }
 
 // Normalize applies every declared norm to a line, in the order declared.
@@ -683,16 +727,44 @@ func Block(lines []string) string {
 
 // GoBuild declares the tail of a `version` line -- `<goos>/<goarch> go<version>`
 // -- which is the machine the transcript was recorded on rather than anything
-// the document promises. The version word before it is NOT covered: whether a
-// build says `devel` or a tag is the tool's own answer and is compared.
+// the document promises. The version word before it is NOT covered here; that
+// is Version's, and a `version` line wants both declared.
 //
 // Several sections already paste a real triple (`devel linux/amd64 go1.26.5`),
 // so this reduces both sides to the same sentence rather than asking the
 // document to carry a placeholder it has no convention for.
+//
+// The two tokens must stand as two whole tokens: an unanchored pattern here was
+// a ReplaceAll over every line of every step of the sitting, which is the thing
+// the Norm contract above exists to forbid.
 func GoBuild() Norm {
 	return Norm{
 		Name: "<goos>/<goarch> go<version> (the machine this run is on)",
 		Re:   regexp.MustCompile(`[a-z0-9]+/[a-z0-9]+ go[0-9]+(\.[0-9]+)*`),
 		As:   "<the machine this run is on>",
+		run:  true,
+	}
+}
+
+// Version declares the version word of a `version` line: the word a build
+// stamps itself with.
+//
+// It has to be declared, and the reason is worth writing down. Under `go test`
+// the binary is not stamped and every one of these tools prints `devel`
+// (internal/buildinfo's Unknown). A build a reader makes -- `go build
+// ./cmd/nova-review && ./nova-review version` -- prints the stamp, today
+// `v0.16.0-dev.<base>.0.<date>-<sha>`. So a transcript that pastes `devel` is
+// green under `go test` and FALSE for the reader it is written for, and one
+// that pastes the stamp is true for the reader and red in the test, and the sha
+// in it changes with every commit. The document therefore shows what a reader
+// sees, and the word is compared as a SHAPE: a stamp or `devel`, and nothing
+// else -- a tool that answered `unknown`, or printed nothing at all, still
+// fails.
+func Version() Norm {
+	return Norm{
+		Name: "the version word (`devel` under `go test`, a stamp in a build)",
+		Re:   regexp.MustCompile(`devel|v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*`),
+		As:   "<the version of this build>",
+		run:  true,
 	}
 }
