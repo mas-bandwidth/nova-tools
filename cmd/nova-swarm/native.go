@@ -112,6 +112,14 @@ type nativeRunResult struct {
 	spent    int  // the observed sum over the whole job at the final read
 	observed bool // any budget column was a number at all
 	partial  bool // some budget column was a dash: the plus on the line
+	// stopped is the `stopped=<tokens|max_turns|max_cache_read|unverifiable>` field of rule
+	// 13d, and "" for a card the machinery did not stop under that rule. It is a KEY OF ITS
+	// OWN (decision 17): `reason=terminated` stays what a TERM from outside prints, and the
+	// `reason=` inside the `usage=none` group stays the usage read's.
+	stopped string
+	// defect is the PROMPT-DEFECT line a card budget's stop owes. Rule 13d prints it on
+	// native's own stdout AFTER the NATIVE OK line and writes it into NO file.
+	defect string
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -479,6 +487,38 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	termCh := nativeTermCh()
 	defer stopNativeTerm(termCh)
+
+	// THE LIVE SAMPLER (SPEC-SWARM rule 13d, issue #1545). It is started HERE, once for the
+	// whole job and not once per launch, because the budget it watches is the job's: "the
+	// observed sum is over the whole job, every launch counted from the first launch's
+	// start, so a retry begins with what the earlier launches spent and no retry resets
+	// anything". The data home is one per job, so a read of it is already the job's sum and
+	// this tool does no arithmetic across launches to get one.
+	//
+	// IT RUNS ONLY WHEN THERE IS SOMETHING TO WATCH. Under `--tokens unmetered` with no card
+	// budget "the deadline is the only stop", so a sample would open `sqlite3` every few
+	// seconds to answer a question nobody asked. That is a cost, not a behaviour: the
+	// NATIVE OK line's `budget=` comes from the FINAL read of each launch either way, which
+	// rule 13d is explicit about ("`<spent>` is the sum over every launch at the final read,
+	// never the sum at the stop").
+	//
+	// IT IS BESIDE THE SELECT BELOW AND NEVER INSIDE IT, so the deadline and a TERM end the
+	// card at their own instants whatever a read is doing (nativesample.go says why at
+	// length).
+	sampler := startLiveSampler("", 0, cfg, outLog)
+	if !cfg.unmetered && cfg.tokens > 0 || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
+	}
+	defer sampler.Stop()
+
+	// THE JOB'S OWN FIGURES, folded from each launch's FINAL read as the launches end.
+	// jobObserved stays false until some launch's read answered with a number, so a job
+	// nothing was ever observed for prints `budget=-/<n>` and is never reported as under
+	// budget.
+	jobSpent, jobObserved, jobPartial := 0, false, false
+	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
+	// no floor, which is what the first launch has.
+	var previousLaunchEnd time.Time
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
 		cmd := exec.Command(runPath, runArgv...)
@@ -521,6 +561,23 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			<-done
 			res.rc = -1
 			res.terminated = true
+		case word := <-sampler.Fired():
+			// THE BUDGET FIRED (SPEC-SWARM rule 13d). "When it is true `native` ends the
+			// card the way it ends one on a TERM from outside: a terminate to the card's
+			// whole process group, a wait, then a kill of the group, after which no process
+			// of that group is alive, grandchildren and a harness that ignores the
+			// terminate included." That is swarm.Reap, which is the TERM case's own call
+			// one line above and NOT the deadline's immediate KillGroup: the terminate
+			// exists so the card has its one moment to publish, and rule 13d keeps what it
+			// published byte for byte.
+			deadline.Stop()
+			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			<-done
+			// `rc=-1` on the line, as it is for a deadline and for a TERM; the ROW's `rc`
+			// is a dash, which writeNativeUsage already writes for any rc below zero
+			// (rule 12's closed list, amended by decision 14).
+			res.rc = -1
+			res.stopped = word
 		}
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
@@ -531,21 +588,90 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.rc != 0 {
 			res.end = swarm.EndFailed
 		}
+		// A LAUNCH A BUDGET ENDED SAYS SO IN ITS OWN ROW (rule 13d): `end=budget` for a
+		// budget that fired, and `end=budget-unverifiable` for a source the tool stopped
+		// being able to see. It is THIS launch's end, and only the stopping launch carries
+		// it -- an earlier launch that died on a provider 5xx keeps its own word.
+		if res.stopped != "" {
+			res.end = swarm.EndBudget
+			if res.stopped == stoppedUnverifiable {
+				res.end = swarm.EndUnverifiable
+			}
+		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
-		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
+		var launchUsage swarm.ProviderUsage
+		launchEnd := time.Now()
+		launchUsage, res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
+		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
+		// so that adding a job's rows counts each launch once (rule 13d).
+		previousLaunchEnd = launchEnd
+		// THE LINE IS THE JOB'S: this launch's final read is ADDED to what the earlier
+		// launches were finally reported to have used. Rule 13d's worked example is two
+		// launches at 40 and 70 under `--tokens 100`: the rows keep 40 and 70, and the line
+		// prints 110/100. A launch whose read reported nothing adds nothing and leaves the
+		// job's `observed` where it was, because a zero here would be a measurement the
+		// harness never made.
+		if sum, seen, part := launchUsage.Budget(); seen > 0 {
+			jobSpent += sum
+			jobObserved = true
+			jobPartial = jobPartial || part
+		}
 		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
 		// the terminated reason is carried out on the OK line.
 		if res.terminated {
 			break
 		}
+		// AND A BUDGET STOP IS THE END (rule 13d): "Nothing is launched again, by `native`
+		// or by a batch, and running the card once more is a person's act with a number of
+		// their own." So it breaks out above the retry, terminally.
+		if res.stopped != "" {
+			break
+		}
 		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): "The stop is rule 13's
+			// `spent >= n`, tested at every sample and once more before any relaunch."
+			// The first launch's spend is already in the job's data home, so a budget the
+			// earlier launches have ALREADY reached must not buy a third launch -- "a
+			// first launch that reached the budget alone is never launched again".
+			//
+			// THIS LAUNCH'S ROW IS ALREADY WRITTEN AND KEEPS ITS OWN WORD. This launch
+			// did not end on the budget -- it died on a provider 5xx -- so its row says
+			// what happened to it, and the `stopped=` on the LINE says why there is no
+			// launch after it. The two are different facts about different things, which
+			// is the whole of rule 13d's "the row is the launch's and the line is the
+			// job's".
+			if word := sampler.StopWord(); word != "" {
+				res.stopped = word
+				break
+			}
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}
 		break
 	}
+	// The card is over, so no further sample is wanted. Stop SIGNALS and never joins: a
+	// read in flight is abandoned where it stands (rule 13d).
+	sampler.Stop()
+	// WHAT THE LINE WILL PRINT. "Final" means the last thing the harness reported and
+	// nothing more: where every launch's final read answered, this is their sum; where one
+	// could not be made, that launch contributed nothing to it and the plus below says the
+	// figure is not the whole story.
+	res.spent, res.observed, res.partial = jobSpent, jobObserved, jobPartial
+	// AND WHERE NO FINAL READ ANSWERED AT ALL, the last sum a SAMPLE saw stands in, with
+	// the plus (rule 13d: "a final read that cannot be made leaves a dash in every column
+	// of the row it could not fill, the line then prints the last sum a sample saw with the
+	// plus, and nowhere does the tool say that all that was spent was seen"). A sample's
+	// figure is never allowed to pass for a final read, which is what the plus is for.
+	if !res.observed {
+		if spent, observed, _, _, _ := sampler.Observed(); observed {
+			res.spent, res.observed, res.partial = spent, true, true
+		}
+	}
+	// The PROMPT-DEFECT line the card budget owes, carried out to the caller to print after
+	// the NATIVE OK line.
+	res.defect = sampler.Defect()
 	log.Close()
 	harnessOut.Close()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
@@ -1074,8 +1200,16 @@ func sameDir(a, b string) bool {
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
 // ended -- done, failed, or wall (issue #644's follow-up).
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, endWord string, errOut io.Writer) (reason, path string) {
-	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
+// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"). It returns the usage it
+// finally read as well, because the JOB's figure on the NATIVE OK line is the sum of these
+// launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
+// launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
+// prints 110. The caller folds; this function never sees the job's running sum.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string) {
+	// notBefore is the EARLIER launch's end, and it is the floor that keeps this row
+	// disjoint from that one: without it the window's five-second widening reaches back over
+	// the previous launch's rows and counts them twice (usagecard.go says what that cost).
+	usage, note, storePath, rr := swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -1100,12 +1234,12 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
 	if rr == "" {
-		return "", ""
+		return usage, "", ""
 	}
 	if storePath == "" {
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
-	return rr, storePath
+	return usage, rr, storePath
 }
 
 // providerOf splits a native model id on its single slash and reports whether it

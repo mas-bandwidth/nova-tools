@@ -24,10 +24,12 @@ import (
 // replaces that day's rows rather than doubling them, so the ledger can be filled again and
 // again and never counts a card twice.
 
-// cardColumns are the thirteen columns of one card's usage.tsv, in order, the contract
-// between the native run that writes it and this reader.
+// cardColumns are the fourteen columns of one card's usage.tsv, in order, the contract
+// between the native run that writes it and this reader (internal/swarm CardUsageColumns).
+// `end` joined them with SPEC-SWARM rule 13d (nova-tools#1545); readCardFile below maps by
+// header name, so a file written before that change reads exactly as it did.
 var cardColumns = []string{
-	"job", "attempt", "started", "ended", "rc", "provider", "model",
+	"job", "attempt", "started", "ended", "end", "rc", "provider", "model",
 	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
 }
 

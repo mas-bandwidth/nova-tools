@@ -376,3 +376,55 @@ func TestStatusOnelineTwoThousandJobRootIsFast(t *testing.T) {
 		t.Errorf("warm status must answer from the index (spend=2.0000):\n%s", out)
 	}
 }
+
+// TestStatusIndexMapsUsageColumnsByHeaderName is the claim that the per-root index reads a
+// card's usage.tsv BY HEADER NAME, the way cmd/nova-tokens's readCardFile and this package's
+// parseProgressUsage already do. SPEC-SWARM rule 13d (nova-tools#1545) inserts `end` after
+// `ended` and before `rc`, so a card written by a current native run has fourteen columns.
+// A reader that hardcodes offsets reads `end` as the rc, `reasoning` as the dollars and
+// drops tokens_out. Both shapes are asserted here: the fourteen-column file and the
+// thirteen-column file a run written before rule 13d left behind.
+func TestStatusIndexMapsUsageColumnsByHeaderName(t *testing.T) {
+	const started, ended = "2026-09-16T09:00:00Z", "2026-09-16T09:10:00Z"
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "fourteen columns, rule 13d's end after ended",
+			body: "job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n" +
+				"card-0-0\t1\t" + started + "\t" + ended + "\tbudget\t7\tdeepseek\tpro\t100\t23\t-\t-\t5\t0.0010\n",
+		},
+		{
+			name: "thirteen columns, a card written before rule 13d",
+			body: "job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n" +
+				"card-0-0\t1\t" + started + "\t" + ended + "\t7\tdeepseek\tpro\t100\t23\t-\t-\t5\t0.0010\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "usage.tsv")
+			write(t, path, tc.body)
+
+			e := readIndexEntry(path)
+			if len(e.rows) != 1 {
+				t.Fatalf("rows = %d, want 1 (%q)", len(e.rows), tc.body)
+			}
+			r := e.rows[0]
+			if r.started != started || r.ended != ended {
+				t.Errorf("started, ended = %q, %q; want %q, %q", r.started, r.ended, started, ended)
+			}
+			// The rc is the row's own return code, never rule 13d's `end` word.
+			if r.rc != "7" {
+				t.Errorf("rc = %q, want %q", r.rc, "7")
+			}
+			// The dollars are the `usd` column, never `reasoning`.
+			if r.usd != "0.0010" {
+				t.Errorf("usd = %q, want %q", r.usd, "0.0010")
+			}
+			// The token count is tokens_in + tokens_out, and tokens_out is not dropped.
+			if r.tokens != "123" {
+				t.Errorf("tokens = %q, want %q (tokens_in 100 + tokens_out 23)", r.tokens, "123")
+			}
+		})
+	}
+}

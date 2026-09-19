@@ -229,17 +229,24 @@ func readIndexEntry(path string) indexEntry {
 	e := indexEntry{key: indexKey(path)}
 	raw, err := os.ReadFile(path)
 	if err == nil {
+		var cols map[string]int
 		for _, l := range strings.Split(string(raw), "\n") {
-			if l == "" || strings.HasPrefix(l, "job") {
+			if l == "" {
+				continue
+			}
+			if strings.HasPrefix(l, "job") {
+				if cols == nil {
+					cols = usageColumns(strings.Split(l, "\t"))
+				}
 				continue
 			}
 			f := strings.Split(l, "\t")
 			e.rows = append(e.rows, indexRow{
-				started: cell(f, 2),
-				ended:   cell(f, 3),
-				rc:      cell(f, 4),
-				usd:     cell(f, 12),
-				tokens:  tokensCell(f),
+				started: cell(cols, f, "started"),
+				ended:   cell(cols, f, "ended"),
+				rc:      cell(cols, f, "rc"),
+				usd:     cell(cols, f, "usd"),
+				tokens:  tokensCell(cols, f),
 			})
 		}
 	}
@@ -247,18 +254,37 @@ func readIndexEntry(path string) indexEntry {
 	return e
 }
 
-// cell is field i of a usage row, "" when the row is short.
-func cell(f []string, i int) string {
-	if i >= len(f) {
+// usageColumns is one usage.tsv header line read into column positions, first occurrence
+// winning. This reader maps BY NAME like every other reader of the file -- cmd/nova-tokens's
+// readCardFile and parseProgressUsage in this package -- so a column inserted in the middle
+// moves nothing: SPEC-SWARM rule 13d (nova-tools#1545) puts `end` after `ended` and before
+// `rc`, and a hardcoded offset reads that word as the return code, `reasoning` as the
+// dollars, and drops tokens_out.
+func usageColumns(head []string) map[string]int {
+	cols := map[string]int{}
+	for i, name := range head {
+		name = strings.TrimSpace(name)
+		if _, seen := cols[name]; !seen {
+			cols[name] = i
+		}
+	}
+	return cols
+}
+
+// cell is the row's cell under a header name, "" when the file carries no such column or the
+// row is short.
+func cell(cols map[string]int, f []string, name string) string {
+	i, has := cols[name]
+	if !has || i >= len(f) {
 		return ""
 	}
 	return f[i]
 }
 
 // tokensCell is tokens_in + tokens_out for one row, "-" when neither is a number.
-func tokensCell(f []string) string {
-	in, errIn := strconv.Atoi(strings.TrimSpace(cell(f, 7)))
-	out, errOut := strconv.Atoi(strings.TrimSpace(cell(f, 8)))
+func tokensCell(cols map[string]int, f []string) string {
+	in, errIn := strconv.Atoi(strings.TrimSpace(cell(cols, f, "tokens_in")))
+	out, errOut := strconv.Atoi(strings.TrimSpace(cell(cols, f, "tokens_out")))
 	if errIn != nil && errOut != nil {
 		return "-"
 	}

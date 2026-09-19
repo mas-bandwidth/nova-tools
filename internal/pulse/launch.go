@@ -194,6 +194,18 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 	if files < 1 {
 		files = DefaultLaunchFiles
 	}
+	// AND THE TOKEN BUDGET, for the same reason and by the same shape (SPEC-SWARM rule
+	// 13d, nova-tools#1545). `batch --cards` now refuses an admission that names no budget
+	// -- every card it starts runs through `native`, and `native` refuses without the word
+	// -- so a launch that sent none would be refused before a single card started. The
+	// configured budget comes through `launch.tokens`, which config.go already reads and
+	// validates; a LaunchInput carrying none names the documented default, which is
+	// DefaultLaunchTokens and is `unmetered` for the reason recorded beside it: the bench's
+	// own native runner shim has no live accounting and the deadline is its stop.
+	tokens := strings.TrimSpace(in.Tokens)
+	if tokens == "" {
+		tokens = DefaultLaunchTokens
+	}
 	var out, errb bytes.Buffer
 	cmd := exec.Command("nova-swarm", "batch",
 		"--id", id,
@@ -202,6 +214,7 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 		"--runner", nativeRunner,
 		"--root", in.Root,
 		"--files", strconv.Itoa(files),
+		"--tokens", tokens,
 		"--then", then)
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

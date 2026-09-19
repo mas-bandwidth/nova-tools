@@ -162,12 +162,35 @@ func main() {
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
 	}
+	// FAKE-TURNS prints n MODEL TURNS in the harness's own voice, on the child's output,
+	// which is the capture rule 13b counts turns in: "the harness log's assistant turns
+	// (counted the way usage counts assistant rows)". It is how a card budget's `max_turns`
+	// is driven without a provider and without a model -- the turns are lines, and the
+	// lines are what the counter reads.
+	if n, ok := number(prompt, "FAKE-TURNS"); ok {
+		for i := 1; i <= n; i++ {
+			fmt.Printf("assistant: turn %d\n", i)
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
 		}
 	}
-	if arg, ok := directive(prompt, "FAKE-USAGE"); ok {
+	// FAKE-USAGE-DB WRITES A REAL SQLITE DATABASE in the harness's own shape (SPEC-SWARM
+	// rule 13d, issue #1545), and it is checked BEFORE FAKE-USAGE because `directive`
+	// matches a prefix. Everything that samples or stops on a budget is tested against
+	// this one and never against the tab-separated stand-in below: the reader under test
+	// runs `sqlite3 -readonly` and folds JSON out of a `data` column, and a fixture that
+	// short-circuits both would prove nothing about either.
+	//
+	// The argument is the five token counts in rule 12's order -- tokens_in, tokens_out,
+	// cache_write, cache_read, reasoning -- with `-` for a type this provider did not
+	// report, then an optional `usd`. A `-` becomes SQL NULL, which is what an absence is
+	// in this table and is read back as a dash and never as a zero.
+	if arg, ok := directive(prompt, "FAKE-USAGE-DB"); ok {
+		writeUsageDB(data, arg)
+	} else if arg, ok := directive(prompt, "FAKE-USAGE"); ok {
 		writeUsage(data, arg)
 	}
 	// A provider 429 cannot ride the exit status: POSIX truncates 429 to 173. So the fake
@@ -475,6 +498,75 @@ func writeUsage(data, arg string) {
 	row := append([]string{"fake", "fake-model"}, values...)
 	writeRecorded(path, []byte(strings.Join(row, "\t")+"\n"), 0o644)
 }
+
+// writeUsageDB writes the job's accounting into a REAL sqlite database at the place a real
+// OpenCode keeps it, in the harness's own schema: a `message` table whose `data` column is
+// JSON and whose `time_created` column is MILLISECONDS since the epoch. It is what every
+// test of the live sampler and of the stop reads, because those read it with `sqlite3
+// -readonly` and fold JSON out of it, and a fixture that faked either would be a fixture
+// testing itself.
+//
+// IT APPENDS. A retried card runs this harness again into the SAME data home, and rule 13d
+// counts "every launch counted from the first launch's start" -- so a second launch's rows
+// must sit beside the first's rather than replace them. `CREATE TABLE IF NOT EXISTS` and an
+// INSERT are exactly that.
+//
+// THE ROW IS AN ASSISTANT ROW with a provider and a model, because the final read
+// (ReadCardUsage) selects `role = 'assistant'` and groups by provider and model, while the
+// live read (ReadJobUsageLive) takes every row with tokens. One shape answers both.
+//
+// A `-` IS SQL NULL, which prints as the empty string through `sqlite3 -tabs` and is read
+// back as an absence -- never as a zero (rule 12). `0` is written as a real zero, because
+// "a reported `0` ... is a measurement that adds nothing to the sum".
+func writeUsageDB(data, arg string) {
+	path := openCodeDB(data)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "fake harness: the data home could not be made:", err)
+		return
+	}
+	record(path)
+	// ONE SET OF COUNTS PER LAUNCH, separated by `;`, so a test can give a retried card a
+	// different spend on each of its launches -- which is what rule 13d's two-launch
+	// accounting case needs ("a first launch that reports 40 and dies on a provider 5xx
+	// inside the launch grace, then a second that reports 70"). The launch number comes
+	// from the FAKE-LAUNCHES record, so a card using this also names that directive; with
+	// one set and no `;` every launch writes the same counts, as before.
+	sets := strings.Split(arg, ";")
+	which := 0
+	if len(sets) > 1 {
+		if n := launchCount(jobDir); n > 1 && n-1 < len(sets) {
+			which = n - 1
+		}
+	}
+	fields := strings.Fields(sets[which])
+	// input, output, cache.write, cache.read, reasoning, then cost.
+	cell := func(i int) string {
+		if i >= len(fields) || fields[i] == "-" {
+			return "null"
+		}
+		return fields[i]
+	}
+	// The JSON is built with sqlite's own json_object so a NULL stays a NULL inside the
+	// document rather than becoming the string "null", which json_extract would hand the
+	// reader as a value.
+	sql := `CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);
+INSERT INTO message (data, time_created) VALUES (json_object(
+  'role','assistant','providerID','fake','modelID','fake-model',
+  'tokens', json_object('input',` + cell(0) + `,'output',` + cell(1) +
+		`,'cache', json_object('write',` + cell(2) + `,'read',` + cell(3) + `),'reasoning',` + cell(4) + `),
+  'cost',` + cell(5) + `), ` + nowMs() + `);
+`
+	cmd := exec.Command("sqlite3", path)
+	cmd.Stdin = strings.NewReader(sql)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "fake harness: the usage database could not be written: %v: %s\n", err, strings.TrimSpace(string(out)))
+	}
+}
+
+// nowMs is this instant in milliseconds, the unit the harness's own `time_created` column
+// carries. The final read windows on it, so a row stamped in seconds would fall outside
+// every window and be read as a harness that reported nothing.
+func nowMs() string { return strconv.FormatInt(time.Now().UnixMilli(), 10) }
 
 // THE WRITE-PATH TRIPWIRE (demanded test 9, SPEC-SWARM.md:1264). Every path this child
 // opens for writing is recorded in its OWN job directory, one per line, so a test can prove

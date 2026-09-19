@@ -566,6 +566,56 @@ $ nova-swarm native --tokens unmetered --worker ./usage-none-max-turns.json --ha
 `--tokens unmetered` with no such description runs under both conditions, as it does today.
 After every refusal above, `<slot>` is empty: nothing was made.
 
+### What the line reports against the number
+
+The fake harness writes a **real sqlite database** in the harness's own shape
+(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
+
+```
+# a harness that reported nothing
+harness=ok budget=-/50000
+# only tokens_in
+harness=ok budget=900+/50000
+# every column a reported zero
+harness=ok budget=0/50000
+# tokens_in 100, tokens_out 50, cache_write 9000, cache_read 90000, reasoning 7
+harness=ok budget=157/50000
+```
+
+The last is the whole of the sum rule: `tokens_in + tokens_out + reasoning` is 157, and the
+99,000 of cache stands in the usage row and never in the budget. A reported `0` is a
+measurement and prints `0/50000` — never `unmetered`. `--tokens unmetered` prints the word
+whatever the harness reported.
+
+### The stop
+
+A card that publishes a report, spends past `--tokens 100000` and then declines the
+terminate, under `--deadline 120s` so that the budget is what ends it:
+
+```
+$ nova-swarm native --tokens 100000 --usage-interval 1s … --deadline 120s
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=-1 wall=5.05s sandbox=none-by-flag card_sha256=8e1f… binary_sha256=ad88… config=ffdf555f harness=ok budget=100000/100000 stopped=tokens
+```
+
+Exit 1. The launch's own row carries `end=budget` and a dash for `rc`, while the line prints
+`rc=-1`:
+
+```
+$ cut -f1-8 ./root/slot-1/jobs/card/usage.tsv
+job	attempt	started	ended	end	rc	provider	model
+card	1	2026-09-19T13:16:05Z	2026-09-19T13:16:10Z	budget	-	fake	fake-model
+```
+
+And what the card published is kept byte for byte — the tool writes nothing into it:
+
+```
+$ grep -c PROMPT-DEFECT ./root/slot-1/jobs/card/RESULT.md
+0
+$ grep "findings:" ./root/slot-1/jobs/card/RESULT.md
+findings: 2
+```
+
 ### The sample interval's floor and ceiling
 
 ```
