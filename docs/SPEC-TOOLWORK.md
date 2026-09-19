@@ -1,4 +1,4 @@
-# Mechanical tool work — specification (draft 2, 2026-09-19)
+# Mechanical tool work — specification (draft 3, 2026-09-19)
 
 Glenn, 2026-09-19: *"I want to upgrade our tools so we can push more work to swarms
 mechanically."*
@@ -25,7 +25,9 @@ call** and reads **no prose as an instruction**. Mechanical acceptance decides w
 card's commit becomes a pull request in the read queue. It never lands anything: the
 read condition (`docs/SPEC-MERGE.md:808-827`) and the one entry to the merge queue
 (`docs/SPEC-MERGE.md:1540-1561`, *"swarms produce branches, never queue entries"*) stand
-exactly as written, and §6 makes the lane hold them harder, not softer.
+as written, with one bounded change stated where it is made (the eligibility rule, 3:
+sampled reads for a kind the coordinator trusted inside the measured bound), and §6 makes
+the lane hold them harder, not softer.
 
 ## The failures it closes
 
@@ -54,79 +56,80 @@ be ready for next month, and says nothing at all about code outside it that a sw
 not ready for today. What replaces it is a rule with two conditions **before** the work
 and the mechanical law that already holds **after** it.
 
-**A card is swarm-eligible when both hold:**
+Glenn again, the same day, on who decides: *"You are the coordinator. If you can't write
+the card, nobody can."* **The coordinator — a role, whoever holds it — writes the cards
+and decides when the swarm is trusted with a kind of work.** Nobody else is asked to
+author anything: no table, no second signer, no record a person keeps by hand. What the
+coordinator decides **from** is measured by the tools and shown to them, and the
+measurement also **bounds** the decision.
 
-- **(a) our confidence, recorded** — a readiness row for the card's kind and area is in
-  force (rules 1-4);
+**A card goes to a swarm when both hold:**
+
+- **(a) the kind of work is on trial or trusted** — decided by the coordinator, from a
+  track record the tool computes and nobody writes (rules 1-4);
 - **(b) the classifier says the work is within a swarm's reach** — the `nova-decide
   route` answer for the card is a rung a swarm runs, at or above its tuned floor, logged
   (rules 5-7).
 
-1. **Readiness is a record in the repository, written by a commit, never by a tool.**
-   `docs/READINESS.tsv`, one row per line: `kind`, `area` (a repo-relative glob),
-   `state` (`ready` | `withdrawn`), `evidence`, `by`, `at`. It is append-only: a
-   withdrawal is a new row, and per `(kind, area)` the newest `at` wins, a tie folding
-   **withdrawn-last**, the way a hold folds last (`docs/SPEC-MERGE.md:820-827`). Its
-   author (the `by` field, and the commit's) is Glenn or a friend who is **not** the
-   writer of the pilot's cards — never the coordinator that cut those cards, alone, since
-   that is marking one's own work (Q9, awaiting Glenn) — and it reaches `dev` the way any change does
-   — a pull request, a read, a batch. No verb in these tools writes the file: a class
-   test asserts no non-test Go file names its path for writing, and §3's hygiene rejects
-   any card's diff that touches it (`readiness-self`), so a swarm cannot grant itself a
-   row or lift a withdrawal.
-2. **A row cites its evidence, and `cut` checks that the citation resolves.** The
-   `evidence` field is a `;`-separated list of typed pointers, and a `ready` row for a
-   kind that changes code must carry all three:
-   - `gate=<control id>` — the accept gate exists for that kind, with its negative
-     control: a passing `ACCEPT SELFTEST` whose seeds include that kind's (§1 rules 6-8,
-     §5 rule 2);
-   - `trial=<path or PR>` or `mutation=<path>` — what this area has shown: a pilot
-     batch's `OUTCOME` rows for this `(kind, area)` with their accept and later-read
-     results, or a mutation pass over the area with its score (mutants killed of mutants
-     seeded, each seed one edit). The file is in the repository or on the PR the row
-     names; a number typed into the row with nothing behind it is refused as `untuned`
-     is refused (`docs/SPEC-DECIDE.md:581`);
-   - `cert=<bench>` — at least one bench certified for the legs that area's gate needs
-     (§2 rule 4).
+1. **The track record is computed, never written.** For each card kind — and each
+   *area*, which is cheap: the first two path components the card's `PATHS:` share,
+   `cmd/nova-tokens` or `internal/pulse`, carried as `area=` on the `OUTCOME` line — the
+   record is the last **N** gated cards of that kind and area in
+   `<queue>/decide/outcomes.jsonl`, the file `harvest` already appends (§4 rule 5). A
+   card **passes** when the gate said `ACCEPT OK` and no HOLD later landed on its pull
+   request; it **fails** when the gate said `REJECT`, or a HOLD landed on it after an
+   `ACCEPT OK`. An `ABSTAIN` is the bench's and counts for neither. Nothing else feeds
+   it, no verb takes a number for it, and a job that ships its own `OUTCOME` is a
+   `stray-file` (§4), so a swarm cannot write its own record.
 
-   A kind whose gate is `none` — it changes nothing — needs only `trial=`. `cut` refuses
-   to cut a card under a row whose `gate=` has no control on file, whose `trial=` or
-   `mutation=` path does not exist, or whose `cert=` bench holds no live record:
-   `CUT REFUSED readiness kind=<kind> area=<glob>: evidence <pointer> does not resolve`.
-3. **The table starts empty except for what evidence already supports**, which at
-   `dev@31e35195` is one row:
+   ```
+   nova-pulse trust --queue <dir> [--kind <kind>] [--area <area>] [--max <n>]
 
-   | kind | area | state | evidence | by |
-   |---|---|---|---|---|
-   | `read`, `probe` | `**` | `ready` | `trial=` 504 read cards in one day, 2026-09-17 (`docs/SPEC-REVIEW.md:644`); 326 cards in the practice-17 shape, 2026-09-15 (`docs/WORKER-CARDS.md:317-319`). These kinds change nothing, so no gate is owed. | proposed by Rowan; in force only when Glenn or a friend confirms it in the read of this PR (rule 1) |
+   TRUST kind=<kind> area=<area> state=<trial|trusted|paused> cards=<n>/<N> pass=<0.00-1.00|-> need=<rate> run_of_fails=<n>/<R> since=<stamp|-> by=<who|->
+   TRUST OK kinds=<n> trial=<n> trusted=<n> paused=<n>
+   ```
+2. **Every kind starts on trial. A trial is allowed, and every result is read.** A kind
+   with no track record — every code-changing kind today, since no gate exists yet to
+   produce one — runs as **trial**: the coordinator may cut its cards and a swarm may
+   run them, the gate accepts or rejects each, and **every accepted result gets a read
+   before it lands** (`needs_read=yes`, the read condition exactly as it stands,
+   `docs/SPEC-MERGE.md:808-827`). Trial costs nothing but the reads it already costs
+   today, and it is how the record gets made.
+3. **The coordinator decides when a kind is trusted, and the record bounds the
+   decision.**
 
-   **No code-changing kind has a row, for any area, because no accept gate exists yet**
-   (work items T1-T6). That is the whole reason the gate is built by a **builder** with a friend's read — a
-   builder being the role, held as data in the route registry and never a model's name
-   in this text, of a coordinator's own child working red test first
-   (`docs/SPEC-DECIDE.md:126-131`, the child rungs) — not that the paths are forbidden, but that condition (a) cannot be met
-   by anything until the thing (a) cites exists.
-4. **How an area earns its row, and how it loses it.** (i) The kind's gate and its
-   seeds are on `dev` and `ACCEPT SELFTEST` passes on a certified bench. (ii) A pilot:
-   cards of that kind in that area, cut **under a `pilot` row** — `state=ready` with
-   `evidence=pilot:<n>`, which admits at most `<n>` cards, one at a time (§5 rule 5),
-   every one of them read by a friend whatever the gate said. (iii) The pilot's
-   `OUTCOME` rows and the reads' dispositions go into a trial file; where the area's
-   tests are the question, a mutation pass gives the score. (iv) Glenn, or a
-   friend who did not write the pilot's cards, writes the `ready` row citing them, by
-   commit. The row is a judgment, and under it sits a small floor **held in data, not in
-   this prose**: `docs/READINESS-FLOOR.tsv`, one row per kind — `kind`, `min_pilot`,
-   `max_accepted_then_held` — seeded with a minimum pilot count and **zero**
-   accepted-then-held in the trial. `cut` refuses a `ready` row whose `trial=` file shows
-   fewer pilot cards than `min_pilot` or more accepted-then-held than the maximum
-   (`CUT REFUSED readiness … below-floor`); the floor file is changed by commit, like the
-   table, and is `readiness-self` to a card. The numbers are Q9's and await Glenn. **Withdrawal** tightens, so it is open to more hands: one appended row by Glenn, any
-   friend or the coordinator, for any reason, in
-   force from the commit that lands it; `harvest` re-reads the table, so a card launched
-   before a withdrawal and harvested after it is `ACCEPT ABSTAIN reason=not-ready` and
-   pushes nothing. A HOLD on an accepted swarm PR whose finding the gate should have
-   caught is the expected trigger, and `nova-pulse status` counts, per `(kind, area)`,
-   accepted PRs later held, so the trigger is a number.
+   ```
+   nova-pulse trust --queue <dir> --kind <kind> [--area <area>] --set trusted --who <name>
+   nova-pulse trust --queue <dir> --kind <kind> [--area <area>] --set trial|paused --who <name> --reason <text>
+   ```
+
+   `--set trusted` is refused unless the record holds **N** gated cards at or above the
+   **pass rate**: `TRUST REFUSED kind=<kind>: cards=<n>/<N> pass=<x> need=<rate>`. Both
+   numbers are data with defaults — **N = 10 and rate = 0.8, and both are untuned**:
+   they are a place to start, held in `<queue>/trust.tsv` (`kind`, `n`, `rate`,
+   `run_of_fails`), and the first month's outcomes are what tune them. Meeting the
+   bound does not trust a kind by itself; the coordinator says so with the command, and
+   may decline. **What trusted buys:** reads of that kind's accepted results drop from
+   every one to a sample — `audit_rate`, default 0.1, untuned, the same idea as #1627's
+   `--audit-rate` — and the rest land on the gate, CI and no hold. A sampled read that
+   ends in a HOLD is a fail in the record like any other. *This is the one place this
+   document changes the read condition*, and only for a swarm's gated result of a kind
+   the coordinator trusted inside the bound; Glenn's rule of 2026-09-09 (shared tools
+   merge only after reads from other lines, `docs/SPEC-MERGE.md:836`) still governs
+   everything a person or a builder writes, and every trial.
+4. **The record decays by itself, a run of fails resets it, and one command pauses a
+   kind.** *Decay:* the record is only ever the last N cards, so old passes fall out as
+   new cards arrive and a kind that gets worse loses its rate with nobody deciding
+   anything. *Reset:* **R** fails in a row (default 3, untuned) put the kind back on
+   trial at once and empty its record, so trust is re-earned from zero:
+   `TRUST RESET kind=<kind> area=<area> run_of_fails=3/3`, printed by the `harvest` that
+   saw the third. *Pause:* `--set paused --reason <text>` stops `cut` from cutting that
+   kind until `--set trial`; `harvest` re-reads the state, so a card launched before a
+   pause and harvested after it is `ACCEPT ABSTAIN reason=paused` and pushes nothing.
+   Tightening — `trial`, `paused` — is never refused; only `trusted` is bounded. The
+   state is one small file per kind under `<queue>/trust/`, written by this verb alone
+   under the queue's lock, outside every repository a card can touch. **Nothing in any
+   of this needs Glenn or a friend to author anything.**
 5. **The classifier's half is the route, not a new question.** `nova-decide route`
    already answers one unit of work with the lowest rung the evidence supports
    (`docs/SPEC-DECIDE.md:126-134`), and the swarm's fill path already asks it per card
@@ -162,8 +165,9 @@ and the mechanical law that already holds **after** it.
    reading does loosen something *"the answer appears in that list only as one more
    condition that can fail"*; its own summary is that a permitting answer is never
    sufficient. Eligibility loosens — it hands work to a swarm — so it is stated as that
-   list. **Before:** a readiness row in force, written by a commit (mechanical); its
-   evidence resolving (mechanical); a certified bench (mechanical); **and** the route's
+   list. **Before:** the kind on trial or trusted and not paused, a state only the coordinator's
+   command sets and only inside the measured bound (mechanical); a certified bench
+   (mechanical); **and** the route's
    answer, one more condition that can fail. Take the provider away and the list still
    stands and is simply stricter (rule 6). **After:** the accept gate with its negative
    control (§1), hygiene (§3), and the read condition and the hold fold (§6) — none of
@@ -171,7 +175,7 @@ and the mechanical law that already holds **after** it.
    (`docs/SPEC-DECIDE.md:66-71`, rule 6: *confidence never authorizes*). The route's
    state is built from the card's typed header and the issue's public text inside
    #1627's untrusted-text frame; nothing in an issue body can make a card eligible,
-   because a row and a gate stand on either side of the answer.
+   because a measured state and a gate stand on either side of the answer.
 
 **What stays law, and is not a never-touch list.** These are mechanical, they hold for
 every card whatever its area, and the ruling does not loosen them:
@@ -184,8 +188,9 @@ every card whatever its area, and the ruling does not loosen them:
     a card that edits them is judged by the version it did not write. When a card's
     diff touches the gate's own sources, seeds or fixtures, `accept` additionally runs
     the **base's** selftest seeds against the **head's** gate code: any seed that no
-    longer draws its token is `REJECT reason=gate-weakened`. `docs/READINESS.tsv` and
-    the floors file are `readiness-self` (rule 1).
+    longer draws its token is `REJECT reason=gate-weakened`. The track record and the
+    trust state live under the queue, outside every repository a card can touch (rules 1
+    and 4).
 11. **A card cannot edit its tests to pass.** Every `Test` function present at the base
     in a package the card touched must still be present at head and must have gained no
     skip; and for every test file that exists at the base and that the card changed,
@@ -205,36 +210,44 @@ every card whatever its area, and the ruling does not loosen them:
     rule routes the **unit**, not only its read. So for these kinds condition (b) is
     answered, and the answer is not a swarm: the route resolves to a rung that is asked
     and not run, the line reads `why=rung-is-asked-not-run`, and by rule 5 the card is
-    **not swarm-eligible**, whatever readiness row exists. This is Glenn's ruling
+    **not swarm-eligible**, however trusted its kind is. This is Glenn's ruling
     applied, not an exception to it — the route is the classifier, and for these kinds
     it says the designated mind — and it stays so until a person changes the routing
     table by commit. The read of any pull request that touches these kinds is the
     designated mind's and nobody else's: the read condition is satisfied only by that
     mind's APPROVE at the current head, and where that mind is asleep the work
     **waits**; it is never re-routed to whoever is awake.
-14. **Reading is never gated on readiness for an area.** `read` and `probe` change
-    nothing and rule 3's row covers `**`.
+14. **Reading needs no track record.** `read`, `probe`, `text` and `tone` change no code and
+    have no gate, so there is nothing to be on trial for: the coordinator cuts them over any
+    path, as today (504 read cards in one day, `docs/SPEC-REVIEW.md:644`).
 
-**Red tests for this rule**, the provider a fake and the repository a fixture:
-`no-path-is-refused-as-such` (a `fix-red` card over `internal/swarm/**` with a ready
-row and a run-rung answer is cut); `no-readiness-row-is-not-eligible`;
-`withdrawn-last-wins-a-tie`; `a-withdrawal-after-launch-abstains-at-harvest`;
-`readiness-evidence-must-resolve` (a `gate=` with no control on file refuses the cut);
-`no-tool-writes-the-readiness-file` (class test); `a-card-that-edits-readiness-is-rejected`;
+**Red tests for this rule**, the provider a fake and the queue a fixture:
+`no-path-is-refused-as-such` (a `fix-red` card over `internal/swarm/**`, on trial, with
+a run-rung answer, is cut); `a-kind-with-no-track-record-is-on-trial`;
+`every-trial-result-needs-a-read` (an `ACCEPT OK` on trial is `needs_read=yes`);
+`the-track-record-is-the-last-n-gated-cards` (card N+1 pushes card 1 out);
+`an-abstain-counts-for-neither`; `a-hold-after-accept-ok-is-a-fail`;
+`set-trusted-is-refused-under-n-cards`; `set-trusted-is-refused-under-the-pass-rate`;
+`meeting-the-bound-trusts-nothing-until-the-coordinator-says-so`;
+`trusted-reads-are-sampled-at-the-audit-rate` (a fake random source; the sampled one is
+`needs_read=yes`); `three-fails-in-a-row-reset-to-trial-and-empty-the-record`;
+`set-trial-and-set-paused-are-never-refused`; `a-paused-kind-is-not-cut`;
+`a-pause-after-launch-abstains-at-harvest`; `no-verb-takes-a-number-for-the-record`
+(class test: nothing but `harvest` appends `outcomes.jsonl`);
+`a-card-that-ships-its-own-outcome-is-a-stray-file`; `the-defaults-say-they-are-untuned`
+(`nova-pulse trust` prints `untuned` beside a default nobody has changed);
 `route-below-floor-is-not-eligible`; `asked-not-run-rung-is-not-eligible`;
 `no-provider-falls-back-to-the-rule-table`; `no-provider-and-no-rule-says-not-eligible`
 (the line carries `eligible=no why=no-provider-and-no-rule`, and the fill fake sees no
-dispatch); `a-yes-at-0.99-with-no-row-cuts-nothing` (#1627 S5's obeyed-provider shape);
-`an-injected-issue-body-changes-no-eligibility`; `harvest-writes-the-route-outcome`;
+dispatch); `a-yes-at-0.99-for-a-paused-kind-cuts-nothing` (#1627 S5's obeyed-provider
+shape); `an-injected-issue-body-changes-no-eligibility`; `harvest-writes-the-route-outcome`;
 `a-later-hold-appends-a-red-outcome`; `a-card-that-weakens-the-gate-is-rejected`;
 `base-tests-overlaid-on-head-must-pass`; `test-edit-excuses-only-the-named-file`;
-`a-security-kind-card-is-never-swarm-eligible-by-route` (a ready row and a fake provider
-saying yes at 0.99 still cut nothing: no provider call is made at all);
+`a-security-kind-card-is-never-swarm-eligible-by-route` (a trusted kind and a fake
+provider saying yes at 0.99 still cut nothing: no provider call is made at all);
 `a-routing-table-commit-is-the-only-thing-that-changes-that`;
 `security-kind-read-goes-to-the-designated-mind-only`;
-`security-kind-pr-waits-when-the-designated-mind-is-asleep`;
-`pilot-row-admits-n-cards-and-no-more`; `a-row-by-the-pilots-card-writer-is-refused`;
-`a-trial-under-min-pilot-is-below-floor`; `one-accepted-then-held-in-the-trial-is-below-floor`.
+`security-kind-pr-waits-when-the-designated-mind-is-asleep`.
 
 ## 1. The accept gate — mechanical accept or reject, with a negative control
 
@@ -266,7 +279,7 @@ nova-pulse accept --selftest --fixtures <dir> --bench <name> --cert <path> [--ti
 ```
 ACCEPT OK      label=<label> kind=<kind> head=<sha12> base=<sha12> tests=<n> red_without=<n> edits=<n|-> control=<id> bench=<name> cert=<id> took=<d>
 ACCEPT REJECT  label=<label> kind=<kind> head=<sha12|-> reason=<token> at=<path[:line]|test|-> control=<id> bench=<name> cert=<id> took=<d>
-ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|not-ready|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
+ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|paused|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
 ACCEPT SELFTEST control=<id> accepted=<n>/<n> rejected=<n>/<n> edits=1 build=<build identity> fixtures=<sha12> bench=<name> <PASS|FAIL>
 ACCEPT SEED    name=<seed> edits=<n> want=<token> got=<token|ACCEPT> <ok|WRONG>
 ACCEPT REFUSED: <reason> (<remedy>)
@@ -303,7 +316,7 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    able to turn a test green. `--cert` names the bench's certification record (§2); a
    missing, stale or failing record is `ACCEPT ABSTAIN reason=bench-uncertified`.
 4. **The order, and the first failure decides.** (a) §3's hygiene checks: `identity`,
-   `stray-file`, `secret`, `out-of-path`, `readiness-self`. (b) The kind's shape check,
+   `stray-file`, `secret`, `out-of-path`. (b) The kind's shape check,
    where the kind declares one (§5): the named test exists at head
    (`named-test-missing`); the kind changed at least one test file (`no-test`). (b2)
    **The base's tests survive** (the eligibility rule, 11): every `Test` function present
@@ -335,7 +348,7 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    `accept --selftest` runs the gate over a fixture repository shipped in
    `cmd/nova-pulse/testdata/accept/`: one known-good fix commit, which must be
    `ACCEPT OK`, and one seeded defect per reject token of the common gate, each of which must be
-   `ACCEPT REJECT` **with that token and no other** (thirteen tokens, thirteen seeds; the
+   `ACCEPT REJECT` **with that token and no other** (twelve tokens, twelve seeds; the
    kind-specific tokens of §5 add their seeds with their kind; **`gate-weakened` is the
    one token the selftest does not prove** — it needs a second gate to weaken — and its
    own red test, `a-card-that-weakens-the-gate-is-rejected`, is what holds it):
@@ -349,7 +362,6 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    | `stray` | one untracked-then-added file outside `PATHS:` | `stray-file` |
    | `wide` | one line changed in a file outside `PATHS:` | `out-of-path` |
    | `secret` | one line carrying a key-shaped fixture string | `secret` |
-   | `self-ready` | one line added to `docs/READINESS.tsv` | `readiness-self` |
    | `broken` | one line of the fix made a syntax error | `build` |
    | `vetted` | one format verb in the fix made wrong for its argument | `vet` |
    | `renamed` | the named test's `func` line renamed | `named-test-missing` |
@@ -554,8 +566,7 @@ mechanical, and the harvest half never trusts that the staging half ran.
 4. **`out-of-path`: the diff is bounded to the card's declared paths.** The card's
    `PATHS:` line (§5) is a list of repo-relative globs, validated at `cut`: no `..`, no
    absolute path, no bare `**`, at most 8 entries. Every path in `git diff --name-only
-   <base>..<head>` matches one. A rename counts on both sides. `docs/READINESS.tsv` and the
-   floors file are `readiness-self` first (the eligibility rule, 1).
+   <base>..<head>` matches one. A rename counts on both sides.
 5. **`stray-file`.** No added file matches the stray list — `RESULT.md`, `PROMPT.md`,
    `scratch/**`, `*.log`, `*.orig`, `*.rej`, `*.test`, `*.out`, `.DS_Store`, editor
    swap files, anything over 1 MiB, any file whose mode is not `100644` or `100755`,
@@ -690,8 +701,7 @@ the worker never sees and cannot edit.
    below line 1 the contract hash covers them: a card whose header was altered after
    admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing any of
    them (`CUT REFUSED kind=<kind>: no <LINE>`), and `lint --card` gains the tokens
-   `kind-declared`, `paths-declared`, `not-ready` (no readiness row in force for this kind
-   over these paths; the remedy names the eligibility rule, 4: how an area earns its row) and
+   `kind-declared`, `paths-declared`, `paused` (the coordinator paused this kind; the remedy is the `trust --set trial` command) and
    `test-named`.
 2. **The kinds.** `gate` is the step list of §1 rule 4; `control` is what must be seen
    red before the gate's green counts for this card.
@@ -719,10 +729,11 @@ the worker never sees and cannot edit.
    checks the first, third and fourth; the second is the card writer's, by practice 3.
 5. **One card of a new template runs alone before the batch widens.** `launch` refuses
    a batch wider than one for a `(kind, template sha12)` pair with no `ACCEPT OK` on
-   file in `<root>/accept/pilots.tsv`: `PULSE REFUSED: no accepted pilot for kind=<kind>
-   template=<sha12> (launch one card first)`. One wrong template line goes out on every
-   card; the pilot is how it goes out on one. A pilot that is `REJECT` or `ABSTAIN`
-   leaves the pair unpiloted.
+   file in `<root>/accept/first.tsv`: `PULSE REFUSED: no accepted first card for
+   kind=<kind> template=<sha12> (launch one card first)`. One wrong template line goes
+   out on every card; the first card is how it goes out on one. A first card that is
+   `REJECT` or `ABSTAIN` leaves the pair unproven. This is about the template, and it
+   holds for a trusted kind as much as for one on trial.
 6. **A kind never widens itself.** The templates stay text (`docs/SPEC-SWARM.md:2470`);
    the gate is chosen by `KIND:` from the tool's table and by nothing the worker wrote.
    A `RESULT.md` that names a different kind, a different test or more paths is not
@@ -731,7 +742,7 @@ the worker never sees and cannot edit.
 **Red tests:** `cut-refuses-a-gated-kind-without-paths`; `header-lines-are-inside-the-contract-hash`;
 `kinds-table-matches-the-spec`; `transcript-test-rejects-an-edit-to-the-document`;
 `rebase-rejects-one-changed-line-outside-a-conflict`; `sweep-control-names-the-reverted-site`;
-`mutation-kill-rejects-a-test-the-mutant-survives`; `launch-refuses-a-wide-batch-with-no-pilot`;
+`mutation-kill-rejects-a-test-the-mutant-survives`; `launch-refuses-a-wide-batch-with-no-accepted-first-card`;
 `accept-abstains-on-an-unknown-kind`.
 
 ## 6. Lanes and landing that refuse a held member, mechanically
@@ -843,7 +854,8 @@ the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head
    members once (`BATCH DROP #<n> reason="build red with this member merged: <first
    line>"`) instead of failing the batch whole.
 7. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
-   condition; `needs_read` stands for every swarm PR that changes code, and the reader
+   condition; `needs_read` stands for every result of a kind on trial and for the sampled results of a
+   trusted kind (the eligibility rule, 2-3), and the reader
    *"judges spec fit and nothing else"* (`docs/SPEC-REVIEW.md:659-660`) because the
    gate already did the rest. What the gate cannot judge it hands over by name: a
    pre-existing test body changed under `TEST-EDIT:`, and a rebase's conflicted files.
@@ -938,43 +950,44 @@ nine); `platform-line-must-name-a-ci-leg`; `unexecuted-examples-only-shrink`.
 
 ## The work list
 
-Ordered. Each item is one card's worth. The **initial readiness** column is where each
-item starts, not where it stays: `swarm` means the item is cut as swarm cards as soon
-as its kind and area hold a readiness row and the route says yes (the eligibility
-rule); `builder` means it starts with a builder and a friend's read, because at
-`dev@31e35195` no gate exists for any code-changing kind and so no row can cite one.
-Nothing in this column is a prohibition, and any `builder` item becomes swarm work the
-day its `(kind, area)` earns a row. **T1-T6 are the gate; until they land, condition
-(a) cannot be met for any card that changes code.** T8 onward is ordered so that the
-first things a swarm is handed are the narrowest, most mechanical kinds with the
-strongest controls.
+Ordered. Each item is one card's worth. The **starts as** column says where each item
+begins, and none of it is a prohibition. `trial` means the coordinator cuts it as swarm
+cards of a kind that has a gate: allowed from the day T1-T6 land, every result read,
+and **trusted after a track record** when the coordinator says so inside the measured
+bound (the eligibility rule, 2-3). `builder` means a coordinator's own child, red test
+first, with a friend's read — for one of two plain reasons, named on the row: **no
+gate yet** (T1-T7 build the thing every trial is judged by, and a card is never judged
+by what it wrote), or **no kind yet** (the work is a new verb or a new rule, and no
+card kind with a gate covers that shape of work; when one does, it goes on trial like
+any other). T8 onward is ordered so that the first things a swarm is handed are the
+narrowest, most mechanical kinds with the strongest controls.
 
-| # | initial readiness | item | section |
+| # | starts as | item | section |
 |---|---|---|---|
-| T1 (#1646) | builder | `nova-review mutate`: `reverted=<n>` on the verdict line, and the `--seed` form with `edits=1` asserted | §1 rule 9 |
-| T2 (#1647) | builder | `internal/hygiene.Check` and its data files (stray list, key shapes), `readiness-self`, plus `nova-check hygiene` | §3 rules 3-7 |
-| T3 (#1648) | builder | `nova-pulse accept`: the worktree, the step order, the base's tests surviving (`test-weakened`), the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
-| T4 (#1649) | builder | `accept --selftest`: the fixture repository, the thirteen one-edit seeds, `control=<id>`, OK refused without a control on file, and `gate-weakened` with its own red test | §1 rules 6-8, eligibility rule 10 |
-| T5 (#1650) | builder | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line with `class=rejected`; no decide call where the gate decided; the route outcome written | §1 rule 1, §4 rules 1-2, eligibility rule 7 |
-| T6 (#1651) | builder | the header lines in `cut`, the `lint --card` tokens, `docs/READINESS.tsv` with its fold and its class test (no tool writes it), eligibility checked at `cut` and at dispatch — row in force, evidence resolving, route answer or rule table or `eligible=no` — the kinds table with `fix-red` and `transcript-test`, the pilot row | the eligibility rule 1-8, §5 rules 1-5 |
-| T7 (#1652) | builder | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
-| T8 (#1653) | swarm | `transcript-test`, one card per tool, the sections no test executes: nova-ci, nova-decide, nova-pulse (`PATHS:` never reaching `testdata/accept/`), nova-review, and nova-post after its block is re-cut (Q5) | §7 rule 1 |
-| T9 (#1654) | swarm | `transcript-test`, one card per tool, the set-of-shapes tests moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
-| T10 (#1655) | swarm | `fix-red` cards over the triage's defects, area by area as each earns its row (the first pool: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
-| T11 (#1656) | swarm | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
-| T12 (#1657) | builder | the transcript tests of the four tools whose areas will earn a row last — nova-sandbox and nova-secrets (unexecuted; security kinds, so the unit and its read are the designated mind's and no readiness row makes them a swarm's), nova-merge and nova-work (set of shapes) — and then the set helper is deleted | §7 rules 1-2, eligibility rule 13 |
-| T13 (#1658) | builder | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
-| T14 (#1659) | swarm | `rebase`: the conflicting open PRs that are ours, oldest first, one per card (54 conflicted at the triage); the read card lists the files that conflicted | §5 `rebase` |
-| T15 (#1660) | swarm | `mutation-kill`: one card per surviving mutant, from a mutation pass a builder runs with hand-written one-edit seeds and files (Q8) — the same pass is an area's `mutation=` evidence | §5 `mutation-kill`, eligibility rule 2 |
-| T16 (#1572) | builder | #1572: the disposition fold, the forge adding holds only and the verb alone lifting, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
-| T17 (#1661) | builder | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build; a security-kind member needs the designated mind's APPROVE | §6 rule 6, eligibility rule 13 |
-| T18 (#1662) | builder | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
-| T19 (#1663) | builder | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
-| T20 (#1664) | builder | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
-| T21 (#1665) | builder | staging: the pool's `identity.tsv`, the clone's local git config, no symlink out of the job root | §3 rules 1-2 |
-| T22 (#1666) | builder | the Jev boundary: the state built from `OUTCOME`, `class=`/`conf=` written back, `rejected` in the class set, `outcomes.jsonl` — with the Jev lane's SPEC-DECIDE amendment (#1627), not before it | §4 rules 3-5 |
-| T23 (#1667) | builder | `Platform:` lines and their class test (#1509); the unexecuted-examples count and its shrink-only list | §7 rules 5, 7 |
-| T24 (#1668) | builder | move each section's normative text home into its own spec and leave this file as the index | preamble |
+| T1 (#1646) | builder: no gate yet | `nova-review mutate`: `reverted=<n>` on the verdict line, and the `--seed` form with `edits=1` asserted | §1 rule 9 |
+| T2 (#1647) | builder: no gate yet | `internal/hygiene.Check` and its data files (stray list, key shapes), plus `nova-check hygiene` | §3 rules 3-7 |
+| T3 (#1648) | builder: no gate yet | `nova-pulse accept`: the worktree, the step order, the base's tests surviving (`test-weakened`), the reject and abstain tokens, never opens `RESULT.md`, never reruns a red | §1 rules 2-5 |
+| T4 (#1649) | builder: no gate yet | `accept --selftest`: the fixture repository, the twelve one-edit seeds, `control=<id>`, OK refused without a control on file, and `gate-weakened` with its own red test | §1 rules 6-8, eligibility rule 10 |
+| T5 (#1650) | builder: no gate yet | `harvest` runs `accept` by default before any push; `rejected=` on `HARVEST OK`; the `OUTCOME` line with `class=rejected`; no decide call where the gate decided; the route outcome written | §1 rule 1, §4 rules 1-2, eligibility rule 7 |
+| T6 (#1651) | builder: no gate yet | the header lines in `cut`, the `lint --card` tokens, the track record computed from `outcomes.jsonl`, `nova-pulse trust` (show, `--set trusted` refused outside the bound, `--set trial`, `--set paused`), the reset on a run of fails, sampled reads for a trusted kind, the route check at dispatch — answer, rule table or `eligible=no` — the kinds table with `fix-red` and `transcript-test`, the first-card rule | the eligibility rule 1-8, §5 rules 1-5 |
+| T7 (#1652) | builder: no gate yet | `onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine` with its shrink-only allowlist | §7 rules 2-4 |
+| T8 (#1653) | trial, trusted after a track record | `transcript-test`, one card per tool, the sections no test executes: nova-ci, nova-decide, nova-pulse (`PATHS:` never reaching `testdata/accept/`), nova-review, and nova-post after its block is re-cut (Q5) | §7 rule 1 |
+| T9 (#1654) | trial, trusted after a track record | `transcript-test`, one card per tool, the set-of-shapes tests moved onto the comparator: nova-board, nova-bus, nova-cairn, nova-check, nova-fuse, nova-self-talk, nova-wake | §7 rule 2 |
+| T10 (#1655) | trial, trusted after a track record | `fix-red` cards over the triage's defects (the first pool: nova-tokens #1472 #154 #155, nova-check #1400, nova-review's packet #417 #418 #449 #476), one issue per card | §5 `fix-red` |
+| T11 (#1656) | trial, trusted after a track record | `sweep`: the help examples that exit 2 when pasted (#1455), one card per tool, the class test first (needs T13) | §5 `sweep`, §7 rule 7 |
+| T12 (#1657) | designated mind, and trial | the transcript tests of nova-sandbox and nova-secrets (unexecuted; security kinds, so the unit and its read are the designated mind's by the routing table) and of nova-merge and nova-work (set of shapes; `trial` like T9, listed here only because they finish the job) — and then the set helper is deleted | §7 rules 1-2, eligibility rule 13 |
+| T13 (#1658) | builder: no kind yet | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
+| T14 (#1659) | trial, trusted after a track record | `rebase`: the conflicting open PRs that are ours, oldest first, one per card (54 conflicted at the triage); the read card lists the files that conflicted | §5 `rebase` |
+| T15 (#1660) | trial, trusted after a track record | `mutation-kill`: one card per surviving mutant, from a mutation pass a builder runs with hand-written one-edit seeds and files (Q8) | §5 `mutation-kill` |
+| T16 (#1572) | builder: no kind yet | #1572: the disposition fold, the forge adding holds only and the verb alone lifting, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too | §6 rules 1-5 |
+| T17 (#1661) | builder: no kind yet | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build; a security-kind member needs the designated mind's APPROVE | §6 rule 6, eligibility rule 13 |
+| T18 (#1662) | builder: no kind yet | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
+| T19 (#1663) | builder: no kind yet | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
+| T20 (#1664) | builder: no kind yet | Linux: #1495, #1469, then `--toolchain` on Landlock; only then is a Linux bench certified for a walled leg | §2 rule 7 |
+| T21 (#1665) | builder: no kind yet | staging: the pool's `identity.tsv`, the clone's local git config, no symlink out of the job root | §3 rules 1-2 |
+| T22 (#1666) | builder: no kind yet | the Jev boundary: the state built from `OUTCOME`, `class=`/`conf=` written back, `rejected` in the class set, `outcomes.jsonl` — with the Jev lane's SPEC-DECIDE amendment (#1627), not before it | §4 rules 3-5 |
+| T23 (#1667) | builder: no kind yet | `Platform:` lines and their class test (#1509); the unexecuted-examples count and its shrink-only list | §7 rules 5, 7 |
+| T24 (#1668) | builder: no kind yet | move each section's normative text home into its own spec and leave this file as the index | preamble |
 
 T7 starts with a builder because it is the comparator every T8 and T9 card is judged
 against, and a card is never judged by what it wrote (the eligibility rule, 10). T16
@@ -1015,18 +1028,18 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
 - **Q8. `mutation-kill` needs a mutant source.** Default stands: hand-written one-edit
   seeds by a builder, as the nova-work hardening lane did on 2026-09-19; no generator is
   specified here.
-- **Q9 (new). Who may write a readiness row, and what floor sits under it? — AWAITING
-  GLENN.** Default, taken from the cold read of draft 2: Glenn, or a friend who is not
-  the pilot's card writer, by commit — never the coordinator that cut the cards alone;
-  and a small numeric floor in `docs/READINESS-FLOOR.tsv` (a minimum pilot count, zero
-  accepted-then-held in the trial), in data and not in prose. The numbers themselves
-  are Glenn's.
+- **Q9. — WITHDRAWN.** It asked who may write a readiness row. Glenn, 2026-09-19: *"I
+  don't know what readiness rows means. Sounds silly."* and *"You are the coordinator. If
+  you can't write the card, nobody can."* There is no such row. The coordinator decides,
+  from a track record the tool measures; the three defaults (10 cards, 0.8, a run of 3,
+  and the 0.1 read sample) are untuned and are tuned from outcomes, not asked of anyone.
 
 ## What this draft does not do
 
 It lands no code. It forbids no path to a swarm. It does not let a swarm land anything,
-lift a hold, skip a read, enqueue anything, write its own readiness or edit what judges
-it. It does not change the read condition, and it does not move a security-kind unit off
+lift a hold, skip a read, enqueue anything, write its own track record or edit what judges
+it. It changes the read condition in one stated place only (sampled reads for a trusted kind),
+and it does not move a security-kind unit off
 the designated mind: SPEC-DECIDE's routing table does that, by commit, or nothing does. It lets no classifier answer suffice for anything. It does not specify Jev's
 question, options, state or floor — that is the Jev lane's SPEC-DECIDE amendment. It
 does not widen the wall: §2 names narrower roots per leg and refuses an unknown one. It
