@@ -1309,7 +1309,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1322,6 +1322,12 @@ written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
 ```
 nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner nova-native-runner.sh --root <root> --then "nova-pulse harvest --id <id> --root <root>"
 ```
+
+`--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
+unchanged, and only when they are given: one pulse fills every bench the caller names
+— the Studio and the Space in one tick, as SPEC-SWARM's **Benches** section allows —
+instead of a pulse being one bench (issue #637). Neither flag is read by `launch`
+itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
 no launch flag supplies, so launch never calls it (issue #630). `--runner` is
