@@ -92,4 +92,5 @@
                 (:file "tests/replays-restart-and-recovery")
                 (:file "tests/replays-validator-rule-witnesses")
                 (:file "tests/replays-fleet-stale-tokens")
-                (:file "tests/replays-e02-operations")))
+                (:file "tests/replays-e02-operations")
+                (:file "tests/replays-e02-cancel")))
