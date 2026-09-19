@@ -190,8 +190,10 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 // CountEdits is countEdits for a caller outside this package: the accept gate's selftest
 // (SPEC-TOOLWORK §1 rule 7) applies whole-object seeds -- a commit re-authored, a file
 // added, a hunk dropped -- that the patch form cannot express, and still asserts the line
-// count of every patch seed by THIS definition and no second one.
-func CountEdits(applied string) int { return countEdits(applied) }
+// count of every patch seed by THIS definition and no second one. The argument is the
+// `git diff --numstat` of what was applied, as countEdits reads it; a unified diff is
+// not a numstat and counts wrong.
+func CountEdits(numstat string) int { return countEdits(numstat) }
 
 // countEdits is the whole definition of "one edit", and it is the patch git applied
 // that is counted, never the patch file's header.

@@ -513,14 +513,23 @@ func (s *selftest) plant(seed seedSpec) (int, error) {
 		return 0, err
 	}
 	if seed.kind != "author" {
-		diff, err := s.git(nil, "diff", "--cached", "--no-ext-diff", "--no-renames", "-U0")
-		if err != nil {
-			return 0, err
-		}
 		if seed.kind == "hunk" {
-			edits = strings.Count(diff, "\n@@")
+			diff, err := s.git(nil, "diff", "--cached", "--no-ext-diff", "--no-renames", "-U0")
+			if err != nil {
+				return 0, err
+			}
+			edits = strings.Count("\n"+diff, "\n@@")
 		} else {
-			edits = review.CountEdits(diff)
+			// The line count is review.CountEdits over git's own --numstat arithmetic,
+			// the one definition the seed form uses (T01's repair moved it from the
+			// patch text to --numstat; feeding it a unified diff counted a one-line
+			// seed as zero and a two-line one as one, found by the hulk gate of
+			// 58bcb348).
+			numstat, err := s.git(nil, "diff", "--cached", "--no-ext-diff", "--no-renames", "--numstat")
+			if err != nil {
+				return 0, err
+			}
+			edits = review.CountEdits(numstat)
 		}
 		if edits != 1 {
 			return edits, &seedCountError{edits: edits}
