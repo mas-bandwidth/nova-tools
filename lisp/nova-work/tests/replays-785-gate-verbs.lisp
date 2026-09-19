@@ -408,3 +408,155 @@ reason, which is how the first cut of this case would have looked green."
                         :request "alloc-2"))
       (ok okp "once the need is met the allocation is admitted: ~A" line)
       (ok (search "ALLOC OK" line) "with the OK line: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; an identical replay answers its original receipt, whatever the state
+;;;    Stella's [P2] on 1a11652d          SPEC-WORK.md:315
+;;; ------------------------------------------------------------------
+
+(deftest "a-replayed-take-answers-its-original-receipt-after-the-state-moved"
+    "docs/SPEC-WORK.md:315"
+    "expected=the-durable-contract-is-about-the-recorded-payload-and-not-the-state-now"
+  ;; Her witness: `same-take` succeeds at revision 3, a normal submit reopens
+  ;; its need, and the IDENTICAL request retried comes back `LEASE FAIL ...
+  ;; need-reverted` at exit 1 -- although the journal holds the original
+  ;; `LEASE OK`. An identical replay grants no new work: the work was granted
+  ;; and recorded already.
+  (let ((k (verbs-kernel)))
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (multiple-value-bind (okp original code)
+        (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                        :request "same-take" :stamp "2026-09-16T12:00:00Z"
+                        :clock :tool))
+      (ok okp "the take succeeds: ~A" original)
+      (check-equal 0 code "at exit 0")
+      ;; the need is reopened by a normal submit, so the node is no longer
+      ;; needs-met and a FRESH take would be refused
+      (multiple-value-bind (okp line) (verbs-reopen k "acme/work/n")
+        (ok okp "the need is reopened: ~A" line))
+      (ok (search "need-reverted" (or (lease-refusal k "acme/work/d" "sam") ""))
+          "a fresh take is refused now")
+      ;; the identical request answers the ORIGINAL receipt
+      (let ((leases (length (state-lease-log (kernel-state k))))
+            (rev (state-revision (kernel-state k))))
+        (multiple-value-bind (okp replayed code)
+            (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                            :request "same-take" :stamp "2026-09-16T12:00:00Z"
+                            :clock :tool))
+          (ok okp "the identical request is admitted as a replay")
+          (check-equal 0 code "at exit 0")
+          (check-string= original replayed "and answers the original receipt"))
+        (check-equal leases (length (state-lease-log (kernel-state k)))
+                     "and writes no second lease")
+        (check-equal rev (state-revision (kernel-state k))
+                     "and takes no second revision"))))
+  ;; `--expect` is checked AFTER the replay answer, so a request carrying its
+  ;; original expectation does not fail on its own retry
+  (let ((k (verbs-kernel)))
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (let ((expect (state-revision (kernel-state k))))
+      (multiple-value-bind (okp original)
+          (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                          :request "expect-take" :expect expect
+                          :stamp "2026-09-16T12:00:00Z" :clock :tool))
+        (ok okp "the take succeeds under its expectation: ~A" original)
+        ;; the set moves under it
+        (verbs-doing k "acme/work/x")
+        (ok (/= expect (state-revision (kernel-state k))) "the revision has moved")
+        (multiple-value-bind (okp replayed code)
+            (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                            :request "expect-take" :expect expect
+                            :stamp "2026-09-16T12:00:00Z" :clock :tool))
+          (ok okp "the identical request with its original --expect still replays")
+          (check-equal 0 code "at exit 0")
+          (check-string= original replayed "to the original receipt")))))
+  ;; a node that no longer exists, or is now in C, does not change the answer
+  (let ((k (verbs-kernel)))
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (multiple-value-bind (okp original)
+        (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                        :request "settled-take" :stamp "2026-09-16T12:00:00Z"
+                        :clock :tool))
+      (ok okp "the take succeeds: ~A" original)
+      (node-remove k "acme/work/d")
+      (check-equal :c (node-branch (kernel-state k) "acme/work/d") "D is now in C")
+      (multiple-value-bind (okp replayed)
+          (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                          :request "settled-take" :stamp "2026-09-16T12:00:00Z"
+                          :clock :tool))
+        (ok okp "the identical request still replays over a node now in C")
+        (check-string= original replayed "to the original receipt"))))
+  ;; and the same id with a DIFFERENT payload is still refused, whatever moved
+  (let ((k (verbs-kernel)))
+    (verbs-done k "acme/work/n")
+    (refresh-needs-view k)
+    (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                    :request "conflict-take" :stamp "2026-09-16T12:00:00Z"
+                    :clock :tool))
+    (let ((leases (length (state-lease-log (kernel-state k)))))
+      (multiple-value-bind (okp line code)
+          (submit k (list :verb :take-node :node "acme/work/d" :by "sam"
+                          :request "conflict-take" :stamp "2026-09-16T12:00:00Z"
+                          :clock :tool))
+        (ok (not okp) "a different payload under the same id is refused")
+        (check-equal 1 code "at exit 1")
+        (ok (search "reused with a different payload" line) "by name: ~A" line))
+      (check-equal leases (length (state-lease-log (kernel-state k)))
+                   "and writes nothing"))))
+
+;;; ------------------------------------------------------------------
+;;; the same, against the REAL file journal
+;;;    Stella: every new test of a journaled command runs against the real
+;;;    file journal as well as the fake, because the fake is permissive
+;;; ------------------------------------------------------------------
+
+(defun verbs-file-kernel (path &key (seed *verbs-seed*))
+  "A kernel over a real `file-journal`, not the permissive ordering fake."
+  (let ((state (make-seed-state seed)))
+    (values (make-kernel :state state
+                         :journal (open-file-journal
+                                   path :initial-state-hash (root-digest state))
+                         :rev-base 1
+                         :friends (list "glenn" "rowan" "emma" "sam"))
+            state)))
+
+(deftest "a-take-replays-from-the-real-file-journal" "docs/SPEC-WORK.md:315"
+    "expected=one-durable-record-per-take-and-an-identical-retry-answers-it"
+  (let* ((path (test-journal-path "take-node-replay"))
+         (k (verbs-file-kernel path)))
+    (unwind-protect
+         (progn
+           (verbs-done k "acme/work/n")
+           (refresh-needs-view k)
+           (multiple-value-bind (okp original code)
+               (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                               :request "file-take" :stamp "2026-09-16T12:00:00Z"
+                               :clock :tool))
+             (ok okp "the take succeeds against a real journal: ~A" original)
+             (check-equal 0 code "at exit 0")
+             ;; the state moves under it, exactly as in the fake case
+             (verbs-reopen k "acme/work/n")
+             (let ((leases (length (state-lease-log (kernel-state k)))))
+               (multiple-value-bind (okp replayed code)
+                   (submit k (list :verb :take-node :node "acme/work/d" :by "emma"
+                                   :request "file-take" :stamp "2026-09-16T12:00:00Z"
+                                   :clock :tool))
+                 (ok okp "the identical request replays")
+                 (check-equal 0 code "at exit 0")
+                 (check-string= original replayed
+                                "to the original receipt the FILE journal holds"))
+               (check-equal leases (length (state-lease-log (kernel-state k)))
+                            "and writes no second lease"))
+             ;; and a different payload under the same id is refused by the real
+             ;; journal too
+             (multiple-value-bind (okp line code)
+                 (submit k (list :verb :take-node :node "acme/work/d" :by "sam"
+                                 :request "file-take" :stamp "2026-09-16T12:00:00Z"
+                                 :clock :tool))
+               (ok (not okp) "a different payload under the same id is refused")
+               (check-equal 1 code "at exit 1")
+               (ok (search "reused with a different payload" line) "by name: ~A" line))))
+      (close-file-journal (kernel-journal k)))))

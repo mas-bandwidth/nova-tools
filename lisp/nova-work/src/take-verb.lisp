@@ -35,16 +35,45 @@
       ((not (and (stringp rid) (plusp (length rid)))) "refusing to guess: --request")
       (t nil))))
 
+(defun %request-replay-verdict (kernel rid digest)
+  "The two-part request dedup, asked of the journal (SPEC-WORK.md:315).
+
+Answers NIL when this request is new, or (values KIND LINE) where KIND is
+:REPLAY -- an identical recorded payload, so the ORIGINAL receipt is the answer
+-- :CONFLICT, the same id with a different payload, or :UNAVAILABLE.
+
+STELLA'S [P2] ON 1a11652d: this must be asked BEFORE every mutable-state
+precondition. Her witness submitted `same-take` successfully at revision 3,
+reopened its need through a normal submit, and retried the IDENTICAL request:
+it came back `LEASE FAIL ... need-reverted` at exit 1 although the journal held
+the original `LEASE OK`. `--expect` was checked before the lookup too, so an
+unchanged successful request carrying its original expectation could fail on
+its own retry.
+
+The durable replay contract is about the RECORDED payload and not about the
+state now: an identical replay answers the original receipt whatever has
+happened since, and grants no new work, because the work was already granted
+and recorded. A different payload under the same id is still refused."
+  (multiple-value-bind (found recorded-digest recorded-line)
+      (journal-lookup (kernel-journal kernel) rid)
+    (cond
+      ((eq found :unavailable) (values :unavailable recorded-digest))
+      ((not found) nil)
+      ((string= digest recorded-digest) (values :replay recorded-line))
+      (t (values :conflict recorded-line)))))
+
 (defun %take-node-submit (kernel request)
   "`take --node`, run on the kernel's one command thread.
 
 Answers (values OK-P LINE EXIT-CODE ENVELOPE).
 
-The refusal order is rule 3's, fixed so every expected line can be written
-(SPEC-WORK.md:4894): an invocation that cannot be read, exit 2; then a stale
-`--expect`; then a node the session does not hold, by this verb's existing line;
-then NEEDS-MET; and only then the verb's other preconditions -- a node in C, and
-a lease already held.
+THE ORDER. An invocation it cannot read, exit 2 -- that reads the request only
+and no state. Then the DURABLE REPLAY ANSWER, which reads the journal and no
+state: an identical recorded payload answers its original receipt, and the same
+id with a different payload is refused. Only then rule 3's refusal order over
+mutable state (SPEC-WORK.md:4894): a stale `--expect`; a node the session does
+not hold; NEEDS-MET; and only then this verb's other preconditions -- a node in
+C, and a lease already held.
 
 `--dry-run` is how a caller asks without writing (:4934): it answers the same
 refusal or the projected receipt, journals nothing and writes nothing."
@@ -61,9 +90,39 @@ refusal or the projected receipt, journals nothing and writes nothing."
          (dry-run (getf request :dry-run))
          (expect (getf request :expect))
          ;; The authoritative view is the session's, read HERE, on the writer,
-         ;; at the revision this request is applied at. A request may carry one
-         ;; for a caller that built it; the kernel's is the default.
-         (view (or (getf request :view) (kernel-needs-view kernel))))
+         ;; at the revision this request is applied at.
+         (view (or (getf request :view) (kernel-needs-view kernel)))
+         (event (make-work-event
+                 :kind :lease :node node :by by
+                 :fields (list :holder by
+                               :default (getf request :default +absent+))
+                 :stamp (or (getf request :stamp) "2026-09-14T12:00:00Z")
+                 :clock (or (getf request :clock) :tool)
+                 :request rid
+                 :generation-owner (or (getf request :generation-owner) by)
+                 :rev (kernel-next-rev kernel)))
+         ;; The digest is stable: it covers :kind, :node, :by and the kind's own
+         ;; fields, and never the revision, so one request digests the same
+         ;; however much the set has moved since (src/event.lisp).
+         (digest (payload-digest (list event))))
+    ;; ---- the durable replay answer, before any mutable state -------------
+    (multiple-value-bind (verdict recorded) (%request-replay-verdict kernel rid digest)
+      (case verdict
+        (:unavailable
+         (return-from %take-node-submit
+           (values nil (format nil "LEASE FAIL node=~A page=~A: dedup unavailable"
+                               node recorded)
+                   1 nil)))
+        (:replay
+         (return-from %take-node-submit
+           (values t recorded 0
+                   (list :request rid :digest digest :events (list) :replayed t))))
+        (:conflict
+         (return-from %take-node-submit
+           (values nil (format nil "LEASE FAIL node=~A request=~A: reused with a different payload"
+                               node rid)
+                   1 nil)))))
+    ;; ---- and only now the mutable state ----------------------------------
     (when (and expect (/= expect (state-revision state)))
       (return-from %take-node-submit
         (values nil (format nil "LEASE FAIL node=~A expect=~D current=~D: stale"
@@ -86,45 +145,16 @@ refusal or the projected receipt, journals nothing and writes nothing."
         (return-from %take-node-submit
           (values nil (format nil "LEASE FAIL node=~A: ~A is in C and takes no lease" node node)
                   1 nil)))
-      ;; The two-part dedup test is asked of the journal FIRST, as `%submit`
-      ;; asks it, so a retry of one request id answers the original line and
-      ;; never this verb's `held` precondition.
-      (let* ((event (make-work-event
-                     :kind :lease :node node :by by
-                     :fields (list :holder by
-                                   :default (getf request :default +absent+))
-                     :stamp (or (getf request :stamp) "2026-09-14T12:00:00Z")
-                     :clock (or (getf request :clock) :tool)
-                     :request rid
-                     :generation-owner (or (getf request :generation-owner) by)
-                     :rev (kernel-next-rev kernel)))
-             (digest (payload-digest (list event)))
-             (line (format nil "LEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
-                           (event-id event) rid node by (work-event-rev event))))
+      (when (wnode-holder n)
+        (return-from %take-node-submit
+          (values nil (format nil "LEASE FAIL node=~A holder=~A: held" node (wnode-holder n))
+                  1 nil)))
+      (let ((line (format nil "LEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
+                          (event-id event) rid node by (work-event-rev event))))
         ;; `--dry-run` journals nothing and writes nothing (:4934).
-        ;; dedup first (SPEC-WORK.md:315), then this verb's last precondition
-        (multiple-value-bind (found recorded-digest recorded-line)
-            (journal-lookup (kernel-journal kernel) rid)
-          (cond
-            ((eq found :unavailable)
-             (return-from %take-node-submit
-               (values nil (format nil "LEASE FAIL node=~A page=~A: dedup unavailable"
-                                   node recorded-digest)
-                       1 nil)))
-            (found
-             (return-from %take-node-submit
-               (if (string= digest recorded-digest)
-                   (values t recorded-line 0
-                           (list :request rid :digest digest :events (list) :replayed t))
-                   (values nil (format nil "LEASE FAIL node=~A request=~A: reused with a different payload"
-                                       node rid)
-                           1 nil))))))
-        (when (wnode-holder n)
-          (return-from %take-node-submit
-            (values nil (format nil "LEASE FAIL node=~A holder=~A: held" node (wnode-holder n))
-                    1 nil)))
         (when dry-run
           (return-from %take-node-submit
             (values t (format nil "~A dry-run=true" line) 0 nil)))
+        ;; ONE durable append and apply, with the final receipt.
         (%oneshot-submit kernel rid digest line event "LEASE"
                          (list :verb :take-node :node node :holder by :request rid))))))
