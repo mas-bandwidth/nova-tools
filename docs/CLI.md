@@ -3182,7 +3182,9 @@ models are listed for the owner to evaluate and pull themselves. No timer is ins
 ### Capture and compare installed binaries
 
 ```sh
+go build -o ./bin/ ./cmd/nova-version
 nova-version snapshot --bin ./bin --out ./before.tsv
+cp ./before.tsv ./after.tsv
 nova-version diff --from ./before.tsv --to ./after.tsv
 ```
 
