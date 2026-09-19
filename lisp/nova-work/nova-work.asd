@@ -89,4 +89,5 @@
                 (:file "tests/request-line")
                 (:file "tests/replays-concurrency-witness")
                 (:file "tests/replays-restart-and-recovery")
-                (:file "tests/replays-validator-rule-witnesses")))
+                (:file "tests/replays-validator-rule-witnesses")
+                (:file "tests/replays-fleet-stale-tokens")))
