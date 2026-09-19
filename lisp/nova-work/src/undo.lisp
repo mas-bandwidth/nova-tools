@@ -77,10 +77,16 @@ would move, or a refusal naming why the request is not reversible here."
                            :before (%plan-text (getf entry :under))
                            :after (%plan-text (getf entry :from))))
                nil))
+      ;; A verb whose reversal lives in a file loaded after this one registers
+      ;; it in *UNDO-HANDLERS* (src/edit-undo.lisp); everything else is refused
+      ;; by name, which is what the table's last column asks (:2847).
       (t
-       (values nil
-               (format nil "verb ~A is not reversible here"
-                       (string-downcase (symbol-name verb))))))))
+       (let ((handler (undo-handler verb :plan)))
+         (if handler
+             (funcall handler kernel entry)
+             (values nil
+                     (format nil "verb ~A is not reversible here"
+                             (string-downcase (symbol-name verb))))))))))
 
 (defun undo-plan (kernel of &key (request "undo-plan-1") (by "rowan")
                                   (stamp "2026-09-14T12:00:00Z") (clock :tool)
@@ -189,7 +195,10 @@ Answers a list of names, empty when the preconditions still hold."
                       (equal (wnode-children f) (getf before :from-children))
                       (equal (wnode-children u) (getf before :under-children)))
            (list "parent children"))))
-      (t (list "unreversible verb")))))
+      (t (let ((handler (undo-handler (getf entry :verb) :redo-changed)))
+           (if handler
+               (funcall handler state entry)
+               (list "unreversible verb")))))))
 
 (defun %redo-edit-rows (state node after)
   "One row per metadata field the redo would move, from the current value to the
@@ -236,9 +245,12 @@ the intent would move."
                            :after (%plan-text (getf entry :under))))
                nil))
       (t
-       (values nil
-               (format nil "verb ~A is not reversible here"
-                       (string-downcase (symbol-name verb))))))))
+       (let ((handler (undo-handler verb :redo-plan)))
+         (if handler
+             (funcall handler kernel entry)
+             (values nil
+                     (format nil "verb ~A is not reversible here"
+                             (string-downcase (symbol-name verb))))))))))
 
 (defun redo-plan (kernel of &key (request "redo-plan-1") (by "rowan")
                                 (stamp "2026-09-14T12:00:00Z") (clock :tool)
@@ -342,8 +354,18 @@ last event."
             (values nil (format nil "REDO FAIL request-of=~A: stale plan changed ~{~A~^,~}: not applied"
                                 of changed)
                     1 nil))))
-      (if (eq (getf oentry :verb) :node-move)
-          (%redo-move kernel oentry rid of request)
+      (cond
+        ((eq (getf oentry :verb) :node-move)
+         (%redo-move kernel oentry rid of request))
+        ((undo-handler (getf oentry :verb) :redo)
+         (multiple-value-bind (okp line code envelope)
+             (funcall (undo-handler (getf oentry :verb) :redo) kernel oentry rid request)
+           (unless okp
+             (return-from %submit-redo (values nil line code nil)))
+           (setf (gethash rid (kernel-applied kernel))
+                 (list :verb :redo :of of :original oentry :request request))
+           (values t line 0 envelope)))
+        (t
           (let ((target (%redo-target-request oentry request)))
             (unless target
               (return-from %submit-redo
@@ -355,7 +377,8 @@ last event."
               (let ((redo-line (%redo-line rid of envelope)))
                 (setf (gethash rid (kernel-applied kernel))
                       (list :verb :redo :of of :original oentry :request target))
-                (values t redo-line 0 envelope))))))))
+                (values t redo-line 0 envelope)))))))))
+
 
 (defun %submit-redo-plan (kernel request)
   "Dispatch for the `:redo-plan` verb. The read body is `redo-plan`."
