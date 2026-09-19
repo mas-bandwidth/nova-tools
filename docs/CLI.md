@@ -2091,6 +2091,36 @@ Where the card names no `KIND:`, the kind is read from its contract line by a de
 
 **A card that fails its gate re-enters one rung up.** The ladder is the retry policy: a confirmed failure is appended to the unit as evidence, and the rung that failed — and its lineage at that height — is out of the eligible set, so the answer is another lineage on the same rung where there is one (sideways before up) and the rung above where there is not. It is never a retry on the rung that just failed.
 
+**`native` takes a bench slot lease, and refuses a launch it cannot lease (#1546).**
+`--slots-store <dir>` and `--owner <name>` are **required**. The run takes exactly one
+lease before any job directory is made, holds it for the deadline plus two minutes of
+grace, and releases it on every exit path, a failed run included. A take that grants
+nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=… holders=…` line and
+exits 2, having started nothing. Asked without either flag it prints one line and exits 2:
+
+```
+NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
+```
+
+There is no default store, no owner guessed from the host or the label, no `shares.tsv`
+created on the way past, and no flag that turns it off — a launch that took no lease is one
+the bench cannot see, cannot count and cannot refuse. A bench's store is made once, by
+hand: `nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>`,
+which creates and never updates.
+
+`batch` without a `--runner` of its own runs every card through `native`, so it takes the
+same two flags and **refuses the whole batch with the same line before any card runs**. A
+batch with its own `--runner` launches no `native` and is not held to this. The store path
+is resolved on the machine that runs the card, which for a bench row is the bench.
+
+**The release is by identity.** `native` keeps the lease ids `TakeSlotLeases` granted it
+and gives back exactly those, pid-fenced. Releasing by owner and label would mean that two
+runs sharing a bench and a card name each give away the other's live seat, and that a run
+refusing before it started — a missing harness, say — deletes a lease it never took
+(Stella, on #1562). `nova-swarm slots release --owner … --label …` keeps the by-owner-and-label
+behaviour, because that is what a person at a prompt means by it.
+
+
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
 `baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.

@@ -711,7 +711,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -744,7 +744,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -883,6 +883,8 @@ func TestCmdNativeCLI(t *testing.T) {
 	stderr.Reset()
 	args := []string{
 		"native",
+		"--slots-store", nativeStore(t),
+		"--owner", "fake-1",
 		"--harness", bin,
 		"--model", "fake/fake-model",
 		"--label", "test-label",
@@ -1060,7 +1062,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -1079,7 +1081,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -1833,7 +1835,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+			args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
 				"--deadline", "30s"}
 			if tc.walled {
@@ -1935,7 +1937,7 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/other-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/other-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 2 {
@@ -1971,7 +1973,7 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	t.Setenv("FAKE_KEY", fakeKey)
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -2020,7 +2022,7 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -2125,7 +2127,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -2141,7 +2143,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "opencode/other",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/other",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 2 {
@@ -2178,7 +2180,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "other/deepseek-v4-flash",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "other/deepseek-v4-flash",
 			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 2 {
@@ -2241,7 +2243,7 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "space-label", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
