@@ -1322,7 +1322,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1339,8 +1339,17 @@ nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s>
 `--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
 unchanged, and only when they are given: one pulse fills every bench the caller names
 — the Studio and the Space in one tick, as SPEC-SWARM's **Benches** section allows —
-instead of a pulse being one bench (issue #637). Neither flag is read by `launch`
-itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
+instead of a pulse being one bench (issue #637). Whatever `nova-swarm batch` refuses,
+it refuses with its own line.
+
+**`--machines` holds every `--bench` name against the machines registry before the
+batch is admitted.** A launch reaches every bench it names over `ssh`, and runner
+hosts are CI-only, so the NAMES are resolved at the verb's edge: an unknown machine,
+a runner host, the coordination bench or a services host is refused with
+`PULSE REFUSED bench=... reason=... remedy="..."` and no batch is admitted. Naming a
+bench without the registry is refused outright — without it the verb cannot tell a
+bench from a CI runner host, and the one thing it must never do is guess that; a
+launch with no `--bench` names nothing and runs on this machine exactly as before.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
 no launch flag supplies, so launch never calls it (issue #630). `--runner` is

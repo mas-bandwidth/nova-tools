@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 )
@@ -221,5 +222,33 @@ func TestASingleBenchFleetVerbWithoutARegistryKeepsItsOlderGuard(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "FLEET REFUSED bench=studio") {
 		t.Fatalf("stdout = %q, want the studio refusal", out.String())
+	}
+}
+
+// TestLaunchRefusesARunnerHostBench: a launch naming batman hands the card to nova-swarm
+// batch, whose ssh is exactly the reach a runner host may not take -- so the NAME is
+// resolved against the machines registry before the batch is admitted, and the refused
+// launch reaches no batch at all.
+func TestLaunchRefusesARunnerHostBench(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 1)
+
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 2, Deadline: "600",
+		Bench:    "batman",
+		Machines: machinesFile(t, root, []string{"hulk"}, []string{"batman"}),
+		Now:      func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
+	})
+	line := strings.TrimSpace(errb)
+	if !strings.HasPrefix(line, "PULSE REFUSED bench=batman reason=runner-host remedy=\"") {
+		t.Fatalf("launch admitted a runner-host bench: exit=%d stderr=%q, want the PULSE REFUSED bench=batman reason=runner-host line", code, errb)
+	}
+	if code != 2 {
+		t.Fatalf("launch exit = %d, want 2", code)
+	}
+	if raw, err := os.ReadFile(argvLog); err == nil && strings.TrimSpace(string(raw)) != "" {
+		t.Fatalf("the refused launch still reached nova-swarm batch: %q", raw)
 	}
 }

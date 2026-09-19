@@ -399,6 +399,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	queue := f.fs.Bool("queue", false, "")
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
+	machines := f.fs.String("machines", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	routes := f.fs.String("routes", "", "")
 	floor := f.fs.Float64("floor", 0.9, "")
@@ -427,7 +428,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
-		Benches: *benches, Bench: *bench,
+		Benches: *benches, Bench: *bench, Machines: *machines,
 		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,

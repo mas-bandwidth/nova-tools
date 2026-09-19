@@ -3,6 +3,7 @@ package pulse
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -33,6 +35,11 @@ type LaunchInput struct {
 	// batch runs on this machine exactly as before (issue #637).
 	Benches string // the benches table file
 	Bench   string // the benches to fill, comma separated
+	// Machines is the machines registry the named benches are resolved against before
+	// the batch is admitted. Empty leaves the verb unguarded, the same narrowing the
+	// fleet verbs and harvest --bench carry; cmd/nova-pulse names it on every real
+	// invocation.
+	Machines string // the machines registry; empty resolves no bench name
 	// Routes is the routes.tsv the typed decision reads to pick each card's worker. Empty
 	// means no routing: the cards group by their own model column, exactly as before.
 	Routes  string
@@ -81,6 +88,13 @@ func Launch(in LaunchInput) int {
 	if len(cards) == 0 {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
+	}
+	// THE LOCK (Glenn, 2026-09-18): runner hosts are CI-only, and the batch this verb
+	// admits reaches every named bench over ssh. The NAMES are resolved against the
+	// machines registry before the batch is admitted, so a runner host is refused here
+	// rather than handed to nova-swarm batch (issue #1905).
+	if code := requireLaunchBenches(in.Stderr, in.Machines, in.Bench); code != 0 {
+		return code
 	}
 	// ROUTE (SPEC-DECIDE rule 8): with --routes, each card's worker is a typed decision, and
 	// the ROUTE line is logged beside the card and the time. Below the floor the card keeps
@@ -185,6 +199,37 @@ func (in LaunchInput) event(event, msg string, dur time.Duration, err error) {
 		l.Err = err.Error()
 	}
 	_ = l.Write(in.Log)
+}
+
+// requireLaunchBenches holds every named bench against the machines registry BEFORE the
+// batch is admitted, so a launch naming a runner host refuses every card rather than
+// handing it to nova-swarm batch, which would ssh to that host. Every refused name gets
+// its own line, the way the fill's list check names them. With no bench named there is
+// nothing to resolve and the launch runs on this machine exactly as before; with a bench
+// named and no registry the verb cannot tell a bench from a CI runner host, and the one
+// thing it must never do is guess that.
+func requireLaunchBenches(stderr io.Writer, machines, bench string) int {
+	names := splitList(bench)
+	if len(names) == 0 {
+		return 0
+	}
+	if strings.TrimSpace(machines) == "" {
+		return refusal(stderr, "PULSE", fmt.Errorf(
+			"missing --machines; refusing to guess (run: nova-pulse launch --machines queue/control/machines.tsv --benches <file> --bench <name>)"))
+	}
+	reg, err := fleet.ReadRegistry(machines)
+	if err != nil {
+		return refusal(stderr, "PULSE", err)
+	}
+	code := 0
+	for _, name := range names {
+		var r *fleet.Refusal
+		if err := reg.RequireBench(name); errors.As(err, &r) {
+			fmt.Fprintln(stderr, r.Line("PULSE"))
+			code = 2
+		}
+	}
+	return code
 }
 
 // runBatch admits one batch as the swarm's CARD form of nova-swarm batch and relays a swarm
