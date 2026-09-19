@@ -52,7 +52,12 @@
     ;; admitting kind). It is an EVENT so the gate and the write happen together
     ;; inside the single writer, at the revision the request is applied at
     ;; (:4892) -- which a direct mutation on the caller's thread cannot promise.
-    (:lease      :holder :default))
+    (:lease      :holder :default)
+    ;; `dep --add` / `dep --remove`: the reference edge, rule 6
+    ;; (SPEC-WORK.md:4993). It is an EVENT so the edge is journaled, replayed
+    ;; and deduplicated like every other mutation -- Stella's [P1] on 5d1f9dfa,
+    ;; where the edge lived only in memory and a restart erased it.
+    (:dep        :change :need :reason))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")

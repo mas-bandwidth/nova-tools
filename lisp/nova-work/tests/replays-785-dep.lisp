@@ -58,6 +58,7 @@ another repository work set of the same O.")
                                                     :clock :tool
                                                     :generation-owner "gen-1"))
       (ok okp "N settles first so D can be leased: ~A" line))
+    (refresh-needs-view k)
     (take-lease k "acme/work/d" "emma")
     (multiple-value-bind (okp line code) (dep-add k "acme/work/d" "acme/work/m")
       (ok okp "the edge is admitted under work: ~A" line)
@@ -165,3 +166,109 @@ another repository work set of the same O.")
       (ok (not okp) "removing an edge the node does not hold is refused")
       (check-equal 1 code "at exit 1")
       (ok (search "no such edge" line) "naming what is missing: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; a dep edit is durable, deduplicated and replayed
+;;;    Stella's [P1] on 5d1f9dfa          SPEC-WORK.md:4993
+;;; ------------------------------------------------------------------
+
+(deftest "a-dep-edit-is-journaled-and-survives-a-restart" "docs/SPEC-WORK.md:4993"
+    "expected=the-edge-the-verb-acknowledged-is-the-edge-a-restart-reads"
+  ;; The first cut mutated `wnode-deps`, the reverse edge and the structure log
+  ;; in place and appended nothing to the history: `DEP OK changed=1` came back
+  ;; while the history length stayed zero, and a canonical reconstruction
+  ;; produced D with no dependencies and no structure log. A restart erased the
+  ;; edge that had just been acknowledged.
+  (flet ((restart-of (k)
+           (reconstruct-state
+            (canonical-string (state-canonical-form (kernel-state k))))))
+    ;; --add survives, forward edge, reverse edge and audit record
+    (let* ((k (dep-kernel))
+           (before (length (state-history (kernel-state k)))))
+      (multiple-value-bind (okp line) (dep-add k "acme/work/d" "acme/work/m")
+        (ok okp "the edge is admitted: ~A" line)
+        (ok (search "changed=1" line) "and says it changed one thing: ~A" line))
+      (ok (> (length (state-history (kernel-state k))) before)
+          "the history grew: the edit is a journaled envelope and not a poke")
+      (let ((fresh (restart-of k)))
+        (check-equal '("acme/work/n" "acme/work/m") (node-deps fresh "acme/work/d")
+                     "the forward edge survives a canonical reconstruction")
+        (check-equal '("acme/work/d") (node-dependents fresh "acme/work/m")
+                     "and so does the reverse edge")
+        (let ((log (remove-if-not (lambda (e) (eq :dep (getf e :verb)))
+                                  (node-structure-log fresh "acme/work/d"))))
+          (check-equal 1 (length log) "and the audit record")
+          (check-string= "rowan" (getf (first log) :by) "with its author")
+          (ok (stringp (getf (first log) :reason)) "and its reason"))))
+    ;; --remove survives too
+    (let ((k (dep-kernel)))
+      (dep-remove k "acme/work/d" "acme/work/n")
+      (let ((fresh (restart-of k)))
+        (check-equal '() (node-deps fresh "acme/work/d")
+                     "a removed edge stays removed across a restart")
+        (check-equal '() (node-dependents fresh "acme/work/n")
+                     "and the reverse edge with it")))
+    ;; an identical request replays to the ORIGINAL receipt and writes once
+    (let ((k (dep-kernel)))
+      (multiple-value-bind (okp first-line) (dep-add k "acme/work/d" "acme/work/m"
+                                                     :request "review-add")
+        (ok okp "the first add: ~A" first-line)
+        (let ((history (length (state-history (kernel-state k)))))
+          (multiple-value-bind (okp again) (dep-add k "acme/work/d" "acme/work/m"
+                                                    :request "review-add")
+            (ok okp "the retransmission is admitted")
+            (check-string= first-line again
+                           "and answers the original deduplicated receipt"))
+          (check-equal history (length (state-history (kernel-state k)))
+                       "and writes no second envelope"))))
+    ;; the SAME request id with a DIFFERENT payload is refused
+    (let ((k (dep-kernel)))
+      (dep-add k "acme/work/d" "acme/work/m" :request "review-add")
+      (let ((deps (node-deps (kernel-state k) "acme/work/d"))
+            (history (length (state-history (kernel-state k)))))
+        (multiple-value-bind (okp line code)
+            (dep-remove k "acme/work/d" "acme/work/n" :request "review-add")
+          (ok (not okp) "one request id with a different payload is refused")
+          (check-equal 1 code "at exit 1")
+          (ok (search "reused with a different payload" line) "by name: ~A" line))
+        (check-equal deps (node-deps (kernel-state k) "acme/work/d")
+                     "and nothing was mutated")
+        (check-equal history (length (state-history (kernel-state k)))
+                     "and nothing was written")))
+    ;; a REFUSED edit writes nothing at all -- no partial mutation
+    (let* ((k (dep-kernel))
+           (deps (node-deps (kernel-state k) "acme/work/d"))
+           (history (length (state-history (kernel-state k)))))
+      (dolist (bad '(("acme/work/d" "acme/work/d") ("acme/work/d" "acme/work/nowhere")))
+        (multiple-value-bind (okp line code) (dep-add k (first bad) (second bad))
+          (declare (ignore line))
+          (ok (not okp) "~S is refused" bad)
+          (check-equal 1 code "at exit 1")))
+      (check-equal deps (node-deps (kernel-state k) "acme/work/d") "no edge moved")
+      (check-equal history (length (state-history (kernel-state k)))
+                   "and no envelope was written")
+      (check-equal '() (remove-if-not (lambda (e) (eq :dep (getf e :verb)))
+                                      (node-structure-log (kernel-state k) "acme/work/d"))
+                   "and no audit record was left behind"))
+    ;; a FRESH request naming an edge that is already there: a visible,
+    ;; successful no-effect (Stella's ruling on SPEC-QUESTION 2)
+    (let* ((k (dep-kernel))
+           (history (length (state-history (kernel-state k)))))
+      (multiple-value-bind (okp line code)
+          (dep-add k "acme/work/d" "acme/work/n" :request "fresh-duplicate")
+        (ok okp "a duplicate add under a fresh request is admitted")
+        (check-equal 0 code "at exit 0")
+        (ok (search "DEP NOTE" line) "as a visible no-effect: ~A" line)
+        (ok (search "changed=0" line) "with changed=0: ~A" line))
+      (check-equal history (length (state-history (kernel-state k)))
+                   "and it writes no new event")
+      (check-equal '("acme/work/n") (node-deps (kernel-state k) "acme/work/d")
+                   "and does not double the edge")
+      ;; and it does NOT bypass request-id validation
+      (multiple-value-bind (okp line code)
+          (dep-edit k :node "acme/work/d" :change :add :need "acme/work/n"
+                      :as "rowan" :reason "no request id" :request nil
+                      :stamp "2026-09-16T14:00:00Z")
+        (ok (not okp) "a duplicate add with no request id is still refused")
+        (check-equal 2 code "at exit 2")
+        (ok (search "--request" line) "naming the field: ~A" line)))))

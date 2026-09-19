@@ -588,6 +588,34 @@ rather than zero. A view: it never writes, and a closed node is not in it."
       ;; SPEC-WORK.md:4869 -- `take --node` writes one `:lease` event. It is
       ;; applied here, inside the single writer, in the same total order as
       ;; every other event, so no reopen can slip between the gate and the write.
+      ;; SPEC-WORK.md:4993 rule 6 -- one recorded edit of one reference edge,
+      ;; applied here so a canonical reconstruction and a journal replay both
+      ;; rebuild the forward edge, the reverse edge and the structure log.
+      (:dep
+       (let* ((fields (work-event-fields event))
+              (change (getf fields :change))
+              (need (getf fields :need))
+              (target (%node-quiet state need)))
+         (ecase change
+           (:add
+            (unless (member need (wnode-deps node) :test (function equal))
+              (setf (wnode-deps node) (append (wnode-deps node) (list need)))
+              (when target
+                (setf (wnode-dependents target)
+                      (append (wnode-dependents target) (list id))))))
+           (:remove
+            (setf (wnode-deps node) (remove need (wnode-deps node) :test (function equal)))
+            (when target
+              (setf (wnode-dependents target)
+                    (remove id (wnode-dependents target) :test (function equal))))))
+         (push (list :op :structure :kind :structure :verb :dep
+                     :node id :change change :need need
+                     :by (work-event-by event)
+                     :reason (getf fields :reason)
+                     :request (work-event-request event)
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wnode-meta-log node))))
       (:lease
        (let ((holder (getf (work-event-fields event) :holder)))
          (setf (wnode-holder node) holder)

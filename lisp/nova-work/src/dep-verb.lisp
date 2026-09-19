@@ -43,7 +43,7 @@ itself is a cycle of length one, as *The coordination tree is one edge* says of
                           (and n (some #'reach (wnode-deps n))))))))
       (reach need))))
 
-(defun %dep-line (kernel node change need rev &key (changed 1) view)
+(defun %dep-line (kernel node change need rev &key (changed 1) view request)
   "The `DEP OK` line of SPEC-WORK.md:6031, without its trailing `emitted=`,
 which is the CLI's count of what it printed and there is no CLI in this kernel
 -- the same omission every other OK line here makes.
@@ -54,101 +54,150 @@ AFTER the change (:4996)."
     (multiple-value-bind (met) (need-met-p state need :view view :dependent node)
       (multiple-value-bind (unmet) (node-needs-status state node :view view)
         (format nil "DEP OK id=~D request=~A node=~A rev=~D pushed=- change=~(~A~) need=~A met=~A unmet=~D needs-broken=~A changed=~D"
-                rev (%dep-request kernel) node rev
+                rev (or request "-") node rev
                 change need
                 (if met "true" "false")
                 unmet
                 (if (node-needs-broken state node :view view) "true" "false")
                 changed)))))
 
-(defvar *dep-request* nil
-  "The request id of the `dep` call in flight, so the line can name it without
-threading it through every helper.")
-
-(defun %dep-request (kernel) (declare (ignore kernel)) (or *dep-request* "-"))
-
 (defun %dep-text-p (value) (and (stringp value) (plusp (length (string-trim " " value)))))
 
-(defun dep-edit (kernel &key node change need as reason request stamp view)
-  "`dep --add <id>` / `dep --remove <id>`: one recorded edit of one reference
-edge. Answers (values OK-P LINE EXIT-CODE).
+(defun %dep-request-refusal (request)
+  "An invocation `dep` cannot read, or NIL. Exit 2 is the code. Request-id
+validation happens HERE, before the no-effect case, so a duplicate add cannot
+bypass it (Stella's read of 5d1f9dfa)."
+  (let ((change (getf request :change)))
+    (cond
+      ((not (member change '(:add :remove))) "--change is add or remove")
+      ((not (%dep-text-p (getf request :node))) "refusing to guess: --node")
+      ((not (%dep-text-p (getf request :need))) "refusing to guess: --need")
+      ((not (%dep-text-p (getf request :by))) "refusing to guess: --as")
+      ((not (%dep-text-p (getf request :reason))) "refusing to guess: --reason")
+      ((not (%dep-text-p (getf request :request))) "refusing to guess: --request")
+      (t nil))))
 
-Refusals, in order. **Exit 2**, an invocation that cannot be read: a missing or
-whitespace-only `--node`, `--need`, `--as`, `--reason` or `--request`, or a
-`--change` outside `add` and `remove`. **Exit 1**, `DEP FAIL node=<id>: rule
-<n>: <reason>`, nothing written: a node this session does not hold; on `--add`,
-a need that names nothing in O or C (`rule 2: dangling`, and an id that lives in
-another session's tree is that case and no other, since `:deps` holds ids of
-this O), the node's own id or an id that would close a cycle (`rule 3`); on
-`--remove`, an edge the node does not hold.
+(defun %dep-submit (kernel request)
+  "`dep --add` / `dep --remove`, run on the kernel's one command thread.
 
-An edge added under work is admitted and flagged (:5008): onto a node that is
-engaged or in C it is written anyway, because the dependency is true whether or
-not it is convenient, and the line prints `needs-broken=true`. Nothing is
-stopped and nothing is reopened, by rule 5.
+STELLA'S [P1] ON 5d1f9dfa. The first cut mutated `wnode-deps`, the reverse edge
+and `wnode-meta-log` in place and appended nothing to the history. `DEP OK
+changed=1` came back while the history length stayed zero, so a canonical
+reconstruction produced D with no dependencies and no structure log: a restart
+erased the edge that had just been acknowledged. The same bypass also accepted
+one request id twice with different payloads.
 
-`--as` is caller text and the tool authenticates nobody, as *The verbs* says of
-every verb: what the tool cannot do is stop a named person removing an edge."
-  (let ((state (kernel-state kernel)))
-    (flet ((refuse2 (what)
-             (return-from dep-edit
-               (values nil (format nil "DEP FAIL node=~A: ~A; run: nova-work help"
-                                   (if (%dep-text-p node) node "-") what)
-                       2)))
-           (refuse1 (what)
-             (return-from dep-edit
-               (values nil (format nil "DEP FAIL node=~A: ~A" node what) 1))))
-      ;; exit 2: the invocation
-      (unless (member change '(:add :remove))
-        (refuse2 "--change is add or remove"))
-      (unless (%dep-text-p node) (refuse2 "refusing to guess: --node"))
-      (unless (%dep-text-p need) (refuse2 "refusing to guess: --need"))
-      (unless (%dep-text-p as) (refuse2 "refusing to guess: --as"))
-      (unless (%dep-text-p reason) (refuse2 "refusing to guess: --reason"))
-      (unless (%dep-text-p request) (refuse2 "refusing to guess: --request"))
-      ;; exit 1: the node
-      (let ((n (%node-quiet state node)))
-        (unless n (refuse1 (format nil "rule 2: no such node ~A" node)))
+It is now a `:dep` EVENT through the same writer path every other mutation
+takes -- `%oneshot-submit` -> `%install-envelope`: dedup asked of the journal,
+the record written before the apply, the candidate installed all-or-none, and
+the event in the history that `reconstruct-state` replays.
+
+Scope edits stay UNGATED (SPEC-WORK.md:5018): durability does not make `dep` an
+admission verb, and there is no needs precondition here."
+  (let ((refusal (%dep-request-refusal request)))
+    (when refusal
+      (return-from %dep-submit
+        (values nil (format nil "DEP FAIL node=~A: ~A; run: nova-work help"
+                            (let ((n (getf request :node)))
+                              (if (%dep-text-p n) n "-"))
+                            refusal)
+                2 nil))))
+  (let* ((state (kernel-state kernel))
+         (node (getf request :node))
+         (need (getf request :need))
+         (change (getf request :change))
+         (rid (getf request :request))
+         (by (getf request :by))
+         (n (%node-quiet state node)))
+    (flet ((refuse1 (what)
+             (return-from %dep-submit
+               (values nil (format nil "DEP FAIL node=~A: ~A" node what) 1 nil))))
+      (unless n (refuse1 (format nil "rule 2: no such node ~A" node)))
+      (let* ((event (make-work-event
+                     :kind :dep :node node :by by
+                     :fields (list :change change :need need
+                                   :reason (getf request :reason))
+                     :stamp (or (getf request :stamp) "2026-09-14T12:00:00Z")
+                     :clock (or (getf request :clock) :tool)
+                     :request rid
+                     :generation-owner (or (getf request :generation-owner) by)
+                     :rev (kernel-next-rev kernel)))
+             (digest (payload-digest (list event))))
+        ;; The two-part dedup test, asked of the journal FIRST: a retransmitted
+        ;; request answers its original receipt, and the same id with a changed
+        ;; payload is refused rather than applied at the next revision.
+        (multiple-value-bind (found recorded-digest recorded-line)
+            (journal-lookup (kernel-journal kernel) rid)
+          (cond
+            ((eq found :unavailable)
+             (return-from %dep-submit
+               (values nil (format nil "DEP FAIL node=~A page=~A: dedup unavailable"
+                                   node recorded-digest)
+                       1 nil)))
+            (found
+             (return-from %dep-submit
+               (if (string= digest recorded-digest)
+                   (values t recorded-line 0
+                           (list :request rid :digest digest :events (list) :replayed t))
+                   (values nil (format nil "DEP FAIL node=~A request=~A: reused with a different payload"
+                                       node rid)
+                           1 nil))))))
         (ecase change
           (:add
            (when (equal node need)
              (refuse1 (format nil "rule 3: ~A needs itself" node)))
-           ;; rule 2 resolves a reference against O's nodes or C's closed index;
-           ;; a removed node's row stays there, so a removed id is NOT dangling
-           ;; and its edge is admitted, reading need-closed-unaccepted for good
-           ;; (SPEC-WORK.md:4831).
+           ;; rule 2 resolves against O's nodes or C's closed index; a removed
+           ;; node's row stays there, so a removed id is NOT dangling.
            (unless (%node-quiet state need) (refuse1 "rule 2: dangling"))
+           ;; A FRESH request naming an edge that is already there is a visible,
+           ;; successful NO-EFFECT: no event, changed=0 (Stella's ruling on
+           ;; SPEC-QUESTION 2). It is reached only after request-id validation
+           ;; and the dedup answer above, so it never bypasses either.
            (when (member need (wnode-deps n) :test #'equal)
-             (return-from dep-edit
-               (values t (format nil "DEP NOTE node=~A need=~A: the edge is already there"
-                                 node need)
-                       0)))
+             (return-from %dep-submit
+               (values t (format nil "DEP NOTE node=~A request=~A change=add need=~A met=~A unmet=~D needs-broken=~A changed=0: the edge is already there"
+                                 node rid need
+                                 (if (need-met-p state need :view (kernel-needs-view kernel)
+                                                            :dependent node)
+                                     "true" "false")
+                                 (node-needs-status state node :view (kernel-needs-view kernel))
+                                 (if (node-needs-broken state node
+                                                        :view (kernel-needs-view kernel))
+                                     "true" "false"))
+                       0 nil)))
            (when (%dep-closes-a-cycle-p state node need)
              (refuse1 (format nil "rule 3: :deps edges would contain a cycle through ~A" need))))
           (:remove
            (unless (member need (wnode-deps n) :test #'equal)
              (refuse1 (format nil "no such edge ~A -> ~A" node need)))))
-        ;; apply
-        (let ((rev (kernel-next-rev kernel))
-              (target (%node-quiet state need)))
-          (ecase change
-            (:add
-             (setf (wnode-deps n) (append (wnode-deps n) (list need)))
-             (when target
-               (setf (wnode-dependents target)
-                     (append (wnode-dependents target) (list node)))))
-            (:remove
-             (setf (wnode-deps n) (remove need (wnode-deps n) :test #'equal))
-             (when target
-               (setf (wnode-dependents target)
-                     (remove node (wnode-dependents target) :test #'equal)))))
-          ;; the `:structure` event, with its author and its required reason
-          (push (list :op :structure :kind :structure :verb :dep
-                      :node node :change change :need need
-                      :by as :reason reason :request request
-                      :stamp (or stamp "-") :rev rev)
-                (wnode-meta-log n))
-          (setf (wstate-revision state) (max (wstate-revision state) rev))
-          (setf (kernel-next-rev kernel) (1+ rev))
-          (let ((*dep-request* request))
-            (values t (%dep-line kernel node change need rev :view view) 0)))))))
+        ;; The line is built from the state AFTER the change, so it is built
+        ;; after the apply and not before it.
+        (multiple-value-bind (okp line code envelope)
+            (%oneshot-submit kernel rid digest
+                             ;; a placeholder the installer replaces below
+                             "DEP OK" event "DEP"
+                             (list :verb :dep :node node :need need :change change
+                                   :request rid))
+          (declare (ignore line))
+          (if okp
+              (let ((final (%dep-line kernel node change need (work-event-rev event)
+                                      :view (kernel-needs-view kernel) :request rid)))
+                (journal-record (kernel-journal kernel) rid digest final
+                                (work-event-rev event))
+                (values t final code envelope))
+              (values nil "DEP FAIL: journal refused acceptance" code envelope)))))))
+
+(defun dep-edit (kernel &key node change need as reason request stamp view)
+  "`dep --add <id>` / `dep --remove <id>`: one recorded edit of one reference
+edge, submitted through the kernel's one command thread.
+
+A convenience wrapper: `%dep-submit` is the verb. VIEW, when given, is installed
+as the kernel's for this call, because the counts on the line are read after the
+change and a caller that built a view should see its own."
+  (let ((previous (kernel-needs-view kernel)))
+    (when view (setf (kernel-needs-view kernel) view))
+    (unwind-protect
+         (submit kernel (list :verb :dep :node node :change change :need need
+                              :by as :reason reason :request request
+                              :stamp stamp :clock :tool))
+      (when view (setf (kernel-needs-view kernel) previous)))))
