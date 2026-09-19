@@ -26,11 +26,17 @@ type FailedStep struct {
 	Completed  time.Time
 }
 
-// FailedJob is one job of a run.
+// FailedJob is one job of a run. Attempt and HeadSHA are the forge's own provenance for
+// this job: which attempt of the run it ran in, and the commit it ran against. They are
+// what the CI-red reading counts spent reruns from (attempt N means N-1 reruns already
+// spent), and they are read from the same job listing as the name and the conclusion, so
+// no second call and no caller's word stands between the forge and the licence.
 type FailedJob struct {
 	ID         int64
 	Name       string
 	Conclusion string // success, failure, cancelled, timed_out, skipped, ...
+	Attempt    int    // the forge's run_attempt for this job; 1 is the first, 0 is absent
+	HeadSHA    string // the forge's head_sha for the run this job ran in
 	Steps      []FailedStep
 }
 
@@ -102,7 +108,13 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 		// The forge's own conclusion and the failed step's name are the mechanical facts
 		// the CI-red reading classes a red by. They travel beside the report so the
 		// reading never guesses at a line of the log.
-		report.RedJobs = append(report.RedJobs, RedJob{Name: j.Name, Conclusion: j.Conclusion, Step: FailedStepName(j)})
+		report.RedJobs = append(report.RedJobs, RedJob{
+			Name:       j.Name,
+			Conclusion: j.Conclusion,
+			Step:       FailedStepName(j),
+			Attempt:    j.Attempt,
+			SHA:        j.HeadSHA,
+		})
 		said := report.findings()
 		report.Cancels = append(report.Cancels, CancelledSteps(j)...)
 		log, err := f.JobLog(j.ID)
@@ -313,6 +325,8 @@ func (g *GHFailForge) Jobs(runID int64) ([]FailedJob, error) {
 				ID         int64  `json:"id"`
 				Name       string `json:"name"`
 				Conclusion string `json:"conclusion"`
+				Attempt    int    `json:"run_attempt"`
+				HeadSHA    string `json:"head_sha"`
 				Steps      []struct {
 					Name        string `json:"name"`
 					Conclusion  string `json:"conclusion"`
@@ -328,7 +342,7 @@ func (g *GHFailForge) Jobs(runID int64) ([]FailedJob, error) {
 			break
 		}
 		for _, j := range body.Jobs {
-			job := FailedJob{ID: j.ID, Name: j.Name, Conclusion: j.Conclusion}
+			job := FailedJob{ID: j.ID, Name: j.Name, Conclusion: j.Conclusion, Attempt: j.Attempt, HeadSHA: strings.TrimSpace(j.HeadSHA)}
 			for _, s := range j.Steps {
 				job.Steps = append(job.Steps, FailedStep{
 					Name:       s.Name,

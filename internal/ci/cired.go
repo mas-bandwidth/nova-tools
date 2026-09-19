@@ -26,12 +26,16 @@ const (
 	RedInfra         = "infra"
 )
 
-// RedJob is one failed job as the reading sees it: the forge's own conclusion and the name
-// of the step that failed. Both are mechanical facts, never a reading of the log.
+// RedJob is one failed job as the reading sees it: the forge's own conclusion, the name of
+// the step that failed, and the forge's provenance for the job -- which attempt of the run
+// it ran in and the commit it ran against. All of them are mechanical facts, never a
+// reading of the log and never a caller's assertion.
 type RedJob struct {
 	Name       string
 	Conclusion string
 	Step       string
+	Attempt    int    // the forge's run_attempt: 1 is the first run, 0 is the forge saying nothing
+	SHA        string // the forge's head_sha for the run this job ran in
 }
 
 // FlakeRow is one row of the flake table: a test name, the issue that tracks it and the
@@ -42,31 +46,100 @@ type FlakeRow struct {
 	Expiry time.Time
 }
 
-// RedOptions is the caller's data and the clock for one reading. Reruns is the forge's own
-// attempt count for this job at this sha less one; Withdrawn is set when a decider took the
-// licence back. With no provider both are the mechanical values.
+// RedOptions is the caller's data and the clock for one reading. Attempt is the FORGE's own
+// attempt number for this job at this sha, fetched by ForgeAttemptOf and never asserted by
+// the caller: attempt N means N-1 reruns are already spent. Floor is the caller's --reruns,
+// which can only RAISE the spent count, so an assertion withholds a licence and can never
+// grant one the forge's count denies. Withdrawn is set when a decider took the licence back.
 type RedOptions struct {
 	Flakes     []FlakeRow
 	InfraSteps []string
 	Now        time.Time
-	Reruns     int
+	Attempt    int
+	Floor      int
 	Withdrawn  bool
 }
 
+// Reruns is the count the licence is decided on: the forge's attempt number less one, never
+// below the caller's floor and never below zero. An absent attempt reads as no reruns spent
+// here and is refused before this point (ForgeAttemptOf), so nothing licences off a zero
+// this function invented.
+func (o RedOptions) Reruns() int {
+	spent := o.Attempt - 1
+	if spent < 0 {
+		spent = 0
+	}
+	if o.Floor > spent {
+		spent = o.Floor
+	}
+	return spent
+}
+
 // RedReading is the reading's whole answer: the class the rule table found ("" when it
-// found no row at all), the licence, and why it was withheld.
+// found no row at all), the licence, the spent-rerun count it was decided on, the forge's
+// attempt number behind that count, and why the licence was withheld.
 type RedReading struct {
 	Class   string
 	Rerun   string // "licensed" or "no"
 	Finding string // "yes" or "no"
 	Reruns  int
+	Attempt int    // the forge's attempt number, 0 when the run had nothing red to ask about
 	Why     string // "withdrawn" when a decider took the licence back; else ""
+}
+
+// ForgeAttemptOf is where the spent-rerun count comes from, and the only place it comes
+// from: the forge's own run_attempt and head_sha for the red jobs this report read. It
+// FAILS CLOSED. A report whose red jobs carry no attempt, or whose red jobs disagree with
+// each other about the attempt or the sha, yields an error and no count, because a licence
+// granted without knowing whether this is already the second attempt is the manufactured
+// green the whole reading exists to refuse. A report with nothing red asks nothing of the
+// forge: there is no licence to grant and no attempt to check.
+func ForgeAttemptOf(r FailedReport) (attempt int, sha string, err error) {
+	if len(r.RedJobs) == 0 {
+		return 0, "", nil
+	}
+	var first RedJob
+	for i, j := range r.RedJobs {
+		if j.Attempt < 1 {
+			return 0, "", fmt.Errorf("the forge named no attempt number for the red job %q; "+
+				"the one licensed rerun is counted from the forge's own attempt and never from a flag", j.Name)
+		}
+		if strings.TrimSpace(j.SHA) == "" {
+			return 0, "", fmt.Errorf("the forge named no head sha for the red job %q; "+
+				"the attempt count is only meaningful for one job at one sha", j.Name)
+		}
+		if i == 0 {
+			first = j
+			continue
+		}
+		if j.Attempt != first.Attempt {
+			return 0, "", fmt.Errorf("the forge's attempt count disagrees with itself: job %q is attempt %d and job %q is attempt %d",
+				first.Name, first.Attempt, j.Name, j.Attempt)
+		}
+		if !strings.EqualFold(strings.TrimSpace(j.SHA), strings.TrimSpace(first.SHA)) {
+			return 0, "", fmt.Errorf("the forge's red jobs disagree about the sha: job %q ran at %s and job %q ran at %s",
+				first.Name, shortSHA(first.SHA), j.Name, shortSHA(j.SHA))
+		}
+	}
+	return first.Attempt, strings.TrimSpace(first.SHA), nil
+}
+
+// shortSHA is a commit as an error names it: enough to tell two apart, never the whole
+// forty characters in the middle of a sentence.
+func shortSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // ClassifyRed runs the rule table over one report and returns the class and the licence.
 // The table carries the whole licence: the rerunnable classes are cancelled-leg,
 // known-flake and infra, and rerun=licensed needs one of them, no withdrawal, and zero
-// reruns already made for this job at this sha. Everything else -- a named failing test, a
+// reruns already spent for this job at this sha -- spent being the FORGE's attempt number
+// less one (ForgeAttemptOf), raised but never lowered by the caller's floor. Both the
+// grant and the refusal are therefore the forge's, not the caller's. Everything else -- a named failing test, a
 // class the table cannot place, a second red at the same sha, a withdrawn licence -- is a
 // finding at once, because a rerun that turns a real red green is manufactured green.
 func ClassifyRed(r FailedReport, opt RedOptions) RedReading {
@@ -74,13 +147,14 @@ func ClassifyRed(r FailedReport, opt RedOptions) RedReading {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	reading := RedReading{Class: redClass(r, opt, now), Reruns: opt.Reruns}
+	reruns := opt.Reruns()
+	reading := RedReading{Class: redClass(r, opt, now), Reruns: reruns, Attempt: opt.Attempt}
 	switch reading.Class {
 	case RedCancelledLeg, RedKnownFlake, RedInfra:
 		switch {
 		case opt.Withdrawn:
 			reading.Rerun, reading.Finding, reading.Why = "no", "yes", "withdrawn"
-		case opt.Reruns == 0:
+		case reruns == 0:
 			reading.Rerun, reading.Finding = "licensed", "no"
 		default:
 			reading.Rerun, reading.Finding = "no", "yes"
@@ -243,15 +317,21 @@ func ParseInfraSteps(text string) []string {
 
 // Fields is the tail the closing line gains under --decide, in one fixed shape:
 //
-//	red=<class> rerun=<licensed|no> finding=<yes|no> reruns=<n>
+//	red=<class> rerun=<licensed|no> finding=<yes|no> reruns=<n> attempt=<n|->
 //
 // A red with no rule row prints red=unknown, the absence of a class rather than a guessed
-// one. The field names, their order and their spelling are the output grammar other lines
-// parse and do not change.
+// one. attempt= is the forge's own attempt number the reruns= count was derived from, so a
+// reader of the line can check the licence against the run rather than take it on trust; it
+// is `-`, never 0, on a run with nothing red to ask the forge about. The field names, their
+// order and their spelling are the output grammar other lines parse and do not change.
 func (rr RedReading) Fields() string {
 	class := rr.Class
 	if class == "" {
 		class = "unknown"
 	}
-	return fmt.Sprintf(" red=%s rerun=%s finding=%s reruns=%d", class, rr.Rerun, rr.Finding, rr.Reruns)
+	attempt := "-"
+	if rr.Attempt > 0 {
+		attempt = fmt.Sprintf("%d", rr.Attempt)
+	}
+	return fmt.Sprintf(" red=%s rerun=%s finding=%s reruns=%d attempt=%s", class, rr.Rerun, rr.Finding, rr.Reruns, attempt)
 }

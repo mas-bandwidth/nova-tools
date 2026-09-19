@@ -38,15 +38,19 @@ usage:
   --gh <path>           path to the gh executable (default: gh)
   --timeout <duration>  budget for one gh call (default: 2m)
   --decide              class the red and say whether one rerun is licensed: the closing
-                        line gains red=<class> rerun=<licensed|no> finding=<yes|no> reruns=<n>
+                        line gains red=<class> rerun=<licensed|no> finding=<yes|no>
+                        reruns=<n> attempt=<n>, and the reruns are counted from the forge's
+                        own attempt number for the red jobs, never from a flag
   --flakes <file>       with --decide: a TSV of test, issue and expiry (YYYY-MM-DD); an
                         expired row matches nothing (default: no flake table)
   --infra-steps <file>  with --decide: one step name per line whose failure is
                         infrastructure, such as the runner's set-up or the checkout
   --now <date>          with --decide: read the flake table against this date, YYYY-MM-DD
                         (default: today, UTC)
-  --reruns <n>          with --decide: the forge's attempt count for this job at this sha,
-                        less one; zero is the first red (default 0)
+  --reruns <n>          with --decide: a FLOOR on the reruns already spent, for a caller
+                        who knows of one the forge cannot see. The reading takes the
+                        greater of it and the forge's own count, so it can only withhold
+                        a licence and never grant one (default 0)
 
 output (a job name is quoted, because it is what you paste back into --job):
   FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
@@ -58,8 +62,9 @@ output (a job name is quoted, because it is what you paste back into --job):
   NOLOG job="<name>" reason="<a log the forge would not give; the run still reports>"
   FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n> [unread=<n>]
   with --decide, the closing line gains: red=<class|unknown> rerun=<licensed|no>
-      finding=<yes|no> reruns=<n>; the reading licenses at most one rerun and never
-      reruns anything itself
+      finding=<yes|no> reruns=<n> attempt=<n|->; the reading licenses at most one rerun,
+      never reruns anything itself, and refuses (exit 2) when the forge names no attempt
+      for a red job or its red jobs disagree about the attempt or the sha
 
 exit codes: 0 nothing red in the run, 1 the run said something red,
             2 the invocation could not run (bad flag, no run, gh could not answer).
@@ -95,7 +100,7 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 	flakesPath := fs.String("flakes", "", "TSV of test, issue and expiry for the flake table")
 	infraStepsPath := fs.String("infra-steps", "", "one step name per line whose failure is infrastructure")
 	nowStamp := fs.String("now", "", "the date to read the flake table against, YYYY-MM-DD")
-	reruns := fs.Int("reruns", 0, "the forge's attempt count for this job at this sha, less one")
+	reruns := fs.Int("reruns", 0, "a floor on the reruns already spent; it can only withhold a licence, never grant one")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " failed", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -124,7 +129,7 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 		return refuse(stderr, " failed", fmt.Sprintf("--timeout must be a positive duration, like 2m (got %s)", *timeout))
 	}
 	if *reruns < 0 {
-		return refuse(stderr, " failed", fmt.Sprintf("--reruns is the attempt count less one and cannot be negative (got %d)", *reruns))
+		return refuse(stderr, " failed", fmt.Sprintf("--reruns is a floor on the reruns already spent and cannot be negative (got %d)", *reruns))
 	}
 	if !*decide && (*flakesPath != "" || *infraStepsPath != "" || *nowStamp != "" || *reruns != 0) {
 		return refuse(stderr, " failed", "--flakes, --infra-steps, --now and --reruns are the --decide reading's data; add --decide or drop them")
@@ -150,7 +155,17 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 	}
 	lines := report.Lines(*maxLines)
 	if *decide {
-		opt := ci.RedOptions{Now: now, Reruns: *reruns}
+		// WHERE THE LICENCE'S COUNT COMES FROM. The forge's own attempt number for the
+		// red jobs this report read, from the job listing the verb already fetched, and
+		// nowhere else. A report the forge gave no attempt for, or whose red jobs
+		// disagree with each other, is a refusal and not a licence at zero: the verb
+		// cannot tell a first red from a second, and guessing the first is how a real
+		// red gets rerun until it is green.
+		attempt, _, err := ci.ForgeAttemptOf(report)
+		if err != nil {
+			return refuse(stderr, " failed", oneline.Cap(oneline.Err(err), oneline.TailBytes))
+		}
+		opt := ci.RedOptions{Now: now, Attempt: attempt, Floor: *reruns}
 		if *flakesPath != "" {
 			raw, err := os.ReadFile(*flakesPath)
 			if err != nil {
