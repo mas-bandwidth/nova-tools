@@ -300,3 +300,64 @@ func TestCardResultTranscriptRuns(t *testing.T) {
 			strings.Join(wanted, "\n  "), strings.Join(printed, "\n  "))
 	}
 }
+
+// TestTESTSRefusalsAreWhatTheToolPrints executes the `### Refusals` block of this
+// tool's docs/TESTS.md section, which nothing executed until 2026-09-19. A
+// refusal line is compared WHOLE rather than by shape: a refusal is a sentence a
+// person reads at a prompt, and its wording is the promise. The first-run lines
+// run first, in the same directory, because the cycle refusal reads the graph
+// those lines build.
+//
+// This is the test the two-bench dogfood run was doing by hand. The bare-command
+// line in that block said `nova-work: no verb given` while the binary had said
+// `WORK REFUSED: a verb is required` since it grew the client spec's refusal
+// shape, and it said so from a second `## nova-work` section that
+// onboarding.Section could not reach.
+func TestTESTSRefusalsAreWhatTheToolPrints(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := firstRunDir(t)
+	firstRun, err := onboarding.FirstRun(string(raw), "nova-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range firstRun {
+		if cmd, ok := strings.CutPrefix(line, "$ nova-work "); ok {
+			if code, _, stderr := runCLI(t, localize(t, dir, cmd)...); code != 0 {
+				t.Fatalf("setting up from the first run: %q exits %d: %s", line, code, stderr)
+			}
+		}
+	}
+
+	refusals, err := onboarding.Transcript(string(raw), "nova-work", "Refusals")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := 0
+	for i := 0; i < len(refusals); i++ {
+		cmd, ok := strings.CutPrefix(refusals[i], "$ nova-work")
+		if !ok {
+			continue
+		}
+		if i+1 >= len(refusals) {
+			t.Fatalf("the refusal %q is the last line of the block; the line it prints is missing", refusals[i])
+		}
+		want := refusals[i+1]
+		code, stdout, stderr := runCLI(t, localize(t, dir, strings.TrimSpace(cmd))...)
+		ran++
+		if code != 2 {
+			t.Errorf("%q exits %d, want 2 (a refusal is what could not run)", refusals[i], code)
+		}
+		if stdout != "" {
+			t.Errorf("%q wrote to stdout: %q; a refusal belongs on stderr", refusals[i], stdout)
+		}
+		if got := strings.TrimSuffix(stderr, "\n"); got != want {
+			t.Errorf("docs/TESTS.md promises\n  %s\nand %q printed\n  %s", want, refusals[i], got)
+		}
+	}
+	if ran == 0 {
+		t.Fatal("the `### Refusals` block holds no nova-work command; this test passed by running nothing")
+	}
+}
