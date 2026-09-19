@@ -118,13 +118,31 @@ func twoRungRegistry(t *testing.T) *Registry {
 	return reg
 }
 
+// threeRungRegistry is the same witness with one rung in the middle, so a
+// mechanical kind with a confirmed failure still has an offer above the burned
+// rung and the step-up refusal can be reached.
+func threeRungRegistry(t *testing.T) *Registry {
+	t.Helper()
+	reg, err := ParseRegistry([]byte(`{"minds":[
+	  {"name":"low","lineage":"one","height":0,"availability":"available","ask":"card"},
+	  {"name":"mid","lineage":"two","height":1,"availability":"available","ask":"card"},
+	  {"name":"high","lineage":"three","height":2,"availability":"available","ask":"bus"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
+
 // (2) A routing refusal does not discard a completed call. The call was made,
 // the tokens were spent, and the refusal that follows cannot unspend them: the
 // result carries the usage and the refusal, so the caller can persist both
 // before it exits.
 func TestUsageSurvivesARoutingRefusal(t *testing.T) {
-	reg := twoRungRegistry(t)
-	u := Unit{ID: "u-ref", Kind: KindRebase, Files: 2, Packages: 1}
+	reg := threeRungRegistry(t)
+	u := Unit{ID: "u-ref", Kind: KindRebase, Files: 2, Packages: 1, Attempts: []Attempt{
+		{Rung: "low", Outcome: OutcomeFailed, Reason: "the card rung missed it"},
+	}}
 	// The provider picks the top rung with a confidence below the floor, so the
 	// step up has nowhere to go.
 	rec := &recorder{conf: 0.40, pick: 1, usage: Usage{InputTokens: 937, HasInput: true, OutputTokens: 12, HasOutput: true}}

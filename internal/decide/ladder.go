@@ -979,6 +979,15 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt map[int]map[string]bool) []Mind {
 	var out []Mind
 	rungs := 0
+	// #1513: a mechanical kind with no CONFIRMED failure is offered its
+	// supported rung ALONE -- there is no step the evidence has earned, so no
+	// decision is asked for it at all. A confirmed failure (see
+	// Attempt.Failed) restores the ordinary offer of the supported rung and
+	// the next one that holds a mind.
+	bound := 2
+	if Mechanical(u.Kind) && len(failedAt) == 0 {
+		bound = 1
+	}
 	for _, h := range reg.Heights() {
 		if h < height {
 			continue
@@ -994,7 +1003,7 @@ func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt ma
 		}
 		out = append(out, at...)
 		rungs++
-		if rungs == 2 {
+		if rungs == bound {
 			break
 		}
 	}

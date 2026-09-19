@@ -122,7 +122,9 @@ func TestTheDefaultFloorSitsBelowTheMeasuredBand(t *testing.T) {
 	}
 	// A real collapse still steps up, and still never down.
 	fake := &fakeDecider{choice: "rung-1", conf: 0.4}
-	res, err := RouteJev(context.Background(), fake, reg, Unit{ID: "collapsed", Kind: KindRowTest, Files: 1, Packages: 1}, DefaultFloor)
+	res, err := RouteJev(context.Background(), fake, reg, Unit{ID: "collapsed", Kind: KindRowTest, Files: 1, Packages: 1, Attempts: []Attempt{
+		{Rung: "flash", Outcome: OutcomeFailed, Reason: "the card rung missed it"},
+	}}, DefaultFloor)
 	if err != nil {
 		t.Fatal(err)
 	}

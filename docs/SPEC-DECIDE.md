@@ -255,8 +255,10 @@ branch name or error text can ride out on a payload.
 
 The provider is offered only the eligible rungs at the
 supported height and the one above it, so a typed answer can advise sideways or up but never down;
-an answer below the floor steps up, and a provider error or a rung nobody offered leaves the rules'
-answer standing (rule 5). A floor that is not a number between 0 and 1 — NaN, an infinity, a
+a mechanical kind with no confirmed failure is offered its supported rung alone, so no decision is
+asked for it at all, and a confirmed failure restores that step-up offer (#1513); an answer below the
+floor steps up, and a provider error or a rung nobody offered leaves the rules' answer standing
+(rule 5). A floor that is not a number between 0 and 1 — NaN, an infinity, a
 negative, anything above one — is refused with one remedy line, because NaN compares false against
 every bound and would otherwise gate a decision on a number that is not one. `--no-jev` answers by
 the rules alone, with no key and no network, so the loop runs where the API does not.
