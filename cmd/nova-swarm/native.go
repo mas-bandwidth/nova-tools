@@ -74,7 +74,7 @@ type nativeRunResult struct {
 	binarySHA256 string            // sha256 of the harness binary, lowercase hex
 	job          string            // the job directory <slot>/jobs/<label> the child ran in
 	usageState   string            // the store path the NATIVE OK line names when no store answered, "" otherwise
-	usageReason  string            // no-rows | no-store | no-sqlite3, "" when the store answered
+	usageReason  string            // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
 	configSHA    string            // sha8 of the carried provider config, "" when --config named none
 	tmp          string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
@@ -280,6 +280,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	// (3c) THE SHELL SHIM (issue #1814). The harness spawns its bash tool's shell by NAME,
+	// resolving it through the child's PATH and SHELL, and hands it the harness's own
+	// environment -- which carries the provider key. A `bash` and an `sh` wrapper are
+	// written into <slot>/shim, which is inside the wall's read set and outside its write
+	// set, and each unsets every KEY/TOKEN/SECRET name before exec'ing the real shell
+	// (shellshim.go). A run whose shim cannot be written REFUSES: a card's shell carrying
+	// the seat's key is the defect this closes, not a mode to fall back to.
+	shimDir, shimShell, shimErr := writeNativeShellShims(cfg.slotDir)
+	if shimErr != nil {
+		refuseNative(errOut, fmt.Sprintf("%s the card's shell cannot be scrubbed of the provider key: %s",
+			oneline.Field(cfg.label), oneline.Err(shimErr)))
+		return nativeRunResult{}, 2
+	}
+
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
 	// 0600 is refused: its copy would spread a secret further than its owner.
@@ -388,7 +402,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.worker != nil {
 		secretEnv = cfg.worker.Secret
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -855,7 +869,15 @@ func benchOS(cfg nativeRunConfig) string {
 // when its name already carries KEY/TOKEN/SECRET -- so a name that does not itself carry one
 // still reaches the harness. The value is never written to a file and never printed; the
 // argv log redacts any name that carries a secret.
-func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []string {
+//
+// shimDir and shimShell are the shell wrappers this run wrote under <slot>/shim
+// (shellshim.go, issue #1814). shimDir goes FIRST on the child's PATH and shimShell is
+// pinned as SHELL, which are the two names the harness resolves its bash tool's shell
+// through. The harness process keeps the key -- it is the process that makes the API call
+// -- and every shell under it is handed an environment with the secret names unset. Both
+// are empty on windows and in the unit tests of the argv builder, and the environment is
+// then exactly what it was.
+func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -864,6 +886,9 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []stri
 		}
 	}
 	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"}
+	if shimShell != "" {
+		remove = append(remove, "SHELL")
+	}
 	if secretEnv != "" {
 		remove = append(remove, secretEnv)
 	}
@@ -882,6 +907,12 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []stri
 			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
 			"GOTOOLCHAIN=local",
 		)
+	}
+	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
+	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
+	out = pathWithShimFirst(out, shimDir)
+	if shimShell != "" {
+		out = append(out, "SHELL="+shimShell)
 	}
 	if secretEnv != "" {
 		if v, ok := os.LookupEnv(secretEnv); ok {

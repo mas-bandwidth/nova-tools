@@ -29,7 +29,7 @@ depth and headroom, never from slot count alone.
 6. **A refusal never takes neighbours down.** Admission, scoring and locks are per card, every
    abstain names one reason token — SPEC-SWARM, **scatter** and **gather**, landed in #577.
 7. **A contraction phase is bugs only.** While the `CONTRACTION` verdict is `EXPANDING`, or a
-   pit stop is open ([PIT-STOP.md](PIT-STOP.md)), the policy's `scope-regex` admits fixes with
+   pit stop is open ([PIT-STOP.md](../PIT-STOP.md)), the policy's `scope-regex` admits fixes with
    reproducing tests, reads and rebases; anything expansionary is labelled `next-push` in its
    issue and never carded. We choose to be done. Replay: `contraction-phase-cards-bugs-only`.
 8. **The coordinator is a friend.** Every broadcast includes it; adoption is a mechanical step
@@ -38,4 +38,4 @@ depth and headroom, never from slot count alone.
 
 The exit of a pit stop is a trust batch: the fix cards of the stop rerun as one batch and every
 one scores `done` with its red line quoted, before the queue widens again
-([PIT-STOP.md](PIT-STOP.md), **The exit gate**).
+([PIT-STOP.md](../PIT-STOP.md), **The exit gate**).
