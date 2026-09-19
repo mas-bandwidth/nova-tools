@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,56 @@ func TestHelpDropsNotYetImplementedForHarvest(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "--id is required") {
 		t.Errorf("harvest without --id did not name the remedy: %q", errb.String())
+	}
+}
+
+// bannerVerbCount reads a verb count out of a usage banner: the number immediately
+// before the word `verbs`, as a digit or as one of the words a sentence would use.
+// The second result is false when the banner claims no count at all.
+func bannerVerbCount(line string) (int, bool) {
+	words := map[string]int{
+		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+		"eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+		"fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+		"nineteen": 19, "twenty": 20,
+	}
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		if strings.Trim(f, ",.") != "verbs" || i == 0 {
+			continue
+		}
+		prev := strings.ToLower(strings.Trim(fields[i-1], ",."))
+		if n, ok := words[prev]; ok {
+			return n, true
+		}
+		if n, err := strconv.Atoi(prev); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// The banner is the first line of `nova-pulse help` and the first sentence a first
+// run reads, so a verb count in it is a number the usage under it must match. The
+// usage declares every verb the binary answers, and the count rots the day one more
+// lands, so the banner names none (docs/ONBOARDING.md point 1).
+func TestHelpBannerVerbCountMatchesUsage(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
+		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
+	}
+	lines := strings.Split(out.String(), "\n")
+	banner := lines[0]
+	verbs := map[string]bool{}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "nova-pulse" {
+			verbs[fields[1]] = true
+		}
+	}
+	claimed, ok := bannerVerbCount(banner)
+	if ok && claimed != len(verbs) {
+		t.Errorf("the banner claims %d verbs and the usage declares %d: %q", claimed, len(verbs), banner)
 	}
 }
 

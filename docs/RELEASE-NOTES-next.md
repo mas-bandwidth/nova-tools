@@ -34,7 +34,7 @@ New: one bounded, exact-revision **review packet**, no opinion and no merge.
 
 ## nova-pulse
 
-New: one tool, five verbs, no model call — every token is a card's.
+New: bounded open work, cut into cards and folded back, no model call — every token is a card's.
 
 - **Verbs:** `pool`, `cut`, `launch`, `harvest`, `manager`. `harvest` is no longer marked `(not yet implemented)`.
 - **Flags:** `pool --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]`; `cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]`; `launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]`; `harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]`; `manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]`.
