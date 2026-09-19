@@ -134,3 +134,18 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 		t.Fatalf("refusal must name holders, got %q", holders)
 	}
 }
+
+// aBenchSlotStore is a store with room, for a test whose batch launches `nova-swarm
+// native`. Since nova-tools#1546 a launch without a lease is REFUSED, so a Batch with no
+// --runner of its own needs SlotsStore and SlotOwner or it never reaches the card.
+func aBenchSlotStore(t *testing.T) string {
+	t.Helper()
+	store := filepath.Join(t.TempDir(), "slots-store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "shares.tsv"), []byte("capacity\t8\nreserve\t0\nfake-1\t8\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}

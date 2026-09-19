@@ -412,3 +412,14 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 	}
 	return released, held, nil
 }
+
+// NoSlotsStoreRefusal is the ONE line printed when a native launch was asked for without a
+// bench slot store or without an owner (nova-tools#1546). It lives here, beside the lease
+// code, because FOUR places must print the same sentence -- `nova-swarm native` itself, the
+// batch that refuses before any card runs, and the two paths that build a native argv --
+// and a remedy that drifts between them is a remedy a reader stops trusting.
+//
+// It names the store, the owner AND the exact command that makes a one-seat store, because
+// "pass --slots-store <dir>" on a bench that has never had one is not a remedy, it is a
+// second question.
+const NoSlotsStoreRefusal = "NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)"

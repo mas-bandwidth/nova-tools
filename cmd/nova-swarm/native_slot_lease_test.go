@@ -127,27 +127,64 @@ func TestNativeTakesOneSlotLeaseAndReleasesIt(t *testing.T) {
 	})
 }
 
-// TestNativeNoSlotsStoreTakesNothing: without --slots-store the feature is off — no lease
-// is taken and the run behaves exactly as it does today.
-func TestNativeNoSlotsStoreTakesNothing(t *testing.T) {
+// TestNativeWithoutASlotsStoreRefuses: a launch without a lease is refused (SPEC-SWARM,
+// "Bench slot leases"; nova-tools#1546). This test used to assert the OPPOSITE -- it was
+// TestNativeNoSlotsStoreTakesNothing, and it said "without --slots-store the feature is
+// off ... the run behaves exactly as it does today". That sentence is the hole: a native
+// launch that takes no lease is one the bench cannot see, cannot count and cannot refuse,
+// and a test asserting it RUNS pinned the hole open. Johnny held PR #1562 on exactly this.
+//
+// The refusal is checked WHOLE and checked to be ONE line. A remedy is a sentence someone
+// reads at a prompt with a failed launch in front of them, so its wording is the promise,
+// and a second line would mean the reader has to work out which of two things to do.
+func TestNativeWithoutASlotsStoreRefuses(t *testing.T) {
 	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	cardPath := filepath.Join(root, "card.md")
-	write(t, cardPath, "a card\n")
-	store := slotShares(t, "capacity\t2\nreserve\t0\nfake-1\t2\n")
+	const want = swarm.NoSlotsStoreRefusal
 
-	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
-		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "30s", "--no-wall"},
-		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("no --slots-store runs as today, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Fatalf("the run behaves as today, got:\n%s", stdout.String())
-	}
-	if left := slotLeaseCount(t, store); left != 0 {
-		t.Errorf("no --slots-store takes no lease, %d left", left)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"neither", nil},
+		{"store_without_owner", []string{"--slots-store", "STORE"}},
+		{"owner_without_store", []string{"--owner", "fake-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, slot := aSlot(t)
+			cardPath := filepath.Join(root, "card.md")
+			write(t, cardPath, "a card\n")
+			store := slotShares(t, "capacity\t2\nreserve\t0\nfake-1\t2\n")
+
+			argv := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+				"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+				"--deadline", "30s", "--no-wall"}
+			for _, a := range tc.args {
+				if a == "STORE" {
+					a = store
+				}
+				argv = append(argv, a)
+			}
+
+			var stdout, stderr bytes.Buffer
+			rc := run(argv, strings.NewReader(""), &stdout, &stderr, time.Now())
+			if rc != 2 {
+				t.Fatalf("a launch with no bench slot lease is refused with exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+			}
+			if got := strings.TrimSuffix(stderr.String(), "\n"); got != want {
+				t.Errorf("the refusal is exactly\n  %s\nand it printed\n  %s", want, got)
+			}
+			if n := len(strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n")); n != 1 {
+				t.Errorf("the refusal is ONE line, got %d:\n%s", n, stderr.String())
+			}
+			if stdout.String() != "" {
+				t.Errorf("a refusal writes nothing to stdout, got: %q", stdout.String())
+			}
+			if _, err := os.Stat(filepath.Join(slot, "jobs", "lbl")); !os.IsNotExist(err) {
+				t.Errorf("no job directory is made when the launch is refused: %v", err)
+			}
+			if left := slotLeaseCount(t, store); left != 0 {
+				t.Errorf("a refused launch holds no lease, %d left", left)
+			}
+		})
 	}
 }
