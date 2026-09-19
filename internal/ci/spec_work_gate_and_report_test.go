@@ -78,6 +78,11 @@ func TestSpecWorkCarriesTheDependencyGateAndTheHandReport(t *testing.T) {
 		"`:act`, `:subject`, `:what`, `:acted-at`, `:instead-of`, `:reason`",
 		"No field restates the envelope",
 		"It changes no tree state",
+		"a `:stopped` report on that node ends",
+		"`needs-gate: withholds`",
+		"The mark is per verb and the gate is per form",
+		"floor holds, the id included",
+		"Two implementation tests are owed with the code",
 		// (h) one answer, stated once.
 		"Asked, it is refused",
 		"told afterwards, it is recorded and never refused",
@@ -118,6 +123,7 @@ func TestSpecWorkCarriesTheDependencyGateAndTheHandReport(t *testing.T) {
 		"a-reopened-need-under-a-doing-dependent-leaves-the-set-green",
 		"a-verb-that-can-admit-declares-its-needs-gate",
 		"a-removed-or-corrected-need-is-unmet",
+		"a-report-of-a-stop-ends-the-engagement-a-launch-report-began",
 		"an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less",
 	} {
 		if got := strings.Count(spec, "`"+replay+"`"); got < 2 {
