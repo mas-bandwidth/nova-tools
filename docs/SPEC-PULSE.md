@@ -610,31 +610,26 @@ both idempotent: a second `--install` rewrites nothing that already matches.
 One line per run, every field named:
 
 ```
-HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> diag-deleted=<n> diag-freed=<bytes> cache=<kept|dropped>(<size>G) free <a> -> <b>
+HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> dead=<n> diag-deleted=<n> diag-freed=<bytes> cache=<kept|kept-lease|dropped>(<size>G) free <a> -> <b>
 ```
 
-`host` is `hostname -s`; `slots` the slot directories the run saw; `reaped` the slot `data`
-homes, `tmp` dirs and scratch it deleted; `jobs-deleted` the jobs it deleted whole;
-`slots-deleted` the empty slots it removed; `diag-deleted` and `diag-freed` the runner `_diag`
-files it took and the bytes they held; `cache` is `kept` or `dropped` with the build
-cache's size in GB; `free <a> -> <b>` is disk free space before and after. `--dry-run` walks
-the same trees and prints one `WOULD rm -rf <path>` line per deletion it would make, deleting
-nothing, so a bench's first run is read before it is felt.
+`host` is `hostname -s`; `slots` the directories the run RECOGNISED as slots; `reaped` the
+slot `data` homes, `tmp` dirs and scratch it deleted; `jobs-deleted` the jobs it deleted
+whole; `slots-deleted` the empty slots it removed; `dead` the unleased jobs it took that had
+left no `RESULT.md`, which is a different fact from a job somebody read; `diag-deleted` and
+`diag-freed` the runner `_diag` files it took and the bytes they held; `cache` is `kept`,
+`kept-lease` (a lease was live) or `dropped`, with the build cache's size in GB;
+`free <a> -> <b>` is disk free space before and after. `--dry-run` walks the same trees and
+prints one `WOULD <verb> <path>` line per deletion it would make, deleting nothing, so a
+bench's first run is read before it is felt.
 
-The liveness rule decides every touch: a job whose `harness-output.log` is under fifteen
-minutes old with no `RESULT.md`, or that any process names in its command line or its cwd, is
-live and never touched, and a slot any live process's cwd sits in is live the same way. A
-harvested job (a `.harvested` marker) is deleted whole; a finished job nobody read goes after
-six hours; an empty slot goes; runner `_work/_temp` entries older than a day go; and the Go
-build cache is dropped when disk free is below 25 GB or the cache itself is above 20 GB. A
-live job is never reaped, however old its neighbours are.
-
-**The shell reaper deletes on a lease and an age, never on a shape** (issue #1499, after it
-ate a certify tree, corpus and all, on two benches mid-pass). `scripts/bench-hygiene.sh` --
-the script the benches run today, and the one `--install` writes -- asks three questions the
-rules above did not. **Is it a slot?** A slot is the shape the launcher makes, `<slot>/jobs`;
-a directory under either root without one is somebody's work and is skipped whole, at any
-age. **Is it leased?** `nova-swarm native` writes `<job>/.lease` before the child starts,
+**The reaper deletes on a lease and an age, never on a shape** (issue #1499, after it ate a
+certify tree, corpus and all, on two benches mid-pass; and issue #1512, which is the same
+three rules reaching the Go verb that replaces the script). `scripts/bench-hygiene.sh` -- the
+script the benches run today, and the one `--install` writes -- and `nova-pulse hygiene run`
+both ask three questions, in this order. **Is it a slot?** A slot is the shape the launcher
+makes, `<slot>/jobs`; a directory under either root without one is somebody's work and is
+skipped whole, at any age, and is not even counted as a slot. **Is it leased?** `nova-swarm native` writes `<job>/.lease` before the child starts,
 carrying its pid and a heartbeat it bumps every 30 s while the child runs, and removes it
 when the run ends; a job whose lease names a live pid or whose heartbeat is under ten minutes
 old is live and is never touched, and neither are the slot's `data` (the card's HOME) and
@@ -643,11 +638,17 @@ silence is ever a reason to delete, because one long model call and one long com
 silent. **Is it old?** An unleased job goes when it is harvested, or when nothing in it has
 changed for six hours; an emptied slot goes only once it too has been quiet six hours, read
 before the pass deletes anything under it. The build cache is never dropped while any lease
-is live (`cache=kept-lease`). Replay: `scripts/bench-hygiene_test.sh`.
+is live (`cache=kept-lease`). Replay: `scripts/bench-hygiene_test.sh`, and the same class
+ported onto the Go verb in `cmd/nova-pulse/hygiene_reaper_class_test.go` (#1512).
 
-The Go verb above has not inherited these three rules yet: it still reads a fifteen-minute
-silence as death and deletes any empty directory under a root at any age. It must take the
-shape, the lease and the age before it replaces the script on a bench.
+**The Go verb reads the launcher's own lease record, not a second spelling of it.**
+`nova-pulse hygiene run` asks `internal/swarm`'s `ReadJobLease` and `JobLease.Live`, which is
+the judgement `nova-swarm native` itself makes about another run's lease: the pid wherever
+this kernel can be asked, and the heartbeat against `swarm.JobLeaseStale` where it cannot. A
+reaper that re-spells that rule is a reaper that can disagree with the launcher, and the way
+it disagrees is by deleting a running card's directory. A `.lease` this process cannot read
+at all -- a directory, or unreadable -- names an owner it cannot establish, so the job is
+KEPT.
 
 **The runner `_diag` prune is two rules, and one of them is a size cap.** Each
 `$HOME/runner-*/_diag` is bounded by an age window, `--diag-days` (**two** days by default),
