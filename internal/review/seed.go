@@ -164,7 +164,15 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("could not read the applied seed: %v", err)
 	}
-	res.Edits = countEdits(applied)
+	// `-U0` alongside the numstat: the arithmetic stays git's own, and the second
+	// read answers the question the arithmetic cannot -- WHERE the changed lines are.
+	// One line added here and one removed there is one of each on the numstat and two
+	// edits in the tree (#1803).
+	placed, err := gitOut(ctx, wt, "diff", "--cached", "--no-ext-diff", "--no-renames", "-U0")
+	if err != nil {
+		return res, fmt.Errorf("could not read the applied seed: %v", err)
+	}
+	res.Edits = countEdits(applied, placed)
 	if res.Edits != 1 {
 		return res, &SeedCountError{Edits: res.Edits}
 	}
@@ -189,16 +197,64 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 // One edit is: one line changed (one removed, one added), one line added, one line
 // removed, or one line MOVED -- the same text removed in one place and added in
 // another, which git reports exactly as a changed line does. All four are one removed
-// line or fewer and one added line or fewer, so the count is the larger of the two
-// sides. Two changed lines are two, and a seed that changed nothing is zero.
+// line or fewer and one added line or fewer, so a file's own count is the larger of
+// its two sides. Two changed lines are two, and a seed that changed nothing is zero.
 //
-// The count comes from `--numstat`, which is git's own arithmetic per file, rather
-// than from reading the unified diff line by line: a removed Markdown rule is `----`
-// in that text and a removed `-- x` SQL comment is `--- x`, and both read as the
-// `---` file header they are not. A seed whose one edit was on such a line was
-// refused as a control that changed nothing.
-func countEdits(numstat string) int {
-	added, removed := 0, 0
+// AN EDIT IS A PLACE AND NOT A SUM, and for three months it was a sum. The count was
+// `max(total added, total removed)` over the whole patch, so two edits in two places
+// CANCELLED: a line added in `a.go` and a line removed in `b.go` is added=1,
+// removed=1, larger side 1, and a seed that changed two things printed `edits=1` and
+// ran (Emma's bench dogfood, #1803). The same arithmetic passed a line added in one
+// function and a line removed in another in the SAME file. That is the exact failure
+// rule 7 exists to prevent -- a gate that went red under such a seed has proved one
+// of two rules and nobody can say which.
+//
+// So the count is now per PLACE:
+//
+//	the number of files touched, if that is more than one
+//	otherwise the number of `@@` hunks, if that is more than the line count
+//	otherwise the file's own larger side, as before
+//
+// with ONE exception, which is rule 7's own: a moved line is two hunks and one edit,
+// and it is verified rather than assumed -- exactly one added line, exactly one
+// removed line, and the SAME TEXT. Two hunks holding different text are two edits.
+//
+// The line arithmetic still comes from `--numstat`, which is git's own per file,
+// rather than from reading the unified diff: a removed Markdown rule is `----` in
+// that text and a removed `-- x` SQL comment is `--- x`, and both read as the `---`
+// file header they are not. A seed whose one edit was on such a line was refused as a
+// control that changed nothing. The `-U0` diff is read only for the two things
+// numstat cannot say -- how many hunks, and what the one added and one removed line
+// SAY -- and it is read only after the first `@@`, where every line carries a `+` or
+// a `-` prefix and the header ambiguity cannot arise.
+func countEdits(numstat, placed string) int {
+	lines, files := countLines(numstat)
+	if files != 1 {
+		// Two files are two places whatever their lines add up to, and a file whose
+		// only change is its mode counts 0 lines and is still a place.
+		if files > lines {
+			return files
+		}
+		return lines
+	}
+	hunks, added, removed := countPlaces(placed)
+	if hunks <= 1 {
+		return lines
+	}
+	// Rule 7's fourth shape: one line moved. The same text, out of one place and into
+	// another, which git reports as one removed line and one added line.
+	if hunks == 2 && len(added) == 1 && len(removed) == 1 && added[0] == removed[0] {
+		return 1
+	}
+	if hunks > lines {
+		return hunks
+	}
+	return lines
+}
+
+// countLines is git's own arithmetic over `--numstat`: the larger side per file,
+// summed, and the number of files that side was taken from.
+func countLines(numstat string) (lines, files int) {
 	for _, line := range strings.Split(numstat, "\n") {
 		f := strings.SplitN(strings.TrimRight(line, "\n"), "\t", 3)
 		if len(f) < 3 {
@@ -207,8 +263,8 @@ func countEdits(numstat string) int {
 		// A binary file is `-\t-\t<path>`: git will not count its lines, so it
 		// counts as one edit and a seed that touches two of them is two.
 		if f[0] == "-" || f[1] == "-" {
-			added++
-			removed++
+			files++
+			lines++
 			continue
 		}
 		a, err := strconv.Atoi(f[0])
@@ -219,13 +275,43 @@ func countEdits(numstat string) int {
 		if err != nil {
 			continue
 		}
-		added += a
-		removed += d
+		files++
+		if a > d {
+			lines += a
+		} else {
+			lines += d
+		}
 	}
-	if added > removed {
-		return added
+	return lines, files
+}
+
+// countPlaces reads a `-U0` diff for the two things the numstat cannot say: how many
+// hunks it has, and what its added and removed lines actually hold.
+//
+// Every line of a `-U0` hunk carries a `+` or a `-`, because there is no context; a
+// hunk header starts `@@` at column 0 and a content line never can, since it always
+// carries its prefix first. `diff --git ` at column 0 is the next file's header for
+// the same reason, and ends the file this loop is inside. Nothing before the first
+// `@@` of a file is read -- which is where `--- a/x` and `+++ b/x` live, and the
+// whole reason the line count is left to git.
+func countPlaces(placed string) (hunks int, added, removed []string) {
+	inHunk := false
+	for _, line := range strings.Split(placed, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			inHunk = false
+		case strings.HasPrefix(line, "@@"):
+			hunks++
+			inHunk = true
+		case !inHunk:
+			// A file header, a mode line, an index line: not a place.
+		case strings.HasPrefix(line, "+"):
+			added = append(added, line[1:])
+		case strings.HasPrefix(line, "-"):
+			removed = append(removed, line[1:])
+		}
 	}
-	return removed
+	return hunks, added, removed
 }
 
 // listPackage is the first precondition: the package the caller named must exist at
