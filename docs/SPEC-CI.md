@@ -1305,7 +1305,8 @@ in a green build exactly like one every bench runs.
 `onboarding.SectionPlatforms`, and `onboarding.SectionSkipReason` is the named
 skip a transcript test uses.
 **Its allowlist.** `internal/ci/testdata/platform_line_allowlist.txt`, one
-`<tool>` per line with the issue that owes it, checked in both directions so it
+`<tool>` per line with the issue that owes it, checked in both directions -- a stale
+entry and an ORPHAN naming no section are both red -- so it
 only shrinks. Today: `nova-swarm`, whose line names a machine state and not a
 platform (#1509).
 **Its remedy line.** ``the `## <tool>` section is recorded for "<goos>" and no
