@@ -68,6 +68,10 @@ over an already reconciled registry recovers nothing and registers no duplicate
         (cond
           ((null record))
           ((cancel-record-p record) (registry-apply-cancel-record registry record))
+          ;; Any other tagged record on this journal belongs to another
+          ;; subsystem of the same operation (a staging record, for one) and is
+          ;; not an operation id to recover.
+          ((getf record :record))
           ((assoc id (operation-registry-operations registry) :test #'equal))
           (t (recover-operation registry id)
              (push id recovered)))))))
