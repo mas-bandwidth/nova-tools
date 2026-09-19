@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // ---------------------------------------------------------------------------
@@ -178,11 +180,9 @@ func (s *fakeSSH) Fetch(_ context.Context, machine, dir, dest string) (string, e
 		if e.IsDir() {
 			continue
 		}
-		body, err := os.ReadFile(filepath.Join(source, e.Name()))
-		if err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(filepath.Join(dest, e.Name()), body, 0o755); err != nil {
+		// Link, never copy: these are built executables going into a fixture install
+		// root, and macOS assesses every fresh copy on its first exec (internal/testbin).
+		if err := testbin.Place(filepath.Join(source, e.Name()), filepath.Join(dest, e.Name())); err != nil {
 			return "", err
 		}
 	}

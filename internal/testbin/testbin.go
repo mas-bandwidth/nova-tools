@@ -44,3 +44,17 @@ func copyFile(src, dst string) error {
 	}
 	return os.WriteFile(dst, raw, 0o755)
 }
+
+// PlaceCopy puts a real byte copy of src at dst, never a link, and is the one
+// entry point a test should use when the SUBJECT of the test is that the file
+// is not the same binary. A hard link shares src's inode, so a guard that asks
+// "is my parent this executable?" answers yes through a link and the test
+// silently stops testing anything. cmd/nova-sandbox's probe-step guard is that
+// test. Everywhere else, Place: a copy there only costs macOS's policy scanner
+// time (see the package comment).
+func PlaceCopy(src, dst string) error {
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return copyFile(src, dst)
+}
