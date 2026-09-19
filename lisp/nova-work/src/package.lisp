@@ -1978,6 +1978,16 @@
     #:dep-edit
     #:%dep-submit
     #:node-structure-log
+    ;; the hand report (SPEC-WORK.md:5033-5112, nova-tools #854 item 7)
+    #:*report-acts*
+    #:*report-subject-kinds*
+    #:parse-report-subject
+    #:report-subject-selector
+    #:report-submit
+    #:state-reports
+    #:kind-session-fields
+    #:record-form->event
+    #:kernel-applied
     ;; the COW root partition, the whole walk that reads nothing of :deps
     #:cow-load-findings
     #:cow-partition-holds-p
