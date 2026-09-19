@@ -8,6 +8,15 @@ package main
 // throwaway worktree at the head and runs the tests the change touched: they must fail.
 // The harvest runs it before any reader is spawned, and the reader then judges spec fit
 // and nothing else, from the packet.
+//
+// It has two forms. The RANGE form is the one above, and it now says how much it put
+// back (`reverted=<n>`), so "every non-test hunk" is a number a caller can gate on
+// instead of a sentence in a spec. The SEED form is the other half and the one the
+// accept gate's negative controls are built from (SPEC-TOOLWORK.md §1 rules 7 and 9,
+// PR #1637): one deliberate one-line defect goes INTO the head, and the named packages'
+// suites must kill it. Its edit count is asserted, not reported -- a seed that changed
+// nothing proves a suite red on nothing, and a seed that changed two things does not
+// say which one was caught.
 
 import (
 	"context"
@@ -15,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -28,13 +38,15 @@ func mutate(args []string, out, errOut io.Writer) int {
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "", "")
 	head := fs.String("head", "", "")
+	seed := fs.String("seed", "", "")
+	tests := fs.String("tests", "", "")
 	timeout := fs.Int("timeout", 120, "")
 	maxFlag := fs.Int("max", bounded.Default, "")
 	if fs.Parse(args) != nil || fs.NArg() != 0 {
 		return refuseMutate(errOut, "bad mutate flags")
 	}
-	if *repo == "" || *base == "" || *head == "" {
-		return refuseMutate(errOut, "--repo, --base and --head are required")
+	if *repo == "" || *head == "" {
+		return refuseMutate(errOut, "--repo and --head are required")
 	}
 	if *timeout <= 0 {
 		return refuseMutate(errOut, "--timeout must be positive")
@@ -45,6 +57,25 @@ func mutate(args []string, out, errOut io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
 	defer cancel()
+
+	// The two forms are exclusive and each names what it needs. A run that took
+	// --base and --seed together would have to pick one, and a verb that picks for
+	// the caller is a verb whose answer nobody can tie to a question.
+	if *seed != "" {
+		if *base != "" {
+			return refuseMutate(errOut, "--seed and --base are the two forms; give one")
+		}
+		if *tests == "" {
+			return refuseMutate(errOut, "--seed needs --tests <package>[,<package>...]: the suites that must kill the seed")
+		}
+		return mutateSeed(ctx, *repo, *head, *seed, *tests, out, errOut)
+	}
+	if *tests != "" {
+		return refuseMutate(errOut, "--tests belongs to the --seed form; the range form runs the tests the change touched")
+	}
+	if *base == "" {
+		return refuseMutate(errOut, "--repo, --base and --head are required")
+	}
 
 	res, err := review.Mutate(ctx, review.MutateOptions{Repo: *repo, Base: *base, Head: *head})
 	switch {
@@ -77,10 +108,43 @@ func mutate(args []string, out, errOut io.Writer) int {
 		greens.More()
 	}
 
-	// The verdict line prints on both outcomes and carries both counts, because the
+	// The verdict line prints on both outcomes and carries every count, because the
 	// count a caller needs is the one it did not ask for: a FAIL with red=0 and a FAIL
-	// with red=9 are different failures.
-	line := fmt.Sprintf("MUTATE %s red=%d green=%d %s\n", review.Short(res.Head), res.Red, res.Green, res.Verdict())
+	// with red=9 are different failures, and a PASS with reverted=0 would be a PASS
+	// over a control that never ran.
+	line := fmt.Sprintf("MUTATE %s reverted=%d red=%d green=%d %s\n", review.Short(res.Head), res.Reverted, res.Red, res.Green, res.Verdict())
+	if res.Pass {
+		fmt.Fprint(out, line)
+		return 0
+	}
+	fmt.Fprint(errOut, line)
+	return 1
+}
+
+// mutateSeed is the seed form. The refusal comes BEFORE the seeded run: a control whose
+// size is wrong is not a control, and running it anyway would produce a verdict line
+// somebody could quote. The named suites are listed and run once at the UNSEEDED head
+// before that, because a package that does not exist and a suite that is already red
+// both kill every seed, and a PASS under either is a control that never ran.
+func mutateSeed(ctx context.Context, repo, head, seed, tests string, out, errOut io.Writer) int {
+	var pkgs []string
+	for _, p := range strings.Split(tests, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			pkgs = append(pkgs, p)
+		}
+	}
+	if len(pkgs) == 0 {
+		return refuseMutate(errOut, "--tests names no package")
+	}
+	res, err := review.MutateSeed(ctx, review.SeedOptions{Repo: repo, Head: head, Seed: seed, Tests: pkgs})
+	var count *review.SeedCountError
+	switch {
+	case errors.As(err, &count):
+		return refuseMutate(errOut, count.Error())
+	case err != nil:
+		return refuseMutate(errOut, err.Error())
+	}
+	line := fmt.Sprintf("MUTATE %s seed=%s edits=%d red=%d green=%d %s\n", review.Short(res.Head), res.Seed, res.Edits, res.Red, res.Green, res.Verdict())
 	if res.Pass {
 		fmt.Fprint(out, line)
 		return 0
