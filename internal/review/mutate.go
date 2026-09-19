@@ -83,12 +83,17 @@ type Skip struct {
 // or one Lisp suite), not files; Pass is the per-file rule: every changed test file has at
 // least one failing unit with the change reverted.
 type MutateResult struct {
-	Head   string
-	Red    int
-	Green  int
-	Pass   bool
-	Greens []GreenTest
-	Skips  []Skip
+	Head  string
+	Red   int
+	Green int
+	// Reverted is the number of non-test HUNKS put back: SPEC-REVIEW says the
+	// revert covers "every non-test hunk", and a caller that gates on that sentence
+	// needs it as a number. A verdict over an empty revert is a verdict about the
+	// head's own suite, so the count is what tells a gate the control ran at all.
+	Reverted int
+	Pass     bool
+	Greens   []GreenTest
+	Skips    []Skip
 }
 
 // Verdict is the word that ends the MUTATE line.
@@ -185,9 +190,13 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 	if err := revert(ctx, repo, wt, base, others); err != nil {
 		return nil, err
 	}
+	reverted, err := countHunks(ctx, repo, base, head, others)
+	if err != nil {
+		return nil, err
+	}
 
 	units, skips := plan(wt, tests)
-	res := &MutateResult{Head: head, Skips: skips}
+	res := &MutateResult{Head: head, Skips: skips, Reverted: reverted}
 	redFiles := map[string]bool{}
 	skipped := map[string]bool{}
 	for _, s := range skips {
@@ -499,4 +508,41 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// countHunks is how much was put back: the number of `@@` hunks in the base..head diff
+// restricted to the non-test files the revert touched. A file the head ADDED and the
+// revert removed whole counts as its own hunks, because that is what the diff says was
+// undone.
+//
+// It is read from the range, not from the checkout: `git checkout <base> -- <paths>`
+// says nothing about how many hunks it wrote, and a count that came from the same
+// command whose work it is measuring would agree with itself whatever happened.
+func countHunks(ctx context.Context, repo, base, head string, others []change) (int, error) {
+	if len(others) == 0 {
+		return 0, nil
+	}
+	n := 0
+	paths := make([]string, 0, len(others))
+	for _, c := range others {
+		paths = append(paths, c.path)
+	}
+	for len(paths) > 0 {
+		k := len(paths)
+		if k > 100 {
+			k = 100
+		}
+		args := append([]string{"diff", "--no-ext-diff", "--no-renames", "--unified=0", base, head, "--"}, paths[:k]...)
+		out, err := gitOut(ctx, repo, args...)
+		if err != nil {
+			return 0, fmt.Errorf("could not count the hunks between %s and %s: %v", Short(base), Short(head), err)
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "@@ ") {
+				n++
+			}
+		}
+		paths = paths[k:]
+	}
+	return n, nil
 }
