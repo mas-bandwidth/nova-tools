@@ -266,6 +266,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
 	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
+	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty receipt set: without this, receipts that read as none at all are refused rather than called OK")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
@@ -276,6 +277,10 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
 	if code != 0 {
 		return code
+	}
+	if len(read.receipts) == 0 && !*allowEmpty {
+		fmt.Fprintf(stderr, "nova-check dogfood gate: the receipts read from %s are empty, so the gate would pass on no evidence; pass --allow-empty to accept that, or record receipts first\n", oneline.Field(*receipts))
+		return 1
 	}
 	// The discarded receipts are said FIRST, and on every outcome.
 	reportStranded(read, *failMax, stderr)
