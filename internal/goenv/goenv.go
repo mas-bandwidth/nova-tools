@@ -26,7 +26,11 @@
 // this package must build its environment from Clean.
 package goenv
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/keyshape"
+)
 
 // Removed is the documented list of what Clean drops, and the only list. It is
 // read by people, not by code -- the rules below are the implementation -- so
@@ -54,6 +58,30 @@ func Clean(env []string) []string {
 	for _, entry := range env {
 		name, value, ok := strings.Cut(entry, "=")
 		if ok && removes(name, value) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// WithoutSecrets returns a copy of env with every variable whose NAME carries
+// KEY, TOKEN or SECRET taken out. It is not the output-shape rule Clean is:
+// Clean keeps the child `go` command's answers comparable, and this one keeps a
+// program the gate did not write from reading the seat's credentials. The
+// predicate is keyshape.SecretName, the same one the job shell's shim and the
+// harvest's argv log redact by, so there is one definition of a secret name.
+//
+// A gate runs a card's tree -- its git filters and its tests -- and the process
+// it was started in already holds the provider key, GH_TOKEN and the rest
+// (#1814 was the job shell; this is the gate's own children, #1897). The value
+// is never read, printed or copied: the name is what decides, and a variable
+// that does not carry one is left alone.
+func WithoutSecrets(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && keyshape.SecretName(name) {
 			continue
 		}
 		out = append(out, entry)
