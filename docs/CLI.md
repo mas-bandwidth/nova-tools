@@ -1286,6 +1286,29 @@ build-level half of the same class on the bench, in seconds, with no second mach
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
 
+### land
+
+```
+nova-merge land --repo <owner>/<name> [--lane <name>] --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>] [--reviewers <file> | --no-require-holds] [--reason <text>] [--untyped-comments <ignore>]
+```
+
+`land` is the one entrance to the merge queue: it reads the pull request back from the
+forge and enqueues it **at the front**, unless `--no-jump` sends it to the back, and
+exactly one of `--reviewers <file>` and `--no-require-holds` is required. It refuses a
+head that is not a batch's — a branch named `rowan/integration-*`, or one a `BATCH OK`
+receipt names this very commit; `--receipt-file` reads that receipt from a file, taking
+the LAST line, so a caller may hand it the gate's whole output — and it refuses a pull
+request whose own CI checks are not green. Both green-ness questions are asked, because
+the gate's green is a bench's and CI's green is the forge's on the commit the queue will
+take, and a lander that trusted the receipt alone would have queued `integration-4`
+after it went green on hulk and red on three CI legs.
+
+Its first refusal is one line:
+
+```
+nova-merge land: --repo is required; refusing to guess: the repository whose merge queue this batch enters, as <owner>/<name>
+```
+
 ## nova-pulse
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
