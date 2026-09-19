@@ -29,7 +29,7 @@ func TestQueryFriendsOverSocket(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -46,7 +46,7 @@ func TestQueryFriendsWithOwner(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends --owner wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --owner Rowan\\x20Jr --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open --owner Rowan\\x20Jr"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -63,7 +63,7 @@ func TestQueryFriendsWithRepo(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends --repo wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --repo mas-bandwidth/nova-tools --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open --repo mas-bandwidth/nova-tools"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -80,7 +80,7 @@ func TestQueryFriendsWithMax(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends --max wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --max 50 --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open --max 50"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
