@@ -95,6 +95,11 @@ esac`)
 		row("nova-secrets", "tool", dashed, "local:"+dashed, "none"),
 		row("nova-foreign", "tool", bare, "local:"+bare, "none"),
 	)
+	// The OS's first-exec toll is paid here and not out of the report's --timeout: see
+	// seen(). nova-secrets is the tool this matters most for -- it is the only one asked
+	// twice, so it is the one whose ladder the toll used to eat.
+	seen(t, novaish, dashed, bare)
+
 	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
 	if strings.Contains(stdout, "REPORT UNKNOWN") {
 		t.Errorf("report ran our own tools bare and could not read them:\n%s", stdout)
