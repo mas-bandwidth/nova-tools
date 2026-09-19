@@ -171,3 +171,15 @@ func TestLoadLaneVerdictsPropagatesErrors(t *testing.T) {
 		t.Fatalf("LoadLaneVerdicts error must name the bad file: %v", err)
 	}
 }
+
+func TestLoadLaneVerdictsRefusesLaneNone(t *testing.T) {
+	t.Parallel()
+	vs, err := LoadLaneVerdicts("none", 1)
+	if err == nil {
+		t.Fatalf("LoadLaneVerdicts on 'none' must return error, got vs=%v", vs)
+	}
+	if !strings.Contains(err.Error(), "none") {
+		t.Fatalf("LoadLaneVerdicts error must name 'none': %v", err)
+	}
+}
+

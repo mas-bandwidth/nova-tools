@@ -1052,10 +1052,14 @@ const GitIgnore = `# nova-merge: the tracked files are the records and nothing e
 
 // LoadLaneVerdicts reads all line-level read records for pr from <laneDir>/reads/<entry>/.
 func LoadLaneVerdicts(laneDir string, pr int) ([]Verdict, error) {
-	if laneDir == "" || laneDir == "none" {
+	if laneDir == "" {
 		return nil, nil
 	}
+	if laneDir == "none" {
+		return nil, fmt.Errorf("lane directory %q is not permitted", laneDir)
+	}
 	if fi, err := os.Stat(laneDir); err != nil {
+
 		return nil, fmt.Errorf("lane directory %s: %w", laneDir, err)
 	} else if !fi.IsDir() {
 		return nil, fmt.Errorf("lane path %s is not a directory", laneDir)

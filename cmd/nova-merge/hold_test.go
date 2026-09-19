@@ -1167,3 +1167,32 @@ func TestLandRefusesWhenPRReadFailsUnderNoRequireHolds(t *testing.T) {
 	contains(t, lstderr, "LAND REFUSED")
 	contains(t, lstderr, "member pull request 999 could not be read")
 }
+
+// 41. TestReviewersWithLaneNoneRefuses (Stella blocker 3): literal --lane none with --reviewers must be refused
+func TestReviewersWithLaneNoneRefuses(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
+
+	// batch with --reviewers and --lane none
+	exit, _, stderr := l.runBare("batch", "--name", "lane-none", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--lane", "none", "--reviewers", revFile)
+	if exit != 2 {
+		t.Fatalf("batch with --lane none must exit 2, got %d\nstderr: %s", exit, stderr)
+	}
+	contains(t, stderr, "--lane is required when --reviewers is specified")
+
+	// land with --reviewers and --lane none
+	head := strings.Repeat("a", 40)
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=1551 dropped=none"
+	lexit, _, lstderr := runLandBare(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
+		"--receipt", receipt, "--lane", "none", "--reviewers", revFile)
+	if lexit != 2 {
+		t.Fatalf("land with --lane none must exit 2, got %d\nstderr: %s", lexit, lstderr)
+	}
+	contains(t, lstderr, "--lane is required when --reviewers is specified")
+}
+

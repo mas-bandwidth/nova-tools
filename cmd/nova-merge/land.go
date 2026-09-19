@@ -68,7 +68,7 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if (*reviewersFile == "") == (*noRequireHolds == false) {
 		f.problem("exactly one of --reviewers <file> or --no-require-holds --reason <text> is required; exit 2 with neither or both")
 	}
-	if *reviewersFile != "" && strings.TrimSpace(*lane) == "" {
+	if *reviewersFile != "" && (strings.TrimSpace(*lane) == "" || strings.TrimSpace(*lane) == "none") {
 		f.problem("--lane is required when --reviewers is specified")
 	}
 	if *noRequireHolds && strings.TrimSpace(*reason) == "" {
