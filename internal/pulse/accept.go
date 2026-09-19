@@ -792,8 +792,23 @@ func (g *acceptGate) execWalled(ctx context.Context, dir, name string, args ...s
 	// The verdict is a property of the range, never of the environment the gate was
 	// started in (internal/goenv: a caller's GOFLAGS=-json would hide every result).
 	// HOME and GOCACHE are the gate's, inside its write set, as the wall's rule 9 wants.
-	cmd.Env = append(goenv.Clean(os.Environ()), "HOME="+g.home, "GOCACHE="+g.gocache)
+	cmd.Env = append(acceptEnvForTheWall(goenv.Clean(os.Environ())), "HOME="+g.home, "GOCACHE="+g.gocache)
 	return cmd
+}
+
+// acceptEnvForTheWall drops GOENV and every secret-shaped name (goenv.IsSecretName,
+// the same predicate the native-argv log redacts by -- reused, not copied) before
+// an operator's environment reaches a card's tests inside the wall.
+func acceptEnvForTheWall(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(name, "GOENV") || goenv.IsSecretName(name) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // acceptNoVCS puts -buildvcs=false after a go build, vet or test verb that lacks it.

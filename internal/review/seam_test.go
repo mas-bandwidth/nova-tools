@@ -115,7 +115,8 @@ func TestMutateCouldNotRunIsASkipNotARed(t *testing.T) {
 	if res.Red != 0 || res.Pass || len(res.Skips) != 1 {
 		t.Fatalf("silent exit 1: red=%d pass=%v skips=%v", res.Red, res.Pass, res.Skips)
 	}
-	// But a panic IS the suite failing under the mutant.
+	// But a bare panic with no --- FAIL: line is now could-not-run, never a kill on
+	// its own (HOLD on #1721).
 	exec2 := func(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, "sh", "-c", "echo '=== RUN   TestSignZero'; echo 'panic: boom'; exit 2")
 		cmd.Dir = dir
@@ -125,7 +126,43 @@ func TestMutateCouldNotRunIsASkipNotARed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Red == 0 || len(res.Skips) != 0 {
-		t.Fatalf("a panic under the mutant: red=%d skips=%v, want a kill", res.Red, res.Skips)
+	if res.Red != 0 || len(res.Skips) != 1 || !strings.Contains(res.Skips[0].Reason, "could not be run") {
+		t.Fatalf("a bare 'panic:' line with no --- FAIL: line: red=%d skips=%v, want could-not-run, not a kill", res.Red, res.Skips)
+	}
+}
+
+// HOLD on #1721 (johnny-357c06749499): mutate.go:513-518 used to read "panic:" or a
+// bare "FAIL\t" line anywhere in the combined output as proof every named unit died,
+// and both strings are exactly what a card's own TestMain or init can print,
+// regardless of whether anything it claims to test actually broke. Only a --- FAIL:
+// line (scored above this fallback) or the exit status may say a unit died now.
+func TestMutateABareFAILOrPanicLineWithNoStructuredFAILLineIsNotAKill(t *testing.T) {
+	repo, base, head := seamLab(t)
+	cases := []struct {
+		name string
+		exec func(ctx context.Context, dir, name string, args ...string) *exec.Cmd
+	}{
+		{"bare panic, no --- FAIL: line at all", func(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+			cmd := exec.CommandContext(ctx, "sh", "-c", "echo '=== RUN   TestSignZero'; echo 'panic: boom'; exit 2")
+			cmd.Dir = dir
+			return cmd
+		}},
+		{"a real unit passed, but a forged package FAIL line and no --- FAIL: for anything", func(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+			cmd := exec.CommandContext(ctx, "sh", "-c", "echo '=== RUN   TestSignZero'; echo '--- PASS: TestSignZero (0.00s)'; printf 'FAIL\tfixture/sign\t0.01s\n'; exit 1")
+			cmd.Dir = dir
+			return cmd
+		}},
+	}
+	for _, c := range cases {
+		res, err := Mutate(context.Background(), MutateOptions{Repo: repo, Base: base, Head: head, TempRoot: t.TempDir(), Exec: c.exec})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if res.Red != 0 || res.Pass {
+			t.Fatalf("%s: red=%d pass=%v, want no kill from free text alone", c.name, res.Red, res.Pass)
+		}
+		if len(res.Skips) != 1 || !strings.Contains(res.Skips[0].Reason, "could not be run") {
+			t.Fatalf("%s: skips=%v, want one could-not-run skip", c.name, res.Skips)
+		}
 	}
 }
