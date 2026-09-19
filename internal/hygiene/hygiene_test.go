@@ -536,34 +536,6 @@ func TestHygieneReadsADiffTheSubjectRepoMarkedBinary(t *testing.T) {
 	}
 }
 
-// The conflict-marker half of the same defect: `--check` reads the same attribute, and
-// unlike the unified diff it stays silent whatever `--text` says. Only
-// `--attr-source=<empty tree>` reaches it, and that is git 2.42 and later.
-func TestHygieneChecksMarkersInADiffTheSubjectRepoMarkedBinary(t *testing.T) {
-	dir := lab(t)
-	// The skip is decided by what THIS git takes, read here rather than from the
-	// package's own helper: a helper that stopped returning the option would
-	// otherwise skip this test instead of failing it.
-	if !gitTakesAttrSource(t, dir) {
-		t.Skip("this git does not take --attr-source (2.42 and later), and --text alone does not make `diff --check` read a file the subject marked -diff")
-	}
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/.gitattributes", "*.go -diff\n")
-	write(t, dir, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "nothing to see here either")
-	fs := check(t, dir, Options{})
-	found := false
-	for _, f := range fs {
-		if strings.Contains(f.Why, "conflict marker") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("a `-diff` attribute in the range hid the conflict marker: %v", fs)
-	}
-}
-
 // hygiene-reads-a-path-git-would-quote: one non-ASCII byte in a name and git quotes the
 // whole header -- `+++ "b/sign/k\303\251y.go"` -- which the parser read as a file it
 // could not name, so every added line in that file was skipped.
@@ -583,24 +555,24 @@ func TestHygieneReadsAPathGitWouldQuote(t *testing.T) {
 	}
 }
 
-// hygiene-refuses-when-the-marker-check-cannot-run: `diff --check` exits 2 when it has
-// something to say, which is why its stdout is read directly -- but the error was
-// dropped with it, so a cancelled context and an exit 128 both came back as an empty
-// answer, which reads as a range with no markers in it. A check that could not run has
-// found nothing, and must never say clean.
-func TestHygieneRefusesWhenTheMarkerCheckCannotRun(t *testing.T) {
+// hygiene-refuses-when-the-added-lines-cannot-be-read. The first repair caught this on
+// `git diff --check`, whose stdout had to be read past a non-zero exit and whose error
+// went missing with it. `--check` is gone (cold read 2, N1) and the rule outlived it:
+// the one read that now answers both the key shapes and the conflict markers must
+// refuse rather than come back empty, because an empty answer reads as a clean range.
+func TestHygieneRefusesWhenTheAddedLinesCannotBeRead(t *testing.T) {
 	dir := lab(t)
 	head := git(t, dir, "rev-parse", "HEAD")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := conflictMarkers(ctx, dir, head, head, nil); err == nil {
-		t.Fatal("a cancelled context reported a range with no conflict markers")
+	if _, err := checkAddedLines(ctx, dir, head, head, nil); err == nil {
+		t.Fatal("a cancelled context reported a range with nothing added to it")
 	}
 
 	absent := strings.Repeat("0", len(head))
-	if _, err := conflictMarkers(context.Background(), dir, absent, head, nil); err == nil {
-		t.Fatal("a ref git could not resolve reported a range with no conflict markers")
+	if _, err := checkAddedLines(context.Background(), dir, absent, head, nil); err == nil {
+		t.Fatal("a ref git could not resolve reported a range with nothing added to it")
 	}
 }
 
@@ -681,17 +653,6 @@ func TestHygieneRefusesALogRowItCannotRead(t *testing.T) {
 	}
 }
 
-// gitTakesAttrSource asks the git on THIS bench, not the package, whether it has
-// `--attr-source` (2.42 and later).
-func gitTakesAttrSource(t *testing.T, dir string) bool {
-	t.Helper()
-	empty := git(t, dir, "hash-object", "-t", "tree", os.DevNull)
-	cmd := exec.Command("git", "--attr-source="+empty, "rev-parse", "--is-inside-work-tree")
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-	return cmd.Run() == nil
-}
-
 // hygiene-reads-a-file-git-calls-binary: one NUL byte anywhere in a file and git
 // prints "Binary files … differ" instead of its lines, whatever the attributes say --
 // so a key added below that byte reached nothing. This is the half `--attr-source`
@@ -731,5 +692,80 @@ func TestHygieneReadsAPathGitMustQuote(t *testing.T) {
 	}
 	if f.At != name+":3" {
 		t.Fatalf("at=%q, want %q", f.At, name+":3")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cold read 2 of 2026-09-19 (#1717, N1).
+
+// hygiene-checks-markers-whatever-the-attributes-say.
+//
+// The first repair answered the COMMITTED `.gitattributes` and stopped there. The same
+// `-diff` attribute reaches git from two more places, and `--attr-source` reads neither:
+// `.git/info/attributes` and a local `core.attributesFile`. The gate's worktree shares
+// the job clone's `.git` (§1 rule 3), so both of them are the worker's to write, and on
+// a git older than 2.42 the committed file was open again too.
+//
+// Reproduced by the reader as 2 secret findings and 0 markers: the added LINES were
+// read -- `--text` sees to that -- and only `git diff --check` was blind, because it
+// honours the attribute whatever `--text` says. So the marker check stops asking git
+// and reads the lines this package already has.
+func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
+	const marked = "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n"
+	for _, how := range []struct {
+		name string
+		hide func(t *testing.T, dir string)
+	}{
+		{"git/info/attributes", func(t *testing.T, dir string) {
+			write(t, dir, ".git/info/attributes", "*.go -diff\n")
+		}},
+		{"core.attributesFile", func(t *testing.T, dir string) {
+			p := filepath.Join(t.TempDir(), "attributes")
+			if err := os.WriteFile(p, []byte("*.go -diff\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git(t, dir, "config", "core.attributesFile", p)
+		}},
+		{"committed .gitattributes", func(t *testing.T, dir string) {
+			write(t, dir, "sign/.gitattributes", "*.go -diff\n")
+		}},
+	} {
+		t.Run(how.name, func(t *testing.T) {
+			dir := lab(t)
+			git(t, dir, "checkout", "-q", "-b", "card")
+			write(t, dir, "sign/sign.go", marked)
+			how.hide(t, dir)
+			git(t, dir, "add", "-A")
+			git(t, dir, "commit", "-q", "-m", "a marker the subject would rather git did not print")
+			fs := check(t, dir, Options{})
+			found := false
+			for _, f := range fs {
+				if strings.Contains(f.Why, "conflict marker") {
+					found = true
+					if !strings.HasPrefix(f.At, "sign/sign.go:") {
+						t.Errorf("at=%q, want sign/sign.go:<line>", f.At)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("the attribute hid the conflict marker: %v", fs)
+			}
+		})
+	}
+}
+
+// The other half of the same line: a marker in a file the range did not touch is not
+// this range's finding, and a line that merely looks like one is not a marker. git's
+// own rule is exactly seven characters followed by a space or the end of the line.
+func TestHygieneReadsAMarkerAsGitSpellsIt(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, "sign/sign.go", "package sign\n\n// <<<<<<<< eight is a rule in a comment, not a marker\nconst bar = \"<<<<<<<\"\nfunc Sign(n int) int { return 1 }\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "lines that only look like markers")
+	for _, f := range check(t, dir, Options{}) {
+		if strings.Contains(f.Why, "conflict marker") {
+			t.Fatalf("a line that is not a marker drew one: %v", f)
+		}
 	}
 }
