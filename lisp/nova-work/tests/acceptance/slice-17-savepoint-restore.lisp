@@ -262,3 +262,94 @@ the revision the image was taken at."
              (check-equal 1 code "the refusal exits 1")
              (ok (search "--max-nodes" line) "the refusal names the bound: ~A" line)))
       (close-file-journal (getf fx :journal)))))
+
+;;; ------------------------------------------------------------------
+;;; savepoint-compare-puts-the-two-revisions-side-by-side
+;;; SPEC-WORK.md:2279, :7085
+;;; ------------------------------------------------------------------
+
+(deftest "savepoint-compare-puts-the-two-revisions-side-by-side" "docs/SPEC-WORK.md:2279,5983,7085"
+    "expected=an-isolated-old-restore-compared-against-current-state;every-difference-one-row;the-shared-checkpoint-a-different-field;a-gap-compares-nothing"
+  (let* ((fx (savepoint-fixture :id "sp-c"))
+         (root (getf fx :root))
+         (journal-path (getf fx :journal-path))
+         (k (getf fx :kernel))
+         (at-cut (getf fx :revision)))
+    (unwind-protect
+         (progn
+           ;; With the live session exactly where the savepoint was cut, an
+           ;; isolated restore and the current state agree on every node.
+           (multiple-value-bind (line rows differences)
+               (savepoint-compare-published root "sp-c" :journal-path journal-path
+                                                        :against (kernel-state k)
+                                                        :against-kind :session
+                                                        :shared-checkpoint 3)
+             (ok (search "SAVEPOINT OK id=sp-c" line) "the OK line: ~A" line)
+             (ok (search "differences=0" line) "an unmoved session differs: ~A" line)
+             (check-equal '() rows "an unmoved session printed rows")
+             (check-equal '() differences "an unmoved session produced differences")
+             (ok (search (format nil "rev=~D" at-cut) line)
+                 "the savepoint's own revision: ~A" line)
+             (ok (search (format nil "against=~D" at-cut) line)
+                 "the against revision stands beside it: ~A" line)
+             ;; the shared checkpoint is a different field from the local
+             ;; savepoint and is never printed as it (SPEC-WORK.md:5983, :7109)
+             (ok (search "checkpoint=3" line) "the shared checkpoint: ~A" line)
+             (ok (not (search (format nil "checkpoint=~D" at-cut) line))
+                 "the local revision was printed as the shared checkpoint: ~A" line))
+
+           ;; Now the live session moves. The comparison names every node that
+           ;; moved, one row each, and the two revisions stay side by side.
+           (ok (submit k (reopen-request :node "acme/work/f1/t1" :request "spc-3"))
+               "the live session moves past the savepoint")
+           (multiple-value-bind (line rows differences)
+               (savepoint-compare-published root "sp-c" :journal-path journal-path
+                                                        :against (kernel-state k)
+                                                        :against-kind :session)
+             ;; the restore replays what the journal holds after the cut, so the
+             ;; two agree again -- an isolated restore of a live journal catches
+             ;; up rather than drifting.
+             (check-equal 0 (length differences)
+                          "a restore over the same journal drifted from the session")
+             (ok (null rows) "a compare that found nothing printed rows")
+             (ok (search "differences=0" line) "the line agrees: ~A" line))
+
+           ;; Against a state that really is different -- the seed, with no
+           ;; mutation at all -- every moved node is one row.
+           (multiple-value-bind (line rows differences)
+               (savepoint-compare-published root "sp-c" :journal-path journal-path
+                                                        :against (make-seed-state *seed*)
+                                                        :against-kind :snapshot)
+             (ok (plusp (length differences)) "a different state compared equal: ~A" line)
+             (check-equal (length differences) (length rows) "one row per difference")
+             (dolist (row rows)
+               (ok (search "difference=moved" row) "every row names its difference: ~A" row))
+             (ok (search "against-kind=snapshot" line)
+                 "the line names what it compared against: ~A" line)
+             (ok (search "against=0" line) "the seed's revision stands beside: ~A" line)
+             ;; --max caps the rows and never the count
+             (multiple-value-bind (capped-line capped-rows)
+                 (savepoint-compare-published root "sp-c" :journal-path journal-path
+                                                          :against (make-seed-state *seed*)
+                                                          :max 1)
+               (check-equal 1 (length capped-rows) "--max did not cap the rows")
+               (ok (search (format nil "differences=~D" (length differences)) capped-line)
+                   "--max capped the count as well as the rows: ~A" capped-line)))
+
+           ;; A savepoint that does not verify compares nothing at all.
+           (let* ((image-path (merge-pathnames "state" (savepoint-directory root "sp-c")))
+                  (before (savepoint-file-text image-path)))
+             (with-open-file (out image-path :direction :output :element-type 'character
+                                             :external-format :utf-8 :if-exists :append)
+               (write-string " " out))
+             (multiple-value-bind (line rows differences)
+                 (savepoint-compare-published root "sp-c" :journal-path journal-path
+                                                          :against (kernel-state k))
+               (ok (search "SAVEPOINT FAIL" line) "a broken savepoint compared: ~A" line)
+               (ok (search "broken hash" line) "the gap is named by kind: ~A" line)
+               (check-equal '() rows "a refused compare printed rows")
+               (check-equal nil differences "a refused compare produced differences"))
+             (with-open-file (out image-path :direction :output :element-type 'character
+                                             :external-format :utf-8 :if-exists :supersede)
+               (write-string before out))))
+      (close-file-journal (getf fx :journal)))))

@@ -1131,6 +1131,7 @@
     #:savepoint-verify-published
     #:savepoint-list-published
     #:savepoint-restore-published
+    #:savepoint-compare-published
     #:restored-savepoint
     #:restored-savepoint-p
     #:restored-savepoint-id
