@@ -2631,6 +2631,7 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -4389,6 +4390,7 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus
