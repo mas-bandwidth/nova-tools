@@ -239,11 +239,12 @@ seconds or more; the CI budget test refuses any `_test.go` line carrying such
 a literal under ten seconds, except a fake documented with
 `// wall-ok: <reason>`.
 
-**Every binary says which build it is.** `<tool> version` (and `--version`)
-prints ONE line, four tokens, exit 0, on stdout:
+**Every binary says which build it is, in ONE shape.** `<tool> version` (and
+`--version`) prints ONE line, exit 0, on stdout: four mandatory tokens, and then
+any number of `key=value` extras.
 
 ```
-<tool> <build identity> <goos>/<goarch> <go version>
+<tool> <build identity> <goos>/<goarch> <go version> [key=value ...]
 ```
 
 The identity in field two is the release's `-ldflags "-X main.version=<tag>"`
@@ -251,16 +252,27 @@ stamp when there is one, the module version the toolchain recorded when there
 is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
 stamp, and the word `devel` for a build with none of those. **It is never a
 dotted number this repo made up**: a version string nobody can trace invites
-the comparison it cannot support. Eleven binaries share the resolution order in
-`internal/buildinfo`. `nova-wake` and `nova-sandbox` retain their existing
-resolvers: their VCS fallback reports the revision alone, without the
-revision time or dirty marker. Release-stamped and installed-module versions
-retain the same identity across all thirteen; the release assertion handles
-the sandbox output separately. `nova-merge` adds a fifth field,
-`build=<12 hex>`, the sha256 of its own file on disk, which is a different fact and its own section's;
-`nova-sandbox` answers with its `SANDBOX VERSION` line, which carries the
-backend and the platform a sandbox is judged by. The verb takes no flags and
-no arguments — a second output shape is a second thing to agree about — and
+the comparison it cannot support. Every binary under `cmd/` takes its resolution
+order, its line and its extras from `internal/buildinfo`, and `buildinfo.Parse`
+is the ONE reader of that line: writer and reader are one pair, so a tool that
+adds a fact cannot break a consumer that never heard of it.
+
+**An extra is a named fact, never a loose token.** `nova-merge` says
+`build=<12 hex>`, the sha256 of its own file on disk, which rule 16 of its lane
+needs; `nova-sandbox` says `backend=<name> platform=<os>`, the two facts a
+sandbox is judged by. A reader takes the identity from field two and asks for an
+extra BY NAME, so a tool that adds a second extra cannot move the first, and a
+reader that has heard of neither still reads the four tokens. **A second line
+shape is what this paragraph forbids**: a hand-rolled fifth token and a
+`SANDBOX VERSION …` line of its own made `nova-version snapshot --bin
+~/.local/bin` refuse an entire install, exit 2 (#1297, 2026-09-18) — because each
+reader had been written against the tokens it happened to know, and the same
+week `nova-version report` called every one of our own tools UNKNOWN for asking
+them a question they do not answer (#1264, SPEC-UPDATE.md rule 4b). `internal/ci`'s
+`TestEveryToolPrintsTheOneVersionLine` runs every built `cmd/nova-*` through the
+real reader, walking `cmd/` rather than holding a list, so a binary added
+tomorrow is held to the grammar on the day it appears. The verb takes no flags
+and no arguments — a second output shape is a second thing to agree about — and
 refuses at exit 2 with one line when it is given any.
 
 **A line is bounded as well as single.** `internal/oneline`'s `Escape` and
@@ -310,12 +322,18 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Six record-layer checks in one binary, each a wall: a record passes or it
+Eight record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
-what makes it say NO, and what it deliberately does not check.
+what makes it say NO, and what it deliberately does not check. Six of them are
+checks over one line's own self repo. The other two are the same shape pointed
+somewhere else: `dogfood` is a check over the record the family keeps about its
+own tools, and `hygiene` is a check over a BRANCH — the four mechanical
+questions the accept gate asks of every card's range, put behind a door a
+person can knock on before asking a friend for a read. Each is a ledger written
+in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, plus `version` and `help`. `nova-check version` is the Conventions'
+`corpus`, `hygiene`, `dogfood`, plus `version` and `help`. `nova-check version` is the Conventions'
 build line, exit 0; before it existed the same words were
 `nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
 named no build.
@@ -1369,6 +1387,249 @@ has gone missing.
 **Three: an indented example is illustration** — which is the point — so a
 four-column table indented after a blank line is not checked. Indented rows
 *abutting* the table above them are named instead, per the list above.
+
+---
+
+### hygiene — is this branch's range clean, before anybody reads it
+
+```
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+```
+
+**Why it exists.** The accept gate asks four mechanical questions of every
+card's range (SPEC-TOOLWORK.md §3): is every commit the pool's own and none of
+them a merge (`identity`), does every changed path match one of the card's
+declared globs (`out-of-path`), was anything added that does not belong in a
+repository (`stray-file`), and does any added line have the SHAPE of a key
+(`secret`). None of the four reads prose and none needs a model. They are one
+package with one entry point, `internal/hygiene.Check`, and this verb is the
+third of its three callers — `nova-pulse accept` at harvest and `nova-merge
+batch` on every member are the other two. One implementation, three callers, so
+the lane and the harvest cannot disagree about what clean means: a second copy
+of these rules is a second definition, and the day the two drift is the day a
+branch passes one and fails the other with nobody able to say which is right.
+
+It is here rather than in `nova-pulse` because the person who wants the answer
+is usually not a gate. It is the thing to type before asking a friend to read
+something, and it decides nothing: it prints what is wrong and exits.
+
+**It never guesses an identity.** `--identity` is required and repeatable with
+commas, `Name <email>`; there is no default and no falling back to the
+repository's own config, because a range checked against nobody would admit
+anybody. `--paths` may be ABSENT, which is a different fact from "the paths
+matched" and is printed as such: `out-of-path` is skipped and the line says
+`paths=-`. A friend's own branch has no card and no declared paths, and a line
+that simply left the field out would read as a bound that held. When `--paths`
+IS given it is validated the same way `cut` validates a card's `PATHS:` line —
+at most eight globs, no `..`, nothing absolute, and nothing that matches every
+file there is.
+
+**Exit codes**, as the Conventions give them: **0** clean, **1** findings,
+**2** could not run. The third is the one that matters most here. A bad ref, a
+directory that is not a working copy, an empty identity set, a `PATHS:` glob
+that bounds nothing, a git that could not be run — every one of them is a
+refusal, never a clean answer, because a check that could not run has found
+nothing and reporting that as clean is the one answer this tool must not be
+able to give.
+
+```
+HYGIENE FINDING reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>: <why>
+HYGIENE MORE kind=finding shown=<n> total=<t> nova-check hygiene --repo <dir> … --max 0
+HYGIENE OK base=<ref> head=<ref> paths=<glob,…|-> findings=0
+HYGIENE NO base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
+nova-check hygiene: <what was wrong>; run: nova-check help
+```
+
+The listing is capped at `--max` (default 20, `0` for all) and counted, like
+every listing in this binary, and the MORE line carries the command that prints
+the rest. `OK` goes to stdout, `NO` and the refusal to stderr, and the findings
+list to stdout in both cases — a caller that wants the verdict alone reads the
+last line.
+
+**What it deliberately does not do.** It never opens `RESULT.md` or any other
+prose a worker wrote: this is a check over a diff, not a reading of a report.
+It never prints matched secret text — only the path, the line and the shape's
+NAME — because a finding travels into a gate's stdout, a PR body, a harvest log
+and whatever a coordinator pastes into a chat, and a finding that quotes the
+key has copied the key into every one of those places. And it decides nothing:
+it returns findings and exits, and what a finding COSTS is the caller's rule,
+not this verb's.
+
+**The subject repo does not get a vote on what git shows this check.** That is
+not a detail, it is the whole reason this verb can be trusted on a range
+somebody else wrote. The bench's global and system git config are blanked, and
+so is the subject's own influence over the diff: the prefixes are passed
+explicitly, so `diff.noprefix` in the checked repo cannot hide every finding by
+dropping the `a/` and `b/` a parser reads file names from; the diff is forced
+textual with `--text --no-textconv`, so a `-diff` attribute — committed, in
+`.git/info/attributes`, or named by a local `core.attributesFile` — cannot turn
+a file holding a key into "Binary files differ"; paths are read with
+`core.quotePath=false` and unquoted besides, so one non-ASCII byte in a name
+does not skip that file; and blob ids are read in full, because an abbreviation
+is ambiguous sooner or later. The conflict-marker check reads the added lines
+of that same diff rather than asking `git diff --check`, which honours a
+`-diff` attribute whatever `--text` says. A check whose subject can choose what
+it is shown is not a check.
+
+---
+
+### dogfood — has anybody but the author run it
+
+```
+nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
+nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+```
+
+**Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
+tested, dogfooded by a non-author on real work with the edges filed, the
+feedback applied, documented and released.* Six of those seven states leave
+evidence somebody else can read — a test run, an issue, a doc, a tag. One does
+not. Whether a **non-author** has ever run the thing was carried in nobody's
+hand but the last speaker's, which is the same shape as `corpus`: the record
+and the evidence about the record were the same sentence. So the claim becomes
+a file. The verbs come from the command reference, the runs come from
+receipts, and `gate` is the exit code a release lane calls.
+
+**The verbs come from the binaries first and the reference second.** `--tools
+<dir>` asks each built `nova-*` binary for its own `help` and reads the verb
+list out of it; that is authoritative for that tool, and `--cli` fills in the
+tools the directory does not hold. At least one source is required. This is the
+first lesson of this verb's own dogfood pass (2026-09-18, by a non-author): the
+reference had gone stale against two verbs that exist — `nova-work ask` and
+`asks` — and both receipts for them were stranded against a document rather than
+against the tool.
+
+**The reference is read in every shape it uses**, which is the second lesson and
+the larger one: `nova-sandbox` and `nova-work` contributed **zero** of the 77
+rows, not because nobody had run them but because one is documented as prose
+with a worked transcript and the other by pasting its own indented help block.
+*A tool can go un-dogfooded forever by being documented in a shape the
+extractor does not read, and nothing says so.* So a declaration is any of:
+
+- a command line inside a fenced block, at any indentation, with or without a
+  `$` prompt and `VAR=value` prefixes. The verb is the leading lowercase bare
+  words, at most two — `nova-fuse lift quarantine` and `nova-fuse lift lockdown`
+  are the two verbs they are, `nova-check links --dir <dir>` stops at the first
+  flag. A pasted help block puts its description in a second column, so two or
+  more spaces end the command: `nova-work ask            delivers ONE unit` is
+  the verb `ask`, `nova-work plan check --file <p>` is the verb `plan check`.
+- a `### <verb>` heading under a `## nova-<tool>` section — one word, and the
+  heading must be that word alone or that word before a separator, so `### cut`
+  and `### serve: the process outside a session` are verbs while `### native and
+  batch` and `### The seven verbs` are prose.
+- a synopsis line with no verb at all — `nova-decide --questions <file>` —
+  which declares that tool's **bare invocation**. It is a unit like any other,
+  prints as `verb=-`, and `--verb -` names it: a tool that takes no verb is
+  still a tool somebody has to have run.
+
+A `## nova-*` section that yields no unit at all is a red test in this package
+(`TestEveryToolSectionOfTheRealReferenceYieldsAVerb`), because that silence is
+exactly what hid two tools from the gate.
+
+The tool comes from the line and not from the section heading: a reference shows
+one tool's verb inside another's section, and a verb belongs to the tool that
+runs it. Headings are the exception — a heading has no tool in it, so it takes
+its section's. A binary's help speaks for that binary only, so another tool's
+line in its `example:` block declares nothing.
+
+**A receipt is one JSON line** — `tool`, `verb`, `by`, `at` (RFC3339, UTC),
+`ok`, `notes`, `issue` — in its own file under `--receipts`, written to a
+temporary name in that directory and renamed into place. The directory is the
+append-only log and each file is one atomic entry, so two benches recording at
+once cannot interleave halves of two records. Every field is stated: `record`
+refuses a blank one with the line that says what the flag wants, and the
+verdict is `--ok` or `--not-ok` and never a default, because an `ok=` that came
+from the absence of a flag is a record of what somebody forgot to type.
+
+**`record` checks the spelling against the same list the ledger will read it
+against**, and refuses a `--tool`/`--verb` pair nothing declares, naming the
+nearest verb that is declared — a verb written INSIDE a declared one wins
+(`--verb ledger` for `dogfood ledger`), then the nearest by edit distance within
+half the spelling, and nothing at all rather than a guess. It had the flag and
+used it for nothing on 2026-09-18, and every one of that bench's nine receipts
+was accepted in silence and discovered later as a count.
+
+**Asserts** (`ledger`, exit 0 — it reports rather than gates): one
+`DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
+verb the reference declares, in the reference's order, then
+`DOGFOOD OK verbs=<n> dogfooded=<n> by-nonauthor=<n> open-edges=<n> unfiled=<n>`. The row
+shows the receipt that speaks best for the verb — a non-author's pass first,
+then a non-author's run, then the author's own, latest first inside each rank —
+and the counts come from all of them, not from the row. **Every row prints**:
+this is the one listing here that `--fail-max` does not cap, because a ledger
+that elided rows would hide exactly the verbs nobody has run. The summary line
+is the bounded read of the same thing.
+
+**An author dogfooding their own verb is recorded and does not count.**
+Authorship comes from `--authors <file>` (`<tool> <verb> = <who wrote it>`, one
+per line, exact) or, second-best, from `--repo <dir>`: for each verb, the
+author of the first commit that introduced the verb's word under
+`cmd/<tool>`. Names compare trimmed and case-insensitively and nothing else — a
+receipt that spells a name differently is a receipt with a different name, and
+the ledger says who it has rather than guessing who it meant. A verb neither
+source places has **no** author, so every receipt for it counts: the gate can
+be wrong by asking for one more pass, never by passing a verb nobody ran.
+
+**An edge is what the run found, not only what it failed at.** A receipt
+records an edge when the verb did not do what the run needed (`--not-ok`) **or**
+when its notes name one in the shape the family writes them — `Edge:` or
+`Edges:` before the finding. It stays open until somebody runs the verb again,
+later, and records neither; `unfiled=` counts the open edges carrying no issue
+number, because an edge nobody has filed is one nobody else can act on.
+Feedback filed is not feedback applied, and the ledger is the half that can see
+the difference.
+
+This is the dogfood pass's fifth edge and the sharpest: every receipt of that
+pass was written `--ok`, because the verbs *did* work, and six of them carried
+"Edges: (1) … (2) …" in the notes. The ledger read `open-edges=0` over a bench
+that had just found a dozen things. Counting only the verdict was counting the
+half a dogfooder is least likely to use.
+
+**Says NO (exit 1) when:**
+
+- a receipt cannot be read — unparseable, an unknown field, or a blank in a
+  required one. Each is one `DOGFOOD FAIL <file>:<line>: <reason>` line, capped
+  by `--fail-max` with the MORE line that names the flag, and **no ledger is
+  printed at all**: a ledger read from records it could not parse would
+  understate the truth in the one direction that lets a tool ship.
+- `gate` finds an open edge, always, with or without `--require-all`.
+- `gate --require-all` finds a verb no non-author has run and passed. Each
+  finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
+  way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate
+  is one line: `DOGFOOD GATE OK verbs=<n> by-nonauthor=<n> open-edges=<n>
+  unfiled=<n> require-all=<yes|no>`.
+
+**Refuses (exit 2) when** neither `--cli` nor `--tools` is given, on any of the
+three; `--receipts` is missing or is not a directory; `--tool`, `--verb`,
+`--by` or `--notes` is missing, the verdict is neither or both, or the verb is
+one the list does not declare (`record`); the sources named declare no verbs at
+all; an `--authors` line has no `=`, an empty side, or maps one verb twice; or a
+subprocess read runs past `--git-timeout` or `--tools-timeout`. A binary that
+cannot answer `help` is one `DOGFOOD NOTE` and a fallback to the reference for
+that tool, never a dead run: a half-built directory costs that tool's rows, not
+the ledger.
+
+**A receipt naming a verb the list does not declare is named, one line each, by
+`ledger` AND by `gate`:** the file it lives in, the tool and verb it claimed,
+who wrote it, and the nearest declared verb. The count line follows, capped like
+every other listing here. It stays a `DOGFOOD NOTE` rather than a failure —
+the disagreement is about the documentation, not about the tool — but it is
+never again a bare number: the pass of 2026-09-18 was told `receipts=9 name a
+verb docs/CLI.md does not declare` and nothing else, so nine real runs were
+invisible and unspellable. And `gate`, the line a release lane actually calls,
+printed none of it at all: a lane could pass or fail without ever learning that
+every receipt it read had been discarded.
+
+**Deliberately does not check:** *whether the run was any good.* `notes` is
+prose and nobody grades it; a receipt says somebody ran the verb on real work
+and what happened, and the judgment that it was real work is the dogfooder's,
+made in the open under their own name. Nor does it check that the issue a
+receipt names exists, is open, or is about this verb (that is `gh`'s to know,
+and this tool reaches no network); nor that the person is who they say they
+are (the receipts live in a repository, and git's authorship is the record that
+answers that); nor that a verb's tests pass, which is a different wall in a
+different lane.
 
 ---
 
@@ -2452,9 +2713,11 @@ nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open 
       [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+      [--until <instant>] [--idle-exit <n>]
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -2546,17 +2809,20 @@ INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddr
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
-WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->
+INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
+INBOX WALK bounded commits=<n> remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
+WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->[ until=<instant|-> idle-exit=<n>]   (the pair only with --until or --idle-exit)
 WAIT NOTE <why this wait is not waiting>
 WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
 WAIT OK new=<n> after=<d> polls=<n>
-WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->[ idle-exit=<n>]                            (the field only with --idle-exit)
 WAIT REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
-CLOSE OK closed=<n> kept=<n> commit=<sha8|->
+CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->     (receipts= on a writing close; a dry run has none to count)
+CLOSE NOTE <path> was written and could not be taken back: <reason>
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
@@ -2569,6 +2835,35 @@ NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
+
+**The two streams, and why the split is a contract.** `stdout` is the PROTOCOL
+stream: every line a listing verb writes on it begins with one of the documented
+prefixes above, and consumers parse it line by line. `stderr` carries refusals,
+failures and **progress** — what the program is doing while it is doing it —
+and nothing on it is protocol.
+
+Glenn's rule has two halves, and until 2026-09-18 only the first was written
+down: *a program that takes longer than 0.1 s says what it is doing, on stderr,
+AND a progress line never enters a protocol stream a consumer parses.* The
+since-walk's `INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` obeyed the
+first half and was still read as protocol: `nova-wake` reads this program's two
+streams together, so that an `INBOX REFUSED` is never lost, and its classifier's
+default case *prints*. The progress line was relayed to a window as
+`WAKE BUS LINE INBOX WALK …`, counted as a change in the world, and ended a poll
+before the mail the watcher was waiting for came down. The same line had broken
+this program's own continuation tests hours earlier.
+
+So **`INBOX WALK` is a progress prefix, it appears on `stderr` only, and it
+appears on `stdout` never** — on any verb. The prefixes are a registry,
+`internal/bus.ProgressPrefixes`, that both the program and every consumer read:
+the program's own test refuses a progress prefix on stdout and holds every other
+stdout line to the grammar above, and a consumer drops a progress line before it
+classifies anything. A new progress line is then one entry in one registry and is
+safe in every consumer at once. The framed payloads are the documented exception
+to "every stdout line is a prefixed line": the bytes between
+`SEND DRAFT id=<id>` and `SEND DRAFT END`, and between
+`INBOX BODY id=<id> bytes=<n>` and `INBOX BODY END`, are a person's prose. The
+frame is protocol; what it carries is not.
 
 `draft` prints a **skeleton and nothing else** on stdout -- no `OK` line under it --
 because its stdout is a FILE: `nova-bus draft ... > draft.md` has to produce a
@@ -2839,6 +3134,17 @@ browser actually writes, both enumerated here and pinned by tests:
    person opens to;
 2. **bullets** on the header lines — `- From:`, `- To:`. A leading `- ` is
    dropped before the key is read.
+
+**A relayed note is attributed by its OUTER `From:` line, and a `From:` line in
+a body is data.** A note that forwards or echoes another may carry the original
+inside it, and that original can itself open with `From:` lines. The sender is
+the **first** `From:` line of the header — the relayer — and every later `From:`
+line, inside the header region or after the blank line, is prose that routes
+nothing: the covenant rule stated above applies here as everywhere. So the
+listing's `from=`, the open list's `from` field, a receipt's `To:`, and the
+`--as` a send is judged by all name that outer sender, never a quoted author
+inside the body. A second `From:` line *inside the header* is still a header
+problem and is refused; it is not a second attribution.
 
 A note whose first line is prose still fails, and should: there is no honest way
 to tell a `From` line from a sentence that happens to hold a colon. The refusal
@@ -4167,9 +4473,11 @@ catalogue is what would make the other choice available later.
 
 ```
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+      [--until <instant>] [--idle-exit <n>]
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus
@@ -4227,6 +4535,33 @@ WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 the caller issues the next one; nothing is written to the bus by a wait that
 found nothing, because there is nothing to record having read.
 
+**`--until` and `--idle-exit` are for a harness that cannot loop.** `--until
+<instant>` is an absolute deadline beside `--timeout`, an RFC 3339 UTC instant,
+and the wait ends at whichever of the two comes first: a caller whose own limit
+is a MOMENT rather than a duration does not have to work out how long is left.
+`--idle-exit <n>` is the exit code a TIMEOUT returns instead of 0, so a harness
+can branch on the code without parsing anything; 1 and 2 are refused, because
+they are this tool's own — a refusal, and an invocation that could not run — and
+a harness that got one back could not tell a quiet bus from a broken one. A
+caller that passes NEITHER sees exactly the lines it saw before the two flags
+existed, byte for byte: the pair is added to the opening line, and `idle-exit=`
+to the timeout line, only for the caller that asked.
+
+**A harness that cannot loop — OpenCode's, and every harness like it — runs this
+exact sequence and nothing else.** Once, to clear the backlog: `nova-bus inbox
+--bus ~/bus --as Freddy --receipt-max-words 40 --advance --remote origin --branch
+main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Freddy
+--receipt-max-words 40 --timeout 25m --until 2026-09-18T18:00:00Z --idle-exit 3
+--advance --remote origin --branch main`.
+Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
+again. Exit 3 is the one line `WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+idle-exit=3` and nothing came: issue the same wait again, or stop if your own
+deadline has passed. Exit 1 is a refusal and exit 2 is an invocation that could
+not run, both with the reason on stderr, and neither is re-armed until somebody
+has read it. The harness keeps no clock and runs no loop of its own: every call
+ends by itself, at the note or at the deadline, and the `WAIT DONE ...
+next=<command>` line is the command to issue again.
+
 **`wait` returns once and must be re-armed.** Every return is one read, ended
 by one terminal `WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>`
 line that hands back the exact command to issue again to keep listening. A
@@ -4281,11 +4616,13 @@ wake cost the waiting window a turn. A wake is a note addressed to the reader, f
 another line, and nothing else. `--quiet-beats` stays accepted so callers that pass
 it keep working; it changes nothing.
 
-Exit codes are `inbox`'s: **0** with notes and **0** on a timeout, **1** for the
-refusals `inbox` already has — a cursor that is no longer on this history, a
+Exit codes are `inbox`'s: **0** with notes and **0** on a timeout — or the code
+`--idle-exit <n>` names, when the caller asked for one — **1** for the refusals
+`inbox` already has: a cursor that is no longer on this history, a
 `--legacy-before` that would move a reader's line earlier, a first `--advance`
 over a history nobody has said what to do with, another run on this checkout —
-and **2** for an invocation that could not run.
+and **2** for an invocation that could not run. `--idle-exit` never changes
+those last two, which is why it will not take them.
 
 ### check — full, or since
 
@@ -4630,8 +4967,8 @@ than trusted. And its transport is git: what it cannot do is make anybody pull.
 
 ## nova-update and nova-version
 
-[SPEC-UPDATE.md](docs/SPEC-UPDATE.md) defines the shared inventory reader, optional
-updates and reporting. [Prepared delivery](docs/SPEC-BUS-DELIVERY.md) keeps one
+[SPEC-UPDATE.md](SPEC-UPDATE.md) defines the shared inventory reader, optional
+updates and reporting. [Prepared delivery](SPEC-BUS-DELIVERY.md) keeps one
 identity across retries. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNOWN,
 CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
@@ -4671,11 +5008,26 @@ in both the MORE line and the closing line.
 
 ### WAITS ON: nothing
 
-`nova-check` is the one tool of the seven with no clock, no subprocess, no
-network and no lock. There is no `--timeout`, no interval, no poll, no `gh`
-and no `git`: it waits only on the filesystem, and every verb measured
-returned **under 0.30 s** — inside the two-minute rule by two orders of
-magnitude, so it is the one that can be run between edits.
+The six record-layer checks over one line's own self repo are the tool measured
+here, and they have no clock, no subprocess, no network and no lock. There is
+no `--timeout`, no interval, no poll, no `gh` and no `git` on that path: they
+wait only on the filesystem, and every verb measured returned **under 0.30 s** —
+inside the two-minute rule by two orders of magnitude, so this is the tool that
+can be run between edits.
+
+`hygiene` is the other exception and it is stated rather than papered over: it
+reads a range out of a real repository, so it runs `git` as a subprocess and
+takes a `--timeout` (default 120 s) for it. It touches no network and takes no
+lock. Its cost is the size of the range, not of the repository.
+
+`dogfood` (2026-09-18) is the exception, and it is stated rather than papered
+over: `record` reads the clock, because a receipt is a dated record; `ledger`
+and `gate` run one `git log` per verb **only when `--repo` is given**, under
+`--git-timeout` (60 s); and all three run one `help` per binary **only when
+`--tools` is given**, under `--tools-timeout` (60 s). With `--authors`, or with neither, the verb waits
+only on the filesystem like the six. The card's measurement stands for the six;
+`dogfood --repo` over a 71-verb reference is the one invocation of this binary
+that can take seconds, and it says so on stderr while it does.
 
 ### Red tests
 

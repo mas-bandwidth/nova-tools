@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// The grammar block in docs/SPEC-REVIEW.md lists one line per event for seven
-// verbs. The binary ships `packet`, `version` and `help`; the other six
+// The grammar block in docs/SPEC-REVIEW.md lists one line per event for eight
+// verbs. The binary ships `packet`, `mutate`, `version` and `help`; the other six
 // (`verdict`, `answer`, `policy`, `roster`, `dedupe`, `cost`) are not built,
 // and the spec strikes their output lines from the grammar with `~~…~~` until
 // they are. This test is what catches it the moment a struck line is unread as
@@ -32,7 +32,7 @@ func TestGrammarStrikesTheUnbuiltVerbs(t *testing.T) {
 		t.Fatal("the grammar block does not close")
 	}
 
-	shipped := map[string]bool{"PACKET": true}
+	shipped := map[string]bool{"PACKET": true, "MUTATE": true}
 	unbuilt := map[string]bool{
 		"VERDICT": true, "ANSWER": true, "POLICY": true,
 		"ROSTER": true, "DEDUPE": true, "COST": true,

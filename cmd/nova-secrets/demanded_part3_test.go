@@ -264,7 +264,7 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("keygen without store failed: %d", code)
 	}
-	if !strings.Contains(out, "<recovery key>") || !strings.Contains(out, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled") {
+	if !strings.Contains(out, "<recovery key>") || !strings.Contains(out, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`") {
 		t.Errorf("expected placeholder and note line without store: %s", out)
 	}
 

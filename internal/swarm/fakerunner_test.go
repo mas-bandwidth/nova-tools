@@ -2,12 +2,16 @@ package swarm
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE FAKE RUNNER IS AN EXECUTABLE, NOT A SHELL SCRIPT (windows leg, 2026-09-15).
@@ -45,8 +49,18 @@ var (
 )
 
 // builtFakeRunner builds testdata/fakerunner once per package run and returns its path.
+// The build is done in TestMain, before any test, so its compile is never charged to the
+// first test to ask for a runner (the studio bench charged it to TestBatchAllocatesSlots).
 func builtFakeRunner(t *testing.T) string {
 	t.Helper()
+	if err := buildFakeRunner(); err != nil {
+		t.Fatalf("building the fake runner these tests drive: %v", err)
+	}
+	return fakeRunnerBin
+}
+
+// buildFakeRunner compiles the one fixture program the whole package shares, once.
+func buildFakeRunner() error {
 	fakeRunnerOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "nova-swarm-fakerunner")
 		if err != nil {
@@ -65,16 +79,14 @@ func builtFakeRunner(t *testing.T) string {
 		}
 		cmd := exec.Command("go", "build", "-o", bin, "./internal/swarm/testdata/fakerunner")
 		cmd.Dir = root
+		cmd.Env = goenv.Clean(os.Environ())
 		if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 			fakeRunnerErr = &buildError{out: string(out), err: cmdErr}
 			return
 		}
 		fakeRunnerBin = bin
 	})
-	if fakeRunnerErr != nil {
-		t.Fatalf("building the fake runner these tests drive: %v", fakeRunnerErr)
-	}
-	return fakeRunnerBin
+	return fakeRunnerErr
 }
 
 type buildError struct {
@@ -86,8 +98,13 @@ func (e *buildError) Error() string { return e.err.Error() + "\n" + e.out }
 
 // TestMain removes the one directory these tests keep outside a t.TempDir(): the fake runner
 // every fixture is copied from, which cannot live in any single test's own directory because
-// every test shares it.
+// every test shares it. It builds that runner first, so the compile lands here and not on
+// whichever test happens to ask first.
 func TestMain(m *testing.M) {
+	if err := buildFakeRunner(); err != nil {
+		fmt.Fprintf(os.Stderr, "building the fake runner these tests drive: %v\n", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if fakeRunnerDir != "" {
 		_ = os.RemoveAll(fakeRunnerDir)
@@ -147,4 +164,23 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 // "{job}/repo" for one that published in its clone (issue #594).
 func publishCard(into string) runnerStep {
 	return runnerStep{Op: "write", Path: into + "/RESULT.md", Body: "{line1}\n{line2}\n"}
+}
+
+// TestFakeRunnerRecordsItsArgv: the `record` step writes the runner's whole argv, one element
+// per line, which is how a fixture proves WHICH command the batch ran and with what arguments
+// -- a `--runner`'s five, or the self's `native` verb (issue #636).
+func TestFakeRunnerRecordsItsArgv(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "argv")
+	runner := runnerDoing(t, dir, "recorder", runnerStep{Op: "record", Path: out})
+	card := filepath.Join(dir, "card.md")
+	root := filepath.Join(dir, "root")
+	cmd := exec.Command(runner, "card-f", "1", "m", card, root)
+	if got, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the recording runner: %v\n%s", err, got)
+	}
+	want := strings.Join([]string{runner, "card-f", "1", "m", card, root}, "\n") + "\n"
+	if got := string(readTestFile(t, out)); got != want {
+		t.Fatalf("the recorded argv is %q, want %q", got, want)
+	}
 }

@@ -35,6 +35,29 @@ usage:
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
 
+  nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                    [--registry <path>] [--floor 0.9] [--base-url <url>]
+                    [--key-env JEV_API_KEY]
+                    (--usage and --log are REQUIRED whenever jev is asked)
+  nova-decide route --unit-id <id> --kind <kind> --no-jev [--files n] [--packages n] [--lanes n]
+                    [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
+                    [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
+                    [--fresh-take] [--deadline 45m] [--no-jev]
+  nova-decide route ... [--step-up] [--max-steps 3]
+                    (below the floor, re-ask the same question with that rung
+                     excluded; every step is a logged decision)
+
+  nova-decide help --state <json file|inline json>
+  nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
+                   [--self-inflicted n] [--class-recurring] [--landing-moved]
+                   [--uncertainty 0..1] [--asked-all-friends]
+
+  nova-decide log --log <path> --summary [--registry <path>]
+
+  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
+                     (what HAPPENED to a unit a decision routed; the kind and
+                      the rung are read from that decision, never retyped)
+
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
@@ -59,13 +82,73 @@ usage:
   --conf <field>      field holding the confidence (default confidence)
   --max-escalation <f>  escalation-rate cap for the best floor (default 0.7)
 
-exit codes: 0 every answer at or above the floor, 3 any answer below it (a
-suggestion), 2 refusal: no key, bad questions, provider error. tune exits 2
+route: which mind does this unit of work, over the ladder of minds a registry
+holds. The answer is the LOWEST rung the evidence supports with confidence that
+the first attempt is right; below the floor it steps UP a rung, never down. A
+failed attempt re-enters the decision carrying its evidence and the answer is
+the next rung, sideways first (same height, another lineage) then up. Two rungs
+are chosen by KIND, not height, and by machinery rather than the provider:
+security -- a guard, secrets, the sandbox, sudo, deploy keys, the network -- and
+a fresh take. Friends first: the DeepSeek rungs take mechanical kinds only.
+
+An attempt that timed out and is not known to have terminated leaves its rung
+OCCUPIED: the answer is the same rung with wait=awaiting_termination, and that
+is a WAIT, never permission to retry. Only what the provider is told is typed
+and enumerated -- buckets and flags, never a unit's id, a lane's spelling, a
+platform's name or an attempt's reason, and the rungs it chooses between are
+opaque ids rather than any mind's name.
+
+  --unit <file>       the unit's evidence as JSON (inline JSON also accepted):
+                      id, kind, files, packages, lanes, lane_owner, attempts
+                      (rung, outcome, reason, terminated), platform, guard,
+                      secrets, touches, fresh_take, deadline
+  --registry <path>   the registry of minds (name, lineage, height, kinds it is
+                      designated for, owned lanes, availability, ask); the
+                      embedded ladder when absent
+  --log <path>        append this decision to the escalation log (JSON lines);
+                      REQUIRED when jev is asked
+  --usage <path>      append what a provider call spent to this usage TSV, in
+                      the fleet's own columns; a failed call is a row too, with
+                      its cost unknown (a dash), never a zero. REQUIRED when jev
+                      is asked: a call nobody can account for is refused before
+                      it is made, never made and then forgotten
+  --floor <f>         confidence floor; below it the answer steps UP (default 0.9)
+  --step-up           below the floor, re-ask the SAME question with that rung
+                      excluded from the criteria. Every step is a decision of
+                      its own: one log row and one usage row each, and the final
+                      line carries steps=<n>
+  --max-steps <n>     how many decisions --step-up makes before it stops
+                      (default 3); it wants --step-up beside it
+  --no-jev            answer by the rules alone: no key, no network, deterministic
+  --kind <kind>       rebase | stack | fixture-retarget | fleet-chore |
+                      fix-with-red-test | new-verb | spec | design | guard |
+                      cause-to-find
+  --attempt <a>       rung:outcome[:reason]; outcome is ok | failed | timeout |
+                      timeout-terminated | abandoned. A bare timeout is a
+                      silence; timeout-terminated is the proof it is dead
+  --touches <t>       guard | secrets | sandbox | sudo | deploy-keys | network
+  --summary           (log) escalations per kind, the regenerated start rung, and
+                      coverage=<outcomes>/<decisions> on the closing line
+
+Accounting is not optional. Token spend reporting is an obligation and every
+decision is logged, so a route that will call the provider is refused unless it
+says where both go. --no-jev makes no call, so there is nothing to account for
+and both stay optional.
+
+exit codes: 0 the answer may be acted on, 1 the verb ran and said NOT YET (a
+wait: the rung named owns the work and an attempt on it is not known dead), 3
+any answer below the floor (a suggestion), 2 refusal: no key, bad questions, bad
+evidence, provider error. Only exit 0 is permission to dispatch. tune exits 2
 when fewer than 10 labeled rows (a floor with no rows behind it is untuned).
 
 example:
   nova-decide --questions ./questions.json --state ./state.md --floor 0.9
   nova-decide tune --decisions ./decisions.jsonl
+  nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+  nova-decide route --unit ./unit.json --usage ./usage.tsv --log ./decide.jsonl
+  nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
+  nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+  nova-decide log --log ./decide.jsonl --summary
 `
 
 // version is empty in every ordinary build and is the one override: a release
@@ -98,11 +181,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			fmt.Fprintln(stdout, buildinfo.Line("nova-decide", version))
 			return 0
-		case "help", "-h", "--help":
+		case "-h", "--help":
 			fmt.Fprint(stdout, usage)
 			return 0
+		case "help":
+			// `nova-decide help` is the door the onboarding standard names, and
+			// `nova-decide help --state ...` is the second decision: continue,
+			// ask all friends, or ask Glenn.
+			if len(args) == 1 {
+				fmt.Fprint(stdout, usage)
+				return 0
+			}
+			return runHelp(args[1:], stdout, stderr)
 		case "tune":
 			return runTune(args[1:], stdout, stderr)
+		case "route":
+			return runRoute(args[1:], stdout, stderr)
+		case "log":
+			return runLog(args[1:], stdout, stderr)
+		case "outcome":
+			return runOutcome(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("nova-decide", flag.ContinueOnError)
@@ -127,8 +225,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if *questions == "" {
 		return refuse(stderr, *prefix, "bad-questions", "--questions is required; refusing to guess")
 	}
-	if *floor < 0 || *floor > 1 {
-		return refuse(stderr, *prefix, "bad-floor", fmt.Sprintf("floor must be between 0 and 1 (got %g)", *floor))
+	// NaN compares false against both bounds, so a bare range check gates a
+	// decision on a number that is not one. One refusal, with one remedy.
+	if err := decide.ValidFloor(*floor); err != nil {
+		return refuse(stderr, *prefix, "bad-floor",
+			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
 	raw, err := os.ReadFile(*questions)
 	if err != nil {
@@ -293,8 +394,8 @@ func parseFloors(list string) ([]float64, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bad floor %q", part)
 		}
-		if f < 0 || f > 1 {
-			return nil, fmt.Errorf("floor must be between 0 and 1 (got %g)", f)
+		if err := decide.ValidFloor(f); err != nil {
+			return nil, fmt.Errorf("--floors %v is not a confidence; each wants a number between 0 and 1, such as 0.9", f)
 		}
 		out = append(out, f)
 	}
@@ -304,6 +405,6 @@ func parseFloors(list string) ([]float64, error) {
 // refuse prints the one refusal line: the prefix, REFUSED, a one-word reason
 // and the detail. It goes to stderr; the key is never printed.
 func refuse(stderr io.Writer, prefix, reason, detail string) int {
-	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
+	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s; run: nova-decide help\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
 	return 2
 }

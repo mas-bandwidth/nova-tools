@@ -60,8 +60,48 @@ func TestNativeConfigNamesTheJobDirectory(t *testing.T) {
 			t.Errorf("%s is above the job and is never named; it holds %v", never, external)
 		}
 	}
-	if external["*"] != "ask" {
-		t.Errorf("everything else is still asked about (and so still refused, and now reported); it holds %v", external)
+	if external["*"] != "deny" {
+		t.Errorf("everything else is denied without prompting (a deny is a tool error the model routes around; an ask auto-rejects and ends the run); it holds %v", external)
+	}
+}
+
+// TestNativeConfigDeniesExternalPaths: the generated config the child reads DENIES a path
+// outside the job, and denies webfetch, so no permission is left to prompt. An `ask` in a
+// non-interactive `run` is auto-rejected and the model stops -- the run ends and the card's
+// commits are stranded. RED WITHOUT THE CHANGE: the block said `ask` (issue #918).
+func TestNativeConfigDeniesExternalPaths(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+
+	var errOut bytes.Buffer
+	if _, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "lbl",
+		card:     []byte("FAKE-NORESULT\n"),
+		slotDir:  slot,
+		root:     root,
+		deadline: 30 * time.Second, noWall: true,
+	}, &errOut); code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatalf("every native run writes the harness config the job's fence reads: %v", err)
+	}
+	var cfg struct {
+		Permission struct {
+			External map[string]string `json:"external_directory"`
+			Webfetch string            `json:"webfetch"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("the config the child saw is not readable JSON: %v\n%s", err, raw)
+	}
+	if cfg.Permission.External["*"] != "deny" {
+		t.Errorf("a path outside the job is denied, never asked about; it holds %v", cfg.Permission.External)
+	}
+	if cfg.Permission.Webfetch != "deny" {
+		t.Errorf("webfetch is denied too, so no permission is left to prompt; it holds %q", cfg.Permission.Webfetch)
 	}
 }
 
@@ -106,7 +146,7 @@ func TestNativeReportsAFenceRejection(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-FENCE-REJECT /Users/glenn/rowan-working/swarm-root/1/jobs/*\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"}
 	var stdout, stderr bytes.Buffer

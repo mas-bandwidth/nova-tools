@@ -1,0 +1,133 @@
+# package-sizes-darwin.tsv: measured seconds on the x64 Macs that carry the merge
+# group's darwin leg. That leg runs on `["self-hosted","macOS"]` — the Studio
+# (arm64), batman and superman (x64) — and it is the ONE leg that deals its shards
+# from this file. Three tab-separated columns, the same shape as its Windows
+# sibling:
+#
+#	import path	short	full
+#
+# A "-" is NOT MEASURED. A trailing "+" is a LOWER BOUND: the true size is at
+# least that number and unknown above it. The plan treats "-" and "+" alike —
+# deal this package across every slot the group opened — because an unknown size
+# must never be guessed downward. That rule is not a style; guessing an unknown
+# size downward is what dropped integration-4's merge group and then batch 7's.
+#
+# THE `short` COLUMN IS EMPTY ON PURPOSE. Its Windows sibling has one because two
+# Windows legs read that table, a -short PR leg and a full merge leg. There is no
+# darwin leg of the -short shape: the PR tier's darwin shards run on the STUDIO
+# (arm64), a different machine from the x64 Macs measured here, and they are dealt
+# round-robin by package rather than from a size table. Measuring a column no leg
+# reads would be a number nobody can correct. It is a column and not an absence so
+# that the two tables parse identically — internal/ci reads both with one parser.
+#
+# WHY THIS FILE EXISTS: run 35369433950, the merge group of batch 7 (PR #1360),
+# 2026-09-18 16:41Z. `test-hosted-merge (darwin, 0)` and `(darwin, 1)` were
+# CANCELLED at the five-minute per-leg cap on superman. Read the log before
+# believing the obvious story — NO package came near the 100 s per-package
+# ceiling. Shard 0 finished 27 packages summing 211.8 s of `go test` between
+# 16:36:43 and 16:41:24 and was killed partway through the rest, its largest
+# single invocation cmd/nova-wake at 50.7 s. What ran out was the SHARD'S SUM,
+# and the sum is decided by how many ways each package is dealt.
+#
+# Dealing came off the LINUX table, and that is what it cost. Four of the five
+# largest packages here are UNDER the 40 s budget on Linux, so each was dealt
+# three ways instead of six:
+#
+#	                 linux   darwin
+#	cmd/nova-wake     24.6    120.3
+#	cmd/nova-swarm    51.0     82.7   (the one Linux already called large)
+#	cmd/nova-merge     7.7     68.8
+#	internal/swarm    17.4     64.4
+#	cmd/nova-bus      10.0     54.2
+#
+# A table that is wrong by a factor of nine on the largest package is not a
+# predictor. Linux keeps package-sizes.tsv, which is its own measurement.
+#
+# MEASURED ON A QUIET HOST, AND THE MARGIN IS STATED. superman, 36 cores,
+# 2026-09-18 17:02:14Z to 17:12:55Z, go1.27.1 darwin/amd64, one
+# `go test -count=1 -timeout 600s <pkg>` per package in turn at nice 10 — the same
+# command `make test-merge PKGS=<pkg>` runs, one package at a time, as the leg
+# runs it. The host was verified quiet first: no busy runner on batman or
+# superman and no merge group in flight, checked against the runners API; the
+# next CI job landed on superman at 17:14:58Z, after the last row. Every row
+# carries the host's load at the moment it finished in the raw log, and those
+# loads (4 to 10 on 36 cores) are this measurement's own parallelism and nothing
+# else.
+#
+# That condition is half the number. The cancel happened while superman was in
+# its POST-POWER-ON state — Spotlight settling, XprotectService scanning fresh
+# test binaries, sixteen runners live — and a size read then is the state's size,
+# not the machine's. So these numbers are a FLOOR, and DARWIN_TIMEOUT is that
+# floor times a stated margin of two. The margin is measured, not chosen:
+# cmd/nova-merge is 68.8 s here and its three shares in the cancelled run sum to
+# about 147 s on the same host under load, which is 2.1x.
+#
+# The whole tree is 636.0 s dealt this way, which is the number the leg's
+# ten-minute cap is judged against.
+#
+# One row is "-": internal/ci. Its run here exited at 0.3 s because the darwin
+# table it now reads did not yet exist, so that number measures a failing build
+# and not the package. It is left unmeasured rather than written down wrong, and
+# "-" deals it across every slot, which is the safe direction. It comes back with
+# the next measurement.
+#
+# import path	short	full
+github.com/mas-bandwidth/nova-tools/cmd/nova-wake	-	120.3
+github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	-	82.7
+github.com/mas-bandwidth/nova-tools/cmd/nova-merge	-	68.8
+github.com/mas-bandwidth/nova-tools/internal/swarm	-	64.4
+github.com/mas-bandwidth/nova-tools/cmd/nova-bus	-	54.2
+github.com/mas-bandwidth/nova-tools/internal/update	-	32.6
+github.com/mas-bandwidth/nova-tools/internal/bus	-	26.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-review	-	23.7
+github.com/mas-bandwidth/nova-tools/internal/pulse	-	22.5
+github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	-	14.4
+github.com/mas-bandwidth/nova-tools/cmd/nova-secrets	-	13.6
+github.com/mas-bandwidth/nova-tools/internal/review	-	10.4
+github.com/mas-bandwidth/nova-tools/cmd/nova-board	-	10.0
+github.com/mas-bandwidth/nova-tools/internal/merge	-	9.5
+github.com/mas-bandwidth/nova-tools/cmd/nova-fuse	-	8.9
+github.com/mas-bandwidth/nova-tools/cmd/nova-tokens	-	8.6
+github.com/mas-bandwidth/nova-tools/internal/secrets	-	8.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-update	-	7.3
+github.com/mas-bandwidth/nova-tools/cmd/nova-sandbox	-	5.3
+github.com/mas-bandwidth/nova-tools/internal/wake	-	4.0
+github.com/mas-bandwidth/nova-tools/internal/tokens	-	3.2
+github.com/mas-bandwidth/nova-tools/cmd/nova-version	-	3.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-cairn	-	2.1
+github.com/mas-bandwidth/nova-tools/internal/release	-	2.0
+github.com/mas-bandwidth/nova-tools/cmd/nova-check	-	1.8
+github.com/mas-bandwidth/nova-tools/internal/cairn	-	1.5
+github.com/mas-bandwidth/nova-tools/internal/records	-	1.5
+github.com/mas-bandwidth/nova-tools/cmd/nova-work	-	1.4
+github.com/mas-bandwidth/nova-tools/cmd/nova-self-talk	-	1.3
+github.com/mas-bandwidth/nova-tools/cmd/nova-memory	-	1.2
+github.com/mas-bandwidth/nova-tools/internal/check	-	1.1
+github.com/mas-bandwidth/nova-tools/internal/dogfood	-	1.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-decide	-	1.0
+github.com/mas-bandwidth/nova-tools/cmd/nova-post	-	1.0
+github.com/mas-bandwidth/nova-tools/internal/decide	-	1.0
+github.com/mas-bandwidth/nova-tools/internal/specwork	-	0.9
+github.com/mas-bandwidth/nova-tools/internal/worklang	-	0.9
+github.com/mas-bandwidth/nova-tools/internal/board	-	0.8
+github.com/mas-bandwidth/nova-tools/internal/docs	-	0.8
+github.com/mas-bandwidth/nova-tools/internal/safepath	-	0.8
+github.com/mas-bandwidth/nova-tools/internal/sandbox	-	0.8
+github.com/mas-bandwidth/nova-tools/internal/selftalk	-	0.8
+github.com/mas-bandwidth/nova-tools/tools/testdur	-	0.8
+github.com/mas-bandwidth/nova-tools/internal/friends	-	0.7
+github.com/mas-bandwidth/nova-tools/internal/fuse	-	0.7
+github.com/mas-bandwidth/nova-tools/internal/memindex	-	0.7
+github.com/mas-bandwidth/nova-tools/internal/oneline	-	0.7
+github.com/mas-bandwidth/nova-tools/cmd/nova-ci	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/bounded	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/buildinfo	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/chat	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/ci/slowtests	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/dispatch	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/fleet	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/goenv	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/jobs	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/log	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/oneline/audit	-	0.6
+github.com/mas-bandwidth/nova-tools/internal/ci	-	-

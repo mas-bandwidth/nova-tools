@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
@@ -46,9 +49,74 @@ func TestMain(m *testing.M) {
 	// The lab fixture newLab copies is built under this directory too, so it is
 	// removed with it.
 	labFixtureRoot = dir
+	// THE LOCK CLOCK IS INJECTED. merge.Lock's bounded wait is a deadline read from a
+	// clock and a sleep between polls, and a test that must exercise a verb's
+	// --timeout would otherwise hold the machine's clock for those seconds -- which is
+	// exactly the wall time the slowtests budget refuses. Every test in this package
+	// drives the same process, so one locked clock stands in for the real one; only
+	// the lock wait reads it.
+	injectLockClock()
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// lockClock is the injected clock merge.Lock reads: a mutex-guarded instant that Sleep
+// advances, so a wait of seconds runs to its end in a few hundred iterations and no
+// test's elapsed time carries the deadline. It is safe for the package's parallel tests
+// because every advance and read is serialised here.
+type lockClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (c *lockClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *lockClock) Sleep(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+// injectLockClock points the merge package's two wait seams at one fake clock for the
+// whole package run. The instant is the tests' own fixed instant, so nothing in a lock
+// refusal depends on the machine's time either. The clock is kept in lockClk so a
+// timeout test can assert how far the wait advanced without reading the wall clock.
+func injectLockClock() {
+	lockClk = &lockClock{at: time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC)}
+	merge.Now = lockClk.Now
+	merge.Sleep = lockClk.Sleep
+}
+
+// lockClk is the fake clock the lock wait reads, for a test that asserts on how long the
+// verb waited: the wait is measured in injected time, never in wall time.
+var lockClk *lockClock
+
+// realLockClock puts the merge package's two wait seams back on the MACHINE's clock for
+// the rest of one test, and restores the injected one when that test ends.
+//
+// The injected clock is one instant shared by the whole process and every waiter's poll
+// advances it. That is what a timeout test wants -- a bounded wait runs to its end with
+// no wall time -- but it is wrong for the one test whose writers must really wait on each
+// other: three waiters polling a held lock advance the shared instant by three poll
+// intervals per round, so the whole 120 s bound passes in a few hundred real
+// microseconds and every waiter but the first is refused before the holder has finished
+// its write. On a fast, idle machine the holder wins that race and the test passes; on a
+// loaded one it does not, which is a test that asserts the machine (#1206 was green on CI
+// and red on the Studio the CI runners share).
+//
+// Only a test that does not call t.Parallel may use it: Go resumes the paused parallel
+// tests after the sequential ones have finished, so nothing else is reading the clock
+// while such a test runs.
+func realLockClock(t *testing.T) {
+	t.Helper()
+	merge.Now = time.Now
+	merge.Sleep = time.Sleep
+	t.Cleanup(injectLockClock)
 }
 
 type lab struct {
@@ -58,12 +126,21 @@ type lab struct {
 	work   string // a clone the test uses to make commits
 	lane   string
 	host   *merge.FakeHost
-	now    time.Time
-	build  string
-	runner merge.Runner
+	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
+	// gh of these tests, and it reaches nothing.
+	queue QueueReader
+	// launcher is the fake the rebase verb's cards are handed to, so a test proves the
+	// launch without a bench.
+	launcher *fakeLauncher
+	now      time.Time
+	build    string
+	runner   merge.Runner
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
+	// heads is the batch fixture's pull request heads by number, so a batch test can
+	// say what the FORGE thinks of one member's own head (edge 25).
+	heads map[int]string
 }
 
 func newLab(t *testing.T) *lab {
@@ -74,12 +151,13 @@ func newLab(t *testing.T) *lab {
 	dir := t.TempDir()
 	l := &lab{
 		t: t, dir: dir,
-		remote: filepath.Join(dir, "remote.git"),
-		work:   filepath.Join(dir, "work"),
-		lane:   filepath.Join(dir, "lane"),
-		host:   merge.NewFakeHost(),
-		now:    time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
-		build:  "aaaaaaaaaaaa",
+		remote:   filepath.Join(dir, "remote.git"),
+		work:     filepath.Join(dir, "work"),
+		lane:     filepath.Join(dir, "lane"),
+		host:     merge.NewFakeHost(),
+		launcher: &fakeLauncher{},
+		now:      time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
+		build:    "aaaaaaaaaaaa",
 	}
 	// The bare repository, its first commit and the clone are BUILT ONCE for the
 	// process and COPIED here. Building them is six git subprocesses, and 82 newLab
@@ -123,7 +201,7 @@ func buildLabFixture() (string, error) {
 		if fail != nil {
 			return
 		}
-		cmd := exec.Command("git", args...)
+		cmd := exec.Command("git", merge.NoBackgroundGit(args...)...)
 		cmd.Dir = at
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@localhost",
@@ -135,6 +213,18 @@ func buildLabFixture() (string, error) {
 	}
 	git(dir, "init", "--bare", "-b", "main", remote)
 	git(dir, "clone", remote, work)
+	// THE SETTINGS GO IN THE REPOSITORIES THEMSELVES, not only on the fixture's own
+	// command lines. A push to a path runs `git receive-pack <path>` in the OTHER
+	// repository, and git clears the -c settings out of the environment before it starts
+	// a git on a repository that is not this one (local_repo_env) -- so the remote's
+	// receive-pack forks its own detached `maintenance run --auto` unless the remote's
+	// own config says not to. Both repositories are copied into each test's t.TempDir,
+	// and they carry this with them (#1607).
+	for _, at := range []string{remote, work} {
+		for _, kv := range quietRepoSettings() {
+			git(at, "config", kv[0], kv[1])
+		}
+	}
 	if fail == nil {
 		fail = os.WriteFile(filepath.Join(work, "README.md"), []byte("the fixture\n"), 0o644)
 	}
@@ -153,9 +243,29 @@ func buildLabFixture() (string, error) {
 	return dir, nil
 }
 
+// quietRepoSettings is merge.NoBackgroundGit's list as key/value pairs, for writing INTO a
+// fixture repository rather than onto one command line.
+//
+// A push to a path runs `git receive-pack <path>` in the OTHER repository, and git clears
+// these settings out of the environment before it starts a git on a repository that is not
+// this one (local_repo_env) -- so a repository this fixture pushes to has to carry them
+// itself, or its receive-pack forks the detached `maintenance run --auto` that #1607 is.
+func quietRepoSettings() [][2]string {
+	var out [][2]string
+	settings := merge.NoBackgroundGit()
+	for i := 0; i+1 < len(settings); i += 2 {
+		key, value, _ := strings.Cut(settings[i+1], "=")
+		out = append(out, [2]string{key, value})
+	}
+	return out
+}
+
+// git runs one git in the fixture, and it runs it THE WAY THE TOOL RUNS GIT: through
+// merge.NoBackgroundGit, so no `git maintenance run --auto --detach` is left writing into
+// a repository that lives in t.TempDir and is about to be removed under it (#1607).
 func (l *lab) git(dir string, args ...string) string {
 	l.t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", merge.NoBackgroundGit(args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@localhost",
@@ -278,13 +388,85 @@ func (l *lab) deps() Deps {
 			return l.remote
 		},
 		NewHost: func(string, time.Duration) merge.Host { return l.host },
-		BuildID: func() string { return l.build },
+		NewQueue: func(string, time.Duration) QueueReader {
+			if l.queue != nil {
+				return l.queue
+			}
+			return nil
+		},
+		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
+		Launcher:      l.launcher,
+		BuildID:       func() string { return l.build },
+		// react's two edges. Dial is the caller's own address -- every react test
+		// hands it a miniredis of its own -- and the forge is the fake.
+		BatchGate: labBatchGate(),
+		Dial:      func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(string, string, time.Duration) ci.Forge {
+			return &reactFakeForge{}
+		},
 	}
+}
+
+// labBatchGate is the landing gate's suite AS THE TESTS RUN IT: batchGate with the cross
+// vet taken out, and nothing else taken out.
+//
+// The gate a friend runs is batchGate, and these tests run the rest of it for real -- the
+// build, the vet, CI's own `go test -json` command and the lisp suite. The one step that
+// cannot be paid here is `vet-windows`, because `GOOS=windows go vet ./...` must build the
+// WINDOWS STANDARD LIBRARY into the cache first: seconds on an idle 64-core bench and far
+// more on a darwin runner sharing its machine with seven others. Paid inside `go test`, it
+// comes out of this package's own -timeout, and the package's serial tests are what its
+// parallel tests wait behind -- which is exactly how the merge group's darwin leg reached
+// `panic: test timed out after 1m40s` with ten parallel tests starved at 14 s each on
+// 2026-09-18.
+//
+// TestTheGateCrossVetsForWindows pins the step in the real list and pins that this list
+// differs from it by that one name and no other, so the exemption cannot quietly grow.
+func labBatchGate() []batchStep {
+	out := make([]batchStep, 0, len(batchGate))
+	for _, step := range batchGate {
+		if step.name == crossVetStep {
+			continue
+		}
+		out = append(out, step)
+	}
+	return out
 }
 
 // run drives the binary's own run() with the test's deps, which is what a stranger's
 // shell reaches.
 func (l *lab) run(args ...string) (int, string, string) {
+	l.t.Helper()
+	effective := append([]string(nil), args...)
+	if len(effective) > 0 && effective[0] == "batch" {
+		hasReviewers := false
+		hasNoRequire := false
+		hasLane := false
+		for _, a := range effective {
+			if a == "--reviewers" || strings.HasPrefix(a, "--reviewers=") {
+				hasReviewers = true
+			}
+			if a == "--no-require-holds" {
+				hasNoRequire = true
+			}
+			if a == "--lane" || strings.HasPrefix(a, "--lane=") {
+				hasLane = true
+			}
+		}
+		if !hasReviewers && !hasNoRequire {
+			effective = append(effective, "--no-require-holds", "--reason", "test")
+		}
+		if hasReviewers && !hasLane && l.lane != "" {
+			_ = os.MkdirAll(l.lane, 0755)
+			effective = append(effective, "--lane", l.lane)
+		}
+	}
+	var out, errb bytes.Buffer
+	exit := run(effective, &out, &errb, l.deps())
+	return exit, out.String(), errb.String()
+}
+
+func (l *lab) runBare(args ...string) (int, string, string) {
 	l.t.Helper()
 	var out, errb bytes.Buffer
 	exit := run(args, &out, &errb, l.deps())

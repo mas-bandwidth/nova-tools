@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -46,6 +45,16 @@ var timeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*(\d+)$`)
 // path. Every other job in ci.yml is on the CL path by default; the exemption
 // has to be written into the workflow as that guard, not assumed here.
 var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.event_name == 'schedule'`)
+
+// perLegTimeoutRe matches a job ceiling carried per matrix leg rather than as one
+// number: `timeout-minutes: ${{ matrix.leg.timeout }}`.
+var perLegTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.leg\.timeout\s*\}\}\s*$`)
+
+// legNameRe and legTimeoutRe read a matrix leg's name and its own ceiling.
+var (
+	legNameRe    = regexp.MustCompile(`^-\s*name:\s*(\S+)$`)
+	legTimeoutRe = regexp.MustCompile(`^timeout:\s*(\d+)$`)
+)
 
 // usesRe matches an action reference pinned by its 40-hex commit SHA.
 var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
@@ -104,11 +113,40 @@ func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
 	if !ok {
 		t.Fatal("test-hosted-merge declares no timeout-minutes; the allowance has nothing to hold")
 	}
-	if mins != mergeGateCeiling {
-		t.Errorf("test-hosted-merge timeout-minutes = %d, want %d: the merge gate is the one allowed exception to the two-minute law, at the recorded five minutes", mins, mergeGateCeiling)
+	if mins != mergeGateDarwinCeiling {
+		t.Errorf("test-hosted-merge's largest per-leg timeout-minutes = %d, want %d", mins, mergeGateDarwinCeiling)
 	}
-	if strings.TrimSpace(mergeGateReason) == "" {
-		t.Error("the merge gate allowance carries no reason; the exception must say why it exists")
+	// PER LEG, because one number for two platforms censors the slower of them.
+	// linux was measured at 41-94 s in run 35354900090, so ITS five minutes is
+	// still a hang detector and stays. darwin's five did not survive batch 7 —
+	// shards 0 and 1 of run 35369433950 were cancelled at exactly five minutes —
+	// and is now mergeGateDarwinCeiling behind a plan that deals from darwin's own
+	// measured table. A THIRD leg lived here until 2026-09-18: windows, at twelve
+	// minutes, cancelled at 5:12 on a five-minute cap with fifteen of twenty-three
+	// packages still to run. It went with the native windows runners (Glenn: "drop
+	// the native windows CI runners. WSL only from now on."), and the assertion
+	// below is that it does not come back by accident.
+	legs := legTimeouts(jobBody(src, "test-hosted-merge"))
+	if len(legs) == 0 {
+		t.Fatal("test-hosted-merge declares no per-leg timeouts; one ceiling for every platform is what cancelled darwin shards 0 and 1 of run 35369433950 at exactly five minutes")
+	}
+	if _, ok := legs["windows"]; ok {
+		t.Error("test-hosted-merge declares a windows leg again; the native windows CI runners were dropped on 2026-09-18 and the CL tier's Windows guard is the lint job's `make vet-windows` cross-vet, which needs no Windows machine")
+	}
+	for leg, want := range map[string]int{"linux": mergeGateCeiling, "darwin": mergeGateDarwinCeiling} {
+		got, ok := legs[leg]
+		if !ok {
+			t.Errorf("the %s leg of test-hosted-merge declares no timeout of its own", leg)
+			continue
+		}
+		if got != want {
+			t.Errorf("the %s leg of test-hosted-merge has timeout %d, want %d", leg, got, want)
+		}
+	}
+	for name, reason := range map[string]string{"merge gate": mergeGateReason, "merge gate darwin leg": mergeGateDarwinReason} {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("the %s allowance carries no reason; an exception must say why it exists", name)
+		}
 	}
 	if !strings.Contains(src, "the one allowed exception") && !strings.Contains(src, "the one exception") {
 		t.Error("the test-hosted-merge comment does not name the gate as the exception to the two-minute law")
@@ -123,7 +161,19 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	if len(certNames) == 0 {
 		t.Fatal("no jobs parsed from certification.yml; the parser is looking in the wrong place")
 	}
+	inventory := toSet(splitMovedJobs)
+	for name, reason := range droppedByRuling {
+		if !inventory[name] {
+			t.Errorf("droppedByRuling names %q, which is not in splitMovedJobs; an exception to a list must be an entry of that list", name)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("the exception for %q carries no reason; an exception must say why it exists", name)
+		}
+	}
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !certNames[name] {
 			t.Errorf("job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
 		}
@@ -131,6 +181,9 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 
 	needs := certificationOKNeeds(cert)
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !needs[name] {
 			t.Errorf("certification-ok does not list %q in its needs; every certification job must be aggregated", name)
 		}
@@ -219,7 +272,9 @@ func jobBody(src, name string) string {
 // holding a reason, and the check reads the code before any comment on the
 // line, so prose about the rule cannot trip it.
 func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	sub10Re := regexp.MustCompile(`(^|[^0-9])([1-9])\s*[\*]\s*time[.]Second\b`)
 	anySecRe := regexp.MustCompile(`time[.]Second\b`)
 	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
@@ -237,20 +292,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	// reason (issue #916).
 	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
 	for _, dir := range []string{"internal", "cmd"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Errorf("cannot read %s: %v", path, err)
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
+		for _, f := range tree.GoFilesUnder(true, dir) {
+			raw := f.Src
+			rel := f.Rel
 			// The batch-deadline shape is scoped to the files that drive the batch:
 			// only there does a short deadline/idle literal reach a real process.
 			// A file drives the batch when it builds a BatchInput -- through the
@@ -280,10 +324,6 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				// A bare duration with no multiplier on the line is one second.
 				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -311,19 +351,48 @@ const defaultCLCeiling = 2
 // mergeGateCeiling is the one allowed exception to the two-minute law.
 // test-hosted-merge is on the CL path — the merge queue's group commit waits on
 // it — but it is not a small check: it runs the FULL hosted suite (no -short) of
-// the packages a group changes, on three platforms, sharded by size. Under load
-// (the Studio running sixteen self-hosted legs plus three friends, windows-latest
-// cold) its darwin shards were cancelled at 2:44 and its windows shards at 2:40
-// on 2026-09-17; a cancelled shard drops the whole group and restarts every group
-// behind it, so the two-minute cap on this one job was the throughput limit of
-// the whole fleet. Five minutes is the allowance; every other CL-path job stays
-// at the default two.
+// the packages a group changes, on both platforms, sharded by size. Under load
+// (the Studio running sixteen self-hosted legs plus three friends) its darwin
+// shards were cancelled at 2:44 on 2026-09-17; a cancelled shard drops the whole
+// group and restarts every group behind it, so the two-minute cap on this one job
+// was the throughput limit of the whole fleet. Five minutes is the allowance;
+// every other CL-path job stays at the default two.
 const mergeGateCeiling = 5
 
 // mergeGateReason is the record beside that allowance: why the merge gate is
 // allowed five minutes. It is asserted in TestMergeGateAllowanceCarriesItsReason,
 // so the number and the why cannot drift apart silently.
-const mergeGateReason = "the merge gate runs the full suite of the packages a group changes on three platforms; sharded by size; cancelled under load at 2:40 on 2026-09-17"
+const mergeGateReason = "the merge gate runs the full suite of the packages a group changes on both hosted platforms; sharded by size; cancelled under load at 2:44 on 2026-09-17"
+
+// A WINDOWS CEILING LIVED HERE, twelve minutes, the second number of the one
+// exception and the windows leg's alone: five of six windows legs took 3:47 to
+// 4:53 in run 35354900090 and the sixth was cancelled at 5:12 with fifteen of
+// twenty-three packages still to run. It went with the leg on 2026-09-18 (Glenn:
+// "drop the native windows CI runners. WSL only from now on."). The rule it
+// carried is not lost — it is mergeGateDarwinCeiling below, the same asymmetry
+// one platform over: a cancelled shard does not fail one leg, it drops the group
+// and restarts every PR behind it, while a cap that is too generous costs runner
+// minutes only when something is genuinely wedged.
+
+// mergeGateDarwinCeiling is the SECOND number of the one exception, and 2026-09-18
+// is what bought it. Five minutes fit darwin while the leg ran small groups off
+// the Linux table (38-256 s in run 35354900090). It did not fit batch 7: in
+// merge-group run 35369433950 darwin shards 0 and 1 were CANCELLED at exactly
+// five minutes on superman, carrying a thirteen-member batch's packages dealt by
+// COUNT rather than by size, with cmd/nova-bus — 10.0 s in the Linux table and
+// minutes on an x64 Mac — inside shard 0.
+//
+// The shard plan is the real fix and it landed in the same change:
+// testdata/ci/package-sizes-darwin.tsv and DARWIN_TIMEOUT mean a darwin shard is
+// now dealt from darwin's own measurement. This number is what remains a HANG
+// DETECTOR behind that plan, and it carries the same room the retired Windows
+// ceiling did, for the same asymmetry: a cap that is too generous costs runner minutes
+// when something is genuinely wedged, while a cap that is too thin drops the
+// group and restarts every PR behind it.
+const mergeGateDarwinCeiling = 10
+
+// mergeGateDarwinReason is the record beside THAT number, asserted the same way.
+const mergeGateDarwinReason = "darwin runs the full suite on the x64 Macs: shards 0 and 1 of run 35369433950 were cancelled at the five-minute cap carrying a thirteen-member batch dealt by count off the Linux table, so the leg now deals from package-sizes-darwin.tsv and this cap is the hang detector behind it"
 
 // clTierCeilings is where a job that does NOT cap at two minutes says so, and
 // says why. A number here is a claim about the machine the job runs on, so it
@@ -332,19 +401,31 @@ var clTierCeilings = map[string]int{
 	// The aggregate reads results and checks nothing out.
 	"ci-ok": 1,
 
-	// The one allowed exception. The merge gate runs the full suite of the
-	// packages a group changes, on three platforms, sharded by size; it was
-	// cancelled under load at 2:40 (2026-09-17), and a cancelled shard drops the
-	// group. mergeGateReason carries the record the budget test asserts.
-	"test-hosted-merge": mergeGateCeiling,
+	// The one allowed exception, and the ceiling here is the LARGEST of its
+	// per-leg numbers, because this map answers "how long can this job run".
+	// linux carries mergeGateCeiling (5) and darwin mergeGateDarwinCeiling (10),
+	// each for the reason recorded beside it. The budget test reads the two apart
+	// out of the workflow's matrix. A windows leg at twelve was the largest until
+	// 2026-09-18, when the native windows runners were dropped.
+	"test-hosted-merge": mergeGateDarwinCeiling,
 
-	// The platform legs a PR runs only when it touches platform-specific paths
-	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
-	// runner starts cold (checkout, setup-go, cache restore) and cmd/nova-bus
-	// measured 439 s on windows-latest before its -short gate (#682); the leg
-	// runs -short, and 6 is the same cap the sharded matrix carries. A PR that
-	// does not touch those paths pays a checkout and skips. (2026-09-16)
+	// The sandbox leg a PR runs only when it touches internal/sandbox or a
+	// *_linux.go. A hosted runner starts cold (checkout, setup-go, cache
+	// restore) before it compiles anything, and 6 is the same cap the sharded
+	// matrix carries. A PR that does not touch those paths pays a checkout and
+	// skips. This job carried a windows entry too until 2026-09-18, when that
+	// entry was retired into test-windows-pr: on integration-4 it was CANCELLED
+	// by this very cap at 6 min 20 s, running unsharded the same packages the
+	// sharded leg had just passed. The number was never the problem; running
+	// them unsharded was. (2026-09-16, amended 2026-09-18)
 	"test-hosted-pr": 6,
+
+	// `test-windows-pr` WAS HERE at ten minutes, the Windows leg a pull request
+	// got for the packages it changed. Glenn dropped the native windows CI
+	// runners on 2026-09-18 ("WSL only from now on."), so the job and its ceiling
+	// are both gone. The Windows guard a PR runs now is the lint job's `make
+	// vet-windows` cross-vet, which lives inside lint's ordinary two minutes and
+	// needs no entry here.
 
 	// The sharded test matrix, and the one number the move to self-hosted
 	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
@@ -385,6 +466,11 @@ func jobNames(src string) []string {
 	return names
 }
 
+// jobTimeouts returns each job's declared timeout-minutes. A job whose ceiling
+// differs per matrix leg declares `timeout-minutes: ${{ matrix.leg.timeout }}`
+// and carries the numbers in its matrix; for those the LARGEST leg value is
+// returned, because the budget question this answers is "how long can this job
+// run", and legTimeouts below is what reads them apart.
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""
@@ -400,6 +486,38 @@ func jobTimeouts(src string) map[string]int {
 			n, err := strconv.Atoi(m[1])
 			if err == nil {
 				out[cur] = n
+			}
+			continue
+		}
+		if perLegTimeoutRe.MatchString(line) {
+			for _, mins := range legTimeouts(jobBody(src, cur)) {
+				if mins > out[cur] {
+					out[cur] = mins
+				}
+			}
+		}
+	}
+	return out
+}
+
+// legTimeouts reads a job's per-leg ceilings out of its matrix: each `- name: X`
+// entry's `timeout: N`, keyed by the leg name. It is how the budget test can say
+// what windows is allowed without saying the same thing about linux and darwin.
+func legTimeouts(job string) map[string]int {
+	out := make(map[string]int)
+	name := ""
+	for _, line := range strings.Split(job, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if m := legNameRe.FindStringSubmatch(trimmed); m != nil {
+			name = m[1]
+			continue
+		}
+		if name == "" {
+			continue
+		}
+		if m := legTimeoutRe.FindStringSubmatch(trimmed); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				out[name] = n
 			}
 		}
 	}
@@ -452,6 +570,27 @@ var splitMovedJobs = []string{
 	"smoke",
 	"release-dry-run",
 	"perf",
+}
+
+// droppedByRuling is the dated, quoted exception to "the split must delete
+// nothing": the jobs that DID leave ci.yml in the 2026-09-12 split but that
+// certification.yml no longer has to carry, because a later ruling retired them
+// outright rather than moving them. The class rule is untouched — every other
+// job in splitMovedJobs must still be present and still be aggregated by
+// certification-ok. Only the names listed here are skipped, and each one carries
+// the ruling that struck it.
+//
+// Glenn, 2026-09-18: "We will not support windows without WSL2. It is not worth
+// it." / "let's drop the native windows CI runners. WSL only from now on."
+// #1449 removed these three from ci.yml on that ruling but left them in
+// certification.yml, so certification-ok was red on every dev sha and
+// `nova-update release cut` refused every tip (CUT REFUSED
+// certification-ok=failure). The Windows guard that remains is the cross-vet,
+// `GOOS=windows go vet`, which needs no Windows machine.
+var droppedByRuling = map[string]string{
+	"build-windows":    `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"windows-packages": `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"test-windows":     `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
 }
 
 // certificationOKNeeds returns the set of job names listed in certification-ok's

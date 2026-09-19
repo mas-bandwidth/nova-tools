@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -164,14 +165,85 @@ func decideAttempt(p *Pool, sc Sidecar) int {
 	return 1
 }
 
+// usageProvider is who the tokens were spent with, in the usage file's own
+// vocabulary: the Jev endpoint is TypeSafe's.
+const usageProvider = "typesafe"
+
+// ValidateUsageDestination ensures that path is not an existing directory,
+// its parent directory exists and is a directory, and the target is writable.
+func ValidateUsageDestination(path string) error {
+	cleaned := filepath.Clean(path)
+	fi, err := os.Stat(cleaned)
+	if err == nil {
+		if fi.IsDir() {
+			return fmt.Errorf("usage destination %q is a directory", path)
+		}
+		f, err := os.OpenFile(cleaned, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("usage destination %q not writable: %w", path, err)
+		}
+		_ = f.Close()
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("usage destination %q inaccessible: %w", path, err)
+	}
+	dir := filepath.Dir(cleaned)
+	if dir == "" {
+		dir = "."
+	}
+	dfi, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("usage destination directory %q does not exist: %w", dir, err)
+	}
+	if !dfi.IsDir() {
+		return fmt.Errorf("usage destination directory %q is not a directory", dir)
+	}
+	probe := filepath.Join(dir, fmt.Sprintf(".usage_probe_%d_%d", os.Getpid(), time.Now().UnixNano()))
+	pf, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("usage destination directory %q not writable: %w", dir, err)
+	}
+	_ = pf.Close()
+	_ = os.Remove(probe)
+	return nil
+}
+
+func canonicalUsagePath(p string) string {
+	cleaned := filepath.Clean(p)
+	abs, err := filepath.Abs(cleaned)
+	if err != nil {
+		abs = cleaned
+	}
+	if target, err := filepath.EvalSymlinks(abs); err == nil {
+		return target
+	}
+	dir := filepath.Dir(abs)
+	if targetDir, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(targetDir, filepath.Base(abs))
+	}
+	return abs
+}
+
+type retainedDecideCall struct {
+	Answers map[string]decide.Answer `json:"answers"`
+	Usage   decide.Usage             `json:"usage"`
+	Failed  bool                     `json:"failed"`
+	Start   time.Time                `json:"start"`
+	End     time.Time                `json:"end"`
+}
+
 // taskDecider carries one triage run's Decide call, floor and the set of
 // (task, attempt) pairs already logged, so a second run adds nothing.
 type taskDecider struct {
-	do    decideFunc
-	floor float64
-	pool  *Pool
-	now   func() time.Time
-	seen  map[string]bool
+	do        decideFunc
+	floor     float64
+	pool      *Pool
+	now       func() time.Time
+	usagePath string
+	seen      map[string]decisionEntry
+	seenUsage map[string]bool
+	lastErr   error
 }
 
 // decideFunc is one typed decision: the seam the httptest fake in tests and
@@ -179,11 +251,24 @@ type taskDecider struct {
 // provider over the network.
 type decideFunc func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
 
-func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time) *taskDecider {
+// DecideFunc is decideFunc under the name the pulse loop can pass across the
+// package boundary: nova-pulse run hands in the Jev client (or its own fake)
+// after each harvest (card 8371).
+type DecideFunc = decideFunc
+
+func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time, usagePath string) *taskDecider {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	d := &taskDecider{do: do, floor: floor, pool: p, now: now, seen: map[string]bool{}}
+	d := &taskDecider{
+		do:        do,
+		floor:     floor,
+		pool:      p,
+		now:       now,
+		usagePath: usagePath,
+		seen:      map[string]decisionEntry{},
+		seenUsage: map[string]bool{},
+	}
 	raw, err := readRegular(p.Path(DecisionsFile))
 	if err != nil {
 		return d
@@ -193,27 +278,122 @@ func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time)
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			continue
 		}
-		d.seen[fmt.Sprintf("%s\x00%d", e.Task, e.Attempt)] = true
+		key := fmt.Sprintf("%s\x00%d", e.Task, e.Attempt)
+		d.seen[key] = e
+		d.seenUsage[key] = true
 	}
 	return d
+}
+
+func (d *taskDecider) retainedCallPath(id string, attempt int) string {
+	if d.pool == nil {
+		return ""
+	}
+	return d.pool.Path(Usage, fmt.Sprintf("%s-%d.decide.json", id, attempt))
+}
+
+func (d *taskDecider) destinations(sc Sidecar) ([]string, error) {
+	var candidates []string
+	if d.usagePath != "" {
+		candidates = append(candidates, d.usagePath)
+	}
+	if sc.Job != "" {
+		if fi, err := os.Stat(sc.Job); err == nil && fi.IsDir() {
+			candidates = append(candidates, filepath.Join(sc.Job, "usage.tsv"))
+		}
+	}
+	if d.pool != nil {
+		candidates = append(candidates, d.pool.Path("usage.tsv"))
+	}
+
+	seen := make(map[string]bool)
+	var unique []string
+	for _, raw := range candidates {
+		if raw == "" {
+			continue
+		}
+		if err := ValidateUsageDestination(raw); err != nil {
+			return nil, err
+		}
+		canonical := canonicalUsagePath(raw)
+		if !seen[canonical] {
+			seen[canonical] = true
+			unique = append(unique, raw)
+		}
+	}
+	return unique, nil
 }
 
 // decideOne asks the one typed decision for a finished task and renders the
 // suffix for its TRIAGE REPORT line. ok is false when the provider errored or
 // answered without a reason: the caller then keeps today's bare line.
-func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok bool) {
-	state := buildDecideState(d.pool, sc)
-	answers, _, err := d.do(context.Background(), state, decideQuestions())
-	if err != nil {
-		return "", false
+func (d *taskDecider) decideCore(sc Sidecar, class string) (td TaskDecision, suffix string, ok bool) {
+	attempt := decideAttempt(d.pool, sc)
+	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
+	if e, found := d.seen[key]; found {
+		suffix = fmt.Sprintf(" decide=%s conf=%.2f needs_human=%.2f floor=%.2f",
+			oneline.Field(e.Decision), e.Confidence, e.NeedsHuman, e.Floor)
+		return TaskDecision{Task: sc.ID, Label: sc.Label, Reason: e.Decision, Confidence: e.Confidence, NeedsHuman: e.NeedsHuman}, suffix, true
 	}
-	reason, ok := answers["reason"]
+
+	dests, err := d.destinations(sc)
+	if err != nil {
+		d.lastErr = err
+		return TaskDecision{}, "", false
+	}
+
+	var call retainedDecideCall
+	retainedPath := d.retainedCallPath(sc.ID, attempt)
+	hasRetained := false
+	if retainedPath != "" {
+		if raw, rerr := os.ReadFile(retainedPath); rerr == nil {
+			if jerr := json.Unmarshal(raw, &call); jerr == nil {
+				hasRetained = true
+			}
+		}
+	}
+
+	if !hasRetained {
+		state := buildDecideState(d.pool, sc)
+		start := d.now()
+		answers, usage, err := d.do(context.Background(), state, decideQuestions())
+		end := d.now()
+		call = retainedDecideCall{
+			Answers: answers,
+			Usage:   usage,
+			Failed:  err != nil,
+			Start:   start,
+			End:     end,
+		}
+		if retainedPath != "" {
+			if raw, jerr := json.Marshal(call); jerr == nil {
+				_ = os.WriteFile(retainedPath, raw, 0o644)
+			}
+		}
+	}
+
+	if err := d.recordUsage(sc, dests, call.Start, call.End, call.Usage, call.Failed); err != nil {
+		d.lastErr = err
+		return TaskDecision{}, "", false
+	}
+	if call.Failed {
+		return TaskDecision{}, "", false
+	}
+
+	reason, ok := call.Answers["reason"]
 	if !ok || reason.Choice == "" {
-		return "", false
+		return TaskDecision{}, "", false
 	}
 	human := 0.0
-	if h, ok := answers["needs_human"]; ok {
+	if h, ok := call.Answers["needs_human"]; ok {
 		human = h.Noul
+	}
+	td = TaskDecision{
+		Task:       sc.ID,
+		Label:      sc.Label,
+		Reason:     reason.Choice,
+		Confidence: reason.Confidence,
+		NeedsHuman: human,
 	}
 	decision := reason.Choice
 	if reason.Confidence < d.floor {
@@ -221,17 +401,147 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 	}
 	suffix = fmt.Sprintf(" decide=%s conf=%.2f needs_human=%.2f floor=%.2f",
 		oneline.Field(decision), reason.Confidence, human, d.floor)
-	d.log(sc, class, decision, reason.Confidence, human)
-	return suffix, true
+	if err := d.log(sc, class, decision, reason.Confidence, human); err != nil {
+		d.lastErr = err
+		return TaskDecision{}, "", false
+	}
+	if retainedPath != "" {
+		_ = os.Remove(retainedPath)
+	}
+	return td, suffix, true
+}
+
+// decideOne renders the suffix for a finished task's TRIAGE REPORT line.
+func (d *taskDecider) decideOne(sc Sidecar, class string) (string, bool) {
+	_, suffix, ok := d.decideCore(sc, class)
+	return suffix, ok
+}
+
+// TaskDecision is one finished task's typed decision: the reason choice, its
+// confidence, and the needs_human probability, behind the floor. It is what
+// nova-pulse run reads to send a task to HUMAN or to retry it (card 8371).
+type TaskDecision struct {
+	Task       string
+	Label      string
+	Reason     string
+	Confidence float64
+	NeedsHuman float64
+}
+
+// decided reports whether this task's attempt already has a decision on file,
+// so a pass over a pool asks about a task once and never once per tick.
+func (d *taskDecider) decided(sc Sidecar) bool {
+	_, found := d.seen[fmt.Sprintf("%s\x00%d", sc.ID, decideAttempt(d.pool, sc))]
+	return found
+}
+
+// decideTask asks and logs one typed decision. ok is false when the provider
+// errored or answered without a reason: the caller keeps today's behaviour.
+func (d *taskDecider) decideTask(sc Sidecar, class string) (TaskDecision, bool) {
+	td, _, ok := d.decideCore(sc, class)
+	return td, ok
+}
+
+// DecideFinished asks the one typed decision for every finished task in the
+// pool's done/ and failed/ directories that has not been decided already. It
+// is the core of `nova-swarm triage --decide`, lifted into a function so
+// nova-pulse run can call it after each harvest (card 8371). floor 0 takes
+// DefaultDecideFloor.
+func DecideFinished(p *Pool, do DecideFunc, floor float64, now func() time.Time) ([]TaskDecision, error) {
+	if floor == 0 {
+		floor = DefaultDecideFloor
+	}
+	d := newTaskDecider(p, do, floor, now, "")
+	var out []TaskDecision
+	for _, state := range []string{Done, Failed} {
+		list, err := p.List(state)
+		if err != nil {
+			return nil, err
+		}
+		for _, sc := range list {
+			if d.decided(sc) {
+				continue
+			}
+			if td, ok := d.decideTask(sc, sc.Class); ok {
+				out = append(out, td)
+			}
+		}
+	}
+	return out, nil
+}
+
+// RequeueOnce queues one more attempt of a finished task -- the same text as a
+// new id, marked `requeued=1` -- through the existing requeue path
+// (freshAttempt, p.Add). It refuses a task already carrying a requeue, so a
+// provider_error is retried once and never twice (card 8371).
+func (p *Pool) RequeueOnce(id string, now time.Time) (Sidecar, bool) {
+	from, ok := p.Where(id)
+	if !ok || from == Running || from == Pending {
+		return Sidecar{}, false
+	}
+	sc, err := p.ReadSidecar(from, id)
+	if err != nil || sc.Requeued >= 1 {
+		return Sidecar{}, false
+	}
+	text, err := p.Text(from, id)
+	if err != nil {
+		return Sidecar{}, false
+	}
+	next := freshAttempt(sc, now)
+	next.From, next.Requeued = id, 1
+	if err := p.Add(text, next); err != nil {
+		return Sidecar{}, false
+	}
+	return next, true
+}
+
+// recordUsage appends one row to each unique usage TSV destination for this
+// provider call through the card-usage contract (AppendCardUsage), matching
+// nova-decide route.
+func (d *taskDecider) recordUsage(sc Sidecar, dests []string, start, end time.Time, usage decide.Usage, failed bool) error {
+	attempt := decideAttempt(d.pool, sc)
+	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
+	if d.seenUsage[key] {
+		return nil
+	}
+	row := UsageRow{
+		"job":      sc.ID,
+		"attempt":  strconv.Itoa(attempt),
+		"started":  Stamp(start),
+		"ended":    Stamp(end),
+		"rc":       "0",
+		"provider": usageProvider,
+		"model":    decide.DefaultModel,
+	}
+	if usage.HasInput || usage.InputTokens > 0 {
+		row["tokens_in"] = strconv.Itoa(usage.InputTokens)
+	}
+	if usage.HasOutput || usage.OutputTokens > 0 {
+		row["tokens_out"] = strconv.Itoa(usage.OutputTokens)
+	}
+	if failed {
+		row["rc"] = "2"
+	}
+	var writeErrs []error
+	for _, dst := range dests {
+		if err := AppendCardUsage(dst, row); err != nil {
+			writeErrs = append(writeErrs, fmt.Errorf("%s: %w", dst, err))
+		}
+	}
+	if len(writeErrs) > 0 {
+		return fmt.Errorf("append usage: %v", writeErrs)
+	}
+	d.seenUsage[key] = true
+	return nil
 }
 
 // log appends one JSON line per task to <pool>/decisions.log, idempotent per
 // (task, attempt).
-func (d *taskDecider) log(sc Sidecar, class, decision string, conf, human float64) {
+func (d *taskDecider) log(sc Sidecar, class, decision string, conf, human float64) error {
 	attempt := decideAttempt(d.pool, sc)
 	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
-	if d.seen[key] {
-		return
+	if _, ok := d.seen[key]; ok {
+		return nil
 	}
 	e := decisionEntry{
 		Task: sc.ID, Attempt: attempt, Class: class, Decision: decision,
@@ -239,13 +549,19 @@ func (d *taskDecider) log(sc Sidecar, class, decision string, conf, human float6
 	}
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(d.pool.Path(DecisionsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
-		return
+		return err
 	}
-	_, _ = f.Write(append(raw, '\n'))
-	_ = f.Close()
-	d.seen[key] = true
+	if _, err := f.Write(append(raw, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	d.seen[key] = e
+	return nil
 }

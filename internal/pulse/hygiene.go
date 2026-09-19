@@ -1,0 +1,775 @@
+package pulse
+
+// The hygiene verbs: the Go half of the bench's bin/bench-hygiene.sh, the
+// clean-as-we-work pass a systemd timer runs on every bench. It is six verbs,
+// never a bare `rm`:
+//
+//	run [--dry-run]              reap dead slots, delete read jobs, drop the cache when low; one HYGIENE line
+//	reap <slot>                  delete <slot>/data, <slot>/tmp and each job's scratch
+//	delete-job <slot> <job>      delete <root>/<slot>/jobs/<job> whole
+//	delete-slot <slot>           delete an empty slot
+//	drop-cache                   delete <home>/.cache/go-build
+//	log [n]                      the last n lines of the per-bench action log
+//
+// Every deletion goes through internal/safepath.RemoveUnder: the path is the
+// join of one of the two literal roots under <home>, a slot name and a job name
+// that match [A-Za-z0-9._-]+, resolved, checked for symlinks, and checked to sit
+// strictly below its root. Nothing else can be removed by this verb.
+//
+// Each deletion is one line in <home>/hygiene.log: <utc> <verb> <path>, the
+// format the shell timer wrote.
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+)
+
+// HygieneProcs answers whether any process names a slot in its command line or
+// its working directory. The real one reads /proc; tests drive a fake.
+type HygieneProcs interface {
+	Busy(path string) bool
+}
+
+// HygieneDisk answers the two numbers the run verb's one line needs.
+type HygieneDisk interface {
+	FreeGB() int
+	Free() string
+	SizeGB(path string) int
+}
+
+// HygieneInput is the hygiene verb family's input, held apart from flag parsing.
+type HygieneInput struct {
+	Verb   string // run, reap, delete-job, delete-slot, drop-cache, log
+	Slot   string
+	Job    string
+	DryRun bool
+	N      int // log: how many trailing lines
+
+	Home      string   // every root, the log and the cache hang under it
+	Roots     []string // default <home>/rowan-swarm-root, <home>/rowan-working/tmp
+	LogPath   string   // default <home>/hygiene.log
+	CachePath string   // default <home>/.cache/go-build
+	Hostname  string   // default the short local host name
+
+	// The runner `_diag` prune's two rules. Zero means the default.
+	DiagDays     int   // age window in days, default HygieneDiagDaysDefault
+	DiagMaxBytes int64 // per-runner-directory cap, default HygieneDiagMaxBytesDefault
+
+	Now    func() time.Time
+	Procs  HygieneProcs
+	Disk   HygieneDisk
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// The runner `_diag` prune's defaults.
+//
+// Measured on hulk, 2026-09-18: 24 runner directories, 3.5 GB of `_diag`,
+// 18,296 files, and the OLDEST file on the bench two days old. A runner rolls
+// its own diagnostics at a rate nobody chose, so the seven-day window the bench
+// ran with took nothing, ever, and neither would three days.
+//
+// The two rules divide the job. On a busy bench the window is what bites day by
+// day (a dry run on hulk at --diag-days 1 selects 10,391 files, 1.95 GB); the cap
+// is the backstop for a burst, or for a runner that starts writing faster than
+// anyone watches. 2 GiB per runner over hulk's 24 runners is a 48 GiB ceiling on
+// a 1.8 TB disk, and it takes nothing there today, because no runner directory is
+// over 220 MB. That is what a ceiling is for.
+const (
+	HygieneDiagDaysDefault     = 2
+	HygieneDiagMaxBytesDefault = int64(2 * 1024 * 1024 * 1024)
+)
+
+type hygiene struct {
+	in       HygieneInput
+	now      time.Time
+	roots    []string
+	log      string
+	cache    string
+	host     string
+	disk     HygieneDisk
+	diagDays int
+	diagMax  int64
+}
+
+// Hygiene runs one hygiene subcommand and returns its exit code: 0 when it ran,
+// 2 on every refusal. One HYGIENE line is the only stdout a run prints; each
+// deletion is one line in <home>/hygiene.log.
+func Hygiene(in HygieneInput) int {
+	h, code := newHygiene(in)
+	if code != 0 {
+		return code
+	}
+	switch in.Verb {
+	case "run":
+		return h.run()
+	case "reap":
+		return h.reapVerb()
+	case "delete-job":
+		return h.deleteJobVerb()
+	case "delete-slot":
+		return h.deleteSlotVerb()
+	case "drop-cache":
+		return h.dropCacheVerb()
+	case "log":
+		return h.logVerb()
+	}
+	return h.refuse(fmt.Sprintf("HYGIENE REFUSED: unknown subcommand %q (pass run, reap, delete-job, delete-slot, drop-cache or log)", oneline.Field(in.Verb)))
+}
+
+func newHygiene(in HygieneInput) (*hygiene, int) {
+	if in.Stdout == nil {
+		in.Stdout = io.Discard
+	}
+	if in.Stderr == nil {
+		in.Stderr = io.Discard
+	}
+	if strings.TrimSpace(in.Home) == "" || !filepath.IsAbs(in.Home) {
+		fmt.Fprintf(in.Stderr, "HYGIENE REFUSED: --home is required and is an absolute path, got %q (pass the bench home; every root hangs under it)\n", oneline.Field(in.Home))
+		return nil, 2
+	}
+	now := in.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	roots := in.Roots
+	if len(roots) == 0 {
+		roots = []string{filepath.Join(in.Home, "rowan-swarm-root"), filepath.Join(in.Home, "rowan-working", "tmp")}
+	}
+	logPath := in.LogPath
+	if logPath == "" {
+		logPath = filepath.Join(in.Home, "hygiene.log")
+	}
+	cache := in.CachePath
+	if cache == "" {
+		cache = filepath.Join(in.Home, ".cache", "go-build")
+	}
+	host := in.Hostname
+	if host == "" {
+		host = shortHost()
+	}
+	disk := in.Disk
+	if disk == nil {
+		disk = OSDisk{Home: in.Home}
+	}
+	diagDays := in.DiagDays
+	if diagDays <= 0 {
+		diagDays = HygieneDiagDaysDefault
+	}
+	diagMax := in.DiagMaxBytes
+	if diagMax <= 0 {
+		diagMax = HygieneDiagMaxBytesDefault
+	}
+	return &hygiene{in: in, now: now().UTC(), roots: roots, log: logPath, cache: cache, host: host, disk: disk, diagDays: diagDays, diagMax: diagMax}, 0
+}
+
+func shortHost() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "bench"
+	}
+	if i := strings.IndexByte(h, '.'); i > 0 {
+		h = h[:i]
+	}
+	return h
+}
+
+// appendLog writes one <utc> <rest> line to the per-bench action log.
+func (h *hygiene) appendLog(rest string) {
+	f, err := os.OpenFile(h.log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(h.in.Stderr, "HYGIENE NOTE %s could not be written: %s\n", oneline.Field(h.log), oneline.Err(err))
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", h.now.UTC().Format(time.RFC3339), rest)
+}
+
+// removeUnder is the one removal: safepath decides, the log records it, and a
+// refusal names the path on stderr. In a dry run it prints WOULD and changes
+// nothing, not even the log.
+func (h *hygiene) removeUnder(verb, path string, roots ...string) bool {
+	if h.in.DryRun {
+		fmt.Fprintf(h.in.Stdout, "WOULD %s %s\n", verb, path)
+		return true
+	}
+	if err := safepath.RemoveUnderRoots(path, roots...); err != nil {
+		fmt.Fprintf(h.in.Stderr, "HYGIENE REFUSED: %s (pass a path strictly below one of the two roots)\n", oneline.Err(err))
+		return false
+	}
+	h.appendLog(verb + " " + path)
+	return true
+}
+
+func (h *hygiene) remove(verb, path string) bool { return h.removeUnder(verb, path, h.roots...) }
+
+func (h *hygiene) refuse(msg string) int {
+	fmt.Fprintln(h.in.Stderr, msg)
+	return 2
+}
+
+// slotPath is the slot with this name when one root holds it as a real
+// directory: it is the join of a literal root and a safe name, resolved and
+// checked to sit strictly below the root.
+func (h *hygiene) slotPath(name string) (string, bool) {
+	if !safepath.NameOK(name) {
+		return "", false
+	}
+	for _, root := range h.roots {
+		p := filepath.Join(root, name)
+		info, err := os.Lstat(p)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if _, err := safepath.ResolvedUnder(p, root); err != nil {
+			continue
+		}
+		return p, true
+	}
+	return "", false
+}
+
+func (h *hygiene) rootsPhrase() string {
+	var parts []string
+	for _, r := range h.roots {
+		parts = append(parts, oneline.Field(r))
+	}
+	return strings.Join(parts, " or ")
+}
+
+func (h *hygiene) reapVerb() int {
+	slot, ok := h.slotPath(h.in.Slot)
+	if !ok {
+		return h.refuse(fmt.Sprintf("REAP REFUSED: %s is not a slot (pass a directory name directly below %s)", oneline.Field(h.in.Slot), h.rootsPhrase()))
+	}
+	h.reapSlot(slot)
+	return 0
+}
+
+func (h *hygiene) deleteJobVerb() int {
+	slot, ok := h.slotPath(h.in.Slot)
+	if !ok {
+		return h.refuse(fmt.Sprintf("DELETE-JOB REFUSED: %s is not a slot (pass a directory name directly below %s)", oneline.Field(h.in.Slot), h.rootsPhrase()))
+	}
+	if !safepath.NameOK(h.in.Job) {
+		return h.refuse(fmt.Sprintf("DELETE-JOB REFUSED: %s is not a job name (use letters, digits, dot, dash or underscore)", oneline.Field(h.in.Job)))
+	}
+	job := filepath.Join(slot, "jobs", h.in.Job)
+	if !dirExists(job) {
+		return h.refuse(fmt.Sprintf("DELETE-JOB REFUSED: %s is not a job (pass a directory name below %s)", oneline.Field(job), oneline.Field(filepath.Join(slot, "jobs"))))
+	}
+	if !h.remove("delete-job", job) {
+		return 2
+	}
+	return 0
+}
+
+func (h *hygiene) deleteSlotVerb() int {
+	slot, ok := h.slotPath(h.in.Slot)
+	if !ok {
+		return h.refuse(fmt.Sprintf("DELETE-SLOT REFUSED: %s is not a slot (pass a directory name directly below %s)", oneline.Field(h.in.Slot), h.rootsPhrase()))
+	}
+	if !emptyDir(filepath.Join(slot, "jobs")) {
+		return h.refuse(fmt.Sprintf("DELETE-SLOT REFUSED: %s still holds jobs (delete its jobs first)", oneline.Field(slot)))
+	}
+	if !h.remove("delete-slot", slot) {
+		return 2
+	}
+	return 0
+}
+
+func (h *hygiene) dropCacheVerb() int {
+	if !dirExists(h.cache) {
+		return 0
+	}
+	if !h.removeUnder("drop-cache", h.cache, filepath.Join(h.in.Home, ".cache")) {
+		return 2
+	}
+	return 0
+}
+
+func (h *hygiene) logVerb() int {
+	n := h.in.N
+	if n <= 0 {
+		n = 20
+	}
+	raw, err := os.ReadFile(h.log)
+	if err != nil {
+		return 0
+	}
+	text := strings.TrimRight(string(raw), "\n")
+	if text == "" {
+		return 0
+	}
+	lines := strings.Split(text, "\n")
+	if n < len(lines) {
+		lines = lines[len(lines)-n:]
+	}
+	for _, line := range lines {
+		fmt.Fprintln(h.in.Stdout, line)
+	}
+	return 0
+}
+
+// run is the timer's verb: it walks both roots, leaves every live slot alone,
+// reaps the dead, deletes the read jobs, drops the cache when the disk is low,
+// and prints one HYGIENE line (and, unless --dry-run, logs it too).
+//
+// THE THREE RULES OF #1499/#1512, WHICH THIS VERB COST TWO CERTIFY TREES AND A
+// 43-CARD SWARM ROOT TO LEARN, are asked in this order:
+//
+//   - IS IT A SLOT? A slot is the shape the launcher makes, <slot>/jobs. A
+//     directory under a root without one is somebody's work -- a certify tree, a
+//     toolchain, a clone -- and is skipped whole, at any age, and is not even
+//     counted as a slot.
+//   - IS IT LEASED? Liveness is the launcher's own lease and nothing else. No
+//     silence is ever a reason to delete: one long model call and one long
+//     compile are both silent. A process naming the path is a SECOND REASON TO
+//     KEEP, never a reason to delete.
+//   - IS IT OLD? Age is required before any deletion. An unleased job goes when
+//     it is harvested, or when nothing in it has changed for MinAgeHours; an
+//     emptied slot only once it too has been quiet that long -- read BEFORE the
+//     pass deletes anything under it, because deleting a job touches jobs/ and an
+//     age read afterwards says "just now" of a slot idle for days.
+//
+// And the cache is never dropped while any lease is live (cache=kept-lease):
+// that is a running card's build cut out from under it.
+func (h *hygiene) run() int {
+	before := h.disk.Free()
+	slots, reaped, jobs, dropped, dead := 0, 0, 0, 0, 0
+	for _, root := range h.roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || !safepath.NameOK(e.Name()) {
+				continue
+			}
+			slot := filepath.Join(root, e.Name())
+			if _, err := safepath.ResolvedUnder(slot, root); err != nil {
+				continue
+			}
+			// Rule 1, asked FIRST: what this tool does not recognise as a slot it
+			// does not touch -- not its jobs, not its scratch, not the directory.
+			if !slotShaped(slot) {
+				continue
+			}
+			slots++
+			slotAge := h.hoursSince(newestMTime(slot))
+			// Rule 2 and rule 3, per job.
+			for _, job := range h.jobDirs(slot) {
+				if h.jobLeased(job) || h.pathLive(job) {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(job, ".harvested")); err == nil {
+					if h.remove("delete-job", job) {
+						jobs++
+					}
+					continue
+				}
+				if m := newestMTime(job); m <= 0 || h.hoursSince(m) < MinAgeHours {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(job, "RESULT.md")); err == nil {
+					if h.remove("delete-job", job) {
+						jobs++
+					}
+				} else if h.remove("DEAD", job) {
+					dead++
+				}
+			}
+			// The slot's own scratch -- <slot>/data is a card's HOME and
+			// <slot>/tmp its TMPDIR -- goes only when nothing in the slot is live.
+			if h.slotLeased(slot) || h.pathLive(slot) {
+				continue
+			}
+			if dirExists(filepath.Join(slot, "data")) || dirExists(filepath.Join(slot, "tmp")) {
+				h.reapSlot(slot)
+				reaped++
+			}
+			// Rule 3 for the slot: recognised, emptied of jobs, and quiet.
+			if emptyDir(filepath.Join(slot, "jobs")) && slotAge >= MinAgeHours {
+				if h.remove("delete-slot", slot) {
+					dropped++
+				}
+			}
+		}
+	}
+	diagN, diagBytes := h.pruneDiag()
+	size := h.disk.SizeGB(h.cache)
+	cache := "kept"
+	if h.disk.FreeGB() < 25 || size > 20 {
+		if h.anyLeased() {
+			cache = "kept-lease"
+		} else if h.removeUnder("drop-cache", h.cache, filepath.Join(h.in.Home, ".cache")) {
+			cache = "dropped"
+		}
+	}
+	line := fmt.Sprintf("HYGIENE %s slots=%d reaped=%d jobs-deleted=%d slots-deleted=%d dead=%d diag-deleted=%d diag-freed=%d cache=%s(%dG) free %s -> %s",
+		h.host, slots, reaped, jobs, dropped, dead, diagN, diagBytes, cache, size, before, h.disk.Free())
+	if !h.in.DryRun {
+		h.appendLog(line)
+	}
+	fmt.Fprintln(h.in.Stdout, line)
+	return 0
+}
+
+// diagEntry is one regular file directly inside a runner's `_diag`.
+type diagEntry struct {
+	path  string
+	size  int64
+	mtime int64
+}
+
+// pruneDiag bounds every GitHub Actions runner's `_diag` directory under
+// <home>/runner-*/ and answers how many files it took and how many bytes it
+// freed.
+//
+// Two rules, because one is not enough. A runner rolls its own diagnostics, so
+// on a busy bench nothing in `_diag` is ever old: hulk on 2026-09-18 held 3.5 GB
+// across 24 runners with the OLDEST file two days old, which no age window can
+// bound. So the window (--diag-days, two by default) takes what a quiet bench
+// leaves behind, and the cap (--diag-max-bytes, 2 GiB per runner directory by
+// default) takes the oldest files until the directory is at or below it. The cap
+// is per runner directory and not per bench, because a runner is what writes
+// into its own `_diag`.
+//
+// The newest file of a runner is never taken, by either rule: the runner process
+// holds it open, and a directory the prune emptied would be a directory the
+// runner cannot write.
+//
+// Only regular files directly inside `_diag` are considered: a symlink is
+// skipped by the Lstat, never followed, never counted and never removed, and
+// every deletion goes through safepath below that runner's own `_diag`.
+func (h *hygiene) pruneDiag() (int, int64) {
+	dirs, err := filepath.Glob(filepath.Join(h.in.Home, "runner-*", "_diag"))
+	if err != nil {
+		return 0, 0
+	}
+	sort.Strings(dirs)
+	n, freed := 0, int64(0)
+	for _, dir := range dirs {
+		dn, df := h.pruneDiagDir(dir)
+		n += dn
+		freed += df
+	}
+	return n, freed
+}
+
+func (h *hygiene) pruneDiagDir(dir string) (int, int64) {
+	runner := filepath.Base(filepath.Dir(dir))
+	if !safepath.NameOK(runner) {
+		return 0, 0
+	}
+	if _, err := safepath.ResolvedUnder(dir, h.in.Home); err != nil {
+		return 0, 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, 0
+	}
+	var files []diagEntry
+	var total int64
+	for _, e := range entries {
+		if !safepath.NameOK(e.Name()) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		info, err := os.Lstat(p)
+		if err != nil || !info.Mode().IsRegular() {
+			continue // a directory, a symlink, a socket: never this prune's business
+		}
+		files = append(files, diagEntry{path: p, size: info.Size(), mtime: info.ModTime().Unix()})
+		total += info.Size()
+	}
+	// Oldest first, and the name breaks a tie so two files written in the same
+	// second are taken in one order and not another run's.
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].mtime != files[j].mtime {
+			return files[i].mtime < files[j].mtime
+		}
+		return files[i].path < files[j].path
+	})
+
+	n, freed := 0, int64(0)
+	left := len(files)
+	deadline := h.now.Add(-time.Duration(h.diagDays) * 24 * time.Hour).Unix()
+	take := func(f diagEntry) {
+		if !h.removeUnder("delete-diag", f.path, dir) {
+			return
+		}
+		n++
+		freed += f.size
+		total -= f.size
+		left--
+	}
+	for _, f := range files {
+		if left <= 1 || f.mtime >= deadline {
+			continue
+		}
+		take(f)
+	}
+	for _, f := range files {
+		if left <= 1 || total <= h.diagMax {
+			break
+		}
+		if f.mtime < deadline {
+			continue // already taken by the window
+		}
+		take(f)
+	}
+	return n, freed
+}
+
+// reapSlot is the reap verb's body: <slot>/data, <slot>/tmp and each job's
+// scratch. It never removes a job directory.
+func (h *hygiene) reapSlot(slot string) {
+	for _, name := range []string{"data", "tmp"} {
+		if p := filepath.Join(slot, name); dirExists(p) {
+			h.remove("reap", p)
+		}
+	}
+	for _, job := range h.jobDirs(slot) {
+		for _, sub := range []string{"scratch", ".nova-sandbox-tmp", filepath.Join("repo", "scratch")} {
+			if p := filepath.Join(job, sub); dirExists(p) {
+				h.remove("reap", p)
+			}
+		}
+	}
+}
+
+func (h *hygiene) jobDirs(slot string) []string {
+	entries, err := os.ReadDir(filepath.Join(slot, "jobs"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || !safepath.NameOK(e.Name()) {
+			continue
+		}
+		out = append(out, filepath.Join(slot, "jobs", e.Name()))
+	}
+	return out
+}
+
+// MinAgeHours is how long anything must have been quiet before this verb may
+// delete it: an unleased job, and an emptied slot. It is the shell reaper's
+// MIN_AGE_H, read the same way and for the same reason.
+const MinAgeHours = 6
+
+// slotShaped answers rule 1: a slot is what the launcher makes, <slot>/jobs,
+// created before the child starts. A symlink named jobs is not that shape and is
+// not followed.
+func slotShaped(slot string) bool {
+	info, err := os.Lstat(filepath.Join(slot, "jobs"))
+	return err == nil && info.IsDir()
+}
+
+// jobLeased answers rule 2, and it answers it with internal/swarm's own record
+// rather than a second spelling of it: <job>/.lease is what `nova-swarm native`
+// WRITES, carrying the launcher's pid and a heartbeat it bumps while the child
+// runs, and swarm.JobLease.Live is the same judgement the launcher itself makes
+// about another run's lease -- the pid where this kernel can be asked, and the
+// heartbeat against swarm.JobLeaseStale where it cannot. A reaper that re-spells
+// that rule is a reaper that can disagree with the launcher, and the way it
+// disagrees is by deleting a running card's directory.
+//
+// A lease this process cannot READ -- a .lease that is a directory, or
+// unreadable -- is a job whose owner cannot be established, so it is KEPT.
+func (h *hygiene) jobLeased(job string) bool {
+	lease, err := swarm.ReadJobLease(job)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	return lease.Live(h.now)
+}
+
+// slotLeased is whether any job in the slot is leased.
+func (h *hygiene) slotLeased(slot string) bool {
+	for _, job := range h.jobDirs(slot) {
+		if h.jobLeased(job) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyLeased is whether any job under any root is leased. It is rule 6's
+// question: the build cache is a running card's build.
+func (h *hygiene) anyLeased() bool {
+	for _, root := range h.roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || !safepath.NameOK(e.Name()) {
+				continue
+			}
+			slot := filepath.Join(root, e.Name())
+			if _, err := safepath.ResolvedUnder(slot, root); err != nil {
+				continue
+			}
+			if slotShaped(slot) && h.slotLeased(slot) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pathLive is the SECOND REASON TO KEEP: a process whose command line or cwd
+// names the path. It is never a reason to delete, so it is only ever consulted
+// after the lease has already said nothing.
+func (h *hygiene) pathLive(path string) bool {
+	return h.in.Procs != nil && h.in.Procs.Busy(path)
+}
+
+// hoursSince is a unix second turned into whole hours before now.
+func (h *hygiene) hoursSince(m int64) int64 {
+	if m <= 0 {
+		return 0
+	}
+	return (h.now.Unix() - m) / 3600
+}
+
+// newestMTime is the newest mtime of a directory and its direct entries -- where
+// a job's own files (harness-output.log, RESULT.md, .lease) and a slot's own
+// (jobs, data, tmp) sit. It is deliberately not a recursive walk: the shell
+// reaper reads one level and the two must agree.
+func newestMTime(p string) int64 {
+	info, err := os.Lstat(p)
+	if err != nil {
+		return 0
+	}
+	newest := info.ModTime().Unix()
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		return newest
+	}
+	for _, e := range entries {
+		ei, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if m := ei.ModTime().Unix(); m > newest {
+			newest = m
+		}
+	}
+	return newest
+}
+
+func dirExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+func emptyDir(p string) bool {
+	entries, err := os.ReadDir(p)
+	return err != nil || len(entries) == 0
+}
+
+// OSDisk is the real disk: df for the free space, du for the build cache. It
+// fails open -- a number it cannot read never turns into a deletion.
+type OSDisk struct{ Home string }
+
+func (o OSDisk) Free() string {
+	out, err := exec.Command("df", "-h", o.Home).Output()
+	if err != nil {
+		return "-"
+	}
+	if field := dfField(string(out), 3); field != "" {
+		return field
+	}
+	return "-"
+}
+
+func (o OSDisk) FreeGB() int {
+	out, err := exec.Command("df", "-BG", o.Home).Output()
+	if err != nil {
+		return 1 << 30
+	}
+	if n, ok := parseGB(dfField(string(out), 3)); ok {
+		return n
+	}
+	return 1 << 30
+}
+
+func (o OSDisk) SizeGB(path string) int {
+	out, err := exec.Command("du", "-sBG", path).Output()
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 1 {
+		return 0
+	}
+	n, _ := parseGB(fields[0])
+	return n
+}
+
+// dfField returns the wanted whitespace field of df's second line (the data
+// line), or "" when the output has no such line or field.
+func dfField(out string, index int) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		return ""
+	}
+	fields := strings.Fields(lines[1])
+	if index < 0 || len(fields) <= index {
+		return ""
+	}
+	return fields[index]
+}
+
+func parseGB(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(s), "G"))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// Busy is the authoritative liveness probe: any process whose cwd is at or
+// below the path, or whose command line names it, holds the slot. It reads
+// /proc and never signals anything.
+func (o OSProcs) Busy(path string) bool {
+	if path == "" {
+		return false
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	sep := string(os.PathSeparator)
+	for _, e := range entries {
+		pid := e.Name()
+		if pid == "" || pid[0] < '0' || pid[0] > '9' {
+			continue
+		}
+		if cwd, err := os.Readlink(filepath.Join("/proc", pid, "cwd")); err == nil {
+			if cwd == path || strings.HasPrefix(cwd, path+sep) {
+				return true
+			}
+		}
+		if raw, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline")); err == nil {
+			if args := strings.ReplaceAll(string(raw), "\x00", " "); strings.Contains(args, path) {
+				return true
+			}
+		}
+	}
+	return false
+}

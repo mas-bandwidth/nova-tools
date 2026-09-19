@@ -35,6 +35,7 @@ type StatusInput struct {
 	Queue          string // the queue directory: pending, launched, done, failed and the state files
 	Roots          string // comma-separated bench roots, the benches in scope
 	SlotsStores    string // comma-separated bench slot-lease stores to report utilisation for
+	Batches        string // the directory holding the swarm's batch-*.out outputs; empty claims nothing
 	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
 	Max            int
 	Timeout        time.Duration
@@ -84,6 +85,19 @@ func Status(in StatusInput) int {
 	dayStart, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return refusal(in.Stderr, "STATUS", fmt.Errorf("--day wants YYYY-MM-DD, got %q (say the day the window starts at)", in.Day))
+	}
+	// The swarm's health is read BEFORE anything prints: a --batches that names nothing
+	// readable is a refusal, not a quiet zero folded into a report that already started.
+	var batches batchReading
+	haveBatches := strings.TrimSpace(in.Batches) != ""
+	if haveBatches {
+		var berr error
+		batches, berr = readBatchOutputs(strings.TrimSpace(in.Batches))
+		if berr != nil {
+			return refusal(in.Stderr, "STATUS", fmt.Errorf(
+				"--batches %s cannot be read (%s); it wants the directory holding the swarm's batch-*.out outputs, or leave it out to say nothing about the swarm",
+				oneline.Field(in.Batches), oneline.Err(berr)))
+		}
 	}
 	hourStart := now.Add(-time.Hour)
 
@@ -178,6 +192,23 @@ func Status(in StatusInput) int {
 
 	merged, toolNames := mergedTools(prs, dayStart, now)
 	fmt.Fprintf(out, "STATUS TOOLS merged_since_adoption=%d %s\n", merged, strings.Join(toolNames, ", "))
+
+	// SWARM, FAULT and PIT-STOP: the machinery's own health, and only when --batches said
+	// where to read it. One reason recurring pitStopAt times is the whole point of the
+	// line: stop and fix it, because more cards through a broken machine is the most
+	// expensive thing this fleet does.
+	if haveBatches {
+		fmt.Fprintln(out, batches.swarmLine())
+		faults := bounded.Capped(out, in.Max, "STATUS", "fault", "--max 0 to show every reason")
+		for _, f := range batches.faults {
+			faults.Line(fmt.Sprintf("STATUS FAULT reason=%s count=%d", oneline.Field(f.reason), f.n))
+		}
+		faults.More()
+		if len(batches.faults) > 0 && batches.faults[0].n >= pitStopAt {
+			fmt.Fprintf(out, "STATUS PIT-STOP reason=%s count=%d remedy=fix the machinery before more cards\n",
+				oneline.Field(batches.faults[0].reason), batches.faults[0].n)
+		}
+	}
 
 	starved := false
 	for _, store := range splitList(in.SlotsStores) {
@@ -424,24 +455,47 @@ func readGh(repo string, timeout time.Duration) ([]ghPR, []ghIssueStatus) {
 	}
 	var prs []ghPR
 	var issues []ghIssueStatus
-	if out := runGh(timeout, "pr", "list", "-R", repo, "--state", "all", "--json", "number,title,createdAt,mergedAt"); out != "" {
+	// --limit is not optional. gh's own default is THIRTY, so a fleet that merges more than
+	// that in the window reads as a fleet that merged thirty, every tick, for the rest of
+	// the day -- a flat line that looks like a steady rate rather than a missing one. The
+	// page said 30 where the script said 273, and that is what the adoption attempt found.
+	if out := runGh(timeout, "pr", "list", "-R", repo, "--state", "all", "--limit", ghLimit, "--json", "number,title,createdAt,mergedAt"); out != "" {
 		_ = json.Unmarshal([]byte(out), &prs)
 	}
-	if out := runGh(timeout, "issue", "list", "-R", repo, "--state", "all", "--json", "number,title,createdAt,closedAt"); out != "" {
+	if out := runGh(timeout, "issue", "list", "-R", repo, "--state", "all", "--limit", ghLimit, "--json", "number,title,createdAt,closedAt"); out != "" {
 		_ = json.Unmarshal([]byte(out), &issues)
 	}
 	return prs, issues
 }
 
 func runGh(timeout time.Duration, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runGhEnv(timeout, nil, args...)
+}
+
+// runGhEnv is runGh with the child's environment named. nil is the caller's own, which is
+// what every verb but `status --html` wants; --gh-config is the one place a caller says
+// which forge identity gh should answer as.
+func runGhEnv(timeout time.Duration, env []string, args ...string) string {
+	ctx, cancel := contextWithTimeout(timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	if env != nil {
+		cmd.Env = env
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// contextWithTimeout bounds a child, treating a missing bound as the fleet default rather
+// than as no bound at all: an unbounded child is how a one-minute page becomes a hang.
+func contextWithTimeout(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = fleetDefaultTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 func prsOpenedMerged(prs []ghPR, start, end time.Time) (opened, merged int) {

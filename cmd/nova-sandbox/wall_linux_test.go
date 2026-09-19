@@ -25,6 +25,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
@@ -47,7 +48,9 @@ func walledTool(t *testing.T) string {
 			return
 		}
 		builtTool = filepath.Join(dir, "nova-sandbox")
-		out, err := exec.Command("go", "build", "-o", builtTool, ".").CombinedOutput()
+		build := exec.Command("go", "build", "-o", builtTool, ".")
+		build.Env = goenv.Clean(os.Environ())
+		out, err := build.CombinedOutput()
 		if err != nil {
 			buildErr = fmt.Errorf("go build: %v: %s", err, out)
 		}
@@ -320,4 +323,35 @@ func fieldOf(line, key string) string {
 		rest = rest[:j]
 	}
 	return rest
+}
+
+// THE NO-EXEC READ SET ON A REAL KERNEL. landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR, so `--read` grants execution of everything under a root and
+// a module cache granted that way is a place a card can run code from. `--read-noexec`
+// drops fsExecute, and this is the measurement: the same script is readable and is NOT
+// executable, with a control proving it runs under `--read` on this same machine.
+func TestLandlockReadNoExecReadsAndRefusesToExecute(t *testing.T) {
+	needLandlock(t)
+	j := newJob(t)
+	cache := filepath.Join(j.base, "cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(cache, "x.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := j.wall(t, "cat "+script, "--read-noexec", cache)
+	if code != 0 || !strings.Contains(out, "echo ran") {
+		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "read-noexec=1") {
+		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	}
+	if code, _, _ := j.wall(t, script, "--read-noexec", cache); code == 0 {
+		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	}
+	if code, _, errOut := j.wall(t, script, "--read", cache); code != 0 {
+		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
+	}
 }

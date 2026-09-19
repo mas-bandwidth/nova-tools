@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE CONTRACT TESTS. Every one of them runs against the FAKE HARNESS binary on PATH,
@@ -87,10 +89,23 @@ func newBench(t *testing.T) *bench {
 	return b
 }
 
-// builtBinaries builds nova-swarm and the fake harness once, and hands every bench the
-// same two files: the tool's own path, and a PATH whose first entry holds the fake harness.
+// builtBinaries hands every bench the two files the package builds once: the tool's own
+// path, and a PATH whose first entry holds the fake harness. The build itself happens in
+// buildShared, which TestMain runs before any test, so no test's own elapsed time carries
+// the compile (the studio bench charged it to TestBenchProbeOK).
 func builtBinaries(t *testing.T) (string, string) {
 	t.Helper()
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
+	}
+	return builtTool, builtPath
+}
+
+// buildShared builds every binary and fixture the whole package shares: the two nova-swarm
+// builds, the fake harness, the fake sqlite3, the real sandbox and its stand-in, and a
+// PATH directory naming the stand-in `nova-sandbox`. It runs once, from TestMain, so the
+// compile is charged to the package and never to whichever test happens to ask first.
+func buildShared() error {
 	buildOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "nova-swarm-binaries")
 		if err != nil {
@@ -98,27 +113,28 @@ func builtBinaries(t *testing.T) (string, string) {
 			return
 		}
 		builtDir = dir
-		builtTool, buildErr = build(t, dir, "nova-swarm", "./cmd/nova-swarm")
+		builtTool, buildErr = build(dir, "nova-swarm", "./cmd/nova-swarm")
 		if buildErr != nil {
 			return
 		}
 		// THE TAGGED BUILD. The same binary with -tags swarmtest, which is the only build
 		// that honours the NOVA_SWARM_* injection variables. The recovery tests that plant
 		// a kill or a pause run this one; every other test runs the release build above.
-		if builtTaggedTool, buildErr = buildTagged(t, dir, "nova-swarm-swarmtest", "./cmd/nova-swarm"); buildErr != nil {
+		if builtTaggedTool, buildErr = buildTagged(dir, "nova-swarm-swarmtest", "./cmd/nova-swarm"); buildErr != nil {
 			return
 		}
 		harnessDir := filepath.Join(dir, "bin")
 		if buildErr = os.MkdirAll(harnessDir, 0o755); buildErr != nil {
 			return
 		}
-		if _, buildErr = build(t, harnessDir, "fake-harness", "./cmd/nova-swarm/testdata/fakeharness"); buildErr != nil {
+		builtHarness, buildErr = build(harnessDir, "fake-harness", "./cmd/nova-swarm/testdata/fakeharness")
+		if buildErr != nil {
 			return
 		}
 		// The one program the usage source runs. It is a stand-in, on the same PATH as the
 		// fake harness, so the dispatcher reads a database end to end with no sqlite3 of
 		// the machine's and no provider (SPEC-SWARM rule 12).
-		if _, buildErr = build(t, harnessDir, "sqlite3", "./internal/swarm/testdata/fakesqlite"); buildErr != nil {
+		if _, buildErr = build(harnessDir, "sqlite3", "./internal/swarm/testdata/fakesqlite"); buildErr != nil {
 			return
 		}
 		// THE WALL AND THE STAND-IN. nova-sandbox is the binary every job now runs inside
@@ -126,18 +142,27 @@ func builtBinaries(t *testing.T) (string, string) {
 		// depends on what is installed on the machine. The fake beside it records the argv
 		// the dispatcher built and enforces nothing, which is how the seam is tested on a
 		// platform whose sandbox body is not built.
-		if builtSandbox, buildErr = build(t, harnessDir, "nova-sandbox", "./cmd/nova-sandbox"); buildErr != nil {
+		if builtSandbox, buildErr = build(harnessDir, "nova-sandbox", "./cmd/nova-sandbox"); buildErr != nil {
 			return
 		}
-		if builtFakeSandbox, buildErr = build(t, harnessDir, "fake-sandbox", "./cmd/nova-swarm/testdata/fakesandbox"); buildErr != nil {
+		if builtFakeSandbox, buildErr = build(harnessDir, "fake-sandbox", "./cmd/nova-swarm/testdata/fakesandbox"); buildErr != nil {
 			return
 		}
+		// THE STAND-IN ON PATH. nativeSandboxOnPath resolves `nova-sandbox` through PATH
+		// rather than a --sandbox flag, and the real sandbox of the build above already
+		// owns that name in harnessDir; a link under its own name in a second directory
+		// keeps both without a per-test compile.
+		pathBin := filepath.Join(dir, "pathbin")
+		if buildErr = os.MkdirAll(pathBin, 0o755); buildErr != nil {
+			return
+		}
+		if buildErr = linkExecutable(builtFakeSandbox, filepath.Join(pathBin, "nova-sandbox"+exeSuffix())); buildErr != nil {
+			return
+		}
+		builtPathBin = pathBin
 		builtPath = harnessDir + string(os.PathListSeparator) + os.Getenv("PATH")
 	})
-	if buildErr != nil {
-		t.Fatalf("building the binaries these tests run: %v", buildErr)
-	}
-	return builtTool, builtPath
+	return buildErr
 }
 
 var (
@@ -146,15 +171,21 @@ var (
 	builtTool        string
 	builtTaggedTool  string
 	builtPath        string
+	builtPathBin     string
+	builtHarness     string
 	builtSandbox     string
 	builtFakeSandbox string
 	buildErr         error
 )
 
-// TestMain removes the one directory these tests keep outside a t.TempDir(): the two
-// binaries every bench runs, which cannot live in any single test's own directory because
-// every test shares them.
+// TestMain builds the one set of binaries the whole package shares before any test runs,
+// and removes the one directory they live in after the last. The compile is charged here
+// and never to whichever test asks first.
 func TestMain(m *testing.M) {
+	if err := buildShared(); err != nil {
+		fmt.Fprintf(os.Stderr, "building the binaries these tests run: %v\n", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if builtDir != "" {
 		_ = os.RemoveAll(builtDir)
@@ -162,18 +193,34 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func build(t *testing.T, into, name, pkg string) (string, error) {
-	return buildWith(t, into, name, pkg)
+// exeSuffix is the name a Windows binary carries and a unix one does not.
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
+// linkExecutable places src under name in the same tree. A hard link needs no privilege and
+// leaves one inode; a symlink is the fallback where the filesystem refuses a link.
+func linkExecutable(src, name string) error {
+	if err := os.Link(src, name); err == nil {
+		return nil
+	}
+	return os.Symlink(src, name)
+}
+
+func build(into, name, pkg string) (string, error) {
+	return buildWith(into, name, pkg)
 }
 
 // buildTagged builds with -tags swarmtest, the build whose injection functions read the
 // NOVA_SWARM_* environment variables. It is the binary the recovery tests run.
-func buildTagged(t *testing.T, into, name, pkg string) (string, error) {
-	return buildWith(t, into, name, pkg, "swarmtest")
+func buildTagged(into, name, pkg string) (string, error) {
+	return buildWith(into, name, pkg, "swarmtest")
 }
 
-func buildWith(t *testing.T, into, name, pkg string, tags ...string) (string, error) {
-	t.Helper()
+func buildWith(into, name, pkg string, tags ...string) (string, error) {
 	bin := filepath.Join(into, name)
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
@@ -183,8 +230,13 @@ func buildWith(t *testing.T, into, name, pkg string, tags ...string) (string, er
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}
 	args = append(args, pkg)
+	root, err := repoRootPath()
+	if err != nil {
+		return "", err
+	}
 	cmd := exec.Command("go", args...)
-	cmd.Dir = repoRoot(t)
+	cmd.Dir = root
+	cmd.Env = goenv.Clean(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("building %s: %v\n%s", pkg, err, out)
 	}
@@ -193,11 +245,16 @@ func buildWith(t *testing.T, into, name, pkg string, tags ...string) (string, er
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := repoRootPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// repoRootPath is the repository root from the package directory every test runs in.
+func repoRootPath() (string, error) {
+	return filepath.Abs(filepath.Join("..", ".."))
 }
 
 func write(t *testing.T, path, body string) {
@@ -2021,4 +2078,15 @@ func TestSupervisorLogAppendsNeverTruncates(t *testing.T) {
 	if at >= 0 && after < at {
 		t.Errorf("the harness's line landed before the bytes that were there first; the log is out of order:\n%s", got)
 	}
+}
+
+// triage accepts --usage and exits 0.
+func TestTriageAcceptsUsageFlag(t *testing.T) {
+	b := newBench(t)
+	usageFile := filepath.Join(t.TempDir(), "usage.tsv")
+	exit, stdout, stderr := b.swarm("triage", "--pool", b.pool, "--usage", usageFile)
+	if exit != 0 {
+		t.Fatalf("triage with --usage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage", stdout, "TRIAGE BATCH ")
 }

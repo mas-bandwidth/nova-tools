@@ -460,11 +460,12 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		}
 		mustContain(t, "stdout", stdout, "RUN QUARANTINE slot=1 id="+taskID+": the leader is dead and a process in its group is alive")
 
-		// Clean up surviving harness
+		// Clean up the surviving harness, whether the assertions above passed or not: the
+		// supervisor killed itself and its runner, but the harness it had already released
+		// (FAKE-SLEEP 15) outlives them both and must not outlive this test.
 		p := mustOpenPool(t, b.pool)
-		sf, _ := p.ReadSlot(1)
-		if sf.JobPgid > 0 {
-			swarm.Reap(sf.JobPgid, sf.JobStarted, 0)
+		if sf, err := p.ReadSlot(1); err == nil && sf.JobPgid > 0 {
+			t.Cleanup(func() { swarm.Reap(sf.JobPgid, sf.JobStarted, 0) })
 		}
 	})
 
@@ -473,9 +474,42 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b := newBench(t)
 		b.inject()
 		taskID := b.add("task between exit and exit.json\nFAKE-FINDINGS 0\n")
+		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=between-exit-and-exit-json"}
 		b.run()
 		b.extraEnv = nil
+
+		// THE FIRST RUN RETURNING IS NOT THE BOUNDARY, and assuming it was is what made this
+		// subtest flaky under load: it failed once on space with the package's parallel tests
+		// squeezed onto one core, and passed alone every time. This kill point kills its
+		// PARENT first -- the dispatcher that b.run() is waiting on -- and only then itself
+		// (killpoint_unix.go), so b.run() returns while the supervisor is still runnable and
+		// nothing but the scheduler decides when it dies. Measured on hulk with the package
+		// squeezed onto one core: in 9 runs of 12 the supervisor was STILL ALIVE at the
+		// moment the first run returned. On an idle box it died during the second
+		// dispatcher's own start-up, which is the only reason this ever passed.
+		//
+		// A supervisor that outlives that moment is a DIFFERENT answer from Pool.Decide: a
+		// live pid with a matching start stamp is an adopt, and a live member of the job's
+		// group is a quarantine. Neither prints `RUN RECLAIM ... end=unknown`, which is
+		// exactly the red that was seen.
+		//
+		// So the second dispatcher runs on OBSERVABLES: the supervisor pid is gone, the group
+		// it led is gone, and exit.json was never published. Those three ARE the transaction
+		// boundary this subtest is about -- the supervisor died between the harness's exit and
+		// the rename that would have published its evidence -- so the state is established
+		// rather than waited out, and the assertion below is on the decision, not the clock.
+		supPID := readSupervisorPID(t, jobDir)
+		noteSupervisor(t, supPID)
+		sf, err := mustOpenPool(t, b.pool).ReadSlot(1)
+		if err != nil {
+			t.Fatalf("could not read slot 1: %v", err)
+		}
+		waitGone(t, supPID)
+		waitGroupGone(t, sf.JobPgid, sf.JobStarted, "the job group of the supervisor killed between exit and exit.json")
+		if _, err := os.Stat(filepath.Join(jobDir, "exit.json")); err == nil {
+			t.Fatalf("exit.json exists: the supervisor was killed AFTER the transaction it was meant to die inside")
+		}
 
 		exit, stdout, _ := b.run()
 		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unknown dest=failed usage=")
@@ -556,15 +590,8 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b.run()
 		b.extraEnv = nil
 
-		// Read supervisor PID
-		rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
-		if err != nil {
-			t.Fatalf("could not read supervisor.pid: %v", err)
-		}
-		supPID, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
-		if err != nil {
-			t.Fatalf("bad supervisor pid: %v", err)
-		}
+		supPID := readSupervisorPID(t, jobDir)
+		noteSupervisor(t, supPID)
 
 		// Second run on pool with --workers 1 and a pending task finds the reserved slot
 		pendingID := b.add("second pending task\nFAKE-FINDINGS 0\n")
@@ -662,28 +689,25 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b.run()
 		b.extraEnv = nil
 
-		rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
-		if err != nil {
-			t.Fatalf("could not read supervisor.pid: %v", err)
-		}
-		supPID, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
-		if err != nil {
-			t.Fatalf("bad supervisor pid: %v", err)
-		}
+		supPID := readSupervisorPID(t, jobDir)
+		noteSupervisor(t, supPID)
 		if _, err := os.Stat(mark); err != nil {
 			t.Fatalf("the supervisor never reached its pause point, so no hangup was staged: %v", err)
 		}
 
-		// The kernel's SIGHUP and SIGCONT have already been delivered. The supervisor is
-		// alive because it ignored the first, and running because of the second: it
-		// identifies, finds the reservation it was handed unchanged, and runs the job. The
-		// evidence that it survived the hangup is that the launch transaction completed.
+		// The kernel's SIGHUP and SIGCONT are delivered asynchronously, and the moment they
+		// land is the scheduler's, not the test's: a dispatcher run the instant the runner
+		// died reads the slot still `reserved` and quarantines it (exit 1), which is the
+		// weather this test used to be. The supervisor ignored the hangup and is resumed by
+		// the SIGCONT that comes with it; it identifies, finds the reservation unchanged,
+		// and runs the job. So the OBSERVABLE of "the hangup did not cost the
+		// acknowledgement" is the completion evidence itself, exit.json, and the second
+		// dispatcher runs only once that file says the launch transaction finished.
+		waitForFile(t, filepath.Join(jobDir, "exit.json"),
+			fmt.Sprintf("the hangup ended supervisor %d before its acknowledgement", supPID))
 		exit, stdout, stderr := b.run("--workers", "1")
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-		}
-		if _, err := os.Stat(filepath.Join(jobDir, "exit.json")); err != nil {
-			t.Fatalf("the hangup ended supervisor %d before its evidence: no exit.json and no aborted.json: %v", supPID, err)
 		}
 	})
 
@@ -707,6 +731,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 			t.Fatal(err)
 		}
 		supPID, _ := strconv.Atoi(strings.TrimSpace(string(rawPid)))
+		noteSupervisor(t, supPID)
 
 		// Resume supervisor with killpoint between-aborted-and-exit
 		// (The supervisor already inherited NOVA_SWARM_KILLPOINT=between-aborted-and-exit if set in env,
@@ -725,6 +750,12 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched dest=- usage=-")
 		mustContain(t, "stdout", stdout, "RUN START id="+taskID)
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
+	})
+
+	// (11) no supervisor outlives its subtest: every subtest that forked one reaps it in
+	// t.Cleanup, and this is the proof.
+	t.Run("no-supervisor-survives", func(t *testing.T) {
+		assertNoSurvivingSupervisor(t)
 	})
 }
 
@@ -784,6 +815,41 @@ func waitGone(t *testing.T, pid int) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("supervisor %d was still alive 30s after its SIGCONT", pid)
+}
+
+// waitGroupGone waits for a process GROUP to be gone, and it has a deadline. It is the
+// second half of "the launch transaction is over": a supervisor's pid can be gone while a
+// member of the job's group is still draining, and Pool.Decide reads that survivor as a
+// quarantine rather than the reclaim the caller is about to assert. A pgid of zero is a
+// group that was never recorded, which is nothing to wait for.
+func waitGroupGone(t *testing.T, pgid int, started, what string) {
+	t.Helper()
+	if pgid <= 0 {
+		return
+	}
+	bound := testWaitBound()
+	for waited := time.Duration(0); waited < bound; waited += 5 * time.Millisecond {
+		if !swarm.GroupAlive(pgid, started) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s: process group %d was still alive after %s", what, pgid, bound)
+}
+
+// readSupervisorPID reads the pid the dispatcher wrote before its handshake. Every subtest
+// that needs to wait on a supervisor it did not fork starts here.
+func readSupervisorPID(t *testing.T, jobDir string) int {
+	t.Helper()
+	rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
+	if err != nil {
+		t.Fatalf("could not read supervisor.pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
+	if err != nil {
+		t.Fatalf("bad supervisor pid: %v", err)
+	}
+	return pid
 }
 
 // waitStopped waits for a process to actually be stopped, and it has a deadline. `ps` is
@@ -869,4 +935,83 @@ func adoptAndNote(t *testing.T, b *bench, taskID string) (int, string, string) {
 		t.Fatalf("the note that lets the adopted job finish: %v", noteErr)
 	}
 	return exit, stdout, stderr
+}
+
+// waitForFile waits for a file this test's owns to appear, and gives up on its own. It is
+// a wait on an OBSERVABLE -- the durable evidence the launch transaction owes -- and never
+// a sleep racing a process: the second dispatcher below runs only once the file says the
+// transaction finished, however long the kernel's hangup takes to resolve. The 30s bound is
+// a safety net for a supervisor that never recovers; the assertion is on the file, not the
+// elapsed time.
+func waitForFile(t *testing.T, path, what string) {
+	t.Helper()
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s: %s never appeared", what, path)
+}
+
+// waitForSlotLaunched waits for a supervisor to write its identity into its slot file. It is
+// the observable that replaces the wall-clock sleep the after-spawn subtest used to race the
+// supervisor's start-up; a dispatcher that adopts only runs a launch the slot file says
+// reached `launched`.
+func waitForSlotLaunched(t *testing.T, p *swarm.Pool, slot int) {
+	t.Helper()
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		if sf, err := p.ReadSlot(slot); err == nil && sf.State == swarm.SlotLaunched {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("slot %d never reached launched", slot)
+}
+
+// THE SUPERVISORS THESE TESTS FORK ARE STOPPED OR ORPHANED ON PURPOSE, and a subtest that
+// dies before it resumes or reaps its own leaves that stop behind forever: a supervisor
+// paused at before-identify that nobody ever SIGCONT'd is the six `supervise` processes
+// that were alive on Space for 14 hours. Every subtest that reads a supervisor's pid hands
+// it here; t.Cleanup reaps it whether the subtest passed or failed, and the final subtest
+// proves none survived.
+var (
+	spawnedSupsMu sync.Mutex
+	spawnedSups   = map[int]bool{}
+)
+
+// noteSupervisor records a forked supervisor so the subtest's cleanup reaps it and the
+// test's end can prove none survived it.
+func noteSupervisor(t *testing.T, pid int) {
+	t.Helper()
+	spawnedSupsMu.Lock()
+	spawnedSups[pid] = true
+	spawnedSupsMu.Unlock()
+	t.Cleanup(func() {
+		// A SIGSTOP'd process cannot die, only be resumed; SIGCONT first, then kill the
+		// group the supervisor leads (ownGroup made it its own process-group leader).
+		_ = syscall.Kill(pid, syscall.SIGCONT)
+		swarm.KillGroup(pid, "")
+	})
+}
+
+// assertNoSurvivingSupervisor is the end-of-test proof: nothing these subtests forked is
+// still alive after its own t.Cleanup ran. It asks the kernel about each pid the test noted
+// -- never a scanned process table -- and waits only the bound a SIGKILL needs to land.
+func assertNoSurvivingSupervisor(t *testing.T) {
+	t.Helper()
+	spawnedSupsMu.Lock()
+	pids := make([]int, 0, len(spawnedSups))
+	for pid := range spawnedSups {
+		pids = append(pids, pid)
+	}
+	spawnedSupsMu.Unlock()
+	for _, pid := range pids {
+		for waited := time.Duration(0); waited < 30*time.Second && processIsAlive(pid); waited += 5 * time.Millisecond {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if processIsAlive(pid) {
+			t.Errorf("a supervisor (pid %d) survived the subtest that forked it", pid)
+		}
+	}
 }

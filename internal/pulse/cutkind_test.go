@@ -94,6 +94,31 @@ func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
 	}
 }
 
+// cut-kind-rebase: the rebase card's line 1 is the contract the harvest matches, and its
+// steps carry the branch the worker checks out and the base it rebases onto.
+func TestCutKindRebaseNamesTheBranchAndTheBase(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "rebase", Repo: "mas-bandwidth/nova-tools", PR: 1142,
+		Branch: "rowan/impl-merge-rebase", Base: "dev",
+		Title: "the rebase cutter", Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	want := "RESULT: CARD-1 nova-tools PR #1142 rebased onto dev with its conflicts resolved and its tests green: the rebase cutter"
+	if got := strings.SplitN(card, "\n", 2)[0]; got != want {
+		t.Errorf("line 1 = %q\nwant      %q", got, want)
+	}
+	if !strings.Contains(card, "git fetch -q origin dev rowan/impl-merge-rebase") || !strings.Contains(card, "git rebase origin/dev") {
+		t.Errorf("the rebase steps do not fetch the base and the branch and rebase onto the base:\n%s", card)
+	}
+	if !strings.Contains(line, "kind=rebase") {
+		t.Errorf("the one line = %q", line)
+	}
+}
+
 // replay and spec cards are cut from the same numberer and carry their own shapes.
 func TestCutKindReplayAndSpec(t *testing.T) {
 	dir := t.TempDir()
@@ -129,6 +154,8 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		{"fix without a title", CutKindInput{Kind: "fix", Repo: "o/n", Issue: 1, Out: dir, Queue: dir}, "--title"},
 		{"no repo", CutKindInput{Kind: "read", PR: 1, Head: "h", Out: dir, Queue: dir}, "--repo"},
 		{"no queue", CutKindInput{Kind: "read", Repo: "o/n", PR: 1, Head: "h", Out: dir}, "--queue"},
+		{"rebase without a branch", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Base: "dev", Title: "t", Out: dir, Queue: dir}, "--branch"},
+		{"rebase without a base", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Branch: "rowan/x", Title: "t", Out: dir, Queue: dir}, "--base"},
 	} {
 		var out, errs bytes.Buffer
 		in := c.in
@@ -139,5 +166,38 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		if !strings.Contains(errs.String(), "CUT REFUSED") || !strings.Contains(errs.String(), c.want) || !strings.Contains(errs.String(), "(") {
 			t.Errorf("%s: refusal = %q, want CUT REFUSED naming %s and a remedy", c.name, errs.String(), c.want)
 		}
+	}
+}
+
+// cut writes queue/lanes/{red,green,small,next}/ (docs/SPEC-JOBS.md section 5):
+// all four directories are visible, a fix lands in red and a small,
+// already-approved read lands in green.
+func TestCutKindWritesPriorityLanes(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+	code, _, errs, _ := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 601, Title: "the lanes exist",
+		Out: filepath.Join(dir, "a"), Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("fix exit = %d, stderr=%s", code, errs)
+	}
+	for _, lane := range []string{"red", "green", "small", "next"} {
+		if st, err := os.Stat(filepath.Join(queue, "lanes", lane)); err != nil || !st.IsDir() {
+			t.Fatalf("cut did not write queue/lanes/%s/: %v", lane, err)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "red", "*.card")); len(matches) != 1 {
+		t.Fatalf("a fix card is not in the red lane: %v", matches)
+	}
+	code, _, errs, _ = cutKind(t, CutKindInput{
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456", Title: "an approved read",
+		Out: filepath.Join(dir, "b"), Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("read exit = %d, stderr=%s", code, errs)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "green", "*.card")); len(matches) != 1 {
+		t.Fatalf("a read card is not in the green lane: %v", matches)
 	}
 }

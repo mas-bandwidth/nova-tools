@@ -43,13 +43,24 @@ var mergeAudit = audit.Config{
 		"verbs.go|cmdAdd|yn":                                            "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
 		"pass.go|discoverDefault|verb":                                  "the verb's own name, the literals \"RUN\" and \"STATUS\" at its three call sites in pass.go",
+		"classify.go|classifyPacketEntry|line":                          "the decision renderer decide.Line has already rendered every name and value through oneline.Field; escaping it again would turn its \\x3d escapes into literal backslashes",
+		"classify.go|classifyPacketEntry|mergePacketEvidence(e)":        "pr#<n> is digits, and branch#<name> renders the name through oneline.Field inside mergePacketEvidence",
+		// The two batch sites are the shape this walk cannot see: a value built above the
+		// print site. Each has a behavioral test of its own in batch_test.go.
+		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same six fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
+		"batch.go|runBatch|line":        "the six fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
+		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"buildinfo.Line"},
+	//
+	// classifyLine is `classify`'s whole line: every value from outside -- the kind,
+	// rerun, park and the raw answer -- is rendered through oneline.Field inside it, and
+	// the rest are the numeric run id, pull request, confidence and floor.
+	Escapers: []string{"buildinfo.Line", "classifyLine"},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
@@ -58,17 +69,72 @@ var mergeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`,
 		`"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
+		// context, os/exec and syscall are simulate's: it runs each check as a child
+		// under a deadline, in its own process group, and none of them writes to a
+		// stream this package prints -- the child's output is captured and rendered
+		// through oneline.Escape before it reaches a line.
+		`"context"`, `"os/exec"`, `"syscall"`,
 		// net/url holds no writer of its own: Parse and String are pure string transforms,
 		// and the one use here strips a URL's userinfo so a token is never printed; the
 		// result is rendered through oneline.Field at its print site.
 		`"net/url"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		// goenv holds no writer of its own: Clean is a pure transform over a slice of
+		// environment strings -- it drops GOFLAGS and the rest of its documented list
+		// and returns what is left -- and it prints nothing. simulate hands its result
+		// to each check's Env so that a caller's GOFLAGS cannot reshape the output
+		// SIMULATE POISON quotes.
+		`"github.com/mas-bandwidth/nova-tools/internal/goenv"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
 		// safepath holds no writer of its own: RemoveUnder only decides whether a path
 		// may be removed and returns an os error, which every caller renders through
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
 		// escape.
+		// safepath removes the scratch worktree this verb computed; it holds no writer.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// context carries no writer: it is the deadline the typed-decision call runs under
+		// (context.Background in classify.go, and decide.Client applies its own 10 s
+		// timeout), the deadline simulate runs each check under, and react.go's CancelFunc
+		// plumbing. It prints nothing. It is already named with simulate's imports above.
+		//
+		// internal/decide is the typed-decision route, used by both classifications here:
+		// it builds one JSON request and parses the answers, and it never prints. Its one
+		// line comes back through decide.Line, whose every field is escaped, and
+		// classify_run.go's own line through classifyLine, an escaper above.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// bytes is a Buffer and not a stream: CutKind's one line is captured into it and
+		// parsed for the card's name, never handed to stdout as it stands.
+		`"bytes"`,
+		// pulse's cut kind writes a card FILE and prints its one line into the Buffer
+		// above; its stderr is this binary's own stderr, so no line of its reaches the
+		// one line this verb prints.
+		`"github.com/mas-bandwidth/nova-tools/internal/pulse"`,
+		// react.go's redis client edge writes nothing itself; it is read through its own
+		// API and this package prints only the escaped lines below, so it cannot write
+		// past oneline.
+		`"github.com/redis/go-redis/v9"`,
+		// react.go publishes and reads through internal/ci, whose values are rendered
+		// through oneline before this package prints them.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
+		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
+		// Parse decodes newline-delimited JSON into structs and returns them, and the
+		// package and test names it returns reach a line through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
+		// regexp holds no writer of its own: batch.go uses it to read a go.mod's `go`
+		// directive, the version `go version` printed, and the `go: downloading ...`
+		// notices it drops off the front of a failing step's output. Match and
+		// FindStringSubmatch are pure reads that return strings, and every one of them
+		// reaches a line through oneline.Escape or oneline.Field.
+		// sync holds no writer of its own: react.go's one use is a sync.Once that installs
+		// go-redis's logger once for the process (#1609), and quietRedis drops every line
+		// it is handed rather than writing one. It cannot write past the escape.
+		`"sync"`,
+		`"regexp"`,
+		// sort holds no writer of its own: queue.go uses it to put `queue status`'s
+		// skipped set in one deterministic order, so two reads of one file print the
+		// same lines. It returns nothing and prints nothing.
+		`"sort"`,
 	},
 	MinClassified: 60,
 }

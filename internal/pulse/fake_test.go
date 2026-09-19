@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // The fakes every test in this package puts in front of PATH.
@@ -46,7 +48,7 @@ type fakeSpec struct {
 // fakeTools are the names the shared bin directory answers to: every program nova-pulse
 // starts. A name with no spec in the test's directory exits 97 and says so, which is how a
 // test proves the fake ran and the real tool did not.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge", "systemctl"}
 
 var (
 	fakeRoot    string // the one directory outside t.TempDir(), owned by TestMain
@@ -81,6 +83,7 @@ func fakeBins(t *testing.T) string {
 			return
 		}
 		cmd := exec.Command("go", "build", "-o", build, "./testdata/fakebin")
+		cmd.Env = goenv.Clean(os.Environ())
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBinErr = fmt.Errorf("building the fake: %v\n%s", err, raw)
 			return

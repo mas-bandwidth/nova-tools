@@ -130,56 +130,106 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 	}
 }
 
-// (c) The README's `### First run` transcript, checked against the tool: every
-// transcript line must match a line the tool actually printed, by event prefix
-// and field names in order. The sentences quoted in it are the fixture's own
-// and are not compared — the tail after ": " is a run's business.
-func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+// (c) The `### First run` transcript of docs/TESTS.md is EXECUTED: every
+// documented command is run and its whole output is compared with the block
+// written under it -- same number of lines, same lines, same order.
+//
+// WHAT THIS REPLACES, AND WHY. The old test collected the SHAPES the command
+// printed into a `printed map[string]bool` and asked whether each documented
+// line was in it. A line the document DROPPED removed a lookup rather than an
+// assertion, so the second block -- which passes two files and quoted only the
+// first file's lines -- passed while showing TWO of the seven lines the tool
+// prints. That is issue #1639, found by the 2026-09-19 dogfood rerun on hulk,
+// reproduced on space and again here on the Studio, and it was invisible to the
+// test that claimed to check it.
+//
+// TWO STREAMS, AND THAT IS THE OTHER HALF OF #1639. The findings go to standard
+// error and the protocol lines to standard output, and the order a terminal
+// interleaves them in is NOT the same twice: the last finding arrived after the
+// NOTE line on one bench and before it on another (#1549). So the block is
+// written to #1570's convention -- a line opening `! ` is standard error --
+// and the two streams are compared apart: standard output whole, standard error
+// for the lines shown, in order. Reading this block as one stream cannot be
+// made to pass, and should not be.
+//
+// The documented paths are typed as written. `./pages` is a copy of the fixture
+// in a directory of the test's own, because the tool PRINTS THE PATH BACK on
+// every finding: a rewritten path is no longer the line the document promised,
+// which is what the old test's `localize` gave up.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	doc := transcriptDoc(t)
+	lines, err := onboarding.FirstRun(doc, "nova-self-talk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-self-talk", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("the `### First run` block runs %d commands, want 2: one file, then the rule document beside it", len(steps))
+	}
+
+	dir := t.TempDir()
+	copyDir(t, examplePages, filepath.Join(dir, "pages"))
+	t.Chdir(dir)
+
+	for _, p := range onboarding.Execute(steps, runDocumented) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments, keeping the two streams apart.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
+	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, &out, &errb)
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-self-talk reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}
+
+// transcriptDoc is docs/TESTS.md, read BEFORE the test moves into its own
+// directory.
+func transcriptDoc(t *testing.T) string {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines, err := onboarding.FirstRun(string(raw), "nova-self-talk")
+	return string(raw)
+}
+
+// copyDir copies the fixture pages to where the transcript says they are.
+func copyDir(t *testing.T, from, to string) {
+	t.Helper()
+	entries, err := os.ReadDir(from)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
-	seen := map[string]int{}
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-self-talk "); ok {
-			exit, stdout, stderr := runSelfTalk(t, localize(strings.Fields(cmd))...)
-			if exit == 2 {
-				t.Fatalf("the README command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout+"\n"+stderr, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
-			continue
-		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
-		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		if !printed[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	for prefix, want := range map[string]int{
-		// Four FAIL lines: two findings and the count line in the first transcript, one
-		// finding in the second. The count line is one of them on purpose -- it is the
-		// line that was missing on a failing run, and a README that did not show it
-		// would be teaching the shape this change exists to fix.
-		"SELFTALK FAIL": 4, "SELFTALK DATED": 1, "SELFTALK NOTE": 1, "SELFTALK RULEDOC": 1,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+	for _, e := range entries {
+		if e.IsDir() {
+			copyDir(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(from, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

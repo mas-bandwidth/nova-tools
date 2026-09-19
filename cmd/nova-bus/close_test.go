@@ -61,9 +61,15 @@ func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
 		mustContain(t, "stdout", "explicit bulk cutoff")
 }
 
-// close --before receipts every open note dated before the stamp, one receipt note per note,
-// and leaves every note at or after it open. A receipt note carries a Re line to the note it
-// closes, so the note leaves the open list; a newer note is left alone.
+// close --before receipts every open note dated before the stamp, ONE receipt note per
+// sender lane, and leaves every note at or after it open. The receipt carries a Re line per
+// note it closes, so each of them leaves the open list; a newer note is left alone.
+//
+// It was one receipt FILE per closed note until #1540, and that is what broke it: every
+// receipt in a run shares a subject, so every filename differed only by an id hashed over
+// fields two receipts also shared but for `re` -- and two notes sharing a target id
+// therefore produced one filename twice and `file exists` at the second Save. See
+// closecollision_test.go.
 func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -111,9 +117,12 @@ func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 	if strings.Contains(got, "bo-333333333333") {
 		t.Fatalf("the note after the stamp was receipted:\n%s", got)
 	}
-	if n := strings.Count(got, "closed: unanswered before 2026-09-08T00:00:00Z"); n < 2 {
-		t.Fatalf("one receipt note per old note, want 2 bodies, saw %d:\n%s", n, got)
+	// Both old notes are Bo's, so they are closed by ONE receipt naming both -- and
+	// closed= still counts the NOTES, which is what the person asked to close.
+	if names := mdFiles(t, checkout, "from-ada"); len(names) != 1 {
+		t.Fatalf("one receipt per sender lane, want 1 file, got %d: %v", len(names), names)
 	}
+	r.mustContain(t, "stdout", "CLOSE OK closed=2 kept=1 receipts=1 commit=")
 }
 
 // mdFiles lists the .md files in a lane, which is where the receipt notes close writes.

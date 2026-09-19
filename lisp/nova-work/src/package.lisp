@@ -65,6 +65,11 @@
    #:state-closed-rows
    ;; indexes: the write-maintained counters and indexes and their reconstruction
    #:reconstruct-state-index
+   #:cow-load-findings
+   #:cow-candidate-gate
+   #:cow-partition-holds-p
+   #:hand-write-closed-row
+   #:wstate-rows
    #:state-holder-index
    #:state-index-mismatches
    #:node-open-count
@@ -580,6 +585,11 @@
     #:session-server-stop
     #:serve-session-request
     #:default-session-request-handler
+    ;; the request line the CLI speaks, answered in the output grammar
+    ;; (src/request-line.lisp; SPEC-WORK.md:2642-2708)
+    #:request-line-verb
+    #:serve-request-line
+    #:session-fail-line
     #:session-identity-line
     ;; session status, stop and handoff (SPEC-WORK.md:304-308, :814-828)
     #:session-status-line
@@ -1078,6 +1088,62 @@
     #:receipt-verifier-verify
     #:verifier-result
     #:verifier-result-valid-p
+    ;; the verifier result a receipt needs, admitted by the one writer
+    ;; (src/receipt-admission.lisp, SPEC-WORK.md:3857-3868)
+    #:verifier-registry
+    #:make-verifier-registry
+    #:verifier-registry-member
+    #:verifier-registry-count
+    #:parse-verifier-line
+    #:run-verifier-command
+    #:configure-verifier
+    #:kernel-verifier
+    #:kernel-verifiers
+    #:provenance-pointer-path
+    #:read-provenance-bytes
+    #:stage-receipt
+    #:staged-input-p
+    #:receipt-submit
+    #:stage-payload-file
+    ;; `savepoint create` over the real state, journal and files
+    ;; (src/savepoint-create.lisp, SPEC-WORK.md:7109-7190)
+    #:journal-scan
+    #:journal-scan-records
+    #:journal-scan-torn-p
+    #:scan-journal-file
+    #:journal-scan-cut
+    #:journal-file-identity
+    #:savepoint-capture-submit
+    #:savepoint-directory
+    #:savepoint-manifest-path
+    #:read-savepoint-manifest
+    #:savepoint-create
+    ;; `savepoint list`, `verify` and the isolated read-only `restore`
+    ;; (src/savepoint-restore.lisp, SPEC-WORK.md:2275-2278, :7165-7171)
+    #:savepoint-report
+    #:savepoint-report-manifest
+    #:savepoint-report-revision
+    #:savepoint-report-cut
+    #:savepoint-report-gap
+    #:savepoint-published-ids
+    #:savepoint-published-p
+    #:savepoint-age-seconds
+    #:savepoint-verify-published
+    #:savepoint-list-published
+    #:savepoint-restore-published
+    #:savepoint-compare-published
+    #:restored-savepoint
+    #:restored-savepoint-p
+    #:restored-savepoint-id
+    #:restored-savepoint-state
+    #:restored-savepoint-revision
+    #:restored-savepoint-replayed
+    #:restored-savepoint-replies
+    #:restored-savepoint-ownership-taken-p
+    #:restored-savepoint-dispatched-p
+    #:restored-savepoint-messages-replayed
+    #:admitted-receipts
+    #:admitted-receipt
     #:session-written-field
     #:assignment-offer
     #:assignment-acknowledge
@@ -1920,6 +1986,25 @@
     #:fetch-resolver-fact
     #:verify-qualifies-p
     #:verify
+    ;; the needs-met predicate and its five reason tokens (nova-tools #785,
+    ;; SPEC-WORK.md:4740-4866)
+    #:needs-view
+    #:make-needs-view
+    #:needs-view-p
+    #:needs-view-session
+    #:needs-view-evidence
+    #:needs-view-generations
+    #:needs-view-responsible
+    #:needs-view-node-evidence
+    #:needs-view-node-generation
+    #:needs-view-node-responsible
+    #:needs-reason-token
+    #:need-met-p
+    #:node-needs-status
+    #:node-needs-met-p
+    #:standing-done-evidence
+    #:*need-default-generation*
+    #:state-node-ids
     ;; the kernel `decide` protocol and its one in-process fake (SPEC-DECIDE)
     #:decision
     #:make-decision
@@ -1994,7 +2079,29 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; notes (the coordinator's notes replays)
+    #:note-scope
+    #:note-author
+    #:note-date
+    #:note-source
+    #:note-kind
+    #:note-text
+    #:note-constraint
+    #:note-uncertain
+    #:note-superseded
+    #:note-did-for
+    #:make-notes-config
+    #:make-notes-store
+    #:notes-notes
+    #:note-by-id
+    #:active-note-p
+    #:notes-active
+    #:notes-active-count
+    #:notes-write
+    #:notes-supersede
+    #:check-not-weaker-kind
+    #:make-replacement-note))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

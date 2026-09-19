@@ -1,32 +1,41 @@
 package pulse
 
 // status --html is the fleet status page as a verb: it folds the old status-page.sh into
-// nova-pulse and fixes the one correctness bug while doing it. The script counted a live
-// slot from log age -- a harness-output.log under fifteen minutes old with no RESULT.md --
-// which the bench-hygiene incident showed is wrong: a card can be silently dead with a
+// nova-pulse and fixes the correctness bugs while doing it. The script counted a live slot
+// from log age -- a harness-output.log under fifteen minutes old with no RESULT.md -- which
+// the bench-hygiene incident showed is wrong: a card can be silently dead with a
 // fresh-looking log, and a long card's log is older than fifteen minutes while it is still
 // alive. Live here is the count of running card processes per bench, the authoritative
-// liveness bench-hygiene.sh's live_slot uses (a process whose command line names the job
-// dir, or whose cwd is under the slot), and the reader is injected so a test never starts
-// ssh. Both outputs are counts and numbers only: no card id, branch name or label ever
-// reaches a public page.
+// liveness bench-hygiene.sh's live_slot uses, and the readers are injected so a test never
+// starts ssh. Both outputs are counts and numbers only: no card id, branch name or label
+// ever reaches a public page.
+//
+// The second pass over this file came from an ADOPTION ATTEMPT: a non-author put the verb
+// in front of the script on the Studio and refused to install it over twelve gaps. Four
+// bench rows matching the script byte for byte is not the page, and the gaps were the whole
+// difference between a verb that renders and a verb that replaces something. Every one of
+// them is closed here, and the rule they share is the DOWN rule: a number nobody measured
+// is a DASH, never a zero.
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // BenchReading is one bench's numbers for the page: the live cards counted from running
-// card processes, and the capacity the allowed arithmetic folds.
+// card processes, the capacity the allowed arithmetic folds, and the hygiene actions the
+// same round trip counted.
 type BenchReading struct {
 	Name    string
 	Live    int
@@ -35,6 +44,45 @@ type BenchReading struct {
 	FreeGB  int
 	MemGB   int
 	Allowed int
+	Hygiene int // reaps and deletions on this bench since the window opened
+	// Down is the bench that did not answer. It is NOT a bench with nothing to do, and the
+	// difference is what the 2026-09-17 pit stop cost: a row of zeros reads as an idle
+	// bench, so a fleet nobody could see looked like a fleet with nothing to do. The page
+	// says DOWN, the metrics row writes a dash for its disk rather than a number the bench
+	// never gave, and the STATUS HTML line counts it.
+	Down bool
+	// Note says WHY, when the bench answered well enough to tell us. A bench whose home is
+	// not there answers every other question perfectly and then reports no disk, which read
+	// as "out of disk, allowed 0" on every row of a page that was otherwise right.
+	Note string
+}
+
+// SelfReading is the host running the verb, which is a bench too. The Studio drowned at
+// load 147 on 2026-09-17 and no page showed it, because the page only ever read the
+// machines it ssh'd to.
+type SelfReading struct {
+	Name      string
+	CIRunners int
+	Cores     int
+	Load      int
+	FreeGB    int
+	Orphans   int
+	Loops     []LoopCount
+	Unknown   bool // the host could not be read; it renders like a DOWN bench
+}
+
+// LoopCount is one long-running loop the caller named and how many of it are up. The
+// patterns come from --loop and never from a name baked into this tool: a verb carrying
+// `harvest-loop.sh` in its source would freeze the scripts it exists to retire.
+type LoopCount struct {
+	Label string
+	N     int
+}
+
+// PublishFile is one file shipped to where the page is served.
+type PublishFile struct {
+	Name string
+	Body []byte
 }
 
 // FleetReader reads every bench's numbers in file order. The production reader reads them
@@ -42,23 +90,198 @@ type BenchReading struct {
 // and disk/mem, so no test starts ssh.
 type FleetReader func(benches []FleetBench, now time.Time) []BenchReading
 
+// SelfReader reads the host the verb runs on. Injected for the same reason.
+type SelfReader func(name string, loops []string, now time.Time) SelfReading
+
+// Publisher ships the page and its series to where they are served. Injected: a test that
+// published for real would need a host.
+type Publisher func(dest string, files []PublishFile, timeout time.Duration) error
+
 // StatusHTMLInput is everything `status --html` needs, apart from flag parsing, so a test
-// can drive it against fake directories and an injected fleet reader.
+// can drive it against fake directories and injected readers.
 type StatusHTMLInput struct {
-	HTML    string // the local file to write; the verb never ships it
-	Benches string // the fleet file: name, ssh target, home, mac
-	Queue   string // the queue whose pending depth and fill log the metrics row counts
-	SSH     string // the ssh program; empty is "ssh"
-	Timeout time.Duration
-	Reader  FleetReader
-	Now     func() time.Time
-	Stdout  io.Writer
-	Stderr  io.Writer
+	HTML string // the local file to write
+	// Machines is the fleet's truth: the machines registry (internal/fleet), seven columns
+	// and roles. The benches read over ssh are its rows carrying role `bench`, and the page
+	// says which machines serve the merge group's shards, instead of leaving that to a
+	// second file nobody updates.
+	Machines string
+	// Benches is the retired four-column fleet file: name, ssh target, home, mac. It reads
+	// for one more release, and every run of it says on stderr what to pass instead.
+	Benches  string
+	Queue    string   // the queue whose depth, fill log and REPO the page reads
+	SSH      string   // the ssh program; empty is "ssh"
+	Publish  string   // host:dir to ship the page and the series to; empty ships nothing
+	GhConfig string   // GH_CONFIG_DIR for the gh children; empty leaves the caller's own
+	DayStart string   // when the merged counter resets, as HH:MMZ; empty is 02:00Z
+	Branch   string   // the branch whose merge queue and tip the page shows; empty is dev
+	Self     string   // the name of the host running the verb; empty omits the row
+	Loops    []string // label=pattern pairs counted on the self host
+	Timeout  time.Duration
+	Reader   FleetReader
+	SelfRead SelfReader
+	Ship     Publisher
+	Now      func() time.Time
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
-// StatusHTML writes the fleet page to --html and appends one seven-column metrics.tsv row
-// beside it, then prints the one STATUS HTML line. Counts only, live from running card
-// processes.
+// readFleet answers the two questions the page asks about the fleet: which machines are
+// benches to be read over ssh, and what every machine IS. The registry answers both; the
+// retired --benches file answers only the first, and says so.
+//
+// Two files that disagree about what the fleet is is how a runner host quietly becomes a
+// bench, so when both are given the registry decides and the run names the file it did not
+// read. Nothing here is silent: a flag that stops being read without a word is a page that
+// goes stale on a bench nobody was watching.
+func readFleet(in StatusHTMLInput) ([]FleetBench, []fleet.Machine, error) {
+	registry := strings.TrimSpace(in.Machines)
+	if registry == "" {
+		small, err := readFleetBenches(in.Benches)
+		if err != nil {
+			return nil, nil, fmt.Errorf("--benches %s: %s", oneline.Field(in.Benches), oneline.Err(err))
+		}
+		benches := make([]FleetBench, len(small))
+		for i, b := range small {
+			benches[i] = FleetBench{Name: b.Name, SSH: b.Target, Home: b.Home, MAC: b.Mac}
+		}
+		fmt.Fprintf(in.Stderr, "STATUS NOTE --benches %s is the retired four-column fleet file; "+
+			"the fleet's truth is the machines registry, so pass --machines queue/control/machines.tsv instead "+
+			"(--benches reads for one more release)\n", oneline.Field(in.Benches))
+		return benches, nil, nil
+	}
+	if b := strings.TrimSpace(in.Benches); b != "" {
+		fmt.Fprintf(in.Stderr, "STATUS NOTE --machines was given, so --benches %s was not read; "+
+			"the registry is the one answer to what the fleet is\n", oneline.Field(b))
+	}
+	reg, err := fleet.ReadRegistry(registry)
+	if err != nil {
+		return nil, nil, fmt.Errorf("--machines %s: %s", oneline.Field(registry), oneline.Err(err))
+	}
+	rows := reg.WithRole(fleet.RoleBench)
+	if len(rows) == 0 {
+		return nil, nil, fmt.Errorf("no machine in %s carries the role %s, so there is nowhere to read cards from; "+
+			"give a registry whose fleet has at least one bench", oneline.Field(registry), fleet.RoleBench)
+	}
+	// The registry carries no home column and needs none: with no home the liveness script
+	// uses the login home, which is the home ssh lands in anyway. The four-column file's home
+	// existed because nothing else said where a bench's work lived.
+	benches := make([]FleetBench, len(rows))
+	for i, m := range rows {
+		benches[i] = FleetBench{Name: m.Name, SSH: m.SSH}
+	}
+	return benches, reg.Machines(), nil
+}
+
+// whyItIsDown puts the registry's own note on a DOWN row. The Air is a bench WHILE UP, and a
+// DOWN row with nothing beside it reads as a broken fleet every time the laptop is shut --
+// which is a page people learn to ignore, and a page people ignore is worth nothing.
+func whyItIsDown(readings []BenchReading, machines []fleet.Machine) []BenchReading {
+	if len(machines) == 0 {
+		return readings
+	}
+	notes := map[string]string{}
+	for _, m := range machines {
+		notes[m.Name] = m.Notes
+	}
+	for i, r := range readings {
+		if !r.Down {
+			continue
+		}
+		if n := strings.TrimSpace(notes[r.Name]); n != "" {
+			readings[i].Note = strings.TrimSpace(r.Note + "; " + n) //nolint:gocritic // the ssh reason first, the registry's word after
+		}
+	}
+	return readings
+}
+
+// repoToAsk is the repo the forge rows are about: the queue's own REPO file, and failing that
+// the origin of the clone the queue sits in. A bench with an origin to ask and no REPO file
+// printed "unknown (no repo to ask)" all day, which is the dash rule turned into a dead end.
+// Nothing is guessed: no REPO and no origin is still nobody asked.
+func repoToAsk(in StatusHTMLInput) string {
+	if repo := firstLine(filepath.Join(in.Queue, "REPO")); repo != "" {
+		return repo
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitOriginTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", in.Queue, "remote", "get-url", "origin")
+	cmd.Env = ghEnv(os.Environ(), in.GhConfig)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	repo := repoFromRemote(string(out))
+	if repo == "" {
+		return ""
+	}
+	fmt.Fprintf(in.Stderr, "STATUS NOTE %s has no REPO file; the forge rows are about %s, the origin of the clone it sits in\n",
+		oneline.Field(in.Queue), oneline.Field(repo))
+	return repo
+}
+
+// gitOriginTimeout bounds the one git child this verb starts. Reading a remote is a local
+// config read; anything slower than this is a repository that is not going to answer.
+const gitOriginTimeout = 10 * time.Second
+
+// repoFromRemote reads owner/name out of a remote url, in every shape this fleet writes one:
+// git@github.com:owner/name.git, git@github-rowan:owner/name.git (the ssh alias `gh as Rowan`
+// uses), https://github.com/owner/name and ssh://git@github.com/owner/name.git.
+func repoFromRemote(url string) string {
+	s := strings.TrimSpace(url)
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimSuffix(s, ".git")
+	if _, rest, ok := strings.Cut(s, "://"); ok { // https:// and ssh://
+		s = rest
+		if _, after, cut := strings.Cut(s, "@"); cut { // ssh://git@host/owner/name
+			s = after
+		}
+		f := strings.Split(s, "/")
+		if len(f) < 3 {
+			return ""
+		}
+		return f[len(f)-2] + "/" + f[len(f)-1]
+	}
+	if _, after, ok := strings.Cut(s, ":"); ok { // git@host:owner/name
+		f := strings.Split(after, "/")
+		if len(f) < 2 {
+			return ""
+		}
+		return f[len(f)-2] + "/" + f[len(f)-1]
+	}
+	return ""
+}
+
+// defaultDayStart is when the day's merged counter resets. It is 02:00Z because
+// INSTALL-fleet.md's rate_counter resets there and the script counted from there: a page
+// that disagrees with every other instrument for two hours a day is a page nobody trusts
+// at 01:00Z.
+const defaultDayStart = "02:00Z"
+
+// defaultBranch is the branch whose merge queue and tip the page shows.
+const defaultBranch = "dev"
+
+// count is a number that may not have been measured. The whole class of bug this file has
+// been through twice -- the DOWN row, the missing REPO -- is a zero standing in for "we
+// did not ask", so an unmeasured number prints a dash and says so.
+type count struct {
+	n     int
+	known bool
+}
+
+func known(n int) count { return count{n: n, known: true} }
+
+func (c count) String() string {
+	if !c.known {
+		return "-"
+	}
+	return strconv.Itoa(c.n)
+}
+
+// StatusHTML writes the fleet page to --html, appends one seven-column metrics.tsv row
+// beside it, ships both where --publish says, and prints the one STATUS HTML line.
 func StatusHTML(in StatusHTMLInput) int {
 	if in.Now == nil {
 		in.Now = func() time.Time { return time.Now().UTC() }
@@ -66,58 +289,128 @@ func StatusHTML(in StatusHTMLInput) int {
 	if in.Timeout <= 0 {
 		in.Timeout = fleetDefaultTimeout
 	}
-	for _, r := range []struct{ v, name, wants string }{
-		{in.HTML, "html", "the local file path to write the fleet page to; the caller ships it"},
-		{in.Benches, "benches", "the fleet file: name, ssh target, home, mac one per line"},
-	} {
-		if strings.TrimSpace(r.v) == "" {
-			return refusal(in.Stderr, "STATUS", fmt.Errorf("--%s is required; it wants %s; refusing to guess", r.name, r.wants))
+	if strings.TrimSpace(in.Branch) == "" {
+		in.Branch = defaultBranch
+	}
+	if strings.TrimSpace(in.HTML) == "" {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf(
+			"--html is required; it wants the local file path to write the fleet page to; refusing to guess"))
+	}
+	if strings.TrimSpace(in.Machines) == "" && strings.TrimSpace(in.Benches) == "" {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf(
+			"--machines is required; it wants the machines registry, as in --machines queue/control/machines.tsv "+
+				"(the retired --benches file still reads for one release); refusing to guess"))
+	}
+
+	// Everything the flags can get wrong is refused BEFORE a bench is read: a minute of ssh
+	// spent on a run that cannot finish is a minute the fleet did not have.
+	dayStart := strings.TrimSpace(in.DayStart)
+	if dayStart == "" {
+		dayStart = defaultDayStart
+	}
+	resetHour, resetMin, derr := parseDayStart(dayStart)
+	if derr != nil {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf(
+			"--day-start %s: %s; it wants the UTC time the day's merged counter resets, as in --day-start 02:00Z (the rate_counter's own boundary)",
+			oneline.Field(dayStart), oneline.Err(derr)))
+	}
+	loops, lerr := parseLoops(in.Loops)
+	if lerr != nil {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf(
+			"--loop %s; it wants <label>=<pattern>, as in --loop harvest=harvest-loop, and may be repeated", oneline.Err(lerr)))
+	}
+	if len(loops) > 0 && strings.TrimSpace(in.Self) == "" {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf(
+			"--loop was given without --self; the loops are counted on the host running the verb, so name it: --self studio"))
+	}
+	if strings.TrimSpace(in.Publish) != "" {
+		if _, _, perr := splitPublish(in.Publish); perr != nil {
+			return refusal(in.Stderr, "STATUS", fmt.Errorf(
+				"--publish %s: %s; it wants <host>:<dir>, as in --publish space:status", oneline.Field(in.Publish), oneline.Err(perr)))
 		}
 	}
 
-	small, err := readFleetBenches(in.Benches)
-	if err != nil {
-		return refusal(in.Stderr, "STATUS", fmt.Errorf("--benches %s: %s", oneline.Field(in.Benches), oneline.Err(err)))
-	}
-	benches := make([]FleetBench, len(small))
-	for i, b := range small {
-		benches[i] = FleetBench{Name: b.Name, SSH: b.Target, Home: b.Home, MAC: b.Mac}
+	benches, machines, ferr := readFleet(in)
+	if ferr != nil {
+		return refusal(in.Stderr, "STATUS", ferr)
 	}
 
+	now := in.Now()
+	hourStart := now.Add(-time.Hour)
 	reader := in.Reader
 	if reader == nil {
-		reader = func(list []FleetBench, now time.Time) []BenchReading {
-			return readFleetOverSSH(list, in.SSH, in.Timeout)
+		reader = func(list []FleetBench, at time.Time) []BenchReading {
+			return readFleetOverSSH(list, in.SSH, in.Timeout, at.Add(-time.Hour))
 		}
 	}
-	now := in.Now()
-	readings := reader(benches, now)
+	// Reading the fleet is the slow step: every bench over ssh, bounded by --timeout. A
+	// verb that takes seconds says what it is doing while it takes them, in the same units
+	// the flag accepts.
+	fmt.Fprintf(in.Stderr, "STATUS reading %d benches over ssh, up to %s each\n", len(benches), in.Timeout)
+	readings := whyItIsDown(reader(benches, now), machines)
 
-	liveTotal := 0
+	liveTotal, downTotal, hygiene := 0, 0, 0
 	var freeDisk []string
 	for _, r := range readings {
+		if r.Down {
+			// A bench that did not answer contributes no live cards and no disk figure:
+			// the series must not carry a number nobody measured.
+			downTotal++
+			freeDisk = append(freeDisk, "-")
+			continue
+		}
 		liveTotal += r.Live
+		hygiene += r.Hygiene
 		freeDisk = append(freeDisk, strconv.Itoa(r.FreeGB))
+	}
+
+	var self *SelfReading
+	if name := strings.TrimSpace(in.Self); name != "" {
+		selfRead := in.SelfRead
+		if selfRead == nil {
+			selfRead = readSelf
+		}
+		fmt.Fprintf(in.Stderr, "STATUS reading the host %s\n", oneline.Field(name))
+		s := selfRead(name, in.Loops, now)
+		s.Name = name
+		self = &s
 	}
 
 	queueDepth := countCards(in.Queue, "pending")
 	ready := countCards(in.Queue, "ready")
 	launched := countFillLog(in.Queue, "attempt=")
-	refused := countFillLog(in.Queue, "REFUSED")
-	merged, opened := 0, 0
-	if repo := firstLine(filepath.Join(in.Queue, "REPO")); repo != "" {
-		prs, _ := readGh(repo, in.Timeout)
-		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		opened, _ = prsOpenedMerged(prs, now.Add(-time.Hour), now)
-		merged, _ = prsOpenedMerged(prs, dayStart, now)
+	refusedByCapacity := countFillLog(in.Queue, "REFUSED")
+
+	// The forge rows. With no REPO there is nobody to ask, and "nobody asked" is a dash --
+	// the same rule as the DOWN row, in the one line a reader uses to decide whether the
+	// day is moving.
+	page := pageData{
+		now: now, dayStart: dayStart, branch: in.Branch,
+		queueDepth: queueDepth, ready: ready, launched: launched, refused: refusedByCapacity,
+		hygiene: hygiene, readings: readings, self: self, machines: machines,
+		merged: count{}, opened: count{},
+	}
+	if repo := repoToAsk(in); repo != "" {
+		page.repo = repo
+		env := ghEnv(os.Environ(), in.GhConfig)
+		// PRs only: the page shows no issue count, so a second round trip for issues is
+		// bought for nothing. --limit is the script's 500, because gh's own default is 30
+		// and a count that caps at 30 flatlines the series for the rest of the day.
+		prs := readGhPRs(repo, in.Timeout, env)
+		dayStartAt := dayBoundary(now, resetHour, resetMin)
+		o, _ := prsOpenedMerged(prs, hourStart, now)
+		m, _ := prsOpenedMerged(prs, dayStartAt, now)
+		page.opened, page.merged = known(o), known(m)
+		page.mq, page.mqKnown = mergeQueueCounts(repo, in.Branch, in.Timeout, env)
+		page.tipSHA, page.tipRun, page.tipKnown = branchTip(repo, in.Branch, in.Timeout, env)
 	}
 
-	page := fleetPage(now, merged, opened, queueDepth, ready, launched, refused, readings)
-	if err := os.WriteFile(in.HTML, []byte(page), 0o644); err != nil {
+	body := fleetPage(page)
+	if err := os.WriteFile(in.HTML, []byte(body), 0o644); err != nil {
 		return refusal(in.Stderr, "STATUS", fmt.Errorf("could not write %s: %s", oneline.Field(in.HTML), oneline.Err(err)))
 	}
-	row := fmt.Sprintf("%s\t%d\t%d\t%d\t%d\t%d\t%s\n",
-		now.UTC().Format(time.RFC3339), liveTotal, queueDepth, merged, opened, launched, strings.Join(freeDisk, ","))
+	row := fmt.Sprintf("%s\t%d\t%d\t%s\t%s\t%d\t%s\n",
+		now.UTC().Format(time.RFC3339), liveTotal, queueDepth, page.merged, page.opened, launched, strings.Join(freeDisk, ","))
 	metrics := filepath.Join(filepath.Dir(in.HTML), "metrics.tsv")
 	f, err := os.OpenFile(metrics, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -129,32 +422,36 @@ func StatusHTML(in StatusHTMLInput) int {
 	}
 	f.Close()
 
-	fmt.Fprintf(in.Stdout, "STATUS HTML wrote=%s live=%d queue=%d\n", in.HTML, liveTotal, queueDepth)
-	return 0
-}
-
-// fleetPage renders the page: counts and bench numbers only, never a card id or branch name.
-func fleetPage(now time.Time, merged, opened, queueDepth, ready, launched, refused int, readings []BenchReading) string {
-	var b strings.Builder
-	b.WriteString("<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"60\"><title>nova fleet</title><style>")
-	b.WriteString("body{font-family:-apple-system,Helvetica,sans-serif;margin:24px;color:#222}")
-	b.WriteString("table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 10px;text-align:right}")
-	b.WriteString("th:first-child,td:first-child{text-align:left}</style></head><body>\n")
-	fmt.Fprintf(&b, "<h2>nova fleet at %s</h2>\n", now.UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "<p>Merged since 00:00Z: <b>%d</b>. PRs opened last hour: <b>%d</b>.</p>\n", merged, opened)
-	b.WriteString("<h3>queues</h3><table><tr><th>queue</th><th>depth</th><th>of which</th></tr>\n")
-	fmt.Fprintf(&b, "<tr><td>pending cards</td><td>%d</td><td>ready %d</td></tr>\n", queueDepth, ready)
-	fmt.Fprintf(&b, "<tr><td>launched by the fill loop, total</td><td>%d</td><td>refused by capacity: %d</td></tr></table>\n", launched, refused)
-	b.WriteString("<h3>slots</h3>\n")
-	b.WriteString("<table><tr><th>bench</th><th>live cards</th><th>cores</th><th>load</th><th>free disk</th><th>free mem</th><th>allowed</th></tr>\n")
-	for _, r := range readings {
-		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d GB</td><td>%d GB</td><td>%d</td></tr>\n",
-			oneline.Field(r.Name), r.Live, r.Cores, r.Load, r.FreeGB, r.MemGB, r.Allowed)
+	// Shipping is last and is loud when it fails: a page that quietly stopped shipping goes
+	// stale while everybody keeps reading it, which is the worst failure this verb has.
+	published := "-"
+	if dest := strings.TrimSpace(in.Publish); dest != "" {
+		ship := in.Ship
+		if ship == nil {
+			ship = func(d string, files []PublishFile, t time.Duration) error {
+				return publishOverSSH(in.SSH, d, files, t)
+			}
+		}
+		series, rerr := os.ReadFile(metrics)
+		if rerr != nil {
+			return refusal(in.Stderr, "STATUS", fmt.Errorf("could not read %s back to publish it: %s", oneline.Field(metrics), oneline.Err(rerr)))
+		}
+		fmt.Fprintf(in.Stderr, "STATUS publishing to %s\n", oneline.Field(dest))
+		files := []PublishFile{
+			{Name: "index.html", Body: []byte(body)},
+			{Name: "metrics.tsv", Body: series},
+		}
+		if perr := ship(dest, files, in.Timeout); perr != nil {
+			fmt.Fprintf(in.Stderr, "STATUS HTML publish failed to %s: %s; the page is written at %s and nothing was shipped\n",
+				oneline.Field(dest), oneline.Err(perr), oneline.Field(in.HTML))
+			return 3
+		}
+		published = dest
 	}
-	b.WriteString("</table>\n")
-	b.WriteString("<p>live cards are running card processes per bench. allowed = min(cores*1.5 - load, (free_gb - 25)/2, memfree_gb/2). Page rewritten every minute; refreshes itself every minute.</p>\n")
-	b.WriteString("</body></html>\n")
-	return b.String()
+
+	fmt.Fprintf(in.Stdout, "STATUS HTML wrote=%s live=%d queue=%d down=%d merged=%s published=%s\n",
+		in.HTML, liveTotal, queueDepth, downTotal, page.merged, oneline.Field(published))
+	return 0
 }
 
 // countFillLog counts the fill log's lines carrying a token; a missing log is zero.
@@ -173,15 +470,15 @@ func countFillLog(queue, token string) int {
 }
 
 // readFleetOverSSH reads the benches in parallel, each bounded by timeout, preserving file
-// order. A bench that cannot be reached reads as all zeros rather than failing the page.
-func readFleetOverSSH(benches []FleetBench, ssh string, timeout time.Duration) []BenchReading {
+// order. since is when the hygiene window opened.
+func readFleetOverSSH(benches []FleetBench, ssh string, timeout time.Duration, since time.Time) []BenchReading {
 	out := make([]BenchReading, len(benches))
 	var wg sync.WaitGroup
 	for i, b := range benches {
 		wg.Add(1)
 		go func(i int, b FleetBench) {
 			defer wg.Done()
-			out[i] = readOneBench(ssh, b, timeout)
+			out[i] = readOneBench(ssh, b, timeout, since)
 		}(i, b)
 	}
 	wg.Wait()
@@ -189,54 +486,94 @@ func readFleetOverSSH(benches []FleetBench, ssh string, timeout time.Duration) [
 }
 
 // readOneBench runs the liveness script on one bench and folds its answer.
-func readOneBench(ssh string, b FleetBench, timeout time.Duration) BenchReading {
+func readOneBench(ssh string, b FleetBench, timeout time.Duration, since time.Time) BenchReading {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := fleetSSH(ctx, ssh, b.SSH, fleetStatusScript(b.Home))
+	out, err := fleetSSH(ctx, ssh, b.SSH, fleetStatusScript(b.Home, since.UTC().Format(time.RFC3339)))
 	if err != nil {
-		return BenchReading{Name: b.Name}
+		return BenchReading{Name: b.Name, Down: true, Note: "no answer over ssh"}
 	}
-	live, cores, load, free, mem, allowed, ok := parseFleetStatus(out)
+	if strings.Contains(out, "STATUSFLEET\tNOHOME") {
+		return BenchReading{Name: b.Name, Down: true,
+			Note: "home " + b.Home + " is not a directory on the bench; check the home column of the fleet file"}
+	}
+	vals, ok := parseFleetStatus(out)
 	if !ok {
-		return BenchReading{Name: b.Name}
+		// An answer nobody can parse is no answer: it says DOWN, never a quiet zero.
+		return BenchReading{Name: b.Name, Down: true, Note: "an answer that could not be read"}
 	}
-	return BenchReading{Name: b.Name, Live: live, Cores: cores, Load: load, FreeGB: free, MemGB: mem, Allowed: allowed}
+	return BenchReading{
+		Name: b.Name, Live: vals[0], Cores: vals[1], Load: vals[2],
+		FreeGB: vals[3], MemGB: vals[4], Allowed: vals[5], Hygiene: vals[6],
+	}
 }
 
-// parseFleetStatus reads the one STATUSFLEET line the remote script prints.
-func parseFleetStatus(out string) (live, cores, load, free, mem, allowed int, ok bool) {
+// parseFleetStatus reads the one STATUSFLEET line the remote script prints. It accepts the
+// seven-number line and the older six-number one, whose hygiene count is simply zero: a
+// bench still running last week's script is a bench, not a DOWN row.
+func parseFleetStatus(out string) ([7]int, bool) {
+	var vals [7]int
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(f) != 7 || f[0] != "STATUSFLEET" {
+		if len(f) == 2 && f[0] == "STATUSFLEET" && f[1] == "NOHOME" {
+			return vals, false
+		}
+		if len(f) < 7 || len(f) > 8 || f[0] != "STATUSFLEET" {
 			continue
 		}
-		vals := make([]int, 6)
+		var got [7]int
 		good := true
-		for i := range vals {
-			n, err := strconv.Atoi(f[i+1])
+		for i := 1; i < len(f); i++ {
+			n, err := strconv.Atoi(f[i])
 			if err != nil {
 				good = false
 				break
 			}
-			vals[i] = n
+			got[i-1] = n
 		}
 		if !good {
 			continue
 		}
-		return vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], true
+		return got, true
 	}
-	return 0, 0, 0, 0, 0, 0, false
+	return vals, false
 }
 
-// fleetStatusScript is the remote liveness and capacity script, run through `ssh <target>
-// bash -s` with HOME set to the bench's home column. A slot is live when a process's command
-// line names one of its job directories (pgrep -f) or a process's cwd is under the slot --
-// the authoritative shape bench-hygiene.sh's live_slot uses. It prints exactly one
-// tab-separated STATUSFLEET line; the Go side is the only place a number is formatted.
-func fleetStatusScript(home string) string {
-	return strings.Join([]string{
-		"HOME=" + fleetQuote(home),
-		"export HOME",
+// fleetStatusScript is the remote liveness, capacity and hygiene script, run through
+// `ssh <target> bash -s` with HOME set to the bench's home column. A slot is live when a
+// process's command line names one of its job directories (pgrep -f) or a process's cwd is
+// under the slot -- the authoritative shape bench-hygiene.sh's live_slot uses.
+//
+// The pid walk happens ONCE, before the slot loop. It used to sit inside it: forty slots
+// against a few thousand processes is a hundred thousand readlinks, which is why a live
+// bench read DOWN at --timeout 10 and the whole page took 24.6 s against the script's 13.8.
+// The list is capped for the same reason -- an unbounded pid walk on a busy bench is that
+// stall by another name.
+//
+// Hygiene rides the same round trip. A second ssh per bench per minute for one integer is
+// exactly the dumb waste the fleet audits for.
+func fleetStatusScript(home, since string) string {
+	// The machines registry carries no home column and needs none: with no home the script
+	// leaves the login home alone, which is the home ssh lands in. The four-column file's
+	// home column existed because nothing else said where a bench's work lived.
+	lines := []string{}
+	if strings.TrimSpace(home) != "" {
+		lines = append(lines, "HOME="+fleetQuote(home), "export HOME")
+	}
+	return strings.Join(append(lines,
+		"since="+fleetQuote(since),
+		// The home is checked FIRST. Without it df answers nothing, and a bench that
+		// answered every other question reads as a bench out of disk with no capacity --
+		// which is what a wrong home column looked like on every row of a real page.
+		`if [ ! -d "$HOME" ]; then printf 'STATUSFLEET\tNOHOME\n'; exit 0; fi`,
+		// One pass over /proc, before any slot is looked at.
+		`cwds=""`,
+		`if [ -d /proc ]; then`,
+		`  for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$' | head -4000); do`,
+		`    c=$(readlink /proc/$pid/cwd 2>/dev/null)`,
+		`    [ -n "$c" ] && cwds="$cwds:$c/"`,
+		`  done`,
+		`fi`,
 		"live=0",
 		`for s in "$HOME"/rowan-working/tmp/*/ "$HOME"/rowan-swarm-root/*/; do`,
 		`  s=${s%/}`,
@@ -248,9 +585,7 @@ func fleetStatusScript(home string) string {
 		`    if command -v pgrep >/dev/null 2>&1 && pgrep -f -- "$j" >/dev/null 2>&1; then found=1; break; fi`,
 		`  done`,
 		`  if [ "$found" = 0 ]; then`,
-		`    for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do`,
-		`      case "$(readlink /proc/$pid/cwd 2>/dev/null)" in "$s"/*) found=1; break;; esac`,
-		`    done`,
+		`    case "$cwds" in *":$s/"*) found=1;; esac`,
 		`  fi`,
 		`  [ "$found" = 1 ] && live=$((live+1))`,
 		`done`,
@@ -258,9 +593,10 @@ func fleetStatusScript(home string) string {
 		`load=$(cut -d. -f1 /proc/loadavg 2>/dev/null || echo 0)`,
 		`free=$(df -BG "$HOME" 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')`,
 		`mem=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)`,
-		`cores=${cores:-1}; load=${load:-0}; free=${free:-0}; mem=${mem:-0}`,
+		`hyg=$(awk -v s="$since" '$1 >= s && ($2=="delete-job" || $2=="delete-slot" || $2=="reap")' "$HOME/hygiene.log" 2>/dev/null | wc -l | tr -d ' ')`,
+		`cores=${cores:-1}; load=${load:-0}; free=${free:-0}; mem=${mem:-0}; hyg=${hyg:-0}`,
 		`a1=$(( cores*3/2 - load )); a2=$(( (free-25)/2 )); a3=$(( mem/2 )); a=0`,
 		`[ $a1 -gt $a ] && a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3; [ $a -lt 0 ] && a=0`,
-		`printf 'STATUSFLEET\t%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$cores" "$load" "$free" "$mem" "$a"`,
-	}, "\n")
+		`printf 'STATUSFLEET\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$cores" "$load" "$free" "$mem" "$a" "$hyg"`,
+	), "\n")
 }

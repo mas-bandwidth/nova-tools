@@ -1,12 +1,385 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
 )
+
+// sessionOKLine is the spec's own SESSION OK grammar line (docs/SPEC-WORK.md,
+// Output grammar: "SESSION OK is one shape, printed by session start, session
+// status and session stop alike") with every field instantiated once, so the
+// byte-for-byte pass-through tests compare against the shape the spec prints
+// and not a shape this package invented.
+const sessionOKLine = "SESSION OK session=/sessions/alpha.sock owner=rowan generation=3 state=live until=2026-09-16T18:00:00Z file=snapshot.sexp base=8f14e45fceea167a5a36dedd4bea2543f7e1d1f journal=/sessions/alpha.journal events=7 pending=0 pushed=- nodes=5 edges=8 parses=0 replays=0 every=5m skew=30s clip-every=15m clip-after=3 retain=48h index-cache=64 page-bytes=262144 page-records=512 closed-window=24h max-bytes=1048576 max-depth=64 max-nodes=100000 boundary=f3d2e1c findings=0 build=devel emitted=934"
+
+// fakeSession is the S1 endpoint's stand-in while the Lisp endpoint lands in
+// parallel: a Unix socket that reads ONE request line and answers ONE reply
+// line, newline-terminated both ways.
+//
+// The socket is bound and dialled by RELATIVE name with this process's cwd
+// inside the test's own t.TempDir(), the house way around sun_path: a
+// Unix-domain socket's path is capped (104 bytes on darwin, 107 on linux) and
+// the absolute spelling of a t.TempDir() outgrows it, so an absolute bind
+// fails with "invalid argument" -- the same reason cmd/nova-sandbox's tests
+// bind and dial the agent socket by relative name. t.Chdir restores the cwd
+// before the directory is removed. The client is handed the same relative
+// spelling, which is how a caller sitting in that directory would name it.
+func fakeSession(t *testing.T, reply string) (socket string, requests <-chan string) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	ln, err := net.Listen("unix", "session.sock")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ch := make(chan string, 8)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				line, err := bufio.NewReader(c).ReadString('\n')
+				if err != nil {
+					return
+				}
+				ch <- strings.TrimSuffix(line, "\n")
+				c.Write([]byte(reply + "\n"))
+			}(c)
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+	return "session.sock", ch
+}
+
+func awaitRequest(t *testing.T, requests <-chan string) string {
+	t.Helper()
+	select {
+	case r := <-requests:
+		return r
+	case <-time.After(30 * time.Second):
+		t.Fatal("no request reached the session")
+		return ""
+	}
+}
+
+func TestVersionPrintsTheBuildIdentity(t *testing.T) {
+	for _, verb := range []string{"version", "--version"} {
+		t.Run(verb, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run([]string{verb}, &stdout, &stderr, "v1.2.3-rc1+build.7"); code != 0 {
+				t.Fatalf("version exit = %d, stderr = %s", code, stderr.String())
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("version wrote stderr: %q", stderr.String())
+			}
+			line := stdout.String()
+			if strings.Count(line, "\n") != 1 {
+				t.Fatalf("version is not one line: %q", line)
+			}
+			fields := strings.Fields(strings.TrimSuffix(line, "\n"))
+			if len(fields) != 4 {
+				t.Fatalf("version fields = %d, want 4: %q", len(fields), line)
+			}
+			if fields[0] != "nova-work" || fields[1] != "v1.2.3-rc1+build.7" {
+				t.Fatalf("version identity = %q, want nova-work v1.2.3-rc1+build.7", line)
+			}
+			if fields[2] != runtime.GOOS+"/"+runtime.GOARCH || fields[3] != runtime.Version() {
+				t.Fatalf("version platform = %q", line)
+			}
+		})
+	}
+}
+
+func TestSessionStatusPrintsTheSessionsLineByteForByte(t *testing.T) {
+	socket, requests := fakeSession(t, sessionOKLine)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session", "status", "--session", socket}, &stdout, &stderr, "")
+	if code != 0 {
+		t.Fatalf("session status exit = %d, stderr = %s", code, stderr.String())
+	}
+	if got, want := stdout.String(), sessionOKLine+"\n"; got != want {
+		t.Fatalf("session status stdout = %q, want byte for byte %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("session status wrote stderr: %q", stderr.String())
+	}
+	if got, want := awaitRequest(t, requests), "session status --session "+socket; got != want {
+		t.Fatalf("request line = %q, want %q", got, want)
+	}
+}
+
+func TestRefusalLinesExitOne(t *testing.T) {
+	// A refusal is the session answering NO -- the spec's exit 1 ("it ran and
+	// said no", a refused take among them) -- and the card's test says so: a
+	// refusal line exits 1, on stderr, byte for byte.
+	refusals := []string{
+		"SESSION REFUSED session=/sessions/alpha.sock: journal held by pid 4242 on /sessions/alpha.journal",
+		"SESSION FAIL session=/sessions/alpha.sock owner=rowan generation=3: socket held by pid 4242",
+	}
+	for _, reply := range refusals {
+		t.Run(strings.Fields(reply)[1], func(t *testing.T) {
+			socket, _ := fakeSession(t, reply)
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"session", "status", "--session", socket}, &stdout, &stderr, "")
+			if code != 1 {
+				t.Fatalf("refusal exit = %d, want 1", code)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("refusal wrote stdout: %q", stdout.String())
+			}
+			if got, want := stderr.String(), reply+"\n"; got != want {
+				t.Fatalf("refusal stderr = %q, want byte for byte %q", got, want)
+			}
+		})
+	}
+}
+
+func TestMissingSocketExitsTwoWithTheSpecsRemedy(t *testing.T) {
+	// The spec's exit 2 is "could not run (... no such session ...), which
+	// costs one line ending `run: nova-work help`" -- that line is the remedy.
+	// The relative name never exists, so the dial is an honest missing socket.
+	absent := "absent.sock"
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session", "status", "--session", absent}, &stdout, &stderr, "")
+	if code != 2 {
+		t.Fatalf("missing socket exit = %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("missing socket wrote stdout: %q", stdout.String())
+	}
+	lines := strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n")
+	if len(lines) != 1 || !strings.HasSuffix(lines[0], "run: nova-work help") {
+		t.Fatalf("missing socket refusal = %q, want one line ending \"run: nova-work help\"", stderr.String())
+	}
+	if !strings.Contains(lines[0], "no such session") {
+		t.Fatalf("missing socket refusal = %q, want it naming no such session", lines[0])
+	}
+}
+
+func TestHelpListsEveryVerbTheSwitchAccepts(t *testing.T) {
+	verbs := switchVerbs(t)
+	want := []string{"help", "query", "session start", "session status", "session stop", "version"}
+	if got := strings.Join(verbs, ","); got != strings.Join(want, ",") {
+		t.Fatalf("the switch accepts %q, want exactly %q", got, strings.Join(want, ","))
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"help"}, &stdout, &stderr, ""); code != 0 {
+		t.Fatalf("help exit = %d, stderr = %s", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("help wrote stderr: %q", stderr.String())
+	}
+	help := stdout.String()
+	for _, v := range verbs {
+		if !strings.Contains(help, "nova-work "+v) {
+			t.Errorf("help does not list the switch's verb %q", v)
+		}
+	}
+}
+
+// switchVerbs walks the verb switch in main.go the way a reader does: the
+// first switch statement in run's body is the verb switch; the case whose
+// value is "session" holds the sub-verb switch; alias spellings (--help, -h)
+// share their case's first value and are not verbs of their own.
+func switchVerbs(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+	var runBody ast.Node
+	for _, d := range file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "run" && fn.Body != nil {
+			runBody = fn.Body
+		}
+	}
+	if runBody == nil {
+		t.Fatal("no function run in main.go")
+	}
+	top := firstSwitch(runBody)
+	if top == nil {
+		t.Fatal("run's body holds no verb switch")
+	}
+	var verbs []string
+	for _, c := range top.Body.List {
+		cl, ok := c.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		names := caseStrings(cl)
+		if len(names) == 0 {
+			continue
+		}
+		if names[0] == "session" {
+			if inner := firstSwitch(cl); inner != nil {
+				for _, c2 := range inner.Body.List {
+					if cl2, ok := c2.(*ast.CaseClause); ok {
+						for _, n := range caseStrings(cl2) {
+							verbs = append(verbs, "session "+n)
+						}
+					}
+				}
+			}
+			continue
+		}
+		verbs = append(verbs, names[0])
+	}
+	sort.Strings(verbs)
+	return verbs
+}
+
+func firstSwitch(body ast.Node) *ast.SwitchStmt {
+	var found *ast.SwitchStmt
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if sw, ok := n.(*ast.SwitchStmt); ok {
+			found = sw
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func caseStrings(cl *ast.CaseClause) []string {
+	var out []string
+	for _, e := range cl.List {
+		lit, ok := e.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			continue
+		}
+		if s, err := strconv.Unquote(lit.Value); err == nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func TestSessionStartAndStopSpellTheirRequestLines(t *testing.T) {
+	socket, requests := fakeSession(t, sessionOKLine)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session", "start",
+		"--session", socket,
+		"--as", "Rowan Jr",
+		"--file", "snapshot.sexp",
+		"--render-root", "docs=mas-bandwidth/nova-tools:docs",
+		"--render-root", "spec=mas-bandwidth/nova-tools:spec",
+		"--resolver", "git=./fetch.sh",
+		"--git-timeout", "30",
+		"--repair",
+	}, &stdout, &stderr, "")
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("session start exit=%d stderr=%q", code, stderr.String())
+	}
+	if got, want := stdout.String(), sessionOKLine+"\n"; got != want {
+		t.Fatalf("session start stdout = %q, want the session's own line %q", got, want)
+	}
+	want := "session start --session " + socket +
+		" --as Rowan\\x20Jr --file snapshot.sexp" +
+		" --render-root docs\\x3dmas-bandwidth/nova-tools:docs" +
+		" --render-root spec\\x3dmas-bandwidth/nova-tools:spec" +
+		" --resolver git\\x3d./fetch.sh --git-timeout 30 --repair true"
+	if got := awaitRequest(t, requests); got != want {
+		t.Fatalf("start request line = %q, want %q", got, want)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"session", "stop", "--session", socket, "--git-timeout", "45", "--no-clip"}, &stdout, &stderr, "")
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("session stop exit=%d stderr=%q", code, stderr.String())
+	}
+	if got, want := awaitRequest(t, requests), "session stop --session "+socket+" --git-timeout 45 --no-clip true"; got != want {
+		t.Fatalf("stop request line = %q, want %q", got, want)
+	}
+}
+
+func TestCLIDocCarriesTheHelpBlockByteForByte(t *testing.T) {
+	if strings.TrimSpace(usage) == "" {
+		t.Fatal("the usage block is empty")
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatalf("read docs/CLI.md: %v", err)
+	}
+	i := strings.Index(string(raw), "## nova-work")
+	if i < 0 {
+		t.Fatal("docs/CLI.md has no nova-work section")
+	}
+	section := string(raw[i:])
+	if j := strings.Index(section, "\n## "); j >= 0 {
+		section = section[:j]
+	}
+	if !strings.Contains(section, usage) {
+		t.Fatal("docs/CLI.md's nova-work section does not carry the help block byte for byte")
+	}
+}
+
+func TestUnusableInvocationsAreRefusedAtTwo(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no arguments at all", nil, "a verb is required"},
+		{"unknown verb", []string{"nodes"}, "unknown verb"},
+		{"unknown session verb", []string{"session", "bogus"}, "unknown session verb"},
+		{"session without a subverb", []string{"session"}, "start, status or stop"},
+		{"missing --session refuses to guess", []string{"session", "status"}, "refusing to guess"},
+		{"unknown flag", []string{"session", "status", "--session", "x", "--bogus"}, "flag provided but not defined"},
+		{"positional arguments", []string{"session", "status", "--session", "x", "extra"}, "no positional arguments"},
+		{"version takes no arguments", []string{"version", "extra"}, "version takes no arguments"},
+		{"help takes no arguments", []string{"help", "extra"}, "help takes no arguments"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(c.args, &stdout, &stderr, "")
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2 (stderr %q)", code, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("refusal wrote stdout: %q", stdout.String())
+			}
+			lines := strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n")
+			if len(lines) != 1 {
+				t.Fatalf("refusal is %d lines, want 1: %q", len(lines), stderr.String())
+			}
+			if !strings.HasSuffix(lines[0], "run: nova-work help") {
+				t.Fatalf("refusal %q does not end with the remedy", lines[0])
+			}
+			if !strings.Contains(lines[0], c.want) {
+				t.Fatalf("refusal %q does not name %q", lines[0], c.want)
+			}
+		})
+	}
+}
 
 func writeSeed(t *testing.T, body string) string {
 	t.Helper()
@@ -46,6 +419,40 @@ func TestHelpNamesTheDependenciesAndReadyVerbs(t *testing.T) {
 	for _, want := range []string{"nova-work dependencies", "ready --node X"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("help does not name %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// main_test.go drives the events verb at the edge a stranger's shell reaches: run() with
+// arguments, miniredis as the bus and a fake forge in Deps, so no test opens a network
+// connection.
+
+type fakeForge struct{ snap ci.Snapshot }
+
+func (f *fakeForge) Snapshot() (ci.Snapshot, error) { return f.snap, nil }
+
+func testWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+func recvBy(t *testing.T, ch <-chan *redis.Message, channel string) string {
+	t.Helper()
+	wait := testWait()
+	deadline := time.After(wait)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("no %s message within %s", channel, wait)
+			return ""
+		case msg := <-ch:
+			if msg.Channel == channel {
+				return msg.Payload
+			}
 		}
 	}
 }
@@ -284,5 +691,347 @@ func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 0 {
 		t.Fatalf("a refused cycle wrote %d cards", len(entries))
+	}
+}
+
+// TestEventsRefusesMissingRedis: --redis is required and its absence is exit 2.
+func TestEventsRefusesMissingRedis(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"events"}, &out, &errb, production())
+	if code != 2 {
+		t.Fatalf("events without --redis exit = %d, want 2; stderr=%s", code, errb.String())
+	}
+	if !bytes.Contains(errb.Bytes(), []byte("--redis")) {
+		t.Errorf("the refusal does not name --redis: %s", errb.String())
+	}
+}
+
+// TestEventsOncePublishesChecksDone: one pass polls the fake forge and publishes the
+// completed check suite on pr-checks-done.
+func TestEventsOncePublishesChecksDone(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	sub := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ps := sub.Subscribe(ctx, ci.ChannelPRChecksDone)
+	if _, err := ps.Receive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Close()
+
+	deps := Deps{
+		Now:  func() time.Time { return time.Now().UTC() },
+		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(_, _ string, _ time.Duration) ci.Forge {
+			return &fakeForge{snap: ci.Snapshot{PRs: []ci.PRState{
+				{Number: 42, Branch: "rowan/x", Head: "a1b2", Conclusion: ci.ConclusionSuccess},
+			}}}
+		},
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"events", "--redis", mr.Addr(), "--repo", "mas-bandwidth/nova-tools", "--once"}, &out, &errb, deps)
+	if code != 0 {
+		t.Fatalf("events --once exit = %d, stderr=%s", code, errb.String())
+	}
+	payload := recvBy(t, ps.Channel(), ci.ChannelPRChecksDone)
+	if payload == "" {
+		t.Fatal("no pr-checks-done payload")
+	}
+}
+
+var cmdNow = time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+
+func testDeps(store record.Store) Deps {
+	return Deps{
+		OpenStore: func(string) (record.Store, error) { return store, nil },
+		OpenConsumer: func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error) {
+			return record.NewRedisConsumer(ctx, addr, stream, group, name)
+		},
+		Now: func() time.Time { return cmdNow },
+	}
+}
+
+func mustRun(t *testing.T, d Deps, args ...string) (int, string, string) {
+	t.Helper()
+	var out, errBuf strings.Builder
+	code := run(args, &out, &errBuf, d)
+	return code, out.String(), errBuf.String()
+}
+
+func TestRecordMigrateCreatesTheSchema(t *testing.T) {
+	store := record.NewFakeStore()
+	code, out, errOut := mustRun(t, testDeps(store), "record", "--postgres", "postgres://space/nova", "--migrate")
+	if code != 0 {
+		t.Fatalf("record --migrate exit = %d, stderr:\n%s", code, errOut)
+	}
+	if store.Versions() != 1 {
+		t.Fatalf("schema versions = %d, want 1", store.Versions())
+	}
+	if !strings.Contains(out, "MIGRATE OK") {
+		t.Fatalf("migrate output does not name the schema:\n%s", out)
+	}
+}
+
+func TestRecordOnceWritesTheRowAndAcksIt(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := record.NewFakeStore()
+	if _, err := mr.XAdd(record.Stream, "1-0", []string{
+		"label", "9347", "bench", "space", "exit", "0",
+		"result", "RESULT: CARD-9347", "job", "/jobs/card-9347",
+		"commit", "abc1234", "branch", "rowan/postgres-card-results",
+	}); err != nil {
+		t.Fatalf("seed stream: %s", err)
+	}
+	code, out, errOut := mustRun(t, testDeps(store), "record", "--redis", mr.Addr(), "--postgres", "postgres://space/nova", "--once")
+	if code != 0 {
+		t.Fatalf("record --once exit = %d, stderr:\n%s", code, errOut)
+	}
+	if len(store.Rows()) != 1 {
+		t.Fatalf("rows = %d, want 1", len(store.Rows()))
+	}
+	if !strings.Contains(out, "RECORD") || !strings.Contains(out, "inserted=true") {
+		t.Fatalf("record output does not name the row:\n%s", out)
+	}
+}
+
+func TestRecordRefusesWithoutPostgres(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "record", "--redis", "127.0.0.1:6379")
+	if code != 2 {
+		t.Fatalf("record without --postgres exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "--postgres") {
+		t.Fatalf("the refusal does not name --postgres:\n%s", errOut)
+	}
+}
+
+func TestRecordRefusesRedisWithoutPostgres(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "record", "--migrate", "--redis", "127.0.0.1:6379")
+	if code != 2 {
+		t.Fatalf("record --migrate with no --postgres exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "--postgres") {
+		t.Fatalf("the refusal does not name --postgres:\n%s", errOut)
+	}
+}
+
+func seedResults(t *testing.T, n int) *record.FakeStore {
+	t.Helper()
+	store := record.NewFakeStore()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		exit := 0
+		if i%5 == 0 {
+			exit = 1
+		}
+		done := cmdNow.Add(-time.Duration(i) * time.Minute)
+		row := record.Row{
+			StreamID: fmt.Sprintf("%d-0", i), Label: fmt.Sprintf("card-%d", i),
+			Bench: "space", Exit: exit, DoneAt: &done, RecordedAt: cmdNow,
+		}
+		if _, err := store.Insert(ctx, row); err != nil {
+			t.Fatalf("seed %d: %s", i, err)
+		}
+	}
+	return store
+}
+
+func TestResultsPrintsOneLinePerRowAndAMoreLine(t *testing.T) {
+	code, out, errOut := mustRun(t, testDeps(seedResults(t, 25)), "results", "--postgres", "postgres://space/nova")
+	if code != 0 {
+		t.Fatalf("results exit = %d, stderr:\n%s", code, errOut)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var resultLines, moreLines int
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "RESULT "):
+			resultLines++
+		case strings.HasPrefix(line, "RESULTS MORE "):
+			moreLines++
+		}
+	}
+	if resultLines != 20 || moreLines != 1 {
+		t.Fatalf("results printed %d RESULT lines and %d MORE lines, want 20 and 1:\n%s", resultLines, moreLines, out)
+	}
+	if !strings.Contains(out, "total=25") {
+		t.Fatalf("the MORE line does not carry the total:\n%s", out)
+	}
+}
+
+func TestResultsFiltersByFailedBenchAndSince(t *testing.T) {
+	store := seedResults(t, 10)
+	// Add one mac row that must not survive --bench space.
+	done := cmdNow
+	if _, err := store.Insert(context.Background(), record.Row{
+		StreamID: "mac-0", Label: "mac-card", Bench: "mac", Exit: 1, DoneAt: &done, RecordedAt: cmdNow,
+	}); err != nil {
+		t.Fatalf("seed mac: %s", err)
+	}
+	code, out, errOut := mustRun(t, testDeps(store),
+		"results", "--postgres", "postgres://space/nova", "--bench", "space", "--failed", "--since", "1h", "--max", "0")
+	if code != 0 {
+		t.Fatalf("results exit = %d, stderr:\n%s", code, errOut)
+	}
+	if strings.Contains(out, "mac-card") {
+		t.Fatalf("--bench space let a mac row through:\n%s", out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if !strings.HasPrefix(line, "RESULT ") {
+			continue
+		}
+		if !strings.Contains(line, "exit=1") {
+			t.Fatalf("--failed let a passing row through: %s", line)
+		}
+	}
+	if !strings.Contains(out, "RESULT ") {
+		t.Fatalf("no failed rows printed:\n%s", out)
+	}
+}
+
+func TestResultsMaxZeroPrintsEverything(t *testing.T) {
+	code, out, errOut := mustRun(t, testDeps(seedResults(t, 25)),
+		"results", "--postgres", "postgres://space/nova", "--max", "0")
+	if code != 0 {
+		t.Fatalf("results exit = %d, stderr:\n%s", code, errOut)
+	}
+	if strings.Contains(out, "MORE") {
+		t.Fatalf("--max 0 printed a MORE line:\n%s", out)
+	}
+	if got := strings.Count(out, "RESULT "); got != 25 {
+		t.Fatalf("--max 0 printed %d rows, want 25", got)
+	}
+}
+
+func TestResultsRefusesWithoutPostgres(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "results")
+	if code != 2 {
+		t.Fatalf("results without --postgres exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "--postgres") {
+		t.Fatalf("the refusal does not name --postgres:\n%s", errOut)
+	}
+}
+
+func TestUnknownVerbIsRefused(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "frobnicate")
+	if code != 2 {
+		t.Fatalf("unknown verb exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "unknown verb") {
+		t.Fatalf("the refusal does not name the verb:\n%s", errOut)
+	}
+}
+
+// silentSession is a socket that accepts the connection and then answers
+// nothing: the wedge the client had no way out of. It is the fake the deadline
+// exists for.
+func silentSession(t *testing.T) string {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	ln, err := net.Listen("unix", "silent.sock")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hold := make(chan struct{})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) { defer c.Close(); <-hold }(c)
+		}
+	}()
+	t.Cleanup(func() { close(hold); ln.Close() })
+	return "silent.sock"
+}
+
+// shortenTheBound makes the wedge cost a test a fraction of a second instead
+// of the standing thirty, and puts the standing bound back afterwards.
+func shortenTheBound(t *testing.T, to time.Duration) {
+	t.Helper()
+	was := askTimeout
+	askTimeout = to
+	t.Cleanup(func() { askTimeout = was })
+}
+
+func TestASessionThatNeverAnswersIsRefusedAtTwoAndNotCalledMissing(t *testing.T) {
+	shortenTheBound(t, 150*time.Millisecond)
+	socket := silentSession(t)
+
+	var stdout, stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- run([]string{"session", "status", "--session", socket}, &stdout, &stderr, "")
+	}()
+	var code int
+	select {
+	case code = <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the client never returned from a session that answers nothing: it waits without a bound")
+	}
+	if code != 2 {
+		t.Fatalf("silent session exit = %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("silent session wrote stdout: %q", stdout.String())
+	}
+	line := strings.TrimSuffix(stderr.String(), "\n")
+	if strings.Count(stderr.String(), "\n") != 1 || !strings.HasSuffix(line, "run: nova-work help") {
+		t.Fatalf("silent session refusal = %q, want one line ending \"run: nova-work help\"", stderr.String())
+	}
+	// A session that is sitting right there is not a missing one, and telling
+	// a person to look for a socket that exists is the wrong errand.
+	if strings.Contains(line, "no such session") {
+		t.Fatalf("a silent session was refused as a missing one: %q", line)
+	}
+	if !strings.Contains(line, "did not answer") {
+		t.Fatalf("silent session refusal = %q, want it naming the silence", line)
+	}
+	// And it says the thing a caller of a mutation has to know.
+	if !strings.Contains(line, "may still have been accepted") {
+		t.Fatalf("silent session refusal = %q, want it saying the work may still stand", line)
+	}
+}
+
+func TestAReplyPastTheWiresBoundIsRefusedAtTwoAndNamedAsSuch(t *testing.T) {
+	shortenTheBound(t, 20*time.Second)
+	t.Chdir(t.TempDir())
+	ln, err := net.Listen("unix", "loud.sock")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hold := make(chan struct{})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.Read(make([]byte, 1024))
+				chunk := bytes.Repeat([]byte("x"), 64<<10)
+				for sent := 0; sent < 4<<20; sent += len(chunk) {
+					if _, err := c.Write(chunk); err != nil {
+						return
+					}
+				}
+				<-hold
+			}(c)
+		}
+	}()
+	t.Cleanup(func() { close(hold); ln.Close() })
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session", "status", "--session", "loud.sock"}, &stdout, &stderr, "")
+	if code != 2 {
+		t.Fatalf("overlong reply exit = %d, want 2", code)
+	}
+	line := strings.TrimSuffix(stderr.String(), "\n")
+	if strings.Contains(line, "no such session") {
+		t.Fatalf("an overlong reply was refused as a missing session: %q", line)
+	}
+	if !strings.Contains(line, "past the wire's bound") {
+		t.Fatalf("overlong reply refusal = %q, want it naming the bound", line)
 	}
 }

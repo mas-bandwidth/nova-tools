@@ -13,6 +13,7 @@ number.
 
 - **New verb: `close`** — `nova-bus close --bus <dir> --as <name> --before <RFC3339>` answers the whole backlog at once: every open note dated before the stamp is closed by one receipt note each, batched in one commit, and the notes stay where they are. `--dry-run` reports and writes nothing.
 - **New flags:** `draft --reply-to <id-or-path-or-subject>` is the bounded reply transaction — the header is the tool's, not hand-built — with `--body-file`, `--draft-dir`, `--max-body-bytes`; `draft --file <path>` is the redirect in flag form; `inbox`/`wait` take `--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]`; `wait --beat`/`--beat-lease` control the presence beat; a `To:` line may name the broadcast aliases `all` and `table`.
+- **New flags for a harness that cannot loop:** `wait --until <RFC 3339 instant>` is an absolute deadline beside `--timeout` and the earlier of the two ends the call; `wait --idle-exit <n>` is the exit code a TIMEOUT returns instead of 0, so a harness branches on the code rather than parsing (1 and 2 are refused, they are the tool's own). A caller that passes neither sees today's lines byte for byte. `inbox --max-commits <n>` (default 500) bounds the since-walk, and the count that decides it is now asked with its bound, so a cursor 500 commits behind and one 50,000 commits behind cost the same 501 commits.
 - **Changed output lines:** `SEND OK … attempts=1` now ends `wakes=1` (the `To:` count); every `inbox`/`wait` return has exactly one `INBOX OPEN` line.
 - **Changed behaviour:** `wait` blocks only when nothing is new and is byte-identical to `inbox` otherwise; with `--advance` it skips heard notes before blocking. A wait writes a `BEAT` with `until=` on entry, tick and exit. `--receipt-max-words` may come from a `receipt-max-words=<n>` line in `<bus>/.nova-bus/defaults` or `NOVA_BUS_RECEIPT_MAX_WORDS`. Unchanged unreadable notes collapse to one line; the terminal rearm line quotes its own arguments.
 
@@ -33,7 +34,7 @@ New: one bounded, exact-revision **review packet**, no opinion and no merge.
 
 ## nova-pulse
 
-New: one tool, five verbs, no model call — every token is a card's.
+New: bounded open work, cut into cards and folded back, no model call — every token is a card's.
 
 - **Verbs:** `pool`, `cut`, `launch`, `harvest`, `manager`. `harvest` is no longer marked `(not yet implemented)`.
 - **Flags:** `pool --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]`; `cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]`; `launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]`; `harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]`; `manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]`.
@@ -56,9 +57,9 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 ## nova-tokens
 
 - **New verb: `profiles`** — `nova-tokens profiles --swarm-root <dir>` folds, per model, the card count, the median `tokens_out` and the overshoot past each card's own budget line (`PROFILES MODEL` lines, one `PROFILES OK`).
-- **New flags:** `sum` gained the ledger form `sum --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>`; help lists the `--swarm-root/--day/--ledger` form; the `--provider` kind `xai` accepts grok usage JSON.
-- **Changed output lines:** `sum` prints `TOKENS AVG day=… model=… tokens=… usd=… usd_per_mtok=…` — average cost per token per model per day.
-- **Changed behaviour:** `sum` reports missing or malformed cost fields as unknown, never 0; `fold` merges by source and refuses a partial shrink before the write; `report` can report a quiet source on a selected day.
+- **New flags:** `sum` gained the ledger form `sum --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>`; help lists the `--swarm-root/--day/--ledger` form; the `--provider` kind `xai` accepts grok usage JSON; `check --strict` and `check --no-spend <file>`; `sources --unattributed`.
+- **Changed output lines:** `sum` prints `TOKENS AVG day=… model=… tokens=… usd=… usd_per_mtok=…` — average cost per token per model per day. `CHECK OK` and the `CHECK FAIL` count line gain `gap=<n> notes=<n>`; `SOURCES OK` gains `unattributed=<n|->`; `SOURCES UNATTRIBUTED stem=<path> tokens=<n>` is a new listing.
+- **Changed behaviour:** `sum` reports missing or malformed cost fields as unknown, never 0; `fold` merges by source and refuses a partial shrink before the write; `report` can report a quiet source on a selected day. **`check` can go green on a real directory:** a calendar day with no file is counted as `gap=` and named `CHECK MISSING` only under `--strict`, or under a `--no-spend` list that does not account for it; a `*.md`, a `*.log` or a `pre-*` archive beside the day files is counted as `notes=` instead of named as a stray. `--strict` restores the old reading whole. On this repository's own `reports/tokens` that is 40 findings — 36 days nobody worked and 4 files a person put there on purpose — turned into two counts on a green line.
 
 ## nova-version
 
@@ -76,7 +77,7 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 
 ## nova-merge, nova-update, nova-board
 
-No new verbs or flags. `nova-merge`'s fetched-tip fold is lock-free and retries only the failed records; `nova-update`'s reporter-death cases are staged and tested; the spec-versus-code drift that kept their docs honest was closed.
+No new verbs or flags. **`nova-merge simulate` now leaves no worktree behind and keeps the exit table docs/CLI.md documents:** the scratch worktree's directory *and* git's entry for it under `.git/worktrees/` both go (the old removal used `git worktree remove --force`, which the lane's git seam refuses in any argument, so it never ran and its error was discarded), and an invalid invocation — an unreadable or non-numeric `--entries`, a `--repo` that is not a repository, a `--base` or a `pull/<n>/head` the origin does not have — is exit 2 as the docs say, not 1. `nova-merge`'s fetched-tip fold is lock-free and retries only the failed records; `nova-update`'s reporter-death cases are staged and tested; the spec-versus-code drift that kept their docs honest was closed.
 
 ## Upgrading
 

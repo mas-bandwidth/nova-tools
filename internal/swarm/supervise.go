@@ -42,6 +42,26 @@ type SuperviseInput struct {
 	UsageInterval  time.Duration
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
+	// Sleep is the wait between two polls of the group the supervisor confirms dead. It
+	// is a seam beside Now so a test can run the bounded drain and grace waits to their
+	// ends without holding the machine's clock; nil is time.Sleep.
+	Sleep func(time.Duration)
+}
+
+// now is the input's clock, defaulting to the real one.
+func (in SuperviseInput) now() func() time.Time {
+	if in.Now != nil {
+		return in.Now
+	}
+	return time.Now
+}
+
+// sleep is the input's wait between group polls, defaulting to the real one.
+func (in SuperviseInput) sleep() func(time.Duration) {
+	if in.Sleep != nil {
+		return in.Sleep
+	}
+	return time.Sleep
 }
 
 // Supervise is the whole of the supervisor's life. It returns the exit code.
@@ -107,11 +127,18 @@ func Supervise(in SuperviseInput) int {
 	argv := harnessArgs(in.Worker, jobDir)
 	dir := jobDir
 	if in.Sandbox != "" {
+		// The shared per-bench cache root lives beside the job directory and is a permitted
+		// write root (issue #1048, docs/SPEC-SANDBOX.md): the toolchain and modules are the
+		// same for every job under one pool, so they are downloaded once, not once per slot.
+		if err := EnsureCacheDirs(p.Dir); err != nil {
+			return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the shared cache directories could not be made: " + redactedReason(err)}, attest, 0, "")
+		}
 		job := SandboxJob{
 			Sandbox: in.Sandbox, PoolName: filepath.Base(p.Dir),
 			SlotDir: in.Worker.SlotDir(in.Slot), JobDir: jobDir,
 			DataHome: in.Worker.DataHome(in.Slot, in.Task), ReadRoots: in.Worker.ReadRoots,
-			Command: harness, Args: argv,
+			CacheDir: CacheRoot(p.Dir),
+			Command:  harness, Args: argv,
 		}
 		whole := job.SandboxCommand()
 		harness, argv = whole[0], whole[1:]
@@ -123,7 +150,7 @@ func Supervise(in SuperviseInput) int {
 	cmd := exec.Command(harness, argv...)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key)
+	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key, p.Dir)
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
@@ -184,6 +211,21 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			if rc != 0 {
 				end = EndFailed
 			}
+			// A WALL DEATH IS NAMED HERE (issue #644's follow-up). The harness's own fence,
+			// or the OS wall, can stop the card at a path and the harness then exits with no
+			// RESULT.md; the pool read that absence as `no-result` -- the model's own doing --
+			// when the truth is the machinery shut a path. The supervisor owns `<job>/harness.log`,
+			// so it reads its own capture, and only when no result exists: a card that
+			// published despite the line is done, never an abstain. The report line names the
+			// path, the last STEP the card reached and the commits it left behind.
+			if wr, ok := wallRefusedInLog(filepath.Join(jobDir, "harness.log")); ok {
+				if _, published := FindCardResult(jobDir); !published {
+					branch, commits, _ := WallCommits(filepath.Join(jobDir, "repo"))
+					line := WallLine(in.Task, wr, branch, commits)
+					fmt.Fprintln(in.Stderr, line)
+					return ExitRecord{RC: rc, Signal: signal, End: EndWall, Spent: spent, Observed: observed, Partial: partial, Reason: line}
+				}
+			}
 			// ISSUE #163: A STRUCTURED SIGNAL BEFORE THE HEURISTIC. A harness adapter records
 			// the provider's refusal as a field -- class, value, limit -- and this
 			// supervisor reads that field and re-emits it as one line the next reader
@@ -207,6 +249,15 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 							Reason: providerLaunchReason(ref, tail)}
 					}
 				}
+			}
+			// A WALL DEATH (issue #918). The harness's own fence stopped the card at a
+			// path outside the job and the run published nothing: the death is `end=wall`,
+			// its reason is the report `WALL task=<id> path=<p>`, and the work ./repo kept
+			// travels with it (`commits=<n> branch=<name>`) so the harvester can push it
+			// instead of the commits being stranded in a job nobody reads.
+			if report, ok := WallDeath(jobDir, in.Task); ok {
+				fmt.Fprintln(in.Stderr, report)
+				return ExitRecord{RC: rc, Signal: signal, End: EndWall, Spent: spent, Observed: observed, Partial: partial, Reason: report}
 			}
 			// AND A PROVIDER'S INPUT LIMIT IS ITS OWN CLASS, named by the process that
 			// watched the harness say it (#103). Two Freddy reads of whole specs died
@@ -302,7 +353,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		// Rule 11's group check, made by the process that owns the group and using the
 		// identity it retained at launch: anything still in the job's own group after its
 		// leader has gone is a background subtask the prompt forbids.
-		if groupStillAlive(jobPgid, jobStarted) {
+		if groupStillAlive(jobPgid, jobStarted, in.sleep()) {
 			if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
 				rec.Survivors = n
 			} else if rec.Survivors == 0 {
@@ -314,7 +365,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		// kernel to agree nothing of it remains. A group that cannot be confirmed dead by
 		// that deadline is recorded WITHOUT the attestation and with `end=unknown` -- the
 		// attestation would otherwise be reusable while a survivor of the group still ran.
-		if groupConfirmedDead(jobPgid, jobStarted) {
+		if groupConfirmedDead(in, jobPgid, jobStarted) {
 			rec.Attest = attest
 		} else {
 			rec.Attest = ""
@@ -333,15 +384,17 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 
 // groupConfirmedDead kills the job's group from the retained identity and waits, bounded by
 // the reap's grace, for the kernel to agree nothing of it remains. It answers whether the
-// group was CONFIRMED dead: the per-launch attestation is published only on true.
-func groupConfirmedDead(jobPgid int, jobStarted string) bool {
+// group was CONFIRMED dead: the per-launch attestation is published only on true. The clock
+// and the wait come from the input's seams, so a test drives the bound without wall time.
+func groupConfirmedDead(in SuperviseInput, jobPgid int, jobStarted string) bool {
 	KillGroup(jobPgid, jobStarted)
-	deadline := time.Now().Add(TerminateGrace)
-	for time.Now().Before(deadline) {
+	now, sleep := in.now(), in.sleep()
+	deadline := now().Add(TerminateGrace)
+	for now().Before(deadline) {
 		if !GroupAlive(jobPgid, jobStarted) {
 			return true
 		}
-		time.Sleep(20 * time.Millisecond)
+		sleep(20 * time.Millisecond)
 	}
 	return !GroupAlive(jobPgid, jobStarted)
 }
@@ -362,12 +415,12 @@ func groupConfirmedDead(jobPgid int, jobStarted string) bool {
 // It was called `groupDrained` and answered the opposite of its own name, so the next
 // reader to invert a caller would have re-broken rule 11's survivor check with a change
 // that read correctly (DeepSeek's read of #88 at d0c1841, LOW 4).
-func groupStillAlive(jobPgid int, jobStarted string) bool {
+func groupStillAlive(jobPgid int, jobStarted string, sleep func(time.Duration)) bool {
 	for waited := time.Duration(0); waited < GroupDrainWait; waited += 20 * time.Millisecond {
 		if !GroupAlive(jobPgid, jobStarted) {
 			return false
 		}
-		time.Sleep(20 * time.Millisecond)
+		sleep(20 * time.Millisecond)
 	}
 	return GroupAlive(jobPgid, jobStarted)
 }
@@ -466,10 +519,11 @@ func expandHarnessArg(a string, w Worker, prompt string) string {
 }
 
 // childEnv is the child's whole environment, built rather than inherited: the key in the
-// CHILD's environment only, the job's own data home, and PATH so the harness can find what
-// it runs. No path this tool uses comes from the environment (SPEC.md, no guessing); PATH is
-// here because a harness is a program and a program is found on one.
-func childEnv(w Worker, slot int, id, key string) []string {
+// CHILD's environment only, the job's own data home, the SHARED per-bench cache root
+// (issue #1048), and PATH so the harness can find what it runs. No path this tool uses comes
+// from the environment (SPEC.md, no guessing); PATH is here because a harness is a program
+// and a program is found on one.
+func childEnv(w Worker, slot int, id, key, root string) []string {
 	pathVal := os.Getenv("PATH")
 	if pathVal == "" {
 		pathVal = os.Getenv("Path")
@@ -488,6 +542,10 @@ func childEnv(w Worker, slot int, id, key string) []string {
 		// database from exactly that directory (rule 13 of SPEC-SWARM).
 		"HOME=" + w.DataHome(slot, id),
 	}
+	// ONE shared cache root for every job under this pool (issue #1048): GOMODCACHE,
+	// GOCACHE and NPM_CONFIG_CACHE point at <root>/cache, which is a write root beside the
+	// job directory, so 120 cards do not each download the Go toolchain and every module.
+	env = append(env, CacheEnv(root)...)
 	if runtime.GOOS == "windows" {
 		env = append(env, "Path="+pathVal)
 		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {

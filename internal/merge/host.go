@@ -183,6 +183,9 @@ type PR struct {
 	Merged   bool
 	Closed   bool
 	MergeSHA string
+	// UpdatedAt is when the host last saw the pull request move, for the queue sweep's
+	// session window. Empty means the host did not report one.
+	UpdatedAt string
 }
 
 // Host is the edge between this tool and the forge. It is an interface for two reasons:
@@ -197,9 +200,14 @@ type Host interface {
 	// Checks reads a commit's check buckets. The base's evidence is read the same way
 	// an entry's is.
 	Checks(oid string) (Checks, error)
+	// MergeGroupRun reads one merge-group run's event, pull request, failed jobs and
+	// their '--- FAIL' test names, the evidence the classify decision judges.
+	MergeGroupRun(id int) (MergeRun, error)
 	// Ready takes a draft out of draft. It is a mutation, it is logged as one, and it
 	// only ever reaches an entry that is in the lane.
 	Ready(n int) error
+	// Verdicts reads the pull request's reviews and comments for the hold check (#1572).
+	Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error)
 	// AtomicMerge says whether this host offers a merge primitive taking BOTH an
 	// expected head and an expected base as preconditions. gh today does not: it takes
 	// --match-head-commit and nothing about the base.
@@ -207,6 +215,14 @@ type Host interface {
 	// Merge is that primitive, used only when AtomicMerge is true, and the host's merge
 	// commit must be the gated object.
 	Merge(n int, headOID, baseSHA, mergeSHA string) error
+}
+
+// VerdictOpts configures options for parsing forge verdicts.
+type VerdictOpts struct {
+	Author          string
+	CurrentHead     string
+	Reviewers       *ReviewerSet
+	UntypedComments string // "ignore" or ""
 }
 
 // GH is the production host: one gh invocation per question, under the run's --timeout.
@@ -305,6 +321,40 @@ func (h *GH) BranchOID(branch string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// OpenPRs reads the repository's open pull requests, one row each, for the rebase cutter.
+// The merge state is the host's own word and no field here is an instruction.
+func (h *GH) OpenPRs() ([]RebasePR, error) {
+	out, err := h.gh("pr", "list", "--repo", h.Repo, "--state", "open", "--limit", "300", "--json",
+		"number,mergeStateStatus,headRefName,title,createdAt")
+	if err != nil {
+		return nil, err
+	}
+	return decodeOpenPRs(out)
+}
+
+// decodeOpenPRs is the arrival point of the open list: the host's JSON becomes the rows the
+// filter reads. A head branch becomes a git argument on a later verb, so it is checked
+// where it arrives, exactly as a single pull request's is.
+func decodeOpenPRs(out string) ([]RebasePR, error) {
+	var raw []struct {
+		Number           int    `json:"number"`
+		MergeStateStatus string `json:"mergeStateStatus"`
+		HeadRefName      string `json:"headRefName"`
+		Title            string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("gh pr list did not answer JSON this tool can read: %w", err)
+	}
+	prs := make([]RebasePR, 0, len(raw))
+	for _, r := range raw {
+		if err := ValidRefName(r.HeadRefName); err != nil {
+			return nil, fmt.Errorf("pull request %d's head branch is not a name this tool hands to git: %w", r.Number, err)
+		}
+		prs = append(prs, RebasePR{Number: r.Number, HeadRef: r.HeadRefName, Title: r.Title, MergeState: r.MergeStateStatus})
+	}
+	return prs, nil
+}
+
 // Checks reads a commit's check runs and buckets them.
 func (h *GH) Checks(oid string) (Checks, error) {
 	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
@@ -338,4 +388,22 @@ func (h *GH) AtomicMerge() bool { return false }
 // Merge is never reached on this host, and says so rather than doing something weaker.
 func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	return fmt.Errorf("this host offers no merge primitive taking both an expected head and an expected base, so publication is the compare-and-swap push of rule 21; gh pr merge is never called")
+}
+
+// Verdicts reads this pull request's comments and its reviews, in two calls, and folds
+// each into the words the gate acts on. It is READ-ONLY and it mutates nothing.
+func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	comments, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	reviews, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	var opt VerdictOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	return ParseForgeVerdicts(comments, reviews, n, opt.Reviewers, opt.Author, opt.CurrentHead, opt.UntypedComments == "ignore")
 }

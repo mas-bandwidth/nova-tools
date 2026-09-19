@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -98,6 +101,20 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 
 // onePass folds the branch's records, runs the pass, and writes the state back.
 func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr io.Writer, deps Deps, build, plannedRed string, admin bool) int {
+	// EDGE 8: A HOLD STOPS THE LANE, NOT ONLY THE SWEEP. `merge.ReadHold` was called in
+	// exactly one place -- the sweep -- so `nova-merge queue hold "the base is frozen"`
+	// stopped nothing from being ENQUEUED and did not stop the pass that lands what is
+	// already queued, which is the half a person holding a lane actually means. It is
+	// read at the top of every pass, so a hold written during a `--loop` stops the next
+	// one, and it says so on its own line.
+	if h, present, err := merge.ReadHold(lane); err != nil {
+		fmt.Fprintf(stderr, "RUN REFUSED: %s\n", oneline.Err(err))
+		return 2
+	} else if present {
+		fmt.Fprintf(stderr, "RUN REFUSED: a hold is standing (%s) by %s: this lane lands nothing while it stands; nova-merge queue --lane %s release\n",
+			oneline.Field(h.Reason), oneline.Field(dashIfBlank(h.By)), oneline.Field(lane))
+		return 2
+	}
 	recs := merge.NewRecords(lane, st.LaneBranch, "origin", merge.NewGit(lane, f.dur(), deps.Runner), f.dur())
 	pulled, problems, err := foldInto(lane, st, recs, f.dur())
 	if err != nil {
@@ -109,6 +126,9 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		Records: recs, Remote: "origin", Max: *f.max, PlannedRed: plannedRed,
 		Admin: admin, Build: build, Now: deps.Now(), Stdout: stdout, Stderr: stderr,
 		Problems: problems, Pulled: pulled,
+	}
+	if code := laneOrder("RUN", lane, st, p, stderr); code != 0 {
+		return code
 	}
 	if code := discoverDefault("RUN", p, stderr); code != 0 {
 		return code
@@ -129,6 +149,18 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		// pass printing MERGE OK and the lane's own file still holding the state before
 		// it -- the next pass would re-decide from a state that never saw this one.
 		return stateWriteRefused("RUN", stderr, err)
+	}
+	// A landed entry leaves the queue with the lane: the queue is the order `run` walks,
+	// and an entry that is gone from the lane is gone from the order.
+	if len(res.DroppedIDs) > 0 {
+		if _, err := merge.UpdateQueue(lane, st, f.dur(), func(q *merge.Queue) error {
+			for _, pr := range res.DroppedIDs {
+				q.Queued = merge.QueueRemove(q.Queued, pr)
+			}
+			return nil
+		}); err != nil {
+			merge.Appendf(lane, deps.Now(), "QUEUE NOTE the landed entries could not be retired from queue.json: %v", err)
+		}
 	}
 	return res.Exit()
 }
@@ -214,6 +246,10 @@ func cmdDryRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 		Stdout: stdout, Stderr: stderr, Problems: folded.Problems,
 		Survey: true, Pulled: folded.Files, LaneTip: tip,
 	}
+	// The survey walks THE ORDER THE PASS WALKS, skip set, parks and all (edge 6).
+	if code := laneOrder("RUN", *f.lane, st, p, stderr); code != 0 {
+		return code
+	}
 	if code := discoverDefault("RUN", p, stderr); code != 0 {
 		return code
 	}
@@ -228,10 +264,21 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 	branch := f.fs.String("branch", "", "")
 	who := f.fs.String("who", "", "")
 	all := f.fs.Bool("all", false, "")
+	// --decide annotates each handed-over entry with one typed risk/scope classification.
+	// It changes no verdict and reaches no merge: it is the flag behind which the typed
+	// decision is asked (SPEC-DECIDE rule 7).
+	decideOn := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", 0.9, "")
+	keyEnv := f.fs.String("key-env", "", "")
+	baseURL := f.fs.String("base-url", "", "")
+	cardFile := f.fs.String("card", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.check()
+	if *decideOn && (*floor < 0 || *floor > 1) {
+		f.problem(fmt.Sprintf("--floor is the confidence below which a decision is only a suggestion, from 0 to 1, got %g", *floor))
+	}
 	f.require("who", *who, "the reader this packet is for, as this lane knows them")
 	id := entrySelector(f, pr, branch, *all)
 	if !*all && id == "" && len(f.problems) == 0 {
@@ -261,7 +308,56 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 		Records: recs, Remote: "origin", Max: *f.max, Now: deps.Now(),
 		Stdout: stdout, Stderr: stderr, Problems: folded.Problems,
 	}
+	if *decideOn {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			fmt.Fprintf(stderr, "PACKET REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		card := ""
+		if *cardFile != "" {
+			b, err := os.ReadFile(*cardFile)
+			if err != nil {
+				fmt.Fprintf(stderr, "PACKET REFUSED: --card: %s\n", oneline.Err(err))
+				return 2
+			}
+			card = string(b)
+		}
+		p.PacketAnnotate = classifyPacketEntry(context.Background(), client, *floor, card)
+	}
 	return p.Packet(*who, id, *all)
+}
+
+// laneOrder puts the queue's order on the pass, and REFUSES A QUEUE IT COULD NOT READ.
+//
+// EDGE 9: the one call site swallowed LoadQueue's error -- `if q, err := ...; err == nil`
+// -- so a `queue.json` that did not parse left Order nil, and a nil Order means "walk
+// every entry in the lane's own order". A corrupt file therefore SILENTLY UN-SKIPPED
+// EVERYTHING and un-parked every poison pull request, which is the one direction a
+// failure here must never fail in. It names the file, at exit 2, and nothing is walked.
+//
+// EDGE 6: it is called by `dry-run` too. `p.Order` was set only in the run path, so the
+// survey that exists to print what a pass would do walked a different order from the
+// pass -- it listed a skipped pull request at position 2. A survey that surveys something
+// else is worse than no survey.
+func laneOrder(verb, lane string, st *merge.State, p *merge.Pass, stderr io.Writer) int {
+	q, err := merge.LoadQueue(lane, st)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s REFUSED: %s: %s; this lane's order and its skip and park sets are in that file, and a pass that cannot read it would walk every entry as though nothing were skipped -- repair or remove it\n",
+			oneline.Escape(verb), oneline.Field(filepath.Join(lane, merge.QueueName)), oneline.Err(err))
+		return 2
+	}
+	p.Order = q.WalkOrder(st)
+	return 0
+}
+
+// dashIfBlank is a field that was never written, printed as the one token every other
+// empty field in this tool's grammar uses.
+func dashIfBlank(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
 }
 
 // discoverDefault runs the one discovery of the repository's default branch that run,

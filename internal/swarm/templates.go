@@ -138,6 +138,7 @@ const templateWorker = `{
   "env_var": "<the NAME of the variable the provider reads>",
   "key_file": "<the path of a file holding one line, mode 0600, OUTSIDE worker_dir>",
   "usage": "opencode",
+  "class": "paid",
   "harness": "<the harness command on PATH>",
   "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
   "worker_dir": "<the home copy of this worker's own directory>",
@@ -248,6 +249,111 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 `
 
+// templateCapacity is the OFFERED-CAPACITY AND ROUTING-LOG FORM (#176): a manual
+// census of one friend's bounded, expiring capacity offer, plus the coordinator's
+// manual routing log that matches dependency-ready work to compatible offers
+// without double-counting shared pools. It is the issue's near-term endpoint and
+// nothing beyond it: a form a friend and a coordinator fill together, reviewed
+// before any automatic scheduler is built. Five capability kinds are kept apart
+// (coordinator, direct worker, one-shot, swarm and local) because model slots
+// are not interchangeable throughput units. The offer's named fields (friend,
+// instance, bench, model identity and basis, harness, supported task types,
+// demonstrated strengths and limits, permitted scope, current availability,
+// concurrency, expected queue/latency and shared-limit pool references) are
+// placeholders, never a friend's own live values, and an expiry bounds the offer.
+// The routing log names the four acceptance rows the issue asks for, in words:
+// an idle compatible pool receiving ready work, an incompatible offer being
+// skipped, shared capacity counted once, and a stale offer excluded. Missing
+// contact is unknown; stale capacity is not proof of failure and not proof of
+// consent. No key, no token, and no private host detail is ever written here --
+// credentials stay on the friend's own bench -- and a form is a form, never a
+// task's conditions, so WrapTemplate refuses it the way `result` and `setup`
+// are refused.
+const templateCapacity = `capacity — one friend's offered capacity and the manual routing log (#176)
+
+One offer per friend, bounded and expiring, published before any automatic
+scheduler is built, because an idle pool receiving ready work, an incompatible
+offer being skipped, shared capacity counted once, and a stale offer excluded
+are four separate things a coordinator has to do by hand first, in a form a
+friend fills and a coordinator reads. Print the offer half, fill it with the
+friend whose capacity is being advertised, and paste the FILLED offer where the
+review happened; the private configuration it stands for stays on the friend's
+own bench. Print the routing log half, fill it with the ready work and the
+offers considered, and record the matching decision in writing so the next
+review can compare the count against the offers' own quotas. Names, instances,
+benches, models, harnesses and pool layouts are not constants of this form:
+every value below is a placeholder, and a friend's own choices fill their own
+copy. A friend may propose an alternative, decline, or stay silent, and missing
+feedback is pending, never consent. A filled form supplies no account access,
+and an automatic scheduler is separate staged work with its own authorization.
+A form carries one capacity kind at a time from the five the SPEC-WORK friend
+section distinguishes — coordinator, direct worker, one-shot, swarm and local —
+because model slots are not interchangeable throughput units and a swarm
+worker, a one-shot, and a local model run on different evidence and different
+shared-limit pools.
+
+## The offer (the friend's own half)
+
+offered by: <who wrote this offer, and where the review is recorded>
+reviewed with: <the friend and a coordinator, or pending>
+expires: <the stamp this offer stops being an offer, never blank>
+
+friend: <name>
+instance: <the worker home or container this friend runs under>
+bench: <the machine or hosted runner this friend works on>
+model identity: <the provider's id and the resolved model id>
+basis: <the per-token cost class — zero|flat|metered — and its pricing reference, or local>
+harness: <the harness this friend chose, and its version>
+supported task types: <read, text, code, replay; one or more, a comma list>
+demonstrated strengths: <what the friend has been shown to do well, never an inferred claim>
+demonstrated limits: <what the friend has been shown unable to do, never an inferred claim>
+permitted scope: <the repositories and paths this offer may read and write>
+current availability: <awake | resting | credit-limited | rate-limited | unknown — never idle because a recent message did not arrive>
+concurrency: <the maximum parallel slots this offer reserves>
+expected queue/latency: <the queue depth and the latency a scheduler can expect, bounded>
+shared-limit pools: <the named pools whose quota this offer shares, or ` + "`[]`" + ` for none>
+
+## The routing log (the coordinator's half)
+
+ready work: <the dependency-ready task list being matched this cycle>
+compatible offers: <the offers whose supported task types and permitted scope admit the ready work>
+incompatible offers: <the offers skipped this cycle, with one reason each — wrong task type, scope mismatch, basis mismatch, capacity kind, anything but a name>
+shared pool share: <the share of the named shared-limit pools, counted ONCE per pool across all offers naming it>
+stale offers excluded: <the offers whose expires stamp has passed or whose contact stamp is past the silent-ping window, named and never counted>
+utilization denominator: <the explicit pool-specific denominator this cycle's utilization would be reported against — a coordinator, direct worker, one-shot, swarm and local each have their own>
+
+## The four rows acceptance evidence demands (one row each, when they occurred this cycle)
+
+| observed | row to write |
+| --- | --- |
+| an idle compatible pool receiving ready work | offer=<name> task=<id> routed=true admit-gate=<gates that passed> |
+| an incompatible offer being skipped | offer=<name> task=<id> reason=<what rules it out> |
+| shared capacity counted once | pooled-as=<pool> reservations=<n> offers-with-that-pool=<n> shared-share=<n> |
+| a stale offer excluded | offer=<name> expires=<stamp> contact=<stamp or NONE> reason=<expired or unconfirmed> |
+
+missing contact is unknown; **stale capacity is not proof of failure and not proof of consent**, so an offer nobody answered since the silent-ping
+window is excluded, not favoured and not penalised, and reported as
+` + "`reason=unconfirmed`" + ` alongside any expired offer reported as
+` + "`reason=expired`" + `. Each capacity kind from the SPEC-WORK friend section
+gets its own row when the offer names it — **coordinator capacity** is its
+own row, **direct worker capacity** is its own row, **one-shot capacity** is
+its own row, **swarm capacity** is its own row, and **local capacity** is its
+own row — because model slots are not interchangeable throughput units, and
+sharing a quota across those kinds is the double-count the form exists to
+prevent.
+
+## What is never in this form
+
+no key, no token, and no private host detail is ever written here, a task
+card, a bus note, an issue or a token ledger: a name or a path is not a
+secret, but a value is, and this form carries values for nobody. A shared
+account limit is named by its pool, never by the credential that holds it.
+An offered capacity is not a purchase, a permission, or a promise to run;
+it is the standing under which a coordinator may propose ready work, and a
+friend chooses offers, reserves, and rest, not a scheduler that maximises
+occupation beyond that offer.
+`
+
 // Template returns one template by name.
 func Template(name string) (string, error) {
 	switch name {
@@ -263,15 +369,29 @@ func Template(name string) (string, error) {
 		return templateWorker, nil
 	case "setup":
 		return templateSetup, nil
+	case "capacity":
+		return templateCapacity, nil
 	}
 	return "", fmt.Errorf("--name wants one of %s, got %q", strings.Join(TemplateNames(), ", "), name)
 }
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup"}
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity"}
 	sort.Strings(names)
 	return names
+}
+
+// IsCardTemplate reports whether name is one of the task templates a card is built from
+// (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
+// setup, capacity -- are not cards: result is the report's shape, worker is a JSON worker
+// description, and setup and capacity are forms, all printed verbatim for their own purpose.
+func IsCardTemplate(name string) bool {
+	switch name {
+	case "read-pr", "probe-row", "fix-card":
+		return true
+	}
+	return false
 }
 
 // WrapTemplate puts a task's own text under its template's conditions, with the file budget
@@ -287,6 +407,9 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "setup" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `setup` is the per-friend agreement form of issue #184, printed by `template --name setup`")
+	}
+	if name == "capacity" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `capacity` is the per-friend offer and routing-log form of issue #176, printed by `template --name capacity`")
 	}
 	body = strings.ReplaceAll(body, "<n> files", fmt.Sprintf("%d files", files))
 	var b strings.Builder

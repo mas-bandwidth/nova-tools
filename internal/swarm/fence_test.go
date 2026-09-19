@@ -27,7 +27,7 @@ func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
 	if state != "abstain" || reason != "fence" {
 		t.Fatalf("a card the fence stopped scores ABSTAIN reason=fence, got %s reason=%s", state, reason)
 	}
@@ -52,7 +52,7 @@ func TestFenceComesBeforeHarnessSilent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
 	if state != "abstain" || reason != "fence" {
 		t.Fatalf("a fenced card scores reason=fence even when the harness also left no words, got %s reason=%s", state, reason)
 	}
@@ -120,8 +120,26 @@ func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
 			t.Errorf("%s is ABOVE the job and is never named: %v", never, external)
 		}
 	}
-	if external["*"] != FenceAsk {
-		t.Errorf("every other path is still asked about: %v", external)
+	if external["*"] != FenceDeny {
+		t.Errorf("every other path is denied without prompting (a deny is a tool error the model routes around; an ask auto-rejects and ends the run): %v", external)
+	}
+}
+
+// TestFencePermissionDeniesExternalDirectory: the harness's own fence is DENY, never ASK. An
+// `ask` in a non-interactive `run` is auto-rejected and the model stops -- the whole run ends
+// and the card's commits are stranded. A `deny` is a tool error returned to the model, which
+// notes it, works inside the job instead, and continues (issue #918).
+func TestFencePermissionDeniesExternalDirectory(t *testing.T) {
+	block := FencePermission("/root/1/jobs/a", nil)
+	external, ok := block[FenceExternalDirectory].(map[string]any)
+	if !ok {
+		t.Fatalf("the block is keyed by the permission the harness asks under: %v", block)
+	}
+	if external["*"] != FenceDeny {
+		t.Fatalf("a path outside the job is denied, never asked about: %v", external)
+	}
+	if block[FenceWebfetch] != FenceDeny {
+		t.Errorf("webfetch is denied too, so no permission is left to prompt: %v", block)
 	}
 }
 

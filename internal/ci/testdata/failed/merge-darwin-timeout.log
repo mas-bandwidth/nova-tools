@@ -1,0 +1,43 @@
+2026-09-18T17:36:51.2255760Z [36;1mdone[0m
+2026-09-18T17:36:51.2478420Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-09-18T17:36:51.2479040Z ##[endgroup]
+2026-09-18T17:36:58.3404850Z go test -count=1 -timeout 100s -run "^(TestABranchEntryMergesOnAGateAndAReadWithNoHostedChecks|TestACorruptQueueFileRefusesRatherThanUnSkippingEverything|TestAFailedDiscoveryAfterASuccessfulOneStillBlocks|TestAFlushRemovesOnlyWhatItDelivered|TestAGateNamesAMergeObjectNoCloneHolds|TestAHostedRedBlocksOnANonMainDefaultBranch|TestAMergeClassificationNeverMerges|TestAPacketIsHandedOverWhileTheCheckoutIsHeld|TestAPassWhoseOwnStateWriteIsRefusedIsNotSilent|TestAPullRequestOntoMainWithNoHostedChecksWaits|TestAReadNamesAnEntryThisLaneDoesNotHold|TestARedBaseStopsTheLaneAndPlannedRedIsTheOneWayThrough|TestARefusedInitLeavesNothingBehindAndRetriesTheSame|TestAStackedBaseNamesTheHostedRed|TestAStatusWhosePullFailedStillReportsAndSaysWhatIsMissing|TestAVerbThatCannotTakeTheCheckoutLockExitsTwoAndNamesTheHolder|TestAddSaysWhatNeedsReadNoMeansAndChecksTheNumber|TestAdminMergeRefusedOverCarriedHold|TestBatchAdmitsAMemberTheGateItselfVouchedFor|TestBatchNoRequireChecksIsSaidOutLoud|TestBatchRefusesAPRListThatIsNotNumbers|TestBatchRequireLispFailsWhenTheStepCannotRun|TestClassifyFlakyUnderLoadReruns|TestDryRunReportsAndExitsZeroWhateverTheLaneHolds|TestEveryCommitWritingCommandInThisPackageCarriesTheIdentity|TestEveryPrintedArgumentIsLiteralQuotedOrEscaped|TestExplicitHostedRedIsTheArmItStates|TestGoNoticesAreNotTheFailure|TestInitRepoIsAnOwnerAndAName|TestLandRefusesAPullRequestThatIsNotABatch|TestLandRefusesAReceiptForAnotherHead|TestLandWithoutJumpQueuesBehind|TestOnATwoPreconditionHostBothPreconditionsAreSupplied|TestOnlyTheGatedObjectIsPublished|TestPrivateTempEnvPointsEveryTempVariableAtTheBatchsOwnDirectory|TestQueueAuditNamesWhatItCouldNotClear|TestQueueAuditRefusesWithoutARepository|TestQueueFrontPuts7FirstAndTheRestKeepTheirOrder|TestQueuePoisonDetectorParksOnOwnChangeOnly|TestQueueStatusNamesTheHoldAndTheSkipSet|TestQueueWritesAreWholeUnderConcurrentWriters|TestReactObeysTheLanesOwnHoldAndSkipSet|TestReactRefusesWithNoLane|TestReadsSurviveARestartAndALostState|TestSimulateDeadlineMakesASlowCheckPoison|TestSimulateNamesThePoisonEntry|TestSimulateSkipsAConflictAndContinues|TestStatusStopsOnARecordWhosePathNamesNoEntry|TestSweepEnqueuesGreenUnqueuedRowanPRs|TestSweepSkipsDirtyAndNonRowanPRs|TestTheBinaryWritesOnlyTheLanesOwnFiles|TestTheGateTestsTheWayCIDoes|TestTheLoopEndsOnItsOwnAndStepsAsideForANewerBinary|TestTheStateLockWaitsTheVerbsOwnTimeout|TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator|TestVersionLineHoldsWhateverTheStampContains|TestVersionVerbIsReachableFromTheDispatch|TestWaitTimeoutPrintsPendingName)" github.com/mas-bandwidth/nova-tools/cmd/nova-merge
+2026-09-18T17:38:41.6223340Z panic: test timed out after 1m40s
+2026-09-18T17:38:41.6224930Z 	running tests:
+2026-09-18T17:38:41.6225760Z 		TestABranchEntryMergesOnAGateAndAReadWithNoHostedChecks (14s)
+2026-09-18T17:38:41.6226710Z 		TestARedBaseStopsTheLaneAndPlannedRedIsTheOneWayThrough (14s)
+2026-09-18T17:38:41.6227520Z 		TestAdminMergeRefusedOverCarriedHold (14s)
+2026-09-18T17:38:41.6229670Z 		TestOnATwoPreconditionHostBothPreconditionsAreSupplied (14s)
+2026-09-18T17:38:41.6230480Z 		TestOnlyTheGatedObjectIsPublished (14s)
+2026-09-18T17:38:41.6231210Z 		TestQueueFrontPuts7FirstAndTheRestKeepTheirOrder (14s)
+2026-09-18T17:38:41.6231980Z 		TestQueuePoisonDetectorParksOnOwnChangeOnly (14s)
+2026-09-18T17:38:41.6232930Z 		TestReadsSurviveARestartAndALostState (14s)
+2026-09-18T17:38:41.6233780Z 		TestStatusStopsOnARecordWhosePathNamesNoEntry (14s)
+2026-09-18T17:38:41.6234730Z 		TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator (14s)
+2026-09-18T17:38:41.6235240Z 
+2026-09-18T17:38:41.6235450Z goroutine 2790 [running]:
+2026-09-18T17:38:41.6235890Z testing.(*M).startAlarm.func1()
+2026-09-18T17:38:41.6236810Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/testing/testing.go:2802 +0x354
+2026-09-18T17:38:41.6237570Z created by time.goFunc
+2026-09-18T17:38:41.6238320Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/time/sleep.go:215 +0x2d
+2026-09-18T17:38:41.6238870Z 
+2026-09-18T17:38:41.6239080Z goroutine 1 [chan receive]:
+2026-09-18T17:38:41.7060150Z os.genericWriteTo(0x0?, {0x879ae20?, 0xdc76f654940?})
+2026-09-18T17:38:41.7060880Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/os/file.go:295 +0x35
+2026-09-18T17:38:41.7061560Z os.(*File).WriteTo(0x880f4f0?, {0x879ae20?, 0xdc76f654940?})
+2026-09-18T17:38:41.7062310Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/os/file.go:273 +0x49
+2026-09-18T17:38:41.7063110Z io.copyBuffer({0x879ae20, 0xdc76f654940}, {0x879a6a0, 0xdc76f602210}, {0x0, 0x0, 0x0})
+2026-09-18T17:38:41.7063970Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/io/io.go:411 +0x9d
+2026-09-18T17:38:41.7064540Z io.Copy(...)
+2026-09-18T17:38:41.7065060Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/io/io.go:388
+2026-09-18T17:38:41.7065640Z os/exec.(*Cmd).writerDescriptor.func1()
+2026-09-18T17:38:41.7066340Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/os/exec/exec.go:602 +0x34
+2026-09-18T17:38:41.7066990Z os/exec.(*Cmd).Start.func2(0xdc76f37f340?)
+2026-09-18T17:38:41.7067700Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/os/exec/exec.go:757 +0x2c
+2026-09-18T17:38:41.7068360Z created by os/exec.(*Cmd).Start in goroutine 9
+2026-09-18T17:38:41.7069100Z 	/Users/nova/runner-nova-tools-8/_work/_tool/go/1.26.6/x64/src/os/exec/exec.go:756 +0x92e
+2026-09-18T17:38:41.7069900Z FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-merge	102.333s
+2026-09-18T17:38:41.7070370Z FAIL
+2026-09-18T17:38:41.7431570Z make: *** [test-merge] Error 1
+2026-09-18T17:38:41.7452220Z ##[error]Process completed with exit code 2.
+2026-09-18T17:38:41.7885010Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

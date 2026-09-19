@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,13 +62,13 @@ func read(t *testing.T, checkout, path string) string {
 // choice and neither choice may cost a parse. And then once more from the other side: a
 // reply that CLOSES an open entry is also one parse, so closing is driven by the new notes
 // and not by a walk of what is being carried.
-// NOT PARALLEL, and neither is TestHeardSurvivesTheCursor: both assert a DELTA of
-// bus.NoteParses, which is one counter for the whole process. A second test parsing a note
-// beside them would be counted here, and the assertion is an exact number. Every other test
-// in this package owns its own TempDir and its own bus and runs parallel; these two are the
-// price of instrumentation that is process-wide, and they are named here rather than left
-// as an unexplained omission.
+// PARALLEL, and so is TestHeardSurvivesTheCursor, since the count they assert a DELTA of is
+// bus.NoteParsesIn(checkout): the parses over THIS test's own bus, and no other. They used
+// to read bus.NoteParses, one counter for the whole process, which a sibling parsing a note
+// beside them would have moved -- and so they ran alone, one after the other, and were the
+// package's critical path. The assertions are the same exact numbers over the same bus.
 func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("slow: builds a ten-thousand-note fixture; runs on the self-hosted legs and nightly")
 	}
@@ -79,30 +80,16 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// them either.
 	const history = 10000
 	const carried = 500
-	var index strings.Builder
-	for i := range history {
-		id := fmt.Sprintf("bo-%012x", i+0x100000)
-		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
-		to := "Bo"
-		if i < carried {
-			to = "Ada"
-		}
-		writeFile(t, checkout, path, fmt.Sprintf(
-			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
-			to, i%28+1, id, i))
-		fmt.Fprintf(&index, "%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
-	}
-	appendFile(t, checkout, "from-bo/INDEX", index.String())
-	commitAs(t, checkout, "Bo", "ten thousand notes")
+	bulkHistory(t, checkout, history, carried)
 
 	// The first run has no cursor, so it is a full one and it says so. This is the only
 	// full read a reader ever pays for, and it is what writes the open list every later run
 	// prints from.
-	before := bus.NoteParses()
+	before := bus.NoteParsesIn(checkout)
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full cursor=-").
 		mustContain(t, "stdout", "INBOX CURSOR commit=")
-	if full := bus.NoteParses() - before; full < history {
+	if full := bus.NoteParsesIn(checkout) - before; full < history {
 		t.Fatalf("the full run parsed %d notes over a bus of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
 	}
 
@@ -128,14 +115,14 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// THE DEFAULT READ. It writes nothing (no --advance), so the two reads below see the
 	// same change set, and it prints one line for the 500 rather than 500 lines.
 	quiet := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
-	before = bus.NoteParses()
+	before = bus.NoteParsesIn(checkout)
 	r = invoke(t, "", quiet...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried+1)).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Ada carrying=%d open=%d", carried+1, carried+1))
 	// ONE. Not one plus the open list, not one plus the history: one file opened and parsed,
 	// over a bus of ten thousand and one with five hundred of them open.
-	if got := bus.NoteParses() - before; got != 1 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
 		t.Fatalf("inbox parsed %d notes for one new note over a bus of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
 	}
 	// The NEW note, in full, and NOTHING else from the list of 500. That is the whole of
@@ -148,12 +135,12 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// THE SAME READ WITH --open. It prints the carried entries, every field of them out of
 	// the open list, and it still parses ONE -- capped at --open-max, with one line saying
 	// how many it did not print.
-	before = bus.NoteParses()
+	before = bus.NoteParsesIn(checkout)
 	r = invoke(t, "", append(append([]string{}, quiet...), "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z").
 		mustContain(t, "stdout", "One more").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN listed=20 and %d more (--open-max to widen)", carried+1-20))
-	if got := bus.NoteParses() - before; got != 1 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
 		t.Fatalf("inbox --open parsed %d notes, want 1: printing the open list must not open a note\n%s", got, r.stdout)
 	}
 	if n := strings.Count(r.stdout, "INBOX NOTE "); n != 20 {
@@ -178,11 +165,11 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 			"Re: bo-222222222222\nSubject: Yes, the gate\n\nYes, on the merge queue too.\n")
 	commitAs(t, checkout, "Ada", "ada: yes, the gate")
 
-	before = bus.NoteParses()
+	before = bus.NoteParsesIn(checkout)
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried)).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d pushed=true", carried))
-	if got := bus.NoteParses() - before; got != 1 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
 		t.Fatalf("closing an open entry parsed %d notes, want the 1 reply that closed it\n%s", got, r.stdout)
 	}
 	if strings.Contains(read(t, checkout, "from-ada/OPEN"), "bo-222222222222") {
@@ -191,6 +178,65 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	if n := openEntries(t, checkout, "from-ada"); n != carried {
 		t.Fatalf("the open list holds %d entries after one closed, want %d", n, carried)
 	}
+}
+
+// bulkHistory puts `history` notes on the bus in ONE git process, of which the first
+// `carried` are addressed to Ada and the rest are Bo's own business.
+//
+// It used to be a loop of `history` os.WriteFile calls followed by commitAs, which is
+// `git add -A` over ten thousand new paths, a commit over them and a push. Measured on an
+// idle Studio 2026-09-18: 0.9 s of file writes and 5.7 s of git, which is most of this
+// test -- and windows-latest, where a file operation is expensive and the merge group's
+// hosted leg runs, timed the shard out at 100 s with this test still running, twice.
+//
+// fast-import builds the same commit from a stream: one process, no working-tree scan, no
+// index full of ten thousand untracked paths to hash, and the tree written once. The
+// working tree is then materialized by a single `git reset --hard`, which is git writing
+// the files instead of Go writing them one at a time. The BUS IS THE SAME: the same ten
+// thousand notes, the same INDEX lines, the same one commit on main, pushed the same way.
+// Nothing this test asserts is a fact about how the fixture was built.
+func bulkHistory(t *testing.T, checkout string, history, carried int) {
+	t.Helper()
+	head := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
+
+	// The INDEX is REPLACED rather than appended to, because fast-import writes a whole
+	// blob: the fixture's own two lines have to be carried into it or the notes they name
+	// leave the index and the bus stops agreeing with itself.
+	index := read(t, checkout, "from-bo/INDEX")
+
+	var b strings.Builder
+	const msg = "ten thousand notes"
+	fmt.Fprintf(&b, "commit refs/heads/main\n")
+	fmt.Fprintf(&b, "author Bo <bo@example.com> 1757376000 +0000\n")
+	fmt.Fprintf(&b, "committer Bo <bo@example.com> 1757376000 +0000\n")
+	fmt.Fprintf(&b, "data %d\n%s\n", len(msg), msg)
+	fmt.Fprintf(&b, "from %s\n", head)
+	for i := range history {
+		id := fmt.Sprintf("bo-%012x", i+0x100000)
+		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
+		to := "Bo"
+		if i < carried {
+			to = "Ada"
+		}
+		note := fmt.Sprintf(
+			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
+			to, i%28+1, id, i)
+		fmt.Fprintf(&b, "M 100644 inline %s\ndata %d\n%s", path, len(note), note)
+		index += fmt.Sprintf("%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
+	}
+	fmt.Fprintf(&b, "M 100644 inline from-bo/INDEX\ndata %d\n%s", len(index), index)
+	b.WriteString("\ndone\n")
+
+	cmd := exec.Command("git", "-C", checkout, "fast-import", "--quiet")
+	cmd.Stdin = strings.NewReader(b.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git fast-import %d notes: %v\n%s", history, err, out)
+	}
+	// fast-import moved the branch under the working tree; this is what puts the notes in
+	// it. --hard against the branch it just wrote, so the tree, the index and HEAD agree
+	// and the checkout is clean -- inbox --advance refuses a dirty one.
+	gitIn(t, checkout, "reset", "--hard", "-q", "refs/heads/main")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 }
 
 // commitAs commits everything in the checkout under a roster name's identity and pushes it,
@@ -266,6 +312,7 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 // receipt reaches ONE run -- as my own RECEIPTS file in that run's change set -- and what it
 // writes is the flag in OPEN, which every later run reads for nothing.
 func TestHeardSurvivesTheCursor(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
@@ -280,11 +327,11 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 	}
 	// And again, with the receipt now far behind the cursor -- and with no note opened at
 	// all, which is the count this asserts.
-	before := bus.NoteParses()
+	before := bus.NoteParsesIn(checkout)
 	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345").
 		mustContain(t, "stdout", "heard=1")
-	if got := bus.NoteParses() - before; got != 0 {
+	if got := bus.NoteParsesIn(checkout) - before; got != 0 {
 		t.Fatalf("a run over an unchanged bus parsed %d notes, want 0: heard is read from the open list", got)
 	}
 	// The default read says the same thing in one line, and RECEIPTS is still the durable

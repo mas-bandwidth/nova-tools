@@ -50,6 +50,25 @@ var checkAudit = audit.Config{
 		// writing them. It writes to the stream the caller hands it and to nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
+		// dogfood.go's three, and why none of them can write past the escape:
+		// internal/dogfood holds no writer at all -- it reads a command
+		// reference and a directory of receipts, returns values, and renders
+		// its line grammar (Row.Line, Summary.Line, Receipt.RecordLine) into
+		// STRINGS this package prints through oneline.Escape. Its one reach
+		// outside the process is a git subprocess whose output it parses and
+		// never prints. context and time supply that subprocess's deadline and
+		// the receipt's RFC3339 stamp; neither holds a stream.
+		`"context"`,
+		`"time"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/dogfood"`,
+		// hygiene.go, and why internal/hygiene cannot write past the escape: it holds no
+		// writer of its own. It runs git as a subprocess, parses what came back and returns
+		// Findings -- three STRING fields this package renders through oneline.Field and
+		// oneline.Escape at the one print site that carries them. Its errors are returned,
+		// never printed, and reach the stream only through refuse, which escapes them.
+		// The matched text of a secret finding is not in any field it returns (its own
+		// TestHygieneRejectsAKeyShapeAndNeverPrintsIt searches every field for it).
+		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
 	},
 	MinClassified: 30,
 }

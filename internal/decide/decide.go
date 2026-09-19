@@ -69,11 +69,21 @@ type Answer struct {
 	Confidence    float64
 }
 
-// Usage counts the tokens one call spent.
+// Usage counts the tokens one call spent, and says PER COUNTER whether the
+// provider reported it at all. A 200 carrying a valid answer is not evidence of
+// reported usage: a response with no usage object, or one naming only some of
+// the counters, has said nothing about the rest -- and nothing is not zero. An
+// explicitly reported 0 is a measurement and is kept as one (SPEC-TOKENS rule
+// 14).
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+	HasInput     bool
+	HasOutput    bool
 }
+
+// Known reports whether the provider measured anything at all.
+func (u Usage) Known() bool { return u.HasInput || u.HasOutput }
 
 // Client talks to one Jev endpoint with one key the caller named.
 type Client struct {
@@ -166,12 +176,15 @@ func (w answerWire) answer() (Answer, error) {
 	}
 }
 
-// responseWire is the documented response shape.
+// responseWire is the documented response shape. The usage counters are
+// POINTERS on purpose: a missing field decodes as nil, which is an absence, and
+// a present 0 decodes as a pointer to zero, which is a measurement. Decoding
+// them as plain ints made every silent response look like a free one.
 type responseWire struct {
 	Answers map[string]answerWire `json:"answers"`
 	Usage   struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -200,6 +213,15 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 	answers, usage, err := decodeResponse(raw)
 	if err != nil {
 		return nil, Usage{}, err
+	}
+	// A typed decision is typed at BOTH ends: an answer that is not one of the
+	// question's own criteria is the provider failing to answer, and not a
+	// decision with a confidence on it. It is refused HERE, before anything
+	// records it as a decision or a floor is applied to it (edges 22 and 23).
+	// The usage travels with the refusal: the call was made and it cost what it
+	// cost, and a refusal cannot unspend it.
+	if err := ValidateAnswers(qs, answers); err != nil {
+		return nil, usage, err
 	}
 	c.record(state, qs, answers)
 	return answers, usage, nil
@@ -255,7 +277,14 @@ func decodeResponse(raw []byte) (map[string]Answer, Usage, error) {
 		}
 		out[name] = a
 	}
-	return out, Usage{InputTokens: rw.Usage.InputTokens, OutputTokens: rw.Usage.OutputTokens}, nil
+	usage := Usage{}
+	if rw.Usage.InputTokens != nil {
+		usage.InputTokens, usage.HasInput = *rw.Usage.InputTokens, true
+	}
+	if rw.Usage.OutputTokens != nil {
+		usage.OutputTokens, usage.HasOutput = *rw.Usage.OutputTokens, true
+	}
+	return out, usage, nil
 }
 
 // ParseQuestions parses a questions file: either a bare map of name to

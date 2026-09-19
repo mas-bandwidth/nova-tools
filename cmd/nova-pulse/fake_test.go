@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // The fakes this package's tests put in front of PATH, sharing internal/pulse's fake
@@ -25,6 +27,8 @@ type fakeRule struct {
 	Equals     string `json:"equals,omitempty"`
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
+	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 
@@ -36,7 +40,7 @@ type fakeSpec struct {
 
 // fakeTools are the programs nova-pulse starts. A name with no spec in the test's
 // directory exits 97 and says so, which no real gh or git ever does.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "ssh"}
 
 var (
 	fakeRoot    string
@@ -70,6 +74,7 @@ func fakeBins(t *testing.T) string {
 			return
 		}
 		cmd := exec.Command("go", "build", "-o", build, "../../internal/pulse/testdata/fakebin")
+		cmd.Env = goenv.Clean(os.Environ())
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBinErr = fmt.Errorf("building the fake: %v\n%s", err, raw)
 			return

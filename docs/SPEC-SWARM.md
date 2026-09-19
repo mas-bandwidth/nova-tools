@@ -46,7 +46,11 @@ it, and a tool that pretended to would be the most dangerous thing in the pool.
 **A job's records are regular files: a `RESULT.md`, `harness.log`, `exit.json`
 or `note` that is a symlink or a FIFO is no record at all — read as `no-result`
 and never followed or waited on — and every record this tool writes into a job
-directory goes through a temporary whose name the worker cannot predict.**
+directory goes through a temporary whose name the worker cannot predict.** The
+batch gather makes that refusal explicit rather than folding it into a missing
+result: a `RESULT.md` that is not a regular file scores `ABSTAIN reason=refused`,
+with the one refusal line naming the path and the kind (`symlink`, `fifo`) after
+the token, so a coordinator reads the planted path off the packet (issue #233).
 
 ## Freddy's swarm is frozen production, and this tool does not touch it
 
@@ -175,7 +179,9 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `budget`, `budget-unverifiable` (rule 13), `violation`, `failed`, `unknown`
     (no completion evidence, rule
     17), `launch-failed` (rule 18), and `rc` is the worker's exit code, `-`
-    for `unknown` and `launch-failed`. A
+    for `unknown` and `launch-failed`, and `-` for a native launch the
+    machinery ended itself (its deadline, a TERM from outside, a budget of
+    rule 13d), which has no exit code of its own to report. A
     field the provider did not report is the literal `-`, never `0`; `0` is
     written only when the provider reported zero. For OpenCode the source is
     the SQLite database in the data home the dispatcher exported for that job
@@ -242,13 +248,30 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     can observe is a promise the tool cannot keep. Otherwise; the supervisor samples the provider's usage as the job runs
     (OpenCode's data dir, per job, read-only, every `--usage-interval`
     seconds, default 5, a tool property like a timeout) and ends the job when
-    the observed sum passes the budget, recording `RUN BUDGET id=<id>
+    the observed sum reaches the budget, `spent >= n`, so a sum exactly
+    equal to the budget ends the job, recording `RUN BUDGET id=<id>
     spent=<n> of=<n>`; a job that ends this way keeps the findings it
-    appended so far (rule 3). **The budget is a stop condition on
+    appended so far (rule 3). **The observed sum is
+    `tokens_in + tokens_out + reasoning`** of rule 12's columns: what the job
+    sent, what it generated and what it reasoned. `cache_write` and
+    `cache_read` stand in the usage row and are never in the sum, because a
+    card re-reads about thirty times what it sends (the measurement under
+    rule 13b, which caps `cache_read` by a number of its own), and a budget
+    that counted them would measure the harness's re-reading and not the
+    job's work. **The budget is a stop condition on
     observations, not a ceiling on spend**: usage arrives after the tokens are
-    spent, so the overshoot is bounded by one sample interval plus the
-    provider's own delay, and the usage row (rule 12) carries the true final
-    sum, never the sum at the stop. When no usage has been observed — the
+    spent, and the stop is late by four delays, of which the tool chooses one.
+    They are the time the harness takes to record a call's usage after the
+    provider has spent it, which the tool neither sets nor knows (a harness
+    that records usage when a model turn ends is unobserved for the whole of
+    its longest turn); the wait for the next sample, at most one
+    `--usage-interval`; the read; and the ending, a terminate, a wait and a
+    kill. Every one of them is a time, and a time bounds no number of tokens
+    and no sum of money: what is spent inside it is whatever the calls in
+    flight cost. So the tool states no overshoot figure and promises no
+    ceiling. What it promises is the record: the usage row (rule 12) carries
+    the true final sum, the overshoot inside it, never the sum at the stop.
+    When no usage has been observed — the
     provider reports nothing, or reports late — the budget cannot fire, the
     deadline still ends the job, and `RUN DONE` / `RUN KILLED` carry
     `budget=<spent|->/<n>`, `-` for no observation, so a job that ran under an
@@ -259,9 +282,22 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     distinct from reporting no rows yet — on three consecutive samples ends
     the job: `RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3: <reason>`,
     `end=budget-unverifiable`, findings kept, files to `failed/`, because a
-    numeric budget the tool has stopped being able to see is a budget the
-    caller believes is enforced and is not. A worker
-    is handed a task file and the files the task names, never a conversation
+     numeric budget the tool has stopped being able to see is a budget the
+     caller believes is enforced and is not. The database is read under the
+     job's **own data home**, at either spelling OpenCode may give it there:
+     `$XDG_DATA_HOME/opencode/opencode.db`, and the `$HOME/.local/share/
+     opencode/opencode.db` a Linux harness derives from `HOME` — the two point
+     at the same per-job directory, because the dispatcher exports `HOME` and
+     `XDG_DATA_HOME` beside each other, and a reader that knew only the XDG
+     spelling found no database and wrote an all-dash row for a run that spent
+     real tokens (measured on hulk, vision, mini and space). A read that lands
+     while a write-ahead log is still beside the database waits up to **5
+     seconds** for the writer to checkpoint it, because the harness closes its
+     connection as it exits and the read lands in that window. And a bench
+     without the reader is a **named refusal**, never a silent dash:
+     `USAGE REFUSED reason=no_sqlite`, the literal line the final read leaves
+     on the record when `sqlite3` is not on `PATH`. A worker
+     is handed a task file and the files the task names, never a conversation
     and never a repository to wander: the task template's file list is the
     reading list, `--files` is its ceiling, and a job that reads past it is
     the refusal rule 1 already names. (2026-09-11: 21 children spent 2.4M
@@ -273,9 +309,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     budget, and when the observed `cache_read` exceeds `max_cache_read` or the
     harness log's assistant turns (counted the way usage counts assistant rows,
     or the usage row count where the log has fewer) exceed `max_turns`, it stops
-    the task on the deadline's stop path: the job moves to `failed/` with
-    `end=budget` in `usage.tsv`, findings kept, and the task's report carries
-    `PROMPT-DEFECT task=<id> reason=budget cache_read=<n> max=<m> turns=<t>`.
+    the task with a terminate, a wait and a kill of the group: the job moves
+    to `failed/` with `end=budget` in `usage.tsv`, findings kept, and the
+    task's report carries
+    `PROMPT-DEFECT task=<id> reason=budget cache_read=<n> max=<m> turns=<t>`,
+    which the supervisor appends to `<job>/RESULT.md` once the group is
+    dead, creating the file where the worker published none; it is the one
+    line this tool ever writes into a report.
     (2026-09-17: one Flash card ran 16 minutes and 3.2M cache-read tokens for
     one fix; the average card is 1.6M cache-read for 40-60k of prompt.)
 13c. **A card budget below the harness's measured startup cost is refused at
@@ -293,6 +333,162 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     a fact rather than a guess. (Stella, 2026-09-17: her 2k cap was smaller
     than the harness's own first context, so every card would have died at
     once.)
+13d. **The native route is under rule 13, and `native` holds the budget
+    itself** (issue #1545, open: this text is ahead of the code, and until
+    the code lands `native` takes no `--tokens` and its only stop is
+    `--deadline`). A card launched by `native` and a job launched by `run`
+    can spend the same key, so they answer to the same rule. Everything rule
+    13 says about the word, the sum, the stop, the record and a source that
+    cannot be read holds for a native card, and this rule says only what
+    differs: who watches, what a native job is, what is printed, and who has
+    to pass the word along.
+
+    **The word is required on every launch.** `native` takes `--tokens <n>`
+    or `--tokens unmetered`; without it the verb is exit 2 naming the flag,
+    and `0` is refused, exactly as on `add`. There is no test for a provider
+    that costs money, because this document has no such predicate and cannot
+    have one: a provider's name is whatever a config file says it is, a
+    `baseURL` can point a local-looking name at a metered endpoint, and a
+    worker description's `class` is about private source and not about
+    price. So the caller says a number or says `unmetered`, every time, and
+    the tool infers neither. It does not infer it from usage either: a
+    reported `0`, in a token column or in `usd`, is a measurement that adds
+    nothing to the sum, and is never a reason to drop the budget, to skip a
+    sample or to print `unmetered`.
+
+    **A budget needs a source the tool can read, and that is checked before
+    anything is made.** A native card's usage source is its worker
+    description's `usage`, and `opencode` when there is no `--worker`. A
+    numeric `--tokens` beside `usage: none`, or on a bench with no `sqlite3`
+    on `PATH`, is `NATIVE REFUSED` at exit 2, naming the source or the
+    missing reader, before any directory is made, for rule 13's own reason:
+    a budget nothing can observe is a promise the tool cannot keep. The same
+    refusal meets a description that sets `max_cache_read` or `max_turns`
+    under either condition, whatever `--tokens` says, because the card's own
+    budget is read from the same source. `--tokens unmetered` with no such
+    description runs under either, as it does today.
+
+    **`native` samples, in the process that holds the card's deadline.**
+    There is no supervisor on this route and none is spawned. While a launch
+    runs, `native` reads the harness's own database under the job's data
+    home (rule 13's source, at both spellings, read-only) every
+    `--usage-interval` seconds, default 5, a flag `native` takes as `run`
+    does. On `native` an interval under one second, or one not shorter than
+    `--deadline`, is refused at exit 2: the first could end an honest card
+    on three quick reads, and under the second no sample would ever run. It
+    never samples `usage.tsv`: that row is written after a launch's process
+    group is dead, so it is the record of a stop and cannot be the cause of
+    one. A sample reads what the database holds through whatever
+    write-ahead log lies beside it, which is the ordinary state of a
+    database a live harness has open, and it waits for no checkpoint; rule
+    13's five-second wait belongs to the final read, made when the harness
+    is gone. And a sample is never in the deadline's way: a read is given 5
+    seconds whatever the interval, no sample starts while one is unanswered,
+    a read still unanswered at its limit is abandoned and counted as a
+    failed read, and the deadline and a TERM from outside end the card at
+    their own instants whatever a read is doing.
+
+    **The budget is the job's, across every launch, and a stop is the end.**
+    A native job is one invocation of `native`: up to three launches when a
+    provider 5xx inside the launch grace retries it, one data home, one
+    usage row per launch. The observed sum is over the whole job, every
+    launch counted from the first launch's start, so a retry begins with
+    what the earlier launches spent and no retry resets anything. The stop
+    is rule 13's `spent >= n`, tested at every sample and once more before
+    any relaunch. When it is true `native` ends the card the way it ends one
+    on a TERM from outside: a terminate to the card's whole process group, a
+    wait, then a kill of the group, after which no process of that group is
+    alive, grandchildren and a harness that ignores the terminate included.
+    What the card had published stays where it is: a `RESULT.md` is kept
+    byte for byte, a `RESULT.md.tmp` is left as data (rule 16), and on this
+    route the tool writes nothing into a report. Nothing is launched again,
+    by `native` or by a batch, and running the card once more is a person's
+    act with a number of their own. `native` exits 1: it ran, and the answer
+    is no.
+
+    **Two numbers, kept apart: the row is the launch's and the line is the
+    job's.** After every launch, once its group is dead, comes the final
+    read and that launch's usage row, and the row carries what THAT LAUNCH
+    is finally reported to have used, from its own start to its own end,
+    and never the job's running sum: a job's rows are disjoint, so that
+    adding them counts each launch once. The launch a budget ended has
+    `end=budget` in its row, and `rc` is a dash there (rule 12), while the
+    line prints `rc=-1` as it does for a deadline and for a TERM. The job's
+    figure is on the line: `NATIVE OK` always carries `budget=`, which is
+    `budget=unmetered`, or rule 13's three spellings against the number,
+    `budget=<spent>/<n>`, `budget=-/<n>` for a job whose usage was never
+    observed, and `budget=<spent>+/<n>` for a partial observation. `<spent>`
+    is the sum over every launch at the final read, never the sum at the
+    stop. Two launches finally reported at 40 and 70 under `--tokens 100`
+    print `budget=110/100`, and their rows hold 40 and 70, never 40 and 110.
+    "Final" means the last thing the harness reported and nothing more: a
+    final read that cannot be made leaves a dash in every column of the row
+    it could not fill, the line then prints the last sum a sample saw with
+    the plus, and nowhere does the tool say that all that was spent was
+    seen.
+
+    **The line says what stopped the card.** A card the machinery stopped
+    under this rule carries one more field, and its value names the budget:
+    `stopped=tokens`, `stopped=max_turns`, `stopped=max_cache_read`, or
+    `stopped=unverifiable`. It is a key of its own. `reason=terminated`
+    stays what a TERM from outside prints, and the `reason=` inside the
+    `usage=none` group stays the usage read's.
+
+    **When the source cannot be read** the three cases are rule 13's, and
+    they stay apart. *Nothing observed* (no database yet, no rows, a harness
+    that reports late or never): the budget cannot fire, the deadline ends
+    the card, the line prints `budget=-/<n>`, and the run is never described
+    as under budget. *A partial observation* counts the columns it has: it
+    can reach the budget and stop the card, and it can never show that the
+    card stayed under it, which is what the plus says. *A read that fails*
+    (the database unreadable, the query erroring, the read abandoned at its
+    limit) on three consecutive samples ends the card exactly as the budget
+    does, with `end=budget-unverifiable` in the row, `stopped=unverifiable`
+    on the line and exit 1; two failures and then an answer end nothing.
+
+    **The card's own budget comes along.** When `--worker` names a
+    description with `max_cache_read` or `max_turns`, the same samples
+    enforce them as rule 13b says, over the whole job as the token sum is,
+    and they are this route's cap on cache reads and on model calls; a
+    `native` with no description has neither, and `--tokens` is its only
+    budget. Turns are counted as rule 13b counts them, with
+    `<job>/harness-output.log` as the log, since `native` never writes
+    `harness.log`. The stop is the one above, with `end=budget` in the row
+    and `stopped=max_turns` or `stopped=max_cache_read` on the line. The
+    `PROMPT-DEFECT` line of rule 13b is printed on `native`'s own stdout,
+    after `NATIVE OK`, and is written into no file: the card's `RESULT.md`
+    is the card's, and a card that published nothing has no report to
+    carry it. Rule 13c already refuses such a budget at load when it is too
+    small to be one.
+
+    **Every caller of `native` passes the word, and none invents it.**
+    `batch --cards` takes `--tokens <n>|unmetered`, required, exit 2 naming
+    the flag before any card starts. It is each card's own budget, the same
+    for every card as `batch --tasks` has it, never divided among the cards
+    and never a total for the batch. The batch puts it verbatim into every
+    `native` argv it builds, the local one under `--harness` and the remote
+    one under **Benches**. A `--runner` is the caller's own command, started
+    once per card with the label, the slot, the model, the card's path and
+    the root; it is handed the word as a sixth argument after those five,
+    and a runner that reaches `native` without passing it on meets
+    `native`'s own refusal. `bench probe` gains one check, `usage`, which
+    says whether `sqlite3` is on the bench's `PATH`; it is reported on
+    `BENCH OK` as `usage=<sqlite3|none>` and is never by itself a refusal,
+    because a bench that runs only `unmetered` cards needs no reader. In the
+    packet a card with a matching `RESULT.md` is `done` as always, because
+    the contract decides, and its line carries the `stopped=` field copied
+    from its `NATIVE OK` line, so that a report cut short is not read as a
+    finished one; and a batch that holds such a card does not run its
+    `--then` follow-on, printing `BATCH THEN SKIPPED` with `stopped=<b>`. A
+    card stopped with no matching result is `ABSTAIN reason=budget`, or
+    `ABSTAIN reason=budget-unverifiable`, and never `rc=<n>`.
+
+    **What this rule does not reach.** There is no dollar budget: `usd` is
+    recorded when the harness reports it and is never a stop, until this
+    document has a rule for a price that is missing. The tool does not judge
+    the number, so a budget no card could reach is `unmetered` said badly,
+    and the line still prints what was spent against it. And a harness
+    launched without `native` is outside this rule altogether.
 14. **The coordinator spends one command to spin a swarm up and one line to
     read it down.** Spinning up is `add --task <file>` per job from a
     template, or `batch --tasks <dir>` for many; the coordinator writes no
@@ -348,7 +544,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     and `triage` read `RESULT.md` only, never `RESULT.md.tmp`, and there is no
     mtime anywhere in the tool: a revision's identity is the SHA-256 of its
     bytes, and `<pool>/triage.json` records, per job id, the hash of the
-    revision last folded into a page. A `RESULT.md` whose hash is not the
+    revision last folded into a page. (The ONE exception is rule 19's `reap`,
+    which reads a harness log's age to decide whether a slot is finished; it
+    never reads or decides a report's identity, and it never touches a
+    `RESULT.md`.) A `RESULT.md` whose hash is not the
     recorded one is new and is folded; a file whose hash **changes between
     the read and the end of the parse** — a writer that ignored the protocol
     and appended in place — is not folded this run, prints `TRIAGE SKIPPED
@@ -550,6 +749,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
     at its budget, at the runner's group kill, or by `stop`.
+19. **The caches are shared per bench, and a finished slot's working bytes are
+    reaped.** A native job's toolchain and modules are the same for every card
+    under one root, so `native` and the supervisor point the harness child at
+    **one shared cache root**, `<root>/cache`, by `GOMODCACHE`, `GOCACHE` and
+    `NPM_CONFIG_CACHE`, and name it as a permitted write root beside the job
+    directory (SPEC-SANDBOX rule 17). The root is never a job's data home: 120
+    cards that each download the Go toolchain and every module into their own
+    data home filled hulk and vision to 100% (issue #1048). `nova-swarm reap
+    --root <dir> [--older <duration, default 1h>] [--dry-run]` removes, for
+    every slot whose job published a `RESULT.md` or whose newest harness log is
+    older than `--older`, the slot's `data/`, `tmp/` and `jobs/*/scratch`,
+    keeping `RESULT.md`, `usage.tsv` and the logs, and prints `REAP OK
+    slots=<n> freed=<bytes>`. A slot no result and no old log has is live and is
+    untouched, and `run` calls the same function at task end unless the worker
+    description sets `keep_data: true` (a task property, like a budget, never a
+    default), which leaves every slot's `data/` where it is for a person who
+    needs to read it. The shared `cache/` is never a reap target: it is the
+    thing the next job reuses.
 
 ## The card is a pipeline, not a loop (issue #856)
 
@@ -630,10 +847,11 @@ meaning of "pull the intelligence up, push down to machinery."
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
-nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--worker <file>]
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
+nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
@@ -642,19 +860,34 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup>
-nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
+nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-nova-swarm lint      --card <file> [--max <n>]
+nova-swarm lint      --card <file> [--max <n>] | --rules
 nova-swarm quickstart --pool <dir>
-nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
+nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
 nova-swarm help
 ```
+
+`route` picks the worker by a typed decision behind a floor. It sends the
+card's first 1500 characters as the state with four questions — `kind` a
+choice among probe, read, spec, fix, feat and port; `complexity` a score over
+four levels from one file mechanical to cross-cutting or under-specified;
+`needs_strong` and `touches_private` noul — and reads a routes table of
+`kind<TAB>complexity<TAB>worker json path<TAB>class` rows where class is
+public (a free/contributor route) or paid. When `touches_private` is at or
+above 0.5 the public-class rows are skipped; the row for (`kind`, rounded
+complexity) wins, else the nearest lower complexity for that kind, else
+`--default`. It prints one `ROUTE` line and exits 0, or 3 with
+`worker=<default>` when the kind confidence is below `--floor` (a suggestion,
+never an authorization: the caller keeps today's behaviour as the fallback),
+or 2 on refusal.
 
 `batch --root` and `native --slot`/`--root` are made **absolute and
 symlink-resolved** at admission, and that one spelling is what reaches the
@@ -673,7 +906,8 @@ provider in the file — a person's config names all of them — is copied verba
 and not checked, because this run never calls it.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
-refused, on `add` and on `batch` alike, for the reason `--files` has none.
+refused, on `add` and on `batch` alike, for the reason `--files` has none. `native`
+and `batch --cards` require the same word for the same reason (rule 13d).
 
 `--no-auto-retry` belongs only to `run`. It finalizes deadline and true-429
 outcomes without an automatic same-text descendant, while preserving the
@@ -742,8 +976,23 @@ because the wall refuses a path above the job; it never invokes `nova-sandbox`;
 its final step writes `RESULT.md` with the `RESULT: ` line first; and the card
 is under 12000 bytes. A card that satisfies all of them prints one line,
 `LINT OK card=<name> checks=<n>`, and exits 0; a card that drifts prints
-`LINT DRIFT card=<name> <check>: <line>: <excerpt>` for each finding and exits
-2, so a caller can refuse to admit it. `--max`, default 20 and 0 for all, bounds
+`LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what the rule wants>`
+for each finding and exits 2, so a caller can refuse to admit it.
+
+**Every drift carries its remedy, and the binary prints the whole table** (issue
+#1464). A rule token and a quoted line are not an instruction: three of the five
+drifts on one hand-written card pointed at line 1, which is the contract line
+practice 1 says line 1 must be, and the writer could not tell what any of them
+wanted. `nova-swarm help` promises of every listing "one MORE line naming the
+remedy", so each drift names one. And because the rule tokens are in no document
+a bench can reach — its clone of this repository is months behind the binary
+installed on it — `nova-swarm lint --rules` prints `LINT RULE <check>
+remedy=<what it wants>` for every check and exits 0, taking no card, since the
+question is asked before there is one. The DRIFT line and the listing read the
+same table, and the count in it is `checks=<n>`: a check added without a remedy
+is a red test.
+
+`--max`, default 20 and 0 for all, bounds
 the printed findings and adds one `LINT MORE` line naming the remedy; it never
 changes the verdict. The verb is the practice-17/18/23/25 shape made mechanical:
 it is a check, not a judgment, and a card that passes it is admitted to the wall
@@ -783,9 +1032,26 @@ their own environment and pass it to the harness under the description's
 absent, is refused naming the variable and the remedy — run the binary under
 `nova-secrets exec --only <NAME> -- <this command>`. The value is never written
 to any file, never printed, and never in a RUN or SUPERVISE line; the harness
-config still carries the variable's NAME, never the value (the key section
-below). The wall's probe has no key file to prove it cannot read, and runs its
-other checks without one (SPEC-SANDBOX rule 10).
+ config still carries the variable's NAME, never the value (the key section
+ below). The wall's probe has no key file to prove it cannot read, and runs its
+ other checks without one (SPEC-SANDBOX rule 10).
+
+ **A description carries `class`, and a `public` worker never sees private
+ source (CARD-8390).** `class` is `"public"` or `"paid"`, default `"paid"`;
+ anything else is refused where the description is loaded. `add`, `batch`,
+ `run` and `native` enforce it the same way: when the worker's class is
+ `public`, the card is scanned for clone URLs (`git clone ... <url>` and
+ `github.com/<owner>/<repo>`), and the card is refused unless every URL's
+ `owner/repo` is listed in `<root>/public-repos.txt` — one `owner/repo` per
+ line, where `<root>` is the pool directory for `add`/`batch`/`run` and the
+ configured root for `batch --cards`/`native`; a missing file refuses every
+ card for a `public`-class worker. The refusal is one line, `CARD REFUSED
+ reason=private-source repo=<owner/repo> class=public worker=<name>`, and the
+ card is not admitted: never queued by `add`/`batch`, never started by `run`
+ or `batch --cards`, never run by `native`. A `paid`-class worker admits every
+ card, as before. (Glenn, 2026-09-17: Muse, contributor-free, is for public
+ repos only; assume every provider trains, so the confinement is machinery,
+ not a promise.)
 
 **`worker check <description.json>`** validates a description before any launch and
 starts nothing. It loads the file with the same strict loader `run` and `native` use,
@@ -861,6 +1127,82 @@ pin. `--no-shared-caches` restores the old behaviour exactly, with no names set 
 caches under `HOME`, for a bench that wants one slot's caches isolated; the slot's data home
 layout is otherwise untouched.
 
+**The wall reads the bench's toolchain roots, because the standard puts the toolchain in a
+user directory.** The bench provisioning standard installs Go and sbcl under `~/sdk`, puts
+`~/go/bin` on the runner units' `PATH`, and leaves the bench's module cache at
+`~/go/pkg/mod`. The wall named none of them, so a card inside it was denied EXECUTION of the
+bench's own `go` (`Permission denied`), the only reachable Go was the distribution's
+`/usr/bin/go` under the `/usr` root, and `GOTOOLCHAIN=local` — which is right, and stays —
+turned that into `go: go.mod requires go >= 1.26 (running go 1.22.2; GOTOOLCHAIN=local)` on
+every Go card on hulk (found by the schema dogfood loop, 2026-09-18). Two contracts
+contradicted each other. So `native`'s implicit worker description now names those
+roots exactly as `read_roots` names one for an explicit worker: **read-only**, and
+**skipped if absent** — rule 5 refuses a path that is not there, and a darwin bench has no
+`~/sdk`. It is **ONE LIST WITH TWO KINDS**, because a `--read` root CARRIES EXECUTE on both
+bodies (landlock's read subset is `EXECUTE|READ_FILE|READ_DIR`, and the darwin profile
+grants `process-exec*` globally):
+
+- **`~/sdk` as `--read`**, read and execute. It is the Go the card must run, and it is the
+  only home directory the wall grants execute on.
+- **`~/go/pkg/mod` as `--read-noexec`**, read WITHOUT execute. The card reads a module's
+  sources out of the cache and never runs them; every `go mod download` on the bench lands
+  there and the bench user can write to it, so the exec-carrying kind would put a
+  dependency's own files one exec away from running inside the wall.
+
+`~/go/bin` is granted under NEITHER kind: it is GOPATH/bin, every `go install` lands there,
+the bench user can write to it, a card that could exec that tree could run bench-user tools
+inside the wall, and read-without-execute buys nothing in a directory of binaries. Nothing
+is lost — `~/go/bin/go` is a symlink into the sdk tree and the kernel checks the resolved
+target, so a card whose `PATH` finds it first still runs the granted toolchain, while a real
+binary sitting in that directory is `Permission denied` (measured on hulk). The same rule is
+why no launcher directory appears on the darwin side either.
+
+**The list is PER GOOS, because the same hurt has a darwin face.** A Mac bench's toolchains
+are INSTALLED and on `PATH` rather than unpacked into a home, and inside the bare wall three
+of them died on the M2 Air (measured 2026-09-18) — each resolves its own runtime FROM THE
+DIRECTORY OF THE LAUNCHER THAT RAN IT, and that launcher is a symlink out of any granted
+tree:
+
+```
+go: cannot find GOROOT directory: 'go' binary is trimmed
+dotnet: Failed to resolve full path of the current executable []
+java: Unable to locate a Java Runtime
+```
+
+`/opt/homebrew/bin/go` is a symlink into `/opt/homebrew/Cellar/go/1.27.1/libexec`, and the
+remedy measured by hand was to name that tree: `--read /opt/homebrew/Cellar/go/1.27.1`. So
+darwin keeps both home roots — a Mac provisioned to the darwin standard has `~/sdk`, and
+every Mac that has built Go has `~/go/pkg/mod` — and adds the installed trees, every one of
+them `--read` because every one of them is a runtime the card RUNS:
+`/opt/homebrew/Cellar/go` and `/opt/homebrew/Cellar/sbcl`, each reduced to the ONE version
+directory this bench runs by reading it off the launcher (`readlink -f "$(command -v go)"`,
+so a `brew upgrade` is not a stale literal here); `/opt/homebrew/opt/openjdk` and
+`/Library/Java/JavaVirtualMachines` for `java`; and `/usr/local/share/dotnet` for `dotnet`.
+Each is skipped when it is not there — a Mac with no .NET is a Mac with no .NET — and each
+reaches the argv RESOLVED THROUGH ITS SYMLINKS, because the grant is checked against the
+resolved target and `/opt/homebrew/opt/openjdk` is itself a link into the Cellar (on the Air
+it resolves to `/opt/homebrew/Cellar/openjdk/27`). The grant is on the toolchain TREE and
+never on `/opt/homebrew/bin`, which is a writable directory holding a launcher for every
+formula on the machine. Measured inside the wall on the Air with the roots granted:
+`go version go1.27.1 darwin/arm64`, `SBCL 2.6.8`, `dotnet` `10.0.401`, the brewed JDK's own
+`java -version` `openjdk version "27"` — and a script planted in `~/go/bin` still
+`Operation not permitted`.
+
+ONE NARROWING, and it is not a missing root: the `/usr/bin/java` STUB still answers `Unable
+to locate a Java Runtime` inside the wall, because it asks `/usr/libexec/java_home`, which
+needs a macOS system service the wall denies rather than a path anyone can grant. The JDK at
+the granted root runs, and the stub works too once a Java card sets `JAVA_HOME`.
+
+The list is written ONCE, in `internal/swarm/toolchain.go`, the kind is part of it, and each
+OS's entries are that OS's provisioning standard read back: `tools/bench-standard.sh` carries
+the linux names between its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
+`nova-pulse fleet standard`'s check table carries both OSes' — demanding a linux root,
+reporting a darwin one. A class test in `internal/ci` fails, per OS and in both directions,
+when the lists disagree. Nothing else under `HOME` is named: not `~/.config/nova-secrets`,
+not `~/.ssh`, not the home itself. The card's WRITABLE Go caches are still the bench-shared
+pair under `<root>/cache`; `~/go/pkg/mod` is the bench's own copy and is read-only inside the
+wall.
+
 **The harness's own fence is configured by the run, never left to its
 defaults** (issue #644). OpenCode asks before a tool touches a path it calls
 external, and a `run` with no terminal answers every such question by rejecting
@@ -878,6 +1220,18 @@ replaced), and its `permission.external_directory` allows:
   `READ:` line, and that path's parent with a `/*` on it, which is what the
   fence asks about for a file. A walled run takes none of them: the WALL owns
   what the child may read (SPEC-SANDBOX rule 1), and the fence is not a wall.
+  A card is the MODEL's text, and a fence rule a card can widen for itself is
+  no fence; and
+- **on every run, walled or not**, every `read_roots` entry of the worker
+  description, in the same three spellings (issue #1463). This one is the
+  DESK's declaration and not the model's: a person wrote it, `LoadWorker`
+  validated it, and it is the same list the wall is handed on the line above
+  (`nova-sandbox --read <read_roots entry>`). The fence may not deny what the
+  wall grants — a second, weaker fence that contradicts the first one can only
+  cost cards, and it cost one whole card at `NATIVE OK rc=0 harness=ok` before
+  this rule existed. **Red test:** a walled `native` run whose description
+  names `read_roots` writes a config that allows those roots, and still names
+  no path the card asked for.
 
 **Nothing ABOVE the job is ever named** — not the `jobs` parent. The harness
 resolves a card's `../scratch` after the card's own `cd repo`, so a parent rule
@@ -976,6 +1330,17 @@ again and displayed them identically, so a job that had already completed its
 `RESULT.md` and its usage row was refused as a pre-launch failure that could be
 replayed. The containment check is unchanged: a cwd that is not the job directory
 still refuses, and only the one field the comparison reads is decoded.
+
+**The deadline ends the whole tree, and a TERM from outside is the same cleanup (issue
+#779).** The native harness runs as the leader of its own process group, so at
+`--deadline` the machinery kills the entire tree the card started — grandchildren
+included, never just the leader — and folds the usage from what the harness had reported up
+to the kill, so the spend is never unknown. A `SIGTERM` from outside (the manager) is
+handled the same way rather than a silent exit: the tree is reaped, `usage.tsv` is written,
+and the `NATIVE OK` line carries `reason=terminated`. A harness that ignores `SIGTERM` is
+still gone at the deadline, because the wall is a kill of the group, not a request it may
+decline. A token budget reached is the third end of a native card, and it is the
+TERM's cleanup with `stopped=tokens` on the line (rule 13d).
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
@@ -1079,6 +1444,43 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   packet — an abstain that names *why* it stopped and the log it watched, never
   a bare missing result — and the BATCH line's `idle=<n>` counts those kills.
 
+- `--stall-after <seconds>` (default 0, off) is the **first-token** deadline,
+  and it is not the idle window. Every signal `--idle` has needs a FIRST sample
+  to compare against — a log that grew, a tree whose CPU advanced — so a card
+  that never speaks once is invisible to it and runs to the batch deadline,
+  paid for. On **2026-09-17** a fresh known-answer card hung for its entire
+  150 s having produced no token at all, while `deepseek-flash` on the same
+  bench in the same second answered in 11 s. A card that has produced **nothing
+  at all** since it launched is therefore ended at `--stall-after` and scored
+  `<label> slot=<n>: ABSTAIN reason=stalled log=0 watched=<path>`. A card that
+  produced one byte and then went quiet is the idle window's business and this
+  check never fires for it.
+
+- `--max-inflight <n>` (default 0, no cap) is the **per-route** in-flight cap.
+  A route is the **provider, the model and the key**: two models on one key
+  share that key's queue and the same model on two keys do not, so neither
+  alone is the unit, and the key is named by its **profile** — this string
+  reaches a log. At most `n` of the batch's cards run against one route at a
+  time; the rest **wait**, holding no process, no bench slot lease and no
+  spend, with their deadlines not yet begun. Measured **2026-09-17**: above
+  roughly 30–40 concurrent requests on one Muse contributor-free key the tail
+  latency goes to infinity — hulk and vision returned **zero** results in
+  thirteen minutes at load 0.5–2.0 — and every card launched past that point
+  burns its whole deadline for nothing. A launcher with no cap turns a free
+  tier's queue into spend.
+
+  When a cap is set the batch prints one line per route, after the BATCH line:
+
+  ```
+  BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
+  ```
+
+  `peak` is the most ever in flight on that route and `held-back` is how many
+  launches had to wait, so a reader chasing a slow batch can rule the cap in or
+  out without guessing. A batch that set no cap prints no such line and behaves
+  exactly as it did before. A card still held when the batch's deadline passes
+  is never launched at all, and is scored `deadline`.
+
 ### gather — one bounded packet, mechanically
 
 `gather` reads every card's `RESULT.md` and folds the batch into **one
@@ -1100,23 +1502,30 @@ rules below still decide. The fold itself is:
 - usage per card and the batch total;
 - bytes bounded: counts, not lists; the packet does not grow with the batch.
 - `--then <command>` (optional) names a follow-on that runs only when every
-  card is done and none stalled or idle-killed: the command runs once, with
+  card is done and none stalled, idle-killed or stopped under rule 13d: the
+  command runs once, with
   `sh -c`, in the batch's root, with `BATCH_ID`, `BATCH_DONE` and `BATCH_N`
   in its environment, and the packet prints `BATCH THEN rc=<n>`. A batch that
   is not all done prints `BATCH THEN SKIPPED done=<d> n=<n> abstain=<a>
-  stalled=<s>` and exits 3, so the follow-on never runs on an abstain.
+  stalled=<s> stopped=<b>` and exits 3, so the follow-on never runs on an abstain or on a stopped card.
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
-that differs is a different card, and folding it would fold a stranger's
-words into the batch. The refusal names the card and its line, and the card
-is `refused` on the packet, not folded — rule 15's quarantine, applied to
-the batch.
+that differs before the end of that line is a different card, and folding it
+would fold a stranger's words into the batch. The refusal names the card and
+its line, and the card is `refused` on the packet, not folded — rule 15's
+quarantine, applied to the batch.
 
 **A `RESULT.md` carrying its contract line is `done` whatever the harness exit
 code was**, unless the card abstained in its own words — a line 1 or a line 2
 beginning `ABSTAIN`. The contract decides, never the child's rc and never its
-timing.
+timing. The card generator can truncate the issue title, so the card's
+contract line may be a **prefix** of the `RESULT.md` line 1 rather than the
+whole of it: a line 1 that **begins with** the contract line — after trailing
+spaces are trimmed — is still this card and is `done`, and its longer tail is
+named on the card line as `tail=<n>` (the number of chars past the contract
+line). A line 1 that differs before the end of the contract line is a
+different card and stays `line1-mismatch`.
 
 **Every abstain names ONE reason token**, so the packet is the whole read and a
 coordinator never opens a `RESULT.md` to learn why (issue #461):
@@ -1125,11 +1534,16 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `refused` | published a `RESULT.md` that is not a regular file — a symlink or a FIFO — so it is no result at all; the refusal line naming the path and the kind follows (issue #233) |
 | `fence` | was stopped by the HARNESS'S OWN permission fence: it auto-rejected a path and the model stopped there, so the card never got to publish (issue #644). The path follows as `path=<p>` |
+| `wall` | was stopped by the WALL — the harness's permission auto-reject line, or the sandbox's own `SANDBOX REFUSED` / `Operation not permitted` on a path outside the write set — and published no `RESULT.md`. The refused path and the last `STEP <n>` the card reached follow as `path=<p> step=<n>`, and one `WALL task=<id> path=<p> step=<n> [commits=<n> branch=<name>]` report line is printed on the notes so a harvester can still push the commits the dead card left (issue #644's follow-up) |
+| `budget` | was ended by its own token budget, or by its description's `max_cache_read` or `max_turns`, and published no matching `RESULT.md` (rule 13d) |
+| `budget-unverifiable` | was ended because its usage could not be read on three consecutive samples, and published no matching `RESULT.md` (rule 13d) |
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
+| `stalled` | was killed because it produced NOTHING AT ALL -- no first token -- within `--stall-after` of launching; not the idle window, which needs a first sample to compare against (#917) |
 | `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
@@ -1151,14 +1565,17 @@ token off the line rather than guessing from files a batch creates itself.
 
 **The order:** the result is read first, and a matching result decides — `done`,
 or `result-after-deadline` at the deadline — before `card-abstain` (line 1 or
-line 2 beginning `ABSTAIN`) and `line1-mismatch`. With no matching result: the
+line 2 beginning `ABSTAIN`) and `line1-mismatch`. A path that is not a regular
+file is `refused` ahead of all of those, because it is never opened at all. With no matching result: the
 kill classes the machinery watched itself — `idle=<s>`, `input-limit` — and
-`admission`, then `fence`, then `harness-silent`, then `deadline`, then the pair `no-result`
+`admission`, then `fence`, then `wall`, then `budget` and `budget-unverifiable`, then `harness-silent`, then `deadline`, then the pair `no-result`
 (ended clean) and `rc=<n>` (ended non-zero), which are one slot split by the exit
-code. **`fence` comes before `harness-silent`, `deadline`, `no-result` and `rc=<n>`**:
-a card the machinery's own fence stopped is neither a model that published nothing
-nor a harness that never ran, and reading it as either sends a coordinator to the
-model for a wall this tool built (issue #644). **`rc=<n>` is never first**:
+code. **`fence` and `wall` come before `harness-silent`, `deadline`, `no-result` and `rc=<n>`**:
+a card the machinery's own fence or the OS wall stopped is neither a model that published
+nothing nor a harness that never ran, and reading it as either sends a coordinator to the
+model for a wall this tool built (issue #644). A card that published a matching `RESULT.md`
+anyway is done: the wall is named only when the report is absent, because a wall that was
+survived is not the card's end. **`rc=<n>` is never first**:
 an exit code from a harness that never ran the card is nothing to go and read.
 `idle=<s>` and `input-limit` are decided before the result is read at all — they
 are what the machinery watched happen, true whether a result exists or not;
@@ -1168,9 +1585,29 @@ The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
 field after it where the remedy needs a path: `watched=<path>`, the log the
 idle monitor watched, or `job=<dir>`, the job directory that holds no result.
-**A stall is `log=0`**: a card that ended with no output after the wall opened
-is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
-its line.
+
+**A card the batch KILLED carries `killed=<n>` after its log count, and a card
+the batch did not kill carries no such field** (issue #640). A kill is the
+card's WHOLE PROCESS GROUP and never one pid: the runner, the wall it opened,
+the harness inside it and everything the harness started — terminated, given
+`TerminateGrace`, then killed, and confirmed gone. The terminate comes first
+because the child of a runnerless batch is `nova-swarm native`, which answers a
+TERM by reaping its own tree and folding its usage. `<n>` is the size of that
+group read in the instant before it was ended: exact where the platform
+enumerates a group, and otherwise the one leader it can prove, which is a floor
+and never a guess. **`killed=0` is a real answer** — the group was already gone
+when the deadline fired. **Red test:** a card that leaves an ordinary child
+running and then blocks past the deadline; when the `BATCH` line has been
+printed, the kernel says that child is gone. *A card that puts itself in a new
+session (`setsid`) leaves its group by construction and no group kill reaches
+it; that is the background-subtask violation the supervisor reports, and it is
+not this rule's business.*
+A `done` card whose line 1 ran longer than its contract line carries one more
+bounded field, `tail=<n>` — the number of chars past the contract line — so a
+coordinator reads how the worker's title extended the generator's truncation;
+an identical line prints no `tail` field. **A stall is `log=0`**: a card that
+ended with no output after the wall opened is counted on the `BATCH` line's
+`stalled=<n>` and reads its own emptiness on its line.
 
 **A read verdict or a BRANCH whose run carries a known failure signature is
 `ABSTAIN reason=signature sig="<signature>" class=<class>`, never `done`.** A
@@ -1217,10 +1654,10 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1234,6 +1671,40 @@ HOLD: <one bounded quoted line>
 `BATCH` is the packet's first line: the id, the admitted n, the cards done,
 the cards abstain, the token and usd totals, `idle=<n>` — how many cards the
 idle timeout killed — and `stalled=<n>`, how many ended with no output at all.
+
+**A card the batch reaped is counted too, and its numbers come from the
+harness's own store.** `usage.tsv` is composed at the END of a run, so a card
+killed for idleness or at the deadline leaves none, and on **2026-09-19
+14:58Z** a card that had run for minutes and made real paid calls was reported
+`in=0 out=0 usd=0.0000` — a number where there should be a measurement. When a
+card wrote no usage row, the totals read the store under its own data home, the
+same store `native` samples its usage from. **The row wins wherever it exists**:
+`native` composed it from that store with the run's own window, provider and
+model, and reading the database over the top of a row that already reported
+would double-count the card. A row at the **slot** root counts only when its
+`job` column names this card: slot directories are reused, and an earlier
+card's leftover row is not this one's.
+
+**A reaped card's numbers are a LOWER BOUND, and `partial=<n>` says how many
+cards are floors.** The card was killed mid-turn, and the assistant row for the
+turn in flight carries no tokens object — the provider charged for it and no
+database holds the figure. The field is printed only when `n` is above zero,
+the way `benches=` is.
+
+**An absence contributes zero, silently; a reader that stopped contributes zero
+and says so.** The two absences are a store that is **not there** (`no-store`)
+and one that is there, was read perfectly, and holds nothing in the window
+(`no-rows`) — the shape a harness killed before its first answer leaves. Neither
+is a fault, and a note on either would fire on every card reaped early and teach
+its readers to scroll past the line, taking the note that matters with it. The
+two failures are `no-sqlite3` and `query-failed` — a missing program, a locked
+or corrupt database, a query past its timeout — and for those
+`BATCH NOTE <label> store unread: <reason>` goes to stderr, because a zero
+nobody was told about is the fault this whole reader exists to close. The store
+reads run **in parallel, at most four at a time**: each carries the usage
+reader's 20-second timeout, and serially `n` reaped cards would add `22n`
+seconds to a gather that is otherwise all file reads.
+
 One card line per card, in admission order: its label, its resolved slot, and
 either its disposition line — line 2 verbatim, capped — or `ABSTAIN` with its
 one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and
@@ -1305,7 +1776,23 @@ b2	b2	/home/me/swarm	1-15	/home/me/.local/bin/opencode	/home/me/.config/nova/aut
 reads, prints or copies `auth`; it names the path on the bench's `native`
 command line and checks that it exists with mode `0600` (`stat`, never a
 read). Rule 6 seen from a bench: the key is data, and here not even data this
-tool holds.
+tool holds. A remote bench answers that with one `ssh <host> stat -c %a <auth>`
+round trip; the `local` row answers it with the Go standard library, because
+`-c` is GNU's spelling and darwin's `stat` refuses the option, and no tool of
+ours may require GNU coreutils on the operator's own Mac.
+
+**`--harness <path>` on `batch --cards`** runs every local card through this same
+binary's own `native`, with no runner script at all (#636: `native` lives in the
+binary that was demanding an external command to reach it, and every caller wrote
+the same eight-line shim). `--auth` names the harness's auth file; a `local` row in
+`--benches` supplies both when neither flag is given.
+
+**`--slots <lo>-<hi>` on `batch --cards`** is the range allocation comes from: a card
+whose slot column is `-` takes the lowest free slot in the range, and a hand slot outside
+it is that card's own `ADMIT REFUSED slot=<n> range=<lo>-<hi>` at admission rather than an
+`rc=2` with no log inside a runner (#618). Free means the slot's own `BATCH` lock is absent
+or its holder pid is dead — never a process probe, which disagrees with the lock for the
+whole of a card's clone.
 
 **`--bench <name>[,<name>...]` on `batch --cards`** allocates the cards across
 the named benches. The cards file's `slot` column is `<n>` (local slot n, as
@@ -1329,7 +1816,7 @@ today's behaviour. On a remote bench `--runner` is not used: the batch builds
 the `native` command itself from the bench row and the card row, and the run is
 
 ```
-ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n>/jobs/<label> --root <root> --deadline <s> --auth <auth> [--no-wall]
+ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n> --root <root> --deadline <s> --tokens <n|unmetered> --slots-store <store> --owner <owner> --auth <auth> [--no-wall]
 ```
 
 whose first output line is `RUN pgid=<n>`, the remote process group `native`
@@ -1375,9 +1862,9 @@ counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 network drop after `RESULT.md` was written is recovered by a second pull at
 gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
-fence | harness-silent | rc=<n> | idle=<s> | deadline | result-after-deadline | card-abstain |
+fence | budget | budget-unverifiable | harness-silent | rc=<n> | idle=<s> | deadline | result-after-deadline | card-abstain |
 admission <why> | input-limit | bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
-remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
+remote card asks `ssh <host> stat -c %s <root>/<n>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
 dead card: the card stays `unknown` until the batch deadline, when it is
@@ -1436,12 +1923,13 @@ bench equals this binary's own `version` line, refused on a mismatch naming
 both; `cores` valid against `nproc --all` there, or `-`; pin, `pin=taskset`
 when `taskset` is on the bench's `PATH` and `pin=none` when not, a refusal only
 when `cores` is a list and `pin=none`; `auth` present with mode `0600`, never
-read; the wall as `nova-sandbox check` reports there. It ends with one line,
+read; the wall as `nova-sandbox check` reports there; and `usage`, whether `sqlite3` is on
+the bench's `PATH`, reported and never by itself a refusal (rule 13d). It ends with one line,
 exit 0 or 1:
 
 ```
-BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
-BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
+BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall|usage> ok=<true|false> [<one bounded value>]
+BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none> usage=<sqlite3|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 ```
 
@@ -1479,6 +1967,7 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 1. `bench-table-parsed` — the seven columns, a `-` cores row, and each refusal above by name.
 2. `bench-probe-refuses-version-mismatch` — `BENCH REFUSED check=version` names both identities.
 3. `bench-probe-never-reads-auth` — the fake ssh sees `stat` on the auth path and never a read of it; mode `0644` is a refusal.
+   Its darwin half, `bench-probe-local-row-needs-no-gnu-stat`: with a BSD `stat` on `PATH` (no `-c`), a `local` row with a `0600` auth still admits and `stat` is never exec'd at all; `0644` still refuses.
 4. `batch-pins-slot-to-core` — slot 3 on `cores=1-15` runs under `taskset -c 3`, and every remote argv carries `taskset`.
 5. `batch-refuses-more-slots-than-cores` — 16 slots on `1-15` is `ADMIT REFUSED bench=b2 slots=16 cores=15` and no card starts.
 6. `batch-copies-card-only` — exactly one file crosses before the run, and it is the card.
@@ -1516,8 +2005,8 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input` |
-| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d) |
+| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`, and `--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and
@@ -1537,27 +2026,28 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
-BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s> stopped=<b>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
+<label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 HOLD: <one bounded quoted line>
-BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
-BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
+BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall|usage> ok=<true|false> [<one bounded value>]
+BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none> usage=<sqlite3|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
+RUN WAIT slots owner=<owner> holders=<owner:count,...>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -1576,7 +2066,7 @@ RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
-NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [fence=rejected path=<p>] [usage=none reason=<r> path=<p>]
+NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -1749,9 +2239,19 @@ takes a lease per card before it runs and releases it after. The seven rules:
 3. The broker verbs are the only way to hold a slot:
 
    ```
+   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
    nova-swarm slots list --store <dir>
    ```
+
+   `init` MAKES a store: the directory, its `slots/` and one `shares.tsv` with the
+   given capacity, a reserve of 0 and one owner's share. It creates and never updates --
+   a store that already has a `shares.tsv` is refused and not touched, because the leases
+   under it belong to processes that are running now and a capacity edited underneath them
+   is a bench that overcommits without saying so. Changing a live store is a hand edit of
+   `shares.tsv`. It exists because rule 2 refuses a launch without a lease, and a refusal
+   whose remedy is "pass --slots-store <dir>" is no remedy on a bench that has never had one.
 
    `take` grants by the owner's share from the registry file `<store>/shares.tsv`
    (columns bench, owner, share). It refuses with the holder list when the share is spent,
@@ -1768,6 +2268,50 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
 - a launch without a lease is refused by the launcher.
+
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all]` frees them, and `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+
+**The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
+
+**`native` requires a lease, and there is no way to ask it not to** (nova-tools#1546).
+`nova-swarm native --slots-store <dir> --owner <name>` are REQUIRED flags: the run takes
+exactly one lease before any job directory is made, holds it for the run's deadline plus
+two minutes of grace, and releases it on every exit path including a run that failed. A
+take that grants nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=…
+holders=…` line and exits 2, having started nothing.
+
+**A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
+ids it granted — not a count — and a holder hands exactly those back to
+`ReleaseSlotLeasesByID(store, ids, pid)`, which re-reads each lease and leaves it alone
+unless the pid is still the holder's. An owner is a bench and a label is a card's name, and
+two runs that share both — two slots, two benches, a retry — would otherwise each give away
+the other's live seat; a run that refused before it started, on a missing harness say, would
+delete a lease it never took. An id that is already gone is not an error: a release is
+allowed to be late.
+
+`slots release --store <dir> --owner <o> (--label <text> | --all)` is unchanged and stays
+by owner and label, because that is what a PERSON at a prompt means by it and a person can
+see the store. A deferred cleanup cannot, so it does not get that verb.
+
+Asked without either flag, `native` prints exactly one line and exits 2:
+
+```
+NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
+```
+
+There is no default store, no store invented under `--root` or `--slot`, no owner guessed
+from the host or the label, no `shares.tsv` created on the way past, and **no `--no-lease`
+flag**. The first cut of this made the store optional, so a `native` without it ran exactly
+as before and took nothing — which leaves rule 2 unmet, because a launch that took no lease
+is one the bench cannot see, cannot count and cannot refuse. That is a hole, not a default.
+
+The same rule reaches every caller that launches `native`. `nova-swarm batch` without a
+`--runner` of its own launches `native` for every card — locally and on a bench — so it
+takes the two flags and **refuses the whole batch with the same line, before any card
+runs**, rather than letting each card fail with it in turn. A batch that names its own
+`--runner` launches no `native` and is not held to this: the runner is somebody else's
+program and the bench cannot speak for what it takes. **The store path is resolved on the
+machine that runs the card**, which for a bench row is the bench.
 
 **The store is the authority.** A launcher reads it before it runs and releases
 its lease after; the broker is the only writer. No owner keeps a private count
@@ -2051,6 +2595,11 @@ and `nova-swarm` does not read a worker's `RESULT.md` and act on it. The
 templates are shipped in the binary, printable, and a caller may write their own
 file instead — the tool has no list of blessed task shapes.
 
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §5 (draft, 2026-09-19):** a template stays text. A card
+**kind** is a template plus a gate and a negative control declared in the tool, chosen by the
+card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
+card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
+
 ## The `RESULT.md` template
 
 One shape, printed by `nova-swarm template --name result`, and the shape
@@ -2230,6 +2779,119 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 ```
 
+## The `capacity` offer-and-routing form (issue #176)
+
+Printed by `nova-swarm template --name capacity` and refused by `add --template`,
+as `result` and `setup` are: it is a form a friend and a coordinator fill
+together, not a task's conditions. It is the near-term endpoint of the
+discover-offered-capacity-and-match-ready-work coordination issue #176 asks
+for — manual census and routing log, with the four rows acceptance evidence
+demands before any automatic scheduler is built, and the five capacity kinds
+(coordinator, direct worker, one-shot, swarm and local) kept apart because
+model slots are not interchangeable throughput units. It publishes the offer
+half and the routing-log half with placeholder values only; every named
+field is a thing only the friend or the coordinator knows, and a friend's
+own choices fill their own copy. The offer has an expiry; past the expiry
+it is excluded, not favoured and not penalised. missing contact is unknown;
+stale capacity is not proof of failure and not proof of consent; an offer
+nobody answered since the silent-ping window is reported as `reason=unconfirmed`,
+and an expired offer is reported as `reason=expired`. Two offers sharing a
+named shared-limit pool are counted once per pool in the routing log, and
+utilisation is reported only against the explicit pool-specific denominator
+the routing log names — coordinator, direct worker, one-shot, swarm and local
+each carry their own, never summed. no key, no token, and no private host
+detail is ever published, names/models/harnesses/benches stay placeholders,
+and an agreed offer supplies no account access. A friend may propose an
+alternative, decline, or stay silent, and missing feedback is pending, never
+consent; an automatic scheduler is separate staged work with its own
+authorization.
+
+```
+capacity — one friend's offered capacity and the manual routing log (#176)
+
+One offer per friend, bounded and expiring, published before any automatic
+scheduler is built, because an idle pool receiving ready work, an incompatible
+offer being skipped, shared capacity counted once, and a stale offer excluded
+are four separate things a coordinator has to do by hand first, in a form a
+friend fills and a coordinator reads. Print the offer half, fill it with the
+friend whose capacity is being advertised, and paste the FILLED offer where the
+review happened; the private configuration it stands for stays on the friend's
+own bench. Print the routing log half, fill it with the ready work and the
+offers considered, and record the matching decision in writing so the next
+review can compare the count against the offers' own quotas. Names, instances,
+benches, models, harnesses and pool layouts are not constants of this form:
+every value below is a placeholder, and a friend's own choices fill their own
+copy. A friend may propose an alternative, decline, or stay silent, and missing
+feedback is pending, never consent. A filled form supplies no account access,
+and an automatic scheduler is separate staged work with its own authorization.
+A form carries one capacity kind at a time from the five the SPEC-WORK friend
+section distinguishes — coordinator, direct worker, one-shot, swarm and local —
+because model slots are not interchangeable throughput units and a swarm
+worker, a one-shot, and a local model run on different evidence and different
+shared-limit pools.
+
+## The offer (the friend's own half)
+
+offered by: <who wrote this offer, and where the review is recorded>
+reviewed with: <the friend and a coordinator, or pending>
+expires: <the stamp this offer stops being an offer, never blank>
+
+friend: <name>
+instance: <the worker home or container this friend runs under>
+bench: <the machine or hosted runner this friend works on>
+model identity: <the provider's id and the resolved model id>
+basis: <the per-token cost class — zero|flat|metered — and its pricing reference, or local>
+harness: <the harness this friend chose, and its version>
+supported task types: <read, text, code, replay; one or more, a comma list>
+demonstrated strengths: <what the friend has been shown to do well, never an inferred claim>
+demonstrated limits: <what the friend has been shown unable to do, never an inferred claim>
+permitted scope: <the repositories and paths this offer may read and write>
+current availability: <awake | resting | credit-limited | rate-limited | unknown — never idle because a recent message did not arrive>
+concurrency: <the maximum parallel slots this offer reserves>
+expected queue/latency: <the queue depth and the latency a scheduler can expect, bounded>
+shared-limit pools: <the named pools whose quota this offer shares, or `[]` for none>
+
+## The routing log (the coordinator's half)
+
+ready work: <the dependency-ready task list being matched this cycle>
+compatible offers: <the offers whose supported task types and permitted scope admit the ready work>
+incompatible offers: <the offers skipped this cycle, with one reason each — wrong task type, scope mismatch, basis mismatch, capacity kind, anything but a name>
+shared pool share: <the share of the named shared-limit pools, counted ONCE per pool across all offers naming it>
+stale offers excluded: <the offers whose expires stamp has passed or whose contact stamp is past the silent-ping window, named and never counted>
+utilization denominator: <the explicit pool-specific denominator this cycle's utilization would be reported against — a coordinator, direct worker, one-shot, swarm and local each have their own>
+
+## The four rows acceptance evidence demands (one row each, when they occurred this cycle)
+
+| observed | row to write |
+| --- | --- |
+| an idle compatible pool receiving ready work | offer=<name> task=<id> routed=true admit-gate=<gates that passed> |
+| an incompatible offer being skipped | offer=<name> task=<id> reason=<what rules it out> |
+| shared capacity counted once | pooled-as=<pool> reservations=<n> offers-with-that-pool=<n> shared-share=<n> |
+| a stale offer excluded | offer=<name> expires=<stamp> contact=<stamp or NONE> reason=<expired or unconfirmed> |
+
+missing contact is unknown; **stale capacity is not proof of failure and not proof of consent**, so an offer nobody answered since the silent-ping
+window is excluded, not favoured and not penalised, and reported as
+`reason=unconfirmed` alongside any expired offer reported as
+`reason=expired`. Each capacity kind from the SPEC-WORK friend section
+gets its own row when the offer names it — **coordinator capacity** is its
+own row, **direct worker capacity** is its own row, **one-shot capacity** is
+its own row, **swarm capacity** is its own row, and **local capacity** is its
+own row — because model slots are not interchangeable throughput units, and
+sharing a quota across those kinds is the double-count the form exists to
+prevent.
+
+## What is never in this form
+
+no key, no token, and no private host detail is ever written here, a task
+card, a bus note, an issue or a token ledger: a name or a path is not a
+secret, but a value is, and this form carries values for nobody. A shared
+account limit is named by its pool, never by the credential that holds it.
+An offered capacity is not a purchase, a permission, or a promise to run;
+it is the standing under which a coordinator may propose ready work, and a
+friend chooses offers, reserves, and rest, not a scheduler that maximises
+occupation beyond that offer.
+```
+
 ## `triage` — one page
 
 `triage` walks the job directories, takes every `RESULT.md` **whose revision
@@ -2298,6 +2960,17 @@ never read as measured zero.
 `cost` reads `<pool>/usage/` and nothing under `done/`, `failed/` or
 `running/`, which is why it answers after `reclaim`.
 
+**`--by model|day|repo` folds the same rows into one summed line per group**, printed
+after the per-task lines and before `COST OK`, one
+`COST BY <group>=<value> tasks=<n> in=<sum> out=<sum> cache_write=<sum> cache_read=<sum>
+reasoning=<sum> usd=<sum or ->` per group, sorted by `cache_read` descending. A group
+whose rows carry a `-` in `usd` prints `usd=-`: the summed dollar figure is an absence
+when any row in it is an absence, and a partial subtotal is never read as the group's
+price. `--summary-only` prints the `COST BY` lines and `COST OK` and no `COST TASK`
+lines, which is the page a coordinator reads to answer *which model, which day, which
+repo*. A `--by` value that is not `model`, `day` or `repo` is refused rather than read
+as a fourth grouping.
+
 This exists because **a fleet can burn a session**: one fleet ran about 9M
 tokens, and three parallel workflows hit the limit in 20 minutes (Glenn,
 2026-09-10). A pool whose cost is invisible is a pool that is discovered to be
@@ -2365,6 +3038,14 @@ than the grace — is a real run that failed and is **not** retried, and `run --
 files the first fast failure without launching a descendant. A native run applies the same
 rule to its launch and appends one usage row per launch, so a retried card's `usage.tsv`
 carries its attempts for the one job.
+
+**The structured signal is a field, not a sentence (issue #163).** A harness adapter records
+the provider's refusal as one line in the harness log —
+`INPUT LIMIT class=<token|bytes|files> value=<n> limit=<n>` — and the supervisor, `finish` and
+rule 17's recovery pass all read that field and name the class from it: no mark, bare-word
+bound, list marker or event-prefix rule is asked to decide it. The prose heuristic above is
+the fallback for a harness with no adapter, and the class is decided from the field before a
+word of it is read.
 
 ## `requeue` — the same task, changed
 
@@ -2764,7 +3445,62 @@ be seen red before it is trusted.
     fake usage source that errors on three consecutive samples ends the job
     `RUN BUDGET-UNVERIFIABLE … samples=3` with `end=budget-unverifiable`,
     the findings kept, and one that errors twice then answers does not;
-    `requeue` without `--files` or `--tokens` is exit 2 naming the flag.
+    `requeue` without `--files` or `--tokens` is exit 2 naming the flag; a
+    fake harness whose sum is exactly `--tokens` is ended; a
+    fake harness whose `cache_read` alone passes `--tokens` is not ended,
+    because the sum is `tokens_in`, `tokens_out` and `reasoning`.
+13d. `TestNativeBudgetEndsTheCardAndKeepsFindings` (issue #1545, open):
+    `native` without `--tokens` is exit 2 naming the flag and makes no
+    directory, `--tokens 0` is refused, and `batch --cards` without it is
+    exit 2 before any card starts; `native` accepts `--usage-interval`, and
+    refuses at exit 2 one under a second and one not shorter than
+    `--deadline`; a fake harness that publishes a `RESULT.md`, forks a
+    grandchild, ignores the terminate and writes usage rows past `--tokens`
+    is ended with no process of its group alive, the `RESULT.md` byte for
+    byte what it published, exactly one launch, exit 1, a usage row with
+    `end=budget` and `rc` a dash whose columns equal the database's final
+    figures rather than the figures at the stop, and a `NATIVE OK` line
+    carrying `rc=-1`, `budget=<spent>/<n>` with `spent` at least `n`, and
+    `stopped=tokens`; a fake harness whose sum is exactly `--tokens` is
+    ended, and one whose `cache_read` alone passes the number is not;
+    **the two-launch accounting**: under `--tokens 100`, a first launch that
+    reports 40 and dies on a provider 5xx inside the launch grace, then a
+    second that reports 70, is stopped in the second launch, the line
+    prints `budget=110/100`, `usage.tsv` holds two rows whose summed
+    columns are 40 and 70, never 40 and 110, the second row alone has
+    `end=budget`, and the rows add to the line's 110; a first launch that
+    reached the budget alone is never launched again; a final read that
+    fails after a stop leaves dashes in that launch's row and the last
+    sampled sum with the plus on the line; a fake harness that writes no
+    usage runs to its deadline and prints `budget=-/<n>`; one that reports
+    only `tokens_in` prints `budget=<n>+/<n>`; `--tokens unmetered` prints
+    `budget=unmetered` and runs to its deadline; a usage reader that errors
+    on three consecutive samples ends the card with
+    `end=budget-unverifiable`, `stopped=unverifiable` and exit 1, and one
+    that errors twice then answers does not; a usage reader that never
+    returns does not move the deadline, and the run still ends inside the
+    bound the deadline's own test holds (issue #779); a database with a
+    write-ahead log beside it for the whole run is sampled and its reads
+    are answers, never failures; a numeric budget beside `usage: none`, or
+    with no `sqlite3` on `PATH`, is `NATIVE REFUSED` at exit 2 before any
+    directory is made, so is `--tokens unmetered` beside a description
+    that sets `max_turns` under either condition, and `unmetered` with no
+    such description runs under both; token columns and a `usd` that all
+    report `0` print `budget=0/<n>` and never `unmetered`; a description's
+    `max_turns` passed, and in a second case its `max_cache_read`, ends the
+    card with `end=budget`, `stopped=max_turns` or `stopped=max_cache_read`,
+    the `PROMPT-DEFECT` line on `native`'s stdout after `NATIVE OK`, and a
+    published `RESULT.md` unchanged by a byte; the batch's local and remote
+    `native` argv both carry `--tokens` with the batch's own word, and a
+    `--runner` receives it as its sixth argument; the packet scores a
+    stopped card with no matching result `ABSTAIN reason=budget`, or
+    `ABSTAIN reason=budget-unverifiable`, ahead of `harness-silent` and
+    behind `wall`, and one with a matching result as done with the
+    `stopped=` field of its `NATIVE OK` line, `stopped=unverifiable`
+    included; a batch holding such a done card prints `BATCH THEN SKIPPED`
+    with `stopped=1` and does not run its follow-on; and `bench probe`
+    prints a `usage` check and `usage=none` on `BENCH OK` for a bench with
+    no `sqlite3`, without refusing it.
 14. `TestOneCommandUpOneLineDown`: `batch --tasks` over three template
     tasks queues three jobs from files with no prompt text on the command
     line, `BATCH OK tasks=3`, every sidecar carrying the one batch id, and a
@@ -2995,11 +3731,13 @@ verb, and tests that pin all three by executing them.
    killed; the report says so; the watcher never matches a process by its command
    line.
 6. **`internal/swarm/templates.go`** — the three task templates, the
-   `RESULT.md` template and the `setup` agreement form (#184), as embedded
-   text, each with its conditions and the number that produced it. Tests:
-   `template --name` prints each; `add --template` wraps a task and the
-   result contains every condition; `add --template setup` is refused and
-   the setup form carries no private name, path or value.
+   `RESULT.md` template, the `setup` agreement form (#184) and the `capacity`
+   offer-and-routing form (#176), as embedded text, each with its conditions
+   and the number that produced it. Tests: `template --name` prints each;
+   `add --template` wraps a task and the result contains every condition;
+   `add --template setup` and `add --template capacity` are refused, the
+   setup form carries no private name, path or value, and the capacity form
+   carries no key, token, or private host detail.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
    with their `dup:` marks and their verbatim quotes, the owed-list match, the
@@ -3073,3 +3811,107 @@ stamp, so a local job never runs beside a benchmark; the separate
 | ideas #275 | refutation rate as a health metric | already, rule 8: `accurate`/`wrong` per batch is that rate; a falling `wrong` share is the reader's to notice |
 | ideas #273 | cleanup arriving before its notification | already, rule 18: `exit.json` before the slot is freed, and the nonce ties the evidence to its launch |
 | ideas #357 | reason about a report, never execute | already, the data paragraph at the top |
+
+## Efficiency: lessons absorbed 2026-09-12 *(Glenn; Stella's measurements)*
+
+Measured 2026-09-12 on the live pool and the worker homes. Correctness is the
+rest of this spec; this section records what `nova-swarm` costs the coordinator
+and the bench, and the rules that bound that cost. Three operations are the
+widest, and each has one rule.
+
+| the operation, measured | the measurement | the rule that bounds it |
+|---|---|---|
+| **REPEATS: one full clone of the repository per job** | 21 clones, 307 MB and 36 s of wall clock for one object graph; 1,128,320 cache-read tokens over 13 tool calls, 86,794 cache-read tokens per tool call, with the clone and the `gh pr checkout` two of them — about 174K per job and 3.6M across the 21 | the reference clone |
+| **COORDINATOR READ: `triage` is the widest listing of the seven** | `status` 22 lines/3,174 B; `cost --max 0` 22/3,698 B; `triage` 45 lines/15,490 B with 20 of 47 at the default; `triage --all --max 0` 71/24,810 B — the counts on `TRIAGE OK` are 27 B of it | counts first, findings capped |
+| **WAITS ON: a deadline, a sampler, and a person** | a job's own clock is `--deadline` (40m in `deepseek.json`); the usage budget is read by the sampler at `--usage-interval` (default 5 s); a verdict waits on a person | one owner per wait, one line back |
+
+1. **The reference clone.** A job's clone is its own (rule 7) and is taken with
+   `git clone --reference-if-able <the shared on-disk checkout> --dissociate`,
+   so the object graph is shared with a checkout already on the bench and the
+   job directory holds only its own objects; `--dissociate` keeps the job's
+   clone independent of a reference it does not own. The task template names
+   the reference checkout and the clone, so every job clones the same way and
+   the network is touched once per object graph, never once per job.
+   (`bin/child-clone.sh:111` already knows the shape.)
+2. **Counts first; a finding's prose is the second read.** The narrow return of
+   `triage` is the counts: `TRIAGE BATCH` and `TRIAGE OK` are the lines a
+   coordinator reads, and a `TRIAGE FINDING` line carries the finding's own
+   prose, bounded by `--max` and capped by `internal/oneline`, with `TRIAGE
+   MORE kind=finding shown=<n> total=<t> at=<path>` naming the page that holds
+   the rest. `status` and `cost` stay one line per task, and `triage` is never
+   wider than the question it answers: 20 finding bodies to learn counts that
+   cost 27 B is the cost this rule removes.
+3. **One owner per wait, and one line back.** A job's own clock is the deadline
+   held by the machinery; the usage budget is read by the sampler at
+   `--usage-interval` and never by a second poll; and a verdict waits on a
+   person, never on a scan. No wait loop scans for its own name (the races
+   below) and no listing polls a person on the coordinator's behalf.
+
+## One live run per job directory
+
+*(Issue #1585, Stella's finding and her HOLD on the first repair. This section is
+APPENDED rather than written into **Slots** above, where it belongs by subject,
+because this repository cites this file by line — `SPEC-SWARM.md:80`,
+`:982`, `:1253` and two dozen more, in Go comments and in review packets — and an
+insertion higher up moves every one of them.)*
+
+**A job directory has one live run.** `<slot-dir>/jobs/<label>` is the worker's
+own working directory, its own data home and its own logs (**Slots**, above),
+and two workers on one data home is the 2026-09-10 `database is locked`
+failure this document already closes (**the races, taken out**). Two concurrent
+`nova-swarm native` invocations pointed at one physical `<slot>/jobs/<label>`
+are therefore **not lawful**, whatever the bench's slot store says about their
+seats: the seats are capacity, and the directory is ownership.
+
+**Ownership is a file, and the file is the reaper's word too.** `<job>/.lease`
+carries `pid=`, `host=`, `label=`, `nonce=` and `started=`, its mtime is the
+heartbeat, and `scripts/bench-hygiene.sh` reads it to decide that a job is live
+and must not be swept. Six rules bind it:
+
+1. **The take is exclusive.** A launcher takes the lease before the child
+   starts. A take that finds a **live** holder is refused, and the launcher
+   exits 2 with one line naming the holder, having written nothing into the
+   directory it does not own.
+2. **Ownership is published whole.** The record is written to a temporary file
+   beside the lease, flushed, and **linked** into place, so the name `.lease`
+   never exists holding a partial record. Creating the name and writing it
+   afterwards is not enough: a reader in that window sees an empty record.
+3. **An incomplete record is never evidence of a dead owner, and age never
+   retires a live one.** The two recoveries are separate rules and stay
+   separate. A **proven-dead** owner is a pid this kernel was asked about and
+   answered for: no elapsed time enters that judgement, and a lease whose pid is
+   alive is held however old its heartbeat is — a card in one long model call is
+   exactly that, and is the whole reason the lease exists. An **unknown** owner
+   — a record that cannot be parsed, or one written on a host whose pids this
+   kernel cannot be asked about — is held until its heartbeat is older than the
+   stale bound (ten minutes, the reaper's `HYGIENE_LEASE_STALE_MIN`), and only
+   then recovered. An empty or truncated record is an unknown owner, never a
+   dead one.
+4. **Reclamation is atomic with respect to the record it judged, and nothing is
+   ever unlinked by path after a read.** Atomic publication does not make
+   reclamation safe on its own: two runs can both judge one abandoned record,
+   the first clear it and publish its own live lease, and the second — removing
+   a *path* on the strength of a record that is no longer there — unlink the
+   winner. So a removal **renames** the lease to a unique tombstone, which takes
+   whatever is at the path in one step, and judges afterwards on the file in
+   hand: the same file it judged (by identity) and, for a reclamation, still
+   abandoned, or it goes straight back and nothing was cleared.
+5. **Failing to establish ownership is a refusal, never a silent success.** A
+   `.lease` that is not a regular file, a job directory that cannot be written,
+   a record that cannot be read, and a claim lost repeatedly to another taker
+   are all refusals: the launcher exits 2 with a remedy. A launcher that cannot
+   prove it owns its job directory does not start. (This replaces the earlier
+   best-effort rule, which was defensible while the lease was only advice to a
+   reaper and is not defensible now that it is the admission to a shared
+   directory: under it, `.lease` as a directory let **both** of two launchers
+   proceed.)
+6. **The release is fenced and joined.** A run removes the lease only while the
+   file is still the record it published — pid **and** nonce — and only after
+   its heartbeat has stopped, so a tick already in flight cannot write the
+   lease back after the run that owned it has ended. It removes by rule 4. A
+   heartbeat whose lease has gone missing publishes it again, under rule 2, and
+   leaves another run's lease alone if one has arrived.
+
+**What this does not change.** The bench slot store (`slots take` / `slots
+release`, above) is capacity accounting and is untouched: a run can hold a seat
+and still be refused its job directory, and that refusal is the correct answer.

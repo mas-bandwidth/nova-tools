@@ -1,8 +1,8 @@
 package main
 
 // The fleet verb and its sub-verbs (SPEC-PULSE ## Fleet, issue #880 items 14, 16 and 17).
-// The work is internal/pulse/fleet.go; ssh comes from --ssh so a test puts a fake on PATH and
-// no test reaches a machine.
+// The work is internal/pulse/fleet.go and internal/pulse/fleetadd.go; ssh comes from --ssh so a
+// test puts a fake on PATH and no test reaches a machine.
 //
 // Issue #880 item 13: the benches live in one tab-separated file kept in git, and
 // `fleet survey` runs tools/bench-standard.sh on every bench over ssh and folds the
@@ -12,10 +12,15 @@ package main
 // The ssh child is `ssh <target> bash -s` with the standard script on its stdin, so a
 // test fakes ssh on PATH and no test reaches the network. The benches run in parallel
 // under --timeout, then print in file order so the one-line-per-bench reading is stable.
+//
+// `fleet add <bench>` admits a bench to the loop only on a fully green fleet-probe record
+// (rule R): it reads the fleet-probe read-back, refuses unless every runner name is green
+// (naming the runner that is not and the run id), and on green writes PULSE_ROOTS and the
+// runner labels. No other verb writes those two.
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,8 +31,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // fleetBench is one line of the benches file: name, ssh target, home, and the optional
@@ -45,12 +52,49 @@ type fleetSurveyResult struct {
 	status int
 }
 
+// fleetSurveyRunner is the survey's one remote step: run the standard script on one bench
+// and return its combined output. The real one is `ssh <target> bash -s`, bounded by the
+// context. A test wires in a Go fake that answers from a table, so no unit test starts a
+// program or waits on the host's scheduler.
+type fleetSurveyRunner interface {
+	Run(ctx context.Context, target, script string) (string, error)
+}
+
+// fleetSSHRunner is the real runner: `ssh <target> bash -s` with the script on stdin.
+type fleetSSHRunner struct {
+	Program string
+}
+
+func (r fleetSSHRunner) Run(ctx context.Context, target, script string) (string, error) {
+	program := r.Program
+	if program == "" {
+		program = "ssh"
+	}
+	testguard.RefuseHosts(program, target, "bash -s")
+	cmd := exec.CommandContext(ctx, program, target, "bash -s")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// The hooks a test replaces. Nothing here is a global side effect: a test wires its fake
+// in and restores it. fleetNow is the survey's clock, so a test can assert the deadline
+// each bench is given without waiting for one.
+var (
+	fleetNewSurveyRunner = func(program string) fleetSurveyRunner { return fleetSSHRunner{Program: program} }
+	fleetNow             = func() time.Time { return time.Now() }
+)
+
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (survey, suspend, wake, reboot, secrets)")
+		return refuse(stderr, " fleet", "a sub-verb is required (registry, add, survey, suspend, wake, reboot, secrets, standard, mirror, join, sleep)")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "registry":
+		return cmdFleetRegistry(rest, stdout, stderr)
+	case "add":
+		return cmdFleetAdd(rest, stdout, stderr)
 	case "survey":
 		return cmdFleetSurvey(rest, stdout, stderr)
 	case "suspend":
@@ -61,14 +105,51 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 		return cmdFleetReboot(rest, stdout, stderr)
 	case "secrets":
 		return cmdFleetSecrets(rest, stdout, stderr)
+	case "standard":
+		return cmdFleetStandard(rest, stdout, stderr)
+	case "mirror":
+		return cmdFleetMirror(rest, stdout, stderr)
+	case "join":
+		return cmdFleetJoin(rest, stdout, stderr)
+	case "sleep":
+		return cmdFleetSleep(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are registry, add, survey, suspend, wake, reboot, secrets, standard, mirror, join, sleep; run: nova-pulse help)\n", sub)
 	return 2
+}
+
+func cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		refuse(stderr, " fleet add", "a bench label is required; refusing to guess")
+		return 2
+	}
+	bench := args[0]
+	f := newFlags("fleet add")
+	queue := f.fs.String("queue", "", "")
+	roots := f.fs.String("roots", "", "")
+	probe := f.fs.String("probe", "", "")
+	if !f.parse(args[1:], stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory PULSE_ROOTS and the runner labels hang under")
+	f.want(*roots, "roots", "the swarm roots PULSE_ROOTS will hold, comma separated")
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.FleetAdd(pulse.FleetAddInput{
+		Bench:  bench,
+		Queue:  *queue,
+		Roots:  *roots,
+		Probe:  *probe,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
 }
 
 func cmdFleetSuspend(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet suspend")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	ifIdle := f.fs.Bool("if-idle", false, "")
@@ -90,7 +171,7 @@ func cmdFleetSuspend(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetSuspend(pulse.FleetSuspendInput{
-		Benches: *benches, Names: fleetNames(*bench), SSH: *ssh,
+		Benches: *benches, Machines: *machines, Names: fleetNames(*bench), SSH: *ssh,
 		Force: *force, IfIdle: *ifIdle,
 		Timeout: time.Duration(*timeout) * time.Second, Max: *max,
 		Stdout: stdout, Stderr: stderr,
@@ -100,6 +181,7 @@ func cmdFleetSuspend(args []string, stdout, stderr io.Writer) int {
 func cmdFleetWake(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet wake")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	wait := f.fs.String("wait", "3m", "")
@@ -124,7 +206,7 @@ func cmdFleetWake(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetWake(pulse.FleetWakeInput{
-		Benches: *benches, Names: fleetNames(*bench), SSH: *ssh,
+		Benches: *benches, Machines: *machines, Names: fleetNames(*bench), SSH: *ssh,
 		Wait: whole, Timeout: time.Duration(*timeout) * time.Second, Max: *max,
 		Now: func() time.Time { return time.Now().UTC() }, Sleep: time.Sleep,
 		Stdout: stdout, Stderr: stderr,
@@ -134,6 +216,7 @@ func cmdFleetWake(args []string, stdout, stderr io.Writer) int {
 func cmdFleetReboot(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet reboot")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	bench := f.fs.String("bench", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	wait := f.fs.String("wait", "5m", "")
@@ -158,7 +241,7 @@ func cmdFleetReboot(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetReboot(pulse.FleetRebootInput{
-		Benches: *benches, Names: fleetNames(*bench), SSH: *ssh,
+		Benches: *benches, Machines: *machines, Names: fleetNames(*bench), SSH: *ssh,
 		Wait: whole, Timeout: time.Duration(*timeout) * time.Second, Max: *max,
 		Now: func() time.Time { return time.Now().UTC() }, Sleep: time.Sleep,
 		Stdout: stdout, Stderr: stderr,
@@ -208,6 +291,7 @@ func fleetNames(s string) []string {
 func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("fleet survey")
 	benches := f.fs.String("benches", "", "")
+	machines := f.fs.String("machines", "", "")
 	ssh := f.fs.String("ssh", "ssh", "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", bounded.Default, "")
@@ -235,21 +319,29 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "FLEET REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	// The lock (Glenn 2026-09-18): a survey is an ssh and a script on the machine, which
+	// is load, so the benches file's names are held against the machines registry before a
+	// single child starts. A refused machine prints its line and is not surveyed; the rest
+	// of the fleet is, so one wrong line in the benches file does not hide the fleet.
+	list, refusals, code := surveyBenches(list, *machines, stdout, stderr)
+	if code == 2 && len(list) == 0 {
+		return 2
+	}
 
 	bound := time.Duration(*timeout) * time.Second
+	runner := fleetNewSurveyRunner(*ssh)
 	results := make([]fleetSurveyResult, len(list))
 	var wg sync.WaitGroup
 	for i, bench := range list {
 		wg.Add(1)
 		go func(i int, bench fleetBench) {
 			defer wg.Done()
-			results[i] = surveyOneBench(*ssh, script, bench, bound)
+			results[i] = surveyOneBench(runner, script, bench, bound)
 		}(i, bench)
 	}
 	wg.Wait()
 
-	code := 0
-	shown := 0
+	shown := refusals
 	for _, r := range results {
 		switch r.status {
 		case 3:
@@ -273,14 +365,11 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 // surveyOneBench runs the standard on one bench over ssh and folds the script's DRIFT
 // lines and its last line into FLEET lines. An ssh failure that is not a drift script's
 // own exit 1 is an unreachable bench.
-func surveyOneBench(ssh, script string, bench fleetBench, timeout time.Duration) fleetSurveyResult {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func surveyOneBench(runner fleetSurveyRunner, script string, bench fleetBench, timeout time.Duration) fleetSurveyResult {
+	ctx, cancel := context.WithDeadline(context.Background(), fleetNow().Add(timeout))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, ssh, bench.Target, "bash -s")
-	cmd.Stdin = bytes.NewReader([]byte(script))
-	out, err := cmd.CombinedOutput()
+	text, err := runner.Run(ctx, bench.Target, script)
 
-	text := string(out)
 	drifting := isDriftOutput(text)
 	answered := strings.Contains(text, "STANDARD OK")
 	if !drifting && !answered {
@@ -376,6 +465,19 @@ func readBenchStandard() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return readBenchStandardFrom(dir)
+}
+
+// readBenchStandardFrom is the walk itself, taking its starting directory, so a test
+// can drive it without moving the process.
+//
+// IT SAYS WHERE IT LOOKED. The fourth release dogfood (2026-09-18) ran `fleet survey`
+// from a home directory and read `tools/bench-standard.sh not found above the working
+// directory` as "the script is missing", when what it means is that this verb wants a
+// nova-tools CHECKOUT as its working directory. A refusal naming the first directory it
+// tried and the last is one a person can act on without reading the source.
+func readBenchStandardFrom(dir string) (string, error) {
+	started, last := dir, dir
 	for i := 0; i < 16; i++ {
 		candidate := filepath.Join(dir, "tools", "bench-standard.sh")
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -385,11 +487,41 @@ func readBenchStandard() (string, error) {
 			}
 			return string(raw), nil
 		}
+		last = dir
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 		dir = parent
 	}
-	return "", fmt.Errorf("tools/bench-standard.sh not found above the working directory")
+	return "", fmt.Errorf("tools/bench-standard.sh not found: looked in every directory from %s up to %s; "+
+		"fleet survey reads the script out of a nova-tools checkout, so run it with a checkout as the working directory", started, last)
+}
+
+// surveyBenches holds every bench in the benches file against the machines registry. It
+// answers the benches that may be surveyed, how many refusal lines it printed, and the exit
+// so far. An unnamed registry is the documented narrowing: no guard, every bench surveyed,
+// exactly as the verb behaved before the registry existed.
+func surveyBenches(list []fleetBench, machines string, stdout, stderr io.Writer) ([]fleetBench, int, int) {
+	if strings.TrimSpace(machines) == "" {
+		return list, 0, 0
+	}
+	reg, err := fleet.ReadRegistry(machines)
+	if err != nil {
+		fmt.Fprintf(stderr, "FLEET REFUSED: %s\n", oneline.Err(err))
+		return nil, 0, 2
+	}
+	kept := make([]fleetBench, 0, len(list))
+	printed, code := 0, 0
+	for _, b := range list {
+		var refusal *fleet.Refusal
+		if err := reg.RequireBench(b.Name); errors.As(err, &refusal) {
+			fmt.Fprintln(stdout, refusal.Line("FLEET"))
+			printed++
+			code = 2
+			continue
+		}
+		kept = append(kept, b)
+	}
+	return kept, printed, code
 }

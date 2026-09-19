@@ -625,17 +625,73 @@ nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --findi
 nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
 nova-review roster  --lane <dir> (--pr <n>|--branch <name>) (--readers <name,...> [--reserved <name,...> --deadline <stamp>] | --policy <id>) [--max <n>]
 nova-review dedupe  --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
+nova-review mutate  --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
 nova-review cost    --lane <dir> ((--pr <n>|--branch <name>) | --all) [--max <n>]
 nova-review version
 nova-review help
 
-every verb BUT version and help takes --lane <dir>; version and help take no
+`mutate` is the one verb that takes --repo rather than --lane: it is asked about a range
+in a working copy, not about an entry in a lane, and it records nothing. Every other verb
+BUT version and help takes --lane <dir>; version and help take no
 flag and no argument and refuse at exit 2 when given any, as SPEC.md:251-254
 requires of every binary. Every verb that runs git or gh also takes
 [--timeout <seconds>], default 120, for SPEC-MERGE's reason (SPEC-MERGE.md:458)
 ```
 
 The binary is `nova-review`, and that is its only name.
+
+**`mutate` is the mechanical half of a read, taken off the reader** (class H of pit
+stop 3, nova-tools#828). On 2026-09-17 this house ran 504 read cards in a day and a
+large part of each one was the same mechanical check: clone the repo, revert the change,
+run the tests, see whether the new test is red without it. That is a mutation test's job.
+`mutate` builds a throwaway worktree at `--head`, reverts every hunk that is **not** in a
+`_test.go` file (or, for a Lisp leg, not under `tests/`) back to `--base`, keeps the test
+hunks, and runs the tests of every changed test file there: the package's Go tests, or
+the Lisp project's `run-tests.sh` when it has one and a named `MUTATE SKIP` when it does
+not. The tests **must fail**. The verdict is `PASS` when every changed test file that
+could be run has at least one failing test with the change reverted, and `FAIL` otherwise,
+naming up to `--max` tests that stayed green — a test that is green without the change it
+claims to cover proves nothing. A range that changes no test file is refused, exit 2,
+`MUTATE <head8> no-tests-changed`: a fix without its red test is not admitted. A range
+that changes only test files is refused too — there is nothing to revert, so neither a
+green run nor a red one would be about the change. It records nothing, writes nothing
+into the repo it is pointed at, removes its worktree on every path, and forms no opinion
+about the code: the harvest runs it before any reader is spawned, and the reader then
+judges spec fit and nothing else. The verdict line carries `reverted=<n>`, the number of
+non-test hunks it put back, so "every non-test hunk" is a number a caller can gate on
+rather than a sentence in this file: a `PASS` with `reverted=0` is a control that never
+ran.
+
+**The `--seed` form is the other half, and it is the one every negative control is
+built from** (SPEC-TOOLWORK.md §1 rules 7 and 9, nova-tools#1646). The range form asks
+"is this change's test red without the change"; the seed form asks "here is one
+deliberate defect — does the suite catch it". `nova-review mutate --repo <dir> --head
+<ref> --seed <patch> --tests <package>[,<package>...]` applies one unified diff in a
+throwaway worktree at the head and runs the named packages' suites there; the verdict is
+`PASS` when at least one of them goes red. Its line is `MUTATE <head8> seed=<hex8>
+edits=<n> red=<n> green=<n> <PASS|FAIL>`, where `seed=` is the first 8 hex of the patch's
+SHA-256, so a report names **which** control ran. The two forms are exclusive: `--seed`
+takes `--tests` and no `--base`, the range form takes `--base` and no `--tests`.
+
+The edit count is **asserted, not reported**: exactly one, else `MUTATE REFUSED`, exit 2,
+before the seeded run. A seed that changed nothing proves a suite red on nothing, and a
+seed that changed two things does not say which one the suite caught. The count is taken
+from the worktree after `git apply` (git's own per-file `--numstat`), never from the
+patch file's `@@` header, which is arithmetic the seed's author wrote. One edit is one
+line changed, added, removed, or moved.
+
+Three things are refused at exit 2 rather than answered, all of them for the same
+reason — they kill every seed, so a `PASS` under them is not about the seed at all. A
+package `go list` does not resolve at that head is a typo in `--tests`. A named suite
+that is already red at the **unseeded** head has nothing left for a mutant to break, so
+the suites are listed and run once before the patch goes in. And a `--timeout` deadline
+that kills the run mid-flight is a could-not-run: a non-zero exit counts as the mutant
+dying only when the output says so — a `--- FAIL:` unit, a package-level `FAIL	<pkg>`,
+or a `panic:`.
+
+**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1 rule 9 (draft, 2026-09-19):** the range form
+prints `reverted=<n>`, and a `--seed` form applies one patch whose edit count is asserted to be
+exactly 1. At `dev@31e35195` no harvest calls this verb; SPEC-TOOLWORK §1 is the step that does.
 
 **A new binary, not verbs on nova-merge, for one reason with three faces.**
 nova-merge is the tool with the mutation guard: one function publishes to the
@@ -762,9 +818,9 @@ the verb could not run, rather than ran and said no.
 
 | code | meaning |
 |------|---------|
-| 0 | the verb ran and passed: a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
-| 1 | the verb ran and said **NO**: `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
-| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), a `policy` with no `--head`, a `--policy <id>` whose record's `head` is not the head being rostered (`ROSTER POLICY HEAD`, rule 7, draft 6), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4),     a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule`, `--max-bytes`, `--diff-only` or `--files` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
+| 0 | the verb ran and passed: a `mutate` whose every changed test file went red with the change reverted, a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
+| 1 | the verb ran and said **NO**: a `mutate` `FAIL` (a changed test file with no failing test once the change is reverted), `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
+| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), a `policy` with no `--head`, a `--policy <id>` whose record's `head` is not the head being rostered (`ROSTER POLICY HEAD`, rule 7, draft 6), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4),     a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule`, `--max-bytes`, `--diff-only` or `--files` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, a `mutate` whose `--repo` is not a git working copy or whose `--base` or `--head` names no commit, a `mutate` range with no changed test file (`no-tests-changed`) or with no non-test hunk to revert (`no-change-to-revert`), bad invocation, `git` or `gh` absent |
 
 A findings row that fails its check is exit 2 and not 1 because nothing was
 recorded and nothing was judged: the invocation was unusable, and the remedy
@@ -793,6 +849,14 @@ PACKET REFUSED: the lane does not hold this entry; add it with nova-merge add --
 PACKET REUSE asked=<hex12> found=<hex12> file=<path>: that packet was built for another (entry, head, range); build this reader's own
 PACKET FOLD file=<path>: <reason>
 PACKET REFUSED: <reason>
+MUTATE <head8> reverted=<n> red=<n> green=<n> <PASS|FAIL>
+MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>
+MUTATE GREEN test=<name> file=<path>: green with the change reverted; it proves nothing
+MUTATE SKIP file=<path>: <reason>
+MUTATE MORE kind=<green|skip> shown=<n> total=<t> nova-review mutate --repo <dir> … --max 0
+MUTATE <head8> no-tests-changed
+MUTATE <head8> no-change-to-revert: every changed file is a test file; a run with nothing reverted proves nothing either way
+MUTATE REFUSED: <reason>
 ~~VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> base_tree=<sha12|-> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true~~
 ~~VERDICT ROW row=<n> id=<id> sev=<block|fix|nit|ok|dup|close> at=<path>:<line>|<finding id> side=<head|base|-> rule=<quoted|base|external|proposed|-> pin=<pin|-> ref=<the third field as written>~~
 ~~VERDICT CLOSED id=<id> <path>:<line> sev=<block|fix|nit|ok>: closed by this record (rule 8)~~
