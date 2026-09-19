@@ -145,7 +145,7 @@ example:
   nova-decide --questions ./questions.json --state ./state.md --floor 0.9
   nova-decide tune --decisions ./decisions.jsonl
   nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-  nova-decide route --unit ./unit.json --usage ./usage.tsv --log ./decide.jsonl
+  nova-decide route --unit '{"id":"card-41","kind":"rebase","files":2,"packages":1}' --usage ./usage.tsv --log ./decide.jsonl --no-jev
   nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
   nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
   nova-decide log --log ./decide.jsonl --summary
