@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"time"
@@ -35,30 +36,24 @@ func readOSDenials(sinceSeconds int, pidFloor int) []deniedPath {
 	if sinceSeconds <= 0 {
 		sinceSeconds = 1
 	}
-	cmd := exec.Command(logPath, "show",
+	// The deadline belongs to the CONTEXT, not to a timer racing a goroutine for the Cmd.
+	// The earlier shape ran Output in a goroutine and read cmd.Process from this one to
+	// kill it, and cmd.Process is written by Start inside that goroutine: a data race, and
+	// a `log show` that had not reached Start yet was never killed at all. CommandContext
+	// kills the process itself, under the exec package's own lock, which is the only safe
+	// reader of a Cmd once it has been started.
+	ctx, cancel := context.WithTimeout(context.Background(), denialReadTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, logPath, "show",
 		"--last", strconv.Itoa(sinceSeconds)+"s",
 		"--style", "syslog",
 		"--info", "--debug",
 		"--predicate", denialPredicate)
-	done := make(chan []byte, 1)
-	go func() {
-		out, err := cmd.Output()
-		if err != nil {
-			done <- nil
-			return
-		}
-		done <- out
-	}()
-	select {
-	case out := <-done:
-		if out == nil {
-			return nil
-		}
-		return parseDenials(string(out), pidFloor)
-	case <-time.After(denialReadTimeout):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+	// Going over the bound is silence, not an error, and so is every other failure: this
+	// is a diagnostic printed after a command has already failed.
+	out, err := cmd.Output()
+	if err != nil {
 		return nil
 	}
+	return parseDenials(string(out), pidFloor)
 }
