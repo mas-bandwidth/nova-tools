@@ -230,13 +230,17 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 ## nova-memory
 
 ```
-nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>]  the first run: stats, one search, one check, each with the line that ran it
-nova-memory stats  --root <dir>...                                       measure m: files, chunks, bytes, vocab, build time, classes
-nova-memory search --root <dir>... --channels <list> --k <n> <words>...  one query, k receipted hits (for work retrieval)
-nova-memory check  --root <dir>... --channels <list> --k <n> <file|->    do I already know this? k receipts per candidate paragraph
-nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--fail-max <n>]
+nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
+                                                                        the first run: stats, one search, one check, each with the line that ran it
+nova-memory stats  --root <dir>... [--exclude <glob>]...
+                                                                        measure m: files, chunks, bytes, vocab, build time, classes
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
+                                                                        one query, k receipted hits (for work retrieval)
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+                                                                        do I already know this? k receipts per candidate paragraph
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]...
                                                                         coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--fail-max <n>] <gold.tsv>
+nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
 ```
