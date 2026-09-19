@@ -1611,6 +1611,19 @@ HOLD: <one bounded quoted line>
 `BATCH` is the packet's first line: the id, the admitted n, the cards done,
 the cards abstain, the token and usd totals, `idle=<n>` — how many cards the
 idle timeout killed — and `stalled=<n>`, how many ended with no output at all.
+
+**A card the batch reaped is counted too, and its numbers come from the
+harness's own store.** `usage.tsv` is composed at the END of a run, so a card
+killed for idleness or at the deadline leaves none, and on **2026-09-19
+14:58Z** a card that had run for minutes and made real paid calls was reported
+`in=0 out=0 usd=0.0000` — a number where there should be a measurement. When a
+card wrote no usage row, the totals read the store under its own data home, the
+same store `native` samples its usage from. **The row wins wherever it exists**:
+`native` composed it from that store with the run's own window, provider and
+model, and reading the database over the top of a row that already reported
+would double-count the card. A store that is absent, or that no reader could
+open, still contributes zero — an absence is an absence, and nothing here is
+invented.
 One card line per card, in admission order: its label, its resolved slot, and
 either its disposition line — line 2 verbatim, capped — or `ABSTAIN` with its
 one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and

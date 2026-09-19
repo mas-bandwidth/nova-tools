@@ -668,6 +668,22 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, scratchName(c), c.label))
+		// A CARD THE BATCH REAPED NEVER WROTE THAT FILE, AND IT IS NOT FREE. `usage.tsv` is
+		// composed by `native` at the END of a run, so a card killed for idleness or at the
+		// deadline leaves none, `readCardUsage` answers zeroes, and the BATCH line reports a
+		// card that ran for minutes as `in=0 out=0 usd=0.0000` (Studio, 2026-09-19 14:58Z).
+		// That is a NUMBER where there should be a measurement, and a shift that trusted it
+		// would under-report its spend.
+		//
+		// The provider's own numbers are in the harness's store, which is where `native`
+		// reads them from (#1712). When the card wrote no row, the batch reads the same
+		// store the same way. THE ROW WINS WHENEVER IT EXISTS: `native` composed it from
+		// this store with the run's own window, provider and model, and a second reader
+		// summing the same database over the top of it would double-count a card that
+		// already reported -- the same false ledger in the other direction.
+		if !usageRowWritten(in.Root, scratchName(c), c.label) {
+			rows[i].in, rows[i].out, rows[i].usd = storeCardSpend(in.Root, scratchName(c))
+		}
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
@@ -1934,4 +1950,56 @@ func groupSize(pgid int, started string) int {
 		return 1
 	}
 	return 0
+}
+
+// usageRowWritten says whether the card composed its own usage row -- the file `native`
+// writes when a run ENDS, at the job directory or the slot fallback `cardUsagePath` already
+// names. A card that wrote one has reported, and its report is the record.
+func usageRowWritten(root, scratch, label string) bool {
+	for _, p := range []string{
+		filepath.Join(root, scratch, "jobs", label, "usage.tsv"),
+		filepath.Join(root, scratch, "usage.tsv"),
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// storeCardSpend is what the provider billed a card that never got to write its own row: the
+// same harness store `native` samples (#1712), under the card's own data home.
+//
+// THE WINDOW IS THE CARD'S WHOLE LIFE, and that is not a widening. `native` brackets its read
+// with the run's own timestamps because one data home can hold more than one ATTEMPT of the
+// same job; this data home is `<root>/<scratch>/data`, made for this card in this batch, and
+// every turn in it is this card's. A window narrower than the card would drop turns it was
+// billed for, which is the very failure this reader exists to close.
+//
+// A store that is not there, or one no reader could open -- no sqlite3 on PATH, a database
+// that would not answer -- returns zeroes, exactly as before: an absence is still an absence,
+// and this reader invents nothing. The difference is that a store that IS there is no longer
+// ignored.
+func storeCardSpend(root, scratch string) (in, out int, usd float64) {
+	usage, _, _, reason := ReadCardUsage(filepath.Join(root, scratch, "data"),
+		time.UnixMilli(0), time.Now())
+	if reason != "" {
+		return 0, 0, 0
+	}
+	in = usageInt(usage, "tokens_in")
+	out = usageInt(usage, "tokens_out")
+	if f, err := strconv.ParseFloat(strings.TrimSpace(usage.Values["usd"]), 64); err == nil {
+		usd = f
+	}
+	return in, out, usd
+}
+
+// usageInt reads one token column of a store's fold. A dash is an absence and reads as zero:
+// the BATCH line's in= and out= are sums and have no spelling for "unreported".
+func usageInt(u ProviderUsage, column string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(u.Values[column]))
+	if err != nil {
+		return 0
+	}
+	return n
 }
