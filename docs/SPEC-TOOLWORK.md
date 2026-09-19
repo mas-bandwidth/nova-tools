@@ -497,6 +497,8 @@ the worker never sees and cannot edit.
    SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
    ```
 
+   Two kinds carry one more: `sweep` a `FILES: <n>` line and `mutation-kill` a `SEED:`
+   block holding its one-edit patch.
    They are written by `cut` from the pool row, never by a model, and because they sit
    below line 1 the contract hash covers them: a card whose header was altered after
    admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing any of
