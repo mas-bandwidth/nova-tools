@@ -1,0 +1,46 @@
+# The `## <tool>` sections of docs/TESTS.md that no test yet executes line for line
+# through onboarding.CompareTranscript, one per line as <tool>, each with the issue
+# that owes it (docs/SPEC-TOOLWORK.md §7 rule 3, PR #1637 at 32b73d77).
+#
+# THE LIST ONLY SHRINKS. TestEveryTranscriptIsExecutedLineForLine checks it in BOTH
+# directions: a section that is not listed and that no test executes with the one
+# comparator is red, and a listed section that a test now executes with the one
+# comparator and no other is a stale entry and red too. So the list cannot be
+# widened and left there, and a conversion that forgets to delete its line is red on
+# the pull request that makes it.
+#
+# A listed section is exempt from BOTH halves of the rule while it is listed: it
+# still compares the way it compares today -- a `printed map[string]bool` set, an
+# onboarding.Shape prefix, an onboarding.Execute call, or nothing at all -- and that
+# is what its card converts. Deleting the line and converting the section are one
+# change.
+
+# T8 (#1653): the sections no test executes at all.
+nova-decide   # #1653 -- executed by no test
+nova-post     # #1653 -- asserts only that the section is non-empty; its block waits on the #1631 re-cut (SPEC-TOOLWORK Q5)
+nova-pulse    # #1653 -- executed by no test
+nova-review   # #1653 -- executed by no test
+
+# T9 (#1654): the set-of-shapes tests, which pass an abridged or reordered block.
+nova-board    # #1654 -- collects what was printed into a set
+nova-bus      # #1654 -- collects what was printed into a set
+nova-cairn    # #1654 -- collects what was printed into a set
+nova-check    # #1654 -- collects what was printed into a set
+nova-fuse     # #1654 -- collects what was printed into a set
+nova-self-talk # #1654 -- collects what was printed into a set
+nova-wake     # #1654 -- collects what was printed into a set
+
+# T12 (#1657): the two security kinds, which are the designated mind's, and the two
+# remaining set-of-shapes sections.
+nova-merge    # #1657 -- collects what was printed into a set
+nova-sandbox  # #1657 -- one line pinned by substring
+nova-secrets  # #1657 -- no firstrun_test.go at all
+nova-work     # #1657 -- collects what was printed into a set
+
+# #1722: the six sections SPEC-TOOLWORK's work list names in no row.
+nova-memory   # #1722 -- its firstrun_test.go executes README.md, not this section
+nova-play     # #1722 -- #1602 made it line for line with its own comparison, not the shared one
+nova-swarm    # #1722 -- compares the event prefix and the field names, dropping every value
+nova-tokens   # #1722 -- compares the event prefix and the field names, dropping every value
+nova-update   # #1722 -- compares the event prefix and the field names, dropping every value
+nova-version  # #1722 -- compares the event prefix and the field names, dropping every value
