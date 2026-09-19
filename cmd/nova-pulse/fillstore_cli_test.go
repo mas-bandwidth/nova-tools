@@ -246,18 +246,18 @@ func sshFill(t *testing.T, answer string, extra ...string) (int, string, string,
 // a valid capacity, and the first of them handed a bench MORE than its whole share.
 func TestFillRefusesAMalformedCapacityAnswer(t *testing.T) {
 	for name, answer := range map[string]string{
-		"a held= the bench made up":       "store share=64 held=-10 cores=64 load1=1.0\nleases\n",
-		"negative share":                  "store share=-4 cores=64 load1=1.0\nleases\n",
-		"cores that is not a number":      "store share=4 cores=x load1=1.0\nleases\n",
-		"load that is not a number":       "store share=4 cores=64 load1=NaN\nleases\n",
-		"infinite load":                   "store share=4 cores=64 load1=+Inf\nleases\n",
-		"missing load":                    "store share=4 cores=64\nleases\n",
-		"missing cores":                   "store share=4 load1=1.0\nleases\n",
-		"duplicate share":                 "store share=4 share=400 cores=64 load1=1.0\nleases\n",
-		"negative formula capacity":       "formula capacity=-3 cores=64 load1=1.0\n",
-		"share out of range":              "store share=99999999999999999999 cores=64 load1=1.0\nleases\n",
-		"a share with no lease listing":    "store share=4 cores=64 load1=1.0\n",
-		"the bench could not read it":     "unreadable reason=slots-list-exit rc=127\n",
+		"a held= the bench made up":     "store share=64 held=-10 cores=64 load1=1.0\nleases\n",
+		"negative share":                "store share=-4 cores=64 load1=1.0\nleases\n",
+		"cores that is not a number":    "store share=4 cores=x load1=1.0\nleases\n",
+		"load that is not a number":     "store share=4 cores=64 load1=NaN\nleases\n",
+		"infinite load":                 "store share=4 cores=64 load1=+Inf\nleases\n",
+		"missing load":                  "store share=4 cores=64\nleases\n",
+		"missing cores":                 "store share=4 load1=1.0\nleases\n",
+		"duplicate share":               "store share=4 share=400 cores=64 load1=1.0\nleases\n",
+		"negative formula capacity":     "formula capacity=-3 cores=64 load1=1.0\n",
+		"share out of range":            "store share=99999999999999999999 cores=64 load1=1.0\nleases\n",
+		"a share with no lease listing": "store share=4 cores=64 load1=1.0\n",
+		"the bench could not read it":   "unreadable reason=slots-list-exit rc=127\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, out, errb, ready, launched := sshFill(t, answer)
