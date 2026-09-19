@@ -1862,6 +1862,7 @@
       "status": "filled-by-folds",
       "disposition": "filled-by-fold-#294",
       "event_kind": ":assignment",
+      "needs_gate": "refuses",
       "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
       "ordered_fields": [
         "session",
@@ -1885,6 +1886,10 @@
       "status": "filled-by-folds",
       "disposition": "filled-by-fold-#294",
       "event_kind": ":assignment",
+      "needs_gate": "refuses",
+      "needs_gate_forms": [
+        "--stage accepted"
+      ],
       "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
       "ordered_fields": [
         "session",
@@ -1907,6 +1912,8 @@
       "status": "filled-by-folds",
       "disposition": "filled-by-fold-#294",
       "event_kind": ":assignment",
+      "needs_gate": "exempt",
+      "needs_gate_reason": "declining an offer creates no lease, offer, allocation or transition",
       "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
       "ordered_fields": [
         "session",
@@ -1929,6 +1936,8 @@
       "status": "filled-by-folds",
       "disposition": "filled-by-fold-#294",
       "event_kind": ":transition",
+      "needs_gate": "exempt",
+      "needs_gate_reason": "a scheduling hold writes no :to :doing; the hold has its own rule (SPEC-WORK.md:4920)",
       "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
       "ordered_fields": [
         "session",
@@ -1950,6 +1959,8 @@
       "status": "filled-by-folds",
       "disposition": "filled-by-fold-#294",
       "event_kind": ":transition",
+      "needs_gate": "exempt",
+      "needs_gate_reason": "a scheduling hold writes no :to :doing; the hold has its own rule (SPEC-WORK.md:4920)",
       "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
       "ordered_fields": [
         "session",
@@ -1971,6 +1982,7 @@
       "status": "filled-by-folds",
       "disposition": "filled-by-fold-#294",
       "event_kind": ":assignment",
+      "needs_gate": "withholds",
       "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
       "ordered_fields": [
         "session",

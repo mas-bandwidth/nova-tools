@@ -64,6 +64,12 @@ type missingVerbEntry struct {
 	Rationale     string   `json:"rationale"`
 	OrderedFields []string `json:"ordered_fields"`
 	GrammarLine   string   `json:"grammar_line"`
+
+	// A missing verb carries the same three marks a built one does: it can name
+	// an admitting event kind, and the coverage rule reads both lists.
+	NeedsGate       string   `json:"needs_gate"`
+	NeedsGateForms  []string `json:"needs_gate_forms"`
+	NeedsGateReason string   `json:"needs_gate_reason"`
 }
 
 type coordinatorDomain struct {
@@ -712,9 +718,40 @@ func validNeedsGate(mark string) bool {
 // checkNeedsGateCoverage is the coverage rule itself, run over any schema so
 // the fixture cases of the replay can exercise it. It returns one finding per
 // offending verb, each naming the verb.
+// missingVerbAsEntry reads a `missing_verbs` row as a verb entry, so the one
+// coverage rule can be run over both lists.
+//
+// The stand-in's low finding on 82421311: `checkNeedsGateCoverage` and
+// `TestShippedSchemaUsesOnlyKnownEventKinds` iterated `ws.Verbs` ONLY, so
+// flipping an EXISTING `missing_verbs` entry's `event_kind` to `":lease"` with
+// no `needs_gate` left `./internal/ci` green. A missing verb with an admitting
+// kind is exactly the "later verb" rule 3 wants caught (SPEC-WORK.md:4878);
+// that it is not built yet is what its `status` says, not a reason to skip it.
+func missingVerbAsEntry(m missingVerbEntry) verbEntry {
+	return verbEntry{
+		Verb:            m.Verb,
+		Op:              m.Op,
+		EventKind:       m.EventKind,
+		Mutating:        true,
+		NeedsGate:       m.NeedsGate,
+		NeedsGateForms:  m.NeedsGateForms,
+		NeedsGateReason: m.NeedsGateReason,
+	}
+}
+
+// schemaVerbEntries is every entry the coverage rule reads: the built verbs and
+// the missing-verb register, which carry event kinds too.
+func schemaVerbEntries(ws workSchema) []verbEntry {
+	entries := append([]verbEntry{}, ws.Verbs...)
+	for _, m := range ws.MissingVerbs {
+		entries = append(entries, missingVerbAsEntry(m))
+	}
+	return entries
+}
+
 func checkNeedsGateCoverage(ws workSchema) []string {
 	var findings []string
-	for _, v := range ws.Verbs {
+	for _, v := range schemaVerbEntries(ws) {
 		kind := ""
 		if v.EventKind != nil {
 			kind = *v.EventKind
@@ -836,14 +873,23 @@ func TestShippedSchemaDeclaresEveryNeedsGate(t *testing.T) {
 	for _, v := range ws.Verbs {
 		byVerb[v.Verb] = v
 	}
-	withholds := []string{}
-	for _, v := range ws.Verbs {
+	// Both lists. `withholds` is reconcile and no other verb today -- `refuses`
+	// would be false of it, since a reconcile over an unmet need exits 0 -- and
+	// the missing-verb register carries the same verb under its short spelling,
+	// folded into the built one, so the two must agree.
+	withholds := map[string]bool{}
+	for _, v := range schemaVerbEntries(ws) {
 		if v.NeedsGate == "withholds" {
-			withholds = append(withholds, v.Verb)
+			withholds[v.Verb] = true
 		}
 	}
-	if len(withholds) != 1 || withholds[0] != "execution reconcile" {
-		t.Errorf("execution reconcile must be the one verb marked withholds today, got %v", withholds)
+	for name := range withholds {
+		if name != "execution reconcile" && name != "reconcile" {
+			t.Errorf("only reconcile may be marked withholds today; %s is too", name)
+		}
+	}
+	if !withholds["execution reconcile"] {
+		t.Errorf("the built execution reconcile must be marked withholds")
 	}
 	for verb, want := range rule3Marks {
 		entry, ok := byVerb[verb]
@@ -949,7 +995,9 @@ func TestShippedSchemaUsesOnlyKnownEventKinds(t *testing.T) {
 		":goal": true, ":friend": true, ":model": true, ":observe": true,
 		":config": true, ":route": true, ":report": true, ":dep": true,
 	}
-	for _, v := range ws.Verbs {
+	// Both lists: a `missing_verbs` row carries an event kind too, and one with
+	// an admitting kind is exactly the later verb rule 3 wants caught.
+	for _, v := range schemaVerbEntries(ws) {
 		if v.EventKind == nil {
 			continue
 		}
@@ -957,5 +1005,43 @@ func TestShippedSchemaUsesOnlyKnownEventKinds(t *testing.T) {
 		if !admittingEventKinds[k] && !nonAdmitting[k] {
 			t.Errorf("%s carries event kind %s, which this coverage test has never heard of: decide whether it admits", v.Verb, k)
 		}
+	}
+}
+
+// TestAMissingVerbWithAnAdmittingKindIsCaught is the stand-in's low finding on
+// 82421311, as a test. Flipping an EXISTING `missing_verbs` entry's event kind
+// to an admitting one, with no `needs_gate`, left `./internal/ci` green,
+// because both loops read `ws.Verbs` only.
+func TestAMissingVerbWithAnAdmittingKindIsCaught(t *testing.T) {
+	ws := loadWorkSchema(t)
+	if len(ws.MissingVerbs) == 0 {
+		t.Fatal("the shipped schema has no missing_verbs to mutate")
+	}
+	for _, kind := range canonicalAdmittingKinds {
+		k := kind
+		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
+			// the shipped file, with ONE existing missing verb flipped to an
+			// admitting kind and left unmarked
+			mutated := workSchema{Verbs: ws.Verbs}
+			mutated.MissingVerbs = append([]missingVerbEntry{}, ws.MissingVerbs...)
+			mutated.MissingVerbs[0].EventKind = &k
+			mutated.MissingVerbs[0].NeedsGate = ""
+			named := false
+			for _, f := range checkNeedsGateCoverage(mutated) {
+				if strings.Contains(f, mutated.MissingVerbs[0].Verb) {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("a missing verb flipped to %s and left unmarked must be found", k)
+			}
+			// and marking it clears the finding
+			mutated.MissingVerbs[0].NeedsGate = "refuses"
+			for _, f := range checkNeedsGateCoverage(mutated) {
+				if strings.Contains(f, mutated.MissingVerbs[0].Verb) {
+					t.Errorf("a marked missing verb must pass, got %q", f)
+				}
+			}
+		})
 	}
 }
