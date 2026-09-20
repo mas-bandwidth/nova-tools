@@ -78,7 +78,7 @@ type StandardCheck struct {
 // skips an absent root either way, so the report is the wall's argv read in advance.
 func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCheck {
 	if strings.TrimSpace(goWant) == "" {
-		goWant = "go1.26.5"
+		goWant = "go1.26.6"
 	}
 	stampMatch, stampWant := MatchNonempty, ""
 	if strings.TrimSpace(stamp) != "" {

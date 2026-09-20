@@ -70,6 +70,35 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 	}
 	// Fake harness at $HOME/nova-bench/harness-<ver>/opencode.
 	writeBenchExe(t, filepath.Join(home, "nova-bench", "harness-v1", "opencode"), "#!/bin/sh\nexit 0\n")
+	// Fake env.sh under sdk and toolchain stubs for check (8)
+	if err := os.WriteFile(filepath.Join(home, "sdk", "env.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sdkBin := filepath.Join(home, "sdk", "bin")
+	writeBenchExe(t, filepath.Join(sdkBin, "cargo"), "#!/bin/sh\necho 'cargo 1.98.1'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "rustc"), "#!/bin/sh\necho 'rustc 1.98.1'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "dotnet"), "#!/bin/sh\necho '10.0.100'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "elixir"), "#!/bin/sh\necho 'Elixir 1.20.4'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "erl"), "#!/bin/sh\necho '29'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "node"), "#!/bin/sh\necho 'v26.0.0'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "javac"), "#!/bin/sh\necho 'javac 21.0.2'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "dart"), "#!/bin/sh\necho 'Dart SDK version: 3.13.2'\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "cc"), "#!/bin/sh\nexit 0\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "c++"), "#!/bin/sh\nexit 0\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "make"), "#!/bin/sh\nexit 0\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "cmake"), "#!/bin/sh\nexit 0\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "git"), "#!/bin/sh\nexit 0\n")
+	writeBenchExe(t, filepath.Join(sdkBin, "sqlite3"), "#!/bin/sh\nexit 0\n")
+	sentinelDir := filepath.Join(home, "sdk", "dotnet-home", ".dotnet")
+	if err := os.MkdirAll(sentinelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sentinelDir, "dummy.dotnetFirstUseSentinel"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll("/tmp/.dotnet", 0o777)
+	_ = os.Chmod("/tmp/.dotnet", 0o777)
+
 	// Fake seat: exactly one *.key.
 	seatDir := filepath.Join(home, ".config", "nova-secrets")
 	if err := os.MkdirAll(seatDir, 0o700); err != nil {
@@ -91,8 +120,9 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 	// Minimal PATH: the fakes first, then the system dirs. The test never
 	// touches the real go, sbcl or nova-secrets, and a long inherited PATH
 	// (IDE shims, SDKs) only slows every command -v lookup in the script.
+	sdkBin := filepath.Join(home, "sdk", "bin")
 	cmd.Env = append([]string{},
-		"PATH="+bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/sbin"+string(os.PathListSeparator)+"/sbin",
+		"PATH="+sdkBin+string(os.PathListSeparator)+bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin"+string(os.PathListSeparator)+"/usr/sbin"+string(os.PathListSeparator)+"/sbin",
 		"HOME="+home,
 		"NOVA_WANT="+want,
 		"NOVA_GO="+goVer,

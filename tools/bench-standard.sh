@@ -20,7 +20,14 @@ for arg in "$@"; do
   esac
 done
 
-NOVA_GO="${NOVA_GO:-go1.26.5}"
+if [ -z "${NOVA_GO:-}" ]; then
+  if [ -f "go.mod" ] && grep -q "^go " "go.mod" 2>/dev/null; then
+    gmod_ver="$(grep "^go " "go.mod" | head -1 | awk '{print $2}')"
+    NOVA_GO="go${gmod_ver}"
+  else
+    NOVA_GO="go1.26.6"
+  fi
+fi
 NOVA_WANT="${NOVA_WANT:-}"
 NOVA_HARNESS="${NOVA_HARNESS:-}"
 HOME_DIR="${HOME:-}"
@@ -220,16 +227,27 @@ else
   done
 fi
 
-# (5) a seat: exactly one *.key and nova-secrets check passes.
+# (5) a seat: exactly one BENCH seat key (swarm-*.key; the coordinator's is studio.key, the Air's air.key) and nova-secrets
+# check passes. A friend's own seat beside it (stella-<bench>.key) is not drift: friends run on the benches.
 seatdir="$HOME_DIR/.config/nova-secrets"
 nkeys=0
 seatkey=""
 if [ -d "$seatdir" ]; then
-  for k in "$seatdir"/*.key; do
+  for k in "$seatdir"/swarm-*.key "$seatdir"/studio.key "$seatdir"/air.key "$seatdir"/rowan.key "$seatdir"/glenn.key; do
     [ -e "$k" ] || continue
     nkeys=$((nkeys + 1))
     seatkey="$k"
   done
+  if [ "$nkeys" = "0" ]; then
+    for k in "$seatdir"/*.key; do
+      [ -e "$k" ] || continue
+      case "$(basename "$k")" in
+        stella-*|emma-*|johnny-*|freddy-*) continue ;;
+      esac
+      nkeys=$((nkeys + 1))
+      seatkey="$k"
+    done
+  fi
 fi
 if [ "$nkeys" != "1" ]; then
   drift "seat keys=$nkeys want=1 in $seatdir"
@@ -239,9 +257,10 @@ else
   else
     seat="$(basename "$seatkey" .key)"
     store="${NOVA_SECRETS_STORE:-}"
-    if [ -z "$store" ] && [ -d "$HOME_DIR/secrets" ]; then
-      store="$HOME_DIR/secrets"
-    fi
+    # the fleet keeps the store at ~/nova-bench/secrets (every bench, measured 2026-09-20); ~/secrets is the older layout
+    for cand in "$HOME_DIR/nova-bench/secrets" "$HOME_DIR/secrets"; do
+      [ -z "$store" ] && [ -d "$cand" ] && store="$cand"
+    done
     if [ -n "$store" ] && [ -f "$store/$seat.yaml" ] && command -v sops >/dev/null 2>&1; then
       if ! nova-secrets check --store "$store" --as "$seat" --key "$seatkey" --sops "$(command -v sops)" >/dev/null 2>&1; then
         drift "seat nova-secrets check failed for $seatkey"
@@ -314,8 +333,76 @@ elif [ "$free_g" -lt "$NOVA_MIN_FREE_G" ]; then
   drift "disk free=${free_g}G want>=${NOVA_MIN_FREE_G}G (both launchers refuse below it); largest under $HOME_DIR: $largest"
 fi
 
+# (8) THE TOOLCHAIN MANIFEST: every leg a card may be cut against, at the pin the schema
+# repo's CI uses, RESOLVABLE IN A NON-LOGIN SHELL AND FROM INSIDE THE WALL.
+tc_pin() {   # tc_pin <row> <bin> <pin-regex|-> <verargs...>
+  row="$1"; bin="$2"; want="$3"; shift 3
+  path="$(command -v "$bin" 2>/dev/null || true)"
+  if [ -z "$path" ]; then drift "toolchain $row: $bin not on PATH (want ${want:--any-})"; return; fi
+  real="$path"
+  while [ -L "$real" ]; do
+    link="$(readlink "$real")"
+    case "$link" in /*) real="$link" ;; *) real="$(dirname "$real")/$link" ;; esac
+  done
+  out="$("$bin" "$@" 2>&1 | tr -d '\r')"
+  if [ "$want" != "-" ] && ! printf '%s' "$out" | grep -qE -- "$want"; then
+    drift "toolchain $row: $bin is [$(printf '%s' "$out" | grep -v '^$' | head -1)] want $want ($real)"
+    return
+  fi
+  case "$real" in
+    "$SDK_REAL"/*|"$HOME_DIR"/sdk/*|/usr/*|/bin/*|/lib/*) ;;
+    /opt/homebrew/Cellar/go/*|/opt/homebrew/Cellar/sbcl/*|/opt/homebrew/opt/openjdk/*) ;;
+    /Library/Java/JavaVirtualMachines/*|/usr/local/share/dotnet/*) ;;
+    *) drift "toolchain $row: $bin resolves to $real, which is OUTSIDE every root the wall grants (see internal/swarm/toolchain.go); it belongs under $HOME_DIR/sdk" ;;
+  esac
+}
+SDK_REAL="$(cd "$HOME_DIR/sdk" 2>/dev/null && pwd -P)"
+[ -n "$SDK_REAL" ] || SDK_REAL="$HOME_DIR/sdk"
+if [ -d "$HOME_DIR/sdk" ] && [ ! -f "$HOME_DIR/sdk/env.sh" ]; then
+  drift "toolchain env: $HOME_DIR/sdk/env.sh is missing; a card and a gate get a NON-LOGIN shell and a PATH in ~/.profile alone is not read by one"
+fi
+if [ -f "$HOME_DIR/sdk/env.sh" ] || [ -d "$HOME_DIR/sdk/bin" ]; then
+  tc_pin cargo   cargo   "${NOVA_RUST:-1\.98\.1}"     --version
+  tc_pin rustc   rustc   "${NOVA_RUST:-1\.98\.1}"     --version
+  tc_pin dotnet  dotnet  "${NOVA_DOTNET:-^10\.0\.}"   --version
+  tc_pin elixir  elixir  "${NOVA_ELIXIR:-1\.20\.4}"   --version
+  tc_pin erl     erl     "${NOVA_OTP:-^29$}"          -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]),halt().'
+  tc_pin node    node    "${NOVA_NODE:-v26\.}"        --version
+  tc_pin javac   javac   "${NOVA_JAVA:-^javac 21}"    -version
+  tc_pin dart    dart    "${NOVA_DART:-3\.13\.2}"     --version
+  tc_pin cc      cc      -                            --version
+  tc_pin cxx     c++     -                            --version
+  tc_pin make    make    -                            --version
+  tc_pin cmake   cmake   -                            --version
+  tc_pin git     git     -                            --version
+  tc_pin sqlite3 sqlite3 -                            --version
+
+  if command -v dotnet >/dev/null 2>&1; then
+    for s in "$HOME_DIR"/sdk/dotnet-home/.dotnet/*.dotnetFirstUseSentinel; do
+      [ -e "$s" ] && break
+      drift "toolchain dotnet: no first-use sentinel under $HOME_DIR/sdk/dotnet-home/.dotnet; DotnetFirstTimeUseConfigurer will run NuGet's MigrationRunner and take a named mutex the wall denies"
+    done
+    dmode="$(ls -ld /tmp/.dotnet 2>/dev/null | cut -c1-10)"
+    if [ "$dmode" != "drwxrwxrwx" ] && [ "$dmode" != "drwxrwxrwt" ]; then
+      drift "toolchain dotnet: /tmp/.dotnet is [${dmode:-absent}] want drwxrwxrwx or drwxrwxrwt; the .NET named-mutex root is hard-coded to /tmp (TMPDIR is ignored), .NET rebuilds any level whose mode it dislikes with mkdtemp(\"/tmp/.dotnet.XXXXXX\"), and /tmp is not writable inside the wall"
+    fi
+  fi
+
+  for tool in go node sqlite3; do
+    sdk_tool="$HOME_DIR/sdk/bin/$tool"
+    first_tool="$(command -v "$tool" 2>/dev/null || true)"
+    if [ -x "$sdk_tool" ] && [ -n "$first_tool" ]; then
+      r_first="$(readlink -f "$first_tool" 2>/dev/null || echo "$first_tool")"
+      r_sdk="$(readlink -f "$sdk_tool" 2>/dev/null || echo "$sdk_tool")"
+      if [ "$r_first" != "$r_sdk" ]; then
+        drift "shadowing: $first_tool shadows $sdk_tool on PATH"
+      fi
+    fi
+  done
+fi
+
 if [ "$DRIFTS" = "0" ]; then
-  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G"
+  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G toolchains=all-legs"
   exit 0
 fi
 echo "STANDARD DRIFT (see lines above)"
