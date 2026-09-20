@@ -563,6 +563,8 @@
     #:session-endpoint-owner
     #:session-endpoint-socket-family
     #:endpoint-network-listener-p
+    #:named-pipe-endpoint-p
+    #:session-endpoint-lock-path
     #:local-socket-family
     #:current-account-uid
     ;; the local listener and the resident session server daemon

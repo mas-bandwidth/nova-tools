@@ -166,3 +166,47 @@
                    "the size ask returns the state's revision as scope=")
       (ok (search (format nil "scope=~D" scope) line)
           "the revision is printed beside the count on the one QUERY OK line: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; E08-F02-04 "Use bounded typed JSON over a local Unix socket, exact
+;;; integer/time encoding and durable asynchronous operation IDs; reconcile
+;;; cross-platform endpoint requirements before lock" (ROADMAP.md:819).
+;;;
+;;; The bounded typed JSON wire, the integer-as-string and RFC 3339 time
+;;; encoding, and the durable asynchronous operation IDs are each already
+;;; carried and replayed by slice-08; the half this case pins is the LAST
+;;; sentence: the endpoint lock is reconciled across platform spellings NAME
+;;; before it is taken, never assumed. Two SPEC-WORK lines state it:
+;;;   docs/SPEC-WORK.md:184-185 -- "<session>.lock is a file only where
+;;;                               --session is a filesystem path: it is that
+;;;                               socket's canonical spelling with .lock
+;;;                               appended, in the socket's own directory."
+;;;   docs/SPEC-WORK.md:186-190 -- "On Windows the endpoint --session names is a
+;;;                               named pipe (..), which is not exclusive by
+;;;                               default .. that first-instance creation IS
+;;;                               the endpoint lock .. there is no
+;;;                               <session>.lock file on Windows."
+;;; ------------------------------------------------------------------
+
+(deftest "TestE08F02UseBoundedTypedJSONOver"
+    "docs/SPEC-WORK.md:184-190;2647-2648"
+    "expected=filesystem-socket-lock-is-canonical-dot-lock-in-its-own-directory;named-pipe-endpoint-has-no-lock-file;platform-spelling-named-not-assumed"
+  ;; The endpoint is one transport whose spelling is the platform's: a
+  ;; Unix-domain socket on a filesystem path, or the Windows named pipe
+  ;; \\.\pipe\<name>. Reconcile the endpoint lock for each BEFORE it is taken.
+  (let ((socket "/tmp/nova-work-e08f02/work.sock")
+        (pipe "\\\\.\\pipe\\nova-work-e08f02"))
+    ;; A filesystem socket's endpoint lock is a file: the socket's canonical
+    ;; spelling with .lock appended, in the socket's own directory (:184-185).
+    (check-string= "/tmp/nova-work-e08f02/work.sock.lock"
+                   (session-endpoint-lock-path socket)
+                   "a filesystem socket's endpoint lock is canonical-spelling.lock")
+    ;; The named pipe is the SAME endpoint under the Windows spelling (:2647-2648).
+    (ok (named-pipe-endpoint-p pipe) "the \\\\.\\pipe\\<name> spelling is recognised")
+    (ok (not (named-pipe-endpoint-p socket)) "a filesystem path is not a named pipe")
+    ;; A named-pipe endpoint carries no <session>.lock file at all: the
+    ;; first-instance create IS the lock, so no caller ever writes a .lock under
+    ;; \\.\pipe\ (:186-190).
+    (ok (null (session-endpoint-lock-path pipe))
+        "a named-pipe endpoint has no <session>.lock file: ~S"
+        (session-endpoint-lock-path pipe))))

@@ -666,6 +666,43 @@ family is AF_UNIX, so this is false; an AF_INET family would make it true."
     (and family (not (eql family (local-socket-family))))))
 
 ;;; ------------------------------------------------------------------
+;;; The endpoint lock reconciled across platform spellings, before it is
+;;; taken (SPEC-WORK.md:178-190, :2647-2648).
+;;; ------------------------------------------------------------------
+
+(defun named-pipe-endpoint-p (session-path)
+  "True when SESSION-PATH names a Windows named pipe (`\\\\.\\pipe\\<name>`): the
+platform's spelling of the one local endpoint, never a second transport. A pipe
+name is not a filesystem path, so no `<session>.lock` file can be created under
+it (SPEC-WORK.md:186-190, :2647-2648)."
+  (and (stringp session-path)
+       (>= (length session-path) 9)
+       (string-equal (subseq session-path 0 9) "\\\\.\\pipe\\")))
+
+(defun canonical-socket-key (socket-path)
+  "The endpoint lock's key: the socket path's canonical spelling. When the
+socket exists this is its truename; otherwise the truename of its directory plus
+the file name, so a symlink and a relative spelling resolve to the same endpoint
+(SPEC-WORK.md:184-185)."
+  (let* ((merged (merge-pathnames socket-path))
+         (dir (directory-namestring merged))
+         (real-dir (or (ignore-errors (namestring (truename (pathname dir))))
+                       dir)))
+    (concatenate 'string real-dir (file-namestring merged))))
+
+(defun session-endpoint-lock-path (session-path)
+  "The endpoint's own lock, reconciled before it is taken. Where SESSION-PATH is
+a filesystem path the lock is a file: the socket's canonical spelling with
+`.lock` appended, in the socket's own directory (SPEC-WORK.md:184-185). Where it
+names the Windows named pipe there is no lock file at all -- the first-instance
+create (`FILE_FLAG_FIRST_PIPE_INSTANCE`) IS the endpoint lock -- so NIL is
+answered and no caller ever writes a `.lock` under `\\\\.\\pipe\\`
+(SPEC-WORK.md:186-190)."
+  (if (named-pipe-endpoint-p session-path)
+      nil
+      (concatenate 'string (canonical-socket-key session-path) ".lock")))
+
+;;; ------------------------------------------------------------------
 ;;; The local listener: bind, listen, accept.
 ;;; ------------------------------------------------------------------
 
