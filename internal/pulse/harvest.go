@@ -326,18 +326,27 @@ func Harvest(in HarvestInput) int {
 		grouped.Line(l)
 	}
 	// A local harvest drains --launched too when it is named: the lane of a card whose
-	// job under this root has finished is released here, not only by `manager`.
-	drained := drainLaunched(in, localJobStates(in.Root), grouped)
+	// job under this root has finished is released here, not only by `manager`. The
+	// local root is walked with os.ReadDir, which reports the error a glob swallows, so
+	// a root read whole is a complete traversal and an unreadable one is not (#1950).
+	localState, localComplete := localJobStates(in.Root)
+	drained, leftLaunched, drainFailed := drainLaunched(in, drainFacts{
+		state: localState, complete: localComplete,
+		// The same per-label probe the bench form runs, against this root (Johnny's
+		// HOLD on #1984): a card is dead only when ITS OWN job directory was looked
+		// for by name and was not there.
+		probe: func(labels []string) map[string]string { return localProbe(in.Root, labels) },
+	}, grouped)
 	grouped.More()
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || drainFailed > 0 {
 		code = 1
 	}
 	tail := ""
 	if strings.TrimSpace(in.Launched) != "" {
-		tail = fmt.Sprintf(" drained=%d", drained)
+		tail = fmt.Sprintf(" drained=%d left=%d", drained, leftLaunched)
 	}
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,

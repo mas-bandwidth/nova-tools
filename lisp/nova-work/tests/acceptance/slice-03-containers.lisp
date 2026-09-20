@@ -672,3 +672,52 @@
       (check-equal unwindowed early "the window did not narrow the named view")
       (ok (find "r/f/t" (getf early :rows) :key (lambda (r) (getf r :node)) :test #'equal)
           "the historical row is still in the table"))))
+
+;; E07-F04 (ROADMAP.md:757) — Include ordinary delivered capabilities beside
+;; versioning rows. SPEC-WORK.md:7782: "For Schema, ordinary scalar and
+;; container support must be visible beside version evolution, refusal behavior
+;; and interoperability." The imported baseline once held only the audit-family
+;; (versioning) rows; the survey appended the ordinary capability rows and
+;; preserved the versioning contract's individual rows for nested work
+;; (SPEC-WORK.md:7829-7830). The renderer must place an ordinary delivered
+;; capability row beside a versioning row in the one table, in their declared
+;; order, dropping or segregating neither class.
+(deftest "TestE07F04IncludeOrdinaryDeliveredCapabilitiesBeside" "docs/SPEC-WORK.md:7782,7829-7830"
+    "expected=ordinary-capability-rows-and-versioning-rows-rendered-interleaved;none-dropped;order-preserved"
+  (let* ((rows (list (make-roadmap-row :id "schema/fixed-tables/versioning/cpp"
+                                       :axis :versioning :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/scalar/int-key"
+                                       :axis :scalar :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/fixed-tables/versioning/struct"
+                                       :axis :versioning :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/container/vector"
+                                       :axis :container :kind :required
+                                       :state :open :evidence :full :status :current)))
+         (rm (make-roadmap :id "schema" :axes '(:versioning :scalar :container)
+                           :rows rows :shared-prerequisites '()
+                           :discovered '() :closed '()))
+         (text (roadmap-render rm :chat)))
+    ;; Every row — versioning and ordinary delivered capability alike — is present.
+    (ok (search "schema/fixed-tables/versioning/cpp" text)
+        "the cpp versioning row is missing from the render")
+    (ok (search "schema/fixed-tables/versioning/struct" text)
+        "the struct versioning row is missing from the render")
+    (ok (search "schema/scalar/int-key" text)
+        "the ordinary scalar capability row is missing from the render")
+    (ok (search "schema/container/vector" text)
+        "the ordinary container capability row is missing from the render")
+    ;; Rendered beside one another in their declared interleaved order: a
+    ;; versioning row, an ordinary row, a versioning row, an ordinary row.
+    (flet ((line (id) (search id text)))
+      (ok (< (line "schema/fixed-tables/versioning/cpp")
+             (line "schema/scalar/int-key"))
+          "an ordinary capability row is not rendered beside the first versioning row")
+      (ok (< (line "schema/scalar/int-key")
+             (line "schema/fixed-tables/versioning/struct"))
+          "the ordinary capability row is not rendered between the versioning rows")
+      (ok (< (line "schema/fixed-tables/versioning/struct")
+             (line "schema/container/vector"))
+          "the second ordinary capability row is not rendered beside the second versioning row"))))
