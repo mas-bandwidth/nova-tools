@@ -602,6 +602,57 @@ badge for a test that passes when its asserted behaviour is broken
   (if (regression-evidence-p receipt behaviour) :evidence nil))
 
 ;;; ------------------------------------------------------------------
+;;; retain-fixtures-revisions-fault-points (SPEC-WORK.md:7057-7059)
+;;; ------------------------------------------------------------------
+
+(defstruct (regression-retention
+             (:constructor make-regression-retention
+                 (&key fixtures seed engine-version client-version schema-version
+                        fault-point invocation captured-revision
+                        expected actual result)))
+  "One retained test record: the input fixtures, the deterministic seed, the
+engine, client and schema versions, its fault point, its invocation, its
+captured revision, its expected-against-actual pair and its result — everything
+a test keeps after it runs (SPEC-WORK.md:7057-7059)."
+  fixtures seed engine-version client-version schema-version
+  fault-point invocation captured-revision expected actual result)
+
+(defun reconcile-retention (retention)
+  "Reconcile the retained expected against the retained actual. A match is
+reported :reconciled and keeps the fixtures, revision and fault point beside the
+result; a difference is reported :diverged and carries the fault point and the
+expected-against-actual pair, so a divergence is visible rather than a silent
+green (SPEC-WORK.md:7057-7059)."
+  (let ((expected (regression-retention-expected retention))
+        (actual (regression-retention-actual retention))
+        (fault (regression-retention-fault-point retention)))
+    (if (equal expected actual)
+        (list :verdict :reconciled
+              :fixtures (regression-retention-fixtures retention)
+              :revision (regression-retention-captured-revision retention)
+              :fault-point fault
+              :result (regression-retention-result retention))
+        (list :verdict :diverged
+              :expected expected :actual actual :fault-point fault))))
+
+(defun retention-complete-p (retention)
+  "T when every field a test must retain is present: input fixtures, the seed,
+the three version strings, a fault point, an invocation, a captured revision, an
+expected, an actual and a result. A test that drops one has not retained its
+evidence (SPEC-WORK.md:7057-7059)."
+  (not (null (and (regression-retention-fixtures retention)
+                  (regression-retention-seed retention)
+                  (regression-retention-engine-version retention)
+                  (regression-retention-client-version retention)
+                  (regression-retention-schema-version retention)
+                  (regression-retention-fault-point retention)
+                  (regression-retention-invocation retention)
+                  (regression-retention-captured-revision retention)
+                  (regression-retention-expected retention)
+                  (regression-retention-actual retention)
+                  (regression-retention-result retention)))))
+
+;;; ------------------------------------------------------------------
 ;;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5790-5793, :6270-6303)
 ;;; ------------------------------------------------------------------
 

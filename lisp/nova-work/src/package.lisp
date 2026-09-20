@@ -1261,6 +1261,23 @@
     #:assertion-holds-p
     #:regression-evidence-p
     #:green-badge-p
+    ;; retain fixtures, revisions, fault points and expected/actual (SPEC-WORK.md:7057-7059)
+    #:regression-retention
+    #:make-regression-retention
+    #:regression-retention-p
+    #:regression-retention-fixtures
+    #:regression-retention-seed
+    #:regression-retention-engine-version
+    #:regression-retention-client-version
+    #:regression-retention-schema-version
+    #:regression-retention-fault-point
+    #:regression-retention-invocation
+    #:regression-retention-captured-revision
+    #:regression-retention-expected
+    #:regression-retention-actual
+    #:regression-retention-result
+    #:reconcile-retention
+    #:retention-complete-p
     ;; savepoint vs shared checkpoint (card 8641)
     #:savepoint
     #:make-savepoint

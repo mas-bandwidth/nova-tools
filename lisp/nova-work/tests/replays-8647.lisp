@@ -314,3 +314,81 @@
                                        :role-limits '(:coordinator 1 :worker 2))))
     (check-equal nil (fallback-eligible-p approved-wide trial)
                  "a fallback exceeding the role limit was called eligible")))
+
+;;; ------------------------------------------------------------------
+;;; TestE05F05RetainFixturesRevisionsFaultPoints
+;;;   criterion E05-F05-02; docs/SPEC-WORK.md:7057-7059
+;;;   "Every test retains its input fixtures, its deterministic seed, the
+;;;    engine, client and schema versions, its fault point, its invocation,
+;;;    its captured revision, its expected-against-actual reconciliation
+;;;    and its result."
+;;; ------------------------------------------------------------------
+
+(deftest "TestE05F05RetainFixturesRevisionsFaultPoints" "docs/SPEC-WORK.md:7057-7059"
+    "expected=fixtures+revision+fault-point-retained;expected-against-actual-reconciliation;missing-field-incomplete"
+  ;; A complete record retains every named artifact: fixtures, seed, the three
+  ;; version strings, fault point, invocation, captured revision, expected,
+  ;; actual and result.
+  (let* ((r (make-regression-retention
+             :fixtures '("fixture-a" "fixture-b")
+             :seed 42
+             :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+             :fault-point "journal-append at step 3"
+             :invocation "config --intake policy-1"
+             :captured-revision "rev 42"
+             :expected 9 :actual 9 :result "pass"))
+         (rec (reconcile-retention r)))
+    ;; Retention is observable through the reconciliation: the verdict, the
+    ;; fixtures, the captured revision and the fault point all come back out.
+    (check-equal :reconciled (getf rec :verdict)
+                 "a matching expected/actual did not reconcile")
+    (check-equal '("fixture-a" "fixture-b") (getf rec :fixtures)
+                 "the input fixtures were not retained")
+    (check-equal "rev 42" (getf rec :revision)
+                 "the captured revision was not retained")
+    (check-equal "journal-append at step 3" (getf rec :fault-point)
+                 "the fault point was not retained")
+    (check-equal "pass" (getf rec :result)
+                 "the result was not retained")
+    (check-equal t (retention-complete-p r)
+                 "a fully retained record is not complete"))
+  ;; A divergence between expected and actual is reconciled as :diverged,
+  ;; keeping both sides and the fault point visible rather than a silent green.
+  (let* ((r (make-regression-retention
+             :fixtures '("fixture-a")
+             :seed 7
+             :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+             :fault-point "journal-append at step 3"
+             :invocation "config --intake policy-1"
+             :captured-revision "rev 42"
+             :expected 9 :actual 11 :result "fail"))
+         (rec (reconcile-retention r)))
+    (check-equal :diverged (getf rec :verdict)
+                 "a mismatched expected/actual reconciled as matched")
+    (check-equal 9 (getf rec :expected) "a divergence dropped the expected value")
+    (check-equal 11 (getf rec :actual) "a divergence dropped the actual value")
+    (check-equal "journal-append at step 3" (getf rec :fault-point)
+                 "a divergence dropped the fault point"))
+  ;; A record that drops any retained artifact — here the fault point, and
+  ;; separately the fixtures — is not complete, so a test that fails to retain
+  ;; its evidence is detected rather than silently counted as retained.
+  (let* ((no-fault (make-regression-retention
+                    :fixtures '("fixture-a")
+                    :seed 7
+                    :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+                    :fault-point nil
+                    :invocation "config --intake policy-1"
+                    :captured-revision "rev 42"
+                    :expected 9 :actual 9 :result "pass"))
+         (no-fixture (make-regression-retention
+                      :fixtures nil
+                      :seed 7
+                      :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+                      :fault-point "journal-append at step 3"
+                      :invocation "config --intake policy-1"
+                      :captured-revision "rev 42"
+                      :expected 9 :actual 9 :result "pass")))
+    (check-equal nil (retention-complete-p no-fault)
+                 "a record missing its fault point is called complete")
+    (check-equal nil (retention-complete-p no-fixture)
+                 "a record missing its fixtures is called complete")))
