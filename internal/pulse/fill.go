@@ -68,6 +68,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -161,10 +162,34 @@ func benchSeats(stderr io.Writer, reg *fleet.Registry, benches []string) (map[st
 					reg.Path()))
 			continue
 		}
+		// The registry validates every other column and not this one, and the seat becomes
+		// a filename in the secrets store (<seat>.yaml, <seat>.key) and an argument to the
+		// launcher. A row that names something else is refused here rather than passed on.
+		if !plainSeat(seat) {
+			fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=seat-not-a-name seat=%s remedy=%q\n",
+				field(bench), field(seat), fmt.Sprintf(
+					"a seat is one plain name -- no space, no path separator, not `.` or `..` -- because it names a file in the secrets store; fix the seat column of %s",
+					reg.Path()))
+			continue
+		}
 		seats[bench] = seat
 		kept = append(kept, bench)
 	}
 	return seats, kept
+}
+
+// plainSeat says whether a seat is one plain name: the stem of a file in the secrets store,
+// and nothing that could reach out of it or split into two arguments.
+func plainSeat(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if strings.ContainsAny(s, `/\`) {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	})
 }
 
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
@@ -461,11 +486,15 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 
 		// THE LAUNCH, in the order the cards were dealt. Nothing here can change anyone's
 		// share: every card of this round is already out of --ready.
+		released := false
 		for _, c := range claims {
 			bench := in.Benches[c.bench]
 			if err := in.Launcher.Launch(bench, c.seat, c.card); err != nil {
 				failed[c.bench]++
 				failLaunch(in, c.card, c.base, c.lane, live, err)
+				if c.lane != "" {
+					released = true
+				}
 				if res.err == nil {
 					res.err = fmt.Errorf("launch %s on %s: %w", field(c.base), field(bench), err)
 				}
@@ -474,6 +503,20 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 			launched[c.bench]++
 			// The card ran: whatever it failed at before is history, not queue depth (#2013).
 			reapCardMarkers(in, c.base)
+		}
+		// Another round only when a failed launch RELEASED a lane and a card is waiting on
+		// it. Nothing else changed between the rounds, so anything else would be a second
+		// pass over the same answer -- and the number of rounds is bounded by the number of
+		// failed lane launches, which is the number of times the world actually moved.
+		waiting := false
+		for _, base := range heldOrder {
+			if !claimed[base] {
+				waiting = true
+				break
+			}
+		}
+		if !released || !waiting {
+			break
 		}
 	}
 

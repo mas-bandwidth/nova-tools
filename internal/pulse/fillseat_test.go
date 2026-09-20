@@ -129,6 +129,40 @@ func TestFillRefusesASeatlessBenchOnceByNameAndFillsTheRest(t *testing.T) {
 	}
 }
 
+// TestFillRefusesASeatThatIsNotAPlainName: the seat becomes a filename in the secrets store
+// (`<seat>.yaml`, `<seat>.key`) and an argument to the launcher, so a row whose seat carries
+// a path separator, a `..` or a space is not an answer fill can pass on. The registry
+// validates every other column and not this one; a bench whose seat is not a plain name is
+// refused by name at the loop, exactly like a bench with no seat at all.
+func TestFillRefusesASeatThatIsNotAPlainName(t *testing.T) {
+	for _, seat := range []string{"../../etc/swarm", "a/b", `a\b`, "two words", ".."} {
+		t.Run(seat, func(t *testing.T) {
+			dir := t.TempDir()
+			ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+			writeCard(t, ready, "card-001.md", "a card\n")
+			l := &seatLauncher{}
+			var out, errb bytes.Buffer
+			code := Fill(FillInput{
+				Ready: ready, Launched: launched,
+				Machines: seatMachines(t, dir, "odd="+seat),
+				Benches:  []string{"odd"},
+				Once:     true,
+				Stdout:   &out, Stderr: &errb,
+				Capacity: laneCap{"odd": 10}, Launcher: l,
+			})
+			if code != 2 {
+				t.Fatalf("fill exit = %d, want 2; stderr=%q", code, errb.String())
+			}
+			if len(l.calls) != 0 {
+				t.Fatalf("a card was launched under the seat %q: %v", seat, l.calls)
+			}
+			if !strings.Contains(errb.String(), "FILL REFUSED bench=odd") {
+				t.Fatalf("the bench was not refused by name: %q", errb.String())
+			}
+		})
+	}
+}
+
 // TestFillRefusesWhenNoNamedBenchHasASeat: with every named bench seatless there is nothing
 // to fill, and that is a refusal that starts nothing -- exit 2, no card moved.
 func TestFillRefusesWhenNoNamedBenchHasASeat(t *testing.T) {
