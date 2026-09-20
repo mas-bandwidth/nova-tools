@@ -48,7 +48,10 @@ func TakenDir(benchDir string) string { return filepath.Join(benchDir, TakenName
 // in sorted order so two workers walk the same list and race on the same first card.
 // A bench with no queue/ directory has no cards, not an error.
 func QueueCards(benchDir string) ([]string, error) {
-	entries, err := os.ReadDir(QueueDir(benchDir))
+	queue := QueueDir(benchDir)
+	// Automatically reconcile any cards left in limbo by .provider-failed.
+	_, _ = ReconcileQueueLimbo(queue, MaxProviderAttempts)
+	entries, err := os.ReadDir(queue)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil

@@ -17,6 +17,7 @@ func PullQueue(queueDir, takenDir, worker string, admit int) ([]string, error) {
 	if admit <= 0 {
 		return nil, nil
 	}
+	_, _ = ReconcileQueueLimbo(queueDir, MaxProviderAttempts)
 	matches, err := filepath.Glob(filepath.Join(queueDir, "*.card"))
 	if err != nil {
 		return nil, err
