@@ -319,5 +319,44 @@ sequence driven is a random sequence of legal verbs."
                  "the fully verified feature did not settle into C")
     (check-equal :o (node-branch (kernel-state k) "root/f-partial")
                  "a completion-only read moved the partial feature out of O")
-    (check-equal :unknown (node-state (kernel-state k) "root/f-unknown/t")
-                 "the unknown leaf lost its :unknown state")))
+     (check-equal :unknown (node-state (kernel-state k) "root/f-unknown/t")
+                  "the unknown leaf lost its :unknown state")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F04LeaveDeletionPendingOnMissing      docs/SPEC-WORK.md:7598
+;;;   acceptance criterion E09-F04-03 (docs/roadmaps/nova-work.sexp):
+;;;   "Leave deletion pending on missing content, source change or
+;;;   uncertain network result".
+;;; ------------------------------------------------------------------
+;;; SPEC-WORK.md:7598 fixes the missing-content prong: "Unavailable or
+;;; unpreserved content is reported and leaves deletion pending, not
+;;; silently skipped." The absorb gate models that as an archive capture
+;;; whose explicit gaps mark what was not captured: a capture with any gap
+;;; is not absorbable, so the source issue is not deleted -- deletion is
+;;; left pending until the missing content is recovered. This replay drives
+;;; each of the six gap kinds through the gate and asserts the source is
+;;; never silently deleted. The source-change (:7604,7643-7645) and
+;;; uncertain-network (:7610-7611) prongs of the criterion are not yet
+;;; modeled in the kernel; this test pins the prong its name carries.
+
+(deftest "TestE09F04LeaveDeletionPendingOnMissing" "docs/SPEC-WORK.md:7598"
+    "expected=missing-content-reported-and-leaves-deletion-pending;gap-free-capture-absorbable"
+  ;; Each of the six gap kinds marks missing content. None of them is a silent
+  ;; skip, and none of them lets the source issue be deleted: the capture is
+  ;; reported and left un-absorbable, so deletion stays pending.
+  (dolist (kind *archive-gap-kinds*)
+    (let ((capture (make-archive-capture
+                    :source-issue "acme/widget#7"
+                    :author :known
+                    :gaps (list (make-archive-gap :kind kind
+                                                  :detail (format nil "missing ~(~A~)" kind)
+                                                  :source-issue "acme/widget#7")))))
+      (check-equal t (archive-gaps-explicit-p capture)
+                   "missing content is reported as an explicit gap, not skipped")
+      (check-equal nil (archive-absorbable-p capture)
+                   "missing content leaves deletion pending (the capture is not absorbable)")))
+  ;; Only a gap-free capture may proceed to deletion.
+  (check-equal t (archive-absorbable-p
+                  (make-archive-capture :source-issue "acme/widget#7"
+                                        :author :known :gaps '()))
+               "a gap-free capture is absorbable"))
