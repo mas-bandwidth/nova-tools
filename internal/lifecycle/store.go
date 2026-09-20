@@ -317,6 +317,18 @@ func (s *Store) byAttempt(attempt string) (*Projection, bool) {
 	return p, ok && p != nil
 }
 
+func (s *Store) startedEvent(attempt string) (Event, bool) {
+	raw, ok := s.keys[startedKey(attempt)]
+	if !ok {
+		return Event{}, false
+	}
+	var ev Event
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		return Event{}, false
+	}
+	return ev, true
+}
+
 func (s *Store) writeProjection(card string) error {
 	p, ok := s.cards[card]
 	if !ok || p == nil {

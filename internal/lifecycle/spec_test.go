@@ -594,6 +594,77 @@ func TestApplyStartedIdenticalRetryIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestApplyStartedIdenticalRetryAfterFenceIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	s, ctrl, now := openRun(t, root)
+	claimAndAdmit(t, s, ctrl, now, "card-hold3", "hulk", "local")
+	p := mustLookup(t, s, "card-hold3")
+	receipt := boundReceipt(p, now)
+	if err := s.ApplyStarted(receipt); err != nil {
+		t.Fatalf("first ApplyStarted: %v", err)
+	}
+	before := mustLookup(t, s, "card-hold3")
+	epoch, err := s.AdvanceFence("card-hold3")
+	if err != nil {
+		t.Fatalf("AdvanceFence: %v", err)
+	}
+	if epoch <= before.FenceEpoch {
+		t.Fatalf("fence did not advance: %d -> %d", before.FenceEpoch, epoch)
+	}
+	afterFence := mustLookup(t, s, "card-hold3")
+	if afterFence.At == "" || afterFence.At == stampOf(receipt.At) {
+		t.Fatalf("setup: fence must overwrite projection At (%q) so a retry that compared it to the receipt would fail", afterFence.At)
+	}
+
+	if err := s.ApplyStarted(receipt); err != nil {
+		t.Fatalf("identical STARTED after AdvanceFence: %v", err)
+	}
+	got := mustLookup(t, s, "card-hold3")
+	if got.State != lifecycle.Started {
+		t.Errorf("state=%s, want STARTED", got.State)
+	}
+	if got.FenceEpoch != epoch {
+		t.Errorf("fence=%d, want preserved %d", got.FenceEpoch, epoch)
+	}
+	if got.Rev != afterFence.Rev {
+		t.Errorf("rev=%d, want preserved %d (no extra STARTED)", got.Rev, afterFence.Rev)
+	}
+	if n := countStartedActs(t, root); n != 1 {
+		t.Fatalf("started:<attempt> events=%d, want 1", n)
+	}
+
+	reopened, err := lifecycle.Open(root)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if err := reopened.ApplyStarted(receipt); err != nil {
+		t.Fatalf("identical STARTED after reopen: %v", err)
+	}
+	got = mustLookup(t, reopened, "card-hold3")
+	if got.FenceEpoch != epoch {
+		t.Errorf("reopen fence=%d, want preserved %d", got.FenceEpoch, epoch)
+	}
+	if got.Rev != afterFence.Rev {
+		t.Errorf("reopen rev=%d, want preserved %d", got.Rev, afterFence.Rev)
+	}
+	if n := countStartedActs(t, root); n != 1 {
+		t.Fatalf("after reopen, started:<attempt> events=%d, want 1", n)
+	}
+
+	changed := receipt
+	changed.Worker = "other-worker"
+	err = reopened.ApplyStarted(changed)
+	if err == nil {
+		t.Fatal("changed STARTED receipt after fence was accepted")
+	}
+	if !errors.Is(err, lifecycle.ErrRefused) && !errors.Is(err, lifecycle.ErrMalformed) {
+		t.Errorf("changed receipt: %v, want refused or malformed", err)
+	}
+	if n := countStartedActs(t, root); n != 1 {
+		t.Fatalf("changed receipt wrote started:<attempt> events=%d, want 1", n)
+	}
+}
+
 func openRun(t *testing.T, root string) (*lifecycle.Store, *fakeControl, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
@@ -659,6 +730,22 @@ func deref(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+func stampOf(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+func countStartedActs(t *testing.T, root string) int {
+	t.Helper()
+	n := 0
+	for _, ev := range readEvents(t, root) {
+		key, _ := ev["idempotency"].(string)
+		if strings.HasPrefix(key, "started:") {
+			n++
+		}
+	}
+	return n
 }
 
 func readEvents(t *testing.T, root string) []map[string]any {

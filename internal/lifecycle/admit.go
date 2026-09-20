@@ -129,7 +129,8 @@ func (s *Store) ApplyStarted(receipt StartedReceipt) error {
 			return fmt.Errorf("%w: card or attempt", ErrMalformed)
 		}
 		if p.State == Started {
-			if !sameStarted(p, receipt) {
+			orig, ok := s.startedEvent(receipt.Attempt)
+			if !ok || !sameStarted(orig, receipt) {
 				return fmt.Errorf("%w: idempotency key reused with a different payload", ErrRefused)
 			}
 			return writeAtomic(s.attemptFile(receipt.Attempt, startedName), []byte(receipt.Line()+"\n"))
@@ -160,7 +161,7 @@ func (s *Store) ApplyStarted(receipt StartedReceipt) error {
 			Lease:       cloneString(p.Lease),
 			Limits:      cloneLimits(p.Limits),
 			At:          stamp(receipt.At),
-			Idempotency: "started:" + receipt.Attempt,
+			Idempotency: startedKey(receipt.Attempt),
 			Worker:      strptr(receipt.Worker),
 			FenceEpoch:  p.FenceEpoch,
 			Nonce:       cloneString(p.Nonce),
@@ -362,23 +363,22 @@ func (s *Store) AdvanceFence(card string) (int, error) {
 	return epoch, err
 }
 
-func sameStarted(p *Projection, r StartedReceipt) bool {
-	if p == nil {
-		return false
-	}
+func startedKey(attempt string) string { return "started:" + attempt }
+
+func sameStarted(ev Event, r StartedReceipt) bool {
 	gen := 0
-	if p.Generation != nil {
-		gen = *p.Generation
+	if ev.Generation != nil {
+		gen = *ev.Generation
 	}
-	return p.Card == r.Card &&
-		deref(p.Attempt) == r.Attempt &&
-		deref(p.Job) == r.Job &&
-		deref(p.Lease) == r.Lease &&
-		deref(p.Bench) == r.Bench &&
-		deref(p.Route) == r.Route &&
+	return ev.Card == r.Card &&
+		deref(ev.Attempt) == r.Attempt &&
+		deref(ev.Job) == r.Job &&
+		deref(ev.Lease) == r.Lease &&
+		deref(ev.Bench) == r.Bench &&
+		deref(ev.Route) == r.Route &&
 		gen == r.Generation &&
-		deref(p.Worker) == r.Worker &&
-		p.At == stamp(r.At)
+		deref(ev.Worker) == r.Worker &&
+		ev.At == stamp(r.At)
 }
 
 func (s *Store) retainStreams(why UnknownWhy) error {
