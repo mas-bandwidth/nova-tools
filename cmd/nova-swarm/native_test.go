@@ -2460,16 +2460,19 @@ func TestInWallTheProductionArgvBuildsAndLinks(t *testing.T) {
 				t.Fatalf("the production argv carries no --:\n%s", strings.Join(argv, " "))
 			}
 			// The wall's own flags, verbatim, and then OUR command instead of the harness.
+			// The settings a cs card would set for itself go through `env`; everything that
+			// is the RUNNER's to decide -- HOME, TMPDIR, PATH, and on darwin DEVELOPER_DIR,
+			// which is what replaces a /var/db read root -- comes from nativeChildEnv below,
+			// the same function the real run uses. Nothing here is a grant typed by hand,
+			// which is the whole point: this file compiles on the commit before the change
+			// too, so its RED there is this test and not a different one.
 			run := append(append([]string{}, argv[:cut+1]...), "env",
 				"DOTNET_CLI_HOME="+filepath.Join(home, "sdk", "dotnet-home"),
 				"DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1",
-				"NUGET_PACKAGES="+filepath.Join(dataHome, ".nuget", "packages"))
-			// The toolchain's own environment, from the same one list the roots come from:
-			// on darwin that is DEVELOPER_DIR, which is what replaces a /var/db read root.
-			run = append(run, swarm.ToolchainEnv(runtime.GOOS)...)
-			run = append(run, "sh", "-c", leg.sh)
+				"NUGET_PACKAGES="+filepath.Join(dataHome, ".nuget", "packages"),
+				"sh", "-c", leg.sh)
 			cmd := exec.Command(wall, run...)
-			cmd.Env = append(os.Environ(), "HOME="+dataHome)
+			cmd.Env = nativeChildEnv(dataHome, jobDir, tmpDir, "", "", "", "")
 			out, _ := cmd.CombinedOutput()
 			if !strings.Contains(string(out), leg.tok) {
 				t.Errorf("the %s leg did not %s inside the wall built by the production argv.\nargv: %s\noutput:\n%s",
