@@ -358,3 +358,61 @@
       (ok (search "SESSION RACED" line) "the divergence does not say RACED: ~A" line)
       (check-equal :fenced (session-state sess)
                    "the divergence did not fence the session"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE08F03RepresentChildrenSwarmCapabilitiesLocal (roadmap
+;;; nova-work.sexp E08-F03-05: "Represent children, swarm capabilities,
+;;; local runs and one-shots separately from friend identity; agreed
+;;; concurrency limits apply"). SPEC-WORK.md:3396-3410 makes configured
+;;; capability, observed fact and current free capacity three fields and
+;;; never one, and names the four execution capability groups;
+;;; SPEC-WORK.md:3385-3386 makes an agreed limit never cancelled or
+;;; raised by a model capability.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE08F03RepresentChildrenSwarmCapabilitiesLocal"
+    "docs/SPEC-WORK.md:3396-3410,3385-3393"
+    "expected=four-groups-not-friends;constraints-carry-agreed-limit;three-fields-never-collapse;agreed-limit-ignores-model-capability"
+  ;; Children, swarm capabilities, local models and one-shots are four
+  ;; distinct execution capability groups, each a catalog entry of its own and
+  ;; never a friend identity.
+  (check-equal '(:child-agents :swarms :local-models :one-shots)
+               *capability-group-kinds*
+               "the four execution capability groups")
+  ;; Each entry is identified by its own stable capability id, and its agreed
+  ;; concurrency limit lives in a separate constraints slot, never folded into
+  ;; the identity or the three support/verification/capacity fields.
+  (dolist (kind *capability-group-kinds*)
+    (let ((g (make-capability-group
+              :id (format nil "cap-~(~A~)" kind) :kind kind :source "CONFIG"
+              :last-verified "2026-09-15T00:00:00Z" :availability :available
+              :constraints (list :concurrent 4))))
+      (ok (stringp (capability-group-id g)) "~A lacks a stable capability id" kind)
+      (check-string= "CONFIG" (capability-group-source g)
+                     "the group's source is not CONFIG")
+      (ok (eql 4 (getf (capability-group-constraints g) :concurrent))
+          "the agreed concurrency limit was not carried on ~A" kind)))
+  ;; Configured capability (declared support), observed fact (runtime
+  ;; verification) and current free capacity are three fields and never one: a
+  ;; catalog entry is not evidence of a live child or of free credits.
+  (let ((g (make-capability-group
+            :id "cap-1" :kind :child-agents :source "CONFIG"
+            :last-verified "2026-09-15T00:00:00Z" :availability :available
+            :constraints '(:concurrent 4)
+            :declared-support t :runtime-verified nil :free-capacity nil)))
+    (check-equal t (capability-declared-support-p g) "declared support is not true")
+    (check-equal nil (capability-runtime-verified-p g)
+                 "runtime verification was inferred from declared support")
+    (check-equal :unknown (capability-free-capacity g)
+                 "free capacity was not unknown")
+    (check-equal nil (capability-fields-collapse-p g)
+                 "declared support, runtime verification and free capacity collapsed into one"))
+  ;; Agreed concurrency limits apply: the limit is read from CONFIG and a model
+  ;; capability never cancels or raises it, and never infers a role.
+  (let* ((config (make-role-config
+                  :roles (list (make-role-record :id "worker" :source "CONFIG"
+                                                 :limit 2)))))
+    (check-equal 2 (agreed-limit-for config "worker" '(:capability "unlimited"))
+                 "the agreed concurrency limit was not applied")
+    (check-equal nil (role-inferred-from-model-p "worker")
+                 "a model capability inferred a role")))
