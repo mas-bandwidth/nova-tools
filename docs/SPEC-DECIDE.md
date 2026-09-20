@@ -1846,3 +1846,80 @@ throughput 22 calls/s at concurrency 10 measured in that trial; and the note
     mutation pages.
 17. Game adoption: the game path uses the decision above the floor and falls
     back to the local rule below it.
+
+## Tests this spec demands
+
+The tree already houses this reading's DECIDER and most of the hold fold (the amendment landed against the base even though the spec text still says "no code yet"). These tests run against a fake decider (`internal/decide`'s `Decide` interface, and rule 9's httptest fake for the wire), with fixtures under `internal/decide/questions/testdata/<q>/` as `<name>.evidence`/`<name>.want` pairs, no network, no key on disk, each seen red before trusted. PRESENT below cites a real `func Test…` asserting the behaviour in the spec's own words; ABSENT means no test asserts it, however near the name.
+
+1. `TestDecodeParsesAllAnswerKinds` / `TestValidateAnswers` — a question over bounded state returns the typed answer with a provider-reported confidence; an untyped reply is refused, not parsed (rule 1, red 1).
+2. `TestDecideSendsBodyAndParses` / `TestNewRefusesWhenEnvUnset` — the fake asserts path `/v1/systemone`, model `jev-latest`, the three question shapes; `TYPESAFE_API_KEY` is accepted where `JEV_API_KEY` is absent (rule 2, red 2).
+3. `TestNoVerbTakesAKeyOnArgv` — the key arrives only via the named environment variable under `nova-secrets exec`, never file/argv/log (rule 3, red 3).
+4. `TestPublicIsAnAllowlist` / `TestPrivateEvidenceNeverReachesAPublicDecider` — public/synthetic state only; a private note or secret is refused before any call (rule 4, red 4, S7).
+5. `TestLineRendersConfidenceAndBelow` / `TestBelowTheFloorStepsUp` — a line prints `confidence=` and `floor=`; below the floor the caller runs the fallback and marks the answer a suggestion (rule 5, red 5).
+6. `TestAnAnswerNeverReplacesAnUnresolvedHolder` / `TestRequiredReadsSurviveTheAnswer` — confidence never authorizes: an answer cannot lift a hold or replace a holder; the machinery's word stands (rule 6, red 6).
+7. `TestAHarvestClassNeverPushesARejectedCard` — a decision alone writes nothing: no card, fix, merge or push after a decision-only run (rule 7, red 7).
+8. `TestOutcomeWritesTheOtherHalfOfTheRow` / `TestNovaDecideTuneRefusesAFloorWithNoRows` — each decision appends a row joining answer, confidence, floor and outcome; a floor with no rows behind it is refused as untuned (rule 8, red 8).
+9. `TestDecideSendsBodyAndParses` — the suite runs against an httptest fake with the network refused and no key on disk (rule 9, red 9).
+10. `TestRouteBelowTheFloorExits3` — every decision prints its evidence pointer beside the answer (rule 10, red 10).
+11. `TestBelowTheFloorStepsUp` — a below-floor answer is a suggestion, never dropped, and the original state stands (rule 11, red 11).
+12. `TestInboxDecideEmptyInboxMakesNoProviderCalls` — only a delivered batch/finished task is decided; an empty wait is not, and no provider call is made (rule 12, red 12).
+13. `TestRouteNoJevIsDeterministic` / `TestPublicIsAnAllowlist` — route adoption: the above-floor answer chooses the kind/rung; below the floor it falls back to today's routing (adoption, red 13).
+14. `TestGlennIsOnlyAskedAfterAllFriends` / `TestHelpAnswers` — abstain adoption: the abstain reason and `needs_human` name the reader; below the floor the machinery's own answer stands (adoption, red 14).
+15. `TestInboxDecideRefusesPrivateBusByName` — inbox adoption: opt-in, public buses only; a private bus is refused; below-floor notes stay unclassified (adoption, red 15).
+16. `TestADecideFlagBelowItsFloorRunsThePreFlagBranch` — pulse gate adoption: below the floor the gate answers real (adoption, red 16).
+17. `a-game-path-uses-the-decision-above-floor-and-the-local-rule-below` — game adoption; the game path lives outside nova-tools and has no tree test (adoption, red 17).
+18. `TestTheFrameIsByteExact` — S2: the frame is byte-exact for a fixed nonce; a marker/`FRAME`/NUL in the evidence still yields exactly two marker lines.
+19. `TestNoEvidenceByteReachesTheInstructions` — S2: for every question the instructions and criteria sent are byte-identical across two evidences.
+20. `TestAnAnswerOutsideTheSetIsAProviderError` — S3: an answer outside the closed set is a provider error at exit 2, no decision row.
+21. `the-provider-is-never-asked-to-name-anything` — S3: no options/instructions request a sha, number, login or test name, and those fields equal the `--meta`/pattern value even when the fake's text differs.
+22. `the-evidence-changes-nothing-but-the-answer` — S1: evidence that tries to change the floor/options/decider leaves the request and the caller's act byte-identical.
+23. `<q>-injection-obeyed` (all six readings) — S4: with the tamper screen bypassed and the fake returning the most-loosening member at 0.99, the call site's state is its mechanical baseline or tighter.
+24. `TestTheTamperScreenIsDataAndMatchesBeforeAnyCall` / `TestTamperedEvidenceMakesNoCall` — S5: one shipped tamper table is data; a replaced `--tamper <file>` is the only table read.
+25. `<q>-injection-screened` (all six readings) — S5: evidence that instructs the classifier makes zero calls and prints `tamper=yes` and the tamper answer.
+26. `TestTwoNamesOneLoginFoldSeparately` — S6: a login is an account and a `who=` is a reader; a typed `who=` the file maps attributes the hold to that name, an unmapped one is `who=unknown`, and a comment with no typed line is `who=unknown`.
+27. `a-comment-by-a-non-reviewer-adds-nothing-and-is-counted` — S6: "<reviewer> says HOLD" from a login outside the file is `why=not-reviewer`, `foreign=1`.
+28. `a-quoted-hold-is-not-a-hold` / `a-verdict-with-no-reviewer-file-is-refused` / `the-author-cannot-ready-their-own` — S6: quoted lines and code blocks are dropped; a verdict with no reviewer file refuses at exit 2; the author's own approve readies nothing.
+29. `TestSecretsAreRedactedAndSecretShapedEvidenceIsRefused` — S7: `sk-` and `<NAME>_KEY=` shapes are redacted before framing; a survivor is refused at exit 2 with `why=secret-shaped`.
+30. `TestEveryQuestionsSetIsClosedAndNamesNothingOfOurs` — D1: no question's text, option or rule row names a person, bench, repo or model of ours.
+31. `every-data-table-is-replaceable` — D1: tamper, verdict tokens, ack prefixes, toolchain patterns and security phrases are each replaceable whole (a replaced verdict-tokens file whose `hold` row is one foreign word makes a bold `HOLD` not a hold).
+32. `TestWithNoProviderEveryQuestionAnswersByRuleOrUnknownAndSaysSo` — D2: with `--decider rules`/no key, exit 0 with `decider=rules` on a rule row, exit 3 with `answer=unknown decider=none why=no-decider` otherwise; zero calls.
+33. `rules-are-consulted-first-whether-named-or-not` — D2: `rules` is consulted first even when not named.
+34. `TestAStoppingMemberEndsTheWalkBeforeTheFloor` — D2: a stopping answer at any confidence (hold 0.2 / security 0.2) ends the walk before a later decider (approve 0.99 / chore 0.99), `stop=yes`, exit 0.
+35. `a-non-stopping-answer-below-the-floor-still-moves-on` — D2: a non-stopping `none` at 0.2 still lets the next decider be asked.
+36. `TestClassifyAnswersByRuleOrUnknownAndSaysSo` / `TestClassifyRefusals` — D3: classify exits 0 / 3 / 2.
+37. `TestAnUnknownKeyBesideTheEnvelopeIsRefusedByName` — D3: an undeclared `--meta` key is refused by name.
+38. `TestJevRequiresAccounting` / `TestRouteRefusalStillPersistsTheCall` — D3: a provider call with no `--log`/`--usage` accounting is refused before it is made; a refusal still persists what a completed call spent.
+39. `TestOneItemOneCall` — D4: two notes are two calls and neither state carries the other's text.
+40. `TestEvidenceOverItsBoundIsTruncatedAndMarked` — D4: head/tail/head-and-tail cuts each carry exactly one `[cut <n> bytes]` line, bound after redaction and quote removal.
+41. `TestBelowFloorIsUnknownAndRequeuesOnce` — D5: below the floor the item escalates to a named reader (`escalate=caller` default, `--escalate-to <name>`); `escalate=-` at/above the floor.
+42. `an-untuned-provider-is-not-asked` — D5: no `--floors`, no row, a missing/39-row/40-with-four trial, or a row for a different `model` makes zero calls with `why=untuned`; 40 rows with five of each stopping member makes one call.
+43. `a-run-may-raise-a-floor-and-never-lower-it` — D5: `--floor <f>` raises the file's floor for one run and never lowers it.
+44. `TestTheEvidenceTextIsNeverLogged` / `TestClassifyLogNeverHoldsTheEvidenceText` — D6: the evidence text never reaches a log or usage row; its SHA-256 does.
+45. `the-decision-id-is-derived-as-written` — D6: `id` is the first sixteen hex digits of SHA-256 over question, version, pointer and hash, each newline-terminated.
+46. `the-audit-sample-is-the-stated-threshold` — D6: `19999998…` sampled and `19999999…` not at 0.1; the same ids on two runs.
+47. `the-three-row-kinds-have-their-shapes-and-an-orphan-is-refused` — D6: decision/observed/truth rows keep their shapes; a row of either appended kind with no decision row is refused.
+48. `an-observed-row-carries-no-truth-and-tune-reads-truth-rows-only` — D6: a log of observed rows reads zero labelled rows in `tune`.
+49. `result-is-computed-from-the-truth-and-never-passed` — D6: `result` is computed by the verb from truth and the decision's answer; a `--result` flag is refused by name.
+50. `TestInboxDecideWakeTellsAcknowledgementFromAction` — reading 1 (note): `wake` answers ack/info/needs-action; a structured `STOP:`/`HOLD:` subject is `needs-action` with no call.
+51. `a-truncated-note-wakes-at-once` — reading 1: a request past byte 600 is relayed at once, `why=truncated`.
+52. `one-wake-carries-every-deferred-note` / `a-restart-keeps-the-original-due` / `wait-timeout-flushes-deferred-notes-before-exit` / `a-note-missing-from-the-state-file-is-not-deferred` / `a-courteous-reply-is-observed-and-writes-no-truth` — reading 1: the durable deferral state on `wait --decide`/`watch --decide`.
+53. `a-bench-red-needs-the-table-and-a-fact-the-card-did-not-write` — reading 2 (harvest): `blocked-toolchain`+`bench` needs the toolchain row AND exit status 126/127 or a harness-error line, else it is a label only.
+54. `a-unit-changes-bench-on-this-ground-once` / `a-defect-files-nothing` / `a-rerun-elsewhere-is-observed-and-writes-no-truth` — reading 2: the one-time bench move and the observed rerun rows.
+55. `TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand` / `TestAHoldInAnySourceStops` — reading 3 (hold): a held head is dropped from a batch and refused at land; a hold in any source stops.
+56. `TestAnAbstainRecordIsNotAnInput` / `TestChildAndCardRecordsAreNotInputs` — reading 3: an ABSTAIN, `child` or `card` record neither holds nor releases.
+57. `TestAScopedApproveReleasesOnlyTheHoldsItNames` / `TestOnlyTheHolderReleases` / `TestAnUnknownHoldIsReleasedOnlyByAReadersVerbNamingIt` — reading 3: release is only the holder, by the verb, at the current head, naming the holds.
+58. `TestACommentNeverReleasesAnything` / `TestAForgeApprovedReviewReleasesNothing` / `TestADismissalReleasesNothing` / `TestNoAnswerReleasesAnything` / `TestAPushReleasesNothing` / `TestAReleaseAtAStaleHeadReleasesNothing` — reading 3: nothing else releases a hold.
+59. `TestADecidedHoldAtAnyConfidenceHolds` / `TestAnUntypedCommentFromAMayHoldLoginIsPending` — reading 3: a decided hold at any confidence holds; an untyped comment from a may-hold login is pending.
+60. `TestAPendingCommentIsClearedOnlyByAReadersVerb` / `TestAScopedApproveRecordDoesNotSatisfyNeedsRead` — reading 3: a pending comment clears only by a reader's verb; a scoped record satisfies no read condition.
+61. `TestBatchOKCarriesHoldsDispositionsAndReviewers` / `TestNewerComparesForgeStampsAndTiesBreakOnID` / `TestEveryLineThatNamesAHoldPrintsItsID` — reading 3: the golden `BATCH OK` fields and forge-stamp ordering.
+62. `TestThereIsNoOptInStrictFlag` / `TestThereIsNoFlagThatIgnoresOneHold` / `TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted` / `TestReviewersXorNoRequireHolds` / `TestNoRequireHoldsWithoutLaneRefuses` / `TestRemovingMayHoldByCommitReleasesAndTheReceiptNamesTheCommit` / `TestLandRefusesAHoldPostedAfterBatchOK` / `TestSweepAndReactNeverEnqueueAHeldPR` / `TestAReleaseAtTheSameHeadIsObservedAndWritesNoTruth` — reading 3: the flags, the waiver, and the observed rows.
+63. `TestFailedDecideClassesTheRedAndLicensesAtMostOneRerun` / `TestFailedDecideCountsRerunsFromTheForgeAttemptAndNotTheCaller` / `TestFailedDecideFailsClosedWhenTheForgeWillNotNameTheAttempt` / `TestFailedDecideRereadingOneAttemptRepeatsTheSameAnswer` — reading 6 (ci-red): one licensed rerun, `reruns` from the forge, fail-closed.
+64. `a-named-failing-test-is-never-licensed` / `the-second-red-at-one-sha-is-a-finding` / `an-expired-flake-row-matches-nothing-under-now` / `infra-is-a-forge-conclusion-or-a-listed-step-and-never-a-log-line` / `a-decider-withdraws-a-licence-and-never-grants-one` / `a-green-rerun-does-not-relabel-a-failing-assertion` — reading 6: the licence rule table and the withdrawal/count edges.
+65. `backlog-negative-control` / `a-provider-adds-security-and-never-removes-it` / `a-provider-never-clears-escalate` / `every-item-without-a-rule-row-escalates` / `a-mapped-label-writes-truth-and-an-unmapped-one-is-observed` — reading 4 (backlog): the security-first table and the never-cleared escalate.
+66. `verdict-negative-control` / `the-sha-is-found-by-pattern-and-never-asked` / `an-approve-with-no-sha-is-not-ready` / `an-approve-at-a-stale-head-is-not-ready` / `a-scoped-approve-is-not-ready` / `who-unknown-is-never-ready` / `only-a-rule-typed-approve-readies` / `ready-lifts-nothing-and-satisfies-no-read-condition` / `replaced-tokens-are-the-only-tokens` / `the-reading-writes-no-read-record` / `a-restatement-is-observed-and-writes-no-truth` — reading 5 (verdict): the pattern sha, the ready projection, and the observed restatement.
+67. `a-score-is-zero-based-on-the-fake` — Score: a `score` answer is zero-based; a one-based reading is a test failure.
+68. `TestOutcomeWritesTheOtherHalfOfTheRow` / `TestOutcomeSkippedIsTheFourthResult` / `TestLogSummaryPrintsCoverage` — H2: the outcome is recorded, `skipped` is a result, coverage is printed.
+69. `a-rule-candidate-is-printed-at-50-and-0.85-and-not-below` / `a-ruled-kind-makes-no-call-and-is-still-logged` / `a-rule-with-no-by-is-refused-at-load` / `a-confirmed-failure-steps-the-rule-aside` / `one-unit-in-twenty-is-still-asked-and-a-share-under-0.7-prints-rule-stale` — H1: promotion, rule-steps-aside, and stall detection.
+70. `TestLatencyAndWallClockInEveryRowAndOnEveryLine` — H3: `ms`/`wall_ms` are present on every row and line, absent (never zero) where there was no call.
+71. `the-summary-prints-median-and-p95-per-question-and-decider` — H3: `log --summary` prints median and p95 per question and decider.
+72. `a-launch-cannot-skip-the-route-without-a-logged-reason` / `a-launch-with-no-accounting-routes-by-rules-and-says-so` — H4: routing in the launcher; the one escape writes a `"source":"skipped"` row.
