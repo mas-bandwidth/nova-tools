@@ -824,7 +824,8 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    reader releases it with the verb; no comment, typed or not, clears it (Q10). Two per-run
    waivers exist, each printed on every line with its
    reason and neither touching the lane's records: `--no-require-holds --reason <text>` waives
-   the forge sources whole, XOR `--reviewers`; `--untyped-comments=ignore --reason <text>` makes
+   the forge sources whole, XOR `--reviewers`, and `--lane` is required on both sides (a waiver
+   with no lane is leftover `--ignore-hold`, #1896); `--untyped-comments=ignore --reason <text>` makes
    untyped comments not a hold for that run. The escape for a holder who
    cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, and the
    receipt names the commit and not the reader.
@@ -877,7 +878,8 @@ login naming the current head; still held); `a-forge-approved-review-releases-no
 `a-scoped-approve-record-does-not-satisfy-needs-read`;
 `untyped-comments-ignore-is-per-run-printed-and-carries-a-reason`;
 `no-require-holds-waives-the-forge-sources-only-and-is-printed`;
-`reviewers-xor-no-require-holds`; `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
+`reviewers-xor-no-require-holds`; `no-require-holds-without-lane-refuses`;
+`removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
 `land-refuses-a-hold-posted-after-batch-ok` (the receipt is #1572's timeline);
 `sweep-and-react-never-enqueue-a-held-pr`. A class test, `toolwork-names-only-tests-reading-3-demands`,
 asserts every test name in this paragraph appears in reading 3's list, so the two texts cannot

@@ -1242,9 +1242,13 @@ is a no, and stepping over one named member while the gate still claims to read 
 02:43Z hole with a flag. The one waiver is `--no-require-holds --reason <text>`, and it waives the
 **forge sources whole**, (b) and (c), never (a): the lane's own records are the read condition
 (SPEC-MERGE.md:808-816) and no flag on `batch` touches them. It is refused together with
-`--reviewers` (one or the other is required, exit 2 with neither), and every `BATCH` and `LAND`
-line under it carries `holds=waived reason="<text>"`, so a landing that did not look at the forge
-is a fact on its line and a person's to own, like `--no-sandbox`. The escape for a holder who
+`--reviewers` (exactly one of `--reviewers <file>` or `--no-require-holds --reason <text>` is
+required, exit 2 with neither or both, and `--no-require-holds` without `--reason` is exit 2),
+and `--lane` is required on both sides (never `none`): a waiver that names no lane cannot read
+(a), so a recorded HOLD is invisible and the member lands — leftover `--ignore-hold` (#1896).
+Every `BATCH` and `LAND` line under the waiver carries `holds=waived reason="<text>"`, so a
+landing that did not look at the forge is a fact on its line and a person's to own, like
+`--no-sandbox`. The escape for a holder who
 cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, which is a
 record with an author and a date, and a receipt that names the commit and not the reader: a
 policy override is never printed as the friend's approval.
@@ -1722,7 +1726,11 @@ The readings; each also has `<q>-fixtures-answer-as-labelled` and `<q>-negative-
   `no-require-holds-waives-the-forge-sources-only-and-is-printed`: a recorded HOLD and a forge
   HOLD; under `--no-require-holds --reason x` the recorded one still drops the member and every
   line carries `holds=waived reason="x"`. 3 `reviewers-xor-no-require-holds` (neither: exit 2;
-  both: exit 2). 3 `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`: the
+  both: exit 2; without `--reason`: exit 2; on `batch` and on `land`; `--reviewers` still
+  lands/batches; `--no-require-holds --reason` still lands/batches). 3
+  `no-require-holds-without-lane-refuses`: a recorded HOLD on disk; `--no-require-holds --reason x`
+  without `--lane` is exit 2 on `batch` and `land`, prints no `BATCH OK`, enqueues nothing
+  (#1896). 3 `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`: the
   `BATCH OK` line's `reviewers=<sha12>` is the commit that removed `may-hold`, and no field on
   any line carries the removed reader's name as a releaser. 3
   `land-refuses-a-hold-posted-after-batch-ok` (the fake forge grows a comment between the two
