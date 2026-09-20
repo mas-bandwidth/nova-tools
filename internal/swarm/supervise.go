@@ -549,6 +549,9 @@ func childEnv(w Worker, slot int, id, key, root string) []string {
 	// GOCACHE and NPM_CONFIG_CACHE point at <root>/cache, which is a write root beside the
 	// job directory, so 120 cards do not each download the Go toolchain and every module.
 	env = append(env, CacheEnv(root)...)
+	// NODE_OPTIONS memory limit to reduce card RSS (issue #2020): ~560MB per card
+	// before tests run; setting --max-old-space-size=256 reduces this significantly
+	env = append(env, "NODE_OPTIONS=--max-old-space-size=256")
 	if runtime.GOOS == "windows" {
 		env = append(env, "Path="+pathVal)
 		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
