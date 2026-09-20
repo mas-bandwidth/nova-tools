@@ -70,7 +70,10 @@ func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string
 	if !hasReviewers && !hasNoRequire {
 		effective = append(effective, "--no-require-holds", "--reason", "test")
 	}
-	if hasReviewers && !hasLane {
+	// --lane is required whatever the mode (#1896): the hold fold reads the lane's own
+	// read records even under the forge waiver. A test that wants the missing-lane refusal
+	// drives runLandBare instead.
+	if !hasLane {
 		effective = append(effective, "--lane", t.TempDir())
 	}
 	var out, errb bytes.Buffer
