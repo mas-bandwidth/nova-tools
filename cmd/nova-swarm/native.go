@@ -54,22 +54,26 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+
+	// MAX OUTPUT TOKENS (Row 5): optional presence-bearing token limit.
+	maxOutputTokens *int
 }
 
 // nativeRunResult is what one run records when the child has gone.
 type nativeRunResult struct {
-	rc           int     // the child's exit code; -1 when the deadline killed it
-	wallSeconds  float64 // the wall the run took
-	wall         string  // the wall's own name from its SANDBOX OK line, or "none"
-	cardSHA256   string  // sha256 of the card text, lowercase hex
-	binarySHA256 string  // sha256 of the harness binary, lowercase hex
-	job          string  // the job directory <slot>/jobs/<label> the child ran in
-	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
-	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
-	configSHA    string  // sha8 of the carried provider config, "" when --config named none
-	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
-	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
-	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	rc                       int     // the child's exit code; -1 when the deadline killed it
+	wallSeconds              float64 // the wall the run took
+	wall                     string  // the wall's own name from its SANDBOX OK line, or "none"
+	cardSHA256               string  // sha256 of the card text, lowercase hex
+	binarySHA256             string  // sha256 of the harness binary, lowercase hex
+	requestedMaxOutputTokens *int    // requested max output tokens bound; nil if omitted
+	job                      string  // the job directory <slot>/jobs/<label> the child ran in
+	usageState               string  // the store path the NATIVE OK line names when no store answered, "" otherwise
+	usageReason              string  // no-rows | no-store | no-sqlite3, "" when the store answered
+	configSHA                string  // sha8 of the carried provider config, "" when --config named none
+	tmp                      string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness                  string  // ok | silent: silent when the capture holds no words of the child's and no result was found
+	fence                    string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -150,6 +154,27 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if cfg.worker.Secret != "" {
 			if _, err := swarm.SecretFromEnv(cfg.worker.Secret); err != nil {
 				refuseNative(errOut, oneline.Escape(err.Error()))
+				return nativeRunResult{}, 2
+			}
+		}
+	}
+
+	// (2c) MAX OUTPUT TOKENS (Row 5). An optional presence-bearing limit.
+	// Native paths with a mismatched or unsupported harness must refuse rather
+	// than silently ignore the requested cap.
+	if cfg.maxOutputTokens == nil && cfg.worker != nil && cfg.worker.MaxOutputTokens != nil {
+		cfg.maxOutputTokens = cfg.worker.MaxOutputTokens
+	}
+	if cfg.maxOutputTokens != nil {
+		harnessName := strings.ToLower(filepath.Base(bin))
+		if !strings.Contains(harnessName, "opencode") && !strings.Contains(harnessName, "fake-harness") {
+			refuseNative(errOut, fmt.Sprintf("the harness binary %s does not support max_output_tokens; native paths with an unsupported harness refuse rather than silently ignore the requested cap", oneline.Field(cfg.binary)))
+			return nativeRunResult{}, 2
+		}
+		if cfg.worker != nil && cfg.worker.Harness != "" {
+			wHarness := strings.ToLower(filepath.Base(cfg.worker.Harness))
+			if wHarness != harnessName {
+				refuseNative(errOut, fmt.Sprintf("--harness %s differs from the worker description's harness %s; a requested cap requires a matching harness", oneline.Field(cfg.binary), oneline.Field(cfg.worker.Harness)))
 				return nativeRunResult{}, 2
 			}
 		}
@@ -297,7 +322,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.worker != nil {
 		secretEnv = cfg.worker.Secret
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, cfg.maxOutputTokens)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -348,13 +373,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	capture := io.MultiWriter(log, harnessOut, timeline)
 
 	res := nativeRunResult{
-		rc:           -1,
-		cardSHA256:   hex.EncodeToString(cardHash[:]),
-		binarySHA256: binaryHash,
-		job:          jobDir,
-		wall:         "none",
-		configSHA:    configSHA,
-		tmp:          tmpDir,
+		rc:                       -1,
+		cardSHA256:               hex.EncodeToString(cardHash[:]),
+		binarySHA256:             binaryHash,
+		requestedMaxOutputTokens: cfg.maxOutputTokens,
+		job:                      jobDir,
+		wall:                     "none",
+		configSHA:                configSHA,
+		tmp:                      tmpDir,
 	}
 	if cfg.noWall {
 		res.wall = "none-by-flag"
@@ -630,7 +656,7 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 // when its name already carries KEY/TOKEN/SECRET -- so a name that does not itself carry one
 // still reaches the harness. The value is never written to a file and never printed; the
 // argv log redacts any name that carries a secret.
-func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []string {
+func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string, maxOutputTokens *int) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -638,7 +664,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []stri
 			kept = append(kept, kv)
 		}
 	}
-	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"}
+	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR", "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX", "NOVA_WORKER_MAX_OUTPUT_TOKENS"}
 	if secretEnv != "" {
 		remove = append(remove, secretEnv)
 	}
@@ -662,6 +688,13 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []stri
 		if v, ok := os.LookupEnv(secretEnv); ok {
 			out = append(out, secretEnv+"="+v)
 		}
+	}
+	if maxOutputTokens != nil && *maxOutputTokens > 0 {
+		val := strconv.Itoa(*maxOutputTokens)
+		out = append(out,
+			"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+val,
+			"NOVA_WORKER_MAX_OUTPUT_TOKENS="+val,
+		)
 	}
 	return out
 }
@@ -729,6 +762,9 @@ func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) {
 
 // keepNativeSecretName says whether a name carries a secret, which the argv log redacts.
 func keepNativeSecretName(name string) bool {
+	if name == "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX" || name == "NOVA_WORKER_MAX_OUTPUT_TOKENS" {
+		return false
+	}
 	up := strings.ToUpper(name)
 	return strings.Contains(up, "KEY") || strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET")
 }

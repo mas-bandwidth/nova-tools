@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -498,6 +499,13 @@ func childEnv(w Worker, slot int, id, key string) []string {
 	}
 	if w.EnvVar != "" && key != "" {
 		env = append(env, w.EnvVar+"="+key)
+	}
+	if w.MaxOutputTokens != nil && *w.MaxOutputTokens > 0 {
+		val := strconv.Itoa(*w.MaxOutputTokens)
+		env = append(env,
+			"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+val,
+			"NOVA_WORKER_MAX_OUTPUT_TOKENS="+val,
+		)
 	}
 	return env
 }

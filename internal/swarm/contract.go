@@ -3,6 +3,7 @@ package swarm
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -22,17 +23,18 @@ const DefaultContractLines = 20
 
 // Contract is one result-contract check of a job's RESULT.md.
 type Contract struct {
-	Label        string
-	ContractLine string // line 1 of RESULT.md must equal this exactly
-	MaxLines     int    // bound on evidence lines; 0 or negative means DefaultContractLines
-	Card         []byte // the card text, hashed into the receipt
-	HaveRun      bool   // a run record exists
-	WallSeconds  int    // from the run record
-	ExitCode     int    // from the run record
-	HaveUsage    bool   // a usage file was given
-	TokensIn     int
-	TokensOut    int
-	USD          string
+	Label                    string
+	ContractLine             string // line 1 of RESULT.md must equal this exactly
+	MaxLines                 int    // bound on evidence lines; 0 or negative means DefaultContractLines
+	Card                     []byte // the card text, hashed into the receipt
+	HaveRun                  bool   // a run record exists
+	WallSeconds              int    // from the run record
+	ExitCode                 int    // from the run record
+	HaveUsage                bool   // a usage file was given
+	TokensIn                 int
+	TokensOut                int
+	USD                      string
+	RequestedMaxOutputTokens int // Row 5: requested limit bound; 0 = unset/omitted
 }
 
 // Outcome is what CheckResult decided: the one grammar line, the disposition, the bounded
@@ -109,5 +111,71 @@ func WriteReceipt(path string, o Outcome, c Contract) error {
 		fmt.Fprintf(&b, "tokens_out=%d\n", c.TokensOut)
 		fmt.Fprintf(&b, "usd=%s\n", c.USD)
 	}
+	if c.RequestedMaxOutputTokens > 0 {
+		fmt.Fprintf(&b, "requested_max_output_tokens=%d\n", c.RequestedMaxOutputTokens)
+	}
 	return writeAtomic(path, []byte(b.String()), 0o644)
+}
+
+// Receipt is the parsed contents of a <result>.receipt file.
+type Receipt struct {
+	Label                    string
+	CardSHA256               string
+	Line2                    string
+	Lines                    int
+	HaveRun                  bool
+	WallSeconds              int
+	ExitCode                 int
+	HaveUsage                bool
+	TokensIn                 int
+	TokensOut                int
+	USD                      string
+	RequestedMaxOutputTokens int
+}
+
+// ReadReceipt reads and parses a <result>.receipt file.
+func ReadReceipt(path string) (Receipt, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Receipt{}, err
+	}
+	r := Receipt{WallSeconds: -1, ExitCode: -1}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			r.Label = v
+		case "card_sha256":
+			r.CardSHA256 = v
+		case "line2":
+			r.Line2 = v
+		case "lines":
+			r.Lines, _ = strconv.Atoi(v)
+		case "wall_seconds":
+			r.HaveRun = true
+			r.WallSeconds, _ = strconv.Atoi(v)
+		case "exit_code":
+			r.HaveRun = true
+			r.ExitCode, _ = strconv.Atoi(v)
+		case "tokens_in":
+			r.HaveUsage = true
+			r.TokensIn, _ = strconv.Atoi(v)
+		case "tokens_out":
+			r.HaveUsage = true
+			r.TokensOut, _ = strconv.Atoi(v)
+		case "usd":
+			r.HaveUsage = true
+			r.USD = v
+		case "requested_max_output_tokens":
+			r.RequestedMaxOutputTokens, _ = strconv.Atoi(v)
+		}
+	}
+	return r, nil
 }

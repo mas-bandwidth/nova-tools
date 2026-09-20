@@ -50,6 +50,10 @@ var swarmAudit = audit.Config{
 		// the harness's own capture -- a file a card can write -- so nothing but the empty
 		// string and an oneline.Field-escaped path can come back.
 		"fenceSuffix",
+		// requestedMaxOutputSuffix (main.go) renders the optional requested_max_output_tokens
+		// token on the NATIVE OK line using fmt.Sprintf of a positive integer (%d), which
+		// cannot contain control characters, newlines, or unescaped values.
+		"requestedMaxOutputSuffix",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads

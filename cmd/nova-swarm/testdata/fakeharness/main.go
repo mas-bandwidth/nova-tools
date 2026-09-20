@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,6 +154,35 @@ func main() {
 			}
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
+	}
+	// FAKE-RECORD-OUTPUT-LIMIT records the output token limit environment variables
+	// into <job>/output-limit-record so a test can verify them.
+	if _, ok := directive(prompt, "FAKE-RECORD-OUTPUT-LIMIT"); ok && job != "" {
+		var b strings.Builder
+		for _, name := range []string{"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX", "NOVA_WORKER_MAX_OUTPUT_TOKENS"} {
+			fmt.Fprintf(&b, "%s=%s\n", name, os.Getenv(name))
+		}
+		writeRecorded(filepath.Join(job, "output-limit-record"), []byte(b.String()), 0o644)
+	}
+	// FAKE-LOOPBACK exercises request capture against a test server. It sends an HTTP POST
+	// carrying authorization and the forwarded output token limits in headers and body.
+	// If the server answers 5xx, it fails with the provider 5xx error line so launch retry
+	// logic is exercised.
+	if target, ok := directive(prompt, "FAKE-LOOPBACK"); ok && target != "" {
+		req, err := http.NewRequest("POST", target, strings.NewReader(fmt.Sprintf(`{"max_output_tokens":%q}`, os.Getenv("NOVA_WORKER_MAX_OUTPUT_TOKENS"))))
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer dummy-token")
+			req.Header.Set("X-Nova-Max-Output-Tokens", os.Getenv("NOVA_WORKER_MAX_OUTPUT_TOKENS"))
+			req.Header.Set("X-Opencode-Output-Token-Max", os.Getenv("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"))
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 500 {
+					fmt.Fprintf(os.Stderr, "Unexpected server error: the provider answered %d; ref=err_fake_loopback\n", resp.StatusCode)
+					os.Exit(1)
+				}
+			}
+		}
 	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {

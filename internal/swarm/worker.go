@@ -65,6 +65,10 @@ type Worker struct {
 	MaxTurns     int `json:"max_turns,omitempty"`
 	MaxCacheRead int `json:"max_cache_read,omitempty"`
 
+	// MAX OUTPUT TOKENS (Row 5): the optional presence-bearing worker limit.
+	// Explicit zero or negative values refuse; omission preserves current behavior.
+	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
+
 	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
 	// job that dies because the request did not fit is its own failure class, and the only
 	// evidence of it is a sentence the provider printed -- in the provider's own words.
@@ -109,7 +113,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, max_output_tokens, read_roots, input_limit_phrases, launch_grace", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -286,12 +290,20 @@ func LoadWorker(path string) (Worker, []error) {
 	if w.MaxCacheRead < 0 {
 		problems = append(problems, fmt.Errorf("%s: max_cache_read wants a non-negative token count, got %d", path, w.MaxCacheRead))
 	}
+	if w.MaxOutputTokens != nil && *w.MaxOutputTokens <= 0 {
+		problems = append(problems, fmt.Errorf("%s: max_output_tokens wants a positive token count, got %d", path, *w.MaxOutputTokens))
+	}
 	if w.LaunchGrace != "" {
 		if d, err := time.ParseDuration(w.LaunchGrace); err != nil || d <= 0 {
 			problems = append(problems, fmt.Errorf("%s: launch_grace wants a positive duration such as 15s, got %q", path, w.LaunchGrace))
 		}
 	}
 	return w, problems
+}
+
+// HasMaxOutputTokens reports whether this worker description declares an explicit max_output_tokens bound.
+func (w Worker) HasMaxOutputTokens() bool {
+	return w.MaxOutputTokens != nil && *w.MaxOutputTokens > 0
 }
 
 // resolvePath is a path with its symlinks followed, which is how the wall reads one (rule

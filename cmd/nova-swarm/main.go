@@ -1046,6 +1046,8 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	runRecord := f.fs.String("run-record", "", "")
 	usageFile := f.fs.String("usage", "", "")
 	max := f.fs.Int("max", swarm.DefaultContractLines, "")
+	maxOutputTokens := f.fs.String("max-output-tokens", "", "")
+	workerFile := f.fs.String("worker", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -1055,11 +1057,44 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if *max < 1 {
 		f.add(fmt.Sprintf("--max is at least 1, got %d; it bounds the evidence lines past the disposition", *max))
 	}
+	var explicitMaxOutput int
+	if *maxOutputTokens != "" {
+		n, err := strconv.Atoi(*maxOutputTokens)
+		if err != nil || n <= 0 {
+			f.add(fmt.Sprintf("--max-output-tokens wants a positive integer, got %q", *maxOutputTokens))
+		} else {
+			explicitMaxOutput = n
+		}
+	}
+	if *workerFile != "" {
+		w, problems := swarm.LoadWorker(*workerFile)
+		if len(problems) > 0 {
+			for _, p := range problems {
+				fmt.Fprintf(stderr, "nova-swarm verify: %s\n", oneline.Err(p))
+			}
+			return 2
+		}
+		if w.MaxOutputTokens != nil {
+			if explicitMaxOutput > 0 && explicitMaxOutput != *w.MaxOutputTokens {
+				f.add(fmt.Sprintf("--max-output-tokens %d differs from the worker description's max_output_tokens %d", explicitMaxOutput, *w.MaxOutputTokens))
+			}
+			if explicitMaxOutput == 0 {
+				explicitMaxOutput = *w.MaxOutputTokens
+			}
+		}
+	}
 	if f.refused(stderr) {
 		return 2
 	}
 
-	c := swarm.Contract{Label: *label, ContractLine: *contract, MaxLines: *max, WallSeconds: -1, ExitCode: -1}
+	c := swarm.Contract{
+		Label:                    *label,
+		ContractLine:             *contract,
+		MaxLines:                 *max,
+		WallSeconds:              -1,
+		ExitCode:                 -1,
+		RequestedMaxOutputTokens: explicitMaxOutput,
+	}
 	if *card != "" {
 		raw, err := os.ReadFile(*card)
 		if err != nil {
@@ -1368,6 +1403,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
+	maxOutputTokens := f.fs.String("max-output-tokens", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1403,6 +1439,23 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			if *config != "" {
 				f.add("--config is the legacy shape's and this worker description names a secret; the description's own provider declaration is written instead")
 			}
+		}
+	}
+	var explicitMaxOutput *int
+	if *maxOutputTokens != "" {
+		n, err := strconv.Atoi(*maxOutputTokens)
+		if err != nil || n <= 0 {
+			f.add(fmt.Sprintf("--max-output-tokens wants a positive integer, got %q", *maxOutputTokens))
+		} else {
+			explicitMaxOutput = &n
+		}
+	}
+	if workerGiven && w.MaxOutputTokens != nil {
+		if explicitMaxOutput != nil && *explicitMaxOutput != *w.MaxOutputTokens {
+			f.add(fmt.Sprintf("--max-output-tokens %d differs from the worker description's max_output_tokens %d", *explicitMaxOutput, *w.MaxOutputTokens))
+		}
+		if explicitMaxOutput == nil {
+			explicitMaxOutput = w.MaxOutputTokens
 		}
 	}
 	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
@@ -1445,20 +1498,21 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		effectiveModel = w.Provider + "/" + w.Model
 	}
 	cfg := nativeRunConfig{
-		binary:         *harness,
-		model:          effectiveModel,
-		label:          lbl,
-		card:           cardRaw,
-		slotDir:        *slot,
-		root:           *root,
-		authFile:       *auth,
-		configFile:     *config,
-		deadline:       d,
-		repos:          repos,
-		recipients:     recipients,
-		sandbox:        *sandbox,
-		noWall:         *noWall,
-		noSharedCaches: *noSharedCaches,
+		binary:          *harness,
+		model:           effectiveModel,
+		label:           lbl,
+		card:            cardRaw,
+		slotDir:         *slot,
+		root:            *root,
+		authFile:        *auth,
+		configFile:      *config,
+		deadline:        d,
+		repos:           repos,
+		recipients:      recipients,
+		sandbox:         *sandbox,
+		noWall:          *noWall,
+		noSharedCaches:  *noSharedCaches,
+		maxOutputTokens: explicitMaxOutput,
 	}
 	if workerGiven {
 		cfg.worker = &w
@@ -1469,8 +1523,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s%s config=%s harness=%s%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), requestedMaxOutputSuffix(res.requestedMaxOutputTokens), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
@@ -1539,4 +1593,11 @@ func orElse(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func requestedMaxOutputSuffix(v *int) string {
+	if v == nil || *v <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" requested_max_output_tokens=%d", *v)
 }
