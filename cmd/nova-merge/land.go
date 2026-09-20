@@ -172,13 +172,23 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 		}
 	}
 
+	// #1894: THE MEMBERS LAND RE-READS ARE THE RECEIPT'S, AND A RECEIPT THAT NAMES NONE
+	// NAMES NOTHING LAND MAY FOLD. A head under rowan/integration-* is a branch's name and
+	// not the list of pull requests it carries, so a batch landed on its branch alone would
+	// fold only the batch pull request and the 02:34Z HOLD on a member would be invisible.
+	// membersNamed is true only when members= is a comma list of pull request numbers.
 	checkPRs := []int{in.pr}
-	if recMembers := receiptMembers(in.receipt); recMembers != "" && recMembers != "-" && recMembers != "none" {
+	recMembers := receiptMembers(in.receipt)
+	membersNamed := recMembers != "" && recMembers != "-" && recMembers != "none"
+	if membersNamed {
 		for _, part := range strings.Split(recMembers, ",") {
 			part = strings.TrimSpace(part)
-			if num, err := strconv.Atoi(part); err == nil && num > 0 {
-				checkPRs = append(checkPRs, num)
+			num, err := strconv.Atoi(part)
+			if err != nil || num < 1 {
+				membersNamed = false
+				break
 			}
+			checkPRs = append(checkPRs, num)
 		}
 	}
 
@@ -260,6 +270,16 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 			}
 			return 1
 		}
+	}
+
+	// THE FOLD ABOVE NAMED EVERY MEMBER LAND COULD. When the head is a batch's own branch
+	// and the receipt named no list of members, that fold saw only the batch pull request,
+	// and a HOLD posted on a member between BATCH OK and land -- the 02:34Z hole #1748 was
+	// built to close -- would be invisible. Refuse rather than enqueue a batch whose members
+	// cannot be re-read. A receipt whose members= is none or empty is a different fact --
+	// "that batch lands nothing" -- and the one door says it.
+	if !membersNamed && recMembers != "none" && recMembers != "" && (merge.IsBatchBranch(data.HeadRef) || recMembers != "-") {
+		return landRefused(stderr, "no-receipt: cannot re-read members; the landing carries no members= list to fold ("+oneline.Field(recMembers)+"), and a head under "+merge.BatchBranchPrefix+"* is a branch's name and not the pull requests it carries. Present the batch's BATCH OK line with --receipt or --receipt-file so every member is folded at the door; run: nova-merge help")
 	}
 
 	if err := merge.NewEnqueuer(deps.NewEnqueueHost(in.repo, in.timeout)).Enqueue(
