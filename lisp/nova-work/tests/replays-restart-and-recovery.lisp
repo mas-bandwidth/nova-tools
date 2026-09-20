@@ -229,5 +229,52 @@ answering the canonical bytes it reaches."
            (journal-record j "pe-1" payload "STATE OK id=1 request=pe-1" 1)
            (multiple-value-bind (found) (journal-lookup j "pe-1")
              (ok found "the accepted envelope did not record after the refusals")))
-      (ignore-errors (close-file-journal j)))
+       (ignore-errors (close-file-journal j)))
     (ignore-errors (delete-file path))))
+
+;;; ------------------------------------------------------------------
+;;; no-survives-the-hop                       docs/SPEC-WORK.md:4651
+;;; ------------------------------------------------------------------
+;;; E11-F06-01: "a decline, refused offer, excluded route, asleep recipient,
+;;; tripped node or effort limit reaches the parent as a named refusal with its
+;;; reason and revision, never as silence or success."
+;;;
+;;; Slice 1's hop is the branch cascade on submit (src/kernel.lisp
+;;; %cascade-events): a child's success (:state-to-done) cascades a :settle up
+;;; to the parent, naming the child that moved it. The child's "no" has no such
+;;; edge -- a cancel writes one :terminal event on the child alone and cascades
+;;; NOTHING to the parent, and the five delegation-layer refusals (decline,
+;;; refused offer, excluded route, asleep recipient, tripped node, effort
+;;; limit) each return a FAIL line to their caller without reaching any parent.
+;;; This test asserts the criterion by name and is red until the no reaches the
+;;; parent as a named refusal.
+
+(deftest "TestE11F06NoSurvivesTheHopA" "docs/SPEC-WORK.md:4651"
+    "expected=a-childs-no-decline-refused-offer-excluded-route-asleep-recipient-tripped-node-or-effort-limit-reaches-the-parent-as-a-named-refusal-with-reason-and-revision-never-silence"
+  ;; A parent work-set with one required child task, doing. Cancel the child --
+  ;; its "no": it will not finish -- and assert the refusal reaches the parent.
+  (let* ((k (make-kernel :state (make-seed-state
+                                 '((:id "hop/p" :type :work-set :parent nil)
+                                   (:id "hop/p/k" :type :task :parent "hop/p"
+                                         :state :doing)))))
+         (request (list :verb :event-cancel :node "hop/p/k" :by "rowan"
+                        :reason "the child declines" :request "e11f06-cancel"
+                        :stamp "2026-09-14T12:00:00Z" :clock :tool
+                        :generation-owner "gen-e11")))
+    (multiple-value-bind (okp line) (submit k request)
+      (ok okp "the child's refusal was not even spoken: ~A" line))
+    ;; The criterion: the no reaches the parent as a named refusal, carrying its
+    ;; reason and revision. Slice 1 keeps no refusal record on the parent.
+    (let ((events (loop for record in (state-history (kernel-state k))
+                        append (getf record :events)))
+          (refusal nil))
+      (dolist (event events)
+        (when (and (eq :refusal (getf event :kind))
+                   (equal "hop/p" (getf event :node)))
+          (setf refusal event)))
+      (unless refusal
+        (fail "expected the child's refusal to reach its parent \"hop/p\" as a named refusal with its reason and revision; the parent saw silence (of ~D history event(s), none names the parent's refusal)"
+              (length events)))
+      (ok (search "the child declines" (princ-to-string (getf refusal :reason)))
+          "the refusal does not carry the child's reason")
+      (ok (getf refusal :rev) "the refusal carries no revision"))))
