@@ -250,5 +250,62 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
                                       :receipt-digest "rd-1" :receipt-id "rc-1"
                                       :request "qr" :verifier "v"))))
       (nth-value 3 (leasebook-decline book :offer "off-1" :node "n1"
-                                      :generation "gen-4" :attempt "att-1")))))
+                                       :generation "gen-4" :attempt "att-1")))))
+
+;;;; ------------------------------------------------------------------
+;;;; E10-F01 "Attach stable error code, stage, verb, request/operation ID
+;;;; and known revisions" (ROADMAP.md:974).
+;;;;
+;;;; docs/SPEC-WORK.md:2682 pins the structured response envelope
+;;;; `{"request","ok","exit","lines","rev","pushed"}`; :2695 pins that a
+;;;; refusal still echoes its request id; *Output grammar* (:5921-5934) pins
+;;;; the verb as every line's first token and rev=/pushed= on every OK line;
+;;;; :2727-2730 pins the operation diagnostic carrying the operation id, the
+;;;; op, the state (the stage) and a named reason. A refusal must therefore
+;;;; attach all five: the stable error code (a named reason and a nonzero
+;;;; exit), the verb, the request/operation id, and the two known revisions.
+;;;; ------------------------------------------------------------------
+
+(deftest "TestE10F01AttachStableErrorCodeStage" "docs/SPEC-WORK.md:2682"
+    "expected=refusal-carries-verb+reason+exit;envelope-carries-request+ok+rev+pushed+operation;op-diag-carries-id+op+state+reason"
+  ;; (a) A refused mutation attaches the verb, a stable named reason and a
+  ;; nonzero exit (the stable error code), and the response envelope still
+  ;; carries the request id and the two known revisions.
+  (let* ((kernel (fresh))
+         (sess (make-wire-session :kernel kernel :pushed "shared-7")))
+    (multiple-value-bind (okp line code response)
+        (wire-session-mutate sess (append (close-request :request "e10-f01-1")
+                                          (list :priority "high")))
+      (ok (null okp) "an unknown request field was accepted, not refused")
+      (check-equal 2 code "the refusal's exit code")
+      (ok (eql 0 (search "STATE" line)) "the refusal does not name the verb: ~A" line)
+      (ok (search "FAIL" line) "the line is not a FAIL line: ~A" line)
+      (ok (search "unknown field" line) "the refusal does not name its reason: ~A" line)
+      (ok (equal "e10-f01-1" (getf response :request))
+          "the refusal envelope does not carry the request id: ~S" response)
+      (ok (null (getf response :ok)) "the refusal envelope does not mark ok=false")
+      (ok (not (null (getf response :rev))) "the refusal envelope carries no rev=")
+      (ok (not (null (getf response :pushed))) "the refusal envelope carries no pushed=")))
+  ;; (b) The wire frame itself — the literal :2682 shape — keeps every
+  ;; attachment even for a failure, and carries a long operation's id beside
+  ;; (never in place of) the request id that asked for it.
+  (let ((frame (wire-frame-response "e10-f01-2" :ok "false" :exit "2"
+                                    :lines (list "STATE FAIL node=acme/work/f1/t1: rule 3: not ready")
+                                    :rev "5" :pushed "shared-7" :operation "op-9")))
+    (ok (search "\"request\": \"e10-f01-2\"" frame) "the frame omits request id: ~A" frame)
+    (ok (search "\"ok\": false" frame) "the frame omits the error signal: ~A" frame)
+    (ok (search "\"exit\": \"2\"" frame) "the frame omits the exit code: ~A" frame)
+    (ok (search "\"rev\": \"5\"" frame) "the frame omits rev=: ~A" frame)
+    (ok (search "\"pushed\": \"shared-7\"" frame) "the frame omits pushed=: ~A" frame)
+    (ok (search "\"operation\": \"op-9\"" frame) "the frame carries no operation id: ~A" frame))
+  ;; (c) The operation diagnostic attaches the operation id, the op (verb), the
+  ;; state (the stage) and a stable named reason, in the grammar's own FAIL line.
+  (multiple-value-bind (state line code)
+      (registry-operation-state (make-operation-registry) "op-missing")
+    (ok (null state) "an unknown operation invented a state")
+    (check-equal 2 code "the unknown operation's exit code")
+    (ok (search "id=op-missing" line) "the operation id is not attached: ~A" line)
+    (ok (search "op=" line) "the op (verb) is not attached: ~A" line)
+    (ok (search "state=" line) "the stage/state is not attached: ~A" line)
+    (ok (search "no such operation" line) "the stable reason is not attached: ~A" line)))
 
