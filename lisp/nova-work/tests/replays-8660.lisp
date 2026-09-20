@@ -245,3 +245,45 @@
       (check-equal 1 code "at exit 1")
       (ok (search "rule 18" line) "and the line names rule 18")
       (ok (search id line) "and the id in both branches"))))
+
+;;; ------------------------------------------------------------------
+;;; E05-F01-02 Require matching criterion kind, exact subject and
+;;; predicate                               SPEC-WORK.md:936-942, :1281-1288
+;;; ------------------------------------------------------------------
+;;;
+;;; docs/SPEC-WORK.md:936-937: "an evidence pointer qualifies a criterion
+;;; only when its kind matches, its subject is the criterion's subject (a
+;;; passing test of another name qualifies nothing)". The qualification gate
+;;; is verify-qualifies-p (docs/SPEC-WORK.md:1281-1288), and its three
+;;; dimensions are the criterion's kind, subject and predicate. The kind half
+;;; is enforced (a test: pointer qualifies a :test criterion, a run: pointer
+;;; does not); the exact-subject half is not: the gate never compares the
+;;; evidence subject to the criterion's subject, so a passing test of another
+;;; name still qualifies.
+
+(deftest "TestE05F01RequireMatchingCriterionKindExact" "docs/SPEC-WORK.md:936"
+    "expected=matching-kind-qualifies;another-name-subject-qualifies-nothing"
+  ;; matching criterion kind: a :test criterion is qualified by a test: pointer
+  ;; naming its own subject.
+  (let ((named (make-verify-evidence "ev-1"
+                                     :pointer "test:pkg/TargetTest@sha1"
+                                     :criterion :test
+                                     :subject "test:pkg/TargetTest@sha1")))
+    (check-equal t (verify-qualifies-p named)
+                 "a matching test: pointer qualifies a :test criterion"))
+  ;; a kind that does not match qualifies nothing.
+  (let ((wrong-kind (make-verify-evidence "ev-2"
+                                          :pointer "run:ci/1@sha1"
+                                          :criterion :test
+                                          :subject "test:pkg/TargetTest@sha1")))
+    (check-equal nil (verify-qualifies-p wrong-kind)
+                 "a run: pointer qualifies no :test criterion"))
+  ;; exact subject: a passing test of another name qualifies nothing
+  ;; (docs/SPEC-WORK.md:937). The evidence names TargetTest as its subject but
+  ;; its pointer is a different test; the gate must refuse it.
+  (let ((another-name (make-verify-evidence "ev-3"
+                                            :pointer "test:pkg/OtherTest@sha2"
+                                            :criterion :test
+                                            :subject "test:pkg/TargetTest@sha1")))
+    (check-equal nil (verify-qualifies-p another-name)
+                 "a passing test of another name qualifies no :test criterion")))
