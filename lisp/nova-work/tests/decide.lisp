@@ -109,4 +109,44 @@
                  (sort (node-dependents state "shared") #'string<)
                  "the referencing nodes form the reverse reference edge")
     (check-equal 5 (state-open-count state)
-                 "|O| counts each node once: references contribute no count")))
+                  "|O| counts each node once: references contribute no count")))
+
+;;;; Criterion E02-F01-01 -- "Load one resident O with structure and event log"
+;;;; (docs/roadmaps/nova-work.sexp E02-F01 subfeature 1).
+;;;; The contract is docs/SPEC-WORK.md:2458-2460: a supervised, long-lived
+;;;; session owns the parsed S, its stable-ID indexes, current event position,
+;;;; derived state and cached projections, and loads and validates once at
+;;;; session start -- subsequent verbs operate on those resident objects. One
+;;;; resident O therefore holds both the structure (parsed nodes) and the event
+;;;; log (the journal), and a mutation appends to that resident log rather than
+;;;; triggering a fresh parse.
+
+(deftest "TestE02F01LoadOneResidentOWith"
+    "docs/SPEC-WORK.md:2458-2460"
+    "expected=session-start-loads-one-resident-o-holding-both-structure-and-event-log;a-mutation-appends-to-the-resident-event-log"
+  (let* ((seed '((:id "acme/work"     :type :work-set :state :unknown)
+                  (:id "acme/work/f1" :type :feature  :parent "acme/work"    :state :unknown)
+                  (:id "acme/work/f1/t1" :type :task :parent "acme/work/f1" :state :todo)))
+         (sess (session-start :owner "emma" :state-seed seed :base "abc123"))
+         (kernel (session-kernel sess)))
+    ;; One resident O holds the parsed structure ...
+    (check-equal '("acme/work" "acme/work/f1" "acme/work/f1/t1")
+                 (state-node-ids (kernel-state kernel))
+                 "the resident O holds its parsed structure")
+    ;; ... and the event log beside it.
+    (ok (kernel-journal kernel) "the resident O holds its event log")
+    (check-equal '() (journal-order (kernel-journal kernel))
+                 "a fresh load carries no events yet")
+    ;; A mutation operates on the resident object: it appends one event to the
+    ;; resident log and the resident structure reads the applied result.
+    (multiple-value-bind (okp line)
+        (submit kernel (list :verb :state-to-doing :node "acme/work/f1/t1"
+                             :by "emma" :reason "started" :evidence '()
+                             :request "e02-f01-load-1"
+                             :stamp "2026-09-14T12:00:00Z" :clock :tool
+                             :generation-owner "gen-1"))
+      (ok okp "the mutation on the resident O is accepted: ~A" line))
+    (check-equal '("e02-f01-load-1") (journal-order (kernel-journal kernel))
+                 "the mutation appended one event to the resident event log")
+    (check-equal :doing (node-state (kernel-state kernel) "acme/work/f1/t1")
+                 "the resident structure reflects the applied event")))
