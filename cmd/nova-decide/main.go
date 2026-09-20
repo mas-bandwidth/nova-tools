@@ -60,6 +60,10 @@ usage:
 
   nova-decide log --log <path> --summary [--registry <path>]
 
+  nova-decide classify --question <q> --evidence <file|-> --pointer <id>
+                       [--decider rules] [--floor <f>] [--rules <tsv>] [--tamper <file>]
+                       [--escalate-to <name>] [--log <path>] [--private]
+
   nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
                      (what HAPPENED to a unit a decision routed; the kind and
                       the rung are read from that decision, never retyped)
@@ -219,6 +223,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runRoute(args[1:], stdout, stderr)
 		case "log":
 			return runLog(args[1:], stdout, stderr)
+		case "classify":
+			return runClassify(args[1:], stdout, stderr)
 		case "outcome":
 			return runOutcome(args[1:], stdout, stderr)
 		}
