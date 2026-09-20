@@ -1879,10 +1879,19 @@ not a flag day; `--slots-store ""` asks for it and nothing else.
 
 **A launcher that fails is not a card that ran.** The card goes back to `--ready`,
 its lane is released, the tick counts it under `failed=` and never under `launched=`,
-and a marker beside it carries the attempt and the reason:
+and a marker in the directory beside the queue (`<ready>-markers`) carries the
+attempt and the reason:
 
 ```
-<ready>/card-<n>.md.failed-<attempt>
+<ready>-markers/card-<n>.md.failed-<attempt>
+```
+
+A ready directory holds cards (#2013). Markers written into `--ready` before this
+rule are moved out on the next tick; a marker is taken when its card relaunches;
+a marker whose card has left `--ready` is reaped at the top of the tick:
+
+```
+FILL REAPED tick=<n> markers=<n> dir=<dir> note="..."
 ```
 
 The card is ready again on the next tick and the markers are the count of how often
@@ -1919,11 +1928,11 @@ file does not name is a refusal, not a guess**, and the refusal carries the reme
 FILL REFUSED card=card-<n>.md lane=<name> remedy="add the lane to <file> or drop the LANE line"
 ```
 
-It is printed **once per card per lanes-file mtime**, remembered by a marker beside
-the card (`card-<n>.md.refused-<mtime>`), the way `nova-merge rebase --markers`
-remembers: a refusal that reprints every five minutes is noise nobody reads, and
-editing the lanes file is a new answer, so every refusal speaks again and the stale
-marker goes. A missing lanes file is an empty table, so every card naming a lane is
+It is printed **once per card per lanes-file mtime**, remembered by a marker in the
+markers directory (`<ready>-markers/card-<n>.md.refused-<mtime>`), the way
+`nova-merge rebase --markers` remembers: a refusal that reprints every five minutes
+is noise nobody reads, and editing the lanes file is a new answer, so every refusal
+speaks again and the stale marker goes. A missing lanes file is an empty table, so every card naming a lane is
 refused by name — the file saying it has not been written yet, rather than a fill
 that serializes nothing. A card with no `LANE:` line is launched exactly as before.
 
