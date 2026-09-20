@@ -1,6 +1,24 @@
 package pulse
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestMergedInWindow(t *testing.T) {
+	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
+	inside := now.Add(-time.Hour).Format(time.RFC3339)
+	outside := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)
+	if !mergedInWindow("", now) {
+		t.Fatal("a merged PR with no stamp stays in the window; dropping it would re-cut")
+	}
+	if !mergedInWindow(inside, now) {
+		t.Fatalf("%s should be inside prMergedLookback=%s", inside, prMergedLookback)
+	}
+	if mergedInWindow(outside, now) {
+		t.Fatalf("%s should be outside prMergedLookback=%s", outside, prMergedLookback)
+	}
+}
 
 func TestHowPRNamesIssue(t *testing.T) {
 	for _, c := range []struct {

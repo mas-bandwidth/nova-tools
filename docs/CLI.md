@@ -1605,9 +1605,10 @@ runs:
 CUT REFUSED: --repo <path> is not a directory (name the clone every git call runs in; cut never reads the working directory)
 ```
 
-`cut --kind fix` lists open and recently merged PRs on that `--repo` before it
-writes a card. A PR that already names the issue — `Fixes #N` / `Closes #N` /
-`Resolves #N`, the title, or the head branch — is refused, exit 2, no card:
+`cut --kind fix` pages every open PR on that `--repo`, then recently merged
+PRs inside a seven-day lookback, before it writes a card. A PR that already
+names the issue — `Fixes #N` / `Closes #N` / `Resolves #N`, the title, or the
+head branch — is refused, exit 2, no card:
 
 ```
 CUT REFUSED: <open|merged> PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)

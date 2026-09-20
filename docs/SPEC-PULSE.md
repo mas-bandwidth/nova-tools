@@ -1263,10 +1263,13 @@ refuses each of the four before a card exists.
 
 The 2026-09-20 fix wave re-cut 27 of 27: every DONE card duplicated an open or
 just-landed PR. Generators call `cut --kind fix`, so the floor is the cutter.
-Before writing a fix card it lists open PRs, then recently merged PRs, and
-matches the issue on `Fixes #N` / `Closes #N` / `Resolves #N` in title or body,
-`#N` in the title or body, or the issue number as a path token of the head
-branch. A match is exit 2, no card:
+Before writing a fix card it pages every open PR until a short page — never
+the first 100 only; that window ended at #1736 while omitted #1730 still
+said `Closes #1649` — then pages recently merged PRs through a seven-day
+lookback until a short page or the oldest row of a full page is outside the
+window. It matches the issue on `Fixes #N` / `Closes #N` / `Resolves #N` in
+title or body, `#N` in the title or body, or the issue number as a path token
+of the head branch. A match is exit 2, no card:
 
 ```
 CUT REFUSED: open PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)
@@ -1284,7 +1287,9 @@ unread. A PR that does not name the issue is not a match, and the card is cut.
    for 1979, names PR 1960, and writes no card. The same refusal holds when the
    title carries `#1979`, when the head branch is `johnny/1979-the-widget`, when
    a recently merged PR closes the issue, and when `gh` itself cannot answer. An
-   unrelated open PR still cuts.
+   unrelated open PR still cuts. A fixture of 101 open PRs whose match is the
+   101st row (`Closes #1649` on PR 1730) refuses; a merged PR older than the
+   seven-day lookback still cuts.
 
 ## The cost of a card (#855), 2026-09-16
 

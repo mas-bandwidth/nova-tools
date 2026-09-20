@@ -176,4 +176,5 @@ handoff (rule **The manager tier**).
 51. `cut-kind-fix-refuses-when-an-open-pr-already-carries-the-issue`: a fixture `gh`
     answering an open PR whose body is `Fixes #1979` refuses the fix card for 1979
     and writes no card; title, branch, a recently merged PR, and an unread forge
-    refuse the same way (#2041).
+    refuse the same way (#2041). A list of 101 open PRs whose match is the 101st
+    row refuses (the first-100 cap missed live PR #1730 `Closes #1649`).
