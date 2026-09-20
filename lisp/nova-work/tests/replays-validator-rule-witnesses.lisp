@@ -218,3 +218,44 @@ that open need.")
                  (mapcar (lambda (id) (node-branch (kernel-state k) id))
                          '("v" "v/ready" "v/blocked" "v/need"))
                  "querying ready changed a node's branch")))
+
+;;; ------------------------------------------------------------------
+;;; E11-F06-02: envelope-up-is-a-copy
+;;;
+;;; docs/SPEC-WORK.md:4652 (prose :4589-4591): "the child's verdict, result
+;;; pointer, evidence events, usage pointer and exact head arrive byte-copied
+;;; by machinery beside its distilled learning in its own words; the parent
+;;; can open the child's evidence from the envelope and find what the summary
+;;; dropped."
+;;;
+;;; The kernel's one child-result-books-upward machine is `book-receipt` /
+;;; `machinery-receipt` (assignment.lisp:639-646), which realises the ADJACENT
+;;; contract receipt-at-exact-head (SPEC-WORK.md:4395/4646): a HEAD and one
+;;; opaque RESULT blob, nothing else. It byte-copies whatever the child hands
+;;; it, but it has no first-class verdict, result-pointer, evidence, usage or
+;;; distilled-learning slots, and no way for a parent to open the child's
+;;; evidence and find what the summary dropped. This test states the full
+;;; contract; it is RED until the envelope-up machine exists.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE11F06EnvelopeUpIsACopy"
+    "docs/SPEC-WORK.md:4652"
+    "expected=child-verdict-result-pointer-evidence-usage-and-exact-head-byte-copied-beside-distilled-learning;parent-opens-child-evidence"
+  (let* ((head "e11f060204")
+         (child-result (list :verdict :done
+                             :result-pointer "note:child/ev-1"
+                             :evidence (list (list :id "ev-1" :kind :test))
+                             :usage (list :input 11 :output 9)))
+         (envelope (book-receipt head child-result)))
+    ;; The exact head arrives byte-copied: the one field the receipt keeps.
+    (check-equal head (machinery-receipt-head envelope)
+                 "the envelope did not carry the exact head")
+    ;; The verdict, result pointer, evidence events and usage pointer follow
+    ;; the child byte-copied -- never retold.
+    (check-equal child-result (machinery-receipt-result envelope)
+                 "the envelope did not byte-copy the child's verdict, result pointer, evidence and usage")
+    ;; Beside the copy, the child's distilled learning must travel in its own
+    ;; words, and the parent must be able to open the child's evidence from the
+    ;; envelope. The receipt keeps a head and an opaque result blob and nothing
+    ;; else: no learning slot and no evidence-opening.
+    (ok nil "envelope-up-is-a-copy not met: the parent received a receipt with only :head and a flat :result (the receipt-at-exact-head contract); the child's distilled learning in its own words is not carried beside them and the parent cannot open the child's evidence from the envelope")))
