@@ -183,3 +183,43 @@
         "validation lost the private node: the O partition does not hold")
     (check-equal :pending (node-disposition state "root/f2")
                  "validation no longer computes the private node's disposition")))
+
+;;; ------------------------------------------------------------------
+;;; E11-F05-01: decision-packet-per-item-revision.
+;;;
+;;; docs/SPEC-WORK.md:4648 -- "Machinery builds one packet per item and
+;;; revision; a newer revision supersedes it keeping its open findings;
+;;; while the reader is busy the packet is amended, not duplicated; an
+;;; empty pulse wakes no model and re-executes nothing."
+;;;
+;;; The slice-1 C/O kernel has no decision-packet machinery: there is no
+;;; record keyed (item, revision) into one packet, no supersede that keeps
+;;; the older packet's open findings, and no amend-not-duplicate path for a
+;;; busy reader. The one clause the kernel already satisfies -- an empty
+;;; pulse wakes no model and re-executes nothing -- is pinned separately by
+;;; gas-town-efficiency-accounting (docs/SPEC-WORK.md:4915) and
+;;; quiet-time-calls-nothing (docs/SPEC-WORK.md:6077). This test asserts the
+;;; whole sentence, so it stays RED until the machinery lands.
+
+(deftest "TestE11F05DecisionPacketPerItemRevision"
+    "docs/SPEC-WORK.md:4648"
+    "expected=one-packet-per-item-and-revision;newer-revision-supersedes-keeping-open-findings;busy-reader-amended-not-duplicated;empty-pulse-wakes-no-model"
+  ;; The distinctive three clauses have no machinery: the package exposes no
+  ;; record or builder that produces one packet per item and revision, so a
+  ;; newer revision cannot supersede it keeping its open findings and a busy
+  ;; reader's packet cannot be amended in place rather than duplicated.
+  (let ((builder (find-symbol "DECISION-PACKET" :nova-work)))
+    (ok (and builder (fboundp builder))
+        "the kernel builds no decision packet per item and revision: expected one packet keyed (item revision), a newer revision superseding it and keeping its open findings, and a busy reader's packet amended (not duplicated); got no decision-packet machinery in :nova-work"))
+  ;; The last clause already holds today: an empty pulse wakes no model and
+  ;; re-executes nothing, and only a non-empty pulse wakes exactly one.
+  (check-equal 0 (pulse-result-model-calls (quiet-pulse :changed nil))
+               "an empty pulse woke a model")
+  (check-equal 1 (pulse-result-model-calls
+                  (quiet-pulse :changed t :decision '(:model "beta")))
+               "a non-empty pulse made no model call")
+  (check-equal 0 (pulse-reexecutions
+                  (list (make-waiting-item
+                         :id "review"
+                         :trigger (make-next-trigger :kind :review-completion :due nil))))
+               "an empty pulse re-executed a model"))
