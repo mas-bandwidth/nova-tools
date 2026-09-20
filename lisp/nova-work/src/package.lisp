@@ -308,6 +308,7 @@
     #:node-repo
     #:repo-holder
     #:node-type
+    #:node-kind
     #:node-view
     #:node-parent
     #:node-children
