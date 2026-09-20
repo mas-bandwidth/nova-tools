@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,11 @@ import (
 // contract: nothing runs before the job and the scratch exist, nothing is deleted before the
 // job is closed, and nothing exits before the scratch is gone.
 type fakeWinPlace struct {
+	// mu guards every field below. The verb calls the placer on whatever goroutine is
+	// running it, and a test that watches a run IN FLIGHT -- TestWindowsHasNo128PlusN asks
+	// the tool to stop partway -- reads the record from the test's own. Same shape as
+	// fakeDiskutil in volumes_darwin_test.go, and for the same reason.
+	mu    sync.Mutex
 	calls []string
 
 	exists   bool
@@ -64,11 +70,15 @@ type fakeWinPlace struct {
 }
 
 func (f *fakeWinPlace) Exists(dir string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "exists:"+filepath.Base(dir))
 	return f.exists, f.existsErr
 }
 
 func (f *fakeWinPlace) MakeScratch(dir string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "scratch:"+filepath.Base(dir))
 	if f.makeErr != nil {
 		return f.makeErr
@@ -84,6 +94,8 @@ func (f *fakeWinPlace) MakeScratch(dir string) error {
 }
 
 func (f *fakeWinPlace) CreateJob(l winLimits) (winJob, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "job:"+limitsWord(l))
 	if f.jobErr != nil {
 		return nil, f.jobErr
@@ -94,6 +106,8 @@ func (f *fakeWinPlace) CreateJob(l winLimits) (winJob, error) {
 }
 
 func (f *fakeWinPlace) Start(job winJob, spec winStartSpec) (winStarted, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "start:"+job.(string))
 	if f.startErr != nil {
 		return winStarted{}, f.startErr
@@ -105,17 +119,23 @@ func (f *fakeWinPlace) Start(job winJob, spec winStartSpec) (winStarted, error) 
 }
 
 func (f *fakeWinPlace) CloseJob(job winJob) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "close:"+job.(string))
 	f.jobsOpen--
 	return f.closeErr
 }
 
 func (f *fakeWinPlace) Used(string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "used")
 	return f.used, nil
 }
 
 func (f *fakeWinPlace) RemoveTree(root, dir string, _ time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removes++
 	f.calls = append(f.calls, "remove:"+filepath.Base(dir))
 	if f.removes <= f.removeOKAfter {
@@ -128,19 +148,52 @@ func (f *fakeWinPlace) RemoveTree(root, dir string, _ time.Duration) error {
 }
 
 func (f *fakeWinPlace) WSBAvailable() (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "wsb-available")
 	return f.wsbEd, f.wsbOK, f.wsbAvailErr
 }
 
 func (f *fakeWinPlace) WSBRunning() (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "wsb-running")
 	return f.wsbBusy, f.wsbRun, f.wsbRunErr
 }
 
 func (f *fakeWinPlace) StartWSB(file, xml string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "wsb-start:"+filepath.Base(file))
 	f.gotXML = xml
 	return f.wsbStartErr
+}
+
+// snapshot is the recorded order, copied under the lock, so that a test may read it while
+// a run is still in flight.
+func (f *fakeWinPlace) snapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.calls...)
+}
+
+// openJobs, startSpec and jobLimits are the same read for the other recorded fields.
+func (f *fakeWinPlace) openJobs() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.jobsOpen
+}
+
+func (f *fakeWinPlace) startSpec() winStartSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gotSpec
+}
+
+func (f *fakeWinPlace) jobLimits() winLimits {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gotLimits
 }
 
 func limitsWord(l winLimits) string {
@@ -227,7 +280,7 @@ func (b *winBench) verb(t *testing.T, extra ...string) (int, string) {
 	return runVerb(args, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")}), errb.String()
 }
 
-func (b *winBench) order() string { return strings.Join(b.place.calls, " ") }
+func (b *winBench) order() string { return strings.Join(b.place.snapshot(), " ") }
 
 // ---------------------------------------------------------------------------------------
 // W1, W2, W5, W7: the sequence.
@@ -263,7 +316,7 @@ func TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.exec(t, b.args(t)...)
 	closed, removed := -1, -1
-	for i, c := range b.place.calls {
+	for i, c := range b.place.snapshot() {
 		if strings.HasPrefix(c, "close:") && closed < 0 {
 			closed = i
 		}
@@ -277,8 +330,8 @@ func TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved(t *testing.T) {
 	if closed > removed {
 		t.Fatalf("the scratch was removed before the job was closed: %s. A directory holding a running .exe cannot be removed, and a rename over a running image raises ERROR_SHARING_VIOLATION -- there is no unix replace-the-inode trick on NTFS", b.order())
 	}
-	if b.place.jobsOpen != 0 {
-		t.Errorf("%d job handle(s) are still open after the verb returned; the kill IS the close, and a job this tool still holds is a tree still running", b.place.jobsOpen)
+	if open := b.place.openJobs(); open != 0 {
+		t.Errorf("%d job handle(s) are still open after the verb returned; the kill IS the close, and a job this tool still holds is a tree still running", open)
 	}
 }
 
@@ -313,7 +366,7 @@ func TestWindowsTheScratchIsTheOnlyWrite(t *testing.T) {
 	b := newWinBench(t, 0)
 	reads := t.TempDir()
 	b.exec(t, b.args(t, "--read", reads)...)
-	p := b.place.gotSpec.Policy
+	p := b.place.startSpec().Policy
 	if p == nil {
 		t.Fatal("the command was never started, so there is no policy to read")
 	}
@@ -362,10 +415,10 @@ func TestWindowsAnExistingScratchIsRefusedNotJoined(t *testing.T) {
 func TestWindowsMemoryAndCPUReachTheJob(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.exec(t, b.args(t, "--memory", "4g", "--cpu", "50")...)
-	if got, want := b.place.gotLimits.MemoryBytes, int64(4)<<30; got != want {
+	if got, want := b.place.jobLimits().MemoryBytes, int64(4)<<30; got != want {
 		t.Errorf("--memory 4g reached the job as %d bytes, want %d", got, want)
 	}
-	if got := b.place.gotLimits.CPUPercent; got != 50 {
+	if got := b.place.jobLimits().CPUPercent; got != 50 {
 		t.Errorf("--cpu 50 reached the job as %d, want 50", got)
 	}
 	// The job is made with the caps already on it: the fake records them at CreateJob, so a
@@ -593,6 +646,8 @@ type hangingPlace struct {
 }
 
 func (p *hangingPlace) Start(job winJob, spec winStartSpec) (winStarted, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls = append(p.calls, "start:"+job.(string))
 	p.gotSpec = spec
 	p.done = make(chan int, 1)
@@ -600,6 +655,8 @@ func (p *hangingPlace) Start(job winJob, spec winStartSpec) (winStarted, error) 
 }
 
 func (p *hangingPlace) CloseJob(job winJob) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls = append(p.calls, "close:"+job.(string))
 	p.jobsOpen--
 	// KILL_ON_JOB_CLOSE: the tree dies with the handle, so the status arrives now.

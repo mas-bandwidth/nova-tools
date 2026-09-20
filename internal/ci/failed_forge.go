@@ -26,11 +26,17 @@ type FailedStep struct {
 	Completed  time.Time
 }
 
-// FailedJob is one job of a run.
+// FailedJob is one job of a run. Attempt and HeadSHA are the forge's own provenance for
+// this job: which attempt of the run it ran in, and the commit it ran against. They are
+// what the CI-red reading counts spent reruns from (attempt N means N-1 reruns already
+// spent), and they are read from the same job listing as the name and the conclusion, so
+// no second call and no caller's word stands between the forge and the licence.
 type FailedJob struct {
 	ID         int64
 	Name       string
 	Conclusion string // success, failure, cancelled, timed_out, skipped, ...
+	Attempt    int    // the forge's run_attempt for this job; 1 is the first, 0 is absent
+	HeadSHA    string // the forge's head_sha for the run this job ran in
 	Steps      []FailedStep
 }
 
@@ -42,6 +48,16 @@ func (j FailedJob) Failed() bool {
 		return false
 	}
 	return true
+}
+
+// Cancelled is true for a job the run cut down rather than one that went red of its own.
+// The forge spells it both ways, and the two are the same job.
+func (j FailedJob) Cancelled() bool {
+	switch strings.ToLower(strings.TrimSpace(j.Conclusion)) {
+	case "cancelled", "canceled":
+		return true
+	}
+	return false
 }
 
 // RunSelector is the one run the caller means, in the words they used: a run id, a pull
@@ -86,6 +102,20 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 			continue
 		}
 		report.Jobs++
+		if j.Cancelled() {
+			report.Cancelled++
+		}
+		// The forge's own conclusion and the failed step's name are the mechanical facts
+		// the CI-red reading classes a red by. They travel beside the report so the
+		// reading never guesses at a line of the log.
+		report.RedJobs = append(report.RedJobs, RedJob{
+			Name:       j.Name,
+			Conclusion: j.Conclusion,
+			Step:       FailedStepName(j),
+			Attempt:    j.Attempt,
+			SHA:        j.HeadSHA,
+		})
+		said := report.findings()
 		report.Cancels = append(report.Cancels, CancelledSteps(j)...)
 		log, err := f.JobLog(j.ID)
 		if err != nil {
@@ -100,6 +130,18 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 		failures, timeouts := ParseJobLog(j.Name, log)
 		report.Failures = append(report.Failures, failures...)
 		report.Timeouts = append(report.Timeouts, timeouts...)
+		// EVERY red job gets a line. A job whose log holds no test event -- a compiler
+		// error under -Werror inside a make step, so `go test` never ran -- said nothing
+		// through the parser, and counting it in jobs= while naming it nowhere is how a
+		// red run reads as a green one. Say which job, which step, and what the runner
+		// marked as the errors.
+		if report.findings() == said {
+			report.NoTests = append(report.NoTests, NoTest{
+				Job:   j.Name,
+				Step:  FailedStepName(j),
+				Lines: LogErrorLines(log),
+			})
+		}
 	}
 	// A filter that matched nothing is NOT a green run, and must never read as one: the
 	// caller asked about a job this run does not have, so say which jobs it does have.
@@ -283,6 +325,8 @@ func (g *GHFailForge) Jobs(runID int64) ([]FailedJob, error) {
 				ID         int64  `json:"id"`
 				Name       string `json:"name"`
 				Conclusion string `json:"conclusion"`
+				Attempt    int    `json:"run_attempt"`
+				HeadSHA    string `json:"head_sha"`
 				Steps      []struct {
 					Name        string `json:"name"`
 					Conclusion  string `json:"conclusion"`
@@ -298,7 +342,7 @@ func (g *GHFailForge) Jobs(runID int64) ([]FailedJob, error) {
 			break
 		}
 		for _, j := range body.Jobs {
-			job := FailedJob{ID: j.ID, Name: j.Name, Conclusion: j.Conclusion}
+			job := FailedJob{ID: j.ID, Name: j.Name, Conclusion: j.Conclusion, Attempt: j.Attempt, HeadSHA: strings.TrimSpace(j.HeadSHA)}
 			for _, s := range j.Steps {
 				job.Steps = append(job.Steps, FailedStep{
 					Name:       s.Name,

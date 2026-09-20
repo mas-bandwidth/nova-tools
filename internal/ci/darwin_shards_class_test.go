@@ -31,8 +31,11 @@ import (
 // already produced the fix: measure the platform, keep the measurements in a
 // table beside the tree, deal the shard plan from the table, and take the
 // per-package ceiling from one place. These two tests are the Windows pair
-// (`windows-sizes`, `windows-table`) mirrored onto darwin, and the parser they
-// share with the Windows tests lives in sizetable_test.go.
+// (`windows-sizes`, `windows-table`) mirrored onto darwin; those two are PARKED
+// as of 2026-09-18 — the native windows CI runners were dropped, Glenn: "WSL
+// only from now on" — so this file is now where that lesson lives and runs, and
+// the parser it used to share with them stays in sizetable_test.go for the next
+// platform. See docs/SPEC-CI.md, "Parked class tests".
 //
 // THE CAP IS MEASURED ON A QUIET HOST AND CARRIES A STATED MARGIN. The cancel
 // happened while superman was in its post-power-on state — Spotlight still
@@ -49,11 +52,11 @@ import (
 // stated, rather than a round number chosen because it felt safe.
 
 // darwinSizesPath is the measured darwin size of each package, the table the
-// merge gate's darwin leg deals its shards from. Its siblings
-// testdata/ci/package-sizes.tsv (idle Linux) and
-// testdata/ci/package-sizes-windows.tsv (windows-latest) are different
-// measurements on different machines, and none of the three predicts another —
-// which is the whole reason there are three.
+// merge gate's darwin leg deals its shards from. Its sibling
+// testdata/ci/package-sizes.tsv (idle Linux) is a different measurement on a
+// different machine and neither predicts the other — which is the whole reason
+// there is more than one. There were three: the windows-latest table went with
+// the native windows legs on 2026-09-18.
 const darwinSizesPath = "testdata/ci/package-sizes-darwin.tsv"
 
 // darwinShardBudget is the seconds of darwin work above which a package's tests
@@ -196,9 +199,17 @@ func TestMergeGateDarwinLegDealsFromTheDarwinTable(t *testing.T) {
 	// Censored and unmeasured both get every slot the group opened. This is the
 	// one rule that must never be relaxed: an unknown size guessed downward is
 	// exactly what dropped integration-4's group and then batch 7's.
+	// The branch is located inside the per-package loop and matched WITHOUT its
+	// `if`/`elif` keyword: it was an `elif` while a windows branch stood in front
+	// of it and became the `if` when the native windows legs were dropped on
+	// 2026-09-18. Which keyword it carries says nothing about the rule; that it
+	// reads the darwin table's FULL column and deals both unknown cases across
+	// every slot does.
 	darwinBranch := step
-	if i := strings.Index(step, `elif [ "$leg" = "darwin" ]; then`); i >= 0 {
-		darwinBranch = step[i:]
+	if i := strings.Index(step, "for pkg in "); i < 0 {
+		t.Error("the merge gate's shard plan has no per-package loop; the step moved and this test is reading the wrong text")
+	} else if j := strings.Index(step[i:], `[ "$leg" = "darwin" ]; then`); j >= 0 {
+		darwinBranch = step[i+j:]
 	} else {
 		t.Error("the merge gate's per-package loop has no darwin branch; without one the darwin table is read into a variable nobody uses")
 	}

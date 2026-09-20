@@ -184,14 +184,16 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                  :fail-partial-write-on fail-partial-write-on
                  :fail-creation-sync-on fail-creation-sync-on))
 
-(defun write-header (stream initial-state-hash capacity stamp path bench)
-  (let* ((header (list :journal-header
-                       :magic "nova-work/journal"
-                       :version 1
-                       :initial-state (or initial-state-hash "")
-                       :capacity capacity
-                       :bench (or bench (bench-identity :path path))
-                       :created-at (or stamp "2026-09-14T00:00:00Z")))
+(defun write-header (stream initial-state-hash capacity stamp path bench &key identity)
+  (let* ((header (append (list :journal-header
+                               :magic "nova-work/journal"
+                               :version 1
+                               :initial-state (or initial-state-hash "")
+                               :capacity capacity
+                               :bench (or bench (bench-identity :path path))
+                               :created-at (or stamp "2026-09-14T00:00:00Z"))
+                         (when identity
+                           (list :journal-identity identity))))
          (header-str (canonical-string header)))
     (write-string header-str stream)
     (write-char #\Newline stream)
@@ -290,7 +292,14 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
               (when (getf hplist :capacity)
                 (setf (slot-value journal 'capacity) (getf hplist :capacity)))
               (when (getf hplist :bench)
-                (setf (journal-bench journal) (getf hplist :bench))))
+                (setf (journal-bench journal) (getf hplist :bench)))
+              ;; A rotated segment's first record continues the chain after the
+              ;; header's copied boundary; a legacy or fresh journal seeds at 0
+              ;; (docs/SPEC-WORK.md:471-482).
+              (let ((boundary (getf hplist :copied-boundary)))
+                (when (and (consp boundary)
+                           (integerp (getf boundary :sequence)))
+                  (setf seq (1- (getf boundary :sequence))))))
             (loop
               (let ((frame (read-record-frame in full-path (1+ seq))))
                 (unless frame (return))
@@ -331,7 +340,8 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                 ;; Synchronize parent directory to guarantee the new directory entry is durable
                 (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
                   (sync-directory parent-dir))
-                (write-header out initial-state-hash capacity stamp full-path (journal-bench journal)))
+                (write-header out initial-state-hash capacity stamp full-path (journal-bench journal)
+                              :identity (mint-journal-identity)))
             (error (c)
               ;; CRITICAL: Close the already-open stream so file descriptor is not leaked,
               ;; while preserving the created file on disk for explicit recovery.
@@ -461,8 +471,11 @@ Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
          (record-count 0)
          (event-count 0))
     (with-open-file (in path :direction :input :element-type 'character :external-format :utf-8)
-      (let ((header (read-header in path expected-initial)))
-        (declare (ignore header)))
+      (let* ((header (read-header in path expected-initial))
+             (boundary (getf (rest header) :copied-boundary)))
+        (when (and (consp boundary)
+                   (integerp (getf boundary :sequence)))
+          (setf seq (1- (getf boundary :sequence)))))
       (loop
         (when (and stop-at-seq (>= seq stop-at-seq))
           (return))

@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +27,13 @@ func main() {
 	// test 11 was a RACE against a child that was already dying, and under three parallel
 	// benches it lost and the violation went unseen.
 	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		time.Sleep(60 * time.Second)
+		secs := 60
+		if v := os.Getenv("FAKE_BACKGROUND_CHILD_SECONDS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				secs = n
+			}
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
 		return
 	}
 	if len(os.Args) < 2 {
@@ -97,8 +105,15 @@ func main() {
 
 	// FAKE-SAY is the harness's own words on its own stderr -- a provider's `401
 	// unauthorized`, the one diagnosis a failed job has.
+	// It writes `said` once the words are on the pipe, so a test can wait for the thing
+	// itself -- a harness that has spoken -- instead of for a clock. Before that file
+	// exists the run has captured nothing from this child at all, and everything the run
+	// decides from its capture is still undecided.
 	if said, ok := directive(prompt, "FAKE-SAY"); ok {
 		fmt.Fprintln(os.Stderr, "fake harness:", said)
+		if job != "" {
+			_ = os.WriteFile(filepath.Join(job, "said"), []byte("said\n"), 0o644)
+		}
 	}
 	// FAKE-TOUCH and FAKE-CAT are THE WALL'S OWN QUESTIONS, asked from inside the job:
 	// can this worker create a file at a path the dispatcher did not name, and can it read
@@ -253,6 +268,19 @@ func main() {
 				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
 		}
 	}
+	// FAKE-BACKGROUND-SLEEP is FAKE-BACKGROUND with a caller-chosen bound (issue #779): the
+	// deadline-kill test needs a grandchild that is clearly still alive when the deadline
+	// fires but does not leave a 60 s corpse behind, and a short sleep keeps the red case
+	// from waiting a full minute on the child the kill was supposed to reap.
+	if n, ok := number(prompt, "FAKE-BACKGROUND-SLEEP"); ok {
+		child := exec.Command(os.Args[0], "--background-child")
+		child.Env = append(os.Environ(), "FAKE_BACKGROUND_CHILD=1", "FAKE_BACKGROUND_CHILD_SECONDS="+strconv.Itoa(n))
+		_ = child.Start()
+		if child.Process != nil && job != "" {
+			_ = os.WriteFile(filepath.Join(job, "background.pid"),
+				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
+		}
+	}
 	// The other half of rule 11: a worker that forks and WAITS for its child leaves nothing
 	// alive in its group, and is no violation at all.
 	if _, ok := directive(prompt, "FAKE-FOREGROUND-CHILD"); ok && os.Getenv("FAKE_FOREGROUND_CHILD") != "1" {
@@ -262,6 +290,34 @@ func main() {
 	}
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
 		return
+	}
+	// FAKE-IGNORE-TERM is THE HARD-CASE CHILD (issue #779): a harness that declines the
+	// polite SIGTERM and keeps running. The deadline must still kill it -- the wall is a
+	// SIGKILL of the whole group, never a negotiation -- so a run whose deadline is its only
+	// stop does not hang on a stubborn harness. It is installed before FAKE-SLEEP so the
+	// sleep happens with the signal already ignored.
+	if _, ok := directive(prompt, "FAKE-IGNORE-TERM"); ok {
+		signal.Ignore(syscall.SIGTERM)
+	}
+	// FAKE-NOTE-ON-TERM is THE POLITE CHILD, and the one observable that tells a TERM from
+	// a KILL from outside the process: on SIGTERM it writes `termed` into its own job
+	// directory and stops. A group ended with swarm.Reap -- terminate, wait, kill -- leaves
+	// the file behind; a group ended with a bare KillGroup cannot, because SIGKILL is not a
+	// signal any process gets to handle. It is what a harness flushing its turn and its
+	// usage row looks like to a test.
+	// It writes `term-armed` the moment the handler is installed, so a test can wait for
+	// the thing itself -- an armed handler -- instead of for a clock. Before that file
+	// exists a TERM would be the default disposition and would kill the process outright,
+	// which is exactly the race a wall-clock test would lose under load.
+	if _, ok := directive(prompt, "FAKE-NOTE-ON-TERM"); ok && job != "" {
+		termed := make(chan os.Signal, 1)
+		signal.Notify(termed, syscall.SIGTERM)
+		go func() {
+			<-termed
+			_ = os.WriteFile(filepath.Join(job, "termed"), []byte("term\n"), 0o644)
+			os.Exit(0)
+		}()
+		_ = os.WriteFile(filepath.Join(job, "term-armed"), []byte("armed\n"), 0o644)
 	}
 	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(d)

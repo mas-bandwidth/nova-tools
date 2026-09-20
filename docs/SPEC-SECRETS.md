@@ -117,7 +117,7 @@ nova-secrets version
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
-nova-secrets gate   --store <dir> --base <git ref> --head <git ref>
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
@@ -341,8 +341,8 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ### `gate`
 
 ```
-nova-secrets gate --store <dir> --base <git ref> --head <git ref>
-GATE APPROVE files=<n>
+nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+GATE APPROVE files=<n> machines=<registry|->
 GATE REFUSE rule=<n> file=<f>: <why>
 ```
 
@@ -362,9 +362,36 @@ does not begin `ENC[` and is not permitted in the clear by the rule's `unencrypt
 number is what `rule=<n>` prints; a changed file outside the three kinds names no rule and
 prints `rule=0`. The `file=` field names the file the refusal is about; a plain value is
 named by its key and **never quoted**, exactly as `check` invariant 3. On success it prints
-`GATE APPROVE files=<n>`, `files=` counting every changed path. The gate measures a **diff
-before review** and `check` measures the **working copy after**; each is the other's witness,
-and neither substitutes for the other.
+`GATE APPROVE files=<n> machines=<registry|->`, `files=` counting every changed path. The gate
+measures a **diff before review** and `check` measures the **working copy after**; each is the
+other's witness, and neither substitutes for the other.
+
+**It also refuses, at exit 2, when a seat file in the store at `--base` is gone at `--head`.**
+Removing a seat is how a seat loses its credentials inside a pull request whose subject says
+it is adding one, and it is never part of adding a seat. Keep what exists.
+
+**`--machines <registry>`: the fleet stands in for the reviewer who is no longer there.**
+Glenn's ruling of 2026-09-18 is that a secrets seat is set up **automatically** when he asks —
+no second human approval on `mas-bandwidth/secrets`, the mechanical gate is the required
+check. So the question a reviewer used to ask — *whose key is this, and does that machine
+exist?* — has to become a machine's question, and the fleet's machines registry
+(`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes`, `queue/control/machines.tsv`)
+is the one place that already answers it. **With `--machines` given, a recipient key this
+diff introduces — one no creation rule named at `--base`, the recovery key aside — is
+permitted only when some machine's `seat` column holds this rule's seat, where the seat is
+the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row whose seat is
+`-` carries no seat and vouches for nothing. The refusal names the **seat**, never the key,
+because the seat is what a reader goes and checks:
+
+```
+GATE REFUSE rule=1 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
+```
+
+The registry is read **first and whole**, before any judgement leans on it — an unreadable or
+malformed one is a refusal, exactly as `internal/fleet` demands, because the half of a
+registry that parses is the half that lets a recipient through. **Without `--machines` the
+rule is dormant, not satisfied**, and the approval line says `machines=-` so that no APPROVE
+is ever read as the fleet having vouched.
 
 ### `keygen`
 
@@ -1076,3 +1103,18 @@ accepted*).
 *Rowan, 2026-09-12. No credential value was read, written, printed or named anywhere in this
 work; the real store was read only through its `.sops.yaml`, its README, its ruleset and its
 collaborator permissions, and no `sops` or `age` command was run against it.*
+
+## Future additions from the first adoption (2026-09-16, Glenn and Stella dogfooding; nova-tools #881)
+
+The first real adoption ran on the studio seat, then Stella's, then four bench seats, by hand. Glenn's verdict: "It should be a single step then 'yes'." Each item below is a hurt from that night and the verb or rule that removes it; each lands with its red test.
+
+1. **`adopt` is one verb.** `nova-secrets adopt --as <seat> [--store <url>] [--bench <ssh host>]` installs sops and age if absent, generates the deploy key and the age identity in place, registers the deploy key by API, clones the store, opens the rule PR (seat key + recovery.pub), waits for the seat-rule gate, merges, pulls, re-seals the calling seat's swarm values into the new file through a pipe when the seat is a swarm seat, proves the seat (`check` OK, `exec` by length) and prints `ADOPT OK seat=<name> store=<sha>`. A human gives "yes" once; a person's value is entered once by `set`. A partial adoption rolls back; every refusal is one remedy line.
+2. **`set` and `rotate`.** `nova-secrets set --as <seat> --name NAME` reads the value from a prompt or stdin, seals it through a pipe (never argv, disk or history), commits and pushes a PR. `rotate` is `set` plus the note that revocation at the provider is the human's step. Ingest is rotate: every value enters fresh.
+3. **The recovery key is generated off-bench, enforced.** `keygen --recovery` refuses on a bench that holds any seat key, or prints the off-bench instruction and stops.
+4. **A seat's `check` and `exec` fail only on the seat's own files.** Other files are reported as foreign, never fatal (a stale rule on one file blocked every seat).
+5. **Remedy lines name the seat that can act,** never a command the caller cannot run (`sops updatekeys` on a bench that cannot decrypt).
+6. **The seat-rule gate is the second pair of eyes** for the one shape a seat PR has (two recipients with recovery.pub second; ciphertext only; no other file); it lives in the store (`.github/seat-rule-gate.sh`) and approves; anything else a human reads.
+7. **A worker description names its secret,** `secret: NAME`, delivered by `exec` into the environment; `key_file` is the legacy shape; `nova-swarm native` never copies an auth file into a job and refuses a `--model` other than the description's (a key may be authorized for one model).
+8. **Harness configs hold `{env:NAME}`, never a literal;** `fleet survey` reports a literal key or a key-shaped file on a bench as DRIFT.
+9. **One seat per OS user.** Two lines on one user share the key ("wouldn't", not "can't"); the survey reports it.
+10. **Keys are for swarms, not people.** A swarm seat holds model keys; a person's own keys are that line's seat, entered by that line.

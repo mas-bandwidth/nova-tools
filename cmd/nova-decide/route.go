@@ -63,6 +63,10 @@ func (s *stringList) Set(v string) error {
 // runRoute is the route verb: it builds the evidence, asks for a rung, applies
 // the floor, prints one line and appends one log row.
 func runRoute(args []string, stdout, stderr io.Writer) int {
+	// wall_ms is the verb's start to its line: the clock starts here, on the
+	// first line of the verb, and every decision this run prints or persists
+	// is stamped with the milliseconds to it.
+	verbStart := now()
 	fs := flag.NewFlagSet("nova-decide route", flag.ContinueOnError)
 	unitPath := fs.String("unit", "", "a JSON file (or inline JSON) holding the unit of work's evidence")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
@@ -72,6 +76,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
 	maxSteps := fs.Int("max-steps", decide.DefaultMaxSteps, "how many decisions --step-up makes before it stops")
+	paste := fs.Bool("paste", false, "print one more line the coordinator pastes: ROUTE <unit> -> <mind> (<model id>) conf=<x>")
 	useJev := fs.Bool("jev", true, "ask Jev among the eligible rungs")
 	noJev := fs.Bool("no-jev", false, "answer by the rules alone: no key, no network, deterministic")
 	baseURL := fs.String("base-url", decide.DefaultBaseURL, "Jev endpoint")
@@ -198,6 +203,17 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	if ask {
 		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
 	}
+	// Stamp the wall clock on every decision the verb prints or persists,
+	// answer and refusal alike: wall_ms is the verb's start to its line, and
+	// a row with no stamp carries no measurement, never a zero.
+	stampWall := func(r *decide.RouteResult) {
+		r.WallMs = int(now().Sub(verbStart).Milliseconds())
+		r.HasWallMs = true
+	}
+	stampWall(&res)
+	for i := range steps {
+		stampWall(&steps[i])
+	}
 	// The record is written BEFORE the refusal is returned. A call that has
 	// already been made has already been paid for, and a decision that could
 	// not be made is still evidence: neither is unspent or unmade by an error
@@ -221,6 +237,15 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "ROUTE", "bad-record", oneline.Cap(persisted.Error(), oneline.TailBytes))
 	}
 	fmt.Fprintln(stdout, res.Line())
+	// THE COORDINATOR'S LINE (Glenn 2026-09-19). The decision line above is
+	// the machine's, with every field a gate needs on it. This one is for a
+	// person -- or for the coordinator about to spawn a child -- and it says
+	// the one thing they act on: who does this, and on what model. The model
+	// id comes from the registry, never from here, and a rung that is ASKED
+	// rather than run says so in place of an id it does not have.
+	if *paste {
+		fmt.Fprintln(stdout, pasteLine(reg, res))
+	}
 	switch {
 	case !res.Dispatchable():
 		// The verb ran and said NOT YET. Only exit 0 is permission (SPEC.md),
@@ -312,6 +337,20 @@ func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
 // vocabulary: the Jev endpoint is TypeSafe's.
 const usageProvider = "typesafe"
 
+// pasteLine is the one line a coordinator pastes: the unit, the mind that
+// answers it, the model id that mind runs on where the registry gives one, and
+// the confidence the floor was applied to. A mind with no model id is a mind
+// that is ASKED -- a friend, a child, Glenn -- and the line says how, because
+// "ask on the bus" is the action, not a model to launch.
+func pasteLine(reg *decide.Registry, res decide.RouteResult) string {
+	how := "ask-" + res.Rung.Ask
+	if model, ok := reg.ModelFor(res.Rung.Name); ok {
+		how = model
+	}
+	return fmt.Sprintf("ROUTE %s -> %s (%s) conf=%.2f",
+		oneline.Field(res.Unit), oneline.Field(res.Rung.Name), oneline.Field(how), res.Confidence)
+}
+
 // remedyFor is the line a person can paste: the missing accounting flags with a
 // path each, rather than the name of a flag they then have to look up.
 func remedyFor(missing []string) string {
@@ -358,6 +397,8 @@ func buildUnit(path string, set map[string]bool, stderr io.Writer, fromFlags dec
 		}
 		return unit, 0
 	}
+	// ...and here for the flag path, the one the manager lanes use.
+	fromFlags.Kind = decide.CanonicalKind(fromFlags.Kind)
 	if len(given) == 0 {
 		return decide.Unit{}, refuse(stderr, "ROUTE", "bad-unit", "--unit (or --unit-id and --kind) is required; the evidence is not guessed")
 	}

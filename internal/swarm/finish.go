@@ -387,7 +387,15 @@ func destinationFor(end, class string, rc int) string {
 // settle is finalize in rule 12's order: the usage file, then the report copy or its marker,
 // and only then anything else.
 func (in RunInput) settle(sc Sidecar, jobDir string, rec ExitRecord, end string, now time.Time) (Finalized, string) {
-	usage, _ := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID))
+	// THE FINAL READ SPEAKS WHEN IT FAILS. It used to discard the error and write a row of
+	// dashes: a bench without sqlite3, or a store that stopped answering, produced a
+	// completed job whose token row said nothing and whose run said nothing either. The
+	// refusal names the class on one line, so a dash is a fact with a reason and never a
+	// silence (rule 13).
+	usage, usageErr := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID))
+	if usageErr != nil {
+		fmt.Fprintln(in.Stderr, UsageRefusalLine(sc.ID, usageErr))
+	}
 	fin, err := in.Pool.Finalize(Ending{
 		Sidecar: sc, JobDir: jobDir, Provider: in.Worker.Provider, Model: in.Worker.Model,
 		End: end, RC: rec.RC, Started: parseStamp(sc.Started, time.Time{}), Ended: now, Usage: usage,

@@ -17,8 +17,11 @@
 //
 //	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
 //
-// It is read WHOLE and validated whole: a partially-read registry is worse than none,
-// because the half that read is the half that lets a card through.
+// A line whose fields do not parse refuses the file: a truncated or unknown-role row is
+// not a machine, and guessing the rest would let a card through. The runner/bench lock is
+// per row (#2031): a machine that is both runner and bench without
+// `allow-shared=<YYYY-MM-DD> <why>` is recorded as lock-failed, not as a bench, and does
+// not stop its neighbours.
 package fleet
 
 import (
@@ -58,17 +61,24 @@ var knownRoles = map[string]bool{
 // The reasons a machine may not take work. They are tokens, not prose, so a loop reading
 // the line can branch on one and a person reading it learns the same thing.
 const (
-	ReasonRunnerHost       = "runner-host"       // it serves the merge group's shards
-	ReasonCoordinationHost = "coordination-host" // a friend's window lives there
-	ReasonServicesHost     = "services-host"     // the stack lives there and nothing else may
-	ReasonNotABench        = "not-a-bench"       // it carries no role that permits work
-	ReasonUnknown          = "unknown-machine"   // the registry does not carry the name
+	ReasonRunnerHost        = "runner-host"         // it serves the merge group's shards
+	ReasonCoordinationHost  = "coordination-host"   // a friend's window lives there
+	ReasonServicesHost      = "services-host"       // the stack lives there and nothing else may
+	ReasonNotABench         = "not-a-bench"         // it carries no role that permits work
+	ReasonUnknown           = "unknown-machine"     // the registry does not carry the name
+	ReasonSharedWithoutNote = "shared-without-note" // bench+runner with no dated allow-shared note
 )
 
 // allowSharedPrefix is how a machine that is BOTH runner and bench says why. The exception
 // is dated because it is meant to end: when the pull worker runs cards in containers, the
 // runner role comes off hulk and vision and the note goes with it.
 const allowSharedPrefix = "allow-shared="
+
+// certifiedPrefix is how a machine's notes say it has been through certification: the
+// machine was provisioned, probed and proven to carry a real card end to end, and the day
+// it was is on the line. It is the field the fill pool is derived from -- an uncertified
+// bench may be named by hand, but no tick puts a card on it by default.
+const certifiedPrefix = "certified="
 
 // Machine is one line of the registry.
 type Machine struct {
@@ -116,6 +126,25 @@ func (m Machine) AllowShared() (date, why string, ok bool) {
 	return date, why, true
 }
 
+// Certified reads the certification out of the notes: `certified=<YYYY-MM-DD>`, with
+// anything after the date free text (the report it was written from, usually). It answers
+// the date and whether the machine carries one at all.
+func (m Machine) Certified() (date string, ok bool) {
+	i := strings.Index(m.Notes, certifiedPrefix)
+	if i < 0 {
+		return "", false
+	}
+	rest := strings.TrimSpace(m.Notes[i+len(certifiedPrefix):])
+	date = rest
+	if j := strings.IndexAny(rest, " \t"); j >= 0 {
+		date = rest[:j]
+	}
+	if !isDate(date) {
+		return "", false
+	}
+	return date, true
+}
+
 // isDate reads YYYY-MM-DD and nothing else. The exception must carry the day it was made,
 // so a reader can ask how long it has stood.
 func isDate(s string) bool {
@@ -156,9 +185,10 @@ func (e *Refusal) Line(token string) string {
 
 // Registry is the whole machines file, read and validated.
 type Registry struct {
-	path     string
-	machines []Machine
-	byName   map[string]int
+	path       string
+	machines   []Machine
+	byName     map[string]int
+	lockFailed []Machine // well-formed rows that fail the runner/bench lock; not benches
 }
 
 // Path is the file this registry was read from, so a refusal can name it.
@@ -197,14 +227,47 @@ func (r *Registry) BenchNames() []string {
 	return out
 }
 
+// CertifiedBenchNames is THE POOL: every machine that may take work AND has been certified,
+// in file order. It is what a verb fills when the caller names no bench, so a bench joins
+// the fleet's work by its registry row and by nothing else -- no list in any Go file, no
+// edit to any tool, no release.
+func (r *Registry) CertifiedBenchNames() []string {
+	out := make([]string, 0, len(r.machines))
+	for _, m := range r.WithRole(RoleBench) {
+		if _, ok := m.Certified(); ok {
+			out = append(out, m.Name)
+		}
+	}
+	return out
+}
+
+// LockFailed is every well-formed row that fails the runner/bench lock, in file order.
+// Those machines are not benches: fill disables them by name and their neighbours keep
+// dealing.
+func (r *Registry) LockFailed() []Machine { return r.lockFailed }
+
+// SharedLockRefusal is the named refusal for a row that is both runner and bench with no
+// dated allow-shared note.
+func (r *Registry) SharedLockRefusal(m Machine) *Refusal {
+	return &Refusal{
+		Name:   m.Name,
+		Reason: ReasonSharedWithoutNote,
+		Remedy: fmt.Sprintf("%s is both %s and %s in %s; add `%s<YYYY-MM-DD> <why it is shared and what ends it>` to its notes, or drop one role",
+			m.Name, RoleRunner, RoleBench, r.path, allowSharedPrefix),
+	}
+}
+
 // RequireBench is THE guard. It answers nil when the named machine may take work, and a
 // *Refusal naming the reason and the remedy when it may not -- an unknown name, a CI runner
-// host, the coordination bench, a services host.
+// host, the coordination bench, a services host, or a shared machine without the dated note.
 //
 // Every verb that reaches a machine calls this before it reaches one. The check is on the
 // NAME, before any ssh, so a refused machine is never even connected to.
 func (r *Registry) RequireBench(name string) error {
 	name = strings.TrimSpace(name)
+	if m, ok := r.lockFailedNamed(name); ok {
+		return r.SharedLockRefusal(m)
+	}
 	m, ok := r.Lookup(name)
 	if !ok {
 		return &Refusal{
@@ -223,6 +286,23 @@ func (r *Registry) RequireBench(name string) error {
 		Remedy: fmt.Sprintf("%s is %s in %s and may take no card, probe or load; name a bench: %s",
 			m.Name, m.RoleList(), r.path, r.benchList()),
 	}
+}
+
+func (r *Registry) lockFailedNamed(name string) (Machine, bool) {
+	for _, m := range r.lockFailed {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return Machine{}, false
+}
+
+func (r *Registry) seenName(name string) bool {
+	if _, ok := r.byName[name]; ok {
+		return true
+	}
+	_, ok := r.lockFailedNamed(name)
+	return ok
 }
 
 // notBenchReason names what the machine is instead of a bench. A runner host is named first
@@ -256,9 +336,10 @@ func dash(s string) string {
 	return s
 }
 
-// ReadRegistry reads and validates the machines file whole. Every refusal names the file,
-// the line and what the line should have said; nothing is guessed and nothing is skipped,
-// because the half of a registry that reads is the half that lets a card through.
+// ReadRegistry reads the machines file. A line whose fields do not parse refuses the whole
+// file -- that is not a machine, and the half that parsed is the half that would let a card
+// through. The runner/bench lock is per row: a shared machine without the dated note is
+// recorded as lock-failed and its neighbours still load (#2031).
 func ReadRegistry(path string) (*Registry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -275,14 +356,18 @@ func ReadRegistry(path string) (*Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s line %d: %w", path, n, err)
 		}
-		if _, twice := reg.byName[m.Name]; twice {
+		if reg.seenName(m.Name) {
 			return nil, fmt.Errorf("%s line %d: %s is named twice; one line per machine",
 				path, n, m.Name)
+		}
+		if m.failsSharedLock() {
+			reg.lockFailed = append(reg.lockFailed, m)
+			continue
 		}
 		reg.byName[m.Name] = len(reg.machines)
 		reg.machines = append(reg.machines, m)
 	}
-	if len(reg.machines) == 0 {
+	if len(reg.machines) == 0 && len(reg.lockFailed) == 0 {
 		return nil, fmt.Errorf("%s names no machine; refusing to guess (a machines file is name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes)", path)
 	}
 	return reg, nil
@@ -329,17 +414,17 @@ func readMachine(line string, n int) (Machine, error) {
 	}
 	m.Cores = cores
 	m.Notes = undash(f[6])
-
-	// The one rule the file itself enforces: a machine that is both a CI runner host and a
-	// card bench is the exception the lock permits for now, and it must say why and when.
-	if m.HasRole(RoleBench) && m.HasRole(RoleRunner) {
-		if _, _, ok := m.AllowShared(); !ok {
-			return Machine{}, fmt.Errorf(
-				"%s is both %s and %s; the lock (Glenn 2026-09-18) is that runner hosts are CI-only, so a shared machine must carry the dated exception in its notes: `%s<YYYY-MM-DD> <why it is shared and what ends it>`",
-				m.Name, RoleRunner, RoleBench, allowSharedPrefix)
-		}
-	}
 	return m, nil
+}
+
+// failsSharedLock is the runner/bench lock on one row: both roles, and no dated
+// allow-shared note. The row parsed; it is not a bench.
+func (m Machine) failsSharedLock() bool {
+	if !m.HasRole(RoleBench) || !m.HasRole(RoleRunner) {
+		return false
+	}
+	_, _, ok := m.AllowShared()
+	return !ok
 }
 
 // readRoles reads the roles set: comma separated, at least one, each known, none twice.

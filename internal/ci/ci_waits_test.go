@@ -246,6 +246,8 @@ func TestWaitsVerbLineMatchesTheSpec(t *testing.T) {
 // the allowlist already names. The count is the truth about the CI path
 // whether or not the lines printed.
 func TestNoFixedWaitsOnTheCIPath(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := filepath.Join(root, "internal", "ci", "testdata", "fixed-waits-allowlist.txt")
 	res, err := CheckWaits(root, allow)

@@ -206,6 +206,8 @@ type Host interface {
 	// Ready takes a draft out of draft. It is a mutation, it is logged as one, and it
 	// only ever reaches an entry that is in the lane.
 	Ready(n int) error
+	// Verdicts reads the pull request's reviews and comments for the hold check (#1572).
+	Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error)
 	// AtomicMerge says whether this host offers a merge primitive taking BOTH an
 	// expected head and an expected base as preconditions. gh today does not: it takes
 	// --match-head-commit and nothing about the base.
@@ -213,6 +215,14 @@ type Host interface {
 	// Merge is that primitive, used only when AtomicMerge is true, and the host's merge
 	// commit must be the gated object.
 	Merge(n int, headOID, baseSHA, mergeSHA string) error
+}
+
+// VerdictOpts configures options for parsing forge verdicts.
+type VerdictOpts struct {
+	Author          string
+	CurrentHead     string
+	Reviewers       *ReviewerSet
+	UntypedComments string // "ignore" or ""
 }
 
 // GH is the production host: one gh invocation per question, under the run's --timeout.
@@ -378,4 +388,22 @@ func (h *GH) AtomicMerge() bool { return false }
 // Merge is never reached on this host, and says so rather than doing something weaker.
 func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	return fmt.Errorf("this host offers no merge primitive taking both an expected head and an expected base, so publication is the compare-and-swap push of rule 21; gh pr merge is never called")
+}
+
+// Verdicts reads this pull request's comments and its reviews, in two calls, and folds
+// each into the words the gate acts on. It is READ-ONLY and it mutates nothing.
+func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	comments, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	reviews, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	var opt VerdictOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	return ParseForgeVerdicts(comments, reviews, n, opt.Reviewers, opt.Author, opt.CurrentHead, opt.UntypedComments == "ignore")
 }

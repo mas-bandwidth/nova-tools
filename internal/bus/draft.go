@@ -81,6 +81,16 @@ const (
 	PlaceholderBody    = "<the note goes here>"
 )
 
+// ContainsPlaceholderBody reports whether body is empty or contains the template placeholder line.
+func ContainsPlaceholderBody(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) == PlaceholderBody {
+			return true
+		}
+	}
+	return false
+}
+
 // Skeleton is a draft's header before anybody has written the note: the verb `draft`
 // resolves the names against the roster and this renders them.
 //
@@ -233,7 +243,13 @@ func tolerate(c *Config, text, as string) tolerated {
 			out.notices = append(out.notices, fmt.Sprintf("this draft carried a %s line (%q); send writes the date from the clock, so yours is replaced, and says so", KeyDate, truncate(strings.TrimSpace(value), maxQuotedKey)))
 			continue
 		case KeyFrom:
-			from, hasFrom = strings.TrimSpace(value), true
+			// The FIRST From line, exactly as parseLines keeps the first: a draft that
+			// relays another note can carry a second, quoted `From:` under its own, and
+			// the sender it is judged by is the OUTER one. Taking the last here made
+			// send blame the quoted inner author for an --as the outer line agrees with.
+			if !hasFrom {
+				from, hasFrom = strings.TrimSpace(value), true
+			}
 		case KeySubject:
 			hasSubject = strings.TrimSpace(value) != ""
 		}

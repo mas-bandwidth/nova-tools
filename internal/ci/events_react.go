@@ -151,6 +151,18 @@ func (r *Reactor) onChecksDone(ctx context.Context, payload string) error {
 			r.line("REACT hold pr=%d head=%s reason=%s\n", e.Number, oneline.Field(e.Head), oneline.Field(reason))
 			return nil
 		}
+		if prGate, ok := r.Gate.(interface {
+			PRHeld(int, string) (bool, string, error)
+		}); ok {
+			held, reason, err := prGate.PRHeld(e.Number, e.Head)
+			if err != nil {
+				return fmt.Errorf("read the pr's hold: %w", err)
+			}
+			if held {
+				r.line("REACT hold pr=%d head=%s reason=%s\n", e.Number, oneline.Field(e.Head), oneline.Field(reason))
+				return nil
+			}
+		}
 	}
 	if err := r.Enqueue(ctx, e.Number, e.Head); err != nil {
 		return fmt.Errorf("enqueue %d: %w", e.Number, err)

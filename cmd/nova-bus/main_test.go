@@ -107,9 +107,10 @@ const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n" +
 // What stays serial, and must: a test that writes PROCESS-WIDE state. That is the whole
 // list, and every one of them is serial for a named reason --
 //
-//	bus.NoteParses,         one counter each for the process, so a sibling parsing a note
-//	bus.CommitsWalked       or counting commits while one of these counts makes the count
-//	                        somebody else's work (TestInboxParsesOnlyWhatIsNewSinceTheCursor,
+//	bus.NoteParses,         one counter each for the process -- but no test here reads
+//	bus.CommitsWalked       them any more: the three that assert a delta of a count read
+//	                        bus.NoteParsesIn and bus.CommitsWalkedIn over their own bus,
+//	                        and run parallel (TestInboxParsesOnlyWhatIsNewSinceTheCursor,
 //	                        TestHeardSurvivesTheCursor, TestAStaleCursorCostsTheBoundAndNotTheDistance)
 //	refreshCheckout,        package variables taken out at the seam and put back
 //	publishDraft,           (withoutFetch, and the two tests that stand in for a
@@ -225,13 +226,17 @@ func buildBusFixture() (string, error) {
 		}
 		fail = os.WriteFile(full, []byte(content), 0o644)
 	}
+	// --template= (empty) on both the init and the clone: git otherwise copies its
+	// sample hooks into every .git it makes, twenty-eight files nothing reads, and busDir
+	// copies this template once per test -- thirty-six files of which those were the
+	// twenty-eight, on every test, and on the platform where a file operation is expensive.
 	bare := filepath.Join(dir, "bus.git")
 	if err := os.MkdirAll(bare, 0o755); err != nil {
 		return "", err
 	}
-	git(bare, "init", "--bare", "--quiet", "--initial-branch=main")
+	git(bare, "init", "--bare", "--quiet", "--template=", "--initial-branch=main")
 	checkout := filepath.Join(dir, "checkout")
-	git(dir, "clone", "--quiet", bare, checkout)
+	git(dir, "clone", "--quiet", "--template=", bare, checkout)
 	git(checkout, "checkout", "-q", "-B", "main")
 	write("checkout/participants.json", rosterJSON)
 	write("checkout/from-bo/2026-09-07T0001Z-a-question-abcdef012345.md",

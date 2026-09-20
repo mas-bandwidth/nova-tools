@@ -39,7 +39,8 @@ const readRemedy = "A command that runs OUTSIDE the wall and dies inside it is m
 const usage = `nova-sandbox: one command, contained by the OS (see docs/SPEC-SANDBOX.md)
 
 usage:
-  nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>]
+  nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
+               [--net-listen] [--cwd <dir>]
                [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
@@ -62,6 +63,14 @@ usage:
 
   --read <dir>    readable, recursively, and NOT writable. Repeatable, no default.
                   Shared inputs go here, named once, so N workers read one copy.
+                  It CARRIES EXECUTE: a program under a --read runs.
+  --read-noexec <dir>
+                  readable, recursively, and NOT EXECUTABLE and not writable.
+                  Repeatable, no default. This is the flag for a cache or a data
+                  tree -- a module cache, a node_modules, a downloads directory --
+                  that this user can write to: under --read the job could RUN
+                  whatever lands there, and under this flag it can only read it.
+                  A path in both lists is a refusal, not a merge.
   --write <dir>   readable AND writable, recursively. Repeatable, no default, and
                   REQUIRED: a command with no writable directory is a
                   misconfiguration, not a tighter sandbox. The FIRST --write is
@@ -140,10 +149,10 @@ asserts its invariants, and drop takes the run's table away.
   --out <file>    egress plan: where the ruleset is written.
   --plan <file>   egress apply and check: the ruleset to apply or to read back.
 
-Every path is yours and none is guessed: a --read, a --write, a --cwd or a --tmp
-that does not exist is a refusal and is NOT created. HOME must resolve inside a
---write (the caller sets it), because almost every tool derives a path from it
-and an inherited HOME is denied by the wall.
+Every path is yours and none is guessed: a --read, a --read-noexec, a --write, a
+--cwd or a --tmp that does not exist is a refusal and is NOT created. HOME must
+resolve inside a --write (the caller sets it), because almost every tool derives
+a path from it and an inherited HOME is denied by the wall.
 
 ` + readRemedy + `:
 a toolchain in a user directory is exactly a caller-supplied read-only root.
@@ -206,7 +215,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 // flags is the argv before --, parsed by hand because every list flag is repeatable and
 // because the split at -- must be exact: everything after it is the command, verbatim.
 type flags struct {
-	reads, writes               []string
+	reads, readsNoExec, writes  []string
 	cwd, tmp, name, secret, acl string
 	gpu                         string
 	netDeny, netListen          bool
@@ -238,6 +247,9 @@ func parse(args []string) flags {
 		case "--read":
 			v, i = want(i, "--read")
 			f.reads = append(f.reads, v)
+		case "--read-noexec":
+			v, i = want(i, "--read-noexec")
+			f.readsNoExec = append(f.readsNoExec, v)
 		case "--write":
 			v, i = want(i, "--write")
 			f.writes = append(f.writes, v)
@@ -333,7 +345,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		return refuseAll(stderr, f.bad)
 	}
 	p, bad := sandbox.Build(sandbox.Input{
-		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
+		Reads: f.reads, ReadsNoExec: f.readsNoExec, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
 		NetDeny: f.netDeny, NetListen: f.netListen, Argv: f.argv, Home: homeOf(env),
 		GPU: f.gpu,
 	})
@@ -366,8 +378,11 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		// oneline.Field for an operator, and cwdb64=<base64url> is the machine-readable
 		// receipt of the raw path bytes a reader must decode -- oneline's escape is not
 		// injective, so the readable spelling cannot be reversed.
-		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s\n",
-			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), used, len(p.Reads), len(p.Writes),
+		// read= and read-noexec= are TWO counts because they are two grants: a --read
+		// root carries EXECUTE and a --read-noexec root does not, so a log that folded
+		// them into one number could not say what a run was allowed to run.
+		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d read-noexec=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s\n",
+			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), used, len(p.Reads), len(p.ReadsNoExec), len(p.Writes),
 			oneline.Field(p.Net()), oneline.Field(p.Cwd), base64.RawURLEncoding.EncodeToString([]byte(p.Cwd)), p.AncestorCount(), oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
 		if flusher, ok := stderr.(interface{ Sync() error }); ok {
 			_ = flusher.Sync()
@@ -467,7 +482,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// --write is missing and that HOME resolves outside it: the two refusals a first run
 	// earns together belong in the same print.
 	p, policyBad := sandbox.Build(sandbox.Input{
-		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
+		Reads: f.reads, ReadsNoExec: f.readsNoExec, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
 		GPU:  f.gpu,
 		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
@@ -896,7 +911,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		argv = []string{shell, "-c", "true"}
 	}
 	p, bad := sandbox.Build(sandbox.Input{
-		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
+		Reads: f.reads, ReadsNoExec: f.readsNoExec, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
 		NetDeny: f.netDeny, NetListen: f.netListen, Argv: argv, Home: homeOf(env),
 		GPU: f.gpu,
 	})
@@ -912,7 +927,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		return sandbox.ExitCannotRun
 	}
 	fmt.Fprint(stdout, text)
-	fmt.Fprintf(stderr, "POLICY OK backend=%s read=%d write=%d bytes=%d gpu=%s\n",
-		oneline.Field(sandbox.Backend), len(p.Reads), len(p.Writes), len(text), oneline.Field(string(p.GPUMode)))
+	fmt.Fprintf(stderr, "POLICY OK backend=%s read=%d read-noexec=%d write=%d bytes=%d gpu=%s\n",
+		oneline.Field(sandbox.Backend), len(p.Reads), len(p.ReadsNoExec), len(p.Writes), len(text), oneline.Field(string(p.GPUMode)))
 	return 0
 }

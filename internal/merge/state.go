@@ -143,12 +143,14 @@ type Entry struct {
 // Read is one recorded verdict: the fold of one file under <lane>/reads/<entry>/.
 // Head is the sha the READER supplied with --head and never one the tool filled in.
 type Read struct {
-	Who     string `json:"who"`
-	Verdict string `json:"verdict"`
-	Note    string `json:"note"`
-	At      string `json:"at"`
-	Head    string `json:"head"`
-	File    string `json:"file"`
+	Who      string   `json:"who"`
+	Verdict  string   `json:"verdict"`
+	Note     string   `json:"note"`
+	At       string   `json:"at"`
+	Head     string   `json:"head"`
+	File     string   `json:"file"`
+	Scope    string   `json:"scope,omitempty"`
+	Releases []string `json:"releases,omitempty"`
 }
 
 // Gate is one recorded gate verdict: the fold of one file under <lane>/gates/<entry>/.

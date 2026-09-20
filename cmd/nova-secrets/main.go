@@ -19,7 +19,7 @@ usage:
   nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
   nova-secrets names  --store <dir> --as <name> [--max <n>]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
-  nova-secrets gate   --store <dir> --base <git ref> --head <git ref>
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
   nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
   nova-secrets placed --machine <name> [--receipts <dir>]
@@ -39,7 +39,10 @@ flags:
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
-  --machines <file>    fleet registry file: name, ssh target, home, tab separated
+  --machines <file>    place: fleet registry file: name, ssh target, home, tab separated
+                       gate: the fleet machines registry whose seat column vouches for a
+                       new recipient; without it that rule does not run and the APPROVE
+                       line says machines=-
   --receipts <dir>     where placed receipts live; default ~/.config/nova-secrets/placed
   --ssh <path>         ssh executable to use (default ssh)
   --name NAME          key to seal (seal only)
@@ -297,6 +300,7 @@ func runGateCLI(args []string) {
 	storeFlag := fs.String("store", "", "store dir")
 	baseFlag := fs.String("base", "", "base git ref")
 	headFlag := fs.String("head", "", "head git ref")
+	machinesFlag := fs.String("machines", "", "fleet machines registry; its seat column vouches for a new recipient")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
@@ -308,7 +312,12 @@ func runGateCLI(args []string) {
 		os.Exit(2)
 	}
 
-	line, code := secrets.RunGate(*storeFlag, *baseFlag, *headFlag)
+	line, code := secrets.RunGate(secrets.GateInput{
+		StoreDir:     *storeFlag,
+		Base:         *baseFlag,
+		Head:         *headFlag,
+		MachinesPath: *machinesFlag,
+	})
 	fmt.Println(line)
 	os.Exit(code)
 }

@@ -64,6 +64,20 @@ type Mind struct {
 	Lanes        []string `json:"lanes"`
 	Availability string   `json:"availability"`
 	Ask          string   `json:"ask"`
+
+	// Model is the model id a unit dispatched to this mind RUNS with, where
+	// this mind is a model at all. It is registry data and never a constant
+	// here: the ladder comes from the file, and so do the ids on it. A mind
+	// asked on the bus or as a child is a person or a coordinator and carries
+	// none, so a caller that can only dispatch a model keeps today's model and
+	// says so.
+	Model string `json:"model,omitempty"`
+}
+
+// Dispatchable reports whether this mind can be handed a unit as a MODEL: it
+// is asked as a card and the registry gives the model id to run it with.
+func (m Mind) Dispatchable() bool {
+	return m.Ask == AskCard && strings.TrimSpace(m.Model) != ""
 }
 
 // Usable reports whether the height ladder may pick this mind at all. A
@@ -151,6 +165,7 @@ func ParseRegistry(data []byte) (*Registry, error) {
 		m.Lineage = strings.TrimSpace(m.Lineage)
 		m.Availability = strings.TrimSpace(m.Availability)
 		m.Ask = strings.TrimSpace(m.Ask)
+		m.Model = strings.TrimSpace(m.Model)
 		switch {
 		case m.Name == "":
 			return nil, fmt.Errorf("decide: bad registry: row %d has no name", i+1)
@@ -186,6 +201,17 @@ func ParseRegistry(data []byte) (*Registry, error) {
 		return reg.Minds[i].Name < reg.Minds[j].Name
 	})
 	return &reg, nil
+}
+
+// ModelFor is the model id a rung runs a unit with, and whether the registry
+// gives it one at all. A rung with no model is not a refusal: it is a mind a
+// card cannot be dispatched to, and the caller keeps today's model.
+func (r *Registry) ModelFor(name string) (string, bool) {
+	m, ok := r.ByName(name)
+	if !ok || !m.Dispatchable() {
+		return "", false
+	}
+	return m.Model, true
 }
 
 // ByName finds one mind.

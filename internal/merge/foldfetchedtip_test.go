@@ -12,15 +12,32 @@ import (
 	"time"
 )
 
+// tipGit runs one git in a fixture, THE WAY THE TOOL RUNS GIT: through NoBackgroundGit,
+// so that no `git maintenance run --auto --detach` is left writing into a repository that
+// lives in t.TempDir and is about to be removed under it (#1607).
 func tipGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", NoBackgroundGit(args...)...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// quietRepo writes NoBackgroundGit's settings INTO a fixture repository.
+//
+// A push to a path runs `git receive-pack <path>` in the OTHER repository, and git clears
+// these settings out of the environment before it starts a git on a repository that is not
+// this one (local_repo_env) -- so the repository being pushed to has to carry them itself,
+// or its receive-pack forks the detached maintenance run this list exists to prevent.
+func quietRepo(t *testing.T, dir string) {
+	t.Helper()
+	for i := 0; i+1 < len(noBackgroundGit); i += 2 {
+		key, value, _ := strings.Cut(noBackgroundGit[i+1], "=")
+		tipGit(t, dir, "config", key, value)
+	}
 }
 
 func tipRead(who, head string) []byte {

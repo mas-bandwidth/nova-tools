@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -488,6 +489,29 @@ func TestTheRedisLoggerIsSilencedBeforeTheFirstDial(t *testing.T) {
 	case silence > dial:
 		t.Error("react.go dials before it silences the logger; the chatter this exists to stop is written while the connection is being made")
 	}
+}
+
+// #1609. `silenceRedis` was `redis.SetLogger(quietRedis{})` run on every `react`, and
+// `redis.SetLogger` writes a package-level variable inside go-redis. Two `react` runs in
+// one process -- which is what this package's own tests are, `reactOnce` starting the
+// verb in a goroutine while the package runs in parallel -- both write it, and
+// `go test -race ./cmd/nova-merge/` caught it one run in six on vision. `-race` is a
+// certification leg, and ten tests failed behind that one race.
+//
+// The property is the tool's, not the harness's: NO TWO VERBS IN ONE PROCESS MAY RACE ON
+// THE LIBRARY'S LOGGER. This drives the silencer itself from several goroutines at once,
+// so the detector fires on every -race run rather than one in six.
+func TestSilencingTheRedisLoggerIsNotARaceBetweenTwoVerbs(t *testing.T) {
+	t.Parallel()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			silenceRedis()
+		}()
+	}
+	wg.Wait()
 }
 
 // --- the fixtures these tests share -------------------------------------------------

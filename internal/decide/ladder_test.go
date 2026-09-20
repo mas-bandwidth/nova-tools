@@ -2,6 +2,7 @@ package decide
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -117,12 +118,19 @@ func TestSidewaysBeforeUp(t *testing.T) {
 	if res.Rung.Height != opus.Height {
 		t.Errorf("sideways keeps the height: %d vs %d", res.Rung.Height, opus.Height)
 	}
+	// No sideways rung exists at the card heights -- flash and pro are one
+	// lineage -- so the answer steps UP. It steps past pro as well, because a
+	// mechanical kind that failed on a card rung was not mechanical after all
+	// (see TestAFailedCardRungTakesTheWholeLineageOut).
 	mech := Unit{ID: "s2", Kind: KindStack, Files: 2, Packages: 1, Attempts: []Attempt{
 		{Rung: "flash", Outcome: OutcomeFailed, Reason: "rebase conflict"},
 	}}
 	res = mustRoute(t, reg, mech, DefaultFloor)
-	if res.Rung.Name != "pro" {
-		t.Errorf("flash failed and no sideways rung exists: up to pro, got %s (%s)", res.Rung.Name, res.Reason)
+	if res.Rung.Name != "opus" {
+		t.Errorf("flash failed and no sideways rung exists: up, got %s (%s)", res.Rung.Name, res.Reason)
+	}
+	if res.Rung.Height <= 0 {
+		t.Errorf("up means a greater height than the rung that failed: %d", res.Rung.Height)
 	}
 	if !res.Escalated {
 		t.Error("a decision that carries a prior attempt is an escalation")
@@ -185,8 +193,22 @@ func TestTheTopIsAllFriendsThenGlenn(t *testing.T) {
 }
 
 // The lane's owner wins among rungs of the same height.
+//
+// It builds its own ladder rather than reading the embedded one, because the
+// embedded registry carries tonight's availability -- who is actually awake --
+// and a rule about lane ownership must not go red the evening a lane's owner
+// goes to sleep. The two facts are separate and the test says which one it is
+// about (see nova-tools#1501, where they stop being hand-written at all).
 func TestLaneOwnerWinsAtEqualHeight(t *testing.T) {
-	reg := testRegistry(t)
+	reg, err := ParseRegistry([]byte(`{"minds":[
+	  {"name":"opus","lineage":"rowan","height":2,"kinds":[],"lanes":["rowan-children"],"availability":"available","ask":"child"},
+	  {"name":"emma","lineage":"emma","height":3,"kinds":[],"lanes":["code"],"availability":"available","ask":"bus"},
+	  {"name":"freddy","lineage":"freddy","height":3,"kinds":[],"lanes":["opencode"],"availability":"available","ask":"bus"},
+	  {"name":"astra","lineage":"stella","height":4,"kinds":[],"lanes":["coordination"],"availability":"available","ask":"bus"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	u := Unit{ID: "l1", Kind: KindNewVerb, Files: 12, Packages: 4, Lanes: 2, LaneOwner: "opencode"}
 	res := mustRoute(t, reg, u, DefaultFloor)
 	if res.Rung.Name != "freddy" {
@@ -224,7 +246,7 @@ func TestRouteLineShape(t *testing.T) {
 	if strings.Contains(line, "\n") {
 		t.Fatalf("exactly one line: %q", line)
 	}
-	for _, want := range []string{"ROUTE ", "unit=card\\x2041", "rung=flash", "confidence=0.9", "floor=0.90", "reason=\"", "ask=card"} {
+	for _, want := range []string{"ROUTE ", "unit=card\\x2041", "rung=flash", "confidence=0.9", fmt.Sprintf("floor=%.2f", DefaultFloor), "reason=\"", "ask=card"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the line is missing %q: %s", want, line)
 		}

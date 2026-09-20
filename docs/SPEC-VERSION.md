@@ -9,7 +9,7 @@ does not restate. `help` prints these four lines, byte for byte:
 ```
 nova-version moved --from <sha> --to <sha> --repo <dir> --out <path>
 nova-update apply --sha <sha> --repo <dir> --bin <dir> [--timeout <d>]
-nova-version snapshot --bin <dir> --out <file.tsv>
+nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
 nova-version diff --from <a.tsv> --to <b.tsv>
 ```
 
@@ -115,7 +115,10 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
 5. **The rest of the `snapshot` refusals.** A `--bin` that is unreadable, or holds no
    `nova-*` regular file, names the directory and the readable `--bin` to supply; a binary
    whose `version` exits non-zero, hangs past its deadline, or prints no parseable line
-   names the tool and the build to repair there.
+   names the tool and the build to repair there. A timeout names the other reading too —
+   that the deadline was spent on the platform's assessment rather than on a broken
+   binary — and the `--timeout` that answers it (rule 11); a spent `--budget` is named as
+   the budget and never as a slow binary.
 6. **`diff` reads two snapshots and prints one line per changed binary.** For every `name`
    whose row differs — stamp, revision or platform, or a name present on one side only — it
    prints `DIFF CHANGED name=<name> from=<stamp|-> to=<stamp|->`; an unchanged binary prints
@@ -134,6 +137,24 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
 10. **Both are bounded and clockless.** Each prints one line beyond the changed-binary rows
     `diff` exists to print, caps every child through `internal/bounded`, takes its clock
     from the injected seam, and touches no network.
+11. **`snapshot`'s bounds are the caller's, and its per-binary default is thirty seconds
+    because its first exec is always a cold one.** `--timeout <d>` bounds one binary's
+    `version`, default `30s`; `--budget <d>` bounds the whole run, default `60s`; a
+    non-positive either is a refusal naming both flags. Thirty rather than the five every
+    other verb in [SPEC-UPDATE.md](SPEC-UPDATE.md) takes: those verbs probe tools a person
+    has been running for days, while every binary `snapshot` reads is one the machine has
+    never executed — the documented sequence is `go install ./cmd/...` and then
+    `nova-version snapshot` — so the platform's one-time assessment of a never-seen
+    executable is charged to this deadline on every row of every run, and a five-second
+    bound refused healthy binaries and sent the reader to repair a build that was fine.
+    Measured on the darwin/arm64 Studio over fresh executables: 164–571 ms cold against
+    5 ms warm at load 121–151 on 32 cores, and a 7.03 s cold maximum against a 5.3 ms warm
+    while the tree compiled beside it — the state `go install ./cmd/...` leaves the machine
+    in one command earlier (#890, and #1554 for the class). A warm-up exec outside the
+    bound was measured and rejected: an exec killed at 40 ms leaves the assessment unpaid
+    (the next exec of that same file still cost 101 ms against a 140 ms cold and a 7 ms
+    warm), so a warm-up under the same `--timeout` buys nothing, and one under `--budget`
+    would turn a genuinely broken binary's prompt refusal into a whole-budget wait.
 
 ### Red tests this section demands
 
@@ -152,3 +173,5 @@ reaches a network.
 9. `TestDiffRefusesANonSnapshotFile`: a file with the wrong header, and a row of the wrong arity, are each exit 2 naming the file and the `snapshot` remedy.
 10. `TestVersionAndDoubleDashVersionAgree`: on every fake binary, `version` and `--version` print the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, `nova-wake` among them.
 11. `TestSnapshotIsBoundedByTheClock`: an injected clock and a fake binary sleeping past its deadline is exit 2 with the deadline named and no partial `--out`.
+12. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary`: a fake binary that is slow on its FIRST invocation and immediate on every one after — the platform's assessment made deterministic — is read, not refused, under the default bound, so the verb's own normal case (a `--bin` one `go install` old) is not a refusal.
+13. `TestSnapshotTakesItsBoundsFromFlags`: a fake binary sleeping past a given `--timeout` is exit 2 naming that tool and that duration with no partial `--out`; four such binaries under a `--budget` shorter than one of them is exit 2 naming the budget rather than a tool's slowness; a non-positive `--timeout` is exit 2 naming the flags.

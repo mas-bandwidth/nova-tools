@@ -316,11 +316,16 @@ write access to a repo's branches.
 
 **`--dir <path>` — a directory of card files in a repository, tomorrow.** One
 file per card, `<dir>/<id>.board`, created by `add`. **The directory itself is made
-by `quickstart` and by no other verb** (`created=` on its `QUICKSTART OK` line says
-whether that run made it): a first run has nowhere to write yet, while every other
-verb refuses a directory that is not there and names the `mkdir -p` that fixes it,
-because a `list` or a `take` against a missing directory is a path typed wrong and
-making it would answer the typo with an empty board. One event per line, appended,
+by `quickstart` and, on the first `add`, by `add`; no other verb makes it**
+(`created=` on `quickstart`'s `QUICKSTART OK` line says whether that run made it):
+a first run has nowhere to write yet, and a board is an append-only log, so an
+empty directory is a valid empty ledger and an `add` into one that is not there
+makes it and files the first card, because a filer who has nowhere to write yet is
+exactly who `add` is for. `list`, `check`, `take` and `close` still refuse a
+directory that is not there and name the `mkdir -p` that fixes it, because a read
+or a take against a missing directory is a path typed wrong and making it would
+answer the typo with an empty board (Stella, nova-tools #625: `add --dir
+<not-yet-created>` was refused with "directory missing"). One event per line, appended,
 read whole; the board is a fold over every file in the directory (rule 3). The
 first line of every card file is exactly `BOARD v1` and nothing else, for the
 reason `OPEN v2` has a version line: a later format read as this one would be

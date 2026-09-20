@@ -13,6 +13,44 @@ Emma reads it, and Freddy is asked by name where a practice touches his swarm (2
 16). Templates read: cards 05 (edit), 08 and 09 (reads) of 2026-09-14, sec38 card-04. A
 promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](SPEC-SWARM.md)).
 
+**The practices `nova-swarm lint --card` checks mechanically, by their rule tokens.** A card
+writer meets these tokens on a `LINT DRIFT` line and has to know which practice they belong
+to; before 2026-09-18 they were written down nowhere at all (#1464), and a bench's clone of
+the tool is months behind the binary installed on it. Each drift now carries its own remedy
+line, and `nova-swarm lint --rules` prints every token and what it wants — that listing, not
+this table, is what a bench with a stale clone reads.
+
+| rule token | practice |
+| --- | --- |
+| `result-first` | 1 — line 1 is the contract line, in ONE form: `RESULT: <label> sha=<sha12>`, with the colon (`docs/SPEC-TOOLWORK.md` §5 rule 7, ruled 2026-09-19). The colon-less `RESULT <label> sha=` the plain `cut` template still renders is read as a stopgap until rule 7's renderer card lands, and is not the form to write (#1741) |
+| `result-last` | 1, 25 — the last step writes `RESULT.md`, whose line 1 is that contract line |
+| `no-sandbox` | 2 — a card runs inside the wall and never invokes it |
+| `files-named` | 3 — the work is anchored to a named file or package |
+| `red-test` | 4, 23 — a reproducing test named, or `probe`/`read` for a card that only reads |
+| `test-command` | 5 — the gate written verbatim, or `no tests` said in words |
+| `clone-step` | 17, 25 — `STEP 1` clones or `cd`s into the repository. The WHOLE step is read, its line and the lines under it down to the next `STEP`, so the wording of the STEP line is yours and the command is the rule |
+| `steps-numbered` | 17 — `STEP <n>.` lines, numbered 1, 2, 3 in order |
+| `deadline` | 17 — a deadline, or `finish within <n> minutes` |
+| `scratch-absolute` | 25 — scratch named against a root, never as a bare relative word |
+| `no-parent-path` | 25 — the card walks no path above the job, because the wall refuses one. What the card WALKS is the rule — a `cd`, `mkdir`, `cp`, `mv`, `rm`, `git -C`, a redirect, a `--root` — inside a fenced block as much as outside one. A `../` the card merely QUOTES is not this drift: a fenced block, a backtick span, a markdown link target, a `go test` ellipsis (#1494, #1527) |
+| `size` | — ADVICE, not a limit. The 12000-byte ceiling is the budget that keeps a model reading the card in one window; a card over it is not refused, not truncated, and still ships. It draws a `LINT NOTE`, never a `LINT DRIFT`, and changes no verdict. The ceiling is never silent: every lint carries the card's size and the cap, on the `LINT OK` line and on a closing `LINT SIZE … advisory=true` line (#1494, #1527) |
+
+Four more tokens read the **typed header** `cut` writes under the contract line —
+`KIND:`, `PATHS:`, `TEST:`, `LEGS:`, `SOURCE:` (`docs/SPEC-TOOLWORK.md` §5 rule 1). They fire
+on any card that declares one of those five lines, and on any card at all under
+`lint --card <file> --typed`; a card written before §5 carries no header and is checked by the
+twelve rules above only. The grammar is the gate's own: `internal/pulse/cardheader.go` parses
+these lines at `accept`, and the lint accepts exactly what it accepts and refuses what it
+refuses, so a card that lints clean on the bench is not rejected at the gate for its header.
+
+| rule token | what it wants |
+| --- | --- |
+| `kind-declared` | a `KIND: <kind>` line with a kind on it; `cut` writes it from the pool row and a model never does |
+| `paths-declared` | a `PATHS: <glob>[, <glob>...]` line, repository-relative, no `..`, every glob holding at least one literal segment — or `PATHS: none` for a card that changes nothing |
+| `test-named` | a `TEST: <package> <TestName>` line — two fields, the name a Go test name — or `TEST: none` where the kind declares no gate |
+| `paused` | the coordinator has not paused this kind. The remedy is never a rerun: it is `nova-pulse trust --set trial`. Checked only when `lint --card` is handed the state with `--trust <file>`, in the shape `nova-pulse trust` prints |
+
+
 The seven Mercury jobs cited below: 20260914T151824Z-card-03/04, 20260914T152306Z-card-02/05,
 20260914T154040Z-card-06/07, 20260914T153752Z-card-08 — all rc 0, 38 to 60 s, harness-reported
 usd 0.009 to 0.033, input 208k to 728k tokens per job, on OpenCode 1.18.29.
