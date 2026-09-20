@@ -94,11 +94,22 @@ func benchGit(t *testing.T, specs, arglog string, counts map[string]string) {
 	rules = append(rules,
 		fakeRule{Arg: 3, Equals: "rev-list", Stdout: "3"},
 		fakeRule{Arg: 3, Equals: "rev-parse", Stdout: "abc1234"},
+		// The clone's own origin, which is what these fixtures push and open PRs
+		// against now: the destination is resolved from git's record, never from the
+		// bench RESULT.md's REPO line (resolveDestination; Johnny's HOLD of #1809).
+		originRule("mas-bandwidth/nova-tools"),
 	)
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: rules})
 }
 
 func benchHarvestInput(t *testing.T, root string, shell *fakeShell, forge *fakeForge) HarvestInput {
+	t.Helper()
+	return benchHarvestInputShell(t, root, shell, forge)
+}
+
+// benchHarvestInputShell is the same, for a test whose seam is not the fake shell -- the
+// one that runs the generated script under /bin/sh to hold the script's own boundary.
+func benchHarvestInputShell(t *testing.T, root string, shell BenchShell, forge *fakeForge) HarvestInput {
 	t.Helper()
 	return HarvestInput{
 		Bench:  "hulk",
@@ -361,13 +372,16 @@ func TestHarvestReleasesTheLaneOfAFinishedCard(t *testing.T) {
 	if err := os.MkdirAll(launched, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The markers carry the session `fill --session` stamps into them: since #1950 a
+	// drain names whose cards it is releasing and is never a wildcard over a shared
+	// directory.
 	for _, c := range []struct{ name, lane string }{
 		{"card-9601.md", "schema"}, {"card-9602.md", "pulse"}, {"card-9603.md", "bus"},
 	} {
 		if err := os.WriteFile(filepath.Join(launched, c.name), []byte("RESULT "+c.name+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		body := "lane=" + c.lane + "\nbench=hulk\nlabel=" + strings.TrimSuffix(c.name, ".md") + "\n"
+		body := "lane=" + c.lane + "\nbench=hulk\nsession=s-42\nlabel=" + strings.TrimSuffix(c.name, ".md") + "\n"
 		if err := os.WriteFile(filepath.Join(launched, c.name+".launched"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -375,15 +389,22 @@ func TestHarvestReleasesTheLaneOfAFinishedCard(t *testing.T) {
 	done := "/home/gaffer/rowan-swarm-root/0/jobs/card-9601"
 	running := "/home/gaffer/rowan-swarm-root/1/jobs/card-9602"
 	shell := &fakeShell{answer: func(bench, script string) (string, error) {
-		if strings.Contains(script, "touch") {
+		switch {
+		case strings.Contains(script, "touch"):
 			return "", nil
+		case strings.Contains(script, "PROBE"):
+			// card-9603's own job directory is asked for BY NAME and is not
+			// there; a sibling job being listed is not evidence about it.
+			return "PROBE\tcard-9603\tabsent\n", nil
 		}
 		return benchJobListing(done, []string{
 			"RESULT card-9601 sha=abc", "DONE", "BRANCH rowan/card-9601", "REPO mas-bandwidth/nova-tools",
+			"SESSION s-42",
 		}) + benchJobListing(running, nil), nil
 	}}
 	in := benchHarvestInput(t, root, shell, &fakeForge{})
 	in.Launched = launched
+	in.Session = "s-42"
 	code, out, errb := runBenchHarvest(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s\n%s", code, out, errb)
@@ -475,6 +496,47 @@ func TestHarvestBenchHarvestsABenchInTheRegistry(t *testing.T) {
 	}
 	if len(forge.opened) != 1 {
 		t.Fatalf("PRs opened = %d, want 1: the guard let the bench through", len(forge.opened))
+	}
+}
+
+// JOHNNY'S HOLD, the repo destination on `harvest --bench`: a RESULT.md REPO line that is
+// not the repository the COORDINATOR's `--clone` names must push nothing and open no PR
+// (issue #1824's receipt, on the --bench path). The branch is in-prefix, so the branch rule
+// is not what stops it.
+func TestHarvestBenchRefusesARepoMismatchAndOpensNoPR(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 3, Equals: "rev-list", Stdout: "3"},
+		{Arg: 3, Equals: "rev-parse", Stdout: "abc1234"},
+		// The COORDINATOR's own clone, on the coordinator's own disk: `--clone` is
+		// required on this verb, so THIS is the manager-side record, and the bench
+		// job's own origin is never read here at all.
+		{Arg: 5, Equals: "remote.origin.url", Stdout: "https://example.com/real/repo.git"},
+	}})
+	mine := "/home/gaffer/rowan-swarm-root/0/jobs/card-1"
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		if strings.Contains(script, "touch") {
+			return "", nil
+		}
+		return benchJobListing(mine, []string{
+			"RESULT card-1 sha=abc", "DONE",
+			"BRANCH rowan/card-1", "REPO attacker/exfil",
+		}), nil
+	}}
+	forge := &fakeForge{}
+	in := benchHarvestInput(t, root, shell, forge)
+	in.BranchPrefix = DefaultBranchPrefix
+	_, out, _ := runBenchHarvest(t, in)
+	if len(forge.opened) != 0 {
+		t.Fatalf("--bench opened a PR on a repo the worker's RESULT claimed: %+v", forge.opened)
+	}
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") && strings.Contains(l, "attacker/exfil") {
+			t.Fatalf("--bench pushed a repo the worker's RESULT claimed: %s", l)
+		}
+	}
+	if !strings.Contains(out, "HARVEST REFUSED repo-mismatch card=card-1 dispatched=real/repo claimed=attacker/exfil") {
+		t.Fatalf("the repo-mismatch refusal line is absent:\n%s", out)
 	}
 }
 

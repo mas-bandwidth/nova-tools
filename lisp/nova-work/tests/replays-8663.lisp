@@ -217,3 +217,68 @@
         (ok (search "slots=1" line) "the refusal names the requested slots: ~A" line)
         (ok (search "holder=n3" line) "the refusal names the holder: ~A" line)
         (ok (search "capacity" line) "the refusal is the capacity one: ~A" line)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F06ProvideReproducibleBuildInstallAnd     SPEC-WORK.md:298-309
+;;; ------------------------------------------------------------------
+;;;
+;;; E02-F06 — Provide reproducible build/install and small
+;;; startup/status/shutdown smoke tests (ROADMAP.md:339). Stated at
+;;; docs/SPEC-WORK.md:298-309: the runtime packaging and its platforms are
+;;; pinned and tested before release (298-301); the build=<identity> field
+;;; says which build it is, so every running binary names the pinned runtime
+;;; (302-303); and the session's identity, bounds, state, and clip cadence are
+;;; explicit at start and readable at any time, and it is stopped explicitly
+;;; (304-309). This replay drives the pure session lifecycle the paragraph
+;;; promises: a reproducible build identity, an explicit start, a status that
+;;; reads every bound and the build, and an explicit stop that still answers.
+
+(deftest "TestE02F06ProvideReproducibleBuildInstallAnd" "docs/SPEC-WORK.md:298-309"
+    "expected=build-identity-reproducible-and-names-the-pinned-runtime;start-names-owner-and-generation;status-reads-every-bound-and-the-build;stop-fences-and-status-still-answers"
+  ;; (a) reproducible build: the build identity the running binary prints is
+  ;; deterministic across calls and names the pinned SBCL runtime
+  ;; (SPEC-WORK.md:302-303).
+  (let ((id1 (session-build-identity))
+        (id2 (session-build-identity)))
+    (ok (and (stringp id1) (plusp (length id1)))
+        "the build identity is empty: ~S" id1)
+    (check-string= id1 id2
+        "the build identity is not reproducible across two calls")
+    (ok (search (lisp-implementation-type) id1)
+        "the build identity does not name the pinned runtime: ~S" id1))
+  ;; (b) startup, status and shutdown on one session.
+  (multiple-value-bind (sess line code)
+      (session-start :path "acme/work" :owner "rowan"
+                     :now "2026-09-20T00:00:00Z")
+    ;; startup: the SESSION OK line names the owner and generation explicitly.
+    (check-equal 0 code "a session start answered a nonzero exit code")
+    (ok (search "SESSION OK" line) "start does not print SESSION OK: ~A" line)
+    (ok (search "owner=rowan" line) "start does not name the owner: ~A" line)
+    (ok (search "generation=1" line) "start does not name the generation: ~A" line)
+    ;; status: the SESSION OK status line reads every bound and names the build
+    ;; rather than remembering (SPEC-WORK.md:304-308).
+    (let ((status (session-status-line sess)))
+      (ok (search "SESSION OK" status) "status is not a SESSION OK line: ~A" status)
+      (ok (search "state=live" status) "status does not read the state: ~A" status)
+      (ok (search "build=" status) "status does not say which build it is: ~A" status)
+      (ok (search "every=" status) "status does not read every: ~A" status)
+      (ok (search "max-bytes=" status) "status does not read max-bytes: ~A" status)
+      (ok (search "closed-window=" status) "status does not read closed-window: ~A" status))
+    ;; shutdown: the session stops explicitly, fences itself and releases the
+    ;; owner (SPEC-WORK.md:308-309).
+    (multiple-value-bind (ok stop-lines)
+        (session-stop-lifecycle sess :no-clip t :now "2026-09-20T00:05:00Z")
+      (ok ok "the stop was refused: ~S" stop-lines)
+      (check-equal :fenced (session-state sess) "the stopped session is not fenced")
+      (check-equal "" (session-owner sess) "the stopped session still names an owner")))
+  ;; (c) a fenced session still answers status, so the harness that started it
+  ;; can read its shutdown (SPEC-WORK.md:252-266, session.lisp session-status).
+  (multiple-value-bind (sess line)
+      (session-start :path "acme/work" :owner "rowan" :now "2026-09-20T00:00:00Z")
+    (declare (ignore line))
+    (session-stop-lifecycle sess :no-clip t :now "2026-09-20T00:05:00Z")
+    (let ((after (session-status-line sess)))
+      (ok (search "SESSION OK" after)
+          "a fenced session does not answer status: ~A" after)
+      (ok (search "state=fenced" after)
+          "status does not read the fenced state after stop: ~A" after))))

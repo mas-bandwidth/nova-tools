@@ -344,3 +344,73 @@
       "a fully evidenced automatic refresh was refused")
   (ok (not (refresh-allowed-p (make-refresh-admission :decision t :adapter t :evidence nil)))
       "a refresh with no evidence was allowed"))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F03AllowOmittedRepeatedAndRecursively   SPEC-WORK.md:1555
+;;; ------------------------------------------------------------------
+;;; E01-F03 (ROADMAP.md:224) — allow omitted, repeated and recursively
+;;; nested work-set grouping layers without a prescribed depth.
+;;; docs/SPEC-WORK.md:1555: "These are examples, not grammars. A team may
+;;; omit, repeat or nest grouping layers as its work requires; validation
+;;; must not enforce a repository/epic/feature depth sequence."
+
+;; A grouping layer is named by its node kind, never by its depth, and the
+;; kernel's validation admits omitted, repeated and recursively nested layers.
+(defun %e01-f03-grouping-layer (state id)
+  "The node kind of ID under STATE, read by stable id rather than by a fixed
+number of parent hops (SPEC-WORK.md:1564-1566)."
+  (node-type state id))
+
+(deftest "TestE01F03AllowOmittedRepeatedAndRecursively" "docs/SPEC-WORK.md:1555"
+    "expected=deeper-witness-admitted;repeated-layers-by-kind-not-position;omitted-layers-admitted;depth-not-prescribed"
+  ;; The deeper witness repeats project, stream and feature layers and nests
+  ;; sub-features recursively: repository -> project -> project -> stream ->
+  ;; work-set -> stream -> epic -> feature -> feature -> feature -> task.
+  (let* ((deep '((:id "acme/repo" :type :work-set :parent nil :state :unknown)
+                 (:id "acme/repo/p1" :type :project :parent "acme/repo" :state :unknown)
+                 (:id "acme/repo/p1/p2" :type :project :parent "acme/repo/p1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1" :type :stream :parent "acme/repo/p1/p2" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws" :type :work-set :parent "acme/repo/p1/p2/s1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2" :type :stream :parent "acme/repo/p1/p2/s1/ws" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e" :type :epic :parent "acme/repo/p1/p2/s1/ws/s2" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e/f" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e/f/sf1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2/t" :type :task
+                      :parent "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2" :state :doing)))
+         (state (make-seed-state deep)))
+    (check-equal 11 (state-open-count state)
+                 "the deeper witness was not admitted whole")
+    (check-equal :task
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2/t")
+                 "the leaf task is a task, read by id not by depth")
+    (check-equal :feature
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2/s1/ws/s2/e/f/sf1")
+                 "a sub-feature is :feature, not a distinct mandatory layer")
+    (check-equal :project
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2")
+                 "a repeated project layer is admitted one below another"))
+  ;; Omitted layers: the shallow repository -> feature -> task witness skips
+  ;; project/stream/epic and is admitted, so no layer is mandatory.
+  (let* ((shallow '((:id "acme/sh" :type :work-set :parent nil :state :unknown)
+                    (:id "acme/sh/f" :type :feature :parent "acme/sh" :state :unknown)
+                    (:id "acme/sh/f/t" :type :task :parent "acme/sh/f" :state :doing)))
+         (state (make-seed-state shallow)))
+    (check-equal 3 (state-open-count state)
+                 "the shallow witness with omitted layers was not admitted")
+    (check-equal :task (%e01-f03-grouping-layer state "acme/sh/f/t")
+                 "the shallow task is a task with the intermediate layers omitted"))
+  ;; No prescribed depth: a chain of 24 nested sub-features under one task is
+  ;; admitted exactly like a shallow one; depth is not a rank restriction.
+  (let* ((ids (loop for i from 0 to 24 collect (format nil "deep/~D" i)))
+         (seed (loop for i from 0 to 24
+                     for id in ids
+                     collect (list :id id
+                                   :type (if (= i 24) :task :feature)
+                                   :parent (and (plusp i) (nth (1- i) ids))
+                                   :state (if (= i 24) :doing :unknown)))))
+    (let ((state (make-seed-state seed)))
+      (check-equal 25 (state-open-count state)
+                   "the 25-level nested chain was not admitted")
+      (check-equal :task (%e01-f03-grouping-layer state "deep/24")
+                   "the deep chain's task is a task at depth 25, not refused"))))
