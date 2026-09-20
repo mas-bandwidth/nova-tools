@@ -1195,16 +1195,14 @@ Bounds from session or explicit arguments are enforced before parsing finishes (
           (error 'unsupported-input :what "a bundle request carries no :request id")))
       (make-request-bundle :base base :clipped-revision clipped :requests requests))))
 
-(defun read-request-bundle-file (path &key session max-bytes max-depth max-nodes (signal-error t) (require-bounds nil))
+(defun read-request-bundle-file (path &key session max-bytes max-depth max-nodes (signal-error t) (require-bounds t))
   "Read a request bundle from PATH governed by SESSION bounds or explicit bounds (SPEC-WORK.md:839-845)."
   (multiple-value-bind (sess-mb sess-md sess-mn)
       (if session (session-bounds session) (values nil nil nil))
     (let* ((mb (or max-bytes sess-mb))
            (md (or max-depth sess-md))
-           (mn (or max-nodes sess-mn))
-           (has-bounds (or max-bytes max-depth max-nodes session))
-           (req (or require-bounds (not (null has-bounds)))))
-      (when req
+           (mn (or max-nodes sess-mn)))
+      (when require-bounds
         (unless mb
           (if signal-error
               (error 'missing-read-bounds :bound "--max-bytes")
@@ -1221,7 +1219,7 @@ Bounds from session or explicit arguments are enforced before parsing finishes (
                                           :max-bytes mb
                                           :max-depth md
                                           :max-nodes mn
-                                          :require-all req
+                                          :require-all require-bounds
                                           :signal-error signal-error)))
         (when text
           (read-request-bundle text :session session
@@ -1396,7 +1394,7 @@ EXIT): one verdict line per request, exit 0 only when every one applied."
         (when (plusp code) (setf exit 1))))
     (values (zerop exit) (nreverse lines) exit)))
 
-(defun replay-request-bundle (source target-kernel &key session max-bytes max-depth max-nodes (require-bounds nil))
+(defun replay-request-bundle (source target-kernel &key session max-bytes max-depth max-nodes (require-bounds t))
   "`session replay --from` against a bare TARGET-KERNEL: apply the bundle
 SOURCE's requests one at a time, validating each fresh. SOURCE may be bundle
 text or a pathname/filename to read under session bounds. The bundle is one ordered
@@ -1409,19 +1407,18 @@ moved independently refuses the request `stale` and applies nothing. Answers
     (let* ((mb (or max-bytes sess-mb))
            (md (or max-depth sess-md))
            (mn (or max-nodes sess-mn))
-           (has-bounds (or max-bytes max-depth max-nodes session))
-           (req (or require-bounds (not (null has-bounds)))))
-      (when req
+           (is-file (and (or (stringp source) (pathnamep source))
+                         (probe-file source))))
+      (when (and is-file require-bounds)
         (unless mb (error 'missing-read-bounds :bound "--max-bytes"))
         (unless md (error 'missing-read-bounds :bound "--max-depth"))
         (unless mn (error 'missing-read-bounds :bound "--max-nodes")))
-      (let* ((text (if (and (or (stringp source) (pathnamep source))
-                            (probe-file source))
+      (let* ((text (if is-file
                        (read-bounded-file source :session session
                                                  :max-bytes mb
                                                  :max-depth md
                                                  :max-nodes mn
-                                                 :require-all req
+                                                 :require-all require-bounds
                                                  :signal-error t)
                        source))
              (bundle (read-request-bundle text :session session

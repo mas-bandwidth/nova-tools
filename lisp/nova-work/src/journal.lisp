@@ -262,40 +262,41 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                                 fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp
                                 (take-lock t) (bench nil)
                                 max-bytes max-depth max-nodes session
-                                (require-bounds nil))
+                                (require-bounds t))
   (multiple-value-bind (sess-mb sess-md sess-mn)
       (if session (session-bounds session) (values nil nil nil))
     (let* ((mb (or max-bytes sess-mb))
            (md (or max-depth sess-md))
            (mn (or max-nodes sess-mn))
-           (has-bounds (or max-bytes max-depth max-nodes session))
-           (req (or require-bounds (not (null has-bounds)))))
-      (when req
+           (journal (make-instance 'file-journal
+                                   :path (namestring (merge-pathnames path))
+                                   :capacity capacity
+                                   :initial-state-hash initial-state-hash
+                                   :reject-on reject-on
+                                   :fail-sync-on fail-sync-on
+                                   :fail-pre-write-on fail-pre-write-on
+                                   :fail-partial-write-on fail-partial-write-on
+                                   :fail-creation-sync-on fail-creation-sync-on))
+           (full-path (journal-path journal))
+           (exists (probe-file full-path)))
+      ;; When the journal file exists on disk, it is read.
+      ;; Required bounds must be enforced before reads or side effects (taking the lock).
+      (when (and exists require-bounds)
         (unless mb (error 'missing-read-bounds :bound "--max-bytes"))
         (unless md (error 'missing-read-bounds :bound "--max-depth"))
         (unless mn (error 'missing-read-bounds :bound "--max-nodes")))
-      (let* ((journal (make-instance 'file-journal
-                                     :path (namestring (merge-pathnames path))
-                                     :capacity capacity
-                                     :initial-state-hash initial-state-hash
-                                     :reject-on reject-on
-                                     :fail-sync-on fail-sync-on
-                                     :fail-pre-write-on fail-pre-write-on
-                                     :fail-partial-write-on fail-partial-write-on
-                                     :fail-creation-sync-on fail-creation-sync-on))
-             (full-path (journal-path journal))
-             (exists (probe-file full-path)))
-        ;; The OS-held lock is taken before the file is opened or created, so a
-        ;; second holder is refused up front and never reads a journal out from
-        ;; under a live owner (SPEC-WORK.md:162-183). The lock is keyed by the
-        ;; journal's canonical spelling (realpath).
-        (when take-lock
-          (let ((lock (take-journal-lock full-path)))
-            (if lock
-                (setf (journal-lock journal) lock)
-                (error 'journal-held :path full-path))))
-        (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
-        (if exists
+      ;; The OS-held lock is taken before the file is opened or created, so a
+      ;; second holder is refused up front and never reads a journal out from
+      ;; under a live owner (SPEC-WORK.md:162-183). The lock is keyed by the
+      ;; journal's canonical spelling (realpath).
+      (when take-lock
+        (let ((lock (take-journal-lock full-path)))
+          (if lock
+              (setf (journal-lock journal) lock)
+              (error 'journal-held :path full-path))))
+      (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
+      (if exists
+          (progn
             (let* ((seq 0))
               (flet ((parse-stream (in)
                        (let* ((header (read-header in full-path initial-state-hash))
@@ -329,25 +330,22 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                                                       (journal-capacity journal))))
                              (setf (gethash req (journal-records journal)) (list digest line rev))
                              (push req (journal-order-slot journal)))))))
-                (if has-bounds
-                    (let ((text (read-bounded-file full-path :max-bytes mb
-                                                            :max-depth md
-                                                            :max-nodes mn
-                                                            :session session
-                                                            :require-all req
-                                                            :signal-error t)))
-                      (with-input-from-string (in text)
-                        (parse-stream in)))
-                    (with-open-file (in full-path :direction :input :element-type 'character :external-format :utf-8)
-                      (parse-stream in))))
-              (setf (journal-seq journal) seq)
-          ;; 2. Reopen for append once validated.
-          (let ((out (open full-path :direction :output
-                                     :if-exists :append
-                                     :if-does-not-exist :error
-                                     :element-type 'character
-                                     :external-format :utf-8)))
-            (setf (journal-stream journal) out)))
+                (let ((text (read-bounded-file full-path :max-bytes mb
+                                                        :max-depth md
+                                                        :max-nodes mn
+                                                        :session session
+                                                        :require-all require-bounds
+                                                        :signal-error t)))
+                  (with-input-from-string (in text)
+                    (parse-stream in))))
+              (setf (journal-seq journal) seq))
+            ;; 2. Reopen for append once validated.
+            (let ((out (open full-path :direction :output
+                                       :if-exists :append
+                                       :if-does-not-exist :error
+                                       :element-type 'character
+                                       :external-format :utf-8)))
+              (setf (journal-stream journal) out)))
         ;; File does not exist: create fresh journal, sync directory, and write header
         (let ((out (open full-path :direction :output
                                    :if-exists :error
@@ -371,7 +369,7 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
               (ignore-errors (close out))
               (setf (journal-stream journal) nil)
               (error c)))))
-        journal))))
+        journal)))
 
 (defun close-file-journal (journal)
   (when (journal-stream journal)
@@ -480,19 +478,17 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
         (values t (first record) (second record))
         (values nil nil nil))))
 
-(defun replay-journal (journal target-kernel &key (stop-at-seq nil) max-bytes max-depth max-nodes session (require-bounds nil))
+(defun replay-journal (journal target-kernel &key (stop-at-seq nil) max-bytes max-depth max-nodes session (require-bounds t))
   "Replay entries from JOURNAL into TARGET-KERNEL from its current revision.
 TARGET-KERNEL must start at the seed state matching the journal's initial state hash.
 Replays into private working state and installs into TARGET-KERNEL only after the
-requested replay cut completes without error. Governed by session bounds when supplied (SPEC-WORK.md:839-845).
+requested replay cut completes without error. Governed by session bounds (SPEC-WORK.md:839-845).
 Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
   (multiple-value-bind (sess-mb sess-md sess-mn)
       (if session (session-bounds session) (values nil nil nil))
     (let* ((mb (or max-bytes sess-mb))
            (md (or max-depth sess-md))
            (mn (or max-nodes sess-mn))
-           (has-bounds (or max-bytes max-depth max-nodes session))
-           (req (or require-bounds (not (null has-bounds))))
            (path (if (or (stringp journal) (pathnamep journal))
                      (namestring (merge-pathnames journal))
                      (journal-path journal)))
@@ -502,7 +498,7 @@ Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
            (seq 0)
            (record-count 0)
            (event-count 0))
-      (when req
+      (when require-bounds
         (unless mb (error 'missing-read-bounds :bound "--max-bytes"))
         (unless md (error 'missing-read-bounds :bound "--max-depth"))
         (unless mn (error 'missing-read-bounds :bound "--max-nodes")))
@@ -533,17 +529,14 @@ Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
                      (let ((candidate (apply-envelope working-state envelope)))
                        (setf working-state candidate)
                        (setf working-next-rev (max working-next-rev (1+ rev)))))))))
-        (if has-bounds
-            (let ((text (read-bounded-file path :max-bytes mb
-                                                :max-depth md
-                                                :max-nodes mn
-                                                :session session
-                                                :require-all req
-                                                :signal-error t)))
-              (with-input-from-string (in text)
-                (do-replay in)))
-            (with-open-file (in path :direction :input :element-type 'character :external-format :utf-8)
-              (do-replay in))))
+        (let ((text (read-bounded-file path :max-bytes mb
+                                            :max-depth md
+                                            :max-nodes mn
+                                            :session session
+                                            :require-all require-bounds
+                                            :signal-error t)))
+          (with-input-from-string (in text)
+            (do-replay in))))
       (setf (kernel-state target-kernel) working-state)
       (setf (kernel-next-rev target-kernel) working-next-rev)
       (values target-kernel event-count record-count))))

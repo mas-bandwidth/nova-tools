@@ -67,10 +67,10 @@ are byte identical. Returns the count written (SPEC-WORK.md:1294-1325)."
              always (loop for (k nil) on form by #'cddr thereis (eq k key)))
        (member (getf form :fact) '(:holds :absent))))
 
-(defun read-verification-cache (path &key resolvers max-bytes max-depth max-nodes session (require-bounds nil))
+(defun read-verification-cache (path &key resolvers max-bytes max-depth max-nodes session (require-bounds t))
   "Read the cache file PATH back into a fresh cache built with RESOLVERS
 (SPEC-WORK.md:1294-1325). A PATH that does not exist is an empty cache and not
-an error. When bounds or session are supplied, enforces them directly via read-bounded-file.
+an error. When reading an existing cache file, bounds are strictly enforced (SPEC-WORK.md:839-845).
 Every line goes through READ-RESTRICTED; a line that does not read, a
 form that is not a fact form, or a `:fact' that is neither `:holds' nor
 `:absent' signals UNSUPPORTED-INPUT naming PATH and the 1-based line, and
@@ -80,38 +80,36 @@ installs nothing: the cache is returned only when every line passed."
     (let* ((mb (or max-bytes sess-mb))
            (md (or max-depth sess-md))
            (mn (or max-nodes sess-mn))
-           (has-bounds (or max-bytes max-depth max-nodes session))
-           (req (or require-bounds (not (null has-bounds)))))
-      (when req
+           (cache (make-verification-cache :resolvers resolvers)))
+      (unless (probe-file path)
+        (return-from read-verification-cache cache))
+      (when require-bounds
         (unless mb (error 'missing-read-bounds :bound "--max-bytes"))
         (unless md (error 'missing-read-bounds :bound "--max-depth"))
         (unless mn (error 'missing-read-bounds :bound "--max-nodes")))
-      (let ((cache (make-verification-cache :resolvers resolvers)))
-        (unless (probe-file path)
-          (return-from read-verification-cache cache))
-        (let ((text (read-bounded-file path :max-bytes mb :max-depth md :max-nodes mn
-                                            :session session
-                                            :require-all req :signal-error t)))
-          (with-input-from-string (in text)
-            (loop for line = (read-line in nil :eof)
-                  for n from 1
-                  until (eq line :eof)
-                  do (let ((form (handler-case (read-restricted line)
-                                   (restricted-data-violation (c)
-                                     (error 'unsupported-input
-                                            :what (format nil "verification cache ~A line ~D does not read: ~A"
-                                                          (namestring path) n c))))))
-                       (unless (%verification-cache-form-p form)
-                         (error 'unsupported-input
-                                :what (format nil "verification cache ~A line ~D is not a fact form"
-                                              (namestring path) n)))
-                       (verification-cache-store cache
-                                                 (getf form :pointer)
-                                                 (getf form :subject)
-                                                 (getf form :resolver)
-                                                 (getf form :fact)
-                                                 (getf form :stamp))))))
-        cache))))
+      (let ((text (read-bounded-file path :max-bytes mb :max-depth md :max-nodes mn
+                                          :session session
+                                          :require-all require-bounds :signal-error t)))
+        (with-input-from-string (in text)
+          (loop for line = (read-line in nil :eof)
+                for n from 1
+                until (eq line :eof)
+                do (let ((form (handler-case (read-restricted line)
+                                 (restricted-data-violation (c)
+                                   (error 'unsupported-input
+                                          :what (format nil "verification cache ~A line ~D does not read: ~A"
+                                                        (namestring path) n c))))))
+                     (unless (%verification-cache-form-p form)
+                       (error 'unsupported-input
+                              :what (format nil "verification cache ~A line ~D is not a fact form"
+                                            (namestring path) n)))
+                     (verification-cache-store cache
+                                               (getf form :pointer)
+                                               (getf form :subject)
+                                               (getf form :resolver)
+                                               (getf form :fact)
+                                               (getf form :stamp))))))
+      cache)))
 
 (defun resolver-identities (resolvers)
   "The canonical resolver-identity list for RESOLVERS (SPEC-WORK.md:1294-1301):
@@ -126,7 +124,7 @@ command string everywhere, and no resolver object is ever compared for identity.
                          (verification-resolver-command resolver)))
                    resolvers))))
 
-(defun session-verification-from-cache (cache-path resolvers &key max-bytes max-depth max-nodes session)
+(defun session-verification-from-cache (cache-path resolvers &key max-bytes max-depth max-nodes session (require-bounds t))
   "The verification session `session start --cache` builds over CACHE-PATH with
 RESOLVERS, or nil when no non-empty cache is named (SPEC-WORK.md:1322-1325).
 Bounds from session start govern the cache read (SPEC-WORK.md:839-845)."
@@ -137,7 +135,8 @@ Bounds from session start govern the cache read (SPEC-WORK.md:839-845)."
                                      :max-bytes max-bytes
                                      :max-depth max-depth
                                      :max-nodes max-nodes
-                                     :session session)
+                                     :session session
+                                     :require-bounds require-bounds)
      :cache-path cache-path
      :resolvers resolvers)))
 

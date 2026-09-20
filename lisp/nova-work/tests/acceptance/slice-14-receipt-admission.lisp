@@ -300,13 +300,13 @@ revalidate the receipt against (SPEC-WORK.md:3864-3865)."
       (close-file-journal j1))
     ;; Close, reopen, replay: the ledger is a projection over the journalled
     ;; envelopes, so a recovered session reads the same receipt.
-    (let* ((j2 (open-file-journal journal-path :initial-state-hash init-digest))
+    (let* ((j2 (open-file-journal journal-path :initial-state-hash init-digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
            (k2 (make-kernel :state (make-seed-state *seed*) :journal j2)))
       (unwind-protect
            (progn
              (check-equal '() (admitted-receipts (kernel-state k2))
                           "a freshly seeded session holds no receipt")
-             (replay-journal j2 k2)
+             (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
              (let ((receipt (admitted-receipt (kernel-state k2) "receipt-7")))
                (ok receipt "the replayed session reads the receipt back")
                (check-equal "glenn" (getf receipt :sender) "the sender survived the replay")

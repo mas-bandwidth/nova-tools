@@ -54,11 +54,11 @@
             (ok (submit k1 (close-request :node "a" :request "irp-1")) "settle a")
             (ok (submit k1 (close-request :node "b" :request "irp-2")) "settle b"))
           (close-file-journal j1)
-          (let* ((j2 (open-file-journal path :initial-state-hash init-digest))
+          (let* ((j2 (open-file-journal path :initial-state-hash init-digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                  (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
             (unwind-protect
                 (progn
-                  (replay-journal j2 k2)
+                  (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                   (check-equal :c (node-branch (kernel-state k2) "a") "a recovered into C")
                   (check-equal :c (node-branch (kernel-state k2) "b") "b recovered into C")
                   (check-equal 0 (state-open-count (kernel-state k2)) "|O| after recovery")
@@ -101,11 +101,11 @@
                     (ok (submit rk (reopen-request :node "a" :request "irp-r2"))
                         "revive leg: revive a"))
                   (close-file-journal rj)
-                  (let* ((rj2 (open-file-journal rpath :initial-state-hash init-digest))
+                  (let* ((rj2 (open-file-journal rpath :initial-state-hash init-digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                          (rk2 (make-kernel :state (make-seed-state seed) :journal rj2)))
                     (unwind-protect
                         (progn
-                          (replay-journal rj2 rk2)
+                          (replay-journal rj2 rk2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                           (check-equal :o (node-branch (kernel-state rk2) "a")
                                        "the replayed revive did not return a to O")
                           (ok (plusp (length (state-closed-rows (kernel-state rk2))))

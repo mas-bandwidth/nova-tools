@@ -1051,7 +1051,7 @@
            ;; The recovery reconciliation has an id for every operation a caller
            ;; was told about: a restart over the same journal still holds it.
            (close-file-journal journal)
-           (let ((reopened (open-file-journal path)))
+           (let ((reopened (open-file-journal path :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (unwind-protect
                   (let ((restarted (make-operation-registry :journal reopened)))
                     (check-equal 1 (operation-journal-length restarted)

@@ -133,12 +133,12 @@
            ;; Verify file now holds durable record
            (ok (> (file-byte-count path) 100) "journal record was durable")
            ;; 2. Process restarts: new session opens existing journal and replays it
-           (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
+           (let* ((j2 (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                   (k2 (fresh :journal j2)))
              (unwind-protect
                   (progn
                     (multiple-value-bind (replayed-k events-count records-count)
-                        (replay-journal j2 k2)
+                        (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                       (declare (ignore replayed-k))
                       (check-equal 1 records-count "one record replayed")
                       (ok (> events-count 0) "cascade events replayed"))
@@ -228,7 +228,7 @@
                ;; Attempt to open corrupt file: must signal journal-corrupt-data
                (let ((signaled nil))
                  (handler-case
-                     (open-file-journal path :initial-state-hash initial-hash)
+                     (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                    (journal-corrupt-data () (setf signaled t))
                    (error (c) (fail "unexpected error type: ~A" c)))
                  (ok signaled "journal-corrupt-data signaled on torn tail"))
@@ -243,7 +243,7 @@
                       (close-file-journal j))
                     (let ((mismatch-signaled nil))
                       (handler-case
-                          (open-file-journal mismatch-path :initial-state-hash "different-hash-bbb")
+                          (open-file-journal mismatch-path :initial-state-hash "different-hash-bbb" :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         (journal-mismatch () (setf mismatch-signaled t)))
                       (ok mismatch-signaled "journal-mismatch signaled on wrong initial state")))
                (ignore-errors (delete-file mismatch-path)))))
@@ -272,12 +272,12 @@
                  (final-rows (state-closed-rows (kernel-state k1)))
                  (final-rev (kernel-next-rev k1)))
              ;; Create a fresh kernel k2 with the original seed and replay j1 into it
-             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
-                    (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
-               (unwind-protect
-                    (progn
-                      (multiple-value-bind (replayed-k events records)
-                          (replay-journal j2 k2)
+              (let* ((j2 (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
+                     (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
+                (unwind-protect
+                     (progn
+                       (multiple-value-bind (replayed-k events records)
+                           (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         (declare (ignore replayed-k))
                         (check-equal 5 records "five records replayed")
                         (ok (> events 5) "all events replayed"))
@@ -321,11 +321,11 @@
              (ok (> (file-byte-count path) size-after-req1) "frame was flushed to disk before sync failure")
              (close-file-journal j)
              ;; 5. Recovery via clean reopen: validates complete frames including req-fail, seq is 2!
-             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
-                    (k2 (fresh :journal j2)))
-               (unwind-protect
-                    (progn
-                      (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2)
+              (let* ((j2 (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
+                     (k2 (fresh :journal j2)))
+                (unwind-protect
+                     (progn
+                       (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         (declare (ignore replayed-k ev))
                         (check-equal 2 rec "recovered 2 complete records including uncertain append"))
                       (check-equal 2 (journal-seq j2) "recovered journal seq is 2")
@@ -376,9 +376,9 @@
                (ok (> torn-size size-after-req1) "partial frame written to disk")
                (close-file-journal j)
                ;; 5. Reopen must signal journal-corrupt-data
-               (let ((corrupt-signaled nil))
-                 (handler-case
-                     (open-file-journal path :initial-state-hash initial-hash)
+                (let ((corrupt-signaled nil))
+                  (handler-case
+                      (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                    (journal-corrupt-data (c)
                      (declare (ignore c))
                      (setf corrupt-signaled t)))
@@ -438,11 +438,11 @@
                (ok (getf env3 :replayed) "req-cap-3 marked replayed"))
              ;; 4. Close and reopen journal: exactly 3 entries preserved and retriable
              (close-file-journal j)
-             (let* ((j2 (open-file-journal path :capacity capacity :initial-state-hash initial-hash))
-                    (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
-               (unwind-protect
-                    (progn
-                      (multiple-value-bind (rep-k ev rec) (replay-journal j2 k2)
+              (let* ((j2 (open-file-journal path :capacity capacity :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
+                     (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
+                (unwind-protect
+                     (progn
+                       (multiple-value-bind (rep-k ev rec) (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         (declare (ignore rep-k ev))
                         (check-equal 3 rec "replayed 3 records")
                         (check-string= state-at-capacity (root-digest (kernel-state k2)) "state restored"))
@@ -552,13 +552,13 @@
                   (init-digest (root-digest (kernel-state target-k)))
                   (init-rev (kernel-next-rev target-k))
                   (init-history (state-history (kernel-state target-k)))
-                  (j-replay (open-file-journal path :initial-state-hash initial-hash))
+                  (j-replay (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                   (signaled nil))
              (unwind-protect
                   (progn
                     ;; 4. Attempt replay-journal: frame 1 applies to working state, but frame 2 signals error
                     (handler-case
-                        (replay-journal j-replay target-k)
+                        (replay-journal j-replay target-k :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                       (error (c)
                         (declare (ignore c))
                         (setf signaled t)))
@@ -617,11 +617,11 @@
              (handler-case (submit k1 req) (error () nil)))
            (close-file-journal j1)
            (ok (> (file-byte-count path) 100) "record written and synced before apply")
-           (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
+           (let* ((j2 (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                   (k2 (fresh :journal j2)))
              (unwind-protect
                   (progn
-                    (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2)
+                    (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                       (declare (ignore replayed-k ev))
                       (check-equal 1 rec "one record recovered after the crash"))
                     (multiple-value-bind (okp line code env) (submit k2 req)

@@ -185,14 +185,14 @@
                   (and (consp boundary) (consp (cdr boundary))
                        (getf boundary :dedup-root)))))
     (close-file-journal (getf fx :journal))
-    (let ((journal (open-file-journal journal-path :initial-state-hash init-digest)))
+    (let ((journal (open-file-journal journal-path :initial-state-hash init-digest :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
       (unwind-protect
            (progn
              (multiple-value-bind (entries digest) (read-dedup-root dedup-root-path)
                (declare (ignore entries))
                (check-equal named digest "the root's digest changed across close"))
              (let ((k (make-kernel :state (make-seed-state *seed*) :journal journal)))
-               (replay-journal journal k)
+               (replay-journal journal k :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                (multiple-value-bind (okp line)
                    (savepoint-verify-published root "sp-dr" :journal-path journal-path)
                  (ok okp "the savepoint stopped verifying after reopen: ~A" line))

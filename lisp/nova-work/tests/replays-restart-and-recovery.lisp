@@ -59,10 +59,10 @@ journal file in it at all: the answer a restart has to agree with."
 (defun %replayed-form (path digest &key stop-at-seq)
   "Reopen the journal at PATH and replay it into a fresh kernel over the seed,
 answering the canonical bytes it reaches."
-  (let* ((j (open-file-journal path :initial-state-hash digest))
+  (let* ((j (open-file-journal path :initial-state-hash digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
          (k (make-kernel :state (make-seed-state *recovery-seed*) :journal j)))
     (unwind-protect
-         (progn (replay-journal j k :stop-at-seq stop-at-seq)
+         (progn (replay-journal j k :stop-at-seq stop-at-seq :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                 (state-canonical-form (kernel-state k)))
       (ignore-errors (close-file-journal j)))))
 
@@ -127,11 +127,11 @@ answering the canonical bytes it reaches."
                  "a restart after a kill between the record and the apply is not where the clean run lands")
     ;; AND THE RETRY. Same id, same payload, after the restart: the original
     ;; receipt, and no second event.
-    (let* ((j2 (open-file-journal path :initial-state-hash digest))
+    (let* ((j2 (open-file-journal path :initial-state-hash digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
            (k2 (make-kernel :state (make-seed-state *recovery-seed*) :journal j2)))
       (unwind-protect
            (progn
-             (replay-journal j2 k2)
+             (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
              (let ((rev (state-revision (kernel-state k2)))
                    (hist (length (state-history (kernel-state k2)))))
                (multiple-value-bind (okp line) (submit k2 (third (%recovery-commands)))

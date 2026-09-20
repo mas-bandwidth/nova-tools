@@ -454,85 +454,215 @@
       (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count"))
 
     ;; E. Missing bounds signaled across entrypoints when bounds omitted:
+    ;; 1. session-start with named existing cache file:
     (let ((signaled nil))
       (handler-case
-          (open-file-journal journal-file :session default-sess)
+          (session-start :cache cache-file)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "open-file-journal missing bound")))
-      (ok signaled "open-file-journal did not signal missing-read-bounds under default-sess"))
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "session-start cache all omitted bound")))
+      (ok signaled "session-start did not signal missing-read-bounds with all bounds omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (open-file-journal journal-file :require-bounds t)
+          (session-start :cache cache-file :max-depth 20 :max-nodes 500)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "open-file-journal require-bounds")))
-      (ok signaled "open-file-journal did not signal missing-read-bounds with :require-bounds t"))
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "session-start cache omitted max-bytes")))
+      (ok signaled "session-start did not signal missing-read-bounds when max-bytes omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (replay-journal journal-file (fresh) :session default-sess)
+          (session-start :cache cache-file :max-bytes 100000 :max-nodes 500)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-journal missing bound")))
-      (ok signaled "replay-journal did not signal missing-read-bounds under default-sess"))
+          (check-equal "--max-depth" (missing-read-bounds-bound c) "session-start cache omitted max-depth")))
+      (ok signaled "session-start did not signal missing-read-bounds when max-depth omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (replay-journal journal-file (fresh) :require-bounds t)
+          (session-start :cache cache-file :max-bytes 100000 :max-depth 20)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-journal require-bounds")))
-      (ok signaled "replay-journal did not signal missing-read-bounds with :require-bounds t"))
+          (check-equal "--max-nodes" (missing-read-bounds-bound c) "session-start cache omitted max-nodes")))
+      (ok signaled "session-start did not signal missing-read-bounds when max-nodes omitted"))
+
+    (let ((sess-ok (session-start :cache cache-file :max-bytes 100000 :max-depth 20 :max-nodes 500)))
+      (ok sess-ok "session-start failed when all required bounds were supplied")
+      (ok (session-verification sess-ok) "session carries verification session"))
+
+    ;; 2. read-verification-cache:
+    (let ((signaled nil))
+      (handler-case
+          (read-verification-cache cache-file)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-verification-cache all omitted bound")))
+      (ok signaled "read-verification-cache did not signal missing-read-bounds with all bounds omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (read-verification-cache cache-file :session default-sess)
+          (read-verification-cache cache-file :max-depth 20 :max-nodes 500)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-verification-cache missing bound")))
-      (ok signaled "read-verification-cache did not signal missing-read-bounds under default-sess"))
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-verification-cache omitted max-bytes")))
+      (ok signaled "read-verification-cache did not signal missing-read-bounds when max-bytes omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (read-verification-cache cache-file :require-bounds t)
+          (read-verification-cache cache-file :max-bytes 100000 :max-nodes 500)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-verification-cache require-bounds")))
-      (ok signaled "read-verification-cache did not signal missing-read-bounds with :require-bounds t"))
+          (check-equal "--max-depth" (missing-read-bounds-bound c) "read-verification-cache omitted max-depth")))
+      (ok signaled "read-verification-cache did not signal missing-read-bounds when max-depth omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (read-request-bundle-file bundle-file :session default-sess :signal-error t)
+          (read-verification-cache cache-file :max-bytes 100000 :max-depth 20)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-request-bundle-file missing bound")))
-      (ok signaled "read-request-bundle-file did not signal missing-read-bounds under default-sess"))
+          (check-equal "--max-nodes" (missing-read-bounds-bound c) "read-verification-cache omitted max-nodes")))
+      (ok signaled "read-verification-cache did not signal missing-read-bounds when max-nodes omitted"))
+
+    (let ((cache-ok (read-verification-cache cache-file :max-bytes 100000 :max-depth 20 :max-nodes 500)))
+      (ok cache-ok "read-verification-cache failed when all bounds supplied"))
+
+    ;; 3. open-file-journal:
+    (let ((signaled nil))
+      (handler-case
+          (open-file-journal journal-file)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "open-file-journal all omitted bound")))
+      (ok signaled "open-file-journal did not signal missing-read-bounds with all bounds omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (read-request-bundle-file bundle-file :require-bounds t :signal-error t)
+          (open-file-journal journal-file :max-depth 20 :max-nodes 500)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-request-bundle-file require-bounds")))
-      (ok signaled "read-request-bundle-file did not signal missing-read-bounds with :require-bounds t"))
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "open-file-journal omitted max-bytes")))
+      (ok signaled "open-file-journal did not signal missing-read-bounds when max-bytes omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (replay-request-bundle bundle-file (fresh) :session default-sess)
+          (open-file-journal journal-file :max-bytes 100000 :max-nodes 500)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-request-bundle missing bound")))
-      (ok signaled "replay-request-bundle did not signal missing-read-bounds under default-sess"))
+          (check-equal "--max-depth" (missing-read-bounds-bound c) "open-file-journal omitted max-depth")))
+      (ok signaled "open-file-journal did not signal missing-read-bounds when max-depth omitted"))
 
     (let ((signaled nil))
       (handler-case
-          (replay-request-bundle bundle-file (fresh) :require-bounds t)
+          (open-file-journal journal-file :max-bytes 100000 :max-depth 20)
         (missing-read-bounds (c)
           (setf signaled t)
-          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-request-bundle require-bounds")))
-      (ok signaled "replay-request-bundle did not signal missing-read-bounds with :require-bounds t"))))
+          (check-equal "--max-nodes" (missing-read-bounds-bound c) "open-file-journal omitted max-nodes")))
+      (ok signaled "open-file-journal did not signal missing-read-bounds when max-nodes omitted"))
+
+    ;; 4. replay-journal:
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh))
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-journal all omitted bound")))
+      (ok signaled "replay-journal did not signal missing-read-bounds with all bounds omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh) :max-depth 20 :max-nodes 500)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-journal omitted max-bytes")))
+      (ok signaled "replay-journal did not signal missing-read-bounds when max-bytes omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh) :max-bytes 100000 :max-nodes 500)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-depth" (missing-read-bounds-bound c) "replay-journal omitted max-depth")))
+      (ok signaled "replay-journal did not signal missing-read-bounds when max-depth omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh) :max-bytes 100000 :max-depth 20)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-nodes" (missing-read-bounds-bound c) "replay-journal omitted max-nodes")))
+      (ok signaled "replay-journal did not signal missing-read-bounds when max-nodes omitted"))
+
+    ;; 5. read-request-bundle-file:
+    (let ((signaled nil))
+      (handler-case
+          (read-request-bundle-file bundle-file :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-request-bundle-file all omitted bound")))
+      (ok signaled "read-request-bundle-file did not signal missing-read-bounds with all bounds omitted"))
+
+    (multiple-value-bind (val msg code) (read-request-bundle-file bundle-file :signal-error nil)
+      (ok (null val) "read-request-bundle-file with signal-error nil returned val")
+      (check-equal 2 code "read-request-bundle-file with signal-error nil exit 2")
+      (ok (search "missing --max-bytes" msg) "read-request-bundle-file message names missing bound"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-request-bundle-file bundle-file :max-depth 20 :max-nodes 500 :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-request-bundle-file omitted max-bytes")))
+      (ok signaled "read-request-bundle-file did not signal missing-read-bounds when max-bytes omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-request-bundle-file bundle-file :max-bytes 100000 :max-nodes 500 :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-depth" (missing-read-bounds-bound c) "read-request-bundle-file omitted max-depth")))
+      (ok signaled "read-request-bundle-file did not signal missing-read-bounds when max-depth omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-request-bundle-file bundle-file :max-bytes 100000 :max-depth 20 :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-nodes" (missing-read-bounds-bound c) "read-request-bundle-file omitted max-nodes")))
+      (ok signaled "read-request-bundle-file did not signal missing-read-bounds when max-nodes omitted"))
+
+    ;; 6. replay-request-bundle:
+    (let ((signaled nil))
+      (handler-case
+          (replay-request-bundle bundle-file (fresh))
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-request-bundle all omitted bound")))
+      (ok signaled "replay-request-bundle did not signal missing-read-bounds with all bounds omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-request-bundle bundle-file (fresh) :max-depth 20 :max-nodes 500)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-request-bundle omitted max-bytes")))
+      (ok signaled "replay-request-bundle did not signal missing-read-bounds when max-bytes omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-request-bundle bundle-file (fresh) :max-bytes 100000 :max-nodes 500)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-depth" (missing-read-bounds-bound c) "replay-request-bundle omitted max-depth")))
+      (ok signaled "replay-request-bundle did not signal missing-read-bounds when max-depth omitted"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-request-bundle bundle-file (fresh) :max-bytes 100000 :max-depth 20)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-nodes" (missing-read-bounds-bound c) "replay-request-bundle omitted max-nodes")))
+      (ok signaled "replay-request-bundle did not signal missing-read-bounds when max-nodes omitted"))))
 
 ;;; ------------------------------------------------------------------
 ;;; E01-F02-03: Preserve unknown keys and refuse unknown node types

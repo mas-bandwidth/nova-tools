@@ -81,7 +81,7 @@ image without redefining each other."
              (apply #'verification-cache-store cache f))
            (check-equal 3 (write-verification-cache cache path)
                         "the writer returns the count it wrote")
-           (let ((back (read-verification-cache path)))
+           (let ((back (read-verification-cache path :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (check-equal 3 (verification-cache-size back)
                           "three facts come back through the file")
              (dolist (f *round-trip-facts*)
@@ -176,7 +176,7 @@ image without redefining each other."
              (write-string "this is not a restricted form" out)
              (write-char #\Newline out))
            (handler-case
-               (setf result (read-verification-cache path))
+               (setf result (read-verification-cache path :max-bytes 1000000 :max-depth 20 :max-nodes 500))
              (unsupported-input (c)
                (let ((what (princ-to-string c)))
                  (ok (search path what)
@@ -198,7 +198,7 @@ image without redefining each other."
          (progn
            (write-cache-lines path (list "#.(error \"pwned\")"))
            (handler-case
-               (progn (read-verification-cache path)
+               (progn (read-verification-cache path :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                       (ok nil "evaluation syntax was accepted"))
              (unsupported-input ()
                (ok t "the evaluation syntax is refused as unsupported-input"))))
@@ -220,7 +220,7 @@ image without redefining each other."
                                        :absent "2026-09-13T18:00:00Z")
              (check-equal 2 (write-verification-cache cache path)
                           "two facts written"))
-           (let ((sess (session-start :cache path)))
+           (let ((sess (session-start :cache path :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (check-equal path (session-cache sess)
                           "the session names the cache path it was started with")
              (let ((vs (session-verification sess)))
@@ -248,14 +248,14 @@ image without redefining each other."
     (unwind-protect
          (let (first-line first-rows second-line second-rows)
            (let* ((resolver (counting-resolver "test" "cmd-reopen" :calls calls))
-                  (sess (session-start :cache path :resolvers (list resolver))))
+                  (sess (session-start :cache path :resolvers (list resolver) :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (multiple-value-bind (line rows exit) (verify (session-verification sess) evidence)
                (declare (ignore exit))
                (setf first-line line first-rows rows)))
            ;; There is no stop verb to call: dropping the first session and
            ;; starting a second on the same path IS the reopen.
            (let* ((resolver (counting-resolver "test" "cmd-reopen" :calls calls))
-                  (sess (session-start :cache path :resolvers (list resolver))))
+                  (sess (session-start :cache path :resolvers (list resolver) :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (multiple-value-bind (line rows exit) (verify (session-verification sess) evidence)
                (declare (ignore exit))
                (setf second-line line second-rows rows)))
@@ -288,13 +288,13 @@ image without redefining each other."
                                        :holds "2026-09-13T18:00:00Z")
              (write-verification-cache cache path))
            (let* ((resolver (counting-resolver "test" "cmd-ident" :calls calls))
-                  (sess (session-start :cache path :resolvers (list resolver)))
+                  (sess (session-start :cache path :resolvers (list resolver) :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                   (vs (session-verification sess)))
              (check-equal (list "cmd-ident")
                           (verification-cache-resolvers (verification-session-cache vs))
                           "the cache's resolver set holds command strings, not objects")
              (ok (null (verification-cache-lookup
-                        (read-verification-cache path :resolvers (list resolver))
+                        (read-verification-cache path :resolvers (list resolver) :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         "test:a@sha-1" "a" "cmd-ident"))
                  "the same read given resolver objects would not hit")
              (multiple-value-bind (line rows exit) (verify vs evidence)
@@ -325,7 +325,8 @@ image without redefining each other."
                           (session-start :cache path
                                          :resolvers (list (counting-resolver
                                                            "test" "cmd-write"
-                                                           :calls calls))))
+                                                           :calls calls))
+                                         :max-bytes 1000000 :max-depth 20 :max-nodes 500))
                          evidence)
                (declare (ignore rows exit))
                (setf returned line))
@@ -353,13 +354,13 @@ image without redefining each other."
            (let* ((resolver (counting-resolver "test" "cmd-hold"
                                                :fact :holds
                                                :stamp "2026-09-13T18:00:00Z"))
-                  (sess (session-start :cache path :resolvers (list resolver))))
+                  (sess (session-start :cache path :resolvers (list resolver) :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (verify (session-verification sess) evidence))
            (let ((text (cache-file-text path)))
              (ok (plusp (length text)) "the cache file is not empty")
              (check-equal 1 (count #\Newline text)
                           "the cache file is exactly one line"))
-           (let ((back (read-verification-cache path)))
+           (let ((back (read-verification-cache path :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
              (check-equal 1 (verification-cache-size back)
                           "the file holds exactly one fact")
              (let ((got (verification-cache-lookup back "test:pkg/z@sha-1" "pkg/z"

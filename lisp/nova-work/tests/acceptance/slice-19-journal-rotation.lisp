@@ -130,11 +130,11 @@ valid UTF-8 and the frame structurally parseable: a corrupt record, not a tear."
            ;; the OLD header shape: no :journal-identity field
            (s19-strip-identity journal-path)
            (let ((before (file-sha256-hex journal-path)))
-             (let ((reopened (open-file-journal journal-path :initial-state-hash init)))
-               (unwind-protect
-                    (let ((k (make-kernel :state (make-seed-state *seed*)
-                                          :journal reopened)))
-                      (multiple-value-bind (rk ev rec) (replay-journal reopened k)
+              (let ((reopened (open-file-journal journal-path :initial-state-hash init :max-bytes 1000000 :max-depth 20 :max-nodes 500)))
+                (unwind-protect
+                     (let ((k (make-kernel :state (make-seed-state *seed*)
+                                           :journal reopened)))
+                       (multiple-value-bind (rk ev rec) (replay-journal reopened k :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         (declare (ignore rk ev))
                         (check-equal 2 rec "the legacy journal replayed two records")))
                  (close-file-journal reopened)))

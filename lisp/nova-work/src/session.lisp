@@ -372,16 +372,22 @@ max-nodes bounds (SPEC-WORK.md:839-845)."
         (let* ((actual-mb max-bytes)
                (actual-md max-depth)
                (actual-mn max-nodes)
-               (k (make-kernel :state (if (typep state-seed 'wstate)
-                                          state-seed
-                                          (make-seed-state state-seed))
-                               :journal (or journal (make-ordering-journal))))
-               (cache-path (or cache ""))
-               (verification (session-verification-from-cache cache-path resolvers
-                                                             :max-bytes actual-mb
-                                                             :max-depth actual-md
-                                                             :max-nodes actual-mn))
-               (sess (make-session :path (or path "")
+               (cache-path (or cache "")))
+          ;; When a named existing cache file is given to session-start, bounds are required
+          ;; before reading the cache file (SPEC-WORK.md:839-845).
+          (when (and (plusp (length cache-path)) (probe-file cache-path))
+            (unless actual-mb (error 'missing-read-bounds :bound "--max-bytes"))
+            (unless actual-md (error 'missing-read-bounds :bound "--max-depth"))
+            (unless actual-mn (error 'missing-read-bounds :bound "--max-nodes")))
+          (let* ((k (make-kernel :state (if (typep state-seed 'wstate)
+                                            state-seed
+                                            (make-seed-state state-seed))
+                                 :journal (or journal (make-ordering-journal))))
+                 (verification (session-verification-from-cache cache-path resolvers
+                                                               :max-bytes actual-mb
+                                                               :max-depth actual-md
+                                                               :max-nodes actual-mn))
+                 (sess (make-session :path (or path "")
                                    :owner (owner-owner record)
                                    :generation (owner-generation record)
                                    :token (owner-token record)
@@ -400,7 +406,7 @@ max-nodes bounds (SPEC-WORK.md:839-845)."
               (start-session-server sess
                                     :socket-path (or socket-path path)
                                     :foreground foreground)
-              (values sess line 0))))))
+              (values sess line 0)))))))
 
 (defun session-read-file (sess path &key (signal-error nil))
   "Read PATH under the bounds of SESS (SPEC-WORK.md:839-845)."

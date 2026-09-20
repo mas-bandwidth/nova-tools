@@ -68,11 +68,11 @@ PATH is bound too, so a case can reopen the same journal and replay it."
     ;; pass at all: a lease that is not in the journal is not in the order,
     ;; and a kernel rebuilt from the journal gets the node back UNOWNED.
     (close-file-journal j)
-    (let* ((j2 (open-file-journal path :initial-state-hash init-digest))
+    (let* ((j2 (open-file-journal path :initial-state-hash init-digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
            (k2 (make-kernel :state (make-seed-state *lease-seed*) :journal j2)))
       (unwind-protect
            (progn
-             (replay-journal j2 k2)
+             (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
              (check-equal "emma" (node-holder (kernel-state k2) "root/t1")
                           "the lease did not survive replay-journal")
              (let ((rows (state-lease-log (kernel-state k2))))
@@ -192,11 +192,11 @@ PATH is bound too, so a case can reopen the same journal and replay it."
     (multiple-value-bind (found) (journal-lookup j "lrl-2")
       (ok found "the release wrote NO journal record"))
     (close-file-journal j)
-    (let* ((j2 (open-file-journal path :initial-state-hash init-digest))
+    (let* ((j2 (open-file-journal path :initial-state-hash init-digest :max-bytes 1000000 :max-depth 20 :max-nodes 500))
            (k2 (make-kernel :state (make-seed-state *lease-seed*) :journal j2)))
       (unwind-protect
            (progn
-             (replay-journal j2 k2)
+             (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
              (check-equal nil (node-holder (kernel-state k2) "root/t1")
                           "the replayed release did not end the lease")
              (check-equal '(:take :release)

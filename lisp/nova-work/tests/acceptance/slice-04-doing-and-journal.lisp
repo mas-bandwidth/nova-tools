@@ -21,9 +21,9 @@
              (let* ((torn-bytes (file-byte-count path))
                     (torn-sha (file-sha256-hex path)))
                (ok (> torn-bytes valid-bytes) "torn bytes appended")
-               (let ((reason nil))
-                 (handler-case (open-file-journal path :initial-state-hash initial-hash)
-                   (journal-corrupt-data (c) (setf reason (journal-corrupt-data-reason c))))
+                (let ((reason nil))
+                  (handler-case (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500)
+                    (journal-corrupt-data (c) (setf reason (journal-corrupt-data-reason c))))
                  (ok reason "the torn tail was not diagnosed"))
                (check-equal torn-bytes (file-byte-count path)
                             "the file was truncated")
@@ -85,11 +85,11 @@
            (let ((digest (root-digest (kernel-state k1)))
                  (rev (kernel-next-rev k1)))
              (close-file-journal j1)
-             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
-                    (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
-               (unwind-protect
-                    (progn
-                      (multiple-value-bind (rk ev rec) (replay-journal j2 k2)
+              (let* ((j2 (open-file-journal path :initial-state-hash initial-hash :max-bytes 1000000 :max-depth 20 :max-nodes 500))
+                     (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
+                (unwind-protect
+                     (progn
+                       (multiple-value-bind (rk ev rec) (replay-journal j2 k2 :max-bytes 1000000 :max-depth 20 :max-nodes 500)
                         (declare (ignore rk ev))
                         (check-equal 2 rec "two records replayed"))
                       (check-string= digest (root-digest (kernel-state k2))

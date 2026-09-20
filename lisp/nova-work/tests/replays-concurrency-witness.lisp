@@ -139,11 +139,11 @@ writer and its counters rather than on one node's transition table.")
            ;; and replaying it from the seed reaches the same bytes.
            (let ((live (state-canonical-form (kernel-state k))))
              (close-file-journal j)
-             (let* ((j2 (open-file-journal path :initial-state-hash digest :capacity 512))
-                    (k2 (make-kernel :state (make-seed-state *concurrency-seed*) :journal j2)))
-               (unwind-protect
-                    (progn
-                      (replay-journal j2 k2)
+              (let* ((j2 (open-file-journal path :initial-state-hash digest :capacity 512 :max-bytes 10000000 :max-depth 100 :max-nodes 50000))
+                     (k2 (make-kernel :state (make-seed-state *concurrency-seed*) :journal j2)))
+                (unwind-protect
+                     (progn
+                       (replay-journal j2 k2 :max-bytes 10000000 :max-depth 100 :max-nodes 50000)
                       (check-equal live (state-canonical-form (kernel-state k2))
                                    "the journal does not replay to the state the writers left: the applied order and the recorded order are not the same order")
                       (check-equal '() (state-index-mismatches (kernel-state k2))
