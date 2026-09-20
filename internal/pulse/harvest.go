@@ -72,6 +72,11 @@ type HarvestInput struct {
 	Roots      string
 	SinceStamp string
 	Timer      string
+
+	// CaptureDir is the root directory for capture manifests and artifacts (#2407).
+	// When named, each folded job is captured against the capture manifest, keyed
+	// by card + attempt + job, with manifest digest verified and deletion disabled.
+	CaptureDir string
 }
 
 func field(s string) string {
@@ -305,6 +310,33 @@ func Harvest(in HarvestInput) int {
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
 				field(dest.repo), pr, field(c.Label), field(branch), classTail))
 			appendNext(in.Root, dest.repo, pr, c.Label)
+		}
+
+		if strings.TrimSpace(in.CaptureDir) != "" && isDir(jobDir) {
+			attempt := 1
+			cardName := c.Card
+			if cardName == "" {
+				cardName = c.Label
+			}
+			key := CaptureKey{
+				Card:    cardName,
+				Attempt: attempt,
+				Job:     c.Label,
+			}
+			isHarnessFail := (state == "abstain" || state == "refused" || state == "mismatch")
+			m, err := CaptureJob(CaptureJobOptions{
+				Key:            key,
+				JobDir:         jobDir,
+				OutputRoot:     in.CaptureDir,
+				Label:          c.Label,
+				BaseSHA:        in.Base,
+				ExitKind:       state,
+				HarnessFailure: isHarnessFail,
+			})
+			if err == nil && m != nil {
+				lines = append(lines, fmt.Sprintf("HARVEST CAPTURE key=%s digest=%s retained=true",
+					key.String(), m.ManifestDigest))
+			}
 		}
 	}
 

@@ -118,6 +118,28 @@ func HarvestWorking(in HarvestInput) int {
 		if out.line != "" {
 			list.Line(out.line)
 		}
+		if strings.TrimSpace(in.CaptureDir) != "" {
+			attempt := 1
+			key := CaptureKey{
+				Card:    j.label,
+				Attempt: attempt,
+				Job:     filepath.Base(j.dir),
+			}
+			isHarnessFail := (out.class == classFailed)
+			m, err := CaptureJob(CaptureJobOptions{
+				Key:            key,
+				JobDir:         j.dir,
+				OutputRoot:     in.CaptureDir,
+				Label:          j.label,
+				BaseSHA:        r.base12,
+				ExitKind:       string(out.class),
+				HarnessFailure: isHarnessFail,
+			})
+			if err == nil && m != nil {
+				list.Line(fmt.Sprintf("HARVEST CAPTURE key=%s digest=%s retained=true",
+					key.String(), m.ManifestDigest))
+			}
+		}
 		markHarvestedLocal(j.dir)
 	}
 	list.More()

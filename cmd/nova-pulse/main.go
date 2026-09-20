@@ -472,9 +472,21 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	working := f.fs.String("working", "", "")
 	roots := f.fs.String("roots", "", "")
 	timer := f.fs.String("timer", "", "")
+	captureDir := f.fs.String("capture-dir", "", "")
+	recoverDir := f.fs.String("recover", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if recDir := strings.TrimSpace(*recoverDir); recDir != "" {
+		rec, err := pulse.RecoverCapture(recDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "HARVEST RECOVERY REFUSED: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "HARVEST RECOVERY OK key=%s digest=%s files=%d retained=%t\n",
+			rec.Key.String(), rec.Manifest.ManifestDigest, len(rec.Manifest.Files), rec.Manifest.Retained)
+		return 0
 	}
 	// The working layout names no --id and no --root: it folds the bench's jobs
 	// under --working and the swarm roots under --roots. The old layout is
@@ -498,6 +510,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 			SinceStamp: *since,
 			Timer:      *timer,
 			Max:        *max,
+			CaptureDir: *captureDir,
 			Clones:     []string(clones),
 			Stdout:     stdout,
 			Stderr:     stderr,
@@ -559,6 +572,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Launched:     *launched,
 		Done:         *doneDir,
 		Failed:       *failedDir,
+		CaptureDir:   *captureDir,
 	}
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)
