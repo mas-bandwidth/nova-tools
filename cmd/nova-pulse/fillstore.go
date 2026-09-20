@@ -40,7 +40,7 @@ const defaultMaxLoadPerCore = 1.5
 type storeProbeConfig struct {
 	SSH      string          // the ssh binary; empty is `ssh`
 	Store    string          // the slot store path ON the bench
-	Owner    string          // the owner row in shares.tsv; empty is swarm-<bench>
+	Owner    string          // the owner row in shares.tsv; empty is the bench's registry seat, then swarm-<bench>
 	SlotsBin string          // the nova-swarm that lists the store's leases
 	Root     string          // the swarm root, for the legacy formula's disk term
 	Local    map[string]bool // benches read by this machine's own shell, never over ssh
@@ -52,21 +52,17 @@ type storeProbeConfig struct {
 // probe per bench per tick, parsed and braked by internal/pulse.
 func storeProbeCapacity(c storeProbeConfig) pulse.Capacity {
 	return pulse.StoreCapacity{
-		Probe:          c.probe,
+		SeatProbe:      c.probeOwner,
 		Owner:          c.Owner,
 		MaxLoadPerCore: c.MaxLoad,
 		Stderr:         c.Stderr,
 	}
 }
 
-// probe runs the one line on the bench and hands back what it printed.
-func (c storeProbeConfig) probe(bench string) (string, error) {
-	owner := strings.TrimSpace(c.Owner)
-	if owner == "" {
-		// The seat the launcher already hands the bench. It is a convention this tool
-		// already writes down (flashLauncher's `swarm-<bench>`), not a new guess.
-		owner = "swarm-" + bench
-	}
+// probeOwner runs the one line on the bench for the owner StoreCapacity resolved: an
+// explicit --slots-owner, else the bench's registry seat (#2029). It does not derive
+// `swarm-<bench>`; that guess is StoreCapacity's last-resort legacy fallback only.
+func (c storeProbeConfig) probeOwner(bench, owner string) (string, error) {
 	script := storeScript(c.Store, owner, c.SlotsBin, c.Root)
 	if c.Local[bench] {
 		return runProbeLocally(script)

@@ -129,6 +129,25 @@ func (g guardedCapacity) Capacity(bench string) (int, error) {
 	return g.next.Capacity(bench)
 }
 
+// capacityForSeat carries the registry seat through the guard to a seat-aware reader and
+// falls back to the plain seam for a fixed number or a legacy fixture (#2029).
+func (g guardedCapacity) capacityForSeat(bench, seat string) (int, error) {
+	if err := g.reg.RequireBench(bench); err != nil {
+		return 0, err
+	}
+	return capacityFor(g.next, bench, seat)
+}
+
+// capacityFor asks a reader for one bench's free count, handing a seat-aware reader the
+// registry seat Fill resolved once (#2029). A reader that knows only Capacity(bench) --
+// fixedCapacity, sshCapacity, a test fixture -- is asked the old way.
+func capacityFor(c Capacity, bench, seat string) (int, error) {
+	if sc, ok := c.(seatCapacity); ok {
+		return sc.capacityForSeat(bench, seat)
+	}
+	return c.Capacity(bench)
+}
+
 // guardedLauncher is the launch seam with the registry in front of it: the last gate a card
 // passes before it lands on a machine.
 type guardedLauncher struct {
@@ -378,7 +397,7 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 	want := make([]int, len(in.Benches))
 	capacityFailed := make([]bool, len(in.Benches))
 	for i, bench := range in.Benches {
-		if n, err := in.Capacity.Capacity(bench); err != nil {
+		if n, err := capacityFor(in.Capacity, bench, seats[bench]); err != nil {
 			capacityFailed[i] = true
 			// FAIL CLOSED, AND SAY SO, PER BENCH. A probe or parse failure is zero free
 			// slots on THAT bench -- never a deal, never a fall-through -- and every

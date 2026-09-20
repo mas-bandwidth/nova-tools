@@ -1598,8 +1598,11 @@ free = <store>/shares.tsv's <owner> row  -  that owner's held leases (live or DR
 ```
 
 `--slots-store <path>` is the store on the bench, `$HOME/nova-bench/slots` by default
-and expanded by the bench's own shell; `--slots-owner <name>` is the row, `swarm-<bench>`
-by default, the seat the launcher already hands the bench; `--slots-bin <path>` is the
+and expanded by the bench's own shell; `--slots-owner <name>` is the row, the bench's
+registry seat by default (#2029) — the same seat the launcher already hands the bench, so
+the store share and the live leases of the seat are what is counted; an explicit
+`--slots-owner` overrides it, and `swarm-<bench>` is used only when no seat is known;
+`--slots-bin <path>` is the
 `nova-swarm` that lists the leases, `$HOME/.local/bin/nova-swarm` by default, because
 a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
 no `nova-swarm` would read zero leases and call a full bench empty.

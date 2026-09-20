@@ -62,3 +62,49 @@ func TestFillGivesTheLauncherTheRegistrySeat(t *testing.T) {
 		t.Fatalf("the launcher was not given the registry's seat `studio` as its second argument: %q", raw)
 	}
 }
+
+// TestFillUsesTheRegistrySeatForStoreCapacityAndLaunch drives the real command boundary.
+// Studio's share is two and one studio lease is live, so exactly one of two cards may run.
+// Before #2029 the probe asked for swarm-studio, missed both facts, and used the formula.
+func TestFillUsesTheRegistrySeatForStoreCapacityAndLaunch(t *testing.T) {
+	specs := fakePATH(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "argv.log")
+	fakeTool(t, specs, "nova-swarm", fakeSpec{
+		Log:     log,
+		Rules:   []fakeRule{{Arg: 1, Equals: "slots", Stdout: "SLOT 1 owner=studio pid=101 label=x until=2026-09-20T23:00:00Z state=live\n"}},
+		Default: fakeRule{Exit: 0},
+	})
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeMainFile(t, ready, "card-001.md", "a card\n")
+	writeMainFile(t, ready, "card-002.md", "a card\n")
+	store := fillStore(t, dir, "studio", 2)
+	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
+
+	var out, errb bytes.Buffer
+	code := run([]string{"fill", "--ready", ready, "--launched", launched,
+		"--machines", seatRegistry(t, dir, "studio=studio"), "--bench", "studio",
+		"--local-bench", "studio", "--slots-store", store, "--slots-bin", bin,
+		"--max-load-per-core", "0", "--launcher", bin, "--launch-grace", "0", "--once",
+	}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
+	}
+	if got := fillCount(t, launched); got != 1 {
+		t.Fatalf("launched holds %d cards, want 1; stdout=%q stderr=%q", got, out.String(), errb.String())
+	}
+	if got := fillCount(t, ready); got != 1 {
+		t.Fatalf("ready holds %d cards, want 1", got)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := string(raw)
+	if !strings.Contains(argv, "slots list --store ") || !strings.Contains(argv, "nova-swarm studio studio ") {
+		t.Fatalf("probe and launcher did not both use Studio's seat: %q", argv)
+	}
+	if strings.Contains(argv, "swarm-studio") {
+		t.Fatalf("command invented swarm-studio instead of using the registry seat: %q", argv)
+	}
+}

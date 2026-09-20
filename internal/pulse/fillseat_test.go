@@ -91,6 +91,49 @@ func TestFillPassesTheRegistrySeatNotSwarmBench(t *testing.T) {
 	}
 }
 
+type seatAwareCapacity struct {
+	plain, seated     int
+	gotBench, gotSeat string
+}
+
+func (c *seatAwareCapacity) Capacity(bench string) (int, error) {
+	c.gotBench = bench
+	return c.plain, nil
+}
+
+func (c *seatAwareCapacity) capacityForSeat(bench, seat string) (int, error) {
+	c.gotBench, c.gotSeat = bench, seat
+	return c.seated, nil
+}
+
+// TestFillPassesTheRegistrySeatToCapacityAndLaunch proves both admission and launch use
+// the same registry fact. The plain capacity intentionally answers two while the seated
+// capacity answers one: calling the legacy seam would dispatch both cards.
+func TestFillPassesTheRegistrySeatToCapacityAndLaunch(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "a card\n")
+	writeCard(t, ready, "card-002.md", "a card\n")
+	capacity := &seatAwareCapacity{plain: 2, seated: 1}
+	launcher := &seatLauncher{}
+	var out, errb bytes.Buffer
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched,
+		Machines: seatMachines(t, dir, "studio=studio"), Benches: []string{"studio"},
+		Once: true, Stdout: &out, Stderr: &errb, Capacity: capacity, Launcher: launcher,
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if capacity.gotBench != "studio" || capacity.gotSeat != "studio" {
+		t.Fatalf("capacity got bench=%q seat=%q, want studio/studio",
+			capacity.gotBench, capacity.gotSeat)
+	}
+	if len(launcher.calls) != 1 || !strings.HasPrefix(launcher.calls[0], "studio studio ") {
+		t.Fatalf("launcher calls = %v, want one studio/studio call", launcher.calls)
+	}
+}
+
 // TestFillRefusesASeatlessBenchOnceByNameAndFillsTheRest: a bench whose row names no seat is
 // refused ONCE, by name, before any card is dealt. Its neighbours keep working -- the whole
 // fleet is not stopped by one incomplete row -- and the refusal does not repeat per card.
