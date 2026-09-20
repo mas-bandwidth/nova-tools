@@ -1588,6 +1588,23 @@ still gone at the deadline, because the wall is a kill of the group, not a reque
 decline. A token budget reached is the third end of a native card, and it is the
 TERM's cleanup with `stopped=tokens` on the line (rule 13d).
 
+**`native` prints a verdict on every launch that started, and never exits 255**
+(issue #2058). The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and
+`NATIVE REFUSED`. A launch that started the harness and then died — including a
+darwin OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md`,
+and exited 255 — still prints one of those three, with the child's code on the
+line as `rc=<n>`. **The process never itself exits 255.** 255 is `ssh`'s own
+"could not start the remote command"; a native that passed 255 through made a
+fill loop treat a finished card as never started and run it twice. The child's
+255 is `rc=255` on the verdict line and the process exits 1 (the verb ran and
+said NO). A refusal before any child starts is `NATIVE REFUSED` at exit 2, as
+today. **Red test:** `TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255` —
+a fake harness that prints the FSEvents line, writes `RESULT.md` and exits 255:
+a verdict line is printed, the process is not 255, `rc=255` is on the line.
+**Negative:** `TestNativeOrdinaryCardsStillPrintOKAndIncomplete` — a card that
+ran and published is still `NATIVE OK` at exit 0; a silent harness is still
+`NATIVE INCOMPLETE`; neither process exits 255.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
@@ -1914,7 +1931,11 @@ in #603), `idle-watch-ends-a-dribble`
 (`TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog`, #1893),
 `gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo`,
 #603), `native-silent-harness-is-not-ok` (`TestNativeSilentHarnessIsNotOK`, PR
-#604), `native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
+#604), `native-harness-exit-255-prints-a-verdict`
+(`TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255`, #2058),
+`native-ordinary-cards-still-print-ok-and-incomplete`
+(`TestNativeOrdinaryCardsStillPrintOKAndIncomplete`, #2058),
+`native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
 #558), `local-route-is-one-slot` (two local-model cards in one batch: one runs,
 one is `ABSTAIN reason=admission local route is one slot`; open), and, for the
 range and the pre-run refusals (issue #618), `TestBatchAllocatesSlots`,
@@ -2283,8 +2304,12 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d) |
+| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d), a `native` whose harness exited 255 (the child's code is `rc=255` on the verdict line; the process is 1, never 255: #2058) |
 | 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`, and `--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+
+**`native` never exits 255.** That code is `ssh`'s own "could not start the remote
+command". A harness that exited 255 is `rc=255` on the verdict line and process
+exit 1 (#2058).
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and
@@ -2346,6 +2371,7 @@ RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
+NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc>
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0

@@ -3716,6 +3716,12 @@ entire tree the card started â€” grandchildren included, never just the leader â
 (the manager) is handled the same way: the tree is reaped, `usage.tsv` is written, and the
 `NATIVE OK` line carries `reason=terminated` instead of a silent exit.
 
+**A launch that started always prints a verdict, and `native` never exits 255 (#2058).**
+The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and `NATIVE REFUSED`. A darwin
+OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md` and exited 255
+still prints one of those, with `rc=255` on the line. 255 is ssh's own "could not start";
+passing it through made a fill loop retry a finished card. The process exits 1.
+
 ### First run
 
 `quickstart` needs nothing but a directory: it makes the pool's structure and names the
