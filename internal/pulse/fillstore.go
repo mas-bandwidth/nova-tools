@@ -349,10 +349,19 @@ func oneLineAnswer(s string) string {
 // canned line.
 type StoreCapacity struct {
 	Probe          func(bench string) (string, error)
-	Owner          string // the store's owner row, whose leases are counted
+	SeatProbe      func(bench, owner string) (string, error) // seat-aware: owner already resolved
+	Owner          string                                    // the store's owner row, whose leases are counted
 	MaxLoadPerCore float64
 	Stderr         io.Writer
 	memo           *labelMemo // shared across value copies; last held-lease labels per bench
+}
+
+// seatCapacity is the optional seat-aware form of Capacity (368d348). Fill resolves the
+// registry seat once and hands it down; a reader that can count the seat's own leases
+// implements this, while a fixed number and every legacy test fixture keep the plain
+// Capacity(bench) seam untouched.
+type seatCapacity interface {
+	capacityForSeat(bench, seat string) (int, error)
 }
 
 type labelMemo struct {
@@ -383,17 +392,33 @@ func (c StoreCapacity) rememberLabels(bench string, labels []string) {
 	c.memo.mu.Unlock()
 }
 
-// ownerFor is the store row whose leases are this bench's: the one named, or the seat the
-// launcher already hands the bench.
-func (c StoreCapacity) ownerFor(bench string) string {
+// ownerFor is the store row whose leases are this bench's: the row named, else the registry
+// seat the launcher already hands the bench, and only as a last resort -- when neither is
+// known, as in a direct legacy call with no seat -- the invented `swarm-<bench>`.
+func (c StoreCapacity) ownerFor(bench, seat string) string {
 	if o := strings.TrimSpace(c.Owner); o != "" {
 		return o
+	}
+	if s := strings.TrimSpace(seat); s != "" {
+		return s
 	}
 	return "swarm-" + bench
 }
 
+// Capacity is the legacy seam: a caller with no registry seat gets the old
+// `swarm-<bench>` derivation. Fill does NOT call this; it calls capacityForSeat.
 func (c StoreCapacity) Capacity(bench string) (int, error) {
-	if c.Probe == nil {
+	return c.capacity(bench, "")
+}
+
+// capacityForSeat is the seat-aware seam: the registry seat resolved by Fill (368d348)
+// becomes the store row whose leases are counted.
+func (c StoreCapacity) capacityForSeat(bench, seat string) (int, error) {
+	return c.capacity(bench, seat)
+}
+
+func (c StoreCapacity) capacity(bench, seat string) (int, error) {
+	if c.Probe == nil && c.SeatProbe == nil {
 		return 0, fmt.Errorf("no capacity probe; refusing to guess a free count")
 	}
 	// The threshold is checked here as well as at the flag, because this type is the
@@ -404,11 +429,18 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 			"the load brake is %v, which is not a finite number of load units per core, 0 or more; a threshold nothing can exceed is a brake that is silently off",
 			c.MaxLoadPerCore)
 	}
-	out, err := c.Probe(bench)
+	owner := c.ownerFor(bench, seat)
+	var out string
+	var err error
+	if c.SeatProbe != nil {
+		out, err = c.SeatProbe(bench, owner)
+	} else {
+		out, err = c.Probe(bench)
+	}
 	if err != nil {
 		return 0, err
 	}
-	a, err := ParseCapacityAnswer(out, c.ownerFor(bench))
+	a, err := ParseCapacityAnswer(out, owner)
 	if err != nil {
 		return 0, err
 	}

@@ -40,8 +40,9 @@ package pulse
 // launch goes through a wrapper that asks the registry again -- so a bench name that arrives
 // by some other road later still cannot reach a runner host.
 //
-// THE SEAT COMES FROM THE ROW (#2014). The launcher's second argument is the bench's
-// nova-secrets seat from the machines registry, not `swarm-<bench>`. The Studio's seat is
+// THE SEAT COMES FROM THE ROW (#2014, 368d348). The launcher's second argument is the
+// bench's nova-secrets seat from the machines registry, not `swarm-<bench>`, and the
+// capacity probe counts that same seat's store row and live leases. The Studio's seat is
 // `studio` and the Air's is `air`; inventing `swarm-studio` killed every card on the
 // strongest bench (SECRETS EXEC FAIL, exit 125) and bounced them back. A bench whose row
 // names no seat, or a seat that is not one plain name, is refused once by name at the loop
@@ -173,6 +174,25 @@ func (g guardedCapacity) Capacity(bench string) (int, error) {
 		return 0, err
 	}
 	return g.next.Capacity(bench)
+}
+
+// capacityForSeat carries the registry seat through the guard to a seat-aware reader and
+// falls back to the plain seam for a fixed number or a legacy fixture (368d348).
+func (g guardedCapacity) capacityForSeat(bench, seat string) (int, error) {
+	if err := g.reg.RequireBench(bench); err != nil {
+		return 0, err
+	}
+	return capacityFor(g.next, bench, seat)
+}
+
+// capacityFor asks a reader for one bench's free count, handing a seat-aware reader the
+// registry seat Fill resolved once (368d348). A reader that knows only Capacity(bench) --
+// fixedCapacity, a test fixture -- is asked the old way.
+func capacityFor(c Capacity, bench, seat string) (int, error) {
+	if sc, ok := c.(seatCapacity); ok {
+		return sc.capacityForSeat(bench, seat)
+	}
+	return c.Capacity(bench)
 }
 
 type leaseViewer interface {
@@ -471,7 +491,7 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 	want := make([]int, len(in.Benches))
 	capacityFailed := make([]bool, len(in.Benches))
 	for i, bench := range in.Benches {
-		if n, err := in.Capacity.Capacity(bench); err != nil {
+		if n, err := capacityFor(in.Capacity, bench, seats[bench]); err != nil {
 			capacityFailed[i] = true
 			// FAIL CLOSED, AND SAY SO, PER BENCH. A probe or parse failure is zero free
 			// slots on THAT bench -- never a deal, never a fall-through -- and every
