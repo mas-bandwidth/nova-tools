@@ -253,3 +253,40 @@
     ;; :type, never a guess from the title.
     (check-equal :feature (node-type state "proj/feature")
                  "a feature titled like a stream is not reclassified")))
+
+;;; ------------------------------------------------------------------
+;;; E02-F03-02 "Lock filesystem socket or use Windows first-pipe-instance
+;;; semantics" (docs/roadmaps/nova-work.sexp:618) — docs/SPEC-WORK.md:169:
+;;; the endpoint is locked by its own lock and never by the journal's: the
+;;; session takes an exclusive lock on `<session>.lock`, keyed by the socket
+;;; path's canonical spelling, and holds it for its whole life, so a start
+;;; whose `--session` path carries a held lock refuses `socket held`. On
+;;; Windows that same guarantee is spelled FILE_FLAG_FIRST_PIPE_INSTANCE, where
+;;; the first create of the pipe name IS the endpoint lock and a second create
+;;; of the name fails ERROR_ACCESS_DENIED (docs/SPEC-WORK.md:184-190).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F03LockFilesystemSocketOrUse" "docs/SPEC-WORK.md:169"
+    "expected=endpoint-socket-locked-by-its-own-lock;second-start-refused-socket-held"
+  (let* ((tmp (namestring (uiop:default-temporary-directory)))
+         (dir (format nil "~Anova-work-e02f03-~D-~D/" tmp (sb-posix:getpid) (random 1000000)))
+         (sock (concatenate 'string dir "w"))
+         (lock-path (concatenate 'string sock ".lock")))
+    (unwind-protect
+         (progn
+           ;; Creating the endpoint must take the endpoint's own lock, never the
+           ;; journal's: an exclusive lock on `<session>.lock`, the socket path's
+           ;; canonical spelling with `.lock` appended in its own directory, held
+           ;; for the endpoint's whole life, so a start on a `--session` path
+           ;; whose lock is held refuses `socket held`. (On Windows the same
+           ;; guarantee is FILE_FLAG_FIRST_PIPE_INSTANCE: the first create of the
+           ;; pipe name IS the endpoint lock.) The endpoint directory is created
+           ;; and validated here; its own lock file must accompany it.
+           (let ((endpoint (make-session-endpoint dir sock)))
+             (declare (ignore endpoint))
+             (ok (probe-file lock-path)
+                 "expected the endpoint's own <session>.lock at ~A while the filesystem socket is held, but none exists: the filesystem socket is not locked by its own lock"
+                 lock-path)))
+      (ignore-errors (delete-file lock-path))
+      (ignore-errors (sb-posix:unlink sock))
+      (ignore-errors (sb-posix:rmdir dir)))))
