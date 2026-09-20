@@ -122,11 +122,11 @@ PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nov
 PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
 PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
 PROBE STEP name=read_root expect=allow got=allow path=/Users/me/bin/nova-sandbox
-PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /Users/me/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ cmd=sh
+SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ ancestors=11 cmd=sh gpu=none
 cat: /Users/me/.config/anthropic/env: Operation not permitted
 ```
 

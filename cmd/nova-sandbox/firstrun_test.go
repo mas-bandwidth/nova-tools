@@ -71,10 +71,13 @@ func TestTheCheckTranscriptNamesEveryFieldTheVerbPrints(t *testing.T) {
 }
 
 // checkFieldNames is the card's one rule: split the line on whitespace, and for each token
-// matching ^[a-z_]+= take the text before the first '='. It STOPS after taking `note`,
+// matching ^[a-z0-9_-]+= take the text before the first '='. The class is wider
+// than letters because the grammar holds hyphenated and digit names
+// (read-noexec=, cwdb64=); a letters-only read drops exactly the mid-line
+// insertion this pin exists to catch. It STOPS after taking `note`,
 // because note's value is a sentence with spaces in it, so everything after it is prose.
 func checkFieldNames(line string) []string {
-	field := regexp.MustCompile(`^[a-z_]+=`)
+	field := regexp.MustCompile(`^[a-z0-9_-]+=`)
 	var names []string
 	for _, tok := range strings.Fields(line) {
 		if !field.MatchString(tok) {
@@ -87,6 +90,89 @@ func checkFieldNames(line string) []string {
 		}
 	}
 	return names
+}
+
+// docs/TESTS.md's nova-sandbox transcript was recorded on a Mac, and the blocks
+// underneath its Platform: line drifted from what that Mac prints: the PROBE OK
+// block omits gpu=, and the SANDBOX OK block omits read-noexec=, ancestors= and
+// gpu=. The CHECK OK pin above compares against a live run; these two lines
+// cannot run portably here -- the wall they print is darwin-only -- so they are
+// pinned against the format strings in main.go that print them, which have no
+// platform branch above them. Field VALUES are the recording machine's and are
+// not compared; field NAMES in order are.
+func TestTheProbeAndSandboxTranscriptsNameEveryFieldTheVerbsPrint(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	documented := map[string]string{}
+	inSection := false
+	for _, l := range strings.Split(string(doc), "\n") {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(l, "## ") {
+			inSection = l == "## nova-sandbox"
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		for _, prefix := range []string{"PROBE OK ", "SANDBOX OK "} {
+			if strings.HasPrefix(trimmed, prefix) {
+				if documented[prefix] != "" {
+					t.Fatalf("the nova-sandbox section has more than one %q line: %q and %q", prefix, documented[prefix], trimmed)
+				}
+				documented[prefix] = trimmed
+			}
+		}
+	}
+	for _, prefix := range []string{"PROBE OK ", "SANDBOX OK "} {
+		if documented[prefix] == "" {
+			t.Fatalf("TESTS.md has no %q transcript line to pin", prefix)
+		}
+	}
+
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := regexp.MustCompile(`^[a-z0-9_-]+=`)
+	printed := map[string][]string{}
+	for _, line := range strings.Split(string(src), "\n") {
+		for _, prefix := range []string{"PROBE OK ", "SANDBOX OK "} {
+			i := strings.Index(line, `"`+prefix)
+			if i < 0 {
+				continue
+			}
+			rest := line[i+1:]
+			end := strings.Index(rest, `"`)
+			if end < 0 {
+				t.Fatalf("main.go's %q format string is not closed on its line: %q", prefix, line)
+			}
+			var names []string
+			for _, tok := range strings.Fields(rest[:end]) {
+				if !field.MatchString(tok) {
+					continue
+				}
+				names = append(names, tok[:strings.Index(tok, "=")])
+			}
+			if len(printed[prefix]) != 0 {
+				t.Fatalf("main.go prints more than one %q line; this test cannot say which one the transcript pins", prefix)
+			}
+			printed[prefix] = names
+		}
+	}
+	for _, prefix := range []string{"PROBE OK ", "SANDBOX OK "} {
+		if len(printed[prefix]) == 0 {
+			t.Fatalf("main.go prints no %q line to pin the transcript to", prefix)
+		}
+		documentedFields := checkFieldNames(documented[prefix])
+		if !reflect.DeepEqual(documentedFields, printed[prefix]) {
+			missing := diffFieldNames(printed[prefix], documentedFields)
+			extra := diffFieldNames(documentedFields, printed[prefix])
+			t.Errorf("TESTS.md %q line does not name every field the verb prints\n documented: %q\n documented fields: %v\n printed fields:    %v\n missing from document: %v\n in document but not printed: %v",
+				prefix, documented[prefix], documentedFields, printed[prefix], missing, extra)
+		}
+	}
 }
 
 // diffFieldNames returns the names in want that are absent from have, in want's order.
