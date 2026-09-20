@@ -276,3 +276,56 @@
       (declare (ignore answer))
       (check-equal 2 code "show refuses --expect")
       (ok (search "--expect" line) "show names --expect as not a show flag: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; represent-leaf-tasks-separately-from-par...  docs/SPEC-WORK.md:945
+;;; ------------------------------------------------------------------
+;;; E01-F04 (ROADMAP.md:235) — represent leaf tasks separately from
+;;; parent tasks and attempts. docs/SPEC-WORK.md:888 makes features,
+;;; tasks, attempts and leaf subtasks distinct units; :945-947 states
+;;; the rule "a task with no :children is a leaf subtask ... a task with
+;;; children is counted by its leaves, never itself; so the four units ...
+;;; are :feature, :task, the leaf :task, and the :attempt event".
+
+(deftest "represent-leaf-tasks-separately-from-parent-and-attempts"
+    "docs/SPEC-WORK.md:945"
+    "expected=parent-has-children;leaf-has-none;parent-not-counted-as-leaf;attempt-is-an-event-field"
+  (let ((state (make-seed-state
+                '((:id "root"       :type :work-set :parent nil        :state :unknown)
+                  (:id "root/f"     :type :feature  :parent "root"     :state :unknown)
+                  (:id "root/f/p"   :type :task     :parent "root/f"   :state :doing)
+                  (:id "root/f/p/l" :type :task     :parent "root/f/p" :state :doing)
+                  (:id "root/f/l2"  :type :task     :parent "root/f"   :state :doing)))))
+    ;; A parent task carries children; a leaf task carries none.
+    (check-equal (list "root/f/p/l") (node-children state "root/f/p")
+                 "a parent task keeps its children, not an empty children list")
+    (check-equal nil (node-children state "root/f/p/l")
+                 "a leaf task is represented with no children")
+    ;; The feature and the parent task are distinct kinds from the leaf task's
+    ;; :task; every node has one type read back from the model.
+    (check-equal :feature (node-type state "root/f")
+                 "the container is a :feature, never inferred from a title")
+    (check-equal :task (node-type state "root/f/p")
+                 "the parent task reads back as :task")
+    (check-equal :task (node-type state "root/f/p/l")
+                 "the leaf task reads back as :task")
+    ;; The leaf rollup counts a parent task by its leaves, never itself: the
+    ;; one feature folds to the two leaf tasks, not to root/f/p.
+    (multiple-value-bind (done total unknown)
+        (nova-work::%percent-leaf-counts state "root/f")
+      (check-equal 2 total "the feature counts its two leaves, not its parent task")
+      (check-equal 0 done "no leaf is settled in this seed")
+      (check-equal 0 unknown "the doing leaves are not unknown"))
+    ;; An attempt is a field on an event, a unit of its own and not a node kind:
+    ;; an :evidence event names its :attempt apart from the :task node it addresses.
+    (let* ((ev (make-work-event
+                :kind :evidence :node "root/f/p/l" :by "rowan"
+                :fields (list :pointer "p1" :criterion "c1" :against "a1"
+                              :generation "g4" :attempt "att-1")
+                :stamp "2026-09-20T00:00:00Z" :clock :tool :request "r1"
+                :generation-owner "g4" :rev 1))
+           (fields (work-event-fields ev)))
+      (check-equal "att-1" (getf fields :attempt)
+                   "the evidence event carries its own :attempt, separate from the node")
+      (check-equal "root/f/p/l" (work-event-node ev)
+                   "the attempt's event addresses the leaf task, never replaces it"))))
