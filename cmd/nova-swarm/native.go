@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -548,6 +549,29 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		cmd.Stdout = capture
 		cmd.Stderr = io.MultiWriter(capture, &wallOut)
 		attemptStart := time.Now()
+
+		// DURABLE LAUNCH TRACKING (Issue #2070 / #2079):
+		// Atomically persist launch record per slot and job before execution begins.
+		lane := os.Getenv("NOVA_LANE")
+		if lane == "" {
+			lane = "native"
+		}
+		attemptID := os.Getenv("NOVA_ATTEMPT_ID")
+		if attemptID == "" {
+			attemptID = fleet.MustMintAttemptID()
+		}
+		launchRec := fleet.LaunchRecord{
+			AttemptID:        attemptID,
+			Timestamp:        attemptStart.UTC(),
+			CardHash:         res.cardSHA256,
+			Lane:             lane,
+			Slot:             filepath.Base(cfg.slotDir),
+			Job:              cfg.label,
+			RunningCommitSHA: fleet.CurrentCommitSHA(""),
+			State:            "STARTING",
+		}
+		_ = fleet.RecordLaunch(cfg.slotDir, jobDir, launchRec)
+
 		if err := cmd.Start(); err != nil {
 			log.Close()
 			harnessOut.Close()
@@ -556,6 +580,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 		pgid := cmd.Process.Pid
 		started := swarm.StartStamp(pgid)
+
+		// Update durable launch record with PID and STARTED state
+		launchRec.Pid = pgid
+		launchRec.State = "STARTED"
+		_ = fleet.RecordLaunch(cfg.slotDir, jobDir, launchRec)
+
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		deadline := time.NewTimer(cfg.deadline)
@@ -581,6 +611,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			res.rc = -1
 			res.terminated = true
 		}
+
+		if res.rc == 0 {
+			launchRec.State = "COMPLETED"
+		} else {
+			launchRec.State = "FAILED"
+		}
+		_ = fleet.RecordLaunch(cfg.slotDir, jobDir, launchRec)
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
 		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall

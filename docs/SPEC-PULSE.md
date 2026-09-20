@@ -1608,6 +1608,31 @@ STOP completion requires conservative RECONCILED execution and publication recei
 owned attempt. PARKED is irrelevant to completion, and UNKNOWN prevents it. Absence of a lease,
 job directory or reply cannot reduce `owned` or make `complete=yes`.
 
+**Durable launch tracking per slot and job (Issue #2070, #2079).**
+Before child process execution begins, the executor atomically persists a durable launch record
+to `<slotDir>/launch.json` and `<jobDir>/launch.json`. Each record contains:
+- `attempt_id`: an unguessable CSPRNG-minted hex identifier (kernel-minted from OS CSPRNG, hex, immutable, never derived from label, path, time, host or counter).
+- `timestamp`: UTC instant formatted as RFC3339.
+- `card_hash`: SHA-256 digest of the card payload.
+- `lane`: coordination or worker lane (`from-emma`, `main`, `native`).
+- `slot`: slot identifier.
+- `job`: card or job label.
+- `running_commit_sha`: the commit SHA of the worker codebase at launch time.
+- `pid`: worker process PID (once spawned).
+- `state`: lifecycle state (`STARTING`, `STARTED`, `COMPLETED`, `FAILED`).
+
+Atomic state persistence is enforced before invocation: the JSON payload is staged into a temporary
+file on the same filesystem, flushed and synced (`Sync()`), and atomically renamed into place.
+A sudden worker crash, panic, or SIGKILL leaves the launch record durable on disk.
+
+**Fleet node status reporting.**
+`nova-pulse fleet status [--machines <file>] [--root <dir>] [--bench <name>] [--json]` queries
+and reports per-node and per-slot live execution status:
+- Per node: node name, reachability, disk SHA (current commit SHA of repository or checkout on disk).
+- Per slot: slot identifier, job label, attempt ID, lane, card hash, live execution status (`RUNNING`, `CRASHED`, `COMPLETED`, `IDLE`), running commit SHA vs disk SHA, and match boolean.
+- Liveness determination: a dead process with no completion receipt (`RESULT.md`) is accurately reported as `CRASHED`.
+- Version drift detection: when `running_commit_sha != disk_commit_sha`, status queries flag drift (`match=false`) without guessing.
+
 **Required tests, all with local fakes and event coordination:**
 
 1. Two dealers race one READY card; the winning CLAIM mints its attempt in the card-revision CAS,
