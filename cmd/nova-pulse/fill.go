@@ -308,7 +308,11 @@ type flashLauncher struct {
 	grace    time.Duration
 }
 
-func (l flashLauncher) Launch(bench, card string) error {
+// The seat is the machines registry's, handed down by pulse.Fill (#2014). It used to be
+// `swarm-`+bench, computed here from the bench's name: right for six benches and wrong for
+// the Studio (`studio`) and the Air (`air`), whose cards all died at
+// `SECRETS EXEC FAIL store file .../swarm-studio.yaml is absent` and bounced.
+func (l flashLauncher) Launch(bench, seat, card string) error {
 	bin := l.bin
 	if bin == "" {
 		bin = "flash-native-bench.sh"
@@ -318,7 +322,7 @@ func (l flashLauncher) Launch(bench, card string) error {
 		deadline = defaultCardDeadline
 	}
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
-	cmd := exec.Command(bin, bench, "swarm-"+bench, card, label, strconv.Itoa(deadline))
+	cmd := exec.Command(bin, bench, seat, card, label, strconv.Itoa(deadline))
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = io.Discard, said
 	if err := cmd.Start(); err != nil {

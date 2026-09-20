@@ -24,7 +24,7 @@ func (c laneCap) Capacity(bench string) (int, error) { return c[bench], nil }
 // laneLauncher records one line per launched card, bench then card.
 type laneLauncher struct{ calls []string }
 
-func (l *laneLauncher) Launch(bench, card string) error {
+func (l *laneLauncher) Launch(bench, seat, card string) error {
 	l.calls = append(l.calls, bench+" "+card)
 	return nil
 }
@@ -216,7 +216,7 @@ type failingLauncher struct {
 	calls int
 }
 
-func (l *failingLauncher) Launch(bench, card string) error { l.calls++; return l.err }
+func (l *failingLauncher) Launch(bench, seat, card string) error { l.calls++; return l.err }
 
 // deadCapacity refuses every capacity read, as an unreachable bench does.
 type deadCapacity struct{ err error }
@@ -234,7 +234,8 @@ func markersIn(t *testing.T, dir, glob string) []string {
 }
 
 // TestFillReturnsAFailedLaunchToReady: an exit-7 launcher is not a card that ran. The card
-// goes back to --ready with a .failed-1 marker, nothing stays under --launched, the lane is
+// goes back to --ready with a .failed-1 marker in the MARKERS directory beside the queue (#2013),
+// nothing stays under --launched, the lane is
 // free again, and the tick counts it failed=1 launched=0.
 func TestFillReturnsAFailedLaunchToReady(t *testing.T) {
 	dir := t.TempDir()
@@ -262,7 +263,7 @@ func TestFillReturnsAFailedLaunchToReady(t *testing.T) {
 	if got := len(readyCards(ready)); got != 1 {
 		t.Fatalf("ready holds %d cards, want 1 (the failed card comes back)", got)
 	}
-	if got := markersIn(t, ready, "card-001.md.failed-*"); len(got) != 1 {
+	if got := markersIn(t, ready+"-markers", "card-001.md.failed-*"); len(got) != 1 {
 		t.Fatalf("failed markers = %v, want exactly card-001.md.failed-1", got)
 	} else if filepath.Base(got[0]) != "card-001.md.failed-1" {
 		t.Fatalf("marker = %q, want card-001.md.failed-1", filepath.Base(got[0]))
@@ -319,7 +320,7 @@ type oneFailingLauncher struct {
 	seen  []string
 }
 
-func (l *oneFailingLauncher) Launch(bench, card string) error {
+func (l *oneFailingLauncher) Launch(bench, seat, card string) error {
 	l.calls++
 	l.seen = append(l.seen, filepath.Base(card))
 	if filepath.Base(card) == l.fail {
@@ -393,7 +394,7 @@ func TestFillRefusesAnUnknownLaneOncePerLanesFile(t *testing.T) {
 	if strings.Contains(err2.String(), "FILL REFUSED") {
 		t.Fatalf("the second tick refused the same card again over an unchanged lanes file: %q", err2.String())
 	}
-	if got := markersIn(t, ready, "card-001.md.refused-*"); len(got) != 1 {
+	if got := markersIn(t, ready+"-markers", "card-001.md.refused-*"); len(got) != 1 {
 		t.Fatalf("refusal markers = %v, want exactly one", got)
 	}
 
@@ -411,7 +412,7 @@ func TestFillRefusesAnUnknownLaneOncePerLanesFile(t *testing.T) {
 	if !strings.Contains(err3.String(), "FILL REFUSED card=card-001.md lane=ghost") {
 		t.Fatalf("an edited lanes file did not make the refusal speak again: %q", err3.String())
 	}
-	if got := markersIn(t, ready, "card-001.md.refused-*"); len(got) != 1 {
+	if got := markersIn(t, ready+"-markers", "card-001.md.refused-*"); len(got) != 1 {
 		t.Fatalf("refusal markers = %v, want exactly one (the stale one is removed)", got)
 	}
 }

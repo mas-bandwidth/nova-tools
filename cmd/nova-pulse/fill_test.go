@@ -25,7 +25,7 @@ func (f fillCapStub) Capacity(bench string) (int, error) { return f[bench], nil 
 // fillLaunchStub records one line per launched card, bench then card.
 type fillLaunchStub struct{ calls []string }
 
-func (l *fillLaunchStub) Launch(bench, card string) error {
+func (l *fillLaunchStub) Launch(bench, seat, card string) error {
 	l.calls = append(l.calls, bench+" "+card)
 	return nil
 }
@@ -271,10 +271,10 @@ func TestLaunchDoesNotWaitForTheCardToRun(t *testing.T) {
 	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
 	card := filepath.Join(t.TempDir(), "card-001.md")
 
-	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", card); err != nil {
+	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", "swarm-bench-a", card); err != nil {
 		t.Fatalf("a launcher still running at the grace answered an error: %v", err)
 	}
-	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", card)
+	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", "swarm-bench-a", card)
 	if err == nil {
 		t.Fatal("with no grace the launcher is waited for; its failure was not seen")
 	}
@@ -289,7 +289,7 @@ func TestLaunchStillCatchesAFailureInTheGrace(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stderr: "no such bench", Exit: 7}})
 	l := flashLauncher{bin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), grace: 10 * time.Second}
-	err := l.Launch("bench-a", filepath.Join(t.TempDir(), "card-001.md"))
+	err := l.Launch("bench-a", "swarm-bench-a", filepath.Join(t.TempDir(), "card-001.md"))
 	if err == nil {
 		t.Fatal("an exit-7 launcher answered no error")
 	}

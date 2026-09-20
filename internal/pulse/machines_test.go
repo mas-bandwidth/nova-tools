@@ -148,13 +148,13 @@ func TestTheLaunchSeamRefusesARunnerHostOnItsOwn(t *testing.T) {
 	}
 	rec := &laneLauncher{}
 	g := guardedLauncher{reg: reg, next: rec}
-	if err := g.Launch("batman", "card-001.md"); err == nil {
+	if err := g.Launch("batman", "swarm-batman", "card-001.md"); err == nil {
 		t.Fatal("the launcher put a card on a CI runner host")
 	}
 	if len(rec.calls) != 0 {
 		t.Fatalf("the refused card still reached the launcher: %q", rec.calls)
 	}
-	if err := g.Launch("hulk", "card-001.md"); err != nil {
+	if err := g.Launch("hulk", "swarm-hulk", "card-001.md"); err != nil {
 		t.Fatalf("the launcher refused a bench: %v", err)
 	}
 }
