@@ -2051,7 +2051,10 @@ the table launch writes for that `--id`, falling back to `<root>/cards.tsv` for 
 `cut` wrote and to the job directories themselves for a bare swarm root. Reading only
 `<root>/cards.tsv` meant the `--then` harvest launch chains refused every successful
 pulse, with `run: nova-pulse cut` as the remedy — the wrong door, because launch had
-already written the table (issue #1818).
+already written the table (issue #1818). The table's slot column is `-` until swarm
+allocates; a `--bench` pull lands at `<root>/<bench>-<n>/jobs/<label>/`, and harvest
+`--id` opens that pulled path rather than `<root>/0/jobs/<label>`, so the `--then`
+fold is not counted `elsewhere` (issue #1907).
 
 A card is **this** card when its `RESULT.md` line 1 **begins with** the card's contract
 line, trailing spaces trimmed — the same rule `nova-swarm batch`'s gather applies

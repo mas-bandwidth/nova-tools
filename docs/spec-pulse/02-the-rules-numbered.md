@@ -124,7 +124,12 @@
     the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's
     label, `done/` before `failed/`, latest task first — and a task in `failed/` whose
     `RESULT.md` exists with a first line equal to the card's `RESULT` line is harvested as a
-    result, not a failure, because the contract decides, never the directory it sits in. When
+    result, not a failure, because the contract decides, never the directory it sits in. The
+    `--then` harvest launch chains is `harvest --id <id> --root <root>` with no `--bench`.
+    Launch writes the pulse table's slot column as `-` before swarm allocates; a remote card's
+    files come back at `<root>/<bench>-<n>/jobs/<label>/` (SPEC-SWARM, Three files come back).
+    Harvest opens that pulled directory when the named slot has no `RESULT.md`, so a card
+    whose files are already under the root is not counted `elsewhere` (issue #1907). When
     `--root` names a bare swarm root with no `cards.tsv` — the caller handed cards straight to
     `nova-swarm batch` — `harvest` folds every `<root>/<slot>/jobs/<label>/RESULT.md` under it,
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to

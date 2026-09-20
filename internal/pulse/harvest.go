@@ -440,11 +440,53 @@ func discoverRootCards(root string) []CardRow {
 }
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.
+// Slot `-` (what launch writes before swarm allocates) is not that directory
+// after a --bench pull; when it has no RESULT.md, the pulled <bench>-<n> path
+// is used so the --then harvest can fold it (issue #1907).
 func jobDir(root, slot, label string) string {
+	named := namedJobDir(root, slot, label)
+	if resultAt(named) {
+		return named
+	}
+	if slot == "" || slot == "-" {
+		if found := findJobDir(root, label); found != "" {
+			return found
+		}
+	}
+	return named
+}
+
+// namedJobDir is the path the slot column spells: `-` is the local `0` layout,
+// `bench:<n>` is the pulled <bench>-<n> directory.
+func namedJobDir(root, slot, label string) string {
 	if slot == "" || slot == "-" {
 		slot = "0"
+	} else if bench, n, ok := strings.Cut(slot, ":"); ok && bench != "" && n != "" {
+		slot = bench + "-" + n
 	}
 	return filepath.Join(root, slot, "jobs", label)
+}
+
+func resultAt(job string) bool {
+	_, err := os.Stat(filepath.Join(job, "RESULT.md"))
+	return err == nil
+}
+
+func findJobDir(root, label string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name(), "jobs", label)
+		if resultAt(dir) {
+			return dir
+		}
+	}
+	return ""
 }
 
 // cardContract is line 1 of a card's text file, the contract line its RESULT must equal.
