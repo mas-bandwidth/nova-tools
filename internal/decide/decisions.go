@@ -37,19 +37,41 @@ const DecisionsEnv = "NOVA_DSN"
 const PGDriverName = "postgres"
 
 // decisionsHeader is the TSV fallback's first line, in the column order the
-// table is declared in.
-var decisionsHeader = []string{"question_hash", "kind", "answer", "provider_confidence", "floor", "outcome"}
+// table is declared in. `source` is LAST because it was added after the other
+// six: a file written before it exists is six columns wide and is still read,
+// with its source unknown rather than guessed.
+var decisionsHeader = []string{"question_hash", "kind", "answer", "provider_confidence", "floor", "outcome", "source"}
+
+// legacyDecisionColumns is the width of a row written before `source` existed.
+const legacyDecisionColumns = 6
+
+// noProviderConfidence is the confidence column of a decision no provider
+// answered. It is a DASH and never a number: a decision the machinery settled
+// cost no call, so there is no calibration evidence about any provider in it,
+// and a zero or a display constant written here would become exactly that
+// (Stella, 2026-09-19, expanded Go read of #1925).
+const noProviderConfidence = "-"
 
 // DecisionRow is one row of the decisions table: the question that was asked,
 // the kind of judgment, the answer, the provider's confidence, the floor it
-// was gated on, and the outcome that followed (empty until known).
+// was gated on, the outcome that followed (empty until known), and which of
+// the two decided it.
 type DecisionRow struct {
-	QuestionHash       string
-	Kind               string
-	Answer             string
-	ProviderConfidence float64
-	Floor              float64
-	Outcome            string
+	QuestionHash string
+	Kind         string
+	Answer       string
+	// ProviderConfidence is meaningful only where HasProviderConfidence is
+	// true. Where it is false the provider was never asked and the column
+	// is written as a dash.
+	ProviderConfidence    float64
+	HasProviderConfidence bool
+	Floor                 float64
+	Outcome               string
+	// Source is SourceMachinery where the rules settled the decision with
+	// no provider asked, SourceProvider where the provider's answer stood
+	// (within the constraints), and empty in a row written before the
+	// column existed.
+	Source string
 }
 
 // DecisionDriver is the storage seam for the decisions table. The tool opens
@@ -145,9 +167,40 @@ func (c *Client) SetFloor(f float64) { c.floor = f }
 // and 0.71 on three calls and routed two ways.
 const DefaultFloor = 0.65
 
-// record appends one row per answer to the client's decisions table. It is
-// best effort: the table is a projection of the journal and never an authority,
-// so a write failure never fails the decision it records.
+// SetRowSource names which of the two decided the answers this call is about,
+// and whether a provider confidence stands behind them. Machinery that settled
+// a decision writes SourceMachinery with hasProviderConfidence false: the
+// provider was not asked, so there is no calibration evidence in the row and
+// none is invented.
+func (c *Client) SetRowSource(source string, hasProviderConfidence bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rowSource, c.rowHasConfidence = source, hasProviderConfidence
+}
+
+// Recorded is how many rows this client appended, and RecordErr the first
+// append that failed. A decision the caller was told succeeded while its
+// configured table was never written is a decision with no receipt, so the
+// caller reads both and reports rather than assuming (Stella, 2026-09-19,
+// expanded Go read of #1925).
+func (c *Client) Recorded() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recorded
+}
+
+func (c *Client) RecordErr() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recordErr
+}
+
+// record appends one row per answer to the client's decisions table. The
+// write is no longer swallowed: the error is kept for the caller to report.
+// One client's Decide is called from several goroutines at once, so the
+// bookkeeping is under the client's lock and the Append itself is not -- the
+// driver owns its own serialization and holding the lock across a database
+// round trip would serialize every decision in the process.
 func (c *Client) record(state string, qs map[string]Question, answers map[string]Answer) {
 	if c == nil || c.decisions == nil {
 		return
@@ -156,31 +209,58 @@ func (c *Client) record(state string, qs map[string]Question, answers map[string
 	if floor == 0 {
 		floor = DefaultFloor
 	}
+	c.mu.Lock()
+	source, hasConfidence := c.rowSource, c.rowHasConfidence
+	c.mu.Unlock()
+	if source == "" {
+		source, hasConfidence = SourceProvider, true
+	}
 	for name, a := range answers {
 		q := qs[name]
-		_ = c.decisions.Append(DecisionRow{
-			QuestionHash:       QuestionHash(state, name, q),
-			Kind:               q.Kind(),
-			Answer:             a.Value(),
-			ProviderConfidence: a.Confidence,
-			Floor:              floor,
-		})
+		row := DecisionRow{
+			QuestionHash:          QuestionHash(state, name, q),
+			Kind:                  q.Kind(),
+			Answer:                a.Value(),
+			HasProviderConfidence: hasConfidence,
+			Floor:                 floor,
+			Source:                source,
+		}
+		if hasConfidence {
+			row.ProviderConfidence = a.Confidence
+		}
+		err := c.decisions.Append(row)
+		c.mu.Lock()
+		if err != nil {
+			if c.recordErr == nil {
+				c.recordErr = err
+			}
+		} else {
+			c.recorded++
+		}
+		c.mu.Unlock()
 	}
 }
 
 // postgresDriver is the decisions table in Postgres, one writer per row.
 type postgresDriver struct{ db *sql.DB }
 
+// The durable table carries the same two facts the TSV does: a confidence that
+// is NULL where no provider answered, and the source that says which of the
+// two decided. A table with no `source` column and a NOT NULL
+// `provider_confidence` cannot hold a machinery receipt, and the append fails
+// loudly rather than writing a number about a call nobody made.
 func (p *postgresDriver) Append(row DecisionRow) error {
 	_, err := p.db.Exec(
-		`INSERT INTO decisions (question_hash, kind, answer, provider_confidence, floor, outcome) VALUES ($1, $2, $3, $4, $5, $6)`,
-		row.QuestionHash, row.Kind, row.Answer, row.ProviderConfidence, row.Floor, row.Outcome)
+		`INSERT INTO decisions (question_hash, kind, answer, provider_confidence, floor, outcome, source) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		row.QuestionHash, row.Kind, row.Answer,
+		sql.NullFloat64{Float64: row.ProviderConfidence, Valid: row.HasProviderConfidence},
+		row.Floor, row.Outcome, row.Source)
 	return err
 }
 
 func (p *postgresDriver) Rows(kind string) ([]DecisionRow, error) {
 	rows, err := p.db.Query(
-		`SELECT question_hash, kind, answer, provider_confidence, floor, outcome FROM decisions WHERE kind = $1 ORDER BY question_hash`,
+		`SELECT question_hash, kind, answer, provider_confidence, floor, outcome, source FROM decisions WHERE kind = $1 ORDER BY question_hash`,
 		kind)
 	if err != nil {
 		return nil, err
@@ -189,9 +269,13 @@ func (p *postgresDriver) Rows(kind string) ([]DecisionRow, error) {
 	out := make([]DecisionRow, 0)
 	for rows.Next() {
 		var row DecisionRow
-		if err := rows.Scan(&row.QuestionHash, &row.Kind, &row.Answer, &row.ProviderConfidence, &row.Floor, &row.Outcome); err != nil {
+		var confidence sql.NullFloat64
+		var source sql.NullString
+		if err := rows.Scan(&row.QuestionHash, &row.Kind, &row.Answer, &confidence, &row.Floor, &row.Outcome, &source); err != nil {
 			return nil, err
 		}
+		row.ProviderConfidence, row.HasProviderConfidence = confidence.Float64, confidence.Valid
+		row.Source = source.String
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -225,13 +309,18 @@ func (t *tsvDriver) Append(row DecisionRow) error {
 			return fmt.Errorf("decide: write decisions header: %w", err)
 		}
 	}
+	confidence := noProviderConfidence
+	if row.HasProviderConfidence {
+		confidence = strconv.FormatFloat(row.ProviderConfidence, 'g', -1, 64)
+	}
 	record := []string{
 		row.QuestionHash,
 		row.Kind,
 		row.Answer,
-		strconv.FormatFloat(row.ProviderConfidence, 'g', -1, 64),
+		confidence,
 		strconv.FormatFloat(row.Floor, 'g', -1, 64),
 		row.Outcome,
+		row.Source,
 	}
 	if err := w.Write(record); err != nil {
 		return fmt.Errorf("decide: write decisions row: %w", err)
@@ -267,21 +356,29 @@ func (t *tsvDriver) Rows(kind string) ([]DecisionRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decide: read decisions: %w", err)
 		}
-		if len(record) < len(decisionsHeader) {
+		// A row written before `source` existed is six columns wide and is
+		// read exactly as it was, with no source rather than a guessed one.
+		if len(record) < legacyDecisionColumns {
 			continue
 		}
-		confidence, _ := strconv.ParseFloat(record[3], 64)
+		confidence, confErr := strconv.ParseFloat(record[3], 64)
 		floor, _ := strconv.ParseFloat(record[4], 64)
 		if record[1] != kind {
 			continue
 		}
+		source := ""
+		if len(record) > legacyDecisionColumns {
+			source = record[6]
+		}
 		out = append(out, DecisionRow{
-			QuestionHash:       record[0],
-			Kind:               record[1],
-			Answer:             record[2],
-			ProviderConfidence: confidence,
-			Floor:              floor,
-			Outcome:            record[5],
+			QuestionHash:          record[0],
+			Kind:                  record[1],
+			Answer:                record[2],
+			ProviderConfidence:    confidence,
+			HasProviderConfidence: confErr == nil && strings.TrimSpace(record[3]) != noProviderConfidence,
+			Floor:                 floor,
+			Outcome:               record[5],
+			Source:                source,
 		})
 	}
 	return out, nil

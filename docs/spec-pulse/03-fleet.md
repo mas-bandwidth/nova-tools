@@ -8,7 +8,7 @@ listener process descending from `nova-runner-<i>.service` (runner checks run
 only when `uname` is Linux), that each unit file carries `Environment=PATH`
 with `go/bin` and `.local/bin`, `KillMode=control-group` and
 `TimeoutStopSec=30s`, that `go version` equals `$NOVA_GO` (default
-`go1.26.5`) with `sbcl` on `PATH` and the harness at
+the tree's `go.mod` `go` line; `$NOVA_GO` is an explicit override) with `sbcl` on `PATH` and the harness at
 `$HOME/nova-bench/harness-<ver>/opencode`, that the toolchain roots the
 sandbox wall grants a card are all present (`$HOME/sdk` — one list, `internal/swarm/toolchain.go`, checked against
 this script by a test so the standard and the wall cannot drift apart), that the 16 nova bins in
@@ -58,6 +58,26 @@ That is enforced in the registry rather than remembered:
 do. The native Windows half of that box is parked: see
 `docs/BENCH-STANDARD-WINDOWS.md`.
 
+### The Windows host bootstraps in one step
+
+`tools/bench-wsl2.ps1` is the host half of this standard, run once from an
+elevated PowerShell on a fresh Windows box with one parameter: a Tailscale auth
+key minted once in the admin console and pre-approved. It installs Tailscale,
+points `w32tm` at `time.windows.com`, turns hibernate off (`powercfg /h off`),
+opens the Hyper-V firewall, writes `$HOME\.wslconfig` with `memory=` at 75% of
+RAM and `networkingMode=mirrored`, and registers a startup task that runs
+`wsl -d Ubuntu-24.04 -u root -- systemctl start ssh` with nobody logged in.
+Inside `wsl --install -d Ubuntu-24.04 --no-launch` it creates the `nova` user,
+NOPASSWD sudo, `[boot] systemd=true` and `[user] default=nova` in
+`/etc/wsl.conf`, the PATH in `/etc/environment`, `openssh-server
+build-essential sbcl gh redis-tools`, the Go SDK from go.mod under `~/sdk`, the
+git identity, and the fleet's public keys from `fleet/authorized_keys` — never a
+password and never a generated key. It prints one `CHECK<TAB>name<TAB>value`
+line per item and exits 0 only when sshd answers on the tailnet address. The
+keeper does the rest over ssh: `nova-pulse fleet add`, the registry row,
+`nova-update release adopt --platform linux-amd64`, the runners,
+`nova-pulse fleet standard`.
+
 ### The four bench scripts, retired
 
 `fleet standard`, `fleet mirror`, `fleet join` and `fleet sleep` are the last
@@ -74,12 +94,12 @@ It prints one `STANDARD <bench> <check> OK got=<v>` or
 then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
 `FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
 operating system, so the standard is read rather than traced through a shell
-script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+script: the Linux list is the Go toolchain at `--go` (default the tree's `go.mod` `go` line),
 `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
 opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
 the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
-the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
-`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+the Xcode shim (`/usr/bin/git` is the shim; the wall grants `xcode_select_link`,
+and Homebrew's git remains the usual PATH), and every runner's `.path` carrying the real git
 first — with the stamp, seat and space checks shared. `--os` names the list;
 left out, the bench is asked with `uname -s`. The remote side prints
 `CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This

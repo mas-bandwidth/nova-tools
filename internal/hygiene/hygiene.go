@@ -428,12 +428,19 @@ func short(sha string) string {
 // configOpts is what this package imposes on every git it runs, over and above the
 // blanked global and system config in gitCmd.
 //
+// `--no-replace-objects`: a `git replace <head> <base>` writes `refs/replace/<head>`
+// into the job clone's own `.git` -- a ref, not a commit, so `out-of-path` and
+// `stray-file` never see it -- and every later object read follows it, so the whole
+// range is shown as the base and the four checks report clean over work that still
+// carries a key. The replacement is the subject's vote on what git shows this check,
+// which SPEC.md says the subject does not get.
+//
 // `core.quotePath=false`: with it on -- git's default -- one non-ASCII byte in a name
 // makes git quote the whole header, `+++ "b/sign/k\303\251y.go"`, and the parser read
 // that as a file it could not name and skipped every added line in it. diffPath
 // unquotes what is left, because a name holding a quote or a newline is quoted
 // whatever this setting says.
-var configOpts = []string{"-c", "core.quotePath=false"}
+var configOpts = []string{"--no-replace-objects", "-c", "core.quotePath=false"}
 
 // diffOpts is the shape of every textual diff this package reads, and every one of
 // them is here because the repository being CHECKED controls what git prints.

@@ -1,3 +1,12 @@
 #!/bin/sh
 printf "\n" "$*" >> ./.nova-swarm-argv.log
+# `nova-pulse launch` asks WHICH nova-swarm it got before it hands one a batch
+# (nova-tools #1760): a stale binary on PATH used to answer the batch with a
+# puzzling flag error instead of saying it was the wrong build. A stub standing in
+# for the real binary has to stand in for it completely, so it answers `version`
+# the way the real one does: one line, four tokens, beginning `nova-swarm`.
+if [ "$1" = version ]; then
+  echo "nova-swarm devel example/example go-example"
+  exit 0
+fi
 exit 0
