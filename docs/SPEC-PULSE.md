@@ -1659,6 +1659,11 @@ job directory or reply cannot reduce `owned` or make `complete=yes`.
     idempotency key and identical payload adds no event; the same key with different payload
     refuses. Version-one paths and required fields are exact; state validation accepts null only
     before an identity is allocated and additional event fields are ignored.
+13. `live-process-identity-is-not-started`: a live pid/pgid/start-stamp tuple, including a
+    matching `RUN START` line, without the typed, fully bound `LAUNCH STARTED` acknowledgement
+    never establishes STARTED. The durable state stays CLAIMED or STARTING as applicable,
+    becoming UNKNOWN at the acknowledgement deadline; ownership and reservations remain.
+    Supplying the valid typed acknowledgement then follows test 3 for that same attempt.
 
 ## The loop as a tool (pit stop 3)
 
