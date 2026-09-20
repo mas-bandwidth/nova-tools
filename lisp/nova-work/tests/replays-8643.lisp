@@ -214,3 +214,44 @@
                    :implementation-cost 50))))
     (check-equal nil (getf joined :comparable)
                  "the token-saving hypothesis is comparable only after adoption")))
+
+;;; ------------------------------------------------------------------
+;;; TestE08F01UseOneSchemaForClient            SPEC-WORK.md:2664-2666
+;;; ------------------------------------------------------------------
+;;; E08-F01-01 "Use one schema for client validation, protocol, help and
+;;; examples" (docs/roadmaps/nova-work.sexp). The contract line is
+;;; docs/SPEC-WORK.md:2664: "it is pinned by one generated schema file (every
+;;; verb with its op, event kind, ordered fields and grammar line)".
+;;;
+;;; One schema drives all four consumers: the client validates against the
+;;; ordered fields, the protocol carries the op and event kind, help prints
+;;; the grammar line, and the runnable examples come from that same entry. A
+;;; verb the client validates but help does not print (or the protocol does
+;;; not carry) is two schemas, not one.
+;;;
+;;; The kernel today carries a split, field-ordering-only grammar
+;;; (nova-work:*mutation-grammar*, with a second *new-verb-grammar* beside it)
+;;; whose entries name only a kind, an ordered field list and a subject --
+;;; no wire op, no grammar line and no example. This replay is RED on the
+;;; three missing consumers: client validation, the protocol, help and the
+;;; examples are not yet the one schema the contract line pins.
+
+(deftest "TestE08F01UseOneSchemaForClient" "docs/SPEC-WORK.md:2664-2666"
+    "expected=one-schema-drives-client-validation-protocol-help-and-examples"
+  (let ((schema *mutation-grammar*))
+    (ok schema "the kernel exposes no verb schema at all, so there is no one schema")
+    (dolist (entry schema)
+      (let ((verb (car entry))
+            (spec (cdr entry)))
+        (ok (getf spec :op)
+            "~A: the one schema names no wire op the protocol carries (entry ~S)"
+            verb entry)
+        (ok (getf spec :fields)
+            "~A: the one schema names no ordered fields for the client to validate (entry ~S)"
+            verb entry)
+        (ok (getf spec :grammar-line)
+            "~A: the one schema names no grammar line for help to print (entry ~S)"
+            verb entry)
+        (ok (getf spec :example)
+            "~A: the one schema carries no runnable example (entry ~S)"
+            verb entry)))))
