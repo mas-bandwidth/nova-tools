@@ -1204,7 +1204,7 @@ source, not a string built in three places, and `policy` prints them:
 
 | platform | roots |
 |---|---|
-| darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
+| darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/var/db/xcode_select_link` and `/private/var/db/xcode_select_link` (literals on the Xcode-select link, not a subpath on `/private/var/db`), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command, and the directory `/var/db/xcode_select_link` points at when it exists and is not already a root (`Xcode.app/Contents` when Xcode is selected, not `Contents/Developer`); plus **write** on `/dev/null` and `/dev/tty` |
 | linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/run/systemd/resolve`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command, and the directory `/etc/resolv.conf` resolves to (its symlink target's parent: `/run/systemd/resolve` on a systemd machine, `/mnt/wsl` on WSL2); plus **write** on `/dev/null` and `/dev/tty` |
 | windows | `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command |
 
@@ -1229,13 +1229,21 @@ the wall unusable for any wrapped shell command. With the three literals and
 what is written: the literal grants the link, and what the link points at is
 granted, or not, by the other roots.
 
-One measured consequence of the same shape, named here so a build does not
-rediscover it: `/usr/bin/git` on a Mac is an Xcode shim that reads
-`/var/db/xcode_select_link`, which no root grants, so the shim fails inside the
-wall. Rule 5 resolves the command on the caller's `PATH` before the wrap, so a
-caller whose `git` is the real binary (`/opt/homebrew/bin/git`, measured
-working) is unaffected; a caller stuck with the shim names `/private/var/db`
-with `--read`.
+One measured consequence of the same shape, repaired in #1557: `/usr/bin/c++`,
+`/usr/bin/cc` and `/usr/bin/git` on a Mac are Xcode shims that read
+`/var/db/xcode_select_link`. `/var` is a literal on the symlink, not a
+subpath, so without a literal on the link itself every C and C++ compile
+inside the wall died with xcode-select's "unable to read data link" and a
+worker read that as "no compiler installed". The profile grants the two
+spellings of the link as literals — not a subpath on `/private/var/db`, which
+holds host state the wall is not for — and OptionalRoots follows the link
+outside the wall the way `--go` asks `go env`, adding the directory it points
+at when that directory is not already a root (`CommandLineTools` sits under
+`/Library`; `Xcode.app/Contents` does not). The grant is `Contents`, not
+`Contents/Developer`: `xcode-select -p` prints Developer, and the shims also
+stat `Info.plist` and load `SharedFrameworks` next to it — Developer alone is
+"couldn't stat Xcode's Info.plist". Homebrew's `git` on `PATH` remains the
+usual caller path; the shim no longer needs `--read /private/var/db`.
 
 There is no `--root` flag. A toolchain installed into a user directory — Go
 under `~/go`, node under `~/.nvm`, .NET under `~/.local`, the Studio's
@@ -1979,8 +1987,9 @@ until its own checklist is green.
    left unset), because a nested sandbox is not a stronger wall, it is a dead
    harness. (`profiles/darwin-check.sh`, check `nested_sandbox_refused`.)
 4. **Homebrew's `git` comes before `/usr/bin` on `PATH`.** `/usr/bin/git` is
-   the Xcode shim; inside the wall it cannot reach the developer directory it
-   dispatches through, so `PATH` starts `/opt/homebrew/bin:/usr/bin:...`.
+   the Xcode shim; the profile grants `xcode_select_link` (#1557) so the shim
+   runs inside the wall, and `PATH` still starts `/opt/homebrew/bin:/usr/bin:...`
+   because Homebrew's git is the usual caller path.
 5. **The wrapped command's stdout and stderr go to a pipe the launcher drains,
    or to a file inside a `--write`.** Rule 12, and it is the one rule 12
    addresses to launchers rather than to the tool. A log file outside every
@@ -2090,8 +2099,9 @@ inherited, `git -C <dir> status` is `fatal: unable to access
 '/Users/<user>/.gitconfig': Operation not permitted`, and with `HOME` set to a
 directory inside the write set it exits 0 (as does `GIT_CONFIG_GLOBAL` +
 `XDG_CONFIG_HOME` pointed inside, for git alone); `/usr/bin/git` — the Xcode
-shim — fails inside the wall on `/var/db/xcode_select_link` while
-`/opt/homebrew/bin/git` works; a wrapped `/bin/cat` whose stdout is a file
+shim — failed inside the wall on `/var/db/xcode_select_link` until #1557
+granted the link (and `Xcode.app/Contents` when that is the selected dir) while
+`/opt/homebrew/bin/git` already worked; a wrapped `/bin/cat` whose stdout is a file
 outside every named path is denied while `/bin/echo` writing the same
 descriptor succeeds.
 
@@ -2262,7 +2272,9 @@ One per rule:
    On darwin the roots themselves are asserted through their symlinks:
    `cat /etc/hosts` succeeds and `/bin/sh -c true` exits 0 inside the wall
    (both fail without the `/etc`, `/tmp`, `/var` literals and
-   `/private/var/select`). On linux a wrapped command's **child** reads
+   `/private/var/select`). On darwin a wrapped `/usr/bin/c++` compiles and
+   runs a C++ probe inside the write set (#1557; it fails without the
+   `xcode_select_link` literals). On linux a wrapped command's **child** reads
    `/proc/self/status` successfully, which `/proc/self` as a root would
    deny.
 4. No `--write` is exit 125 with the sentence naming the flag; three `--read`

@@ -65,7 +65,7 @@ type StandardCheck struct {
 // helper every bench script sources, and the nova stamp. The darwin list is
 // fleet/macos/provision-mac-bench.sh: the Go SDK and sbcl under ~/sdk, real git ahead of
 // the Xcode shim, and each runner's .path carrying it (INSTALL-batman.md, 2026-09-18:
-// /usr/bin/git is the shim and the sandbox cannot read /var/db/xcode_select_link).
+// /usr/bin/git is the shim; the wall grants xcode_select_link and Homebrew's git remains the usual PATH).
 //
 // THE TOOLCHAIN ROOTS (the `toolchain-*` checks, Root set) are this table's half of the one
 // list the sandbox wall grants -- internal/swarm/toolchain.go is the other half, and the
