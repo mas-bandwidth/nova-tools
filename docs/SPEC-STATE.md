@@ -386,3 +386,36 @@ Each slice shadows the last and is measured, so the old path is restorable until
 **Invent nothing.** If Redis or Postgres already does it — streams, consumer groups,
 `XAUTOCLAIM`, `SET NX`, TTL, `ZREMRANGEBYSCORE`, pub/sub, a `GROUP BY`, a unique key, WAL — the
 design uses it and does not build a second one.
+
+## Tests this spec demands
+
+The slice-1 tests run against fakes: **miniredis** stands in for the Redis instance, a `record.FakeStore` stands in for Postgres, every path is a `t.TempDir()`, nothing reaches the network, and each test is shown red first by mutation before it is trusted. The one real-Postgres half is the soak behind `RECORD_TEST_PG`, skipped when the env var is unset.
+
+1. `TestOneCardIsDeliveredToExactlyOneConsumer` — with the `workers` group shared by two benches, `XREADGROUP` hands a card to one bench and not the other; the group is per stream, never per bench.
+2. `TestAStreamConsumerThatDiesMidCardHasItsCardReclaimed` — a puller that dies mid-card has its card handed to the next puller by `XAUTOCLAIM`, its partial `RESULT.md` kept as evidence.
+3. `TestAStreamConsumerThatDiesMidCardHasItsCardReclaimed` — an acked card is a landed card and only a landed card is safe to forget (nothing left pending after `XACK`).
+4. `TestLanesAreReadInPriorityOrder` — lanes are read `red`, then `green`, then `small`, then `next`; priority is the stream suffix and the puller's read order.
+5. `TestACapCounterRefusesThe41stInFlightMuseCall` — the 40th Muse call admits, the 41st is refused.
+6. `TestACapCounterRefusesThe41stInFlightMuseCall` — a lapsed call frees its seat on the next admission with no reap pass (the score is the expiry/deadline).
+7. `TestACapAdmissionIsOneAtomicScriptThatRefusesThe41st` — concurrent admissions run through the one script; exactly the cap hold, no `ZCARD`-then-`ZADD` interleave lets a 41st in.
+8. `TestAStaleLeaseTokenCannotRenewOrReleaseASlot` — a token that lost the `SET NX` renews and releases as a no-op through the Lua script; no bare `EXPIRE` moves the key.
+9. `TestAStaleLeaseTokenCannotRenewOrReleaseASlot` — a bench in file mode never touches the Redis key (nor the reverse), so one slot never has two modes.
+10. `TestAPausedOldWorkerCannotWriteAfterItsLeaseLapsed` — a paused old worker whose lease lapsed is refused its clip, `XACK`, `RESULT` publish and harvest push: every guarded write carries the token and compares before it writes.
+11. `TestAModeRestartRefusesToStartUntilTheOldModesCardsAreDrained` — a bench switching mode refuses to start the new mode while any old-mode card is live, and writes `mode restart` to its log once drained.
+12. `TestACapReservationOverProviderModelAndKeyIsOneAtomicScript` — with the key or model scope full, a call that would fit the provider alone is refused with none of the three sets written; an admitted call reserves and releases all three together.
+13. `TestAnExpiredRemoteCallIsUnknownAndKeepsItsSeatUntilAnAnswerOrABound` — a model call past its deadline with no answer is `outcome=unknown`, never failed or succeeded, and keeps its seat until the provider answers or the hard bound passes.
+14. `TestStatusPrintsTheLiveUnknownCallCount` — `nova-pulse status` prints the live unknown-call count beside the cap counts.
+15. `TestAWatchSubscriberWakesOnAJobDoneEventWithinASecond` — publishing `nova:events:job` after a `RESULT.md` lands returns the subscriber once, inside a second, and it re-reads the file.
+16. `TestPresenceKeyExpiresAndLeavesNoTombstone` — `wake:presence:<bench>` holds `{as, until}`, the beat renews it, and a crashed line ages out with no tombstone.
+17. `TestTheMonthlyTokenReportFromPostgresEqualsTheFoldedTsv` — `nova-tokens report` over `token_ledger` equals the folded day TSVs, every type and every `(day, model, repo)`.
+18. `TestRowFromMessageCarriesEveryField` — a `card_results` row carries every field: stream_id, label, bench, exit, result_line, job_path, commit, branch, pr, pushed_at, done_at, recorded_at.
+19. `TestRowFromMessageAcceptsTheStreamsAliasNames` — `pr`, `pushed_at` and `done_at` stay unknown (SQL NULL) when the result did not carry them.
+20. `TestRowFromMessageRefusesAResultWithNoLabel` — a result with no label is refused; a row needs a card.
+21. `TestInsertIsIdempotentOnTheStreamID` — a redelivered or replayed result is an `ON CONFLICT (stream_id) DO NOTHING` no-op, never a second row.
+22. `TestMigrateIsIdempotent` — `record --migrate` applies the schema idempotently, versioned by `schema_version`.
+23. `TestConsumeDoesNotAckWhenTheCommitFailsThenRecovers` — `record` commits each row and `XACK`s only after the commit; a crash between leaves the entry pending for the next start.
+24. `TestListFiltersSinceBenchAndFailed` — `results` filters by `--since`, `--bench` and `--failed`.
+25. `TestResultsPrintsOneLinePerRowAndAMoreLine` — `results` prints one line per row, newest first, capped at `--max` (default 20), with a `MORE` line naming the rest.
+26. `TestNodesIsAProjectionOfTheJournal` — the Postgres `nodes` table is a projection of the journal, not its authority: it can be dropped and rebuilt, and a disagreement is a bug in the projection.
+27. `TestStatusFleetReadsTheProjectionNotJobFiles` — `nova-pulse status --fleet` reads the `nodes`/`receipts` projection and the counters, not every job file.
+28. `TestDirectoryFallbackDeliversTheSameContract` — a bench cut off from Redis falls back to the directory queue, slot files and bus presence through the same contract, so an outage is a latency regression and never a lost card.
