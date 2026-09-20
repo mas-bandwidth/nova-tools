@@ -488,8 +488,8 @@ script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
 `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
 opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
 the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
-the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
-`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+the Xcode shim (`/usr/bin/git` is the shim; the wall grants `xcode_select_link`,
+and Homebrew's git remains the usual PATH), and every runner's `.path` carrying the real git
 first — with the stamp, seat and space checks shared. `--os` names the list;
 left out, the bench is asked with `uname -s`. The remote side prints
 `CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This

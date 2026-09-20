@@ -67,7 +67,8 @@ ancestors_of() { local d; d="$(dirname -- "$1")"; while [[ "$d" != "/" ]]; do pr
 OPTROOTS=""
 # the documented darwin optional roots, and nothing else: a check that grants a root
 # the spec's table does not name is testing a broader policy than the document.
-# (A caller whose git is the Xcode shim names /private/var/db with --read, not here.)
+# /usr/bin/git is an Xcode shim; the profile grants xcode_select_link (#1557), so
+# a caller stuck with the shim no longer needs --read /private/var/db.
 for r in /opt/homebrew /opt/local "$(dirname -- "$GIT")"; do
   # skip-if-absent: an absent root is never a refusal
   [[ -d "$r" ]] || continue
@@ -164,6 +165,13 @@ expect_ok cat_etc_hosts      "cat /etc/hosts > /dev/null"
 expect_ok sh_c_true          "/bin/sh -c true"
 expect_ok child_kill         "sleep 5 & kill \$!"
 expect_ok stdout_to_file     "echo nova > '$W/out.txt' && test \"\$(cat '$W/out.txt')\" = nova"
+
+# #1557: /usr/bin/c++ is an Xcode shim. The profile must grant xcode_select_link
+# (and the developer dir it points at, when that dir is not already a root) so
+# a C++ probe compiles inside the wall the same way it does outside it.
+printf '%s\n' '#include <iostream>' 'int main(){ std::cout << "ok\n"; return 0; }' > "$W/probe.cpp"
+expect_ok cxx_compile "/usr/bin/c++ -o '$W/probe' '$W/probe.cpp' && test -x '$W/probe' && '$W/probe' | grep -qx ok"
+control_ok cxx_compile_control /usr/bin/c++ -o "$OUTSIDE/probe-ctl" "$W/probe.cpp"
 
 # stdout to a pipe the caller drains (rule 12)
 set +e; PIPED="$(walled "echo nova-pipe" 2>/dev/null)"; PRC=$?; set -e

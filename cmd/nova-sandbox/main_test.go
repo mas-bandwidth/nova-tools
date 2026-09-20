@@ -224,6 +224,39 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 	})
 }
 
+// #1557: /usr/bin/c++ is an Xcode shim that reads /var/db/xcode_select_link.
+// The profile granted /var as a literal on the symlink, not a subpath, so the
+// shim died inside the wall with xcode-select's "unable to read data link" and
+// a worker read that as "no compiler installed". A C++ probe that compiles
+// outside the wall must compile inside it, with no extra --read.
+func TestCXXCompilesInsideTheWallOnDarwin(t *testing.T) {
+	needDarwin(t)
+	if _, err := os.Stat("/usr/bin/c++"); err != nil {
+		t.Skip("skipped: /usr/bin/c++ is not on this machine")
+	}
+	j := newJob(t)
+	src := filepath.Join(j.write, "probe.cpp")
+	if err := os.WriteFile(src, []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outsideBin := filepath.Join(j.outside, "probe")
+	if out, err := exec.Command("/usr/bin/c++", "-o", outsideBin, src).CombinedOutput(); err != nil {
+		t.Skipf("skipped: /usr/bin/c++ does not compile outside the wall, so a denial inside it proves nothing: %s", out)
+	}
+	insideBin := filepath.Join(j.write, "probe")
+	code, out, errOut := j.tool(t, j.env(), "--write", j.write, "--", "/usr/bin/c++", "-o", insideBin, src)
+	if code != 0 {
+		t.Fatalf("c++ inside the wall exited %d; want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(errOut, "xcode_select_link") {
+		t.Fatalf("the wall still denies /var/db/xcode_select_link:\n%s", errOut)
+	}
+	code, out, errOut = j.tool(t, j.env(), "--write", j.write, "--", insideBin)
+	if code != 0 || !strings.Contains(out, "ok") {
+		t.Fatalf("the C++ probe did not run inside the wall: exit %d stdout %q stderr %s", code, out, errOut)
+	}
+}
+
 // zsh switches large heredocs from a pipe to a temporary file. On macOS it chooses
 // that file from TMPPREFIX, not TMPDIR; an inherited outside prefix therefore made a
 // legitimate report write fail at the wall even though its final destination was allowed.
@@ -553,16 +586,18 @@ func TestUnbuiltPlatformsRefuse(t *testing.T) {
 	}
 }
 
-// realGit is the git a caller would use: /usr/bin/git on a Mac is an Xcode shim that
-// reads /var/db/xcode_select_link, which no root grants, so it fails inside the wall.
+// realGit is the git a caller would use. Homebrew's git is preferred when
+// present so the test is the same path a developer shell takes. /usr/bin/git
+// is an Xcode shim; the profile grants xcode_select_link (#1557), so the shim
+// is a working fallback inside the wall.
 func realGit(t *testing.T) string {
 	t.Helper()
-	for _, p := range []string{"/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git"} {
+	for _, p := range []string{"/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git", "/usr/bin/git"} {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
 		}
 	}
-	t.Skip("skipped: no git outside /usr/bin on this machine, and the Xcode shim cannot run inside the wall")
+	t.Skip("skipped: no git on this machine")
 	return ""
 }
 

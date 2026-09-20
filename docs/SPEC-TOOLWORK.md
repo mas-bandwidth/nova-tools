@@ -452,9 +452,9 @@ outside the wall and dies inside it is missing a `--read`"*
 **What those rules do not hold.** They say how to let a toolchain through the wall; none
 says **which toolchains this repository's own gate needs**, none proves a bench can run
 that gate **inside** the wall, and nothing ties a card's result to a bench that was ever
-shown able to produce one. The receipts: `/usr/bin/cc` and `/usr/bin/c++` fail inside
-the wall on macOS because the profile denies `/var/db/xcode_select_link`, which also
-kills every `make` target at parse time (#1557); `native` shares the Go caches but never
+shown able to produce one. The receipts: `/usr/bin/cc` and `/usr/bin/c++` failed inside
+the wall on macOS because the profile denied `/var/db/xcode_select_link`, which also
+killed every `make` target at parse time (#1557, repaired in the darwin profile); `native` shares the Go caches but never
 reads the Go toolchain, so a Go card printed `rc=0 harness=ok` having compiled nothing
 (#1465); the harness fence ignores `read_roots` (#1463); on Linux the wall refuses
 `/tmp`, which dotnet hard-codes (#1495), `policy` prints the darwin profile under

@@ -158,12 +158,21 @@ func (p *Policy) AncestorCount() int {
 
 // darwinOptRoots is the per-platform optional root table, as DATA and in one place
 // (spec: "they are data, not code"). The fixed darwin roots — /, /etc, /tmp, /var as
-// literals on the symlinks, /System, /usr, /bin, /sbin, /Library, /private/etc,
-// /private/var/select, /dev, and write on /dev/null and /dev/tty — are in
-// profiles/darwin.sb.tmpl verbatim, because two copies of a profile is one copy too
-// many. What varies per machine is here. A root is SKIPPED if it is absent; only a
-// caller's path is refused for absence (rule 5).
+// literals on the symlinks, the xcode_select_link literals (#1557), /System, /usr,
+// /bin, /sbin, /Library, /private/etc, /private/var/select, /dev, and write on
+// /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
+// copies of a profile is one copy too many. What varies per machine is here. A
+// root is SKIPPED if it is absent; only a caller's path is refused for absence
+// (rule 5). The directory /var/db/xcode_select_link points at is discovered
+// below, not listed here: CommandLineTools is already under /Library, and
+// Xcode.app/Contents is not (Contents, not Developer: the shims read
+// Info.plist and SharedFrameworks next to Developer).
 var darwinOptRoots = []string{"/opt/homebrew", "/opt/local"}
+
+// xcodeSelectLinks are the two spellings of the symlink the Xcode shims read.
+// OptionalRoots follows them outside the wall so the developer dir can be a
+// skip-if-absent root; the profile's own grant of the link is the template's.
+var xcodeSelectLinks = []string{"/var/db/xcode_select_link", "/private/var/db/xcode_select_link"}
 
 // fixedDarwinPrefixes are the roots the template already grants as subpaths. An optional
 // root under one of them is dropped rather than emitted twice.
@@ -171,11 +180,13 @@ var fixedDarwinPrefixes = []string{"/usr", "/bin", "/sbin", "/System", "/Library
 
 // OptionalRoots is the machine's answer to the table above plus the directory of the
 // resolved command, which is a root for exactly this run (the spec's roots table names
-// it on all three platforms).
+// it on all three platforms), plus the directory /var/db/xcode_select_link points at
+// when that directory is not already a fixed root (#1557).
 func OptionalRoots(command string) []string {
 	var out []string
 	seen := map[string]bool{}
 	candidates := append([]string{}, darwinOptRoots...)
+	candidates = append(candidates, xcodeSelectDeveloperDirs()...)
 	if command != "" {
 		candidates = append(candidates, filepath.Dir(command))
 	}
@@ -203,6 +214,43 @@ func underAny(path string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// xcodeSelectDeveloperDirs is the directory /var/db/xcode_select_link points at,
+// asked of the host the way --go asks go env and never guessed (#1557). Both
+// spellings of the link are read because /var is a symlink to /private/var.
+// An absent link is skip-if-absent, like /opt/local. The target is not yet
+// filtered against fixedDarwinPrefixes; OptionalRoots drops one that already
+// sits under /Library (CommandLineTools) so the profile does not grant it twice.
+//
+// xcode-select -p prints .../Contents/Developer. The shims also stat Info.plist
+// and load SharedFrameworks next to Developer, so the grant is Contents, not
+// Developer: measured, Developer alone is "couldn't stat Xcode's Info.plist"
+// and a dyld deny on DVTSystemPrerequisites.
+func xcodeSelectDeveloperDirs() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, link := range xcodeSelectLinks {
+		target, err := os.Readlink(link)
+		if err != nil || target == "" {
+			continue
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(link), target)
+		}
+		if got, err := filepath.EvalSymlinks(target); err == nil {
+			target = got
+		}
+		if strings.HasSuffix(target, filepath.FromSlash("/Contents/Developer")) {
+			target = filepath.Dir(target) // .../Contents, which holds Info.plist and SharedFrameworks
+		}
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		out = append(out, target)
+	}
+	return out
 }
 
 // callerHomes is every directory that is a HOME of the person running the tool: the
