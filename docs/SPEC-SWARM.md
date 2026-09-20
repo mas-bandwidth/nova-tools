@@ -2494,10 +2494,10 @@ holders=…` line and exits 2, having started nothing.
 ids it granted — not a count — and a holder hands exactly those back to
 `ReleaseSlotLeasesByID(store, ids, pid)`, which re-reads each lease and leaves it alone
 unless the pid is still the holder's. An owner is a bench and a label is a card's name, and
-two runs that share both — two slots, two benches, a retry — would otherwise each give away
-the other's live seat; a run that refused before it started, on a missing harness say, would
-delete a lease it never took. An id that is already gone is not an error: a release is
-allowed to be late.
+two runs that share both — two slots, two benches, a retry, two dispatchers sharing an
+owner and a task id — would otherwise each give away the other's live seat; a run that
+refused before it started, on a missing harness say, would delete a lease it never took.
+An id that is already gone is not an error: a release is allowed to be late.
 
 `slots release --store <dir> --owner <o> (--label <text> | --all) [--force]` still SELECTS
 by owner and label, because that is what a PERSON at a prompt means by it and a person can

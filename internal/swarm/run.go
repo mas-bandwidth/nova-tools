@@ -101,6 +101,7 @@ type running struct {
 	adopted    bool
 	notes      int
 	leased     bool
+	leaseIDs   []string
 }
 
 // Run is the dispatcher. It returns the exit code.
@@ -436,9 +437,10 @@ func Run(in RunInput) int {
 				}
 			}
 			leased := false
+			var leaseIDs []string
 			if in.SlotsStore != "" {
 				dur := taskDeadline(sc, in.Worker) + 2*time.Minute
-				_, _, _, _, holders, granted, lerr := TakeSlotLeases(in.SlotsStore, in.SlotOwner, 1, dur, sc.ID, now(), slotPID)
+				ids, _, _, _, holders, granted, lerr := TakeSlotLeases(in.SlotsStore, in.SlotOwner, 1, dur, sc.ID, now(), slotPID)
 				if lerr != nil {
 					said = true
 					haltAdmissions = true
@@ -464,6 +466,7 @@ func Run(in RunInput) int {
 					break
 				}
 				leased = true
+				leaseIDs = ids
 				slotWaitTask = ""
 				slotNextPoll = time.Time{}
 			}
@@ -471,6 +474,7 @@ func Run(in RunInput) int {
 			switch code {
 			case launchStarted:
 				r.leased = leased
+				r.leaseIDs = leaseIDs
 				started++
 				watching[slot] = r
 				tasks.Line(line)
@@ -489,7 +493,7 @@ func Run(in RunInput) int {
 				failed++
 				tasks.Line(line)
 				if leased {
-					in.releaseSlotLease(sc.ID)
+					in.releaseSlotLease(leaseIDs)
 				}
 			default:
 				said = true
@@ -497,7 +501,7 @@ func Run(in RunInput) int {
 				haltAdmissions = true
 				tasks.Line(line)
 				if leased {
-					in.releaseSlotLease(sc.ID)
+					in.releaseSlotLease(leaseIDs)
 				}
 			}
 		}
@@ -534,7 +538,7 @@ func Run(in RunInput) int {
 				// THE LEASE ENDS WITH THE TASK, whatever end it found. Clearing the poll
 				// hold lets the next waiting task ask at once rather than wait out a
 				// poll interval for a capacity that is already free.
-				in.releaseSlotLease(r.sc.ID)
+				in.releaseSlotLease(r.leaseIDs)
 				slotNextPoll = time.Time{}
 			}
 			// D2 (the real run, 2026-09-11): two jobs printed `RUN DONE … dest=failed`
@@ -596,16 +600,26 @@ func Run(in RunInput) int {
 	return 0
 }
 
-// releaseSlotLease gives back the lease this dispatcher holds for one task. A failure is
+// releaseSlotLease gives back EXACTLY the leases this dispatcher took. A failure is
 // reported and is not fatal: the lease names this process's pid, so a dispatcher that dies
 // leaves a lease the next take reaps anyway.
-func (in RunInput) releaseSlotLease(id string) {
-	if in.SlotsStore == "" || id == "" {
+//
+// IT RELEASES BY IDENTITY, not by owner and label (nova-tools#1582, Stella's hold on
+// PR #1562). The first cut handed `ReleaseSlotLeases(store, owner, taskID, false)` here,
+// and that removes EVERY lease matching the owner and the task id — so two dispatchers
+// sharing both each gave away the other's live seat. ids is exactly what TakeSlotLeases
+// granted this task and exactly what is handed back.
+func (in RunInput) releaseSlotLease(ids []string) {
+	if in.SlotsStore == "" || len(ids) == 0 {
 		return
 	}
-	if _, _, err := ReleaseSlotLeases(in.SlotsStore, in.SlotOwner, id, false); err != nil {
-		fmt.Fprintf(in.Stderr, "nova-swarm run: releasing the slot lease for %s: %s\n",
-			oneline.Field(id), oneline.Escape(redactedReason(err)))
+	pid := in.SlotPID
+	if pid <= 0 {
+		pid = os.Getpid()
+	}
+	if _, err := ReleaseSlotLeasesByID(in.SlotsStore, ids, pid); err != nil {
+		fmt.Fprintf(in.Stderr, "nova-swarm run: releasing the slot lease: %s\n",
+			oneline.Escape(redactedReason(err)))
 	}
 }
 
