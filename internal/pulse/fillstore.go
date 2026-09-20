@@ -26,6 +26,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -34,15 +35,16 @@ import (
 // numbers the bench could give: its store's own free count, or the legacy load formula for a
 // bench that has no store yet.
 type CapacityAnswer struct {
-	FromStore bool
-	Share     int     // the owner's row in shares.tsv, when FromStore
-	Held      int     // the live leases that owner holds, when FromStore
-	Formula   int     // the legacy load formula's number, when not FromStore
-	Cores     int     // the bench's cores, for the brake; 0 when CoresRead is false
-	CoresRead bool    // whether the bench could measure its cores at all
-	Load1     float64 // the bench's one-minute load, for the brake; 0 when LoadRead is false
-	LoadRead  bool    // whether the bench could measure its load at all
-	Why       string  // why the bench answered the formula rather than its store
+	FromStore  bool
+	Share      int      // the owner's row in shares.tsv, when FromStore
+	Held       int      // the live leases that owner holds, when FromStore
+	HeldLabels []string // labels of those held leases, for reservation reconciliation
+	Formula    int      // the legacy load formula's number, when not FromStore
+	Cores      int      // the bench's cores, for the brake; 0 when CoresRead is false
+	CoresRead  bool     // whether the bench could measure its cores at all
+	Load1      float64  // the bench's one-minute load, for the brake; 0 when LoadRead is false
+	LoadRead   bool     // whether the bench could measure its load at all
+	Why        string   // why the bench answered the formula rather than its store
 }
 
 // UnreadableMeasurement is what a bench says instead of a number when every reader for that
@@ -211,7 +213,7 @@ func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
 				"the capacity probe answered %q with no `leases` listing after it; refusing a share with no lease count",
 				oneLineAnswer(head))
 		}
-		if a.Held, err = countLeases(strings.Join(listing, "\n"), owner); err != nil {
+		if a.Held, a.HeldLabels, err = countLeases(strings.Join(listing, "\n"), owner); err != nil {
 			return CapacityAnswer{}, err
 		}
 		if a.Held > a.Share {
@@ -283,40 +285,44 @@ var leaseStates = map[string]bool{"live": true, "DRIFT": true, leaseStateExpired
 // `SLOT <id> owner=<o> pid=<n> label=<l> until=<t> state=<s>` per lease -- and answers how
 // many of them this owner holds. Every non-empty row must BE a lease: a row that is not is
 // a refusal, because a row nobody matched used to be indistinguishable from a free slot.
-func countLeases(listing, owner string) (int, error) {
+func countLeases(listing, owner string) (int, []string, error) {
 	held := 0
+	var labels []string
 	for _, line := range strings.Split(listing, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if !strings.HasPrefix(line, "SLOT ") {
-			return 0, fmt.Errorf(
+			return 0, nil, fmt.Errorf(
 				"the lease listing carries a row that is not a lease: %q", oneLineAnswer(line))
 		}
-		var rowOwner, state string
+		var rowOwner, state, label string
 		for _, f := range strings.Fields(line) {
 			switch k, v, _ := strings.Cut(f, "="); k {
 			case "owner":
 				rowOwner = v
 			case "state":
 				state = v
+			case "label":
+				label = v
 			}
 		}
 		if rowOwner == "" || state == "" {
-			return 0, fmt.Errorf(
+			return 0, nil, fmt.Errorf(
 				"the lease listing carries a row with no owner= or no state=: %q", oneLineAnswer(line))
 		}
 		if !leaseStates[state] {
-			return 0, fmt.Errorf(
+			return 0, nil, fmt.Errorf(
 				"the lease listing carries state=%s, which is not one this fill knows (live, DRIFT, expired, UNKNOWN); refusing to guess whether it is held",
 				oneline.Field(state))
 		}
 		if rowOwner == owner && state != leaseStateExpired {
 			held++
+			labels = append(labels, label)
 		}
 	}
-	return held, nil
+	return held, labels, nil
 }
 
 // unreadOr prints a measurement, or the word a bench uses when nobody could take it.
@@ -346,6 +352,35 @@ type StoreCapacity struct {
 	Owner          string // the store's owner row, whose leases are counted
 	MaxLoadPerCore float64
 	Stderr         io.Writer
+	memo           *labelMemo // shared across value copies; last held-lease labels per bench
+}
+
+type labelMemo struct {
+	mu sync.Mutex
+	by map[string][]string
+}
+
+func (c StoreCapacity) OwnedLeaseLabels(bench string) []string {
+	if c.memo == nil {
+		return nil
+	}
+	c.memo.mu.Lock()
+	defer c.memo.mu.Unlock()
+	out := make([]string, len(c.memo.by[bench]))
+	copy(out, c.memo.by[bench])
+	return out
+}
+
+func (c StoreCapacity) rememberLabels(bench string, labels []string) {
+	if c.memo == nil {
+		return
+	}
+	c.memo.mu.Lock()
+	if c.memo.by == nil {
+		c.memo.by = map[string][]string{}
+	}
+	c.memo.by[bench] = append([]string(nil), labels...)
+	c.memo.mu.Unlock()
 }
 
 // ownerFor is the store row whose leases are this bench's: the one named, or the seat the
@@ -377,6 +412,7 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	c.rememberLabels(bench, a.HeldLabels)
 	// THE ONE FALLBACK IS NEVER SILENT. A bench answering the old load formula is a bench
 	// with no row of its own in a store the probe could read, and it says which.
 	if !a.FromStore && c.Stderr != nil {

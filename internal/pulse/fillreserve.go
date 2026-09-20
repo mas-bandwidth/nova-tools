@@ -5,22 +5,23 @@ package pulse
 // Capacity is an observation. Two dealers can both see free=1 before either
 // claims. Rename protects the same card, not the seat. The reservation is a
 // file created with O_EXCL under --launched/.fill-seats/<bench>/<n>, so the
-// claim of a numbered seat is atomic and stays visible until this dealer
-// releases a known failure, reconciles owned execution on a later tick, or
-// keeps an UNKNOWN launch. It is not a lock taken around Launch and dropped
-// when Launch returns.
+// claim of a numbered seat is atomic and stays visible until a matching owned
+// lease is positively observed. A known failure releases it. UNKNOWN is not
+// freed. Process restart reloads the files; in-memory holds alone are not
+// enough. It is not a lock taken around Launch and dropped when Launch returns.
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 )
 
 // SeatHold is one reserved seat. Release frees a known-failed dispatch.
-// KeepOwned marks owned execution, dropped at this process's next tick so a
-// raised share can fill. KeepUnknown must not be freed.
+// KeepOwned / KeepUnknown persist the outcome; neither is dropped until
+// ReconcileOwned sees a matching live lease label.
 type SeatHold interface {
 	Release()
 	KeepOwned()
@@ -29,9 +30,10 @@ type SeatHold interface {
 
 // SeatReserver claims one of the observed free seats on a bench. ok=false
 // means another dealer already took them; the caller stands down.
+// visible is the set of owned lease labels (and card-*.md aliases) just read.
 type SeatReserver interface {
 	Reserve(bench string, observedFree int, card string) (SeatHold, bool, error)
-	ReconcileOwned()
+	ReconcileOwned(visible map[string]bool)
 }
 
 // fileSeats reserves numbered files under root/<bench>/<n>.
@@ -93,18 +95,103 @@ func (r *fileReserver) Reserve(bench string, observedFree int, card string) (Sea
 	return nil, false, nil
 }
 
-func (r *fileReserver) ReconcileOwned() {
+func (r *fileReserver) loadPersisted() {
+	benches, err := os.ReadDir(r.root)
+	if err != nil {
+		return
+	}
+	have := map[string]bool{}
+	r.mu.Lock()
+	for _, h := range r.holds {
+		have[h.path] = true
+	}
+	r.mu.Unlock()
+	for _, b := range benches {
+		if !b.IsDir() {
+			continue
+		}
+		dir := filepath.Join(r.root, b.Name())
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if e.IsDir() {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			if have[path] {
+				continue
+			}
+			h, ok := readHoldFile(r, path)
+			if !ok {
+				continue
+			}
+			r.mu.Lock()
+			r.holds = append(r.holds, h)
+			r.mu.Unlock()
+			have[path] = true
+		}
+	}
+}
+
+func readHoldFile(r *fileReserver, path string) (*fileHold, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	h := &fileHold{r: r, path: path, pid: os.Getpid()}
+	for _, line := range strings.Split(string(raw), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "bench":
+			h.bench = v
+		case "card":
+			h.card = v
+		case "outcome":
+			h.outcome = v
+		}
+	}
+	if h.card == "" || h.outcome == "" || h.outcome == "released" {
+		return nil, false
+	}
+	if h.bench == "" {
+		h.bench = filepath.Base(filepath.Dir(path))
+	}
+	return h, true
+}
+
+func (r *fileReserver) ReconcileOwned(visible map[string]bool) {
+	r.loadPersisted()
 	r.mu.Lock()
 	holds := append([]*fileHold(nil), r.holds...)
 	r.mu.Unlock()
 	for _, h := range holds {
 		h.mu.Lock()
-		owned := h.outcome == "owned"
+		card := h.card
+		outcome := h.outcome
 		h.mu.Unlock()
-		if owned {
+		if outcome == "released" {
+			continue
+		}
+		if leaseVisible(visible, card) {
 			h.Release()
 		}
 	}
+}
+
+func leaseVisible(visible map[string]bool, card string) bool {
+	if len(visible) == 0 || card == "" {
+		return false
+	}
+	if visible[card] {
+		return true
+	}
+	base := strings.TrimSuffix(card, ".md")
+	return visible[base]
 }
 
 func (h *fileHold) body() string {

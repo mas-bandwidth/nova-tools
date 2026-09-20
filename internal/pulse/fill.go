@@ -175,6 +175,49 @@ func (g guardedCapacity) Capacity(bench string) (int, error) {
 	return g.next.Capacity(bench)
 }
 
+type leaseViewer interface {
+	OwnedLeaseLabels(bench string) []string
+}
+
+func (g guardedCapacity) OwnedLeaseLabels(bench string) []string {
+	if v, ok := g.next.(leaseViewer); ok {
+		return v.OwnedLeaseLabels(bench)
+	}
+	return nil
+}
+
+func rememberLeases(c Capacity) Capacity {
+	if sc, ok := c.(StoreCapacity); ok {
+		if sc.memo == nil {
+			sc.memo = &labelMemo{by: map[string][]string{}}
+		}
+		return sc
+	}
+	return c
+}
+
+func ownedLeaseLabels(c Capacity, benches []string) map[string]bool {
+	out := map[string]bool{}
+	v, ok := c.(leaseViewer)
+	if !ok {
+		return out
+	}
+	for _, bench := range benches {
+		for _, lab := range v.OwnedLeaseLabels(bench) {
+			if lab == "" || lab == "-" {
+				continue
+			}
+			out[lab] = true
+			base := strings.TrimSuffix(lab, ".md")
+			out[base] = true
+			if !strings.HasSuffix(lab, ".md") {
+				out[lab+".md"] = true
+			}
+		}
+	}
+	return out
+}
+
 // guardedLauncher is the launch seam with the registry in front of it: the last gate a card
 // passes before it lands on a machine.
 type guardedLauncher struct {
@@ -343,7 +386,7 @@ func Fill(in FillInput) int {
 	in.Benches = seated
 	// Belt and braces: even a bench that passed the list check is asked again at the
 	// moment the card, or the capacity probe, would reach the machine.
-	in.Capacity = guardedCapacity{reg: reg, next: in.Capacity}
+	in.Capacity = guardedCapacity{reg: reg, next: rememberLeases(in.Capacity)}
 	in.Launcher = guardedLauncher{reg: reg, next: in.Launcher}
 	for _, dir := range []string{in.Ready, in.Launched} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -408,9 +451,6 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // returns the FILL line first, then one FILL HELD line per held card, then the FILL REAPED
 // line when the tick took stale markers away.
 func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickResult) {
-	if in.Seats != nil {
-		in.Seats.ReconcileOwned()
-	}
 	reaped := reapMarkers(in)
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
@@ -453,6 +493,9 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 		}
 	}
 	observed := append([]int(nil), want...)
+	if in.Seats != nil {
+		in.Seats.ReconcileOwned(ownedLeaseLabels(in.Capacity, in.Benches))
+	}
 
 	// Round-robin: one card per bench in turn, passes repeat until every bench is at its
 	// capacity or the pool is empty. A card skipped as unknown or held consumes the card

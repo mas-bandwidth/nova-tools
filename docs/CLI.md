@@ -1977,10 +1977,11 @@ taken before the card moves out of `--ready`. A losing dealer stands down:
 FILL STANDDOWN bench=<name> reason=seat-taken note="another dealer reserved the observed free seat; this tick launches nothing on this bench"
 ```
 
-The reservation stays until owned execution is reconciled on a later tick of the
-same process, or a known launch failure releases it. An UNKNOWN launch — the
-launcher started, but owned execution is not established — is not freed. Taking a
-lock around dispatch and dropping it when `Launch` returns is not that reservation.
+The reservation stays until a matching owned lease is positively observed, or a
+known launch failure releases it. An UNKNOWN launch — the launcher started, but
+owned execution is not established — is not freed, including across process
+restart (the files are the record). Taking a lock around dispatch and dropping
+it when `Launch` returns is not that reservation.
 
 **`--only <glob>` is the whitelist of cards this run may launch**, repeatable and
 comma-separated, matched against the card's filename with or without the `card-`

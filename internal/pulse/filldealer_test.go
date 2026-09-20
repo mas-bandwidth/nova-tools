@@ -9,6 +9,7 @@ package pulse
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,7 +270,7 @@ func TestFillReservationPersistsUntilOwnedLeaseReconciliation(t *testing.T) {
 // the seat is not handed out again.
 func TestFillCountsUNKNOWNLeaseStateAsHeld(t *testing.T) {
 	listing := "SLOT 1 owner=" + testOwner + " pid=9 label=card-001 until=2026-09-20T00:00:00Z state=UNKNOWN\n"
-	n, err := countLeases(listing, testOwner)
+	n, _, err := countLeases(listing, testOwner)
 	if err != nil {
 		t.Fatalf("UNKNOWN lease was refused rather than held: %v", err)
 	}
@@ -282,6 +283,85 @@ func TestFillCountsUNKNOWNLeaseStateAsHeld(t *testing.T) {
 	}
 	if a.Held != 1 || a.Free() != 1 {
 		t.Fatalf("share=2 UNKNOWN held=%d free=%d, want held=1 free=1", a.Held, a.Free())
+	}
+}
+
+// TestReviewOwnedReservationBridgesDelayedLeaseVisibility is Stella's HOLD control
+// on #2124: ReconcileOwned must not drop a successful launch just because a later
+// tick ran. Capacity still answers free=1 (lease publication delayed). Exactly one
+// card may be dispatched into that seat.
+func TestReviewOwnedReservationBridgesDelayedLeaseVisibility(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "a card\n")
+	writeCard(t, ready, "card-002.md", "a card\n")
+	if err := os.MkdirAll(launched, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	machines := machinesFile(t, dir, []string{"bench-a"}, nil)
+	seats := fileSeats(filepath.Join(launched, ".fill-seats"))
+	l := &dealerLauncher{}
+	in := FillInput{
+		Ready: ready, Launched: launched, Machines: machines,
+		Benches:  []string{"bench-a"},
+		Capacity: laneCap{"bench-a": 1},
+		Launcher: l,
+		Seats:    seats,
+		Stdout:   io.Discard,
+		Stderr:   io.Discard,
+	}
+	registrySeats := map[string]string{"bench-a": "swarm-bench-a"}
+	fillTick(in, registrySeats, 1)
+	fillTick(in, registrySeats, 2)
+	if got := len(l.snapshot()); got != 1 {
+		t.Fatalf("delayed lease visibility dispatched %d cards into one observed seat, want 1: %q",
+			got, l.snapshot())
+	}
+}
+
+// TestFillRestartKeepsUNKNOWNReservationFromDisk: a new fileSeats on the same
+// directory must load persisted UNKNOWN and not free the seat.
+func TestFillRestartKeepsUNKNOWNReservationFromDisk(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "a card\n")
+	writeCard(t, ready, "card-002.md", "a card\n")
+	if err := os.MkdirAll(launched, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	machines := machinesFile(t, dir, []string{"bench-a"}, nil)
+	root := filepath.Join(launched, ".fill-seats")
+	l := &unknownSeatLauncher{}
+	in := FillInput{
+		Ready: ready, Launched: launched, Machines: machines,
+		Benches:  []string{"bench-a"},
+		Capacity: laneCap{"bench-a": 1},
+		Launcher: l,
+		Seats:    fileSeats(root),
+		Stdout:   io.Discard,
+		Stderr:   io.Discard,
+	}
+	registrySeats := map[string]string{"bench-a": "swarm-bench-a"}
+	fillTick(in, registrySeats, 1)
+	in.Seats = fileSeats(root)
+	writeCard(t, ready, "card-002.md", "a card\n")
+	fillTick(in, registrySeats, 2)
+	if got := len(l.snapshot()); got != 1 {
+		t.Fatalf("restart freed an UNKNOWN reservation: %d launches, want 1: %q", got, l.snapshot())
+	}
+	seats, err := filepath.Glob(filepath.Join(root, "bench-a", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seats) != 1 {
+		t.Fatalf("UNKNOWN reservation files after restart = %v, want 1", seats)
+	}
+	body, err := os.ReadFile(seats[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "outcome=unknown") {
+		t.Fatalf("restart did not keep UNKNOWN: %q", body)
 	}
 }
 

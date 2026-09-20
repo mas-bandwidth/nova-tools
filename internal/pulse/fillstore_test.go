@@ -41,10 +41,21 @@ func (p *storeProbe) probe(bench string) (string, error) {
 // storeLine is what a bench's capacity probe prints when it could read the store: the
 // header, the `leases` marker, and the lease listing itself -- which is what Go counts.
 func storeLine(share, held, cores int, load1 float64) string {
+	labels := make([]string, held)
+	for i := range labels {
+		labels[i] = "-"
+	}
+	return storeLineHeld(share, cores, load1, labels...)
+}
+
+func storeLineHeld(share, cores int, load1 float64, labels ...string) string {
 	b := fmt.Sprintf("store share=%d cores=%d load1=%.2f\nleases\n", share, cores, load1)
-	for i := 0; i < held; i++ {
-		b += fmt.Sprintf("SLOT %d owner=%s pid=%d label=- until=2026-09-20T00:00:00Z state=live\n",
-			i+1, testOwner, 100+i)
+	for i, label := range labels {
+		if label == "" {
+			label = "-"
+		}
+		b += fmt.Sprintf("SLOT %d owner=%s pid=%d label=%s until=2026-09-20T00:00:00Z state=live\n",
+			i+1, testOwner, 100+i, label)
 	}
 	return b
 }
@@ -124,7 +135,7 @@ func TestFillTakesUpARaisedShareOnTheNextTick(t *testing.T) {
 			case 1:
 				// The owner's share is raised from under the loop: 1 -> 4, with the
 				// one card of tick 1 still leased.
-				p.lines["bench-a"] = storeLine(4, 1, 64, 1)
+				p.lines["bench-a"] = storeLineHeld(4, 64, 1, "card-001.md")
 			default:
 				if err := os.WriteFile(stop, nil, 0o644); err != nil {
 					t.Error(err)

@@ -183,8 +183,17 @@ func TestFillDisablesOnePoisonedRegistryRowAmongFive(t *testing.T) {
 			t.Errorf("FILL line does not deal to neighbour %s: %q", name, out.String())
 		}
 	}
-	if len(l.calls) != 8 {
-		t.Fatalf("launcher calls = %d, want 8 (four neighbours × two ticks); calls=%q", len(l.calls), l.calls)
+	if len(l.calls) != 4 {
+		t.Fatalf("launcher calls = %d, want 4 (four neighbours on tick 1; tick 2 keeps each reservation until a matching lease is visible); calls=%q", len(l.calls), l.calls)
+	}
+	ticksOut := 0
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "FILL tick=") && strings.Contains(line, "b1:launched=") {
+			ticksOut++
+		}
+	}
+	if ticksOut != 2 {
+		t.Fatalf("FILL lines naming neighbour b1 = %d, want 2 (the poisoned row must not drop neighbours from later ticks): %q", ticksOut, out.String())
 	}
 	for _, call := range l.calls {
 		if strings.HasPrefix(call, "hetzner ") {
