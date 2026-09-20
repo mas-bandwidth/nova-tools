@@ -2794,6 +2794,21 @@ exits 2, having started nothing. Asked without either flag it prints one line an
 NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
 ```
 
+**A denial in the capture that nobody read is refused, never `NATIVE OK`**
+(issue #1465; Stella's HOLD on #1478), and the classified bytes are the
+parent's tee, never a re-read of `<job>/harness-output.log` (issue #1892). The
+job directory is a `--write`; unlink-and-replace of that name after a real
+shell denial is how a card turned `Permission denied` into `NATIVE OK`. There
+is no OK line at all:
+
+```
+NATIVE REFUSED: go-card a denial the card's shell reported went unread, so this run's disposition is refused rather than OK: step=3 rc=0 wall=none-by-flag denied_path=/opt/sdk/go1.26.5/bin/go operation=unverified job=… line="/usr/bin/bash: line 1: /opt/sdk/go1.26.5/bin/go: Permission denied". …
+```
+
+The refusal quotes the capture and labels the operation `unverified`. It does
+not invent "the gate never ran". The job directory is named so the spend is
+still harvestable.
+
 There is no default store, no owner guessed from the host or the label, no `shares.tsv`
 created on the way past, and no flag that turns it off — a launch that took no lease is one
 the bench cannot see, cannot count and cannot refuse. A bench's store is made once, by

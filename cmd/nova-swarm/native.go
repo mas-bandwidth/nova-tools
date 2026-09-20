@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -83,6 +84,7 @@ type nativeRunResult struct {
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
+	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
@@ -543,7 +545,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	capture := io.MultiWriter(log, harnessOut, timeline, reader)
+	// THE CLASSIFIED BYTES ARE THE PARENT'S TEE (issue #1892). The job directory is a
+	// --write, so the child can unlink-and-replace <job>/harness-output.log after it
+	// prints a denial. O_NOFOLLOW defends a planted symlink; it does not defend a new
+	// inode at the same name. native.log is --read on a walled run and still writable
+	// under --no-wall. The in-memory copy is the one pipe the card cannot open. stdout
+	// and stderr copy concurrently, so the buffer is locked.
+	var classified bytes.Buffer
+	var classifiedMu sync.Mutex
+	parentTee := &lockedWriter{mu: &classifiedMu, w: &classified}
+	capture := io.MultiWriter(log, harnessOut, timeline, reader, parentTee)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -555,7 +566,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		tmp:          tmpDir,
 	}
 	if cfg.noWall {
-		res.wall = "none-by-flag"
+		res.wall = swarm.SandboxNoneByFlag
 	}
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
@@ -576,7 +587,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	termCh := nativeTermCh()
 	defer stopNativeTerm(termCh)
 	for attempt := 1; ; attempt++ {
-		before := fileSize(outLog)
+		classifiedMu.Lock()
+		before := classified.Len()
+		classifiedMu.Unlock()
 		cmd := exec.Command(runPath, runArgv...)
 		ownChildGroup(cmd)
 		cmd.Env = childEnv
@@ -664,7 +677,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
+		classifiedMu.Lock()
+		chunk := append([]byte(nil), classified.Bytes()[before:]...)
+		classifiedMu.Unlock()
+		_, launchFailure := swarm.ProviderLaunchFailure(chunk)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
@@ -673,15 +689,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	log.Close()
 	harnessOut.Close()
+	// AFTER BOTH WRITERS ARE CLOSED, classify the parent's own bytes -- never a re-read of
+	// <job>/harness-output.log, which the child may have replaced (issue #1892).
+	classifiedMu.Lock()
+	captureBytes := append([]byte(nil), classified.Bytes()...)
+	classifiedMu.Unlock()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
 	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
-	res.harness = harnessState(jobDir)
+	res.harness = harnessState(captureBytes, jobDir)
 	// AND WHETHER THE FENCE STOPPED THE CARD (issue #644), asked of the same capture and for
 	// the same reason: the harness prints its own rejection and then the model stops, so a
 	// run that ends with no result and a rejection in its capture is not a model that chose
 	// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
 	// it and scores the card `fence` instead of `no-result`.
-	res.fence = fenceRejected(jobDir)
+	res.fence = fenceRejected(captureBytes)
 	// The timeline lands beside RESULT.md and usage.tsv once the child is gone, with one
 	// row per model turn and per tool call, in report order. A run whose harness reported no
 	// events writes no file: an absent timeline is an empty measurement, never a zero row.
@@ -695,7 +716,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// commits ./repo kept, so the harvester can push the work rather than leave it
 	// stranded with the card. A rejection beside a published result is not a death:
 	// WallDeath asks the result first.
-	if report, ok := swarm.WallDeath(jobDir, cfg.label); ok {
+	if report, ok := swarm.WallDeathFrom(captureBytes, jobDir, cfg.label); ok {
 		res.wallReport = report
 	}
 
@@ -713,17 +734,28 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// reported `WALL task=js-under-20-bytes path=/var/db/xcode_select_link step=-` and a
 	// whole shift went looking at the wall for a provider stall.
 	if _, published := swarm.FindCardResult(jobDir); !published {
-		if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
-			if wr, ok := swarm.WallStopped(raw); ok {
-				res.wallRefusal = wr
-			}
+		if wr, ok := swarm.WallStopped(captureBytes); ok {
+			res.wallRefusal = wr
 		}
+	}
+	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
+	// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
+	// published despite a refusal routed around it and finished. This one does not, and that
+	// is the whole point: the card of #1465 published an honest RESULT.md saying its
+	// `go test` could not be built or run, the child exited 0, and the run said
+	// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
+	//
+	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
+	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
+	// THE BYTES ARE THE PARENT TEE (issue #1892), not a re-read of the job file.
+	if sd, ok := swarm.ShellDenied(captureBytes); ok {
+		res.shellDenial = sd
 	}
 	res.end = swarm.EndDone
 	if res.rc != 0 {
 		res.end = swarm.EndFailed
 	}
-	if (res.wallRefusal != swarm.WallRefusal{}) {
+	if (res.wallRefusal != swarm.WallRefusal{}) || (res.shellDenial != swarm.ShellDenial{}) {
 		res.end = swarm.EndWall
 	}
 	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
@@ -761,43 +793,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	return res, 0
 }
 
-// fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads
-// before a launch so the provider tail it inspects is THIS attempt's output.
-func fileSize(path string) int64 {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	return fi.Size()
-}
-
-// readSince reads what one launch appended to the capture after offset, bounded so a chatty
-// harness does not read a whole log to answer a yes/no.
-func readSince(path string, offset int64) []byte {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return nil
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, 64<<10))
-	if err != nil {
-		return nil
-	}
-	return raw
-}
-
-// fenceRejected is the first path the harness's own fence auto-rejected in this job's
-// capture, or "" when it rejected nothing. It is asked OF THE RUN'S OWN CAPTURE,
-// `<job>/harness-output.log` (issue #608), the file with one writer -- never `harness.log`,
-// which carries the runner's stdout and this very line.
-func fenceRejected(jobDir string) string {
-	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
-	if err != nil {
-		return ""
-	}
+// fenceRejected is the first path the harness's own fence auto-rejected in the parent's
+// tee, or "" when it rejected nothing. It is asked OF THE BYTES THE PARENT ALREADY HAS
+// (issue #1892), never a re-read of `<job>/harness-output.log`, which the child may replace.
+func fenceRejected(raw []byte) string {
 	path, ok := swarm.FenceRejection(raw)
 	if !ok {
 		return ""
@@ -818,10 +817,12 @@ func fenceRejected(jobDir string) string {
 // model; a model that had nothing to say), and the line now tells them apart. A harness that
 // SPOKE and published nothing is `ok` and scores `no-result`: there is evidence to read.
 //
-// THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` (issue #608) -- never
-// `harness.log`, which the legacy supervisor and a `batch`'s runner pin already own. Reading
-// the capture rather than a file this process does not write is what keeps the token honest
-// on a bench, where the batch's own runner pin may not exist at all.
+// THE BYTES ARE THE PARENT'S TEE (issue #1892), the same stream that is also written to
+// `<job>/harness-output.log` (issue #608) -- never `harness.log`, which the legacy
+// supervisor and a `batch`'s runner pin already own, and never a re-read of that job file
+// after the child exits, because the job directory is a --write and the child can replace
+// the name. Reading the tee rather than a file the child can replace is what keeps the
+// token honest.
 //
 // THE WALL'S OWN LINES ARE NOT THE HARNESS SPEAKING. The wall prints `SANDBOX ...` on the
 // child's stderr, which this capture also holds, and counting those bytes would make a WALLED
@@ -833,8 +834,8 @@ func fenceRejected(jobDir string) string {
 // A card's STEP 1 makes `repo/` the model's cwd, so a working run publishes there and the
 // batch copies it up; a shallower lookup here would print `harness=silent` about a run that
 // worked, which is the same class of fault this token exists to end.
-func harnessState(jobDir string) string {
-	if harnessSpoke(filepath.Join(jobDir, "harness-output.log")) {
+func harnessState(raw []byte, jobDir string) string {
+	if harnessSpoke(raw) {
 		return "ok"
 	}
 	if result, ok := swarm.FindCardResult(jobDir); ok && wroteBytes(result) {
@@ -849,19 +850,14 @@ func harnessState(jobDir string) string {
 const captureHeadBytes = 64 << 10
 
 // harnessSpoke says whether the capture holds a line the CHILD wrote: any non-blank line that
-// is not one of the wall's own `SANDBOX ` lines. An absent or empty file is a harness that
-// said nothing, and so is one holding the wall's header alone.
-func harnessSpoke(path string) bool {
-	fi, err := os.Stat(path)
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 {
+// is not one of the wall's own `SANDBOX ` lines. Empty bytes are a harness that said nothing,
+// and so are bytes holding the wall's header alone. Asked of the parent tee (issue #1892).
+func harnessSpoke(raw []byte) bool {
+	if len(raw) == 0 {
 		return false
 	}
-	if fi.Size() > captureHeadBytes {
+	if len(raw) > captureHeadBytes {
 		return true
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX ") {
@@ -870,6 +866,18 @@ func harnessSpoke(path string) bool {
 		return true
 	}
 	return false
+}
+
+// lockedWriter serialises Write so stdout and stderr copy goroutines can share one buffer.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.w.Write(p)
 }
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test

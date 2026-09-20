@@ -1337,6 +1337,43 @@ supervisor's own open included: two processes write a card's `harness.log` at
 their own offsets, and a truncating open destroys the head of what the other
 already wrote.
 
+**Classification is of the parent's tee, never a re-read of
+`<job>/harness-output.log`** (issue #1892). The job directory is a `--write`.
+`O_NOFOLLOW` on open defends a symlink planted by an earlier run; it does not
+defend unlink-and-replace of that name by this run. After the child exits, the
+classified bytes are the ones the parent already captured — an in-memory copy
+of the pipe, which the card cannot open. A file the card can replace is not
+evidence against the process that may write it.
+
+**An unread denial cannot return OK, and it is not a diagnosis either** (issue
+#1465; Stella's HOLD on PR #1478). A `native` run reads that parent capture for
+the words a SHELL uses when it is denied a path — `/usr/bin/bash: line 1:
+<path>: Permission denied`, and the dash, zsh and Go `fork/exec` spellings —
+and a run that holds one is **refused**. There is no `NATIVE OK` line at all.
+
+**The path is the whole segment between the shell's own `: ` delimiters**,
+spaces and parentheses included, because those are ordinary pathname
+characters. What keeps the reader off prose is the SHELL at the head of the
+line, never the shape of the path.
+
+**The refusal asserts no cause.** The shell's line names a path and a refusal
+and *not an operation*: a denied exec, a redirection to a path the card may not
+write, and a `cd` into a directory it may not read all print these words, and a
+card can carry on from any of them. So the line carries what was measured —
+`step=`, `rc=`, `wall=`, `denied_path=`, `job=` and the shell's own line quoted
+— plus `operation=unverified`, and its remedy is a **measurement**: re-run the
+card's own gate against the commit and read its stderr. On a *walled* run the
+read set is offered beside it as **one candidate among the others**, said to be
+a candidate. A run typed `--no-wall` had no sandbox and is told so: nothing is
+attributed to a wall that was not there.
+
+This is the ONE refusal that lands after the spend, and it is a refusal rather
+than another token on the OK line because the run it closes carried `rc=0
+sandbox=landlock harness=ok` over a Go card whose `go test` never compiled: the
+card's own `RESULT.md` said so in prose, and a coordinator reading dispositions
+shipped it. Unlike a wall death, it fires **with a published result beside it**
+— the published report is what made the denial invisible.
+
 **A card's minutes are measured per phase, and the measurement is a file the native
 run writes** (card 8964, Glenn 2026-09-17: *"speed up average wall clock time per
 card; make each card operate more efficiently in tokens and in time from start to
