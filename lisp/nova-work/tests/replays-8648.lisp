@@ -1,13 +1,14 @@
-;;;; replays-8648.lisp --- five acceptance replays named by docs/SPEC-WORK.md.
+;;;; replays-8648.lisp --- acceptance replays named by docs/SPEC-WORK.md.
 ;;;;
 ;;;; Each deftest names the paragraph(s) it comes from and drives the pure
-;;;; model the kernel exposes for it. The five:
+;;;; model the kernel exposes for it. The six:
 ;;;;
 ;;;;   regression-opens-repair-work                     :4943-4951,5782-5785
 ;;;;   reply-retired-only-under-verified-coverage       :6020-6024,6316-6325
 ;;;;   restore-is-isolated-and-dispatches-nothing       :6285-6290,5790-5793
 ;;;;   reuse-only-valid-review                          :4851
 ;;;;   review-cycles-stay-visible                       :6368-6370
+;;;;   TestE02F06PinCommonLispImplementationGo          :292-301,312-321
 
 (in-package #:nova-work/tests)
 
@@ -287,3 +288,25 @@
                  "the repeated cycles are visible as work")
     (check-equal 8 (review-ledger-total-cost ledger)
                  "the repeated cycles are visible as operational cost")))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F06PinCommonLispImplementationGo  SPEC-WORK.md:292-301,312-321
+;;; ------------------------------------------------------------------
+;;;
+;;; E02-F06-01 "Pin Common Lisp implementation, Go client and supported
+;;; OS/runtime combinations." The client is Go under this repository's
+;;; conventions (SPEC-WORK.md:292); the session's own language is Common Lisp
+;;; (293); the runtime is pinned to SBCL and the two supported cells are
+;;; darwin-arm64 and linux-x64 (300, 312-321). This slice pins what it can
+;;; observe about the engine's own runtime: the running binary's build identity
+;;; must name SBCL, and the Common Lisp implementation it reports must be SBCL.
+
+(deftest "TestE02F06PinCommonLispImplementationGo"
+    "docs/SPEC-WORK.md:292-301,312-321"
+    "expected=implementation-is-SBCL;build-identity-names-SBCL"
+  (let ((impl (lisp-implementation-type))
+        (build (session-build-identity)))
+    (check-equal "SBCL" (string-upcase impl)
+                 "the pinned Common Lisp implementation is SBCL")
+    (ok (and (stringp build) (search "SBCL" build))
+        "the build identity names the pinned SBCL runtime: ~A" build)))
