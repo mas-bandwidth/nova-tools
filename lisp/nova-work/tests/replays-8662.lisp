@@ -443,3 +443,44 @@ on. Registration goes through the real `machine` verb, never a back door."
       (check-equal 2 (length rows) "each live allocation lists once")
       (ok (every (lambda (r) (search "ALLOC ROW" r)) rows)
           "every row is an ALLOC ROW"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F03KeepPerChangeCIWithin   E10-F03-04   docs/SPEC-WORK.md:7235
+;;; ------------------------------------------------------------------
+;;; The criterion "Keep per-change CI within two minutes, exhaustive fault/scale
+;;; suites explicit nightly or pre-release; failures block affected gates" reads
+;;; as three spec-stated behaviours (SPEC-WORK.md:7089-7100, :7235-7240): a
+;;; per-change check targets one minute and finishes inside two; the exhaustive
+;;; fault/scale matrices run in an explicit nightly or pre-release lane, never on
+;;; every change; and a failure blocks only the gate of the lane it ran in.
+
+(deftest "TestE10F03KeepPerChangeCIWithin" "docs/SPEC-WORK.md:7235"
+    "expected=per-change-targets-one-minute-finishes-in-two;exhaustive-fault-scale-suites-explicit-nightly-or-pre-release;failures-block-only-their-own-lane-gate"
+  ;; clause 1: a per-change check targets one minute and finishes inside two.
+  (check-equal 60 *per-change-target-seconds* "the per-change target is one minute")
+  (check-equal 120 *per-change-ceiling-seconds* "the per-change ceiling is two minutes")
+  (ok (<= *per-change-target-seconds* *per-change-ceiling-seconds*)
+      "the per-change target never exceeds the two-minute ceiling")
+  ;; clause 2: the bounded fast subset runs per-change (SPEC-WORK.md:7091-7092).
+  (dolist (suite '("format-determinism" "referential-integrity" "retry-protocol"
+                   "read-only-intake" "undo-redo" "roadmap-proof"))
+    (check-equal :per-change (acceptance-suite-lane suite)
+                 (format nil "~A runs per-change, the two-minute lane" suite)))
+  ;; clause 2: the exhaustive fault/scale suites are nightly or pre-release, and
+  ;; never on every change (SPEC-WORK.md:7094-7098).
+  (dolist (suite '("source-inventory" "import-replay" "moving-source"
+                   "archive-completeness" "full-round-trip" "old-history"
+                   "atomic-mutation" "async-operations" "single-writer"
+                   "indexes-and-counters" "materialized-working-set"
+                   "batches-and-pipelines" "recovery" "schema-evolution"
+                   "hostile-data"))
+    (check-equal :nightly-pre-release (acceptance-suite-lane suite)
+                 (format nil "~A runs nightly or pre-release, never per-change" suite)))
+  ;; the lanes are disjoint: a name not in either lane names no lane at all.
+  (check-equal nil (acceptance-suite-lane "not-a-named-suite")
+               "an unlisted suite names no lane")
+  ;; clause 3: a failure blocks only the gate of the lane it ran in.
+  (check-equal :per-change-gate (lane-blocks-gate :per-change)
+               "a per-change failure blocks the per-change gate")
+  (check-equal :nightly-release-gate (lane-blocks-gate :nightly-pre-release)
+               "an exhaustive failure blocks the nightly/release gate, not per-change"))

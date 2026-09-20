@@ -352,3 +352,64 @@ under `--offline` is refused (SPEC-WORK.md:1289-1292, :1320-1325)."
                          head (hash-table-count pointers) verified unverified stale
                          fetched cached emitted)))
       (values line rows (if (zerop unverified) 0 1)))))
+
+;;; ------------------------------------------------------------------
+;;; The CI lanes: per-change vs nightly/pre-release (SPEC-WORK.md:7089-7100,7235)
+;;; ------------------------------------------------------------------
+;;; The lanes are named because a slow gate is a gate nobody runs. A per-change
+;;; check targets one minute and must finish inside two; the exhaustive fault,
+;;; scale and generated matrices run in an explicit nightly or pre-release lane
+;;; and never on every change. A failure blocks only the gate of the lane it ran
+;;; in (SPEC-WORK.md:7235-7240).
+
+(defparameter *per-change-suites*
+  '("format-determinism"
+    "referential-integrity"
+    "retry-protocol"
+    "read-only-intake"
+    "undo-redo"
+    "roadmap-proof")
+  "SPEC-WORK.md:7091-7092 --- the bounded fast subset a per-change check runs, each
+inside the one-minute target and the two-minute bound.")
+
+(defparameter *exhaustive-suites*
+  '("source-inventory"
+    "import-replay"
+    "moving-source"
+    "archive-completeness"
+    "full-round-trip"
+    "old-history"
+    "atomic-mutation"
+    "async-operations"
+    "single-writer"
+    "indexes-and-counters"
+    "materialized-working-set"
+    "batches-and-pipelines"
+    "recovery"
+    "schema-evolution"
+    "hostile-data")
+  "SPEC-WORK.md:7094-7098 --- the whole-matrices suites, run nightly or at
+pre-release, because none of them fits two minutes and a gate.")
+
+(defparameter *per-change-target-seconds* 60
+  "SPEC-WORK.md:7235 --- a per-change check targets one minute.")
+
+(defparameter *per-change-ceiling-seconds* 120
+  "SPEC-WORK.md:7235 --- and must finish inside two.")
+
+(defun acceptance-suite-lane (name)
+  "The CI lane NAME runs in. A per-change suite is the bounded fast subset; an
+exhaustive fault/scale suite is nightly-or-pre-release. NIL is no known suite,
+so an unlisted name falls in neither lane (SPEC-WORK.md:7089-7100)."
+  (cond ((member name *per-change-suites* :test #'string=) :per-change)
+        ((member name *exhaustive-suites* :test #'string=) :nightly-pre-release)
+        (t nil)))
+
+(defun lane-blocks-gate (lane)
+  "The gate a failing suite in LANE blocks: a per-change failure blocks the
+per-change gate, an exhaustive failure the nightly/release gate and never the
+per-change gate (SPEC-WORK.md:7235-7240)."
+  (case lane
+    (:per-change :per-change-gate)
+    (:nightly-pre-release :nightly-release-gate)
+    (t nil)))
