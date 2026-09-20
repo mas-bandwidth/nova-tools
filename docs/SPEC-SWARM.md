@@ -565,6 +565,27 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     never read, and the job's `RUN` line carries `unpublished=true`; the
     published revision is what is counted. (Stella, 2026-09-11: a copy taken
     during an append is a prefix, and two revisions can share an mtime.)
+
+### Mapping durable slots to the card-attempt lifecycle (SPEC-AHEAD: #2045, #2040)
+
+[SPEC-PULSE's durable launch section](SPEC-PULSE.md#durable-launch-attempts-and-fleet-control-spec-ahead-2045-2040-2022)
+is the one authoritative card-attempt lifecycle. Rules 17 and 18 below remain its swarm-side
+ownership mechanism rather than a competing lease authority: the reserved placeholder is
+`CLAIMED`, spawn is `STARTING`, the supervisor's pid/pgid/start-stamp identity is evidence for
+the typed `STARTED` acknowledgement, and supervisor completion is executor evidence for
+`RETURNED` and conservative reconciliation. The slot and job ownership records grow stable
+`card`, `attempt`, control `generation` and publication `fence` fields; their existing nonce,
+pid, pgid and start-stamp checks remain intact.
+
+For ledger-managed launches, any older text below that returns a task to pending, frees an
+`unknown` slot, retries a provider inside one job, or lets a person remove a slot as proof of
+absence is overridden narrowly: UNKNOWN retains ownership and capacity until the durable
+admission owner validates `never-admitted` or executor `terminated|completed` evidence and the
+old publication fence is revoked. The shared card ledger reserves each executable attempt before
+dispatch and enforces two total; a launcher and its selected provider are one attempt, while a
+fallback route is another. Existing unledgered verbs keep their current behavior until they are
+wired; once this path is implemented they must delegate or refuse, never bypass the ledger.
+
 17. **A dispatcher that dies leaves durable ownership, and the next one
     recovers it or quarantines it.** A slot is a file, `<pool>/slots/<n>.json`,
     written by the launch transaction of rule 18 and holding, once launched,

@@ -234,11 +234,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     by `usd per Mtok` — so the zero-cost local model wins; with neither file present the
     relaunch keeps the kind-only route it has always written. Replay
     `harvest-cuts-read-card-per-pr` holds one card after #416.
-14. **An abstain is requeued at most once, under a new card number, then escalated.** For
-    every `ABSTAIN` row and every card with no `RESULT.md`, `harvest` counts it in
-    `abstain=<n>` and triages it by its reason token as the manager does (#587): a first
-    abstain is requeued once under a new number on the other bench, the attempt riding on
-    the card; a second abstain of the same item is one escalation and a row in
+14. **An abstain may use the one remaining executable attempt, then escalates.** The lifecycle
+    section below is a bounded override of this older path for cards launched through the new
+    ledger: the stable card id does not change, while a display number may; attempts live in the
+    authoritative ledger and never reset when work crosses pulse, pool, swarm or reap. A card
+    with no `RESULT.md` is UNKNOWN, not an abstain and not automatically retried. For a completed
+    attempt carrying a typed `ABSTAIN` row, `harvest` counts it in `abstain=<n>` and triages it by
+    its reason token as the manager does (#587). A retry is allowed only after conservative
+    execution reconciliation plus publication-fence revocation, and only when the shared total
+    of two leaves one attempt. A provider fallback consumes that same remaining attempt; it does
+    not earn another pulse retry. A failed or blocked second executable attempt yields one escalation and a row in
     `<root>/retry.tsv` — `label`, `card path`, and the last line of `<job>/harness.log` that
     carries `permission`, `denied`, `refused` or `REFUSED` (else the log's last line),
     bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
@@ -250,8 +255,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     `--floor` is appended to `<queue>/HUMAN` as one line
     `HUMAN task=<id> reason=<r> conf=<c> card=<label>` and is not auto-retried, so a person
     reads the inbox instead of the loop retrying a task that needs them; a
-    `provider_error` above the floor is requeued once by rule 14's own path; below the
-    floor nothing changes and the pool's own class stands. The decision is the core of
+    `provider_error` above the floor may request rule 14's remaining attempt under these same
+    gates; below the floor nothing changes and the pool's own class stands. The decision is the core of
     `nova-swarm triage --decide` (`internal/swarm.DecideFinished`), and the loop makes no
     model call of its own.
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
@@ -1316,9 +1321,12 @@ clone and copy pay about 44 s and the model loop pays the tail — the same leve
 - **No cross-repo dependency graph.** Every card is one bounded item on one repo at one head;
   a card that needs another card's PR merged first is a card that is not bounded yet, and it
   waits in an issue until it is.
-- **No third try.** A card abstains, is requeued once under a new number (rule 14, #587),
-  and a second abstain is a person's: `retry.tsv` names it and the harness's last refusal, a
-  person rewrites it, and the rewritten card is a new candidate.
+- **No third try.** Under the durable lifecycle, a completed first attempt may use the one
+  remaining executable attempt after conservative reconciliation; a provider fallback may have
+  consumed it already. The stable card id remains the same even when a display number changes.
+  Missing result is UNKNOWN rather than abstain. At the shared total of two, `retry.tsv` names the
+  card, both attempts and bounded evidence for a person's diagnosis; no pool-layer rewrite resets
+  the total.
 - **No model call, no summary, no judgement.** It never reads a report body, never opens a
   transcript, never scores a finding. The swarm's packet is the whole read.
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `harvest` and
@@ -1369,8 +1377,10 @@ quiet cycle makes); receipt every `START` and `DONE` note and append every other
 `<queue>/ESCALATE` as one line, composing no reply; harvest every card whose job holds a
 `RESULT.md` — push its branch by explicit refspec, open or update its PR, cut its read card
 from `<queue>/templates`, and refuse a fix PR carrying neither a `red:` line nor a test file
-in its diff; triage each abstain by its reason token, requeueing it once under a new number
-on the other bench and escalating the second; hand a non-draft PR whose read said `APPROVE`
+in its diff; triage each completed abstain by its reason token, using the one remaining shared
+attempt on another eligible bench or route as its failure class requires, only after conservative
+reconciliation, and escalating at the total of
+two; keep a missing result UNKNOWN and reserved; hand a non-draft PR whose read said `APPROVE`
 to the lane once the head revalidates and every check is `SUCCESS` — `nova-merge add
 --lane <dir> --pr <n>`, never `gh pr merge`, never on `HOLD`; refill the queue
 from the policy's sources to its floor, deduplicated on PR number, issue number and the
@@ -1388,6 +1398,205 @@ Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
 `manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`,
 `manager-hands-merge-to-lane`.
+
+## Durable launch, attempts and fleet control (SPEC-AHEAD: #2045, #2040, #2022)
+
+This section specifies the lifecycle before its verbs ship. It does not describe the current
+`fill` launcher as already safe: today that launcher can outlive its grace without returning a
+start receipt, and the old reap rule below treats a missing job directory as proof that work is
+gone. Neither fact is a durable execution protocol.
+
+**One owner and two identities.** `nova-swarm launch` owns execution and the durable attempt
+ledger. `nova-pulse` remains the dealer: it selects a ready card and asks `nova-swarm launch` to
+claim and execute it, but it keeps no second launch state. The existing `nova-pulse launch`
+surface remains a compatibility delegate to that same ledger and does not implement another
+dispatcher. This boundary follows the existing
+tools: pulse owns queues and policy; swarm owns jobs, leases and worker execution. Every card has
+one stable `card=<id>` from cut through harvest. Every executable try has a new immutable,
+unguessable `attempt=<id>`; changing bench or route is a new attempt, while a late reply or a
+restarted reconciliation of the same try retains its attempt id. Labels and paths are display
+fields, never identity. [SPEC-SWARM.md](SPEC-SWARM.md) must cross-reference this section as the
+one authoritative attempt lifecycle; it must not copy the state machine into a second contract.
+
+**Proposed version-one layout for friend review.** Under the explicitly named swarm root,
+`lifecycle/events.jsonl` is the authoritative append-only event log,
+`lifecycle/cards/<card>.json` is the rebuildable current projection, and
+`lifecycle/attempts/<attempt>/` holds bounded `stdout`, `stderr`, `exit` and receipts. Fleet
+control lives at the explicitly named control root as `control/state.json` and
+`control/acks/<owner>.json`. No command guesses either root. These names are a proposal needed
+to make the crash and ownership tests concrete, not an approved storage format.
+
+An event carries `card`, `attempt`, prior and new state, monotonically
+increasing `rev`, control `generation`, bench, route, pinned source, job and lease identities,
+limits, UTC time and one idempotency key. Updating current state is a compare-and-swap on
+`card, attempt, rev`; exactly one claimant can linearize `READY -> CLAIMED`. A duplicate event
+with the same idempotency key and byte-identical payload is the same act; the same key with a
+different payload is a refusal. A different event against an old revision is a conflict and
+changes nothing. The authoritative event is appended and fsynced before the launcher is invoked;
+the projection is then atomically replaced. A crash may therefore leave the projection behind
+the event log. Restart validates and replays the log's complete valid prefix to rebuild the
+projection. A malformed event, revision gap, conflicting duplicate or projection that is not a
+prefix-derived state refuses new admission at exit 2. It never starts over from queue paths,
+leases or job directories, and it does not claim an impossible atomic commit across two files.
+
+The states are:
+
+```
+READY -> CLAIMED -> STARTING -> STARTED -> RETURNED -> HARVESTED
+                         |          |           |
+                         +------ UNKNOWN -------+
+```
+
+`PARKED` is a scheduling disposition on the card, not an execution state. Parking prevents new
+attempts and raises the card for inspection. It does not change an attempt's state, release its
+seat or budget, prove termination, or satisfy DRAIN/STOP. A parked UNKNOWN attempt remains
+UNKNOWN, owned and reserved until the conservative reconciliation below completes.
+
+`CLAIMED` is the durable prelaunch ownership record. `STARTING` durably authorizes the
+launcher invocation before it occurs; a crash around that invocation requires reconciliation. Only this typed acknowledgement, parsed from the bounded launcher channel and bound
+to all named identities, establishes `STARTED`:
+
+```
+LAUNCH STARTED card=<id> attempt=<id> job=<id> lease=<id> bench=<name> route=<name> generation=<n> worker=<opaque> at=<RFC3339>
+```
+
+An SSH connection, a surviving timer, a process id observed by a different owner, a lease file,
+a job directory, provider output, or an untyped worker line is not that acknowledgement. The
+launcher retains bounded stdout, stderr and exit separately under the attempt and prints their
+paths; it never discards a stream. Missing, malformed or late acknowledgement at the launch
+deadline yields `UNKNOWN`, not failed or ready. A valid late `STARTED` reconciles that same
+attempt from `UNKNOWN`; it does not consume another attempt.
+
+**Execution proof and publication fencing both precede retry.** `UNKNOWN` retains the card claim
+and its seat reservation. The durable admission owner, which need not be the unreachable worker,
+is the authority that reconciles its attempt; a worker receipt is evidence that owner validates,
+not self-authenticating authority. A retry is legal only when the owner records either
+`never-admitted` or an authoritative executor receipt of `terminated` or `completed`, **and**
+durably revokes the old publication fence. Every accept, result publication and other externally
+visible effect presents the attempt's monotonically increasing fence token, whose current value
+the effect owner verifies at its own linearization point. Publication-fence revocation alone is
+insufficient: it does not prove resource use, billing or remote execution stopped, so the attempt
+stays UNKNOWN and no retry begins. The contract does not claim exactly-once execution. It
+guarantees at most one current attempt can have its effects accepted. An unreachable bench, a
+missing lease, process or job directory, timeout or stale status is not proof. The reap rule below
+is superseded where it requeues from a missing job directory alone.
+
+An attempt is reserved durably before its first dispatch. One executable try consists of its
+launcher and the one provider route that launcher selected; their internal handoff does not count
+twice. A fallback route or a new bench is a new attempt, as is another dispatch after a launch
+failure. The hard default and maximum automatic budget is **two total attempts per card**, initial
+attempt included. A
+`LAUNCH` retry must use a different eligible bench; a `PROVIDER` retry must use a different
+eligible route; `CARD` has no automatic retry. Before any retry the old attempt must be fenced,
+the current control generation rechecked and the budget atomically reserved. At two attempts,
+or when reconciliation cannot be proved, the card is marked PARKED without changing the current
+attempt's execution state or reservation; it is never silently returned to ready.
+An explicit diagnosed requeue is a new authorized event over the same stable card history, not
+an erasure or an automatic third try.
+
+The machine receipts are:
+
+```
+LAUNCH CLAIMED card=<id> attempt=<id> rev=<n> bench=<name> route=<name> generation=<n> attempts=<n>/2
+LAUNCH UNKNOWN card=<id> attempt=<id> bench=<name> route=<name> why=<no-start|lost-reply|timeout|malformed-start> stdout=<path|-> stderr=<path|-> exit=<n|->
+LAUNCH RECONCILED card=<id> attempt=<id> owner=<id> execution=<never-admitted|terminated|completed> fence=<n> publication=revoked
+LAUNCH PARKED card=<id> attempt=<id> state=<CLAIMED|STARTING|STARTED|RETURNED|UNKNOWN> class=<LAUNCH|PROVIDER|CARD|SILENT|UNKNOWN> attempts=<n>/2 record=<path>
+LAUNCH OK card=<id> attempt=<id> state=<STARTED|RETURNED> bench=<name> route=<name> generation=<n> record=<path>
+```
+
+Exit 0 means a requested positive transition to CLAIMED, STARTING, STARTED, RETURNED, HARVESTED
+or RECONCILED was durably recorded. UNKNOWN and PARKED explicitly exit 1, as do exhausted budget
+and an unreconciled prior attempt. Exit 2 means the invocation or authoritative ledger could not
+be read safely. Raising and grouping parked work may notify the coordinator, but a
+notification failure cannot alter or retry the lifecycle.
+
+**Fleet control is desired state plus acknowledgements, not one magic file.** Version one has
+one supported scope: the entire fleet named by the control root. A per-lane, per-bench or
+exception scope is refused before mutation. Before every launch, accept, publish, merge and land
+path is wired to the generation check, that path denies new admission; unsupported paths do not
+silently proceed.
+
+The control
+record is an atomically replaced, durable tuple
+`generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet by=<identity>
+at=<RFC3339> reason=<token>`. Its generation increases on every accepted change. RUN also grants
+a bounded admission authority carrying `generation`, `scope=fleet` and `expires=<RFC3339>`;
+there is no timeless cached RUN permission. A dealer checks it before claiming. The swarm
+admission owner checks it again while atomically changing `CLAIMED -> STARTING`; that transition
+records the generation as its linearization point. Route fallback and every new attempt repeat
+both checks. An unreadable, absent when configured, stale, expired or malformed control record
+fails closed for new admission. It has no exception lane or borrowed attempt budget. The bounded
+RUN duration is a required explicit configuration value reviewed for the deployment; this spec
+chooses no magical default.
+
+`PAUSE` stops issuing RUN authority and forbids new launch, accept, publish, merge and land
+admissions at every owner that has observed it. It permits read-only
+status, bounded capture of already-returned logs and results, harvest reconciliation that makes
+no publication, and cleanup of attempts the caller demonstrably owns. `DRAIN` has PAUSE's
+admission rule and waits for owned attempts to become returned, harvested or conservatively
+reconciled; scheduling disposition is irrelevant and any `UNKNOWN` keeps the drain pending.
+`STOP` additionally requests termination only for the
+attempt and lease identities owned in the ledger; it grants no host-wide process authority.
+`RUN` reopens admission only at its new generation and bounded expiry.
+
+An admission or action token linearizes globally before PAUSE and may start or finish within its
+bounded authority, or it linearizes after PAUSE and is refused. A partitioned owner may therefore
+hold an earlier unexpired token; PAUSE reports it as outstanding/pending rather than claiming
+instant revocation or rollback. Publication, merge and land need their own durable, bounded action
+token acquired after checking the current generation. The side-effect owner checks that token and
+generation where it commits the effect; a shell precheck is insufficient. Retrying such an action
+reconciles the same token rather than acquiring a new one. The result names whether the effect
+completed, failed or is unknown. Harvest may capture a result during PAUSE, but cannot turn that
+capture into a push, acceptance, publication or land without a current RUN action token.
+
+Each selected admission owner persists its observed generation. A control request receipt names
+the desired generation separately from per-owner acknowledgements:
+
+```
+CONTROL SET generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet expires=<RFC3339|-> owners=<n>
+CONTROL ACK generation=<n> owner=<name> desired=<state> observed=<RFC3339>
+CONTROL STATUS generation=<n> desired=<state> acked=<n> pending=<n> unknown=<n> owned=<n> complete=<yes|no>
+```
+
+Offline or late owners remain `pending`; the request never claims an instantaneous fleet-wide
+pause. Removing a pause creates RUN generation `n+1`; an old acknowledgement cannot satisfy it.
+STOP completion requires conservative RECONCILED execution and publication receipts for every
+owned attempt. PARKED is irrelevant to completion, and UNKNOWN prevents it. Absence of a lease,
+job directory or reply cannot reduce `owned` or make `complete=yes`.
+
+**Required tests, all with local fakes and event coordination:**
+
+1. Two dealers race one card; exactly one durable claim exists and at most one STARTED attempt can
+   have effects accepted after restart. The loser receives a conflict without changing the
+   ledger; an invocation whose acknowledgement was lost may remain UNKNOWN.
+2. A launcher writes no acknowledgement and exits late: stdout, stderr and exit are retained,
+   the attempt becomes UNKNOWN, its reservation remains, and no second invocation occurs.
+3. A correctly bound acknowledgement makes STARTED; wrong card, attempt, job, lease or
+   generation is malformed and cannot start. A late correct acknowledgement reconciles the
+   same attempt.
+4. Missing lease and job-directory controls leave UNKNOWN reserved. Publication-fence revocation
+   alone still forbids retry; only never-admitted or authoritative terminated/completed execution
+   evidence plus that revocation permits one, and the old attempt cannot publish with its token.
+5. One launcher plus its selected provider consumes one attempt, not two. Its provider fallback
+   consumes the second; a third executable try is refused and parked without making UNKNOWN
+   terminal or releasing its reservation. CARD is parked after its first failure. Permitted
+   LAUNCH and PROVIDER retries change bench or route respectively.
+6. Crash after durable claim but before process invocation reconstructs CLAIMED and reconciles
+   it; crash after invocation but before STARTED reconstructs UNKNOWN. Neither returns READY.
+7. PAUSE racing launch has two legal histories: the bounded RUN token linearizes first and may
+   start within its authority while PAUSE reports it outstanding/pending, or PAUSE linearizes
+   first and the admission is refused. Expired authority cannot start, and no history claims
+   instantaneous revocation or rollback.
+8. During PAUSE, status/result capture and owned cleanup run, while new launch, accept, push,
+   publish, merge and land admissions refuse. Previously issued tokens follow test 7. A captured result cannot be published
+   with its read token.
+9. An offline owner's acknowledgement remains pending; DRAIN with UNKNOWN is incomplete; STOP
+   targets only ledger-owned attempt/lease pairs. RUN at the next generation rejects stale
+   acknowledgements from the pause.
+10. A restart with a fsynced valid event ahead of the projection replays that valid prefix. A
+    malformed/non-prefix history refuses admission without invoking a launcher. A duplicate
+    idempotency key and identical payload adds no event; the same key with different payload
+    refuses.
 
 ## The loop as a tool (pit stop 3)
 
@@ -1455,6 +1664,9 @@ already did and no further: the law that does not move is rule 17, no verb calls
    **Held by:** `nova-pulse gate` (writes the STOP naming the red, and writes RESUME),
    `nova-pulse run` and `launch` (admit against it), the STOP file under the root.
    **Proved by:** `stop-admits-only-the-reds-own-fix-card`, `resume-is-the-gates-alone`.
+   This is the CI gate's queue-local `STOP` and its explicit red-fix admission list. It is not
+   fleet `CONTROL STOP` above. The fleet control has no implicit repair exception: a repair runs
+   only after an explicit fleet RUN generation grants it bounded admission authority.
 
 4. **D. Point-in-time verdicts.** Row 4: *"Enqueue only on APPROVE **and** green at that
    instant; 51 approved PRs with checks still queued were logged `(not merged)` and never
@@ -1474,13 +1686,18 @@ already did and no further: the law that does not move is rule 17, no verb calls
    done/failed cards as a block; 22 admitted issues sat uncut"* — a finished card that nothing
    sweeps is a card that still counts.
    **The rule:** a `reap` step every tick. Processes under a swarm root older than the batch
-   deadline are killed and logged; a launched card whose job directory is gone is requeued once
-   and then failed; a batch lock whose pid is dead is removed; test binaries under
-   `/tmp/*swarmtest*` older than 30 minutes die. The counts ride on the `PULSE WIDTH` line, so a
-   leak is visible in the one line the coordinator already reads.
+   deadline are reconciled by their owning attempt and logged; a launched card whose job
+   directory is gone becomes UNKNOWN and retains its reservation until the durable admission
+   owner validates never-admitted or terminated/completed executor evidence and revokes the old
+   publication fence. Only then may the remaining attempt budget admit a retry; at the
+   two-total-attempt bound it is marked parked without becoming terminal. A batch lock whose
+   pid is dead is removed only when it is not an attempt's ownership record. Cleanup is confined
+   to processes and files carrying the current attempt's durable ownership inside the explicitly
+   named swarm or test-fixture root. The counts ride on the `PULSE WIDTH` line, so a leak is
+   visible in the one line the coordinator already reads.
    **Held by:** `nova-pulse reap`, called by `run` each tick; `PULSE WIDTH`.
-   **Proved by:** `reap-kills-past-the-batch-deadline`,
-   `reap-requeues-a-launched-card-whose-job-dir-is-gone`.
+   **Proved by:** `reap-reconciles-past-the-batch-deadline-by-owned-attempt`,
+   `missing-job-dir-is-unknown-until-conservative-reconciliation`.
 
 6. **F. The coordinator's hands.** Row 12: *"The coordinator's own shell: zsh globs aborting
    probes (`no matches found`), a wrong runner path, a held slot, `pkill` killing its own ssh"*.
@@ -1596,11 +1813,13 @@ handoff (rule **The manager tier**).
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
     print `pushed=1 prs=1 mismatch=2`, exit 1; a bare `git push` in the fixture's argv log is
     the mutation that matters.
-14. `harvest-abstain-goes-to-retry`: one `ABSTAIN reason=idle=300` row and one card with no
-    `RESULT.md`, each on its first attempt, yield `abstain=2` and two requeues under new
-    numbers on the other bench; the same two abstaining again yield `retry=2`, two
-    `retry.tsv` rows each carrying the card path and the harness log's last
-    `permission`/`refused` line, no push, no PR, no third batch argv, `seen.tsv` rows `retry`.
+14. `harvest-abstain-uses-only-the-shared-remaining-attempt`: a completed first attempt with
+    `ABSTAIN reason=idle=300`, conservative reconciliation and no earlier provider fallback may
+    reserve attempt two on another bench under the same stable card id. A first attempt with no
+    `RESULT.md` stays UNKNOWN and reserved; an ABSTAIN whose provider fallback already consumed
+    attempt two parks. Neither produces a third batch argv. Each parked row retains the card path,
+    attempt ids and bounded harness evidence; changing a display card number does not reset the
+    ledger total.
 15. `harvest-cuts-read-card-per-pr`: every PR opened yields one row in `next.tsv` with
     template `read` (or `tone` for a seed page), carrying the bench cost table's cheapest
     model that can hold it, and the next `pool` counts it in `next=<n>` after `queue.tsv`.
@@ -1767,14 +1986,19 @@ handoff (rule **The manager tier**).
 61. `sweep-cuts-a-read-card-when-the-head-moves`: an open row whose PR head changed yields one
     new read card in `next.tsv` and no enqueue, and the row carries the new head; the old card is
     not re-sent and the row is not closed.
-62. `reap-kills-past-the-batch-deadline`: on a day-sized fixture, a supervise process under a
-    swarm root older than its batch deadline, a batch lock whose pid is dead and a
-    `/tmp/*swarmtest*` binary older than 30 minutes are killed, removed and deleted, each logged
-    one line, with the counts on the `PULSE WIDTH` line — the mutation that matters: a loop with
-    no reaper, which is fourteen hours of leaked supervisors and a 23-hour-old card (row 10).
-63. `reap-requeues-a-launched-card-whose-job-dir-is-gone`: a card in `launched/` whose job
-    directory has vanished is requeued exactly once and failed on the second reap, its state row
-    written both times, and a done or failed card never blocks the next `refill` from cutting its
+62. `reap-reconciles-past-the-batch-deadline-by-owned-attempt`: on a day-sized fixture, an old
+    supervise process carrying this attempt's current holder and fence is terminated and fenced,
+    while an unowned or mismatched process is left alone and raises UNKNOWN. A dead batch lock is
+    removed only when it is not an attempt ownership record. Test binaries created by the fixture
+    may be deleted under its own temporary root. Each outcome is logged and counted on `PULSE
+    WIDTH` — the mutation that matters is a loop with no owner-aware reaper, which left fourteen
+    hours of leaked supervisors and a 23-hour-old card (row 10).
+63. `missing-job-dir-is-unknown-until-conservative-reconciliation`: a card in `launched/` whose job directory
+    has vanished stays claimed and reserved as UNKNOWN through repeated reaps. A holder-specific
+    publication fence alone changes nothing; validated never-admitted or terminated/completed
+    executor evidence plus fence revocation permits at most the second total attempt. Without
+    both, no retry occurs; parking at the cap does not release the UNKNOWN attempt or let
+    DRAIN/STOP complete. A returned or harvested card does not block `refill` from cutting another
     item (row 7: 22 admitted issues sat uncut).
 64. `hand-launch-is-launch-card-n`: `nova-pulse launch --card <n>` launches that one card and
     prints one bounded line; the same card launched twice is refused by its state row naming the
