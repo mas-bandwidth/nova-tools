@@ -89,6 +89,32 @@ type nativeRunResult struct {
 	blockedPath  string            // the report the run wrote FOR a card that published none, "" when it wrote none
 }
 
+// THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
+//
+// The wait below ends a launch in one of four ways and three of them are events the run
+// can be TOLD about: the watch declared the card idle, the deadline timer fired, a TERM
+// arrived. A test that wanted to assert what the run DOES with an idle end had no way to
+// deliver one, so the first idle tests delivered it by arranging real time -- `--idle 2s`
+// against a `FAKE-SLEEP 60` child -- and then asserted on what the run had printed by
+// then. That is a wall-clock assertion wearing an event's clothes, and under the gate's
+// whole-suite load (GOMAXPROCS=8 -p 2 -parallel 4 across the repo) the arrangement stopped
+// holding: `TestNativeIdleEndsAStillCardLongBeforeItsDeadline` went red in landing batch
+// 16an on hulk while its own ci-ok was green, because ci.yml's CL tier shards only the
+// touched packages and never puts the machine under that load.
+//
+// These three vars are the whole fix on the production side. They are the real functions,
+// byte for byte, and nothing about the run's behaviour is decided by them being variables:
+// no call site changed except the name it is reached through, and no test sets them in a
+// run that is not testing the wait itself. A test may now hand the wait an idle end
+// directly and assert the ORDER of what follows -- idle declared, then the group reaped,
+// then the card ended with the idle reason -- and assert that the deadline branch never
+// ran, because the deadline branch is the only one that calls nativeKillGroup.
+var (
+	nativeWatchIdle = swarm.WatchIdle
+	nativeReap      = swarm.Reap
+	nativeKillGroup = swarm.KillGroup
+)
+
 // nativeRun executes one frozen configuration and returns the recorded result and
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
@@ -508,7 +534,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		// anybody looked: `js-under-20-bytes` held a slot for eighteen silent minutes and
 		// returned nothing.
 		stopWatch := make(chan struct{})
-		idleC := swarm.WatchIdle(swarm.IdleWatch{
+		idleC := nativeWatchIdle(swarm.IdleWatch{
 			Log: outLog, Job: jobDir, Pid: pgid, Idle: cfg.idle, Reader: reader,
 		}, stopWatch)
 		select {
@@ -523,7 +549,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 				res.rc = -1
 			}
 		case <-deadline.C:
-			swarm.KillGroup(pgid, started)
+			nativeKillGroup(pgid, started)
 			<-done
 			res.rc = -1
 		case end := <-idleC:
@@ -539,13 +565,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// machinery stopping a card that is not going to finish -- so it gets the same
 			// grace. The kill still happens; it happens second.
 			deadline.Stop()
-			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
 		case <-termCh:
 			deadline.Stop()
-			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.terminated = true

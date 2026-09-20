@@ -298,6 +298,10 @@ func main() {
 	// the file behind; a group ended with a bare KillGroup cannot, because SIGKILL is not a
 	// signal any process gets to handle. It is what a harness flushing its turn and its
 	// usage row looks like to a test.
+	// It writes `term-armed` the moment the handler is installed, so a test can wait for
+	// the thing itself -- an armed handler -- instead of for a clock. Before that file
+	// exists a TERM would be the default disposition and would kill the process outright,
+	// which is exactly the race a wall-clock test would lose under load.
 	if _, ok := directive(prompt, "FAKE-NOTE-ON-TERM"); ok && job != "" {
 		termed := make(chan os.Signal, 1)
 		signal.Notify(termed, syscall.SIGTERM)
@@ -306,6 +310,7 @@ func main() {
 			_ = os.WriteFile(filepath.Join(job, "termed"), []byte("term\n"), 0o644)
 			os.Exit(0)
 		}()
+		_ = os.WriteFile(filepath.Join(job, "term-armed"), []byte("armed\n"), 0o644)
 	}
 	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(d)
