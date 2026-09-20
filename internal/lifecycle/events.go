@@ -61,6 +61,111 @@ func validateEvent(ev Event) error {
 	return nil
 }
 
+func validateAgainst(p *Projection, ev Event) error {
+	from := Ready
+	curRev := 0
+	if p != nil {
+		from = p.State
+		curRev = p.Rev
+	}
+	if ev.Prior == nil || *ev.Prior != from {
+		return fmt.Errorf("%w: prior %v does not match %s", ErrMalformed, ev.Prior, from)
+	}
+	if ev.Rev != curRev+1 {
+		return fmt.Errorf("%w: revision gap card=%s rev=%d", ErrMalformed, ev.Card, ev.Rev)
+	}
+	if !legalTransition(from, ev.New) {
+		return fmt.Errorf("%w: illegal transition %s -> %s", ErrMalformed, from, ev.New)
+	}
+	if p != nil {
+		if err := bindOnce(p.Attempt, ev.Attempt, "attempt"); err != nil {
+			return err
+		}
+		if err := bindOnce(p.Source, ev.Source, "source"); err != nil {
+			return err
+		}
+		if err := bindOnce(p.Bench, ev.Bench, "bench"); err != nil {
+			return err
+		}
+		if err := bindOnce(p.Route, ev.Route, "route"); err != nil {
+			return err
+		}
+		if err := bindOnce(p.Job, ev.Job, "job"); err != nil {
+			return err
+		}
+		if err := bindOnce(p.Lease, ev.Lease, "lease"); err != nil {
+			return err
+		}
+		if p.Generation != nil {
+			if ev.Generation == nil || *ev.Generation != *p.Generation {
+				return fmt.Errorf("%w: immutable generation", ErrMalformed)
+			}
+		}
+		if err := monotonicLimits(p.Limits, ev.Limits); err != nil {
+			return err
+		}
+	} else if err := validLimits(ev.Limits); err != nil {
+		return err
+	}
+	return nil
+}
+
+func legalTransition(from, to string) bool {
+	if from == to {
+		switch from {
+		case Claimed, Starting, Started, Unknown, Returned, Harvested:
+			return true
+		default:
+			return false
+		}
+	}
+	switch from {
+	case Ready:
+		return to == Claimed
+	case Claimed:
+		return to == Starting
+	case Starting:
+		return to == Started || to == Unknown
+	case Started:
+		return to == Returned || to == Unknown
+	case Unknown:
+		return to == Started
+	case Returned:
+		return to == Harvested || to == Unknown
+	}
+	return false
+}
+
+func bindOnce(have, next *string, name string) error {
+	if have == nil {
+		return nil
+	}
+	if next == nil || *next != *have {
+		return fmt.Errorf("%w: immutable %s", ErrMalformed, name)
+	}
+	return nil
+}
+
+func validLimits(lim *Limits) error {
+	if lim == nil || lim.Attempts < 1 || lim.Max < 1 || lim.Max < lim.Attempts {
+		return fmt.Errorf("%w: limits", ErrMalformed)
+	}
+	return nil
+}
+
+func monotonicLimits(have, next *Limits) error {
+	if err := validLimits(next); err != nil {
+		return err
+	}
+	if have == nil {
+		return nil
+	}
+	if next.Attempts < have.Attempts || next.Max < have.Max {
+		return fmt.Errorf("%w: limits went backwards", ErrMalformed)
+	}
+	return nil
+}
+
 func requireInvocation(ev Event) error {
 	if ev.Attempt == nil || !validID(*ev.Attempt) {
 		return fmt.Errorf("%w: %s requires attempt", ErrMalformed, ev.New)

@@ -128,6 +128,12 @@ func (s *Store) ApplyStarted(receipt StartedReceipt) error {
 		if p.Card != receipt.Card || deref(p.Attempt) != receipt.Attempt {
 			return fmt.Errorf("%w: card or attempt", ErrMalformed)
 		}
+		if p.State == Started {
+			if !sameStarted(p, receipt) {
+				return fmt.Errorf("%w: idempotency key reused with a different payload", ErrRefused)
+			}
+			return writeAtomic(s.attemptFile(receipt.Attempt, startedName), []byte(receipt.Line()+"\n"))
+		}
 		if p.State != Starting && p.State != Unknown {
 			return fmt.Errorf("%w: STARTED from %s", ErrMalformed, p.State)
 		}
@@ -354,6 +360,25 @@ func (s *Store) AdvanceFence(card string) (int, error) {
 		return s.commit(ev)
 	})
 	return epoch, err
+}
+
+func sameStarted(p *Projection, r StartedReceipt) bool {
+	if p == nil {
+		return false
+	}
+	gen := 0
+	if p.Generation != nil {
+		gen = *p.Generation
+	}
+	return p.Card == r.Card &&
+		deref(p.Attempt) == r.Attempt &&
+		deref(p.Job) == r.Job &&
+		deref(p.Lease) == r.Lease &&
+		deref(p.Bench) == r.Bench &&
+		deref(p.Route) == r.Route &&
+		gen == r.Generation &&
+		deref(p.Worker) == r.Worker &&
+		p.At == stamp(r.At)
 }
 
 func (s *Store) retainStreams(why UnknownWhy) error {

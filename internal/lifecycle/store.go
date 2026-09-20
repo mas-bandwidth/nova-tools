@@ -189,7 +189,6 @@ func (s *Store) reloadLocked() error {
 		}
 		return err
 	}
-	lastRev := map[string]int{}
 	for i, raw := range bytes.Split(data, []byte("\n")) {
 		line := bytes.TrimSpace(raw)
 		if len(line) == 0 {
@@ -212,10 +211,9 @@ func (s *Store) reloadLocked() error {
 			}
 			continue
 		}
-		if ev.Rev != lastRev[ev.Card]+1 {
-			return fmt.Errorf("%w: revision gap card=%s rev=%d line=%d", ErrMalformed, ev.Card, ev.Rev, i+1)
+		if err := validateAgainst(s.cards[ev.Card], ev); err != nil {
+			return fmt.Errorf("event at line %d: %w", i+1, err)
 		}
-		lastRev[ev.Card] = ev.Rev
 		s.keys[ev.Idempotency] = payload
 		s.apply(ev)
 	}
@@ -235,6 +233,9 @@ func (s *Store) commit(ev Event) error {
 			return nil
 		}
 		return fmt.Errorf("%w: idempotency key reused with a different payload", ErrRefused)
+	}
+	if err := validateAgainst(s.cards[ev.Card], ev); err != nil {
+		return err
 	}
 	if err := appendLine(s.eventsPath(), payload); err != nil {
 		return err
@@ -256,6 +257,7 @@ func (s *Store) apply(ev Event) {
 	}
 	p.State = ev.New
 	p.Rev = ev.Rev
+	p.At = ev.At
 	if ev.Attempt != nil {
 		p.Attempt = cloneString(ev.Attempt)
 		s.attempts[*ev.Attempt] = ev.Card

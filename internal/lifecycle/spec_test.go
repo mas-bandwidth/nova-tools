@@ -504,6 +504,96 @@ func TestDurableLaunch8_PauseRacingLaunchTwoLegalHistories(t *testing.T) {
 	})
 }
 
+func TestReplayRefusesClaimedToReady(t *testing.T) {
+	root := t.TempDir()
+	s, err := lifecycle.Open(root)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, _, err := s.Claim("card-hold1", "hulk", "local"); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if mustLookup(t, s, "card-hold1").State != lifecycle.Claimed {
+		t.Fatal("setup: want CLAIMED")
+	}
+
+	illegal := `{"card":"card-hold1","attempt":null,"prior":"CLAIMED","new":"READY","rev":2,"generation":null,"bench":"hulk","route":"local","source":"card-hold1","job":null,"lease":null,"limits":{"attempts":1,"max":2},"at":"2026-09-20T14:00:00Z","idempotency":"illegal-ready"}` + "\n"
+	f, err := os.OpenFile(filepath.Join(root, "lifecycle", "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	if _, err := f.WriteString(illegal); err != nil {
+		t.Fatalf("append illegal event: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+
+	_, err = lifecycle.Open(root)
+	if !errors.Is(err, lifecycle.ErrMalformed) {
+		t.Fatalf("Open accepted CLAIMED->READY (reservation would be released): %v", err)
+	}
+	_, _, err = s.Claim("card-hold1", "hulk", "local")
+	if err == nil {
+		t.Fatal("Claim succeeded after CLAIMED->READY; replay released the reservation")
+	}
+	if !errors.Is(err, lifecycle.ErrMalformed) && !errors.Is(err, lifecycle.ErrConflict) {
+		t.Fatalf("Claim after illegal READY: %v, want fail-closed (malformed or still claimed)", err)
+	}
+}
+
+func TestApplyStartedIdenticalRetryIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	s, ctrl, now := openRun(t, root)
+	attempt := claimAndAdmit(t, s, ctrl, now, "card-hold2", "hulk", "local")
+	p := mustLookup(t, s, "card-hold2")
+	receipt := boundReceipt(p, now)
+	if err := s.ApplyStarted(receipt); err != nil {
+		t.Fatalf("first ApplyStarted: %v", err)
+	}
+	if err := s.ApplyStarted(receipt); err != nil {
+		t.Fatalf("identical bound STARTED retry: %v", err)
+	}
+	got := mustLookup(t, s, "card-hold2")
+	if got.State != lifecycle.Started {
+		t.Errorf("state=%s, want STARTED", got.State)
+	}
+	started := 0
+	for _, ev := range readEvents(t, root) {
+		if ev["new"] == "STARTED" {
+			started++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("identical retry wrote %d STARTED events, want 1", started)
+	}
+
+	receiptPath := filepath.Join(root, "lifecycle", "attempts", attempt, "started")
+	if err := os.Remove(receiptPath); err != nil {
+		t.Fatalf("remove receipt: %v", err)
+	}
+	if err := s.ApplyStarted(receipt); err != nil {
+		t.Fatalf("STARTED replay must restore the receipt: %v", err)
+	}
+	body, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatalf("receipt not restored: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != receipt.Line() {
+		t.Errorf("restored receipt %q, want %q", body, receipt.Line())
+	}
+
+	bad := receipt
+	bad.Worker = "other-worker"
+	err = s.ApplyStarted(bad)
+	if err == nil {
+		t.Fatal("different STARTED payload under the same attempt was accepted")
+	}
+	if !errors.Is(err, lifecycle.ErrRefused) && !errors.Is(err, lifecycle.ErrMalformed) {
+		t.Errorf("different payload: %v, want refused or malformed", err)
+	}
+}
+
 func openRun(t *testing.T, root string) (*lifecycle.Store, *fakeControl, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)

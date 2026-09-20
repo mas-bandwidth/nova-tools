@@ -106,6 +106,7 @@ type Projection struct {
 	Execution  *string `json:"execution,omitempty"`
 	Nonce      *string `json:"nonce,omitempty"`
 	ExitAttest *string `json:"exit_attest,omitempty"`
+	At         string  `json:"at,omitempty"`
 }
 
 // StartedReceipt is the typed LAUNCH STARTED acknowledgement. Wrong card,
