@@ -322,4 +322,29 @@
   ;; and retain a resilient checkpoint across interruption, so retry neither
   ;; loses records nor duplicates work (SPEC-WORK.md:7633, :7069).
   (ok (fboundp 'import-batches-with-originals-dedup-and-checkpoints)
-      "expected a resumable batch importer that deduplicates a stable source id to exactly one mapping and retains a replayable checkpoint (SPEC-WORK.md:7633); got none — the kernel has no import-in-batches entry point, so re-delivered source records would duplicate canonical work"))
+      "expected a resumable batch importer that deduplicates a stable source id to exactly one mapping and retains a replayable checkpoint (SPEC-WORK.md:7633)")
+  (let* ((batch1 (list (inventory-record "issue-1" :issue
+                                         :original "{\"number\":1}"
+                                         :mapping "acme/work/f1")
+                       (inventory-record "issue-2" :issue
+                                         :original "{\"number\":2}"
+                                         :mapping "acme/work/f2")))
+         (batch2 (list (inventory-record "issue-1" :issue ; re-delivered stable id
+                                         :original "{\"number\":1,\"rev\":2}"
+                                         :mapping "acme/work/f1-dup")
+                       (inventory-record "issue-3" :issue
+                                         :original "{\"number\":3}"
+                                         :mapping "acme/work/f3"))))
+    (multiple-value-bind (imported cp dedup)
+        (import-batches-with-originals-dedup-and-checkpoints (list batch1 batch2))
+      (check-equal 3 (length imported)
+                   "exactly one canonical mapping per stable source id; duplicate collapsed")
+      (check-equal 1 dedup "one duplicate stable id deduplicated")
+      (ok cp "a replayable checkpoint is retained")
+      (ok (every #'record-resolved-p imported)
+          "all imported records keep their preserved originals and mappings")
+      (multiple-value-bind (resumed cp2)
+          (import-batches-with-originals-dedup-and-checkpoints (list batch1 batch2) :checkpoint cp)
+        (declare (ignore cp2))
+        (check-equal 0 (length resumed)
+                     "resuming from final checkpoint processes no extra batches")))))

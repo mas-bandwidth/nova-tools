@@ -57,7 +57,9 @@ over a reconstructed state issues no id the history already holds
 (SPEC-WORK.md:1216-1218 keys a closed row <event-rev>:<id>; :1578 allows
 startup and recovery to reconstruct the counters). An explicit REV-BASE at or
 below the state's revision is refused rather than silently reissued."
-  (let ((state (or state (make-seed-state '()))))
+  (let ((state (or state (make-seed-state '() :friends friends))))
+    (when friends
+      (setf (wstate-friends state) (union (wstate-friends state) (copy-list friends) :test #'equal)))
     (when (and rev-base (<= rev-base (state-revision state)))
       (error 'unsupported-input
              :what (format nil "rev-base ~D is at or below the state's own revision ~D"
@@ -98,6 +100,8 @@ below the state's revision is refused rather than silently reissued."
      :request :stamp :clock :generation-owner)
     (:state-to-doing :verb :node :by :reason :evidence
      :request :stamp :clock :generation-owner)
+    (:state-to-blocked :verb :node :by :reason :blocked-by
+     :request :stamp :clock :generation-owner)
     (:event-reopen :verb :node :by :reason
      :request :stamp :clock :generation-owner)
     (:node-edit :verb :node :by :reason :title-patch :category-patch :links-patch
@@ -110,6 +114,8 @@ below the state's revision is refused rather than silently reissued."
                       :request :stamp :clock :generation-owner)
     (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
     (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:event-defer :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:event-supersede :verb :node :by :reason :superseded-by :request :stamp :clock :generation-owner)
     ;; The two receipt verbs (SPEC-WORK.md:2295-2296). :staged carries the
     ;; immutable stage the readers produced outside the mutation loop; :lease-by
     ;; and :lease-default are the CLI's --by and --default, renamed here because
@@ -123,7 +129,7 @@ below the state's revision is refused rather than silently reissued."
               :provenance-sha256 :staged :expect :reason
               :request :stamp :clock :generation-owner)))
 
-(defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
+(defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed :superseded-by)
   "Fields that belong to some event kind of SPEC-WORK.md:823-892. One of these
 on a verb that does not own it is refused as forbidden rather than as unknown,
 because it names a real field in the wrong place -- a caller-given :blocked-by
@@ -151,10 +157,16 @@ on a :to :done is the case, and it must never be quietly overwritten with
   "The reviewed incoming edges to :doing. Unknown additionally requires a
 reason or evidence; done/deferred leave only via reopen, never state.")
 
+(defparameter *blocked-edges* '(:todo :doing :unknown)
+  "The reviewed incoming edges to :blocked. Unknown additionally requires a
+reason or evidence; done/deferred leave only via reopen, never state (SPEC-WORK.md:1219-1242).")
+
 (defun %word (verb)
-  (ecase verb
-    ((:state-to-done :state-to-doing) "STATE")
-    (:event-reopen "EVENT")))
+  (case verb
+    ((:state-to-done :state-to-doing :state-to-blocked) "STATE")
+    ((:event-reopen :event-cancel :event-defer :event-supersede) "EVENT")
+    (:node-remove "NODE")
+    (t "MUTATION")))
 
 (defun %require (request key)
   (let ((value (getf request key)))
@@ -171,15 +183,20 @@ reason or evidence; done/deferred leave only via reopen, never state.")
         (rid (%require request :request))
         (stamp (%require request :stamp))
         (clock (%require request :clock))
-        (owner (%require request :generation-owner)))
+        (owner (%require request :generation-owner))
+        (blocked-by (when (eq verb :state-to-blocked)
+                      (%require request :blocked-by))))
     (make-work-event
-     :kind (ecase verb ((:state-to-done :state-to-doing) :transition) (:event-reopen :reopen))
+     :kind (ecase verb ((:state-to-done :state-to-doing :state-to-blocked) :transition) (:event-reopen :reopen))
      :node node :by by
      :fields (ecase verb
-               ((:state-to-done :state-to-doing)
-                (list :to (if (eq verb :state-to-done) :done :doing)
+               ((:state-to-done :state-to-doing :state-to-blocked)
+                (list :to (case verb
+                            (:state-to-done :done)
+                            (:state-to-doing :doing)
+                            (:state-to-blocked :blocked))
                       :reason (getf request :reason +absent+)
-                      :blocked-by +absent+
+                      :blocked-by (or blocked-by +absent+)
                       :evidence (getf request :evidence +absent+)))
                (:event-reopen
                 (list :reason (getf request :reason +absent+))))
@@ -257,7 +274,17 @@ reason or evidence; done/deferred leave only via reopen, never state.")
        (unless (eq :done (wnode-state node))
          (return-from %validate
            (values 10 (format nil "no edge from ~A to todo"
-                              (string-downcase (symbol-name (wnode-state node)))))))))
+                              (string-downcase (symbol-name (wnode-state node))))))))
+      (:state-to-blocked
+       (unless (eq :o (wnode-branch node))
+         (return-from %validate (values 10 (format nil "~A is in C" id))))
+       (unless (member (wnode-state node) *blocked-edges*)
+         (return-from %validate
+           (values 10 (format nil "no edge from ~A to blocked"
+                              (string-downcase (symbol-name (wnode-state node)))))))
+       (let ((blocked-by (getf (work-event-fields event) :blocked-by)))
+         (when (or (absentp blocked-by) (not (stringp blocked-by)) (string= blocked-by ""))
+           (return-from %validate (values 10 "blocked requires blocked-by reference"))))))
     nil))
 
 (defun %derived-branch-event (verb requester node reason rev)
@@ -358,7 +385,9 @@ command loop is a defect)."
     (:redo-plan (return-from %submit (%submit-redo-plan kernel request)))
     (:external-effect (return-from %submit (%submit-external kernel request)))
     (:node-remove (return-from %submit (%submit-terminal kernel request :node-remove :removed)))
-    (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled))))
+    (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled)))
+    (:event-defer (return-from %submit (%submit-terminal kernel request :event-defer :deferred)))
+    (:event-supersede (return-from %submit (%submit-terminal kernel request :event-supersede :superseded))))
   (let ((verb (getf request :verb)))
     ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
     ;; not a work-tree transition: it shares `submit`'s answer shape but never
@@ -400,7 +429,7 @@ command loop is a defect)."
       (return-from %submit (%take-node-submit kernel request)))
     (when (eq verb :release-node)
       (return-from %submit (%release-node-submit kernel request)))
-    (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
+    (unless (member verb '(:state-to-done :state-to-doing :state-to-blocked :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"
                            (if verb (string-downcase (princ-to-string verb)) "-"))))
@@ -435,7 +464,7 @@ command loop is a defect)."
                                 word (work-event-node requester) rule reason)
                     1 nil))))
       (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
-             (session (unless (eq verb :state-to-doing)
+             (session (unless (member verb '(:state-to-doing :state-to-blocked))
                         (%session-event kernel verb requester)))
              ;; Doing stays inside O: one event, no branch change or cascade.
              (events (if session
@@ -644,12 +673,38 @@ journal, in order, and the defects."
 ;;; every-field-has-an-owning-verb (SPEC-WORK.md:2934, :2960, :5686)
 ;;; ------------------------------------------------------------------
 
+(defparameter *mutation-grammar-schema-hash*
+  "4478044333520d99c07a73a1fca0e46d7474ffb088fc32d43d7d7ddbc875e56e"
+  "SHA-256 digest of the canonical mutation-grammar schema (SPEC-WORK.md:2664).")
+
 (defparameter *mutation-grammar*
-  '((:state-to-done :kind :transition
-     :fields (:to :reason :blocked-by :evidence) :subject :node)
-    (:state-to-doing :kind :transition
-     :fields (:to :reason :blocked-by :evidence) :subject :node)
-    (:event-reopen :kind :reopen :fields (:reason) :subject :node))
+  `((:state-to-done
+     :op "state-to-done"
+     :kind :transition
+     :fields (:to :reason :blocked-by :evidence)
+     :subject :node
+     :family :transition
+     :grammar-line "state-to-done <node> [reason] [blocked-by] [evidence]"
+     :example "state-to-done acme/work/f1/t1 shipped"
+     :schema-hash ,*mutation-grammar-schema-hash*)
+    (:state-to-doing
+     :op "state-to-doing"
+     :kind :transition
+     :fields (:to :reason :blocked-by :evidence)
+     :subject :node
+     :family :transition
+     :grammar-line "state-to-doing <node> [reason] [blocked-by] [evidence]"
+     :example "state-to-doing acme/work/f1/t1 doing"
+     :schema-hash ,*mutation-grammar-schema-hash*)
+    (:event-reopen
+     :op "event-reopen"
+     :kind :reopen
+     :fields (:reason)
+     :subject :node
+     :family :reopen
+     :grammar-line "event-reopen <node> [reason]"
+     :example "event-reopen acme/work/f1/t1 reopened"
+     :schema-hash ,*mutation-grammar-schema-hash*))
   "Each mutation verb, its event kind, its ordered field list and its subject
 (SPEC-WORK.md:2960).")
 

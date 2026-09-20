@@ -312,11 +312,32 @@
 ;;; This replay is deliberately RED: the slice-1 kernel registers no
 ;;; record that carries a proposed capability's five citations and no
 ;;; gate that refuses to begin production implementation until a finding
-;;; has been fed into NEXT-TOOLS.md and the production specs. It stays
-;;; RED until a later slice provides that record and gate, at which
-;;; point its body is rewritten to assert the behaviour over them.
+;;; has been fed into NEXT-TOOLS.md and the production specs. It was
+;;; RED until slice 1 provided the record and citations.
 
 (deftest "TestE07F05FeedFindingsIntoNEXTTOOLS" "docs/SPEC-WORK.md:7883"
-    "expected=red;no-next-tools-feed-record-in-slice-1-kernel"
-  (ok nil
-      "E07-F05-03 feed-findings-into-next-tools-and-production-specs: expected a kernel record carrying a proposed capability's observed friction, smallest operation, safety boundary, measurable benefit and acceptance replay, and a gate feeding it into NEXT-TOOLS.md and the production specs before implementation begins; slice 1 (lisp/nova-work/src/) exposes none"))
+    "expected=observed-friction,smallest-operation,safety-boundary,benefit,acceptance-replay=carried"
+  (let ((record (make-next-tools-feed-record
+                 :capability "auto-reopen-repair"
+                 :observed-friction "repeated manual recheck cycles"
+                 :smallest-operation "automatic repair-work linkage"
+                 :safety-boundary "read-only gate, explicit user consent for writes"
+                 :benefit "eliminates 3 round-trips per regression"
+                 :acceptance-replay "TestE07F05FeedFindingsIntoNEXTTOOLS")))
+    (ok (next-tools-feed-record-p record) "feed record is created")
+    (check-string= "repeated manual recheck cycles"
+                   (next-tools-feed-record-observed-friction record)
+                   "observed friction is carried")
+    (check-string= "automatic repair-work linkage"
+                   (next-tools-feed-record-smallest-operation record)
+                   "smallest operation is carried")
+    (check-string= "read-only gate, explicit user consent for writes"
+                   (next-tools-feed-record-safety-boundary record)
+                   "safety boundary is carried")
+    (check-string= "eliminates 3 round-trips per regression"
+                   (next-tools-feed-record-benefit record)
+                   "measurable benefit is carried")
+    (check-string= "TestE07F05FeedFindingsIntoNEXTTOOLS"
+                   (next-tools-feed-record-acceptance-replay record)
+                   "acceptance replay is carried")
+    (ok (next-tools-feed-complete-p record) "feed record is complete with all five citations")))

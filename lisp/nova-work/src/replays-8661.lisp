@@ -79,12 +79,38 @@ journal, in order, and the defects."
 ;;; every-field-has-an-owning-verb (SPEC-WORK.md:2934, :2960, :5686)
 ;;; ------------------------------------------------------------------
 
+(defparameter *mutation-grammar-schema-hash*
+  "4478044333520d99c07a73a1fca0e46d7474ffb088fc32d43d7d7ddbc875e56e"
+  "SHA-256 digest of the canonical mutation-grammar schema (SPEC-WORK.md:2664).")
+
 (defparameter *mutation-grammar*
-  '((:state-to-done :kind :transition
-     :fields (:to :reason :blocked-by :evidence) :subject :node)
-    (:state-to-doing :kind :transition
-     :fields (:to :reason :blocked-by :evidence) :subject :node)
-    (:event-reopen :kind :reopen :fields (:reason) :subject :node))
+  `((:state-to-done
+     :op "state-to-done"
+     :kind :transition
+     :fields (:to :reason :blocked-by :evidence)
+     :subject :node
+     :family :transition
+     :grammar-line "state-to-done <node> [reason] [blocked-by] [evidence]"
+     :example "state-to-done acme/work/f1/t1 shipped"
+     :schema-hash ,*mutation-grammar-schema-hash*)
+    (:state-to-doing
+     :op "state-to-doing"
+     :kind :transition
+     :fields (:to :reason :blocked-by :evidence)
+     :subject :node
+     :family :transition
+     :grammar-line "state-to-doing <node> [reason] [blocked-by] [evidence]"
+     :example "state-to-doing acme/work/f1/t1 doing"
+     :schema-hash ,*mutation-grammar-schema-hash*)
+    (:event-reopen
+     :op "event-reopen"
+     :kind :reopen
+     :fields (:reason)
+     :subject :node
+     :family :reopen
+     :grammar-line "event-reopen <node> [reason]"
+     :example "event-reopen acme/work/f1/t1 reopened"
+     :schema-hash ,*mutation-grammar-schema-hash*))
   "Each mutation verb, its event kind, its ordered field list and its subject
 (SPEC-WORK.md:2960).")
 

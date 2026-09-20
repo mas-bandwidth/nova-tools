@@ -637,13 +637,27 @@ is refused."
 ;;; ------------------------------------------------------------------
 
 (defstruct (machinery-receipt
-             (:constructor make-machinery-receipt (&key head result)))
-  head result)
+             (:constructor make-machinery-receipt (&key head result distilled-learning)))
+  head result distilled-learning)
 
-(defun book-receipt (head result)
+(defun book-receipt (head result &key distilled-learning)
   "A child's result is booked as a machinery receipt at the exact head it ran
-against, by no model call (rule 4)."
-  (make-machinery-receipt :head head :result result))
+against, by no model call (rule 4). Upward, the envelope is a copy and a
+distillation, carrying the child's verdict, result pointer, evidence events,
+usage pointer and exact head byte-copied, beside the child's distilled learning
+in its own words (SPEC-WORK.md:4589-4591, :4652)."
+  (make-machinery-receipt
+   :head head
+   :result result
+   :distilled-learning (or distilled-learning
+                           (when (listp result) (getf result :distilled-learning)))))
+
+(defun envelope-open-evidence (envelope)
+  "The parent can open the child's evidence from the envelope and find what the
+summary dropped (SPEC-WORK.md:4596, :4652)."
+  (let ((result (machinery-receipt-result envelope)))
+    (when (listp result)
+      (getf result :evidence))))
 
 (defun review-binds-p (verdict head)
   "A review verdict binds to --head <sha>."

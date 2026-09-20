@@ -48,8 +48,8 @@ reads finding=holder-asleep inside 300 s and is otherwise untouched
 ;;; ------------------------------------------------------------------
 
 (defstruct (friend-presence (:constructor make-friend-presence
-                               (&key name (state :unknown))))
-  name state)
+                               (&key name (state :unknown) source stamp seen)))
+  name state source stamp seen)
 
 (defstruct (offer-record (:constructor make-offer-record
                               (&key id node friend (state :pending))))

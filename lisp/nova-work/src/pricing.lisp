@@ -590,3 +590,42 @@ made and the cost of the event is the measured spend of that one call."
              (cost (or (cdr (assoc model price-table :test #'equal)) 0)))
         (%make-pulse-result :model-calls 1 :notes 0
                             :published '(:clip :beat :projection) :cost cost))))
+
+;;; ------------------------------------------------------------------
+;;; E10-F05-01: compare update-and-render tokens and wall time with
+;;; manual editing (SPEC-WORK.md:7887, :7894-7902)
+;;; ------------------------------------------------------------------
+
+(defun compare-update-and-render-tokens (&rest args)
+  "Compare update-and-render tokens and wall time against manual editing,
+reporting one of three honest outcomes: :verified-saving, :inconclusive,
+or :failed-hypothesis (SPEC-WORK.md:7887, :7901-7902)."
+  (let (update-tokens update-wall manual-wall (manual-tokens 0))
+    (if (keywordp (first args))
+        (setf update-tokens (getf args :update-tokens 0)
+              update-wall (getf args :update-wall 0)
+              manual-wall (getf args :manual-wall 0)
+              manual-tokens (getf args :manual-tokens 0))
+        (setf update-tokens (or (first args) 0)
+              update-wall (or (second args) 0)
+              manual-wall (or (third args) 0)
+              manual-tokens (or (fourth args) 0)))
+    (let ((verdict
+            (cond
+              ((or (null update-wall) (null manual-wall)
+                   (and (= update-tokens 0) (= update-wall 0) (= manual-wall 0)))
+               :inconclusive)
+              ((or (< update-tokens manual-tokens)
+                   (and (<= update-tokens manual-tokens)
+                        (< update-wall manual-wall)))
+               :verified-saving)
+              ((or (> update-tokens manual-tokens)
+                   (> update-wall manual-wall))
+               :failed-hypothesis)
+              (t :inconclusive))))
+      (values verdict
+              (format nil "GATE ~A update-tokens=~D update-wall=~D manual-tokens=~D manual-wall=~D"
+                      verdict update-tokens update-wall manual-tokens manual-wall)))))
+
+(setf (fdefinition 'compare-update-and-render-cost) #'compare-update-and-render-tokens)
+(setf (fdefinition 'compare-update-and-render) #'compare-update-and-render-tokens)

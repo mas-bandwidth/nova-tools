@@ -480,4 +480,13 @@ on. Registration goes through the real `machine` verb, never a back door."
   (let ((c (make-archive-capture :source-issue "acme/widget#7"
                                  :author :known :gaps '())))
     (check-equal nil (archive-absorbable-p c)
-                 "author identity alone must not select absorption; scope and intake mode must be explicit")))
+                 "author identity alone must not select absorption; scope and intake mode must be explicit"))
+  ;; (3) With explicit scope, authority and intake-mode :absorb, a gap-free
+  ;; known-author capture is absorbable.
+  (let ((c-absorb (make-archive-capture :source-issue "acme/widget#7"
+                                        :author :known :gaps '()
+                                        :scope "acme/widget"
+                                        :authority "glenn"
+                                        :intake-mode :absorb)))
+    (check-equal t (archive-absorbable-p c-absorb)
+                 "an explicit scope, authority and absorb mode selects absorption")))

@@ -302,8 +302,50 @@ reads finding=holder-asleep inside 300 s and is otherwise untouched
 ;;; ------------------------------------------------------------------
 
 (defstruct (friend-presence (:constructor make-friend-presence
-                               (&key name (state :unknown))))
-  name state)
+                               (&key name (state :unknown) source stamp seen)))
+  name state source stamp seen)
+
+(defparameter *presence-beat-ranks*
+  '((:harness-hook . 4)
+    (:bus-cursor . 3)
+    (:manual . 2)
+    (:wake-probe . 1)))
+
+(defun %beat-source-rank (src)
+  (or (cdr (assoc src *presence-beat-ranks*)) 0))
+
+(defun derive-friend-presence (friend beats &key (now 0) (asleep-threshold 300))
+  "Derive one presence per friend from the newest of the four beat sources
+(bus cursor, wake probe, harness hook, manual), with tie-breaking by directness
+(harness-hook > bus-cursor > manual > wake-probe) inside one coalescing bucket
+(SPEC-WORK.md:4129-4132, :4146-4147)."
+  (unless beats (return-from derive-friend-presence nil))
+  (let ((best-source nil)
+        (best-stamp nil))
+    (dolist (beat beats)
+      (let* ((src (cond ((and (consp beat) (keywordp (car beat))) (car beat))
+                        ((and (listp beat) (getf beat :source)) (getf beat :source))
+                        (t (car beat))))
+             (stamp (cond ((and (consp beat) (not (listp (cdr beat)))) (cdr beat))
+                          ((and (listp beat) (getf beat :stamp)) (getf beat :stamp))
+                          (t (cdr beat)))))
+        (when (and src stamp)
+          (if (null best-stamp)
+              (setf best-source src best-stamp stamp)
+              (cond
+                ((> stamp best-stamp)
+                 (setf best-source src best-stamp stamp))
+                ((and (= stamp best-stamp)
+                      (> (%beat-source-rank src) (%beat-source-rank best-source)))
+                 (setf best-source src best-stamp stamp)))))))
+    (when best-source
+      (let ((state (if (and (plusp now) (>= (- now best-stamp) asleep-threshold))
+                       :asleep
+                       :awake)))
+        (make-friend-presence :name (if (stringp friend) friend (string-downcase (string friend)))
+                              :state state
+                              :source best-source
+                              :stamp best-stamp)))))
 
 (defstruct (offer-record (:constructor make-offer-record
                               (&key id node friend (state :pending))))

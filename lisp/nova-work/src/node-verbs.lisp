@@ -156,14 +156,26 @@ never taken. Editing and rendering never call it (SPEC-WORK.md:5357)."
   (incf *link-fetch-count*)
   (format nil "fetched ~A" url))
 
+(defun effective-private-p (state id)
+  "True when ID's own marker or any containment ancestor's is set (:3051, :948-949)."
+  (let ((cur id) (private nil))
+    (loop while cur
+          do (let ((n (%node-quiet state cur)))
+               (cond ((null n) (return))
+                     ((and (wnode-private n)
+                           (not (absentp (wnode-private n)))
+                           (not (eq (wnode-private n) :false)))
+                      (setf private t) (return))
+                     (t (setf cur (wnode-parent n))))))
+    private))
+
 (defun render-node (kernel id)
   "Render one node's links as text. A private node leaves the public render and
-prints only `private=1` (:3016-3017). No link is resolved."
+prints only `private=1` (:3016-3017, :948-949). No link is resolved."
   (let ((node (%node-or-nil (kernel-state kernel) id)))
     (unless node
       (error 'unsupported-input :what (format nil "no such node ~A" id)))
-    (if (and (wnode-private node) (not (absentp (wnode-private node)))
-             (not (eq (wnode-private node) :false)))
+    (if (effective-private-p (kernel-state kernel) id)
         "private=1"
         (with-output-to-string (s)
           (when (wnode-title node) (format s "~A " (wnode-title node)))
@@ -407,16 +419,6 @@ The coordination tree is the spec's responsible context (:3059-3060)."
                    (let ((c (wnode-coordinator n)))
                      (if c (setf found c) (setf cur (wnode-parent n)))))))
     found))
-
-(defun effective-private-p (state id)
-  "True when ID's own marker or any containment ancestor's is set (:3051)."
-  (let ((cur id) (private nil))
-    (loop while cur
-          do (let ((n (%node-quiet state cur)))
-               (cond ((null n) (return))
-                     ((member (wnode-private n) '(t :true)) (setf private t) (return))
-                     (t (setf cur (wnode-parent n))))))
-    private))
 
 (defun %reparent-node (state id old new position)
   "Move ID's containment edge from OLD to NEW, inserting at POSITION in NEW's

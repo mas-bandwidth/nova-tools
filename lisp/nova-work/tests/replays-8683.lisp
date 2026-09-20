@@ -130,10 +130,15 @@
       (let ((t0 (get-internal-real-time)))
         (roadmap-edit-marker (roadmap-render rm :chat) "f-1" "f-1")
         (setf manual-wall (- (get-internal-real-time) t0)))
-      ;; the gate. The kernel can measure both halves but exposes no verdict
-      ;; that compares them and reports one of the three honest outcomes; that
-      ;; is the unbuilt part of E10-F05-01.
-      (fail "E10-F05-01: expected the update-and-render cost (tokens=~D wall=~D) compared ~
-against the manual edit (wall=~D) to be reported as one of ~
-verified-saving | inconclusive | failed-hypothesis; the kernel measured both halves ~
-but offers no such comparison verdict" update-tokens update-wall manual-wall))))
+      ;; the gate. The comparison between update-and-render cost and manual
+      ;; edit produces one of three honest verdicts: verified-saving,
+      ;; inconclusive, or failed-hypothesis (SPEC-WORK.md:7887, :7894-7902).
+      (multiple-value-bind (verdict line)
+          (compare-update-and-render-tokens
+           :update-tokens update-tokens
+           :update-wall update-wall
+           :manual-wall manual-wall)
+        (ok (member verdict '(:verified-saving :inconclusive :failed-hypothesis))
+            "the gate reports one of verified-saving | inconclusive | failed-hypothesis: ~A" verdict)
+        (ok (stringp line)
+            "the gate comparison produces a diagnostic line: ~A" line)))))

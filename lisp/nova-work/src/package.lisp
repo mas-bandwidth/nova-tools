@@ -30,6 +30,8 @@
    #:journal-uncertain-write-reason
    #:journal-held
    #:journal-held-path
+   #:socket-held
+   #:socket-held-path
    ;; restricted data and canonical serialization
    #:+absent+
    #:absentp
@@ -70,6 +72,7 @@
    #:cow-partition-holds-p
    #:hand-write-closed-row
    #:wstate-rows
+   #:wstate-friends
    #:state-holder-index
    #:state-index-mismatches
    #:node-open-count
@@ -360,6 +363,8 @@
     #:make-machinery-receipt
     #:machinery-receipt-head
     #:machinery-receipt-result
+    #:machinery-receipt-distilled-learning
+    #:envelope-open-evidence
     #:book-receipt
     #:review-binds-p
     #:review-reusable-p
@@ -557,7 +562,11 @@
     #:session-endpoint-socket-mode
     #:session-endpoint-owner
     #:session-endpoint-socket-family
+    #:session-endpoint-lock
     #:endpoint-network-listener-p
+    #:endpoint-close
+    #:take-endpoint-lock
+    #:endpoint-lock-path
     #:local-socket-family
     #:current-account-uid
     ;; the local listener and the resident session server daemon
@@ -866,6 +875,20 @@
     #:render-view-selection
     #:render-view-body
     #:render-view
+    ;; next-tools feed record (E07-F05, src/roadmap.lisp)
+    #:next-tools-feed-record
+    #:make-next-tools-feed-record
+    #:next-tools-feed-record-p
+    #:next-tools-feed-record-capability
+    #:next-tools-feed-record-observed-friction
+    #:next-tools-feed-record-smallest-operation
+    #:next-tools-feed-record-safety-boundary
+    #:next-tools-feed-record-benefit
+    #:next-tools-feed-record-measurable-benefit
+    #:next-tools-feed-record-acceptance-replay
+    #:next-tools-feed-complete-p
+    #:make-next-tools-feed
+    #:next-tools-feed-p
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p
@@ -1330,6 +1353,14 @@
     #:archive-capture-source-issue
     #:archive-capture-author
     #:archive-capture-gaps
+    #:archive-capture-identity
+    #:archive-capture-provenance
+    #:archive-capture-content
+    #:archive-capture-deletion-receipt
+    #:archive-capture-scope
+    #:archive-capture-authority
+    #:archive-capture-intake-mode
+    #:archive-append-deletion-receipt
     #:archive-gaps-explicit-p
     #:archive-absorbable-p
     #:author-retains-source-p
@@ -1532,6 +1563,9 @@
     #:pricing-refresh
     #:pricing-rate
     #:estimate-cost
+    #:compare-update-and-render-tokens
+    #:compare-update-and-render-cost
+    #:compare-update-and-render
     #:make-dispatch-pulse
     #:dispatch-pulse-record-bound
     #:dispatch-pulse-pending
@@ -1720,6 +1754,7 @@
     #:record-resolved-p
     #:record-unresolved-p
     #:reconcile-inventory
+    #:import-batches-with-originals-dedup-and-checkpoints
     #:cost-breakdown
     #:subscription-covers-cash-p
     ;; replays-8651 (undo-redo, unknown-price-is-not-zero, unrelated-receipts)
@@ -1781,6 +1816,7 @@
     #:kernel-defect-line
     #:journal-seq-numbers
     #:*mutation-grammar*
+    #:*mutation-grammar-schema-hash*
     #:*field-owning-verbs*
     #:mutation-verbs
     #:verb-event-kind
@@ -1893,6 +1929,9 @@
     #:make-friend-presence
     #:friend-presence-name
     #:friend-presence-state
+    #:friend-presence-source
+    #:friend-presence-stamp
+    #:derive-friend-presence
     #:offer-record
     #:make-offer-record
     #:offer-record-id
@@ -2086,6 +2125,25 @@
     #:verdict-terminal-p
     #:tick-verdict-row
     #:read-owed-p
+    ;; E11 decision packet (SPEC-WORK.md:4648, :4649)
+    #:decision-packet
+    #:build-decision-packet
+    #:make-decision-packet
+    #:supersede-decision-packet
+    #:amend-decision-packet
+    #:decision-packet-p
+    #:decision-packet-item
+    #:decision-packet-revision
+    #:decision-packet-reader
+    #:decision-packet-head
+    #:decision-packet-recorded-head
+    #:decision-packet-delta
+    #:decision-packet-rules-touched
+    #:decision-packet-open-findings
+    #:decision-packet-evidence-pointers
+    #:decision-packet-links
+    #:decision-packet-whole-diff-p
+    #:decision-packet-amended-p
     ;; E02 source capture and import staging (SPEC-WORK.md:2721-2760): the long
     ;; capture/import operation, the bounded staged bytes and the revision-fenced
     ;; admission of a validated result.

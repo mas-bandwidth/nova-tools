@@ -55,15 +55,16 @@ asking the journal and never a resident map."
       (setf (kernel-next-rev kernel) (1+ (work-event-rev (car (last events)))))
       (values t line 0 envelope))))
 
-(defun %oneshot-submit (kernel rid digest line event word applied-entry)
-  "Dedup, install one event, and remember APPLIED-ENTRY on success."
+(defun %oneshot-submit (kernel rid digest line event-or-events word applied-entry)
+  "Dedup, install event(s), and remember APPLIED-ENTRY on success."
   (multiple-value-bind (verdict recorded) (%dedup-verdict kernel rid digest)
     (if verdict
         (if (eq verdict :replay)
             (values t recorded 0 (list :request rid :digest digest :events '() :replayed t))
             (values nil (%dedup-refusal word rid verdict recorded) 1 nil))
-        (let ((result (multiple-value-list
-                       (%install-envelope kernel rid digest line (list event)))))
+        (let* ((events (if (listp event-or-events) event-or-events (list event-or-events)))
+               (result (multiple-value-list
+                        (%install-envelope kernel rid digest line events))))
           (when (and applied-entry (first result))
             (setf (gethash rid (kernel-applied kernel)) applied-entry))
           (values-list result)))))
@@ -241,21 +242,34 @@ EXIT-CODE)."
         (clock (%eu-required request :clock))
         (owner (%eu-required request :generation-owner))
         (reason (getf request :reason +absent+))
+        (superseded-by (getf request :superseded-by +absent+))
         (word (if (eq verb :node-remove) "NODE" "EVENT")))
     (unless (%node-quiet (kernel-state kernel) node)
       (return-from %submit-terminal
         (values nil (format nil "~A FAIL node=~A: no such node" word node) 2 nil)))
     (let* ((event (make-work-event
                    :kind :terminal :node node :by by
-                   :fields (list :disposition disposition :reason reason)
+                   :fields (list :disposition disposition :reason reason
+                                 :superseded-by superseded-by)
                    :stamp stamp :clock clock :request rid
                    :generation-owner owner :rev (kernel-next-rev kernel)
                    :session-written-p nil))
+           (parent-id (when (eq verb :event-cancel)
+                        (let ((n (%node-quiet (kernel-state kernel) node)))
+                          (and n (wnode-parent n)))))
+           (parent-event (when parent-id
+                           (make-work-event
+                            :kind :refusal :node parent-id :by by
+                            :fields (list :reason reason)
+                            :stamp stamp :clock clock :request rid
+                            :generation-owner owner :rev (1+ (kernel-next-rev kernel))
+                            :session-written-p t)))
+           (events (if parent-event (list event parent-event) (list event)))
            (digest (payload-digest (list event)))
            (line (format nil "~A OK id=~A request=~A node=~A disposition=~A rev=~D pushed=-"
                          word (event-id event) rid node
                          (string-downcase (symbol-name disposition)) (work-event-rev event))))
-      (%oneshot-submit kernel rid digest line event word
+      (%oneshot-submit kernel rid digest line events word
                        (list :verb verb :node node :terminal t
                              :disposition disposition :request request)))))
 
@@ -330,7 +344,7 @@ EXIT-CODE)."
                                    (string-downcase (symbol-name (or (getf entry :state) :known)))
                                    (getf entry :handle))
                        1 nil))
-                ((member verb '(:node-remove :event-cancel))
+                ((member verb '(:node-remove :event-cancel :event-defer :event-supersede))
                  (list nil (format nil "UNDO FAIL request-of=~A: not reversible here (~A is terminal)"
                                    of (string-downcase (symbol-name verb)))
                        1 nil))
@@ -346,7 +360,7 @@ EXIT-CODE)."
                     (%undo-submit kernel rid digest line (list event)))))
                 ((eq verb :node-move)
                  (multiple-value-list (node-move-undo kernel entry rid)))
-                ((member verb '(:state-to-doing :state-to-done :event-reopen))
+                ((member verb '(:state-to-doing :state-to-done :state-to-blocked :event-reopen))
                  (multiple-value-list
                   (let* ((events (%undo-compensating-events entry by stamp clock owner rid
                                                             (kernel-next-rev kernel)))

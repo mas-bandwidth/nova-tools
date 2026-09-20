@@ -242,11 +242,12 @@ that open need.")
     "docs/SPEC-WORK.md:4652"
     "expected=child-verdict-result-pointer-evidence-usage-and-exact-head-byte-copied-beside-distilled-learning;parent-opens-child-evidence"
   (let* ((head "e11f060204")
+         (learning "distilled lesson: verification requires independent witness")
          (child-result (list :verdict :done
                              :result-pointer "note:child/ev-1"
                              :evidence (list (list :id "ev-1" :kind :test))
                              :usage (list :input 11 :output 9)))
-         (envelope (book-receipt head child-result)))
+         (envelope (book-receipt head child-result :distilled-learning learning)))
     ;; The exact head arrives byte-copied: the one field the receipt keeps.
     (check-equal head (machinery-receipt-head envelope)
                  "the envelope did not carry the exact head")
@@ -256,6 +257,8 @@ that open need.")
                  "the envelope did not byte-copy the child's verdict, result pointer, evidence and usage")
     ;; Beside the copy, the child's distilled learning must travel in its own
     ;; words, and the parent must be able to open the child's evidence from the
-    ;; envelope. The receipt keeps a head and an opaque result blob and nothing
-    ;; else: no learning slot and no evidence-opening.
-    (ok nil "envelope-up-is-a-copy not met: the parent received a receipt with only :head and a flat :result (the receipt-at-exact-head contract); the child's distilled learning in its own words is not carried beside them and the parent cannot open the child's evidence from the envelope")))
+    ;; envelope.
+    (check-equal learning (machinery-receipt-distilled-learning envelope)
+                 "the envelope did not carry the child's distilled learning")
+    (check-equal (getf child-result :evidence) (envelope-open-evidence envelope)
+                 "the parent cannot open the child's evidence from the envelope")))

@@ -58,6 +58,11 @@
   (:report (lambda (c s)
              (format s "journal ~A is held by another process" (journal-held-path c)))))
 
+(define-condition socket-held (nova-work-error)
+  ((path :initarg :path :reader socket-held-path))
+  (:report (lambda (c s)
+             (format s "socket ~A is held by another process" (socket-held-path c)))))
+
 ;;; Instrumentation. `open-count-is-read-not-computed` (SPEC-WORK.md:3229) asks
 ;;; for zero visits, zero parses and zero replays on a resident current-revision
 ;;; |O| query, so each of the three has a counter and every path that does one

@@ -1003,17 +1003,41 @@ on a settled roadmap revives nothing (:5997-5998)."
 
 (defun export-roadmap-view (view)
   "The canonical durable bytes of a roadmap view record, so an export/load
-round-trip carries the whole head (:3124-3125)."
-  (canonical-string
-   (list :members (copy-list (getf view :members))
-         :axes (copy-list (getf view :axes))
-         :retired (copy-list (getf view :retired))
-         :projections (copy-tree (getf view :projections))
-         :revision (getf view :revision))))
+round-trip carries the whole head (:3124-3125), including audit ID, source
+revision, historical reports, and superseding aliases (:7826)."
+  (let ((rec (list :members (copy-list (getf view :members))
+                   :axes (copy-list (getf view :axes))
+                   :retired (copy-list (getf view :retired))
+                   :projections (copy-tree (getf view :projections))
+                   :revision (getf view :revision))))
+    (when (getf view :id)
+      (setf (getf rec :id) (getf view :id)))
+    (when (getf view :source-revision)
+      (setf (getf rec :source-revision) (getf view :source-revision)))
+    (when (getf view :reports)
+      (setf (getf rec :reports) (copy-tree (getf view :reports))))
+    (when (getf view :aliases)
+      (setf (getf rec :aliases)
+            (mapcar (lambda (item)
+                      (if (consp item)
+                          (if (consp (cdr item))
+                              item
+                              (list (car item) (cdr item)))
+                          item))
+                    (getf view :aliases))))
+    (canonical-string rec)))
 
 (defun load-roadmap-view (bytes)
   "Reconstruct the view record from EXPORT-ROADMAP-VIEW's bytes."
-  (read-restricted bytes))
+  (let ((rec (read-restricted bytes)))
+    (when (getf rec :aliases)
+      (setf (getf rec :aliases)
+            (mapcar (lambda (item)
+                      (if (and (consp item) (consp (cdr item)) (null (cddr item)))
+                          (cons (car item) (cadr item))
+                          item))
+                    (getf rec :aliases))))
+    rec))
 
 (defun roadmap-view-open (view &key (window :default))
   "Open a stored roadmap view. The record is a durable named view, so no live or
@@ -1678,3 +1702,49 @@ rendered selection on success, LINE the refusal otherwise, and CODE 0 or 2."
     (if line
         (values nil line code)
         (values (render-view-body view selection) nil 0))))
+
+;;; ------------------------------------------------------------------
+;;; E07-F05: Feed findings into NEXT-TOOLS and production specs before
+;;; implementation (docs/SPEC-WORK.md:7880-7883)
+;;; ------------------------------------------------------------------
+
+(defstruct (next-tools-feed-record
+            (:constructor %make-next-tools-feed-record))
+  "A next-tools feed record citing the five required dimensions of a proposed
+tool capability before implementation begins: observed friction, the smallest
+operation that removes it, its safety boundary, measurable benefit and an
+acceptance replay."
+  capability
+  observed-friction
+  smallest-operation
+  safety-boundary
+  benefit
+  acceptance-replay)
+
+(defun make-next-tools-feed-record (&key capability observed-friction smallest-operation
+                                         safety-boundary benefit measurable-benefit
+                                         acceptance-replay)
+  (%make-next-tools-feed-record
+   :capability capability
+   :observed-friction observed-friction
+   :smallest-operation smallest-operation
+   :safety-boundary safety-boundary
+   :benefit (or benefit measurable-benefit)
+   :acceptance-replay acceptance-replay))
+
+(defun next-tools-feed-record-measurable-benefit (record)
+  (next-tools-feed-record-benefit record))
+
+(defun next-tools-feed-complete-p (record)
+  "Whether RECORD cites all five required citations before implementation begins."
+  (and record
+       (next-tools-feed-record-observed-friction record)
+       (next-tools-feed-record-smallest-operation record)
+       (next-tools-feed-record-safety-boundary record)
+       (next-tools-feed-record-benefit record)
+       (next-tools-feed-record-acceptance-replay record)
+       t))
+
+(setf (fdefinition 'make-next-tools-feed) #'make-next-tools-feed-record)
+(setf (fdefinition 'next-tools-feed-p) #'next-tools-feed-record-p)
+

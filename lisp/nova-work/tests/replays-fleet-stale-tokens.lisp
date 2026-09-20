@@ -211,6 +211,22 @@
   (let ((builder (find-symbol "DECISION-PACKET" :nova-work)))
     (ok (and builder (fboundp builder))
         "the kernel builds no decision packet per item and revision: expected one packet keyed (item revision), a newer revision superseding it and keeping its open findings, and a busy reader's packet amended (not duplicated); got no decision-packet machinery in :nova-work"))
+  (let* ((item "pr/101")
+         (p1 (decision-packet item 1 :reader "rowan"
+                                     :rules-touched '("rule-1" "rule-2")
+                                     :open-findings '((:id "f1" :disposition :open))
+                                     :evidence-pointers '("note:ev1")))
+         (p2 (supersede-decision-packet p1 2 :rules-touched '("rule-1")))
+         (amended (amend-decision-packet p1 :rules-touched '("rule-1" "rule-3"))))
+    (check-equal item (decision-packet-item p1) "packet keyed by item")
+    (check-equal 1 (decision-packet-revision p1) "and revision")
+    ;; newer revision supersedes keeping open findings
+    (check-equal 2 (decision-packet-revision p2) "newer revision supersedes")
+    (check-equal '((:id "f1" :disposition :open)) (decision-packet-open-findings p2)
+                 "supersede keeps open findings")
+    ;; busy reader amended not duplicated
+    (ok (decision-packet-amended-p amended) "busy reader's packet amended in place")
+    (check-equal p1 amended "amended in place, not duplicated"))
   ;; The last clause already holds today: an empty pulse wakes no model and
   ;; re-executes nothing, and only a non-empty pulse wakes exactly one.
   (check-equal 0 (pulse-result-model-calls (quiet-pulse :changed nil))

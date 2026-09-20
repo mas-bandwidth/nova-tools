@@ -194,6 +194,7 @@ default for. RENDER-CHECK supplies its own :check mode and is called directly."
                             *render-marker-end*)))
     (write-test-file victim text)
     ;; A real symlink inside the root pointing out of it.
+    (ignore-errors (sb-posix:unlink (format nil "~A/link" root)))
     (sb-posix:symlink outside (format nil "~A/link" root))
     (let ((r (render-to-file (test-render-session root)
                                   (test-render-projection :rel "link/target.md")

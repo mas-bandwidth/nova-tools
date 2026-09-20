@@ -27,7 +27,8 @@
     (:edit       :title-patch :category-patch :links-patch :private-patch
                  :version-patch :reason)              ; SPEC-WORK.md:5798
     (:external   :effect :handle)                     ; SPEC-WORK.md:5652
-    (:terminal   :disposition :reason)                ; cancel/remove, SPEC-WORK.md:5783
+    (:terminal   :disposition :reason :superseded-by) ; cancel/remove/defer/supersede, SPEC-WORK.md:5783
+    (:refusal    :reason)                             ; child refusal on parent, SPEC-WORK.md:4651
     (:goal       :change :scope :goal :reason)        ; SPEC-WORK.md:1060
     (:evidence   :pointer :criterion :against :generation :attempt) ; :996
     ;; The six new verbs draft 26 added (SPEC-WORK.md:1014-1043, replay

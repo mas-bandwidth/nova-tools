@@ -251,5 +251,8 @@
                      "the author retains its source issue")))
     (check-equal t (archive-absorbable-p
                     (make-archive-capture :source-issue "acme/widget#7"
-                                          :author :known :gaps '()))
+                                          :author :known :gaps '()
+                                          :scope "acme/widget"
+                                          :authority "glenn"
+                                          :intake-mode :absorb))
                  "a complete capture is absorbable")))

@@ -815,9 +815,27 @@ fixture in the pre-fold order refuses `schema revision unsupported`
   kind detail source-issue)
 
 (defstruct (archive-capture
-             (:constructor make-archive-capture (&key source-issue author gaps)))
-  "One capture with its source issue, its author class and its explicit gaps."
-  source-issue author gaps)
+             (:constructor make-archive-capture
+                 (&key source-issue author gaps
+                       (identity source-issue) provenance content deletion-receipt
+                       scope authority (intake-mode :link))))
+  "One capture with its source issue, its author class, explicit gaps,
+retained identity, provenance, content, deletion receipt, and explicit scope/authority."
+  source-issue
+  author
+  gaps
+  identity
+  provenance
+  content
+  deletion-receipt
+  scope
+  authority
+  (intake-mode :link))
+
+(defun archive-append-deletion-receipt (capture receipt)
+  "Append the actual deletion outcome receipt to the archive capture (SPEC-WORK.md:7609-7610)."
+  (setf (archive-capture-deletion-receipt capture) receipt)
+  capture)
 
 (defun archive-gaps-explicit-p (capture)
   "True when every gap names one of the six kinds and a detail, so none is a
@@ -827,16 +845,72 @@ silent drop."
                 (stringp (archive-gap-detail g))))
          (archive-capture-gaps capture)))
 
-(defun archive-absorbable-p (capture)
-  "An incomplete capture prohibits absorption; only a gap-free capture may be
-absorbed (SPEC-WORK.md:6232)."
-  (null (archive-capture-gaps capture)))
+(defun archive-absorbable-p (capture &key scope authority intake-mode)
+  "An incomplete capture prohibits absorption; only a gap-free capture with
+explicit scope, authority, and absorb intake-mode may be absorbed (SPEC-WORK.md:7590-7593, :6232)."
+  (let ((actual-scope (or scope (archive-capture-scope capture)))
+        (actual-auth (or authority (archive-capture-authority capture)))
+        (actual-mode (or intake-mode (archive-capture-intake-mode capture))))
+    (and (null (archive-capture-gaps capture))
+         (eq (archive-capture-author capture) :known)
+         (eq actual-mode :absorb)
+         (not (null actual-scope))
+         (not (null actual-auth))
+         t)))
 
 (defun author-retains-source-p (capture)
   "A mixed, external or unknown author retains its source issue."
   (and (member (archive-capture-author capture) '(:mixed :external :unknown))
        (archive-capture-source-issue capture)
        t))
+
+;;; ------------------------------------------------------------------
+;;; E09-F03: import in resumable batches with originals, deduplication
+;;; and checkpoints (SPEC-WORK.md:7633, :7069)
+;;; ------------------------------------------------------------------
+
+(defun import-batches-with-originals-dedup-and-checkpoints (batches &key checkpoint)
+  "Import source records in resumable batches without deleting originals.
+Preserve original records alongside the normalized mapping, deduplicate stable
+identities to exactly one canonical mapping, and retain a replayable checkpoint
+(SPEC-WORK.md:7633, :7069)."
+  (let ((seen (make-hash-table :test #'equal))
+        (imported '())
+        (deduplicated-count 0)
+        (batch-index 0)
+        (resume-index (cond
+                        ((null checkpoint) 0)
+                        ((integerp checkpoint) checkpoint)
+                        ((checkpoint-p checkpoint) (checkpoint-shared-revision checkpoint))
+                        ((listp checkpoint) (or (getf checkpoint :batch-index)
+                                                (getf checkpoint :shared-revision)
+                                                0))
+                        (t 0)))
+        (current-checkpoint checkpoint))
+    (dolist (batch batches)
+      (incf batch-index)
+      (let ((records (if (and (listp batch) (listp (first batch))) batch (list batch))))
+        (if (<= batch-index resume-index)
+            ;; already processed in prior checkpoint; populate seen table
+            (dolist (rec records)
+              (let ((id (if (listp rec) (getf rec :id) rec)))
+                (when id (setf (gethash id seen) t))))
+            ;; process this batch
+            (progn
+              (dolist (rec records)
+                (let ((id (if (listp rec) (getf rec :id) rec)))
+                  (if (and id (gethash id seen))
+                      (incf deduplicated-count)
+                      (progn
+                        (when id (setf (gethash id seen) t))
+                        (push rec imported)))))
+              (setf current-checkpoint
+                    (make-checkpoint :id (format nil "checkpoint-batch-~D" batch-index)
+                                     :shared-revision batch-index
+                                     :source "import-batches"))))))
+    (values (nreverse imported)
+            current-checkpoint
+            deduplicated-count)))
 
 
 ;;; ------------------------------------------------------------------

@@ -307,4 +307,37 @@ PATH is bound too, so a case can reopen the same journal and replay it."
                      (find-symbol "MAKE-DECISION-PACKET" :nova-work)
                      (find-symbol "DECISION-PACKET" :nova-work))))
       (ok (and actor (fboundp actor))
-          "SPEC-WORK.md:4649 packet-is-smallest-sufficient: expected a decision-packet builder returning the delta since the reader's recorded head, the rules it touches, the open findings with dispositions, the new behaviour with evidence pointers and links to the full sources (the whole diff only on a first read); the kernel defines no such builder, so the criterion is unmet"))))
+          "SPEC-WORK.md:4649 packet-is-smallest-sufficient: expected a decision-packet builder returning the delta since the reader's recorded head, the rules it touches, the open findings with dispositions, the new behaviour with evidence pointers and links to the full sources (the whole diff only on a first read); the kernel defines no such builder, so the criterion is unmet"))
+    ;; First read: reader has never read the entry (no recorded head) -> whole diff only
+    (let ((first-packet (build-decision-packet :item "root" :revision 1 :reader reader
+                                              :head head :recorded-head nil
+                                              :diff "diff --git a/file b/file"
+                                              :rules-touched '("rule-5")
+                                              :open-findings '((:id "f1" :disposition :open))
+                                              :evidence-pointers '("note:ev1")
+                                              :links '("https://src/file#L1"))))
+      (ok (decision-packet-whole-diff-p first-packet)
+          "whole diff only on a first read")
+      (check-equal "diff --git a/file b/file" (decision-packet-delta first-packet)
+                   "first read gets whole diff"))
+    ;; Subsequent read: delta since recorded head plus rules, findings, evidence pointers, links
+    (let* ((new-head "d539c0d3de97b9856967f8d1ac47c1c7b2ccd5b9")
+           (subsequent-packet (build-decision-packet :item "root" :revision 2 :reader reader
+                                                    :head new-head :recorded-head head
+                                                    :delta "delta:f01a0..d539c"
+                                                    :rules-touched '("rule-5" "rule-6")
+                                                    :open-findings '((:id "f1" :disposition :accepted))
+                                                    :evidence-pointers '("note:ev2")
+                                                    :links '("https://src/file#L10"))))
+      (ok (not (decision-packet-whole-diff-p subsequent-packet))
+          "subsequent read does not carry whole diff")
+      (check-equal "delta:f01a0..d539c" (decision-packet-delta subsequent-packet)
+                   "subsequent read carries delta since recorded head")
+      (check-equal '("rule-5" "rule-6") (decision-packet-rules-touched subsequent-packet)
+                   "carries rules touched")
+      (check-equal '((:id "f1" :disposition :accepted)) (decision-packet-open-findings subsequent-packet)
+                   "carries open findings with dispositions")
+      (check-equal '("note:ev2") (decision-packet-evidence-pointers subsequent-packet)
+                   "carries evidence pointers")
+      (check-equal '("https://src/file#L10") (decision-packet-links subsequent-packet)
+                   "carries links to full sources"))))

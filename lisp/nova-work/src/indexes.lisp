@@ -56,6 +56,9 @@ field, not a maintained structure of its own."
             (when holder
               (let ((cell (assoc holder holders :test #'equal)))
                 (if cell (push id (cdr cell)) (push (cons holder (list id)) holders))))))))
+    (dolist (friend (wstate-friends state))
+      (unless (assoc friend holders :test #'equal)
+        (push (cons friend '()) holders)))
     holders))
 
 (defun %normalize-holder-index (alist)

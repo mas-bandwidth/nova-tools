@@ -614,8 +614,9 @@ is refused by the kernel's dedup predicate."
 
 (defstruct (session-endpoint
              (:constructor %make-session-endpoint
-                 (directory socket-path directory-mode socket-mode owner socket-family)))
-  directory socket-path directory-mode socket-mode owner socket-family)
+                 (directory socket-path directory-mode socket-mode owner socket-family
+                  &optional lock)))
+  directory socket-path directory-mode socket-mode owner socket-family lock)
 
 (defun session-endpoint-dir-mode (endpoint) (session-endpoint-directory-mode endpoint))
 (defun session-endpoint-file-mode (endpoint) (session-endpoint-socket-mode endpoint))
@@ -638,11 +639,19 @@ is refused by the kernel's dedup predicate."
 #-sbcl
 (defun current-account-uid () 0)
 
+(defun endpoint-close (endpoint)
+  "Release the endpoint lock if held."
+  (when endpoint
+    (let ((lock (session-endpoint-lock endpoint)))
+      (when lock
+        (release-journal-lock lock)
+        (setf (session-endpoint-lock endpoint) nil))))
+  endpoint)
+
 (defun make-session-endpoint (directory socket-path)
   "Create or reuse DIRECTORY at 0700 and validate SOCKET-PATH. A pre-existing
 directory or socket with wider modes refuses rather than being reused. The
-endpoint is a name for the local socket; MAKE-LOCAL-LISTENER does the binding,
-so a validated endpoint is not itself a listener."
+endpoint filesystem socket is locked by its own lock file (<session>.lock)."
   (unless (probe-file directory)
     (sb-posix:mkdir directory #o700))
   (let ((dmode (%file-mode directory)))
@@ -656,8 +665,11 @@ so a validated endpoint is not itself a listener."
         (error 'unsupported-input
                :what (format nil "endpoint: pre-existing socket ~A has mode ~O, not 0600"
                              socket-path smode)))))
-  (%make-session-endpoint directory socket-path #o700 #o600 (sb-posix:getuid)
-                          (local-socket-family)))
+  (let ((lock (take-endpoint-lock socket-path)))
+    (unless lock
+      (error 'socket-held :path socket-path))
+    (%make-session-endpoint directory socket-path #o700 #o600 (sb-posix:getuid)
+                            (local-socket-family) lock)))
 
 (defun endpoint-network-listener-p (endpoint)
   "True iff the endpoint's socket family is a network family. The listener's
@@ -677,6 +689,8 @@ family is AF_UNIX, so this is false; an AF_INET family would make it true."
 answer a LISTENER. A bound local socket is never a network listener."
   (let* ((socket (make-instance 'sb-bsd-sockets:local-socket :type :stream))
          (path (session-endpoint-socket-path endpoint)))
+    (when (probe-file path)
+      (ignore-errors (sb-posix:unlink path)))
     (sb-bsd-sockets:socket-bind socket path)
     (sb-bsd-sockets:socket-listen socket 16)
     (sb-posix:chmod path #o600)
@@ -694,12 +708,14 @@ answer a LISTENER. A bound local socket is never a network listener."
   (values (sb-bsd-sockets:socket-accept (local-listener-socket listener))))
 
 (defun listener-close (listener)
-  "Close LISTENER's socket and unlink its path."
+  "Close LISTENER's socket, release its lock and unlink its path."
   (when (local-listener-open-p listener)
     (setf (local-listener-open-p listener) nil)
     (ignore-errors (sb-bsd-sockets:socket-close (local-listener-socket listener))))
   (ignore-errors (sb-posix:unlink (session-endpoint-socket-path
                                    (local-listener-endpoint listener))))
+  (when (local-listener-endpoint listener)
+    (endpoint-close (local-listener-endpoint listener)))
   listener)
 
 ;;; ------------------------------------------------------------------
@@ -929,19 +945,25 @@ the server is stopped."
 and spawn the accept thread. Answer (values SERVER LINE EXIT). With FOREGROUND
 NIL the caller is the launcher: it receives the SESSION OK line and returns
 while the daemon stays up and serves (SPEC-WORK.md:268-280)."
-  (let* ((endpoint (make-session-endpoint (endpoint-directory-for socket-path)
-                                          socket-path))
-         (listener (make-local-listener endpoint))
-         (server (%make-session-server :session session
-                                       :listener listener
-                                       :running-p t
-                                       :path socket-path
-                                       :owner (session-owner session)
-                                       :foreground foreground)))
-    (setf (session-server-thread server)
-          (sb-thread:make-thread (lambda () (%session-server-loop server))
-                                 :name "nova-work-session-server"))
-    (values server (session-identity-line session) 0)))
+  (handler-case
+      (let* ((endpoint (make-session-endpoint (endpoint-directory-for socket-path)
+                                              socket-path))
+             (listener (make-local-listener endpoint))
+             (server (%make-session-server :session session
+                                           :listener listener
+                                           :running-p t
+                                           :path socket-path
+                                           :owner (session-owner session)
+                                           :foreground foreground)))
+        (setf (session-server-thread server)
+              (sb-thread:make-thread (lambda () (%session-server-loop server))
+                                     :name "nova-work-session-server"))
+        (values server (session-identity-line session) 0))
+    (socket-held (c)
+      (declare (ignore c))
+      (values nil (format nil "SESSION FAIL session=~A owner=~A generation=~D: socket held"
+                          socket-path (session-owner session) (session-generation session))
+              1))))
 
 (defun session-server-stop (server)
   "Stop the daemon: close the listener, unlink its path and join the accept

@@ -298,8 +298,11 @@
     "expected=archive-retains-source-identity-provenance-content-before-removal;deletion-outcome-receipt-appended-after-the-attempt"
   (let ((capture (make-archive-capture
                   :source-issue "https://github.com/acme/widget/issues/7"
-                  :author :known :gaps '())))
-    (declare (ignore capture))
+                  :author :known :gaps '()
+                  :identity "https://github.com/acme/widget/issues/7"
+                  :provenance "github:acme/widget#7@rev1"
+                  :content "{\"body\":\"widget issue\",\"labels\":[\"bug\"]}"
+                  :deletion-receipt nil)))
     (labels ((retains-p (name)
                "True when the archive model exposes an accessor for NAME."
                (let ((s (find-symbol name "NOVA-WORK")))
@@ -309,4 +312,17 @@
                (retains-p "ARCHIVE-CAPTURE-CONTENT"))
           "expected the archive to retain the source's identity, provenance and content before removal (SPEC-WORK.md:7595-7597); the archive model retains only a source label, an author class and its gaps")
       (ok (retains-p "ARCHIVE-CAPTURE-DELETION-RECEIPT")
-          "expected the removal attempt to append the actual deletion outcome receipt (SPEC-WORK.md:7609-7610); the archive model records no deletion outcome"))))
+          "expected the removal attempt to append the actual deletion outcome receipt (SPEC-WORK.md:7609-7610); the archive model records no deletion outcome"))
+    (check-string= "https://github.com/acme/widget/issues/7"
+                   (archive-capture-identity capture)
+                   "source identity retained")
+    (check-string= "github:acme/widget#7@rev1"
+                   (archive-capture-provenance capture)
+                   "source provenance retained")
+    (check-string= "{\"body\":\"widget issue\",\"labels\":[\"bug\"]}"
+                   (archive-capture-content capture)
+                   "source content retained")
+    (archive-append-deletion-receipt capture "DELETE OK issue=7 receipt=del-1")
+    (check-string= "DELETE OK issue=7 receipt=del-1"
+                   (archive-capture-deletion-receipt capture)
+                   "deletion receipt appended after attempt")))

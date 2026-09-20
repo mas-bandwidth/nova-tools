@@ -348,6 +348,7 @@ sequence driven is a random sequence of legal verbs."
     (let ((capture (make-archive-capture
                     :source-issue "acme/widget#7"
                     :author :known
+                    :scope "acme/widget" :authority "glenn" :intake-mode :absorb
                     :gaps (list (make-archive-gap :kind kind
                                                   :detail (format nil "missing ~(~A~)" kind)
                                                   :source-issue "acme/widget#7")))))
@@ -358,5 +359,8 @@ sequence driven is a random sequence of legal verbs."
   ;; Only a gap-free capture may proceed to deletion.
   (check-equal t (archive-absorbable-p
                   (make-archive-capture :source-issue "acme/widget#7"
-                                        :author :known :gaps '()))
+                                        :author :known :gaps '()
+                                        :scope "acme/widget"
+                                        :authority "glenn"
+                                        :intake-mode :absorb))
                "a gap-free capture is absorbable"))

@@ -77,16 +77,23 @@ The digest is taken over :kind, :node, :by and the kind's own ordered fields and
 NEVER over the revision (src/event.lisp `event-digest-form`), so one request
 digests the same however far the set has moved since it was recorded. That is
 what makes step 2 above answerable from the journal alone."
-  (make-work-event
-   :kind :lease
-   :node (getf request :node)
-   :by (getf request :by)
-   :fields (list :change change :holder (getf request :by))
-   :stamp (or (getf request :stamp) "2026-09-14T12:00:00Z")
-   :clock (or (getf request :clock) :tool)
-   :request (getf request :request)
-   :generation-owner (or (getf request :generation-owner) (getf request :by))
-   :rev (kernel-next-rev kernel)))
+  (let ((deadline (getf request :deadline))
+        (default (getf request :default))
+        (handed (getf request :handed)))
+    (make-work-event
+     :kind :lease
+     :node (getf request :node)
+     :by (getf request :by)
+     :fields (list :change change
+                   :holder (getf request :by)
+                   :deadline (or deadline +absent+)
+                   :default (or default +absent+)
+                   :handed (or handed +absent+))
+     :stamp (or (getf request :stamp) "2026-09-14T12:00:00Z")
+     :clock (or (getf request :clock) :tool)
+     :request (getf request :request)
+     :generation-owner (or (getf request :generation-owner) (getf request :by))
+     :rev (kernel-next-rev kernel))))
 
 (defun %take-node-submit (kernel request)
   "`take`: one live lease per node, as a journaled command on the one writer.
@@ -109,6 +116,11 @@ Answers (values OK-P LINE EXIT-CODE ENVELOPE) (SPEC-WORK.md:135, :1354-1357)."
           (if (eq verdict :replay)
               (values t recorded 0 (list :request rid :digest digest :events '() :replayed t))
               (values nil (%dedup-refusal "LEASE" rid verdict recorded) 1 nil)))))
+    ;; A lease with deadline but no default is refused at write time (SPEC-WORK.md:1391)
+    (when (and (getf request :deadline) (not (getf request :default)))
+      (return-from %take-node-submit
+        (values nil (format nil "LEASE FAIL node=~A: a deadline with no default is a wait with no end" node)
+                1 nil)))
     ;; ---- and only now the mutable state -----------------------------------
     (let ((n (%node-quiet (kernel-state kernel) node)))
       (unless n
@@ -126,7 +138,10 @@ Answers (values OK-P LINE EXIT-CODE ENVELOPE) (SPEC-WORK.md:135, :1354-1357)."
       (let ((line (format nil "LEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
                           (event-id event) rid node by (work-event-rev event))))
         (%oneshot-submit kernel rid digest line event "LEASE"
-                         (list :verb :take-node :node node :holder by :request request))))))
+                         (list :verb :take-node :node node :holder by
+                               :deadline (getf request :deadline)
+                               :default (getf request :default)
+                               :request request))))))
 
 (defun %release-node-submit (kernel request)
   "`release`: a claim is ended by the one who made it, never a third name
@@ -141,6 +156,7 @@ a release that is not recorded is a lease that comes back on reconstruction."
   (let* ((node (getf request :node))
          (by (getf request :by))
          (rid (getf request :request))
+         (handed (getf request :handed))
          (event (%lease-event kernel request :release))
          (digest (payload-digest (list event))))
     (multiple-value-bind (verdict recorded) (%dedup-verdict kernel rid digest)
@@ -159,10 +175,14 @@ a release that is not recorded is a lease that comes back on reconstruction."
           (values nil (format nil "LEASE FAIL node=~A holder=~A live: held" node
                                (or (wnode-holder n) "unowned"))
                   1 nil)))
-      (let ((line (format nil "LEASE RELEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
-                          (event-id event) rid node by (work-event-rev event))))
+      (let ((line (if handed
+                      (format nil "LEASE HANDOFF OK id=~A request=~A node=~A from=~A to=~A rev=~D pushed=-"
+                              (event-id event) rid node by handed (work-event-rev event))
+                      (format nil "LEASE RELEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
+                              (event-id event) rid node by (work-event-rev event)))))
         (%oneshot-submit kernel rid digest line event "LEASE"
-                         (list :verb :release-node :node node :holder by :request request))))))
+                         (list :verb :release-node :node node :holder (or handed by)
+                               :handed handed :request request))))))
 
 ;;; ------------------------------------------------------------------
 ;;; The two convenience entries, which are what the suite and the readers
@@ -182,22 +202,24 @@ A caller that has a session and a request id of its own passes it; this is for
 the in-process callers that have neither."
   (format nil "~A-~D-~A-~A" word (kernel-next-rev kernel) node by))
 
-(defun take-lease (kernel id by &key request)
+(defun take-lease (kernel id by &key request deadline default)
   "`take`: one live lease per node; a second `take` is refused and names the
 holder (SPEC-WORK.md:135). Goes through `submit`, so the mutation is one
 journaled command in the single writer's total order."
   (multiple-value-bind (okp line)
       (submit kernel (list :verb :take-node :node id :by by
+                           :deadline deadline :default default
                            :request (or request
                                         (%derived-lease-request-id kernel "take" id by))))
     (unless okp (error 'unsupported-input :what line))
     by))
 
-(defun release-lease (kernel id by &key request)
+(defun release-lease (kernel id by &key request handed)
   "`release`: a claim is ended by the one who made it, never a third name
 reaching in (SPEC-WORK.md:1354-1357). Journaled, like `take`."
   (multiple-value-bind (okp line)
       (submit kernel (list :verb :release-node :node id :by by
+                           :handed handed
                            :request (or request
                                         (%derived-lease-request-id kernel "release" id by))))
     (unless okp (error 'unsupported-input :what line))

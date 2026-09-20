@@ -490,7 +490,7 @@ Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
                  (events (loop for e in (getf record :events)
                                collect (record-form->event
                                         e :session-written-p
-                                        (member (getf e :kind) '(:settle :revive)))))
+                                        (member (getf e :kind) '(:settle :revive :refusal)))))
                  (envelope (list :request req :digest digest :events events)))
             (incf *replays*)
             (incf event-count (length events))

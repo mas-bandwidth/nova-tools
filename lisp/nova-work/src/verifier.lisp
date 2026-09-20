@@ -244,6 +244,15 @@ is not the node's current source revision."
         (against (verify-evidence-against evidence)))
     (and current against (not (equal current against)))))
 
+(defun normalize-criterion-subject (str)
+  "Extract the underlying subject name from a pointer or subject string by
+stripping any leading scheme (e.g. 'test:') and trailing '@<rev>'."
+  (when (stringp str)
+    (let* ((colon (position #\: str))
+           (start (if colon (1+ colon) 0))
+           (at (position #\@ str :start start :from-end t)))
+      (subseq str start (or at (length str))))))
+
 (defun verify-qualifies-p (evidence)
   "Whether the pointer's scheme can qualify the criterion's kind, before the raw
 fact is read (SPEC-WORK.md:1278-1286)."
@@ -253,7 +262,11 @@ fact is read (SPEC-WORK.md:1278-1286)."
          (revision (pointer-revision pointer))
          (criterion (verify-evidence-criterion evidence)))
     (case criterion
-      (:test (equal scheme "test"))
+      (:test
+       (and (equal scheme "test")
+            (let ((p-sub (normalize-criterion-subject pointer))
+                  (c-sub (normalize-criterion-subject (verify-evidence-subject evidence))))
+              (and p-sub c-sub (equal p-sub c-sub)))))
       (:job (and (equal scheme "run") revision against (string= revision against)))
       (:merged (equal scheme "pr"))
       (:attested

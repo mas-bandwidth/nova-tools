@@ -60,7 +60,9 @@
   revision
   ;; SPEC-WORK.md:1674-1680 -- the lease log, newest first, "kept whole for
   ;; handoffs". A settle of a live lease appends a :release here.
-  lease-log)
+  lease-log
+  ;; SPEC-WORK.md:3326-3327 -- known friends registered in CONFIG
+  (friends '()))
 
 (defun %node (state id)
   "Every node access goes through here so *VISITS* is honest."
@@ -156,7 +158,7 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
           (t (error 'unsupported-input
                     :what "required must be the internal boolean T or NIL")))))
 
-(defun make-seed-state (nodes)
+(defun make-seed-state (nodes &key (friends '()))
   (let ((table (make-hash-table :test #'equal))
         (order '()))
     (dolist (spec nodes)
@@ -281,7 +283,8 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
-                              :history '() :rows '() :revision 0 :lease-log '())))
+                              :history '() :rows '() :revision 0 :lease-log '()
+                              :friends (copy-list friends))))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
         (%adjust-counters state id 1))
@@ -580,7 +583,8 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                  :history (wstate-history state)
                  :rows (wstate-rows state)
                  :revision (wstate-revision state)
-                 :lease-log (wstate-lease-log state))))
+                 :lease-log (wstate-lease-log state)
+                 :friends (wstate-friends state))))
 
 ;;; Applying one event. The live path and the replay path share it, which is
 ;;; what makes the reconstruction independent of the live counters.
@@ -618,6 +622,10 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                    (%apply-patch (wnode-field node field) patch))))))
       (:terminal
        (setf (wnode-state node) (getf (work-event-fields event) :disposition)))
+      (:refusal
+       ;; A refusal recorded on a parent: records the outcome, advances revision,
+       ;; and leaves the parent open (SPEC-WORK.md:4651, :4655).
+       t)
       ;; `take` and `release` on a node (nova-tools #1612 lane). Applied HERE,
       ;; inside the single writer, in the same total order as every other
       ;; event -- which is what makes a lease survive `replay-journal` and what
@@ -626,14 +634,26 @@ rather than zero. A view: it never writes, and a closed node is not in it."
       ;; `:release` exactly as the settle path already writes `:release`.
       (:lease
        (let ((change (getf (work-event-fields event) :change))
-             (holder (getf (work-event-fields event) :holder)))
-         (setf (wnode-holder node) (when (eq change :take) holder))
-         (push (list :kind change :node id
-                     :by (work-event-by event)
-                     :holder holder
-                     :stamp (work-event-stamp event)
-                     :rev (work-event-rev event))
-               (wstate-lease-log state))))
+             (holder (getf (work-event-fields event) :holder))
+             (handed (getf (work-event-fields event) :handed))
+             (deadline (getf (work-event-fields event) :deadline))
+             (default (getf (work-event-fields event) :default)))
+         (setf (wnode-holder node)
+               (cond
+                 ((eq change :take) holder)
+                 ((and (eq change :release) handed (not (absentp handed))) handed)
+                 (t nil)))
+         (let ((row (list :kind (if (and handed (not (absentp handed))) :handoff change)
+                          :node id
+                          :by (work-event-by event)
+                          :holder (if (and handed (not (absentp handed))) handed holder)
+                          :stamp (work-event-stamp event)
+                          :rev (work-event-rev event))))
+           (when (and deadline (not (absentp deadline)))
+             (setf row (append row (list :deadline deadline))))
+           (when (and default (not (absentp default)))
+             (setf row (append row (list :default default))))
+           (push row (wstate-lease-log state)))))
       (:transition
        (setf (wnode-state node) (getf (work-event-fields event) :to)))
       (:reopen
@@ -712,7 +732,7 @@ set, and replay the history over it."
       (let ((events (loop for e in (getf record :events)
                           collect (record-form->event
                                    e :session-written-p
-                                   (member (getf e :kind) '(:settle :revive))))))
+                                   (member (getf e :kind) '(:settle :revive :refusal))))))
         (setf state (apply-envelope state (list :request (getf record :request)
                                                 :digest (getf record :digest)
                                                 :events events)))))

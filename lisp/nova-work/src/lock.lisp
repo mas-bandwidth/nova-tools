@@ -104,3 +104,32 @@ examining it to name the holder."
       (ignore-errors (sb-posix:close (lock-fd lock)))
       (setf (lock-fd lock) nil)))
   t)
+
+(defun endpoint-lock-path (socket-path)
+  (concatenate 'string socket-path ".lock"))
+
+(defun take-endpoint-lock (socket-path &key (journal "none"))
+  "Take an exclusive, non-blocking flock on `<session>.lock`, keyed by the socket
+path. On success writes the holder's pid and journal into the lock file and returns
+a JOURNAL-LOCK. Returns NIL when another process holds the lock (EWOULDBLOCK)."
+  #+sbcl
+  (let* ((lock-path (endpoint-lock-path socket-path))
+         (fd (sb-posix:open lock-path (logior sb-posix:o-creat sb-posix:o-rdwr) #o644)))
+    (cond
+      ((or (null fd) (minusp fd))
+       (when (and fd (integerp fd)) (ignore-errors (sb-posix:close fd)))
+       nil)
+      (t
+       (let ((r (ignore-errors (%flock fd (logior +lock-ex+ +lock-nb+)))))
+         (if (eql r 0)
+             (progn
+               (ignore-errors
+                 (with-open-file (s lock-path :direction :output :if-exists :overwrite
+                                                 :if-does-not-exist :create
+                                                 :element-type 'character :external-format :utf-8)
+                   (format s "pid=~D journal=~A~%" (sb-posix:getpid) journal)))
+               (make-journal-lock :path lock-path :fd fd))
+             (progn (ignore-errors (sb-posix:close fd)) nil))))))
+  #-sbcl
+  nil)
+
