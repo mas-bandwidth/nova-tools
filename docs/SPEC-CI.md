@@ -1168,8 +1168,8 @@ permanent exemption and it stops firing the moment that branch's section lands.
 per-binary and live in each command's own `firstrun_test.go`, where the example
 lines are EXECUTED, the refusal sentences asserted and the transcript compared
 against real output.
-**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §7 (draft, 2026-09-19):** that last sentence was
-not true of 8 of 22 sections, and 9 more compared a set of shapes; §7 makes execution, line for
+**Held by *Tests that execute documents* below:** that last sentence was
+not true of 8 of 22 sections, and 9 more compared a set of shapes; the toolwork section makes execution, line for
 line through one comparator, the thing the class test asserts.
 
 ### `kernel-components` — no kernel source is compiled by nobody
@@ -1648,3 +1648,75 @@ The production checkers that DO want comments — `CheckNet`, which reads
 their own walk. A rule here that ever needs comments caches a SECOND variant
 keyed by `parser.Mode` rather than widening this one, so that changing the mode
 can never quietly change what an existing rule sees.
+
+
+## Tests that execute documents (toolwork §7)
+
+**Builds on.** Every command carries a `### First run` transcript in its `## <tool>`
+section of `docs/TESTS.md`, asserted for every directory under `cmd/`
+(`docs/SPEC-CI.md:1139-1163`); each `docs/TESTS.md` heading is written once, because
+only the first is read (`docs/SPEC-CI.md:1200-1227`); `docs/TESTS.md:1-3` says every `$`
+line *"is run by a test … and what the tool prints is compared with what is written
+here by SHAPE"*; `onboarding.FirstRun`, `Transcript` and `Shape`
+(`internal/onboarding/onboarding.go:71,153,93`).
+
+**What those rules do not hold.** The class test asserts the section **exists**, not
+that anything **runs** it. Measured at `11aa07a7` by the 2026-09-19 triage: 8 of 22
+sections were executed by no test — nova-ci (its `firstrun_test.go` never opens the
+document), nova-decide, nova-play, nova-pulse, nova-review, nova-secrets (no
+`firstrun_test.go` at all), nova-post (asserts only that the section is non-empty) and
+nova-sandbox (one line pinned by substring) — 7 at `31e35195`, after #1602 gave
+nova-play the first line-for-line test. Nine more —
+`cmd/nova-{board,bus,cairn,check,fuse,merge,self-talk,wake,work}/firstrun_test.go` —
+collect what was printed into a `printed map[string]bool` and ask whether each
+documented line is in it, so an abridged or reordered block passes. nova-post's section
+runs `--channel fake` six times and the shipped tool refuses it
+(`internal/post/post.go:111-118`). Every drift found that week was found by a person.
+
+1. **Every transcript is executed, line for line, in order.** For every `## <tool>`
+   section, a test in `cmd/<tool>` runs every `$` line of every fenced block under
+   `### First run` and compares each command's **whole** output with the block under
+   it: same number of lines, same lines, same order — #1602's shape, in-process
+   `run()`, one temp directory for the sitting.
+2. **One comparator, in one place.** `onboarding.CompareTranscript(doc, got, volatile)`
+   is the only comparison a `firstrun_test.go` may make. Values are compared **as
+   written**; the only values matched by shape are the fields in one shared table of
+   run-owned values (`at=`, `took=`, `created=`, a temp path, a fresh sha) —
+   `onboarding.Volatile` — and a test may name a field from that table and may not
+   invent one. The set-of-shapes helper and every `printed map[string]bool` are
+   deleted.
+3. **The class test asserts execution, not existence.**
+   `TestEveryTranscriptIsExecutedLineForLine` (`internal/ci`) walks `docs/TESTS.md`'s
+   sections and fails for any tool whose package has no test calling
+   `onboarding.CompareTranscript` on that tool's section, and for any
+   `firstrun_test.go` that compares any other way. Its allowlist is the sections not
+   yet converted, by name with the issue that owes each, **shrink-only in both
+   directions** — the repository's own pattern
+   (`internal/ci/testdata/prmerge_allowlist.txt`).
+4. **The comparator is seen red three ways, and so is every test that uses it.** The
+   comparator's own tests carry the three one-edit seeds — a line dropped, a value
+   altered, a line moved — each red. Per tool, the `transcript-test` kind's control
+   (SPEC-SWARM, *card kinds for tool work*) applies the same three seeds to a copy of that tool's **real** section and
+   demands red, which proves the test reads the document and not a fixture of its own.
+5. **A section that one platform cannot reproduce says which.** A `Platform:
+   <goos>[,<goos>]` line under the `## <tool>` heading; elsewhere the test is a named
+   skip, and the class test requires every platform named to be a leg `ci.yml` runs, so
+   a skipped transcript is still executed somewhere (#1509: `backend=`, `hosts=`,
+   `gpu=`, `used=`, `ancestors=`).
+6. **A false transcript is a finding, never an edit to make a test pass.** A
+   `transcript-test` card may not touch `docs/TESTS.md` (SPEC-SWARM, *card kinds for tool work*). When the document and the
+   tool disagree the card's line 2 is `BLOCKED drift <file:line>` with the two lines,
+   and which of the two is wrong is a person's decision and a `fix-red` or a `text`
+   card afterwards — nova-post's `fake` channel is the first such decision (Q5).
+7. **The other documents a stranger pastes from are counted, and the count only
+   shrinks.** Every `$ ` line in a fenced block of `README.md`, `docs/USAGE.md`,
+   `docs/CLI.md`'s `### First run` sections and `docs/nova-swarm-quickstart.md`, and
+   every `example:` line of every `help` (#1455: 28 of 61 exit 2 when pasted), is
+   either executed by a test through the same comparator or listed in
+   `internal/ci/testdata/unexecuted_examples.txt` with its reason. The list is
+   shrink-only; a new unexecuted example fails the class test on the PR that adds it.
+
+**Red tests:** `compare-rejects-a-dropped-line`; `compare-rejects-a-moved-line`;
+`compare-rejects-an-altered-value`; `volatile-field-outside-the-table-is-refused`;
+`every-transcript-is-executed-line-for-line` (fails today, naming the seven and the
+nine); `platform-line-must-name-a-ci-leg`; `unexecuted-examples-only-shrink`.

@@ -825,8 +825,9 @@ and two with one `at` to the second fold **hold-last**, as rule 18 folds
 red-last; the tool deletes no record, and the lane branch's history keeps
 the hold.
 
-**Amended by [SPEC-DECIDE.md](SPEC-DECIDE.md) reading 3, *The hold check* (draft, 2026-09-19;
-#1572, #1627), which [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §6 points to:** `batch`, `land`,
+**Held by *Lanes and landing that refuse a held member* below — the fold of
+[SPEC-DECIDE.md](SPEC-DECIDE.md) reading 3, *The hold check* (draft, 2026-09-19;
+#1572, #1627):** `batch`, `land`,
 `queue sweep` and `react` fold holds too — the lane's line-level APPROVE/HOLD records, and the
 forge's comments and reviews, which can only ADD a hold and never approve or release — and
 refuse a held member, read once at admission and again at the door; a scoped APPROVE releases
@@ -2036,3 +2037,133 @@ dropped list and a lease push.
    exit 2 with the `init` remedy.
 8. The layout test of #560 runs after every merge; a fake run that fails it
    drops that branch like any other red.
+
+
+## Lanes and landing that refuse a held member, mechanically (toolwork §6)
+
+**Builds on.** *"A hold blocks, and nothing outvotes it"*; per `(who, head)` the newest
+`at` wins and a tie folds hold-last (`docs/SPEC-MERGE.md:820-827`); a read is recorded
+by the reader, with the verb, for the head the reader read, and a verdict whose head is
+not the entry's current `oid` is kept, counted `stale` and authorizes nothing
+(`docs/SPEC-MERGE.md:286-304`); an approve from the author is not a read, and `who` is
+*"a line at a keyboard"*, never a host login (`docs/SPEC-MERGE.md:828-837`); nothing
+reaches the merge queue but a batch, and `land` re-reads the PR from the forge
+(`docs/SPEC-MERGE.md:1540-1561`); `batch` drops a member with no green `ci-ok` before
+the merge (`docs/CLI.md:1213-1258`).
+
+**What those rules do not hold — #1572.** The read condition is held by `run`, over the
+lane's **records**. `batch` and `land` — the only road to `dev` since 2026-09-18 — read
+`MERGEABLE` and `ci-ok` and **no disposition at all**, and on this repository a friend's
+disposition is a pull-request **comment**, posted through one shared login, in prose
+(`Stella … Exact head f3e2426d… **HOLD: live-owner exclusion is still lost.**`, PR
+#1430). At 2026-09-19T02:34:25Z a scoped HOLD was posted on #1551 two minutes after
+`BATCH OK`; at 02:43:03Z the held head was on `dev`, through a gate that checked
+everything it was specified to check. Three more were one command from the same end on
+the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head) and
+#1479 (green, MERGEABLE, approved, and does not compile on `dev`).
+
+**The fold is specified once, in `docs/SPEC-DECIDE.md`, reading 3, *The hold check: no held
+head is batched or landed* (#1627), and this section restates none of it.** Drafts 1 to 4 of
+this file carried their own fold beside #1627's, and two implementations following their own
+spec could have disagreed on a landing. There is now one contract, and where this file and that
+reading seem to differ, that reading wins and this file has a bug. What follows names the
+paragraphs of reading 3 that hold each sentence, so that an implementer of T16 opens one text.
+
+1. **What the fold takes** is reading 3, *The inputs*: the lane's line-level APPROVE/HOLD read
+   records (`nova-merge read`, and the `nova-review verdict --kind line` that writes the same
+   record, `docs/SPEC-REVIEW.md:253-260`), the forge's `CHANGES_REQUESTED` reviews, and the
+   comments from a login in the reviewer file. **An ABSTAIN record, a `child` record and a `card`
+   record are not inputs.** The fold is over **unresolved holds**, each with its holder, its head
+   and its release condition, and nothing newer masks one: a same-head or a later-head ABSTAIN
+   by the same reader leaves a hold exactly where it was. The sources are a union, and a hold in
+   any one of them stops the member.
+2. **Whose hold it is** is reading 3, *Who holds*, and SPEC-DECIDE S6: `who` is a name in the
+   lane's reviewer file (`who`, `logins`, `may-hold`) mapped through the typed `DISPOSITION who=`
+   line, and `unknown` otherwise; a `who=unknown` hold holds; a login is evidence about an
+   account and excuses nothing (draft 1 skipped the author's login, and where the friends and the
+   author share one login that skipped every comment there was). The one comment not scanned is
+   the entry author's own `verdict=NOTE` line.
+3. **What adds a hold** is reading 3, *What adds a hold, by the rule table, with no call* and
+   *What the decider may do, which is add*: a typed `DISPOSITION … verdict=HOLD` line, a
+   first-line hold token, the word `HOLD` as a heading word or in bold, a `CHANGES_REQUESTED`
+   review, a decided `hold` at any confidence; each binds to a head and **carries across a
+   push**, with no time filter (SPEC-REVIEW rule 7, *"a HOLD never expires"*,
+   `docs/SPEC-REVIEW.md:269`). The forge source is one-way: it only ever adds. A false drop costs
+   one verb from the reviewer; a false admit costs a held head on `dev`.
+4. **What releases a hold** is reading 3, *What releases a hold*: only its holder, only by the
+   verb (`nova-merge read --verdict approve --head <sha40>`, or the `nova-review verdict` line
+   APPROVE that writes it), only at the current head, and a **scoped** APPROVE releases only the
+   hold ids it names with `--releases`, so a reviewer who held the parser and approved the
+   documentation has not released the parser. A forge `APPROVED` review, the forge's dismissal
+   of a review, a comment typed or untyped, a decider's answer and a push each release nothing.
+   A `who=unknown` hold, and a pending comment, are released only by a `may-hold` reader's verb
+   naming them with `--releases`, or taken over by that reader's own recorded HOLD. A scoped
+   APPROVE record satisfies nothing in the read condition (`docs/SPEC-MERGE.md:808-816`); only an
+   unscoped one does.
+5. **What no flag does** is reading 3, *No flag ignores a hold* and *An untyped comment is
+   pending, and pending stops*: there is no `--ignore-hold`. An untyped comment from a
+   `may-hold` reviewer's login is **pending** by default and stops the member until a `may-hold`
+   reader releases it with the verb; no comment, typed or not, clears it (Q10). Two per-run
+   waivers exist, each printed on every line with its
+   reason and neither touching the lane's records: `--no-require-holds --reason <text>` waives
+   the forge sources whole, XOR `--reviewers`, and `--lane` is required on both sides (a waiver
+   with no lane is leftover `--ignore-hold`, #1896); `--untyped-comments=ignore --reason <text>` makes
+   untyped comments not a hold for that run. The escape for a holder who
+   cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, and the
+   receipt names the commit and not the reader.
+6. **Where the fold runs** is reading 3, *The inputs* and *The lines*: at `batch`, at the point
+   it reads each member's `ci-ok`, from the wire; **again** at `land`, over the receipt's
+   `members=`, from the wire, immediately before `Enqueuer.Enqueue`, where one held member
+   refuses the whole landing (the 02:34Z hold arrived between the two reads, and only the
+   second one sees it); and at `queue sweep` and `react`, which never enqueue a held pull
+   request. The `BATCH DROP`, `LAND REFUSED`, `holds=` and `dispositions=` grammar is reading
+   3's. This file adds one line: `nova-pulse status` counts held PRs, so a lane standing behind a
+   hold does not read as a lane with nothing to do.
+7. **A swarm's member carries its gate's line and passes hygiene again.** A member
+   whose head branch was pushed by `harvest` is admitted to a batch only if its PR
+   body's first line is an `ACCEPT OK` whose `head=` is the member's current head and
+   whose `control=` is on file; otherwise `BATCH DROP #<n> reason="no ACCEPT OK for head
+   <sha12>"`. `batch` runs `internal/hygiene.Check` (SPEC-SWARM, *identity and hygiene*, rule 7) over every member
+   whatever its origin. **The merged tree must compile**: #1479 merged clean and left
+   `undefined: useFakeForge`; `batch`'s `build` step already catches that for the batch
+   — the rule added here is that the failing member is **named** by bisecting the
+   members once (`BATCH DROP #<n> reason="build red with this member merged: <first
+   line>"`) instead of failing the batch whole.
+8. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
+   condition; `needs_read` stands for every swarm PR that changes code, on trial or trusted
+   (the eligibility rule (SPEC-TOOLWORK), 3), and the reader
+   *"judges spec fit and nothing else"* (`docs/SPEC-REVIEW.md:659-660`) because the
+   gate already did the rest. What the gate cannot judge it hands over by name: a
+   pre-existing test body changed under `TEST-EDIT:`, and a rebase's conflicted files.
+   And for a security-kind member the read that counts is the designated mind's and
+   nobody else's (the eligibility rule (SPEC-TOOLWORK), 13).
+
+**Red tests.** The fold's tests are reading 3's *Demanded tests* in `docs/SPEC-DECIDE.md`
+(#1627), by name, each a transition table over a fake forge, and T16 is not done until every one
+of them is red then green; this file names the ones its reviewers asked for so that no reading of
+this file can miss them: `an-abstain-record-is-not-an-input` (a recorded HOLD at H1, then the
+same reader's ABSTAIN at H1: held; then a push to H2 and their ABSTAIN at H2: still held,
+`carried=yes`); `child-and-card-records-are-not-inputs`;
+`a-scoped-approve-releases-only-the-holds-it-names` (a parser HOLD and a docs HOLD by one
+reader; their docs-scoped APPROVE leaves the parser held; their scoped APPROVE naming nothing
+releases nothing; their unscoped APPROVE at the current head releases both);
+`a-push-releases-nothing` (a typed line, a `CHANGES_REQUESTED` review and an untyped HOLD
+comment, each posted at head A, then a push to B, with NO lane record at all: each still held);
+`an-untyped-hold-from-the-shared-login-fails-closed` (author and reviewers on ONE login, the
+fixture draft 1 failed open on); `the-authors-note-line-is-not-scanned-and-the-authors-login-skips-nothing`;
+`a-comment-never-releases-anything` (a pasted `DISPOSITION … verdict=APPROVE` from the shared
+login naming the current head; still held); `a-forge-approved-review-releases-nothing`;
+`a-dismissal-releases-nothing`; `only-the-holder-releases`;
+`an-unknown-hold-is-released-only-by-a-readers-verb-naming-it`; `two-names-one-login-fold-separately`;
+`there-is-no-flag-that-ignores-one-hold`; `an-untyped-comment-from-a-may-hold-login-is-pending`;
+`a-pending-comment-is-cleared-only-by-a-readers-verb`;
+`a-scoped-approve-record-does-not-satisfy-needs-read`;
+`untyped-comments-ignore-is-per-run-printed-and-carries-a-reason`;
+`no-require-holds-waives-the-forge-sources-only-and-is-printed`;
+`reviewers-xor-no-require-holds`; `no-require-holds-without-lane-refuses`;
+`removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
+`land-refuses-a-hold-posted-after-batch-ok` (the receipt is #1572's timeline);
+`sweep-and-react-never-enqueue-a-held-pr`. A class test, `toolwork-names-only-tests-reading-3-demands`,
+asserts every test name in this paragraph appears in reading 3's list, so the two texts cannot
+drift apart. This file's own tests, for rules 7 and 8: `batch-names-the-member-that-breaks-the-build`;
+`swarm-member-without-accept-ok-is-dropped`; `status-counts-held-prs`.

@@ -216,7 +216,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
     name the contract, the `RESULT.md`'s own line 1 is the contract, and the refusal stands
     only when neither the file nor a job dir is there.
-    **Amended by `docs/SPEC-TOOLWORK.md` §1 (draft, 2026-09-19):** between this rule's
+    **Held by *The accept gate* below:** between this rule's
     verify and its push stands `nova-pulse accept` — the card's claim is executed, its test is seen
     red without its change, and a rejected card pushes nothing.
 13. *SPEC-AHEAD: #467.* **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
@@ -2534,3 +2534,247 @@ git on PATH — no test opens a connection:
     `TestHarvestProvesJobDirGonePerLabelAndNeverFromASibling`,
     `TestHarvestLeavesACardTheProbeCouldNotAnswerFor` and
     `TestBenchProbeScriptAsksAboutEachLabelByName` — the per-label probe.
+
+
+## The accept gate — mechanical accept or reject, with a negative control (toolwork §1)
+
+**Builds on.** `harvest` is gated on the verdict and never on mergeability
+(`docs/SPEC-PULSE.md:194-199`); line 1 must match or nothing is pushed
+(`docs/SPEC-PULSE.md:200-218`); `gather` scores a card `done` on line 1 alone, whatever
+the exit code (`docs/SPEC-SWARM.md:1470`), which is why line 1 never carries the answer
+(`docs/WORKER-CARDS.md:310-321`); a fix card names its reproducing test and the manager
+refuses a fix PR that carries neither the `red:` line nor the test file
+(`docs/WORKER-CARDS.md:323-340`); `nova-review mutate` reverts the change, keeps the
+tests and demands they go red (`docs/SPEC-REVIEW.md:643-660`, grammar `:818-824`, exits
+`:787-789`); the card is a three-call pipeline whose tools the harness runs
+(`docs/SPEC-SWARM.md:771-838`).
+
+**What those rules do not hold.** Every one of them reads what the worker **said**. The
+contract line proves which card this is. Line 2 is the worker's own verdict. The `red:`
+line is a pasted string. Between the worker's word and an open pull request there is no
+step that executes the claim, so the first execution of a swarm's claim is a friend's
+read — the most expensive reader in the house doing the most mechanical check in it.
+
+**The verb.** `nova-pulse gate` is taken (it is the dev-red STOP gate,
+`docs/SPEC-PULSE.md:1443-1446`), so this is `accept`:
+
+```
+nova-pulse accept --job <dir> --card <path> --base <ref> --bench <name> --cert <path> [--timeout <seconds>] [--max <n>]
+nova-pulse accept --selftest --fixtures <dir> --bench <name> --cert <path> [--timeout <seconds>]
+```
+
+```
+ACCEPT OK      label=<label> kind=<kind> head=<sha12> base=<sha12> tests=<n> red_without=<n> edits=<n|-> control=<id> bench=<name> cert=<id> took=<d>
+ACCEPT REJECT  label=<label> kind=<kind> head=<sha12|-> reason=<token> at=<path[:line]|test|-> control=<id> bench=<name> cert=<id> took=<d>
+ACCEPT ABSTAIN label=<label> kind=<kind> reason=<bench-uncertified|paused|toolchain|base-red|control-stale|control-red|timeout> bench=<name> took=<d>
+ACCEPT SELFTEST control=<id> accepted=<n>/<n> rejected=<n>/<n> edits=1 build=<build identity> fixtures=<sha12> bench=<name> <PASS|FAIL>
+ACCEPT SEED    name=<seed> edits=<n> want=<token> got=<token|ACCEPT> <ok|WRONG>
+ACCEPT REFUSED: <reason> (<remedy>)
+```
+
+Exit 0 is `ACCEPT OK` or a passing selftest; 1 is the verb saying NO (`REJECT`, a
+failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
+
+1. **The gate is `harvest`'s default step, before any push.** For every `done` card
+   whose kind declares a gate (SPEC-SWARM, *card kinds for tool work*), `harvest` runs `accept` after rule 12's line-1
+   verify and **before** the push of rule 12 and the read card of rule 13. `ACCEPT OK`
+   pushes and opens the PR as today, with the `ACCEPT OK` line as the first line of the
+   PR body. `REJECT` pushes nothing, writes the card's row in `seen.tsv` as `rejected`,
+   counts `rejected=<n>` on `HARVEST OK`, and sends the card down rule 14's requeue-once
+   path with the reason token as the requeue's evidence. `ABSTAIN` pushes nothing and
+   requeues nothing: it is the bench's fault, and it is one line in `<root>/bench.tsv`
+   for a person. The one abstain that is nobody's fault is `reason=paused`: the
+   coordinator paused the kind after the card was launched (the eligibility rule (SPEC-TOOLWORK), 4);
+   `harvest` re-reads the trust state and produces it, it writes no `bench.tsv` row, it
+   requeues nothing (the remedy is `trust --set trial`, not a rerun), and for the track
+   record it counts as neither a pass nor a fail, like every `ABSTAIN` (the eligibility
+   rule, 1). There is no `--no-gate`. A kind whose declared gate is `none` (reads,
+   probes) skips the step and its `HARVEST` row says `gate=none`, so a green row never
+   claims a check that did not run.
+2. **The gate reads the card and the commit, never the report.** Its inputs are the
+   card file `cut` wrote (whose typed header lines are the card writer's), the job's git
+   objects, and `--base`. `RESULT.md` is data and is not opened by `accept` at all (its
+   line 1 is `verify`'s, one step earlier). This keeps `docs/SPEC-SWARM.md:2470` true — *"`nova-swarm` does not
+   read a worker's `RESULT.md` and act on it"* — and means a worker cannot name its own
+   gate, widen its own paths or supply its own seed. The gate's commands come from the
+   kind's declaration in the tool, parameterised only by the card's `TEST:` and
+   `PATHS:` lines, each of which is validated as a test name or a repo-relative glob
+   before use and never passed through a shell.
+3. **The gate runs in its own tree, inside the wall, on a certified bench.** `accept`
+   makes a throwaway worktree of the job's head under `--job`'s slot, runs every
+   command through `nova-sandbox` with the read and write lists of
+   `docs/SPEC-SWARM.md:2245-2275`, and removes the tree on every path. It never runs in
+   the worker's own working copy: an untracked file the worker left behind must not be
+   able to turn a test green. `--cert` names the bench's certification record (SPEC-SANDBOX, *a wall that can build this repository*); a
+   missing, stale or failing record is `ACCEPT ABSTAIN reason=bench-uncertified`.
+4. **The order, and the first failure decides.** (a) SPEC-SWARM, *identity and hygiene*'s hygiene checks: `identity`,
+   `stray-file`, `secret`, `out-of-path`. (b) The kind's shape check,
+   where the kind declares one (SPEC-SWARM, *card kinds for tool work*): the named test exists at head
+   (`named-test-missing`); the kind changed at least one test file (`no-test`). (b2)
+   **The base's tests survive** (the eligibility rule (SPEC-TOOLWORK), 11): every `Test` function present
+   at the base in a package the card touched is still present at head and has gained no
+   skip, and the base's copy of every pre-existing test file the card changed, overlaid
+   on the head, passes — else `test-weakened at=<test>`. A pre-existing test body the
+   card modified under `TEST-EDIT:` is listed on the PR for the reader, by name, because
+   that is judgment the gate does not have. (c) Positive: build, vet, and the packages of every
+   changed file test green at head (`build`, `vet`, `red-at-head`, each with the first
+   failing line that is not a notice). (d) **Negative control for the card**, for the kinds that declare the range form
+   (SPEC-SWARM, *card kinds for tool work*): `nova-review mutate --repo <tree> --base <base> --head <head>` must print `PASS`.
+   A `MUTATE GREEN` line is `reason=vacuous-test at=<test>`: a test that is green
+   without the change it claims to cover proves nothing
+   (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection and not a reader's
+   finding. The card's named `TEST:` must be among the tests that went red
+   (`named-test-not-red`). (e) The kind's own control, where mutate's revert is not the
+   right defect (SPEC-SWARM, *card kinds for tool work*: `transcript-test`, `mutation-kill`, `sweep`).
+5. **A red test is a finding, never a rerun.** `accept` runs each command once. A test
+   red at head is `REJECT reason=red-at-head`; a second run to see whether it goes
+   green is forbidden, because a gate that reruns until green accepts every flaky fix.
+   A test red at head that the card neither changed nor named is run once **at the base**:
+   red there too is `ABSTAIN reason=base-red`, the base's fault and not the card's (a
+   pre-existing failure is named by its failure set against the pinned base,
+   `docs/WORKER-CARDS.md:103-118`).
+   A red whose first non-notice line names a missing toolchain, a refused path
+   (`SANDBOX DENIED`, `WALL`) or a full disk is the bench's:
+   `ABSTAIN reason=toolchain`, and the certification record is marked stale (SPEC-SANDBOX, *a wall that can build this repository*, rule 6).
+6. **The gate's own negative control: it must be seen red before its green counts.**
+   `accept --selftest` runs the gate over a fixture repository shipped in
+   `cmd/nova-pulse/testdata/accept/`: one known-good fix commit, which must be
+   `ACCEPT OK`, and one seeded defect per reject token of the common gate, each of which must be
+   `ACCEPT REJECT` **with that token and no other** (twelve tokens, twelve seeds; the
+   kind-specific tokens of SPEC-SWARM, *card kinds for tool work*, add their seeds with their kind; **`gate-weakened` is the
+   one token the selftest does not prove** — it needs a second gate to weaken — and its
+   own red test, `a-card-that-weakens-the-gate-is-rejected`, is what holds it):
+
+   | seed | the one edit | want |
+   |---|---|---|
+   | `fix-reverted` | the fix's one changed line put back | `red-at-head` |
+   | `vacuous` | the new test's assertion replaced by one that holds without the fix | `vacuous-test` |
+   | `no-test` | the test hunk dropped | `no-test` |
+   | `wrong-author` | the commit re-authored | `identity` |
+   | `stray` | one untracked-then-added file outside `PATHS:` | `stray-file` |
+   | `wide` | one line changed in a file outside `PATHS:` | `out-of-path` |
+   | `secret` | one line carrying a key-shaped fixture string | `secret` |
+   | `broken` | one line of the fix made a syntax error | `build` |
+   | `vetted` | one format verb in the fix made wrong for its argument | `vet` |
+   | `renamed` | the named test's `func` line renamed | `named-test-missing` |
+   | `wrong-name` | the fixture card's `TEST:` line pointed at a test that passes without the fix | `named-test-not-red` |
+   | `skipped` | one `t.Skip()` line added to a test that exists at the base | `test-weakened` |
+
+   `ACCEPT SELFTEST … PASS` requires every row right. One wrong row is `FAIL`, exit 1,
+   with its `ACCEPT SEED … WRONG` line.
+7. **Every seed is one edit, and the count is asserted.** A seed is applied by
+   `nova-review mutate --seed` (rule 9) and is refused unless it changes **exactly one
+   line** — one `-` and one `+`, or one added line, or one removed line, or one line
+   moved (the same text removed in one place and added in another); for the
+   whole-object seeds exactly one object: one commit (`wrong-author`), one file (`stray`),
+   one hunk (`no-test`). The
+   count is printed as `edits=1` on the `ACCEPT SEED` line and asserted by the verb
+   itself: a seed that changed nothing proves the gate red on nothing, and a seed that
+   changed two things does not say which one the gate caught. `edits=0` and `edits>1`
+   are `ACCEPT REFUSED: seed <name> made <n> edits, want exactly 1`, exit 2.
+8. **The control is an id, and a green without it does not count.** `control=<id>` is
+   the first twelve hex of the SHA-256 of the gate binary's build identity, the fixture
+   tree's digest and the bench certification id. `accept` refuses to print `ACCEPT OK`
+   unless a passing `ACCEPT SELFTEST` for the **same id** is on file under
+   `<root>/accept/control/<id>`: it runs the selftest itself when none is
+   (`control-red` if it fails). A new build of the tool, a changed fixture or a
+   re-certified bench is a new id and a new selftest. `harvest` copies `control=` onto
+   the PR body; `nova-merge batch` (SPEC-MERGE, *lanes and landing*) and a reader can ask for it; an `ACCEPT OK`
+   with no control on file is `control-stale` and is treated as `ABSTAIN`.
+9. **`nova-review mutate` grows the seed form, and says how much it reverted.**
+
+   ```
+   nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
+
+   MUTATE <head8> seed=<sha8> edits=1 red=<n> green=<n> <PASS|FAIL>
+   MUTATE REFUSED: seed makes <n> edits, want exactly 1
+   ```
+
+   The seed is a unified diff applied in the throwaway worktree with `git apply`; the
+   verb counts changed lines from the patch it applied, never from the patch file's own
+   header. The range form gains `reverted=<n>` (hunks put back) on its verdict line, so
+   *"every non-test hunk"* (`docs/SPEC-REVIEW.md:647`) is a number a caller can gate on.
+   `mutate` still records nothing and writes nothing into the repo it is pointed at.
+10. **The gate makes no model call and no network call.** It reads no forge, asks no
+    provider and never consults `--decide`: Jev's harvest classification (SPEC-PULSE, *typed results*) runs
+    **after** the gate, over its typed line, and can only route a result — it can never
+    turn a `REJECT` into a push. (Floors: `docs/SPEC-DECIDE.md` rule 5, *"a decision
+    below the floor is a suggestion"*; a decision above the floor is still not an
+    acceptance.)
+
+**Red tests this section demands**, each seen red first, fakes for the bench and the
+clock, no network: `accept-runs-before-any-push` (the git fixture's argv log holds no
+push for a rejected card); `accept-never-opens-result-md` (a `RESULT.md` that is a FIFO
+does not hang the gate); `accept-rejects-a-vacuous-test`; `accept-rejects-when-named-test-stays-green`;
+`accept-never-reruns-a-red`; `accept-abstains-on-a-bench-red` (a `WALL` line is the
+bench's); `selftest-every-seed-is-one-edit` (a two-line seed is refused by count);
+`selftest-wrong-token-is-a-fail`; `ok-without-a-control-on-file-is-refused`;
+`control-id-changes-with-the-build`; `mutate-seed-refuses-two-edits`;
+`mutate-prints-reverted-count`; `harvest-row-says-gate-none-for-a-read`;
+`an-untracked-file-in-the-workers-copy-cannot-turn-the-gate-green` (rule 3);
+`a-red-the-card-did-not-touch-is-run-once-at-base` and `base-red-is-an-abstain` (rule 5);
+`accept-makes-no-network-call` (rule 10: the run is wrapped with the network denied and
+still passes); `a-deleted-base-test-is-test-weakened`; `a-skip-added-to-a-base-test-is-test-weakened`;
+`a-test-edit-body-is-listed-for-the-reader`.
+
+
+## Typed results, and Jev's harvest classification (toolwork §4)
+
+**Builds on.** Line 2 is one of `DONE`, `ABSTAIN <why>`, `BLOCKED <why>`
+(`docs/spec-pulse/10-the-card-as-cut-writes-it.md:8`); every abstain names one reason
+token so the packet is the whole read (`docs/SPEC-SWARM.md:1481-1503`); the working
+layout's five harvest classes are *"the typed decision behind the floor"*
+(`docs/SPEC-PULSE.md:2045`); SPEC-DECIDE's **nova-pulse harvest class** asks one
+`choice` over {fixed, already-fixed, no-change, failed, off-branch} over bounded public
+state (`docs/SPEC-DECIDE.md:407-417`).
+
+**The Jev lane owns the SPEC-DECIDE amendment** (the 2026-09-19 Jev integration lane,
+umbrella #896). This section does not restate or change it. It fixes only the
+**boundary**: what is typed by the gate and therefore never asked of Jev, and what Jev
+is handed.
+
+1. **The result of a card is one typed line, written by the machinery.** After
+   `accept`, `harvest` writes `<job>/OUTCOME` — one line, and the only thing any later
+   step reads about the card:
+
+   ```
+   OUTCOME label=<label> kind=<kind> gather=<done|reason token> accept=<ok|reject|abstain|none> reason=<token|-> class=<class|-> conf=<0-1|-> head=<sha12|-> base=<sha12> bench=<name> cert=<id|-> control=<id|-> pr=<n|-> took=<ms>
+   ```
+
+   `gather=` is SPEC-SWARM's token, `accept=`/`reason=` are SPEC-PULSE, *the accept gate*'s, `class=`/`conf=` are
+   rule 3's. The worker writes none of it.
+2. **What the gate decides is never asked of a model.** `accept=ok` is `class=fixed`
+   and `accept=reject` is the new class **`rejected`**, with `conf=-`, and no decision call is
+   made. It is not `failed`: that word already means *"the push or the read could not
+   complete"* (`docs/SPEC-PULSE.md:2045`) and SPEC-DECIDE says `fixed` and `failed` *"push as
+   today"* (`docs/SPEC-DECIDE.md:413`); a rejected card pushes nothing, and an implementer
+   reading either sentence must not be able to conclude otherwise. The Jev lane's amendment
+   adds `rejected` to the class set as a member no provider is ever asked for:
+   a typed judgment over evidence a verb already settled is a paid coin-flip over a
+   known answer. `no-change`, `already-fixed` and `off-branch` stay the mechanical git
+   reads they are in the working layout (`docs/SPEC-PULSE.md:2045-2049`).
+3. **Jev classifies what is left: the cards with no gate verdict.** `accept=abstain`,
+   `accept=none` with line 2 `BLOCKED` or `ABSTAIN`, and every `gather` abstain whose
+   token does not already name its remedy. The question, its option set, the state sent
+   and the floor are the Jev lane's amendment; this spec requires only that (a) the
+   state is built from `OUTCOME` and the reason token's bounded field, never from
+   `RESULT.md` prose, which also keeps SPEC-DECIDE rule 4 (public or synthetic state
+   only) true by construction; (b) the answer lands in `class=`/`conf=` on `OUTCOME`
+   and on the route log's `outcome`; (c) below the floor `class=unknown` and rule 14's
+   requeue-once path runs as today.
+4. **A classification routes; it never accepts.** No `class`, at any confidence, turns
+   `accept=reject` or `accept=abstain` into a push, lifts a HOLD, or skips a read. The
+   red test is SPEC-DECIDE's own shape, `a-merge-classification-never-merges`
+   (`docs/SPEC-DECIDE.md:510`), restated for harvest:
+   `a-harvest-class-never-pushes-a-rejected-card`.
+5. **Every `OUTCOME` is a row for tuning.** `harvest` appends it to
+   `<queue>/decide/outcomes.jsonl` beside the route log, so the Jev lane measures
+   agreement between `class=` and what a person later did, from rows and not from a
+   feeling (`docs/SPEC-PULSE.md`, rule 10's `ROUTES.log` sentence).
+
+**Red tests:** `outcome-is-written-by-harvest-and-never-by-the-card` (a job that ships
+its own `OUTCOME` is `stray-file`); `no-decide-call-when-accept-decided` (the provider
+fake sees zero requests); `decide-state-is-built-from-outcome-only`;
+`a-harvest-class-never-pushes-a-rejected-card`; `below-floor-is-unknown-and-requeues-once`;
+`accept-reject-is-class-rejected-never-failed`; `every-outcome-is-one-appended-jsonl-row`
+(rule 5).

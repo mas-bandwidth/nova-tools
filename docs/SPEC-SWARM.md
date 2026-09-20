@@ -2277,7 +2277,7 @@ the value's LENGTH. The job directory is then **moved** to
 is evidence a person has to read — one `HUMAN` line is appended to
 `<root>/HUMAN` naming the shape, the quarantine and the one remedy (rotate the
 seat's key), and the card counts `refused`. This is the same shape
-`SPEC-TOOLWORK` §3 rule 6 names for the hygiene gate's `secret` finding; when
+*Identity and hygiene* (below) rule 6 names for the hygiene gate's `secret` finding; when
 that gate lands, one of the two lists loads the other and neither is copied
 again.
 
@@ -2819,7 +2819,7 @@ and `nova-swarm` does not read a worker's `RESULT.md` and act on it. The
 templates are shipped in the binary, printable, and a caller may write their own
 file instead — the tool has no list of blessed task shapes.
 
-**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §5 (draft, 2026-09-19):** a template stays text. A card
+**Held by *Card kinds for tool work* below:** a template stays text. A card
 **kind** is a template plus a gate and a negative control declared in the tool, chosen by the
 card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
 card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
@@ -4160,3 +4160,157 @@ and must not be swept. Six rules bind it:
 **What this does not change.** The bench slot store (`slots take` / `slots
 release`, above) is capacity accounting and is untouched: a run can hold a seat
 and still be refused its job directory, and that refusal is the correct answer.
+
+
+## Identity and hygiene, at staging and at harvest (toolwork §3)
+
+**Builds on.** The card ends at the commit and publication is the launcher's
+(`docs/WORKER-CARDS.md:129-135`); `harvest` pushes by explicit refspec, never bare and
+never to `main` (`docs/SPEC-PULSE.md:203-206`), with a lease from `ls-remote` and a
+refusal of any branch off `rowan/*` (`docs/SPEC-PULSE.md:2049-2051`); the key is in
+neither of the wall's lists (`docs/SPEC-SWARM.md:2268`); the work is anchored to named
+files (`files-named`, `docs/WORKER-CARDS.md:28`).
+
+**What those rules do not hold.** Nothing says whose name a card's commit carries, so
+it carries whatever the bench's git config held; nothing looks at **what** is in the
+commit beyond its branch name; and `files-named` is checked on the card's text at lint
+and never on the diff that comes back.
+
+**Staging** is what the launcher puts in a job directory before the worker starts.
+**Harvest** is what `accept` checks before anything leaves it. Both halves are
+mechanical, and the harvest half never trusts that the staging half ran.
+
+1. **Staging sets the identity; the worker never does.** The launcher writes the job
+   clone's **local** git config — `user.name`, `user.email`, `commit.gpgsign=false`,
+   `core.hooksPath=/dev/null` — from the pool's `identity.tsv` (`owner`, `name`,
+   `email`), and exports `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` so a
+   bench's own config cannot leak in. A pool with no identity row is refused at launch.
+2. **Staging leaves no way out of the job root.** No absolute symlink and no symlink
+   resolving outside the job root exists in a staged tree (#1557's `repo/dist ->
+   /Users/…` cost four legs a toolchain); toolchains are real directories or
+   copy-on-write clones. The launcher checks this before the first worker starts and
+   refuses by path.
+3. **`identity`.** Every commit in `<base>..<head>` has author **and** committer equal
+   to the pool's identity row, and none is a merge commit. Anything else is
+   `reason=identity at=<sha12>`.
+4. **`out-of-path`: the diff is bounded to the card's declared paths.** The card's
+   `PATHS:` line (SPEC-SWARM, *card kinds for tool work*) is a list of repo-relative globs, validated at `cut`: no `..`, no
+   absolute path, no bare `**`, at most 8 entries. Every path in `git diff --name-only
+   <base>..<head>` matches one. A rename counts on both sides.
+5. **`stray-file`.** No added file matches the stray list — `RESULT.md`, `PROMPT.md`,
+   `scratch/**`, `*.log`, `*.orig`, `*.rej`, `*.test`, `*.out`, `.DS_Store`, editor
+   swap files, anything over 1 MiB, any file whose mode is not `100644` or `100755`,
+   any symlink, any submodule — and the worktree after the gate's checkout holds no
+   conflict marker in a changed file (`git diff --check`; card-16 left `<<<<<<< HEAD`
+   in a fenced block, `docs/WORKER-CARDS.md:112-113`). The list is one data file, and
+   an allowlisted exception names the card kind it is for.
+6. **`secret`.** Every **added line** is matched against a list of key SHAPES held as one
+   data file — PEM private-key headers, `AGE-SECRET-KEY-1`, the forge's token prefixes,
+   the provider key prefixes this fleet holds keys for — and never against a key's
+   value: the gate holds no key and reads none (no shape matcher exists in the tree at
+   `31e35195`; `internal/swarm/key.go:118` redacts an error's text and is the nearest
+   thing). A match is `reason=secret at=<path>:<line>` and **the matched
+   text is never printed**, only its path, line and shape name. The job directory is
+   then quarantined — moved to `<root>/quarantine/<label>`, not harvested, not deleted
+   — and one `HUMAN` line is written, because a key in a worker's diff means a key
+   reached a worker. The fixture strings the selftest seeds are generated at test time
+   and are not valid keys for any provider.
+7. **The checks are one package with one entry point**, `internal/hygiene.Check(repo,
+   base, head, paths, identity) []Finding`, called by `accept`, by `nova-merge batch`
+   on each member (SPEC-MERGE, *lanes and landing*, rule 7) and by a `nova-check hygiene` verb a person can run on a
+   branch before asking for a read. One implementation, three callers, so the lane and
+   the harvest cannot disagree about what clean means. `identity` is a set and
+   `paths` may be absent: at harvest the set is the pool's one row and `paths` is the
+   card's; at `batch` the set is the lane's `identities.tsv` — every friend who commits
+   to this repository — and a member that is not a swarm's has no `PATHS:`, so
+   `out-of-path` is skipped for it and says so (`paths=-`), while `identity`,
+   `stray-file`, `secret` and the conflict-marker check run on every member.
+
+**Red tests:** `launch-refuses-a-pool-with-no-identity`;
+`staged-clone-ignores-the-bench-gitconfig`; `stage-refuses-a-symlink-out-of-the-job`;
+`hygiene-rejects-a-foreign-committer`; `hygiene-rejects-a-merge-commit`;
+`hygiene-counts-a-rename-on-both-sides`; `hygiene-rejects-result-md-in-the-diff`;
+`hygiene-never-prints-the-secret` (the output is searched for the fixture string);
+`secret-quarantines-and-never-deletes`; `paths-line-refuses-dotdot-and-bare-doublestar`;
+`hygiene-rejects-a-conflict-marker`, `hygiene-rejects-mode-100600`,
+`hygiene-rejects-a-file-over-one-mebibyte`, `hygiene-rejects-a-symlink-and-a-submodule`
+(rule 5).
+
+
+## Card kinds for tool work, each with its declared gate and control (toolwork §5)
+
+**Builds on.** `cut` renders six typed templates — `read`, `fix`, `text`, `replay`,
+`drift`, `tone` — and refuses a rendered card that breaks the practice-17 shape
+(`docs/spec-pulse/02-the-rules-numbered.md:33-51`); text-only templates forbid the
+build (`:52-55`); the contract line's `sha12` binds everything below line 1
+(`docs/spec-pulse/10-the-card-as-cut-writes-it.md:12-14`); the fix-card shape is three
+model calls (`docs/SPEC-SWARM.md:822-830`) and a fourth without `MODE: explore` is
+refused at admission (`:808-813`); `nova-swarm lint --card` checks twelve rule tokens
+(`docs/WORKER-CARDS.md:23-36`); *"a template is text and nothing else"*
+(`docs/SPEC-SWARM.md:2470`).
+
+**What those rules do not hold.** A template fixes what a card **says**. Nothing fixes
+what **accepting** that kind of card means, so every kind is accepted the same way — by
+its line 1. A kind is a template **plus** the gate that judges it and the control that
+proves the gate: the first half is text for the worker, the second is code in the tool
+the worker never sees and cannot edit.
+
+1. **Five typed header lines, under the contract line and inside its hash.**
+
+   ```
+   KIND: <kind>
+   PATHS: <glob>[, <glob>...]
+   TEST: <package> <TestName>          (or `TEST: none` where the kind allows it)
+   LEGS: <leg>[,<leg>...]
+   SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
+   ```
+
+   Two kinds carry one more: `sweep` a `FILES: <n>` line and `mutation-kill` a `SEED:`
+   block holding its one-edit patch.
+   They are written by `cut` from the pool row, never by a model, and because they sit
+   below line 1 the contract hash covers them: a card whose header was altered after
+   admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing any of
+   them (`CUT REFUSED kind=<kind>: no <LINE>`), and `lint --card` gains the tokens
+   `kind-declared`, `paths-declared`, `paused` (the coordinator paused this kind; the remedy is the `trust --set trial` command) and
+   `test-named`.
+2. **The kinds.** `gate` is the step list of SPEC-PULSE, *the accept gate*, rule 4; `control` is what must be seen
+   red before the gate's green counts for this card.
+
+   | kind | the card does | `PATHS:` may hold | gate | control (seeded defect, `edits=1`) | kind-specific reject tokens |
+   |---|---|---|---|---|---|
+   | `fix-red` | fixes one defect, red test first (WORKER-CARDS 4 and 23; SPEC-SWARM P7) | the named source and test files | hygiene, shape, positive, mutate | the change reverted: `nova-review mutate` range form `PASS`, and `TEST:` is among the tests that went red | `no-test`, `vacuous-test`, `named-test-not-red` |
+   | `transcript-test` | makes one `docs/TESTS.md` section executed line for line (SPEC-CI, *tests that execute documents*) | `cmd/<tool>/firstrun_test.go`, `cmd/<tool>/testdata/firstrun/**` — **never `docs/TESTS.md`**, and never the rest of `testdata/` (for nova-pulse that holds the gate's own fixtures, `testdata/accept/`) | hygiene, shape, positive | three seeds applied to a **copy** of the tool's section, each one edit: one line dropped, one value altered, one line moved; the new test goes red on each | `doc-edited`, `transcript-not-read` (a seed stayed green: the test does not read the document) |
+   | `rebase` | replays one of our own open PRs onto the base, changing nothing | the PR's own changed files, computed by `cut` from the PR at its pinned head | hygiene, positive, and **range equality**: `git range-diff` pairs every commit, and each pair's patch-id is equal except in files git reported conflicted during the replay; those files are exempt from equality, so they are **listed by name on the read card** and are what the reader reads | one line changed in a file that did **not** conflict: the gate rejects `rebase-drift` | `rebase-drift`, `commit-dropped`, `commit-added` |
+   | `sweep` | applies one mechanical class fix at every site the class test names | up to 8 globs, plus `FILES: <n>`, the most files the diff may touch | hygiene, positive, and the seed form **only**: the class test landed first and the sweep changes no test file, so the shape check would say `no-test` and range `mutate` would exit 2 `no-tests-changed` — neither is declared for this kind | **two** seeds, each one edit: the first and the last changed site (path order) reverted alone; the class test in `TEST:` goes red **naming that site** — a class test that samples is found out | `site-not-seen`, `over-files` |
+   | `mutation-kill` | writes the test that kills one surviving mutant | test files only | hygiene, shape, positive, and the diff is test-only | the card's own `SEED:` patch (the mutant, written by the card writer into the card, `edits=1` asserted at `cut`) applied with `mutate --seed`: the new test is red with it and green without | `mutant-survives`, `non-test-change` |
+   | `read`, `probe`, `text`, `tone` | read and report | none: `PATHS: none` | `none` | none; the `HARVEST` row says `gate=none` | — |
+
+3. **A kind's gate is declared in the tool, in one table, and printed.**
+   `internal/pulse/kinds.go` holds the table above as data; `nova-pulse accept --kinds`
+   prints it, one line per kind, and a class test asserts this section's table and
+   that output name the same kinds, steps and tokens. A kind the table does not hold is
+   refused by `cut` and abstained by `accept`; there is no default kind.
+4. **What makes a card of a kind eligible for a swarm.** All of: both conditions of the
+   eligibility rule hold for its kind over its `PATHS:`; its `SOURCE:` names an issue or a `file:line` the card writer opened at
+   the pinned head (WORKER-CARDS 3); its `TEST:` either exists at the pinned head
+   (`transcript-test`'s target section, `sweep`'s class test) or is a name the card
+   fixes in advance; its `LEGS:` are certified on at least one bench (SPEC-SANDBOX, *a wall that can build this repository*, rule 5); and it
+   fits the three-call pipeline or says `MODE: explore` with a `TURNS:` budget. `cut`
+   checks the first, third and fourth; the second is the card writer's, by practice 3.
+5. **One card of a new template runs alone before the batch widens.** `launch` refuses
+   a batch wider than one for a `(kind, template sha12)` pair with no `ACCEPT OK` on
+   file in `<root>/accept/first.tsv`: `PULSE REFUSED: no accepted first card for
+   kind=<kind> template=<sha12> (launch one card first)`. One wrong template line goes
+   out on every card; the first card is how it goes out on one. A first card that is
+   `REJECT` or `ABSTAIN` leaves the pair unproven. This is about the template, and it
+   holds for a trusted kind as much as for one on trial.
+6. **A kind never widens itself.** The templates stay text (`docs/SPEC-SWARM.md:2470`);
+   the gate is chosen by `KIND:` from the tool's table and by nothing the worker wrote.
+   A `RESULT.md` that names a different kind, a different test or more paths is not
+   read (SPEC-PULSE, *the accept gate*, rule 2), so it changes nothing.
+
+**Red tests:** `cut-refuses-a-gated-kind-without-paths`; `header-lines-are-inside-the-contract-hash`;
+`kinds-table-matches-the-spec`; `transcript-test-rejects-an-edit-to-the-document`;
+`rebase-rejects-one-changed-line-outside-a-conflict`; `sweep-control-names-the-reverted-site`;
+`mutation-kill-rejects-a-test-the-mutant-survives`; `launch-refuses-a-wide-batch-with-no-accepted-first-card`;
+`accept-abstains-on-an-unknown-kind`.

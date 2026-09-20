@@ -646,7 +646,8 @@ refusal-for-absence is about the paths the *caller* named.
 Without it, a card names both by hand in every argv, which is a step that will be
 forgotten. `--read $(go env GOROOT)` remains the manual equivalent.
 
-**Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §2 (draft, 2026-09-19; #1557, #1465):** `--toolchain
+**Held by *A wall that can build this repository, and a bench that is certified to* below
+(#1557, #1465):** `--toolchain
 <leg>` is the same idea for `cc`, `make`, `sbcl` and `sqlite3`, each leg's narrowest measured
 roots asked of the toolchain and never guessed, and a bench is certified leg by leg inside the
 wall before a card's result from it is trusted.
@@ -2748,3 +2749,111 @@ names `sandbox.Run` without a signature the code does not have.
    exec-path tripwire load-bearing. The rights a newer ABI adds are still
    unhandled until the table grows; the difference is that the operator is told
    rather than stopped.
+
+
+## A wall that can build this repository, and a bench that is certified to (toolwork §2)
+
+**Builds on.** Every job runs inside `nova-sandbox`, argv built by the dispatcher and
+never from the task text (`docs/SPEC-SWARM.md:2245-2275`); `--go` puts `GOROOT` and
+`GOMODCACHE` in the read set as `go env` reports them (`docs/SPEC-SANDBOX.md:597-612`);
+a toolchain under a user directory is named with `--read`, and *"a command that runs
+outside the wall and dies inside it is missing a `--read`"*
+(`docs/SPEC-SANDBOX.md:1195-1210`), which already names the `xcode_select_link` shim;
+`tools/bench-standard.sh` checks a Linux bench's `go version` and `sbcl` on `PATH`
+(`docs/SPEC-PULSE.md:384-392`); every launcher takes a bench slot lease
+(`docs/SPEC-SWARM.md:2103-2147`).
+
+**What those rules do not hold.** They say how to let a toolchain through the wall; none
+says **which toolchains this repository's own gate needs**, none proves a bench can run
+that gate **inside** the wall, and nothing ties a card's result to a bench that was ever
+shown able to produce one. The receipts: `/usr/bin/cc` and `/usr/bin/c++` fail inside
+the wall on macOS because the profile denies `/var/db/xcode_select_link`, which also
+kills every `make` target at parse time (#1557); `native` shares the Go caches but never
+reads the Go toolchain, so a Go card printed `rc=0 harness=ok` having compiled nothing
+(#1465); the harness fence ignores `read_roots` (#1463); on Linux the wall refuses
+`/tmp`, which dotnet hard-codes (#1495), `policy` prints the darwin profile under
+`backend=landlock` (#1469), and the nova-sandbox and nova-swarm transcripts cannot be
+reproduced on a Linux bench at all (#1509). **nova-sandbox on Linux is not clean, and
+until rule 7's list is closed no Linux bench can be certified for a wall-dependent
+leg.**
+
+1. **The repository declares its legs, as data.** `tools/legs.tsv` — `leg`, `probe
+   command`, `wants` — one row per toolchain this repository's gate uses:
+
+   | leg | probe (run inside the wall, in a scratch clone) | wants |
+   |---|---|---|
+   | `go` | `go build ./... && go vet ./...` | exit 0; `go version` equals `go.mod`'s |
+   | `go-cross` | `GOOS=windows go vet ./...` | exit 0 |
+   | `cc` | compile and run a ten-line C file with `cc` | exit 0, the file's one line |
+   | `make` | `make -n test` | exit 0 (parses; #1557's parse-time `$(CC)`) |
+   | `sbcl` | `lisp/nova-work/run-tests.sh` on a fresh isolated ASDF cache | its `total=<n> pass=<n> fail=0` line |
+   | `sqlite3` | open, write and read one row in the write set | the row |
+   | `git` | clone from the bench mirror, commit, `git worktree add` | exit 0 |
+   | `tmp` | `mkdtemp()` under `$TMPDIR` **and** under `/tmp` | both succeed inside the write set (#1495) |
+
+   A leg is added by adding a row, and a class test asserts every toolchain `ci.yml`
+   installs has a row.
+2. **`nova-sandbox` grows a named toolchain set, not a wider wall.** `--toolchain
+   <leg>[,<leg>...]` adds, per leg and per platform, the narrowest roots that leg was
+   measured to need, asked of the toolchain the way `--go` asks `go env` and never
+   guessed: for `cc` on darwin, `DEVELOPER_DIR` set for the child to what
+   `xcode-select -p` prints **outside** the wall, plus read on that directory — the
+   narrower of #1557's two fixes, and the one the cargo workaround on that issue already
+   proves; for `sbcl`, `SBCL_HOME` and the core; for `sqlite3`, nothing but the binary.
+   Each resolved root is printed on the `SANDBOX OK` line's `toolchain=` field so the
+   wall a card ran behind is a fact on its record. An unknown leg is `SANDBOX REFUSED
+   reason=bad_toolchain`. This is a sandbox change, a security kind: the unit and its read are the designated
+   mind's (the eligibility rule (SPEC-TOOLWORK), 13).
+3. **`native` and `accept` pass the card's legs to the wall.** A card's `LEGS:` line
+   (SPEC-SWARM, *card kinds for tool work*) names what its gate needs; the dispatcher turns it into `--toolchain`, and the
+   harness fence is given the same roots (#1463) so the two walls agree. A card with no
+   `LEGS:` line gets `go`, which closes #1465 as the default rather than as a flag
+   somebody remembers.
+4. **`certify` proves a bench, leg by leg, inside the wall.**
+
+   ```
+   nova-pulse certify --bench <name> --legs <tools/legs.tsv> --root <dir> --out <cert file> [--timeout <seconds>]
+
+   CERTIFY LEG  bench=<name> leg=<leg> <ok|FAIL|absent> wall=<backend> took=<d> [first=<first line that is not a notice>]
+   CERTIFY OK   bench=<name> cert=<id> legs=<ok list> failed=<list|none> absent=<list|none> wall=<backend> build=<build identity> at=<stamp> until=<stamp>
+   ```
+
+   Every probe runs through `nova-sandbox --toolchain <leg>` exactly as a card's gate
+   will, so a leg is certified **inside the wall or not at all**. The record is one file,
+   `cert=<id>` the first twelve hex of its SHA-256; it names the tool build, the wall
+   backend, the host, and the legs that passed. `absent` (the toolchain is not
+   installed) is not a failure of the bench, only a leg it cannot be routed.
+5. **A result is trusted only from a bench certified for the card's legs.** The result
+   that is trusted is the **gate's**, never the worker's (SPEC-PULSE, *the accept gate*, rule 2), so the record that
+   decides is the one for the bench `accept` runs on: `accept` refuses to gate, and
+   `harvest` refuses to count, a card whose `LEGS:` are not all in the `legs=` list of a
+   live certification for that bench — `ACCEPT ABSTAIN reason=bench-uncertified`.
+   Routing reads the same records for the worker's side: a card is never sent to a bench
+   not certified for its legs, because a worker that cannot run its own test comes back
+   `BLOCKED` and the card was paid for nothing (the route's `outcome` records the
+   refusal). *Measure a toolchain before routing a card there* becomes a file the router
+   reads.
+6. **A certification expires, and a bench red kills it.** `until=` is 24 hours. It is
+   also void the moment the tool build changes (`nova-update adopt`), the host's
+   toolchain versions change (`go version`, `sbcl --version`, `cc --version` are in the
+   record), or any `accept` on that bench abstains with `reason=toolchain`. A void
+   record is re-run, never edited.
+7. **What Linux needs before any Linux bench is certified for a walled leg** — each an
+   existing issue, in this order: #1495 (a private writable `/tmp` inside the Landlock
+   policy, with a class test that `mkdtemp()`s under `/tmp` inside the wall); #1469
+   (`policy` prints the Landlock rule set it will apply, not the darwin template);
+   #1509 (the transcripts name their platform, SPEC-CI, *tests that execute documents*, rule 5); then rule 2's `--toolchain`
+   on Landlock, where read roots are inherited across `fork(2)` and cannot be widened
+   after the wrap. Until then a Linux bench certifies with `wall=none` legs only, its
+   record says so, and `accept` treats `wall=none` as uncertified for any card that
+   changes code. UDP is unrestricted under Landlock at every ABI
+   (`docs/SPEC-SANDBOX.md:1559`); `certify` prints that as a note and it is not a leg.
+
+**Red tests:** `certify-runs-every-probe-inside-the-wall` (the sandbox fake's argv log
+holds one wrap per leg); `certify-absent-is-not-failed`; `cert-voids-on-build-change`;
+`accept-abstains-on-an-uncertified-leg`; `route-refuses-a-bench-without-the-leg`;
+`toolchain-cc-sets-developer-dir-and-reads-nothing-wider` (darwin);
+`legs-tsv-covers-every-toolchain-ci-installs`; `native-defaults-to-the-go-leg`;
+`an-unknown-leg-is-bad-toolchain` (rule 2); `a-cert-past-until-is-void`,
+`a-toolchain-abstain-voids-the-cert` and `a-changed-go-version-voids-the-cert` (rule 6);
+`wall-none-is-uncertified-for-a-code-card` (rule 7).
