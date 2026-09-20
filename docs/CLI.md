@@ -2705,7 +2705,15 @@ Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contr
 lease before any job directory is made, holds it for the deadline plus two minutes of
 grace, and releases it on every exit path, a failed run included. A take that grants
 nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=… holders=…` line and
-exits 2, having started nothing. Asked without either flag it prints one line and exits 2:
+exits 2, having started nothing.
+
+**Capacity is refused at admission, not braked afterwards (#2033).** Card kinds carry a
+weight charged against the store's share at take, before the harness starts: a schema or
+fix-red card weighs 4 (it spawns make/cargo/dotnet); a read card weighs 1. A schema card
+on a share that fits only a read prints `SLOTS REFUSED … want=4` and starts nothing. A
+live-until lease whose pid is gone lists as `stranded=1` with its label so a manager can
+re-queue it. The load reading that used to fire at `CAPACITY cores=… load=… allowed=…`
+after the bench was already at load 172 is not the ceiling. Asked without either flag it prints one line and exits 2:
 
 ```
 NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
