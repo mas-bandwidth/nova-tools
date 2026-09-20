@@ -219,3 +219,67 @@ each of its UTF-8 characters is counted exactly once."
                      :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
           (incf *parses*)
           (check-restricted form))))))
+
+;;; ------------------------------------------------------------------
+;;; Intake limits and pre-parse bounds scanning
+;;; (SPEC-WORK.md:837-845, :6248)
+;;; ------------------------------------------------------------------
+
+(defstruct (intake-limits (:constructor make-intake-limits
+                              (&key (max-depth 64) (max-bytes 65536) (max-nodes 4096))))
+  (max-depth 64) (max-bytes 65536) (max-nodes 4096))
+
+(defvar *intake-visits* 0
+  "Bytes examined by intake-scan. A deep or high-fan-out input must grow this
+linearly in its own length, never quadratically.")
+
+(defun intake-scan (text &optional limits)
+  "One linear pre-parse pass, counting peak nesting depth and atom nodes.
+It never calls EVAL or READ, so reader evaluation is disabled by construction."
+  (declare (ignore limits))
+  (let ((depth 0) (peak 0) (nodes 0) (in-token nil))
+    (loop for ch across text
+          do (incf *intake-visits*)
+             (cond ((char= ch #\() (incf depth) (setf peak (max peak depth))
+                                  (setf in-token nil))
+                   ((char= ch #\)) (when (plusp depth) (decf depth))
+                                  (setf in-token nil))
+                   ((find ch " \t\r\n") (setf in-token nil))
+                   (t (unless in-token (incf nodes) (setf in-token t)))))
+    (values peak nodes)))
+
+(defun check-read-bounds (text &key max-bytes max-depth max-nodes (file "input") (require-all nil) (signal-error t))
+  "Check that TEXT obeys max-bytes, max-depth, and max-nodes.
+When REQUIRE-ALL is true, missing bounds refuse with 'refusing to guess'.
+When bounds are exceeded, refuse naming which bound and which file (SPEC-WORK.md:837-845)."
+  (when require-all
+    (unless max-bytes
+      (if signal-error
+          (error 'missing-read-bounds :bound "--max-bytes")
+          (return-from check-read-bounds (values nil "missing --max-bytes: refusing to guess" 2))))
+    (unless max-depth
+      (if signal-error
+          (error 'missing-read-bounds :bound "--max-depth")
+          (return-from check-read-bounds (values nil "missing --max-depth: refusing to guess" 2))))
+    (unless max-nodes
+      (if signal-error
+          (error 'missing-read-bounds :bound "--max-nodes")
+          (return-from check-read-bounds (values nil "missing --max-nodes: refusing to guess" 2)))))
+  (let ((byte-count (utf8-bytes-up-to text (length text))))
+    (when (and max-bytes (> byte-count max-bytes))
+      (if signal-error
+          (error 'read-bounds-exceeded :file file :bound "--max-bytes" :limit max-bytes :observed byte-count)
+          (return-from check-read-bounds
+            (values nil (format nil "read ~A: ~D bytes exceeds --max-bytes ~D" file byte-count max-bytes) 2)))))
+  (multiple-value-bind (depth nodes) (intake-scan text)
+    (when (and max-depth (> depth max-depth))
+      (if signal-error
+          (error 'read-bounds-exceeded :file file :bound "--max-depth" :limit max-depth :observed depth)
+          (return-from check-read-bounds
+            (values nil (format nil "read ~A: depth ~D exceeds --max-depth ~D" file depth max-depth) 2))))
+    (when (and max-nodes (> nodes max-nodes))
+      (if signal-error
+          (error 'read-bounds-exceeded :file file :bound "--max-nodes" :limit max-nodes :observed nodes)
+          (return-from check-read-bounds
+            (values nil (format nil "read ~A: nodes ~D exceeds --max-nodes ~D" file nodes max-nodes) 2)))))
+  (values t (format nil "BOUNDS OK file=~A" file) 0))

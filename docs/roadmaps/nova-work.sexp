@@ -63,11 +63,11 @@
     :suite "cd lisp/nova-work && ./run-tests.sh"
     :suite-result "NOVA-WORK SLICE1 total=336 pass=336 fail=0"
     :rule "a criterion is verified only when a named test in this repository proves it and that test passed at :revision; a feature is verified only when every one of its criteria is"
-    :verified-features 23
-    :verified-acceptance-items 155
+    :verified-features 24
+    :verified-acceptance-items 158
     :by-feature (
       (:feature "E01-F01" :verified 3 :total 3 :tests "tests/acceptance/slice-01-reader.lisp: forbidden-token-boundary-before-interning, line-comments-accepted, comment-inside-form, comment-text-is-text, quote-in-comment-is-text, semicolon-in-string-is-literal, reader-eof-sentinel-is-not-payload, malformed-trailing-unclosed-form, malformed-trailing-unclosed-list, dispatch-byte-offset-utf8, eof-byte-offset-utf8, trailing-byte-offset-utf8, unterminated-string-start-byte, forbidden-after-unicode-comment, utf8-byte-offsets; hostile-data")
-      (:feature "E01-F02" :verified 0 :total 3 :tests "")
+      (:feature "E01-F02" :verified 3 :total 3 :tests "tests/replays-e01-f02-read-bounds.lisp: TestE01F02RequireMaxBytesMaxDepth, TestE01F02ApplySessionBoundsTo, TestE01F02PreserveUnknownKeysAndRefuse")
       (:feature "E01-F03" :verified 1 :total 4 :tests "indexes-and-counters; reconstruction-after-close-and-revive; settle-keeps-id-and-evidence")
       (:feature "E01-F04" :verified 0 :total 4 :tests "")
       (:feature "E01-F05" :verified 2 :total 3 :tests "supported-subset-format-determinism; absent-empty-and-null-are-three-spellings; wire-integers-are-strings")
@@ -552,8 +552,8 @@
           :depends-on (            "E01-F01")
           :source-sections (            "The data"
             "Hostile data and limits")
-          :state "missing"
-          :evidence ())
+          :state "verified"
+          :evidence ("tests/replays-e01-f02-read-bounds.lisp: TestE01F02RequireMaxBytesMaxDepth, TestE01F02ApplySessionBoundsTo, TestE01F02PreserveUnknownKeysAndRefuse"))
         (          :id "E01-F03"
           :title "Stable node identity and canonical containment"
           :subfeatures (            "Model one stable ID per node and one owning containment parent"

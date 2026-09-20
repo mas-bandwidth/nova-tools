@@ -1196,28 +1196,7 @@ because this answers for one receipt only."
 ;;; Hostile data (docs/SPEC-WORK.md:6248)
 ;;; ------------------------------------------------------------------
 
-(defstruct (intake-limits (:constructor make-intake-limits
-                              (&key (max-depth 64) (max-bytes 65536) (max-nodes 4096))))
-  (max-depth 64) (max-bytes 65536) (max-nodes 4096))
-
-(defvar *intake-visits* 0
-  "Bytes examined by intake-scan. A deep or high-fan-out input must grow this
-linearly in its own length, never quadratically.")
-
-(defun intake-scan (text limits)
-  "One linear pre-parse pass, counting peak nesting depth and atom nodes.
-It never calls EVAL or READ, so reader evaluation is disabled by construction."
-  (declare (ignore limits))
-  (let ((depth 0) (peak 0) (nodes 0) (in-token nil))
-    (loop for ch across text
-          do (incf *intake-visits*)
-             (cond ((char= ch #\() (incf depth) (setf peak (max peak depth))
-                                  (setf in-token nil))
-                   ((char= ch #\)) (when (plusp depth) (decf depth))
-                                  (setf in-token nil))
-                   ((find ch " \t\r\n") (setf in-token nil))
-                   (t (unless in-token (incf nodes) (setf in-token t)))))
-    (values peak nodes)))
+;; INTAKE-LIMITS, *INTAKE-VISITS*, and INTAKE-SCAN are defined in value.lisp.
 
 (defun hostile-intake (text &key (limits (make-intake-limits)))
   "Intake of untrusted text. Answer (values OK LINE WHY). A read-time eval form

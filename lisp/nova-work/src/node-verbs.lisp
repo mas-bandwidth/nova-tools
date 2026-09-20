@@ -221,9 +221,15 @@ its containment ancestors, exactly as the seed does."
   (incf (wstate-issue-open state) (length (wnode-links node)))
   state)
 
-(defun node-add (kernel &key id type parent repo title)
+(defun node-add (kernel &rest args &key id type parent repo title &allow-other-keys)
   "Add one node. `--repo` is admitted only with `--under-root` and a work-set
-and only once per collection; a roadmap is refused, naming its one creator."
+and only once per collection; a roadmap is refused, naming its one creator.
+Unknown node type is refused exit 2; unknown keys are preserved (SPEC-WORK.md:845-847)."
+  (unless (member type *known-node-types*)
+    (return-from node-add
+      (values nil
+              (format nil "NODE FAIL node=~A: rule 1: unknown node type ~A" id type)
+              2)))
   (let ((state (kernel-state kernel)))
     (when (eq type :roadmap)
       (return-from node-add
@@ -252,12 +258,16 @@ and only once per collection; a roadmap is refused, naming its one creator."
         (values nil
                 (format nil "NODE FAIL node=~A: rule 1: duplicate id" id)
                 2)))
-    (let ((node (make-wnode :id id :type type :parent parent :children '()
-                            :required t :required-count 0 :required-open 0
-                            :state :unknown :branch :o :open-count 0 :links nil
-                            :title title :category nil :private nil :version nil
-                            :repo repo :view nil :meta-log '()
-                            :settles 0 :revived "-")))
+    (let* ((unknown (loop for (k v) on args by #'cddr
+                          unless (member k *standard-node-keys*)
+                          append (list k v)))
+           (node (make-wnode :id id :type type :parent parent :children '()
+                             :required t :required-count 0 :required-open 0
+                             :state :unknown :branch :o :open-count 0 :links nil
+                             :title title :category nil :private nil :version nil
+                             :repo repo :view nil :meta-log '()
+                             :settles 0 :revived "-"
+                             :unknown-keys unknown)))
       (%install-open-node state node)
       (values t
               (format nil "NODE OK id=~A request=- change=add repo=~A"

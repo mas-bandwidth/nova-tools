@@ -298,7 +298,10 @@ directory, INTO the new snapshot directory. Verifies and materialises one
 exclusively created directory in the snapshot and cache schemas, then answers
 (values snapshot line); every refusal answers (values nil refusal)."
   (macrolet ((refuse (fmt &rest args)
-               `(return-from state-load (values nil (format nil "LOAD FAIL: ~?" ,fmt (list ,@args))))))
+               `(return-from state-load (values nil (format nil "LOAD FAIL: ~?" ,fmt (list ,@args)) 2))))
+    (unless max-bytes (refuse "missing --max-bytes: refusing to guess"))
+    (unless max-depth (refuse "missing --max-depth: refusing to guess"))
+    (unless max-nodes (refuse "missing --max-nodes: refusing to guess"))
     (when (and into (probe-file into))
       (refuse "destination ~A exists" into))
     (unless (and from (probe-file from)
@@ -387,24 +390,35 @@ exclusively created directory in the snapshot and cache schemas, then answers
                                      :directory target :cache cache-path
                                      :manifest-hash manifest-hash)
                       (format nil "LOAD OK rev=~D manifest=~A snapshot=~A cache=~A"
-                              rev manifest-hash snapshot-path cache-path)))))))))
+                              rev manifest-hash snapshot-path cache-path)
+                      0))))))))
 
-(defun read-loaded-snapshot (directory &key cache)
+(defun read-loaded-snapshot (directory &key cache max-bytes max-depth max-nodes)
   "Read a snapshot materialised by `state load` through a fresh reader that
 rebuilds the model from the stored bytes and checks the cache identity, rather
-than copying an unchecked archive (SPEC-WORK.md:3291-3293)."
-  (let* ((snapshot-bytes (%state-load-octets-string
-                          (%state-load-read-octets (%state-load-join directory "snapshot.sexp"))))
+than copying an unchecked archive (SPEC-WORK.md:3291-3293).
+Under --snapshot the reader's own three bounds govern the snapshot and the cache alike
+(SPEC-WORK.md:843-845)."
+  (let* ((snap-path (%state-load-join directory "snapshot.sexp"))
+         (snapshot-bytes (%state-load-octets-string (%state-load-read-octets snap-path)))
          (cache-path (or cache (%state-load-join directory "cache.sexp")))
-         (cache-form (read-restricted
-                      (%state-load-octets-string (%state-load-read-octets cache-path)))))
-    (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
-      (error 'unsupported-input :what "the cache does not match the snapshot"))
-    (let ((state (reconstruct-state snapshot-bytes)))
-      (make-snapshot :state state :revision (state-revision state)
-                     :directory (string-right-trim "/" (namestring directory))
-                     :cache cache-path
-                     :manifest-hash nil))))
+         (cache-raw (%state-load-octets-string (%state-load-read-octets cache-path))))
+    (when (or max-bytes max-depth max-nodes)
+      (check-read-bounds snapshot-bytes :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes
+                                        :file snap-path :signal-error t)
+      (check-read-bounds cache-raw :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes
+                                   :file cache-path :signal-error t))
+    (let ((cache-form (read-restricted cache-raw)))
+      (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
+        (error 'unsupported-input :what "the cache does not match the snapshot"))
+      (let ((state (reconstruct-state snapshot-bytes
+                                      :max-bytes max-bytes
+                                      :max-depth max-depth
+                                      :max-nodes max-nodes)))
+        (make-snapshot :state state :revision (state-revision state)
+                       :directory (string-right-trim "/" (namestring directory))
+                       :cache cache-path
+                       :manifest-hash nil)))))
 
 (defun snapshot-query (snap)
   "The loaded snapshot answers `query --snapshot`; nothing is reloaded."

@@ -224,7 +224,7 @@ slice file (the loader list names it once per fold) never collide."
                      (format nil "the snapshot was accepted as a --session for ~A" verb)))
       ;; No-replace: a second load into the same directory refuses.
       (multiple-value-bind (again out)
-          (state-load :from export-dir :into snap-dir :max-bytes 1000000)
+          (state-load :from export-dir :into snap-dir :max-bytes 1000000 :max-depth 10 :max-nodes 100)
         (ok (null again) "an existing destination was loaded over: ~A" out)
         (ok (search "exists" out) "the refusal names the existing destination: ~A" out))
       ;; A changed member digest is a gap, refuses, and leaves no destination.
@@ -234,13 +234,13 @@ slice file (the loader list names it once per fold) never collide."
         (with-open-file (out (merge-pathnames "state/snapshot.sexp" tampered)
                              :direction :output :if-exists :overwrite)
           (write-string "((:id \"tampered\" :type :task :parent () :state :doing)) " out))
-        (multiple-value-bind (bad out) (state-load :from tampered :into dest :max-bytes 1000000)
+        (multiple-value-bind (bad out) (state-load :from tampered :into dest :max-bytes 1000000 :max-depth 10 :max-nodes 100)
           (ok (null bad) "a changed member digest loaded: ~A" out)
           (ok (search "changed digest" out) "the refusal names the digest: ~A" out)
           (ok (null (probe-file dest)) "an incomplete load left a destination")))
       ;; A bound breach refuses before anything is written.
       (let ((dest (concatenate 'string base "overrun-load/")))
-        (multiple-value-bind (bad out) (state-load :from export-dir :into dest :max-bytes 1)
+        (multiple-value-bind (bad out) (state-load :from export-dir :into dest :max-bytes 1 :max-depth 10 :max-nodes 100)
           (ok (null bad) "an output overrun loaded: ~A" out)
           (ok (search "overrun" out) "the refusal names the overrun: ~A" out)
           (ok (null (probe-file dest)) "an overrun left a destination"))))))

@@ -345,20 +345,23 @@ Checks completion before until, tip == base, and OWNER generation/token."
                            (journal-token nil) (owner-record nil) (now nil)
                            (my-bench "") (lock-held t)
                            (socket-path nil) (serve nil) (foreground t)
-                           (cache nil) (resolvers nil))
+                           (cache nil) (resolvers nil)
+                           (max-bytes 104857600) (max-depth 64) (max-nodes 100000))
   "Start or resume a session. With SERVE the session becomes the resident
 process: it binds the local listener at SOCKET-PATH and serves reads, and with
 FOREGROUND NIL the caller is the launcher, which gets the SESSION OK line and
-returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
+returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267).
+Every file read by this session is governed by its max-bytes, max-depth, and
+max-nodes bounds (SPEC-WORK.md:839-845)."
   (multiple-value-bind (action record line exit-code)
       (evaluate-ownership-claim owner-record owner
-                               :now (or now (format-rfc3339 (get-universal-time)))
-                               :every every
-                               :skew skew
-                               :token token
-                               :journal-token journal-token
-                               :my-bench my-bench
-                               :lock-held lock-held)
+                                :now (or now (format-rfc3339 (get-universal-time)))
+                                :every every
+                                :skew skew
+                                :token token
+                                :journal-token journal-token
+                                :my-bench my-bench
+                                :lock-held lock-held)
     (if (eq action :fenced)
         (values nil line exit-code)
         (let* ((k (make-kernel :state (if (typep state-seed 'wstate)
@@ -366,7 +369,10 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                           (make-seed-state state-seed))
                                :journal (or journal (make-ordering-journal))))
                (cache-path (or cache ""))
-               (verification (session-verification-from-cache cache-path resolvers))
+               (verification (session-verification-from-cache cache-path resolvers
+                                                             :max-bytes max-bytes
+                                                             :max-depth max-depth
+                                                             :max-nodes max-nodes))
                (sess (make-session :path (or path "")
                                    :owner (owner-owner record)
                                    :generation (owner-generation record)
@@ -377,6 +383,9 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                    :base base
                                    :every every
                                    :skew skew
+                                   :max-bytes max-bytes
+                                   :max-depth max-depth
+                                   :max-nodes max-nodes
                                    :cache cache-path
                                    :verification verification)))
           (if serve
@@ -384,3 +393,81 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                     :socket-path (or socket-path path)
                                     :foreground foreground)
               (values sess line 0))))))
+
+;;; ----------------------------------------------------------------------
+;;; Session bounded file reads (SPEC-WORK.md:837-845)
+;;; ----------------------------------------------------------------------
+
+(defun read-bounded-file (path &key max-bytes max-depth max-nodes session (require-all t) (signal-error t))
+  "Read a file under the uniform read bounds: max-bytes, max-depth, and max-nodes.
+If SESSION is supplied, its bounds govern the read (SPEC-WORK.md:839-845).
+If REQUIRE-ALL is true and bounds are missing, refuse exit 2 ('refusing to guess').
+If any bound is exceeded, refuse exit 2 naming which bound and which file, never truncated."
+  (let ((mb (if session (session-max-bytes session) max-bytes))
+        (md (if session (session-max-depth session) max-depth))
+        (mn (if session (session-max-nodes session) max-nodes)))
+    (when (and require-all (null session))
+      (unless mb
+        (if signal-error
+            (error 'missing-read-bounds :bound "--max-bytes")
+            (return-from read-bounded-file (values nil "missing --max-bytes: refusing to guess" 2))))
+      (unless md
+        (if signal-error
+            (error 'missing-read-bounds :bound "--max-depth")
+            (return-from read-bounded-file (values nil "missing --max-depth: refusing to guess" 2))))
+      (unless mn
+        (if signal-error
+            (error 'missing-read-bounds :bound "--max-nodes")
+            (return-from read-bounded-file (values nil "missing --max-nodes: refusing to guess" 2)))))
+    (unless (probe-file path)
+      (if signal-error
+          (error 'unsupported-input :what (format nil "file not found: ~A" path))
+          (return-from read-bounded-file (values nil (format nil "file not found: ~A" path) 2))))
+    (let ((file-str (namestring (merge-pathnames path))))
+      (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
+        (let ((len (file-length in)))
+          (when (and mb (> len mb))
+            (if signal-error
+                (error 'read-bounds-exceeded :file file-str :bound "--max-bytes" :limit mb :observed len)
+                (return-from read-bounded-file
+                  (values nil (format nil "read ~A: ~D bytes exceeds --max-bytes ~D" file-str len mb) 2))))))
+      (let ((text (with-open-file (in path :direction :input :element-type 'character :external-format :utf-8)
+                    (let ((seq (make-string (file-length in))))
+                      (let ((n (read-sequence seq in)))
+                        (subseq seq 0 n))))))
+        (multiple-value-bind (depth nodes) (intake-scan text)
+          (when (and md (> depth md))
+            (if signal-error
+                (error 'read-bounds-exceeded :file file-str :bound "--max-depth" :limit md :observed depth)
+                (return-from read-bounded-file
+                  (values nil (format nil "read ~A: depth ~D exceeds --max-depth ~D" file-str depth md) 2))))
+          (when (and mn (> nodes mn))
+            (if signal-error
+                (error 'read-bounds-exceeded :file file-str :bound "--max-nodes" :limit mn :observed nodes)
+                (return-from read-bounded-file
+                  (values nil (format nil "read ~A: nodes ~D exceeds --max-nodes ~D" file-str nodes mn) 2)))))
+        (values text (format nil "READ OK file=~A bytes=~D" file-str (length text)) 0)))))
+
+(defun session-read-file (sess path &key (signal-error nil))
+  "Read PATH under the bounds of SESS (SPEC-WORK.md:839-845)."
+  (read-bounded-file path :session sess :signal-error signal-error))
+
+(defun session-read-snapshot (sess path &key (signal-error nil))
+  "Read a snapshot file under the bounds of SESS (SPEC-WORK.md:839-845)."
+  (read-bounded-file path :session sess :signal-error signal-error))
+
+(defun session-read-archive (sess path &key (signal-error nil))
+  "Read an archive file under the bounds of SESS (SPEC-WORK.md:839-845)."
+  (read-bounded-file path :session sess :signal-error signal-error))
+
+(defun session-read-journal (sess path &key (signal-error nil))
+  "Read a journal file under the bounds of SESS (SPEC-WORK.md:839-845)."
+  (read-bounded-file path :session sess :signal-error signal-error))
+
+(defun session-read-cache (sess path &key (signal-error nil))
+  "Read a verification cache file under the bounds of SESS (SPEC-WORK.md:839-845)."
+  (read-bounded-file path :session sess :signal-error signal-error))
+
+(defun session-read-bundle (sess path &key (signal-error nil))
+  "Read a replay bundle file under the bounds of SESS (SPEC-WORK.md:839-845)."
+  (read-bounded-file path :session sess :signal-error signal-error))

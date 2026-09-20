@@ -45,7 +45,20 @@
   ;; SPEC-WORK.md:1674-1689 -- the live lease's holder, or NIL for
   ;; `holder=unowned`. W is the view of O nodes whose holder is live, never a
   ;; field of its own.
-  holder)
+  holder
+  ;; E01-F02-03: Unknown keys on a node are preserved and ignored (SPEC-WORK.md:845-847)
+  (unknown-keys nil))
+
+(defparameter *known-node-types*
+  '(:work-set :epic :feature :roadmap :task :bug)
+  "The recognized node kinds (SPEC-WORK.md:888-955). An unknown :type is a refusal.")
+
+(defparameter *standard-node-keys*
+  '(:id :type :parent :coordinator :children :required :required-count :required-open
+    :state :branch :open-count :deps :dependents :needs-broken :links :title
+    :category :private :version :repo :view :meta-log :settles :revived :estimate :holder
+    :acceptance :responsible :priority)
+  "The standard node keys. Unknown keys are preserved on the node (SPEC-WORK.md:845-847).")
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -137,6 +150,21 @@ own ancestor walk, and serialization of the whole state."
 (defun node-private (state id) (node-metadata-reader #'wnode-private state id))
 (defun node-version (state id) (node-metadata-reader #'wnode-version state id))
 
+(defun node-unknown-keys (state-or-kernel id)
+  "The preserved unknown keys on node ID (SPEC-WORK.md:845-847)."
+  (let* ((state (if (typep state-or-kernel 'kernel)
+                    (kernel-state state-or-kernel)
+                    state-or-kernel))
+         (n (%node-quiet state id)))
+    (when n (wnode-unknown-keys n))))
+
+(defun (setf node-unknown-keys) (value state-or-kernel id)
+  (let* ((state (if (typep state-or-kernel 'kernel)
+                    (kernel-state state-or-kernel)
+                    state-or-kernel))
+         (n (%node-quiet state id)))
+    (when n (setf (wnode-unknown-keys n) value))))
+
 (defun metadata-digest (state)
   "A digest of the five metadata fields of every node, in id order. A no-effect
 edit leaves it unchanged; a real edit moves it (SPEC-WORK.md:5627)."
@@ -162,44 +190,51 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
   (let ((table (make-hash-table :test #'equal))
         (order '()))
     (dolist (spec nodes)
-      (let ((id (getf spec :id)))
+      (let* ((id (getf spec :id))
+             (type (getf spec :type)))
+        (unless (member type *known-node-types*)
+          (error 'unsupported-input :what (format nil "rule 1: unknown node type ~A" type)))
         (when (gethash id table)
           (error 'unsupported-input :what (format nil "rule 1: duplicate id ~A" id)))
         (push id order)
-        (setf (gethash id table)
-              (make-wnode :id id
-                          :type (getf spec :type)
-                          :parent (getf spec :parent)
-                          ;; SPEC-WORK.md:4256 -- the coordination tree is a
-                          ;; distinct structure from the work containment tree:
-                          ;; a node's :coordinator is its one direct coordinating
-                          ;; parent, independent of its containment :parent.
-                          :coordinator (getf spec :coordinator)
-                          :children '()
-                          ;; The approved data model defaults :required to true.
-                          ;; NIL is the restricted-data spelling used by this
-                          ;; static seed subset for an explicitly optional node.
-                          :required (%seed-required spec)
-                          :required-count 0
-                          :required-open 0
-                          :state (getf spec :state :unknown)
-                          :branch :o
-                          :open-count 0
-                          :deps (copy-list (getf spec :deps))
-                          :dependents '()
-                          :needs-broken nil
-                          :links (getf spec :links +absent+)
-                          :title (getf spec :title +absent+)
-                          :category (getf spec :category +absent+)
-                          :private (getf spec :private +absent+)
-                          :version (getf spec :version +absent+)
-                          :repo (getf spec :repo)
-                          :view nil
-                          :meta-log '()
-                          :settles 0
-                          :revived "-"
-                          :estimate (getf spec :estimate +absent+)
-                          :holder (getf spec :holder)))))
+        (let ((unknown (loop for (k v) on spec by #'cddr
+                             unless (member k *standard-node-keys*)
+                             append (list k v))))
+          (setf (gethash id table)
+                (make-wnode :id id
+                            :type type
+                            :parent (getf spec :parent)
+                            ;; SPEC-WORK.md:4256 -- the coordination tree is a
+                            ;; distinct structure from the work containment tree:
+                            ;; a node's :coordinator is its one direct coordinating
+                            ;; parent, independent of its containment :parent.
+                            :coordinator (getf spec :coordinator)
+                            :children '()
+                            ;; The approved data model defaults :required to true.
+                            ;; NIL is the restricted-data spelling used by this
+                            ;; static seed subset for an explicitly optional node.
+                            :required (%seed-required spec)
+                            :required-count 0
+                            :required-open 0
+                            :state (getf spec :state :unknown)
+                            :branch :o
+                            :open-count 0
+                            :deps (copy-list (getf spec :deps))
+                            :dependents '()
+                            :needs-broken nil
+                            :links (getf spec :links +absent+)
+                            :title (getf spec :title +absent+)
+                            :category (getf spec :category +absent+)
+                            :private (getf spec :private +absent+)
+                            :version (getf spec :version +absent+)
+                            :repo (getf spec :repo)
+                            :view nil
+                            :meta-log '()
+                            :settles 0
+                            :revived "-"
+                            :estimate (getf spec :estimate +absent+)
+                            :holder (getf spec :holder)
+                            :unknown-keys unknown)))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -720,9 +755,16 @@ the caller installs all of it or none of it."
           (wstate-history candidate))
     candidate))
 
-(defun reconstruct-state (text)
+(defun reconstruct-state (text &key max-bytes max-depth max-nodes)
   "A full independent reconstruction: parse the canonical bytes, seed a fresh
-set, and replay the history over it."
+set, and replay the history over it. When bounds are supplied, enforces them
+before parsing finishes (SPEC-WORK.md:837-845)."
+  (when (or max-bytes max-depth max-nodes)
+    (check-read-bounds text
+                       :max-bytes max-bytes
+                       :max-depth max-depth
+                       :max-nodes max-nodes
+                       :file "state"))
   (let* ((form (read-restricted text))
          (seed (getf form :seed))
          (history (getf form :history))

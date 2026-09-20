@@ -69,7 +69,7 @@ nova-work is in this release, and Glenn's bar is that it ships finished, dogfood
 
 - every blocker above closed with a landed fix and a test, not a rerun;
 - 22 of 22 tools clean in the dogfood, which today means the `docs/TESTS.md` drift closed;
-- nova-work's 231 criteria verified, which today stands at 155.
+- nova-work's 231 criteria verified, which today stands at 158.
 
 No date is promised here and no estimate is given. The numbers move when the evidence moves.
 
@@ -79,7 +79,7 @@ No date is promised here and no estimate is given. The numbers move when the evi
 Help AI friends coordinate work without repeatedly rebuilding the plan in their context.
 
 **Measured 2026-09-19 at `dev` [`4c793b55`](https://github.com/mas-bandwidth/nova-tools/commit/4c793b55a30160e5fe1ed45e25928f2c85dcfe5c).**
-**155 of 231 acceptance criteria verified (67%). 23 of 63 features verified (37%).**
+**158 of 231 acceptance criteria verified (68%). 24 of 63 features verified (38%).**
 A criterion is ticked here only when a named test proves it and that test passed at this exact revision. The run is `cd lisp/nova-work && ./run-tests.sh` — `NOVA-WORK SLICE1 total=336 pass=336 fail=0`. Every ticked criterion names its tests under the feature.
 The page said 0% until today. That was stale, not cautious: the work was there and the page had no way to show it. Each feature now carries `criteria verified / criteria total`, so a feature four-fifths done reads as four-fifths done instead of as nothing.
 
@@ -184,7 +184,7 @@ All active engineering and research items outside the v1 product feature denomin
 | Feature | Criteria verified | Verified |
 |---|:---:|:---:|
 | E01-F01 — Restricted Lisp reader and safe syntax | 3/3 | ✅ |
-| E01-F02 — Uniform read bounds and schema validation | 0/3 | ❌ |
+| E01-F02 — Uniform read bounds and schema validation | 3/3 | ✅ |
 | E01-F03 — Stable node identity and canonical containment | 1/4 | ❌ |
 | E01-F04 — Typed work kinds and acceptance schema | 0/4 | ❌ |
 | E01-F05 — Canonical encoding and semantic round trip | 2/3 | ❌ |
@@ -208,11 +208,13 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 Prerequisites: E01-F01.
 
-- [ ] Require max-bytes, max-depth and max-nodes on every file read
-- [ ] Apply session bounds to snapshots, archives, journals, caches and replay bundles
-- [ ] Preserve unknown keys and refuse unknown node types
+- [x] Require max-bytes, max-depth and max-nodes on every file read
+- [x] Apply session bounds to snapshots, archives, journals, caches and replay bundles
+- [x] Preserve unknown keys and refuse unknown node types
 
 Source sections: The data; Hostile data and limits.
+
+Verified criteria evidence at suite `lisp/nova-work/run-tests.sh` (458/458): tests/replays-e01-f02-read-bounds.lisp: TestE01F02RequireMaxBytesMaxDepth, TestE01F02ApplySessionBoundsTo, TestE01F02PreserveUnknownKeysAndRefuse.
 
 **E01-F03 — Stable node identity and canonical containment**
 

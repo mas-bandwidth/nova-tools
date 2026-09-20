@@ -13,6 +13,14 @@
    #:nova-work-error
    #:restricted-data-violation
    #:unsupported-input
+   #:unsupported-input-what
+   #:read-bounds-exceeded
+   #:read-bounds-exceeded-bound
+   #:read-bounds-exceeded-file
+   #:read-bounds-exceeded-limit
+   #:read-bounds-exceeded-observed
+   #:missing-read-bounds
+   #:missing-read-bounds-bound
    #:not-implemented
    #:journal-error
    #:journal-corrupt-data
@@ -38,6 +46,7 @@
    #:canonical-string
    #:canonical-print
    #:read-restricted
+   #:check-read-bounds
    ;; digest
    #:sha256-hex
    ;; events
@@ -60,6 +69,10 @@
    #:kind-fields
    ;; state
    #:make-seed-state
+   #:*known-node-types*
+   #:*standard-node-keys*
+   #:node-unknown-keys
+   #:wnode-unknown-keys
    #:state-open-count
    #:state-closed-count
    #:state-revision
@@ -175,6 +188,16 @@
     #:session-submit
     #:session-check-admission
     #:session-reconfirm
+    #:session-max-bytes
+    #:session-max-depth
+    #:session-max-nodes
+    #:read-bounded-file
+    #:session-read-file
+    #:session-read-snapshot
+    #:session-read-archive
+    #:session-read-journal
+    #:session-read-cache
+    #:session-read-bundle
     #:parse-rfc3339
     #:format-rfc3339
     #:parse-duration

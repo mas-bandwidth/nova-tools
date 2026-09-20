@@ -63,6 +63,24 @@
   (:report (lambda (c s)
              (format s "socket ~A is held by another process" (socket-held-path c)))))
 
+(define-condition read-bounds-exceeded (unsupported-input)
+  ((bound :initarg :bound :reader read-bounds-exceeded-bound)
+   (file :initarg :file :reader read-bounds-exceeded-file)
+   (limit :initarg :limit :reader read-bounds-exceeded-limit)
+   (observed :initarg :observed :reader read-bounds-exceeded-observed))
+  (:report (lambda (c s)
+             (format s "read ~A bound ~A exceeded: limit ~D observed ~D"
+                     (read-bounds-exceeded-file c)
+                     (read-bounds-exceeded-bound c)
+                     (read-bounds-exceeded-limit c)
+                     (read-bounds-exceeded-observed c)))))
+
+(define-condition missing-read-bounds (unsupported-input)
+  ((bound :initarg :bound :initform nil :reader missing-read-bounds-bound))
+  (:report (lambda (c s)
+             (format s "missing ~A: refusing to guess"
+                     (or (missing-read-bounds-bound c) "bound")))))
+
 ;;; Instrumentation. `open-count-is-read-not-computed` (SPEC-WORK.md:3229) asks
 ;;; for zero visits, zero parses and zero replays on a resident current-revision
 ;;; |O| query, so each of the three has a counter and every path that does one
