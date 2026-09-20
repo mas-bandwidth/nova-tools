@@ -310,3 +310,33 @@
                  "the pinned Common Lisp implementation is SBCL")
     (ok (and (stringp build) (search "SBCL" build))
         "the build identity names the pinned SBCL runtime: ~A" build)))
+
+;;; ------------------------------------------------------------------
+;;; TestE08F04PresenceAndRecoveryDeriveOne   SPEC-WORK.md:4129-4132,4146-4147
+;;; ------------------------------------------------------------------
+;;;
+;;; E08-F04-07 "presence-and-recovery: derive one presence per friend from the
+;;; newest of the four beat sources (bus cursor, wake probe, harness hook,
+;;; manual), read asleep at 300 s and unacknowledged at 600 s, refuse assignment
+;;; to an asleep or unknown friend, and recover only by a coordinator's recorded
+;;; reassign that cites the reading and fences the prior lease." The spec's rule
+;;; is "Presence is derived from ... the newest record, whatever its source"
+;;; (SPEC-WORK.md:4129-4130) and "The tool derives one presence per friend from
+;;; whichever record is newest and reads no other store" (4146-4147). This
+;;; drives exactly that: four beat records, one per source, at four instants,
+;;; and the single derived presence must be the newest one.
+
+(deftest "TestE08F04PresenceAndRecoveryDeriveOne"
+    "docs/SPEC-WORK.md:4129-4132,4146-4147"
+    "expected=one-presence-derived-from-the-newest-of-four-beat-sources"
+  ;; four beat records, one per source; harness-hook at 300 is the newest and
+  ;; must be the one presence the tool derives for this friend.
+  (let* ((beats '((:bus-cursor . 100) (:wake-probe . 200)
+                   (:harness-hook . 300) (:manual . 250)))
+         (derived (handler-case (derive-friend-presence "stella" beats)
+                    (error () nil))))
+    (ok derived
+        "expected one presence per friend derived from the newest of the four beat sources (bus cursor, wake probe, harness hook, manual; harness-hook@300 newest); got no presence derivation for the four beat sources")
+    (when derived
+      (check-equal :harness-hook (friend-presence-source derived)
+                   "the single derived presence is the newest source, not a per-source presence"))))
