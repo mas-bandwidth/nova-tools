@@ -883,6 +883,18 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 	return sandbox.ExitCannotRun
 }
 
+// policyText is rule 15 for the backend this binary was built with: the darwin
+// profile where the wall is sandbox-exec, the landlock ruleset where it is
+// Landlock. Printing the darwin template under backend=landlock showed a reader
+// seven kilobytes of policy no linux run uses (#1469).
+func policyText(p *sandbox.Policy) (string, error) {
+	if sandbox.Backend == "landlock" {
+		return sandbox.LandlockPolicyText(p)
+	}
+	text, _, err := sandbox.DarwinProfile(p)
+	return text, err
+}
+
 // policyVerb prints the generated policy for a read/write pair and runs NOTHING. It is
 // how a reader checks the wall without trusting the document — and it is how
 // profiles/darwin-check.sh can be run against the profile THIS TOOL generates, so that
@@ -921,7 +933,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 		return sandbox.ExitCannotRun
 	}
-	text, _, err := sandbox.DarwinProfile(p)
+	text, err := policyText(p)
 	if err != nil {
 		fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_write: %s\n", oneline.Err(err))
 		return sandbox.ExitCannotRun
