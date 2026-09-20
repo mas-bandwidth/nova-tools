@@ -277,3 +277,34 @@ PATH is bound too, so a case can reopen the same journal and replay it."
     (multiple-value-bind (okp line) (submit k (lease-request :node "root/dep" :request "lneed-2"))
       (ok okp "a need in C refused its dependent's lease: ~A" line))
     (check-equal "emma" (node-holder (kernel-state k) "root/dep") "the dependent is held")))
+
+;;; ------------------------------------------------------------------
+;;; 7. E11-F05-02: packet-is-smallest-sufficient (docs/SPEC-WORK.md:4649)
+;;; ------------------------------------------------------------------
+;;; "the packet carries the delta since this reader's recorded head, the rules it
+;;; touches, the open findings with dispositions, the new behaviour with evidence
+;;; pointers and links to the full sources; the whole diff only when this reader
+;;; has never read the entry." A reader's recorded head is real here: it is the
+;;; verdict row keyed by the reader and the exact head it read
+;;; (docs/SPEC-WORK.md:4535, src/replays-verdict-state.lisp); a reader with no row is a
+;;; first read owed the whole diff. The delta/whole distinction that makes the
+;;; packet smallest-sufficient is exercised nowhere in src/, so this case is the
+;;; red that proves criteria E11-F05 is unmet: it asserts the packet actor and
+;;; names what it must carry, and fails while the kernel has no such actor.
+
+(deftest "TestE11F05PacketIsSmallestSufficientThe"
+    "docs/SPEC-WORK.md:4649"
+    "expected=delta-since-recorded-head-plus-rules-findings-evidence-pointers-links;whole-diff-only-on-first-read"
+  (let ((reader "rowan")
+        (head "f01a0c42d7de34acd4cea8199e2f35510c50cde5"))
+    (let ((recorded (make-verdict-row :node "root" :reader reader :head head
+                                      :decision :approve)))
+      (check-string= reader (verdict-row-reader recorded)
+                     "the recorded head names its reader")
+      (check-string= head (verdict-row-head recorded)
+                     "the recorded head is the exact head the reader last read"))
+    (let ((actor (or (find-symbol "BUILD-DECISION-PACKET" :nova-work)
+                     (find-symbol "MAKE-DECISION-PACKET" :nova-work)
+                     (find-symbol "DECISION-PACKET" :nova-work))))
+      (ok (and actor (fboundp actor))
+          "SPEC-WORK.md:4649 packet-is-smallest-sufficient: expected a decision-packet builder returning the delta since the reader's recorded head, the rules it touches, the open findings with dispositions, the new behaviour with evidence pointers and links to the full sources (the whole diff only on a first read); the kernel defines no such builder, so the criterion is unmet"))))
