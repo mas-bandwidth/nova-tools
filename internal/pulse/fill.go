@@ -130,6 +130,7 @@ type FillInput struct {
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
+	Stop     string        // touch this file to stop the loop; empty names no stop file
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Now      func() time.Time
@@ -207,6 +208,16 @@ func Fill(in FillInput) int {
 	}
 
 	for tick := 1; ; tick++ {
+		// THE STOP FILE, checked before a card is claimed and never in the middle of a
+		// tick: the tick in flight finishes, no further card is claimed, and every card
+		// already live on a bench keeps running. A kill would land between the move out of
+		// --ready and the launcher, leaving a card under --launched that nobody started.
+		if stopped(in.Stop) {
+			fmt.Fprintf(in.Stdout, "FILL STOP tick=%d file=%s live=%d note=%q\n",
+				tick, oneline.Field(in.Stop), len(readyCards(in.Launched)),
+				"no new launches; the live cards are untouched and nothing was killed")
+			return 0
+		}
 		lines, res := fillTick(in, tick)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
@@ -269,6 +280,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	for i, bench := range in.Benches {
 		if n, err := in.Capacity.Capacity(bench); err != nil {
 			capacityFailed[i] = true
+			// FAIL CLOSED, AND SAY SO, PER BENCH. A probe or parse failure is zero free
+			// slots on THAT bench -- never a deal, never a fall-through -- and every
+			// failing bench gets its own line: the tick used to keep only the first
+			// reason, so a fleet nobody could read named one machine and went quiet.
+			fmt.Fprintf(in.Stderr, "FILL UNREADABLE bench=%s free=0 reason=%s\n",
+				field(bench), oneline.Err(err))
 			if res.err == nil {
 				res.err = fmt.Errorf("capacity on %s: %w", field(bench), err)
 			}
@@ -534,6 +551,17 @@ func readLaunchedMarker(dir, base string) map[string]string {
 		}
 	}
 	return out
+}
+
+// stopped says whether the stop file is there. No --stop names no stop file, and a file
+// that is not there is a loop that runs: the check is a stat and nothing else, so a
+// resident loop pays one syscall a tick for a control that never needs a signal.
+func stopped(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // isDir says whether a path is a directory that is there.
