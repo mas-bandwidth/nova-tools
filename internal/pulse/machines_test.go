@@ -223,3 +223,67 @@ func TestASingleBenchFleetVerbWithoutARegistryKeepsItsOlderGuard(t *testing.T) {
 		t.Fatalf("stdout = %q, want the studio refusal", out.String())
 	}
 }
+
+func certifiedMachinesFile(t *testing.T, dir string, certified, uncertified []string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("# name\tssh\tos/arch\troles\tseat\tcores\tnotes\n")
+	for _, name := range certified {
+		b.WriteString(name + "\t" + name + "\tlinux/x64\tbench\tswarm-" + name + "\t64\tcertified=2026-09-18 the report\n")
+	}
+	for _, name := range uncertified {
+		b.WriteString(name + "\t" + name + "\tlinux/x64\tbench\tswarm-" + name + "\t64\tprovisioned, no certification run yet\n")
+	}
+	path := filepath.Join(dir, "machines.tsv")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// 377916fc: with no bench named, fill takes every certified bench from the
+// registry. A Go literal of fleet names was the previous pool.
+func TestFillWithNoBenchNamedUsesTheCertifiedRegistryPool(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "a card\n")
+	l := &laneLauncher{}
+	var out, errb bytes.Buffer
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched,
+		Machines: certifiedMachinesFile(t, dir, []string{"hulk"}, []string{"raw-bench"}),
+		Once:     true,
+		Stdout:   &out, Stderr: &errb,
+		Capacity: laneCap{"hulk": 10, "raw-bench": 10},
+		Launcher: l,
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stderr=%q stdout=%q", code, errb.String(), out.String())
+	}
+	if len(l.calls) != 1 || !strings.HasPrefix(l.calls[0], "hulk ") {
+		t.Fatalf("launcher calls = %q, want one launch on hulk", l.calls)
+	}
+	for _, call := range l.calls {
+		if strings.HasPrefix(call, "raw-bench ") {
+			t.Fatalf("filled an uncertified bench: %q", l.calls)
+		}
+	}
+}
+
+func TestFillWithNoBenchNamedRefusesAnEmptyCertifiedPool(t *testing.T) {
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Fill(FillInput{
+		Ready: filepath.Join(dir, "ready"), Launched: filepath.Join(dir, "launched"),
+		Machines: certifiedMachinesFile(t, dir, nil, []string{"raw-bench"}),
+		Once:     true,
+		Stdout:   &out, Stderr: &errb,
+		Capacity: laneCap{"raw-bench": 10}, Launcher: &laneLauncher{},
+	})
+	if code != 2 {
+		t.Fatalf("fill exit = %d, want 2; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "names no certified bench") {
+		t.Fatalf("stderr = %q, want the empty certified pool refusal", errb.String())
+	}
+}

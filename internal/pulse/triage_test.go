@@ -222,3 +222,56 @@ func TestTriageVerbWritesTheCard(t *testing.T) {
 		t.Errorf("the refusal does not name the seven: %s", e2.String())
 	}
 }
+
+// ddce356e: --decide appends one TRIAGE DECIDE line and does not change the
+// packet. Below the floor the verdict is `?`; at or above it, the typed choice.
+func TestTriageDecideAppendsAnAdvisoryLine(t *testing.T) {
+	queue := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(queue, "UNDECIDED"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(queue, "UNDECIDED", "fence.txt")
+	if err := os.WriteFile(evidence, []byte("RESULT card-892 sha=0123456789ab\nPERMISSION denied: reading outside the job directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "card.md")
+
+	below := &fakeDecider{choice: "ADMIT", conf: 0.60}
+	var stdout, stderr bytes.Buffer
+	if exit := Triage(TriageInput{
+		Case: "fence", Queue: queue, Out: out, Ref: "card-892", Evidence: evidence,
+		Decide: true, Floor: 0.90, Decider: below,
+		Stdout: &stdout, Stderr: &stderr,
+	}); exit != 0 {
+		t.Fatalf("below-floor exit %d: %s%s", exit, stdout.String(), stderr.String())
+	}
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want TRIAGE OK and one DECIDE line, got %q", stdout.String())
+	}
+	if !strings.HasPrefix(lines[0], "TRIAGE OK case=fence") {
+		t.Fatalf("pre-flag line = %q", lines[0])
+	}
+	for _, must := range []string{"TRIAGE DECIDE", "verdict=?", "conf=0.60", "floor=0.90", "evidence=" + evidence} {
+		if !strings.Contains(lines[1], must) {
+			t.Fatalf("below-floor suggestion %q does not carry %q", lines[1], must)
+		}
+	}
+
+	above := &fakeDecider{choice: "ADMIT", conf: 0.95}
+	stdout.Reset()
+	stderr.Reset()
+	if exit := Triage(TriageInput{
+		Case: "fence", Queue: queue, Out: out, Ref: "card-892", Evidence: evidence,
+		Decide: true, Floor: 0.90, Decider: above,
+		Stdout: &stdout, Stderr: &stderr,
+	}); exit != 0 {
+		t.Fatalf("above-floor exit %d: %s%s", exit, stdout.String(), stderr.String())
+	}
+	sug := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")[1]
+	for _, must := range []string{"TRIAGE DECIDE", "verdict=ADMIT", "conf=0.95"} {
+		if !strings.Contains(sug, must) {
+			t.Fatalf("above-floor suggestion %q does not carry %q", sug, must)
+		}
+	}
+}
