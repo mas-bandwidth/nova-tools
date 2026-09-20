@@ -82,6 +82,11 @@ var workAudit = audit.Config{
 		// --since parse; the two durations a refusal names are rendered through
 		// oneline.Escape before they reach a line.
 		`"time"`,
+		// sort orders socketverbs.go's derived lists -- the sub-verbs a family
+		// refusal names and the whole socket verb set a test walks -- so that
+		// two runs print one line. It reorders strings this package already
+		// holds and writes nothing itself.
+		`"sort"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

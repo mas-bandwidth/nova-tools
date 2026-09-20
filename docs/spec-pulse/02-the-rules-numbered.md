@@ -124,7 +124,14 @@
     the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's
     label, `done/` before `failed/`, latest task first — and a task in `failed/` whose
     `RESULT.md` exists with a first line equal to the card's `RESULT` line is harvested as a
-    result, not a failure, because the contract decides, never the directory it sits in. When
+    result, not a failure, because the contract decides, never the directory it sits in. The
+    `--then` harvest launch chains is `harvest --id <id> --root <root>` with no `--bench`.
+    Launch writes the pulse table's slot column as `-` before swarm allocates; a remote card's
+    files come back at `<root>/<bench>-<n>/jobs/<label>/` (SPEC-SWARM, Three files come back).
+    Harvest opens a same-label job under the root whose `RESULT.md` line 1 matches the
+    current card contract, and only when that match is unique. Two matches are
+    `HARVEST REFUSED` ambiguous (a leftover and the current pull of the same card); mtime
+    is not identity. A unique match is not counted `elsewhere` (issue #1907). When
     `--root` names a bare swarm root with no `cards.tsv` — the caller handed cards straight to
     `nova-swarm batch` — `harvest` folds every `<root>/<slot>/jobs/<label>/RESULT.md` under it,
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
@@ -133,6 +140,13 @@
     **Amended by `docs/SPEC-TOOLWORK.md` §1 (draft, 2026-09-19):** between this rule's
     verify and its push stands `nova-pulse accept` — the card's claim is executed, its test is seen
     red without its change, and a rejected card pushes nothing.
+    **Amended for issue #2032:** before any push or PR, harvest fetches the authorized
+    destination's target, pins that OID, and takes `git diff --name-only <oid>..<branch>`
+    (two-dot, not the merge-base and not a cached `origin/dev`). The diff must contain only
+    the card's declared `PATHS:`; otherwise harvest refuses and names the offending files.
+    A missing explicit target defaults to `dev`. A present invalid `BASE` or `--base`
+    (`HEAD`, a hex OID, malformed) is a refusal, never a fall-through to `dev`. A stale
+    base would otherwise revert later landings.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and

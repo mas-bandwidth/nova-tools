@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,6 +22,13 @@ func PrepareReply(t *Bus, me Participant, original *Note, body string, now time.
 // for byte; PrepareReply is that call and is kept so a caller with no host reads as one.
 func PrepareReplyFrom(t *Bus, me Participant, original *Note, body string, now time.Time, host string) (Prepared, error) {
 	var p Prepared
+	normBody := strings.TrimSpace(NormalizeBody(body))
+	if normBody == "" {
+		return p, errors.New("the note has no body")
+	}
+	if normBody == PlaceholderBody || ContainsPlaceholderBody(body) {
+		return p, fmt.Errorf("the body is the unedited template placeholder (%s)", PlaceholderBody)
+	}
 	if host != "" {
 		if err := ValidHost(host); err != nil {
 			return p, err

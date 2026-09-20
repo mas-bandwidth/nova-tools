@@ -22,7 +22,14 @@ func TestMutateLinesAreDocumented(t *testing.T) {
 	}
 	for _, want := range []string{
 		"MUTATE <head8> reverted=<n> red=<n> green=<n> <PASS|FAIL>",
+		// The selected form, #1849: its own line, because it carries a field the
+		// default one does not and a caller gating on `test=` needs to know when it
+		// is there.
+		"MUTATE <head8> reverted=<n> red=<n> green=<n> test=<name> <PASS|FAIL>",
 		"MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>",
+		// The typed abstain, #1850. It is not a refusal and not a verdict, and a
+		// grammar that still spelled it as the old refusal would be false.
+		"MUTATE <head8> ABSTAIN reason=no-change-to-revert",
 	} {
 		if !strings.Contains(string(spec), want) {
 			t.Errorf("docs/SPEC-REVIEW.md missing the line %q (#1708)", want)
@@ -40,6 +47,8 @@ func TestMutateLinesAreDocumented(t *testing.T) {
 		"nova-review mutate --repo <dir> --base <ref> --head <ref>",
 		"nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...]",
 		"reverted=<n>",
+		"--test <name>",
+		"ABSTAIN reason=no-change-to-revert",
 	} {
 		if !strings.Contains(string(cli), want) {
 			t.Errorf("docs/CLI.md missing %q (#1708)", want)
