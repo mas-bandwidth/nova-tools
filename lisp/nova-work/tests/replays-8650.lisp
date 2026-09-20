@@ -174,3 +174,50 @@
                                    :priced-p nil)))
       (ok (absentp (getf unknown :measured-cash))
           "an unsupported cash dimension was reported as zero"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02MapOneIssueToMany                 SPEC-WORK.md:7570-7572
+;;; E09-F02 "Link mode and correspondence reconciliation", criterion
+;;; E09-F02-01 "Map one issue to many nodes and repeated updates without
+;;; duplicates": one public issue may require many work nodes, and a repeated
+;;; intake updates the existing correspondence, never duplicating the work.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F02MapOneIssueToMany" "docs/SPEC-WORK.md:7570-7572"
+    "expected=one-issue=many-nodes,repeated-intake=no-duplicates"
+  (let* ((c0 (make-issue-correspondence))
+         (c1 (record-issue-link c0 "acme/work#11" "acme/work/f1/t1"
+                                :url "https://github.com/acme/work/issues/11"
+                                :revision "r1"))
+         (c2 (record-issue-link c1 "acme/work#11" "acme/work/f1/t2"
+                                :url "https://github.com/acme/work/issues/11"
+                                :revision "r2"))
+         (c3 (record-issue-link c2 "acme/work#11" "acme/work/f1/t3")))
+    ;; One public issue maps to many work nodes, in the order they were linked.
+    (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3")
+                 (correspondence-nodes c3 "acme/work#11")
+                 "one issue did not map to its many work nodes")
+    ;; A repeated intake of an already-linked node updates the existing
+    ;; correspondence rather than appending a second instance of the work.
+    (let ((c4 (record-issue-link c3 "acme/work#11" "acme/work/f1/t2")))
+      (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3")
+                   (correspondence-nodes c4 "acme/work#11")
+                   "a repeated intake duplicated a work node")
+      ;; The existing correspondence keeps its last observed remote revision.
+      (check-string= "r2" (correspondence-revision c4 "acme/work#11")
+                     "the correspondence lost the observed remote revision")
+      ;; A repeated intake of a new node extends the mapping without duplicates.
+      (let ((c5 (record-issue-link c4 "acme/work#11" "acme/work/f1/t4")))
+        (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3"
+                       "acme/work/f1/t4")
+                     (correspondence-nodes c5 "acme/work#11")
+                     "an extended intake did not add the new node once")
+        ;; A second issue keeps its own distinct correspondence without
+        ;; disturbing the first issue's nodes.
+        (let ((c6 (record-issue-link c5 "acme/work#12" "acme/work/f2/t1")))
+          (check-equal '("acme/work/f2/t1") (correspondence-nodes c6 "acme/work#12")
+                       "a second issue did not get its own correspondence")
+          (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3"
+                         "acme/work/f1/t4")
+                       (correspondence-nodes c6 "acme/work#11")
+                       "a second issue disturbed the first issue's nodes"))))))

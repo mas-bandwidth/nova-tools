@@ -1722,6 +1722,12 @@
     #:reconcile-inventory
     #:cost-breakdown
     #:subscription-covers-cash-p
+    ;; issue-correspondence (E09-F02-01, SPEC-WORK.md:7570-7572)
+    #:make-issue-correspondence
+    #:record-issue-link
+    #:correspondence-nodes
+    #:correspondence-url
+    #:correspondence-revision
     ;; replays-8651 (undo-redo, unknown-price-is-not-zero, unrelated-receipts)
     #:resolved-price
     #:reversible-verb-p
