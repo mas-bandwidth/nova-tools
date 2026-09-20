@@ -423,8 +423,9 @@ func main() {
 		os.Exit(n)
 	}
 	// THE SUPERMAN FSEVENTS SHAPE (nova-tools #2058): OpenCode logs this after the card
-	// has already published RESULT.md, then exits 255. 255 is ssh's own "could not
-	// start"; native passing it through made a fill loop retry a finished card.
+	// has already published RESULT.md, then exits 255. Passing 255 through made a
+	// fill loop retry a finished card. Local ssh(1) 255 is any error, not proof
+	// execution never started; the outcome is potentially UNKNOWN.
 	if _, ok := directive(prompt, "FAKE-FSEVENTS"); ok {
 		fmt.Fprintln(os.Stderr, "error: Error starting FSEvents stream")
 		os.Exit(255)

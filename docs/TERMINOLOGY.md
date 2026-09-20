@@ -106,7 +106,9 @@ is available today.
 - **NATIVE** — the printed token of a native card run: `NATIVE OK` when the card
   ran with its harness, `NATIVE INCOMPLETE` when a launch started and did not
   earn OK, `NATIVE REFUSED` when a native invocation is refused. The process
-  never exits 255; that code is ssh's "never started" (#2058).
+  never exits 255 (#2058). Local ssh(1) exits 255 for any error; that is not
+  proof the remote command never started, so the outcome is potentially
+  UNKNOWN and a retry waits on reconciliation.
   ([SPEC-SWARM.md, output grammar](SPEC-SWARM.md#output-grammar))
 - **next-push** — the label for expansionary work during a contraction phase:
   anything the policy's `scope-regex` does not admit is labelled `next-push` and

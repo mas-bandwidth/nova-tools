@@ -1443,18 +1443,21 @@ TERM's cleanup with `stopped=tokens` on the line (rule 13d).
 (issue #2058). The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and
 `NATIVE REFUSED`. A launch that started the harness and then died — including a
 darwin OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md`,
-and exited 255 — still prints one of those three, with the child's code on the
-line as `rc=<n>`. **The process never itself exits 255.** 255 is `ssh`'s own
-"could not start the remote command"; a native that passed 255 through made a
-fill loop treat a finished card as never started and run it twice. The child's
-255 is `rc=255` on the verdict line and the process exits 1 (the verb ran and
-said NO). A refusal before any child starts is `NATIVE REFUSED` at exit 2, as
-today. **Red test:** `TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255` —
-a fake harness that prints the FSEvents line, writes `RESULT.md` and exits 255:
-a verdict line is printed, the process is not 255, `rc=255` is on the line.
-**Negative:** `TestNativeOrdinaryCardsStillPrintOKAndIncomplete` — a card that
-ran and published is still `NATIVE OK` at exit 0; a silent harness is still
-`NATIVE INCOMPLETE`; neither process exits 255.
+and exited 255 — prints exactly one `NATIVE INCOMPLETE` with the child's code
+on the line as `rc=255` and `why=rc`, never OK or REFUSED. **The process never
+itself exits 255.** Local `ssh(1)` exits 255 for any error; that is not proof
+the remote command never started, so the outcome is potentially UNKNOWN, and
+a retry waits on reconciliation (a bound execution receipt, or the verdict
+line). A native that passed 255 through made a fill loop treat a finished card
+as a transport failure and run it twice. The child's 255 is `rc=255` on the
+verdict line and the process exits 1 (the verb ran and said NO). A refusal
+before any child starts is `NATIVE REFUSED` at exit 2, as today. **Red test:**
+`TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255` — a fake harness that
+prints the FSEvents line, writes `RESULT.md` and exits 255: exactly one
+`NATIVE INCOMPLETE` with `rc=255` and `why=rc`, no OK/REFUSED, the process is
+1 not 255. **Negative:** `TestNativeOrdinaryCardsStillPrintOKAndIncomplete` —
+a card that ran and published is still `NATIVE OK` at exit 0; a silent harness
+is still `NATIVE INCOMPLETE`; neither process exits 255.
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
@@ -2104,9 +2107,10 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 | 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d), a `native` whose harness exited 255 (the child's code is `rc=255` on the verdict line; the process is 1, never 255: #2058) |
 | 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`, and `--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
 
-**`native` never exits 255.** That code is `ssh`'s own "could not start the remote
-command". A harness that exited 255 is `rc=255` on the verdict line and process
-exit 1 (#2058).
+**`native` never exits 255.** Local `ssh(1)` exits 255 for any error; that is
+not proof the remote command never started, so the outcome is potentially
+UNKNOWN and a retry waits on reconciliation. A harness that exited 255 is
+`rc=255 why=rc` on the `NATIVE INCOMPLETE` line and process exit 1 (#2058).
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and

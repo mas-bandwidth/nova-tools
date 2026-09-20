@@ -2858,8 +2858,10 @@ entire tree the card started â€” grandchildren included, never just the leader â
 **A launch that started always prints a verdict, and `native` never exits 255 (#2058).**
 The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and `NATIVE REFUSED`. A darwin
 OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md` and exited 255
-still prints one of those, with `rc=255` on the line. 255 is ssh's own "could not start";
-passing it through made a fill loop retry a finished card. The process exits 1.
+prints exactly one `NATIVE INCOMPLETE` with `rc=255` and `why=rc`, never OK or REFUSED.
+Passing 255 through made a fill loop retry a finished card. Local ssh(1) exits 255 for
+any error; that is not proof the remote command never started, so the outcome is
+potentially UNKNOWN and a retry waits on reconciliation. The process exits 1.
 
 ### First run
 
