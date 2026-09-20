@@ -738,7 +738,11 @@ of them prints `RUN STOPPED … : <reason>` rather than inventing a fourteenth.
 **The lane is ORDERED and the order is the order entries were added.** A pass
 walks it from the front and merges **at most one** entry, then stops: the base
 moved, so every entry behind it must be read again. A pass that merged two
-entries would be merging the second against a base no check had seen.
+entries would be merging the second against a base no check had seen. Where
+candidate entries form a stack (one entry's commit is an ancestor of another's),
+topological ancestry ordering takes precedence over arrival order so that parents
+strictly precede children; independent entries break ties by preserving their
+relative arrival order (see **Stacks by ancestry (#2036)**).
 
 ## The merge condition
 
@@ -1478,7 +1482,7 @@ nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own
 nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
 ```
 
-**`simulate`.** It merges the queue's entries onto `origin/<base>` in order in a scratch
+**`simulate`.** It merges the queue's entries onto `origin/<base>` in topological ancestry order (parents before children, preserving queue order for independent entries; see **Stacks by ancestry (#2036)**) in a scratch
 worktree under the repository's own `.git`, runs every check after each squash-merge, and
 names the first entry that turns the base red: `SIMULATE OK #<n>` for each that passes,
 `SIMULATE CONFLICT #<n> with the entries ahead` for one that conflicts (skipped, and the
@@ -1582,6 +1586,35 @@ A non-author drove `nova-merge batch`, `nova-merge queue` and `nova-merge react`
 **The four about a tool that would not say no, or said too much.** **Edge 19**: `react` with neither `--once` nor `--deadline` ran a 60-second loop and exited 0 although its own help said one was required — refused by name, like `nova-work events`. **Edge 20**: one malformed payload killed the reactor at exit 1, although an unknown CHANNEL was already ignored; a payload that is not the JSON its channel promises is one `REACT DROP` line and a count on the closing line, and everything else still fails. **Edge 11**: `--who` on `queue hold` was undocumented and optional, and a hold without it said `by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release; it is required, because this binary reads no environment variable and `$USER` is the caller's to pass. **Edge 16**: five raw `redis: … pool.go` lines landed on stderr ahead of the verb's own one-line refusal; the library's diagnostics are not this tool's grammar, and the logger is silenced before the first dial. *Refuse by name, survive a stranger's typo, and never make a reader read the library instead of the tool.*
 
 **And one the merge group found, the same night.** The batch that carried these fixes went red on `test-hosted-merge (darwin, 1)` with `panic: test timed out after 1m40s` and TEN parallel tests reported at 14 s each — every one of them blocked in `Cmd.Wait` on a `git` child, none of them in a lock. Ten tests do not go slow together: those were the `t.Parallel()` tests, which Go resumes only after the SERIAL ones have finished, so the report says the serial tests had eaten 86 of the package's 100 seconds and left the rest of the package fourteen. What ate them was the gate's new `vet-windows` step, run inside `go test`: `GOOS=windows go vet ./...` must build the WINDOWS STANDARD LIBRARY into the cache before it can type-check anything — seconds on an idle 64-core bench, far more on a darwin runner sharing its machine with seven others — and four new batch tests each paid into it. **A unit test never pays for a cross-compile of the standard library.** The step stays in the product's gate, where it is paid once per bench and cached; the tests run that list minus that one step, and a test that reads both lists pins the step in the real one and pins that the exemption is that one name and no other. **And a CPU-heavy test that owns every fixture it touches takes `t.Parallel`**: serial was never a requirement of the batch tests, and wall clock in the serial phase is wall clock every other test in the package is waiting behind.
+
+## Stacks by ancestry (#2036), 2026-09-20
+
+**The mistake it removes, in one sentence.** It removes the failure where candidate planners and `simulate` detect stacks by forge base ref rather than Git commit ancestry, reporting false conflicts on clean merges and splitting parent and child across batch halves — as when PRs #1670 and #1692 (the child containing the parent's commit, but both declaring base `dev`) were judged a conflict in both directions by `simulate`, dropped from integration-16aq, and squashed out of sequence.
+
+**The Git commit DAG is the truth, not the forge's base ref.** An author frequently points every pull request in a stack to `dev` or `main` so each can be reviewed against the target branch, or bases a child branch on a parent before the parent lands. When a planner or batch builder identifies stacks by comparing a pull request's declared base branch name against other branch names, it sees two PRs targeting `dev` as independent. If it schedules the child before the parent, or places them in separate batch halves, landing the parent first as a squash severs the child's base and turns the child into a merge conflict. If `simulate` evaluates them by combining cumulative diffs or out of order, it reports `SIMULATE CONFLICT` for commits that `git merge-tree` merges cleanly. The tool never trusts the forge's base ref to describe ancestry: commit ancestry is read directly from the Git object graph using `git merge-base --is-ancestor <ancestor> <descendant>`.
+
+**Topological ordering: parents strictly precede children.** Candidate pull requests and integration branches are topologically sorted into an execution plan. For any two candidate heads $A$ and $B$:
+
+1. If $A$ is a strict ancestor of $B$ (`git merge-base --is-ancestor A B` succeeds and $B$ is not an ancestor of $A$), then $A$ is a parent (prerequisite) of $B$. A directed edge $A \to B$ is established.
+2. In the resulting merge plan, **parents strictly precede children**: $A$ appears before $B$. No child branch or stacked pull request is ever merged, simulated, or gated before its ancestor.
+3. If two candidates point to the exact same commit ($A$ is an ancestor of $B$ and $B$ is an ancestor of $A$), neither strictly precedes the other by ancestry; their relative input order is preserved without establishing an edge.
+
+**Deterministic tie-breaking for independent branches.** When two candidates $X$ and $Y$ have no ancestry relationship (neither commit is reachable from the other), they are independent branches. In a directed acyclic graph, multiple topological orderings are valid. To guarantee absolute reproducibility across machines, passes, and loop iterations:
+
+1. **Relative input order is preserved**: candidates with no ancestry dependency maintain their original relative order from the input list (the lane addition order, queue position, or invocation argument list).
+2. **Deterministic selection in Kahn's algorithm**: the topological sort indexes the unique input candidates from $0$ to $n-1$. At each step, among all candidates whose in-degree is zero (candidates with no un-emitted ancestors), the algorithm selects the candidate with the lowest original input index.
+3. Successor nodes have their in-degrees decremented upon emission, and selection repeats. Independent candidates are never reordered or interleaved arbitrarily; their queue priority remains stable while ancestry guarantees dependencies land first.
+
+**Refusal on cycle.** Git commit graphs are directed acyclic graphs by construction. If contradictory topological edges or graph traversal errors produce a cycle such that candidates remain un-emitted while no candidate has an in-degree of zero, the planner refuses: exit 2 naming the cyclic branch set (`ancestry cycle detected among branches: <list>`), never guessing an arbitrary order or hanging in a loop.
+
+### Red tests
+
+1. **Stacked branches permutation**: three stacked branches (`A -> B -> C`) supplied in all six permutations sort deterministically to `[A, B, C]`, base first.
+2. **Independent branches preserve input order**: independent branches `X` and `Y` branching off the same base preserve `[X, Y]` when given as `[X, Y]`, and `[Y, X]` when given as `[Y, X]`.
+3. **Mixed stacked and independent branches**: an interleaved set `[Y, C, X, A, B]` preserves parent-before-child (`A` before `B`, `B` before `C`) and preserves independent input precedence (`Y` before `X`).
+4. **Identical commit heads**: two branches pointing to the same commit sha maintain their exact relative input order.
+5. **Missing branch or invalid ref**: a candidate ref not present in the repository fails immediately at exit 2 before planning proceeds.
+6. **Shared-commit simulation**: two pull requests where the second contains the first's commit, both targeting base `dev`, simulate clean in ancestry order with zero false conflicts.
 
 ## Tests this spec demands
 

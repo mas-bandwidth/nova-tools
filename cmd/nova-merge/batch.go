@@ -390,6 +390,12 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		return code
 	}
 
+	orderedPRs, perr := planPRsByAncestry(g, clone, in.prs)
+	if perr != nil {
+		return batchRefused(stderr, perr)
+	}
+	in.prs = orderedPRs
+
 	prs, prechecked, code := admissible(&in, stdout, stderr, deps, start)
 	if code != 0 {
 		return code
@@ -729,11 +735,17 @@ func withBin(env []string, bin string) []string {
 	return append(out, "PATH="+path)
 }
 
-// mergeMembers merges every pull request head onto the branch IN THE ORDER GIVEN, which
-// is the order they will land. A head that will not merge is dropped and said out loud,
-// and the members after it are still judged -- on the tree without it, which is the tree
-// that would land.
+// mergeMembers merges every pull request head onto the branch in ancestry order (parents
+// before children, preserving given order for independent members), which is the order they
+// will land. A head that will not merge is dropped and said out loud, and the members after
+// it are still judged -- on the tree without it, which is the tree that would land.
 func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
+	orderedPRs, perr := planPRsByAncestry(g, g.Dir, prs)
+	if perr != nil {
+		return nil, nil, batchRefused(stderr, perr)
+	}
+	prs = orderedPRs
+
 	for _, n := range prs {
 		if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
