@@ -246,3 +246,36 @@
     (check-equal :instruction (note-kind repl) "the replacement inherited :kind")
     (check-equal '(:coordinator "A") (note-scope repl) "the replacement inherited :scope")
     (check-string= "new words" (note-source repl) "the replacement carries a new :source")))
+
+;;; ------------------------------------------------------------------
+;;; 7. TestE08F01ProvideBoundedFamilyVerbHelp   SPEC-WORK.md:2664
+;;;    (criterion E08-F01-02: "Provide bounded family/verb help and
+;;;    machine discovery with schema hash")
+;;; ------------------------------------------------------------------
+;;; docs/SPEC-WORK.md:2664 pins the schema the criterion names: it is "one
+;;; generated schema file (every verb with its op, event kind, ordered fields
+;;; and grammar line)". From it, "bounded family/verb help" is a reader that
+;;; lists the verbs grouped into families within a bound, "machine discovery"
+;;; is the fleet listing, and the "schema hash" is the digest that lets a
+;;; client refuse a stale discovered copy. The kernel's verb schema today is
+;;; the flat *mutation-grammar*: three mutation verbs, each an event kind and
+;;; an ordered field list, but no verb belongs to a named family, nothing
+;;; exposes a help listing, and no schema hash is carried on the schema or on
+;;; a machine row -- so a client still has to carry the manual, and cannot
+;;; tell a stale schema from a current one. This records the gap.
+
+(deftest "TestE08F01ProvideBoundedFamilyVerbHelp" "docs/SPEC-WORK.md:2664"
+    "the verb schema groups verbs into families for a bounded help listing and carries a schema hash; machine discovery is answered against it"
+  (let ((grammar nova-work:*mutation-grammar*))
+    (ok grammar "the kernel has no verb schema at all")
+    ;; Bounded family/verb help: every verb belongs to a named family, so help
+    ;; can list them grouped and bounded rather than as one flat grammar.
+    (dolist (entry grammar)
+      (ok (getf (cdr entry) :family)
+          "expected verb ~S to belong to a named family for bounded family/verb help, but the schema groups no family"
+          (car entry)))
+    ;; Schema hash: the schema (and each row of the discovery that reads it)
+    ;; carries a digest, so a client can refuse a stale discovered copy.
+    (ok (every (lambda (entry) (getf (cdr entry) :schema-hash)) grammar)
+        "expected the verb schema to carry a schema hash for stale-discovery refusal, but ~S carries none"
+        grammar)))
