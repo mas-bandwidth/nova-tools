@@ -1741,6 +1741,18 @@ loop runs until it is killed or `--stop` says so. One line per tick:
 FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
 ```
 
+**A poisoned registry row does not stop the fleet (#2031).** A line that is both
+`runner` and `bench` without `allow-shared=<YYYY-MM-DD> <why>` disables **that**
+bench only. Each tick names it; every other bench deals:
+
+```
+FILL DISABLED bench=hetzner reason=shared-without-note remedy="..."
+```
+
+An unknown role, a name twice, a missing column or cores that are not a number still
+refuses the whole file — that line is not a machine. Naming a CI-only runner host as
+`--bench` still refuses the fill (exit 2, nothing launched).
+
 **`--interval <d>` is how long a resident tick waits, `5m` by default.** There was no
 flag at all until #1915, so a freed slot waited up to five minutes for the next tick
 and that was the floor on "a machine replaces a finished card right away". Ten
@@ -2023,18 +2035,21 @@ lack `bench`, **by name and before any ssh**:
 FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, threadripper-wsl, space"
 ```
 
-The reason is one of `runner-host`, `coordination-host`, `services-host`, `not-a-bench` or
-`unknown-machine`. A machine that is **both** `runner` and `bench` is the exception and must
-say so in its notes, with the day it was made: `allow-shared=<YYYY-MM-DD> <why>`. hulk,
-vision and threadripper-wsl carry one today because the pull worker still runs a card in the
-bench's own home; when it runs cards in containers the runner role comes off those lines and
-the exception goes with it. There is **no `windows` line** and there is not meant to be
-(Glenn 2026-09-18: "drop the native windows CI runners. WSL only from now on."): the
-Threadripper Pro joins as `threadripper-wsl`, a `linux/x64` machine under WSL2 with CI
-runners labelled `linux,X64,threadripper`, and `internal/fleet`'s example test refuses any
-machine whose `os` is `windows`. A shared line without the dated note is a refusal, and so is an unknown role, a
-name twice, a missing column or cores that are not a number — the registry is read whole or
-not at all, because the half that reads is the half that lets a card through.
+The reason is one of `runner-host`, `coordination-host`, `services-host`, `not-a-bench`,
+`unknown-machine` or `shared-without-note`. A machine that is **both** `runner` and `bench`
+is the exception and must say so in its notes, with the day it was made:
+`allow-shared=<YYYY-MM-DD> <why>`. hulk, vision and threadripper-wsl carry one today because
+the pull worker still runs a card in the bench's own home; when it runs cards in containers
+the runner role comes off those lines and the exception goes with it. There is **no
+`windows` line** and there is not meant to be (Glenn 2026-09-18: "drop the native windows CI
+runners. WSL only from now on."): the Threadripper Pro joins as `threadripper-wsl`, a
+`linux/x64` machine under WSL2 with CI runners labelled `linux,X64,threadripper`, and
+`internal/fleet`'s example test refuses any machine whose `os` is `windows`. A shared line
+without the dated note **disables that bench only** (`FILL DISABLED
+reason=shared-without-note` each tick; neighbours still fill). An unknown role, a name
+twice, a missing column or cores that are not a number still refuses the whole file —
+that line is not a machine, and the half that parsed is the half that would let a card
+through.
 
 `fleet registry` prints one line per machine, in file order:
 
