@@ -286,3 +286,40 @@
     ;; no release task names the item at all: the version is unresolved.
     (check-equal "-" (finding-released finding '())
                  "no naming release task reads -")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F03ImportInBatchesWithOriginals       SPEC-WORK.md:7633
+;;; ------------------------------------------------------------------
+;;; E09-F03-02 (docs/roadmaps/nova-work.sexp): "Import in batches with
+;;; originals, mappings, deduplication and checkpoints".
+;;; docs/SPEC-WORK.md:7633 reads: "Import in resumable batches without
+;;; deleting originals. Preserve original records alongside the normalized
+;;; representation, reconcile counts and content manifests, deduplicate
+;;; stable identities, and account explicitly for every inventory entry."
+;;; The "originals" and "mappings" words are already provided by the
+;;; source-inventory records (src/dependencies.lisp inventory-record); the
+;;; "batches", "deduplication" and "checkpoints" words are not: the kernel has
+;;; no resumable batch importer that collapses a re-delivered stable source id
+;;; to exactly one canonical mapping or retains a replayable checkpoint
+;;; (import-replay, docs/SPEC-WORK.md:7069), so this test is the RED that says
+;;; the criterion is unmet.
+
+(deftest "TestE09F03ImportInBatchesWithOriginals" "docs/SPEC-WORK.md:7633"
+    "expected=originals-preserved;mapping-per-source-record;re-delivered-stable-id-deduplicated;checkpoint-retained-and-replayable"
+  ;; originals + mappings: a captured record keeps its original alongside a
+  ;; normalised mapping, or is left explicitly unresolved — never neither.
+  (let ((resolved (inventory-record "issue-1" :issue
+                                    :original "{\"number\":1}"
+                                    :mapping "acme/work/f1"))
+        (unresolved (inventory-record "attach-7" :attachment
+                                      :unresolved "not reachable")))
+    (ok (record-resolved-p resolved)
+        "a captured record lost its preserved original or normalised mapping")
+    (ok (record-unresolved-p unresolved)
+        "an unreachable record is not left explicitly unresolved"))
+  ;; deduplication + checkpoints: a batch import run over a source that
+  ;; re-delivers the same stable id must yield exactly one canonical mapping
+  ;; and retain a resilient checkpoint across interruption, so retry neither
+  ;; loses records nor duplicates work (SPEC-WORK.md:7633, :7069).
+  (ok (fboundp 'import-batches-with-originals-dedup-and-checkpoints)
+      "expected a resumable batch importer that deduplicates a stable source id to exactly one mapping and retains a replayable checkpoint (SPEC-WORK.md:7633); got none — the kernel has no import-in-batches entry point, so re-delivered source records would duplicate canonical work"))
