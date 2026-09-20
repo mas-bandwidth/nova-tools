@@ -3,6 +3,8 @@ package review
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -191,6 +193,46 @@ func TestValue(t *testing.T) {
 	}
 	if res.Verdict != VerdictGuarded {
 		t.Fatalf("mixed non-Go + excluded Go: verdict = %s, want GUARDED (reverting value.txt is still a control; N/A only when every production path is excluded Go)", res.Verdict)
+	}
+}
+
+// Stella HOLD of 4edb857b: a deleted ordinary production .go was skipped in
+// productionAppliesHere, so Guard returned NOT-APPLICABLE before the control ran.
+// Restoring obsolete.go makes the retained regression red.
+func TestGuardIsGuardedWhenProductionGoFileIsDeleted(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "git", "checkout", "-q", "-b", "delete")
+	write(t, dir, "sign/obsolete.go", "package sign\n\nfunc Obsolete() int { return 1 }\n")
+	commit(t, dir, "add obsolete")
+	if err := os.Remove(filepath.Join(dir, "sign", "obsolete.go")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "sign/sign_test.go", `package sign
+
+import (
+	"os"
+	"testing"
+)
+
+func TestSignPositive(t *testing.T) {
+	if Sign(5) != 1 {
+		t.Fatal("positive")
+	}
+}
+
+func TestObsoleteGone(t *testing.T) {
+	if _, err := os.Stat("obsolete.go"); err == nil {
+		t.Fatal("obsolete.go still present")
+	}
+}
+`)
+	commit(t, dir, "delete obsolete")
+	res, err := guardFixture(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Verdict != VerdictGuarded {
+		t.Fatalf("deleted production Go: verdict = %s, want GUARDED (restoring obsolete.go makes retained regression red)", res.Verdict)
 	}
 }
 

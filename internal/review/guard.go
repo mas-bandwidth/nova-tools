@@ -129,7 +129,7 @@ func Guard(ctx context.Context, opts GuardOptions) (*GuardResult, error) {
 	}
 	res.Reverted = n
 
-	if !productionAppliesHere(wt, others) {
+	if !productionAppliesHere(ctx, repo, base, wt, tempRoot, others) {
 		res.Verdict = VerdictNotApplicable
 		res.Reason = "build-tags"
 		return res, nil
@@ -225,15 +225,19 @@ func packagesOf(changed []change) []string {
 
 // productionAppliesHere is false only when every reverted production path is a
 // Go file excluded on this GOOS (name suffix or //go:build). A non-Go path
-// keeps the control applicable: reverting value.txt still makes the retained
-// test red (Stella HOLD of #2128). A control that cannot compile the file here
-// is NOT-APPLICABLE, not UNGUARDED (#2042, 7afd48c0).
-func productionAppliesHere(wt string, others []change) bool {
+// keeps the control applicable. A deleted ordinary .go is inspected at the
+// parent: restoring it can make a retained regression red (Stella HOLD of
+// 4edb857b). A deleted foreign-OS file is still N/A. A control that cannot
+// compile the file here is NOT-APPLICABLE, not UNGUARDED (#2042, 7afd48c0).
+func productionAppliesHere(ctx context.Context, repo, base, wt, tempRoot string, others []change) bool {
 	for _, c := range others {
 		if !strings.HasSuffix(c.path, ".go") {
 			return true
 		}
 		if c.status == "D" {
+			if deletedGoAppliesHere(ctx, repo, base, tempRoot, c.path) {
+				return true
+			}
 			continue
 		}
 		if fileAppliesHere(wt, c.path) {
@@ -241,6 +245,31 @@ func productionAppliesHere(wt string, others []change) bool {
 		}
 	}
 	return false
+}
+
+func deletedGoAppliesHere(ctx context.Context, repo, base, tempRoot, rel string) bool {
+	body, err := gitOut(ctx, repo, "show", base+":"+rel)
+	if err != nil {
+		return true
+	}
+	root := tempRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	tmp, err := os.MkdirTemp(root, "nova-review-guard-del-")
+	if err != nil {
+		return true
+	}
+	defer safepath.RemoveUnder(root, tmp)
+	name := path.Base(rel)
+	if err := os.WriteFile(filepath.Join(tmp, name), []byte(body), 0o644); err != nil {
+		return true
+	}
+	ok, err := build.Default.MatchFile(tmp, name)
+	if err != nil {
+		return true
+	}
+	return ok
 }
 
 func fileAppliesHere(wt, rel string) bool {
