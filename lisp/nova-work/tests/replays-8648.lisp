@@ -353,3 +353,57 @@
                  "the mapped external issue survives the child's refusal open")
     (check-equal '("acme/repo#42") (node-links (kernel-state k) "p")
                  "the issue mapping itself survives the child's refusal unchanged")))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F04OrchestrateProcessLevelRunsAgainst  E10-F04-01
+;;; docs/SPEC-WORK.md:7223-7227
+;;; ------------------------------------------------------------------
+;;;
+;;; E10-F04-01 (ROADMAP.md:1014). docs/SPEC-WORK.md:7223-7227 -- "process-level
+;;; fault injection and restart-and-replay against temporary Git remotes and
+;;; fake providers, two-process fencing and interrupted I/O included." The four
+;;; process-level moves -- crash/restart, partition, stale owner and handoff --
+;;; are orchestrated against one temporary clip-remote and one fake decider, and
+;;; the single-writer invariant is read back: exactly one owner's push lands, a
+;;; stale owner is fenced and its compare-and-swap refused, a successor handoff
+;;; takes the next generation without waiting, and a restart answers the
+;;; recorded receipt without applying anything twice.
+
+(deftest "TestE10F04OrchestrateProcessLevelRunsAgainst"
+    "E10-F04-01 (docs/SPEC-WORK.md:7223-7227)"
+    "expected=vacant-take-gen1;stale-owner-fenced;handoff-successor-takes-gen2;partition-refuses-the-stale-push;one-push-lands;provider-consulted-once;restart-answers-once-only"
+  (let ((r (orchestrate-process-level-run)))
+    ;; handoff and stale owner, read from the ownership claims themselves.
+    (check-equal :take (getf r :vacant-action)
+                 "a vacant claim is a take, not a resume or a fence")
+    (check-equal 1 (getf r :vacant-generation)
+                 "the first owner takes generation 1")
+    (check-equal :fenced (getf r :stale-owner-action)
+                 "a stale owner contesting a live hold is fenced, never admitted")
+    (check-equal :take (getf r :handoff-action)
+                 "the successor's handoff claim is a take")
+    (check-equal 2 (getf r :handoff-generation)
+                 "the successor takes the next generation at once")
+    ;; partition and two-process fencing, read from the temporary remote.
+    (ok (getf r :stella-pushed)
+        "the current owner's compare-and-swap landed")
+    (check-equal nil (getf r :stale-pushed)
+                 "the partitioned stale owner's compare-and-swap was not refused")
+    (check-string= "commit-stella" (getf r :remote-tip)
+                   "the remote tip is the one push that landed")
+    (check-equal '("commit-stella") (getf r :remote-pushes)
+                 "exactly one owner's commit reached the remote")
+    ;; the fake provider participates exactly once.
+    (check-equal :run (getf r :provider-answer)
+                 "the fake provider did not answer the bounded question")
+    (check-equal 1 (getf r :provider-calls)
+                 "the fake provider was consulted more than once")
+    ;; crash/restart and interrupted-I/O once-only.
+    (ok (getf r :restart-live-ok)
+        "the live run refused the accepted command")
+    (check-equal :doing (getf r :restart-live-state)
+                 "the live run did not apply the accepted command")
+    (ok (getf r :restart-replayed)
+        "the restart did not answer the recorded receipt")
+    (check-equal :todo (getf r :restart-state)
+                 "the restart applied the command a second time")))
