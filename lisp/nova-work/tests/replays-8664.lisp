@@ -239,5 +239,85 @@ sequence driven is a random sequence of legal verbs."
                           (state-closed-count (kernel-state zk)))
                        (length zs)
                        "the two real branches do not sum to the node count")
-          (check-equal '() (state-index-mismatches (kernel-state zk))
-                       "the real counters disagree with reconstruction after the close"))))))
+           (check-equal '() (state-index-mismatches (kernel-state zk))
+                        "the real counters disagree with reconstruction after the close"))))))
+
+;;; ------------------------------------------------------------------
+;;; TestE07F02KeepPartialMissingAndUnknown       docs/SPEC-WORK.md:7740
+;;;   acceptance criterion E07-F02-02 (docs/roadmaps/nova-work.sexp):
+;;;   "Keep partial, missing and unknown state in S/check counts".
+;;; ------------------------------------------------------------------
+;;; SPEC-WORK.md:7738-7742 fixes the completion-only roadmap view: a tick
+;;; for a fully verified cell, a cross for any other state. The cross is a
+;;; projection choice, not lost information -- "Partial, missing and
+;;; unknown stay in S and in `check`'s counts" (:7740). This replay holds a
+;;; road map whose three rows sit in three different states, runs the
+;;; roadmap's `check`-counts rollup (query --ask percent), and asserts the
+;;; partial, missing (done-unverified) and unknown counts stay distinct and
+;;; the denominator (rows=, applicable=) is unchanged by completion.
+
+(deftest "TestE07F02KeepPartialMissingAndUnknown" "docs/SPEC-WORK.md:7740"
+    "expected=green-counts-only-fully-verified;partial-cell-keeps-k-n;unknown-kept-as-its-own-count;done-unverified-missing-kept-distinct;rows-and-applicable-denominator-unchanged"
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f-done" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f-done/t" :type :task :parent "root/f-done" :state :doing)
+                 (:id "root/f-partial" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f-partial/t1" :type :task :parent "root/f-partial" :state :doing)
+                 (:id "root/f-partial/t2" :type :task :parent "root/f-partial" :state :unknown)
+                 (:id "root/f-unknown" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f-unknown/t" :type :task :parent "root/f-unknown" :state :unknown)))
+         (k (make-kernel :state (make-seed-state seed))))
+    ;; The axisless roadmap names three feature rows as its required set.
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "M" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the axisless roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    (dolist (m '("root/f-done" "root/f-partial" "root/f-unknown"))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member m :op :add
+                       :reason "seed" :request (format nil "row-~A" m))
+        (ok okp "row ~A was not added: ~A" m line)
+        (check-equal 0 code "roadmap row add exit")))
+    ;; One row is fully verified (its one leaf settles); one is partial (one
+    ;; leaf settles, one stays open); one stays unknown (its leaf is unknown).
+    (ok (submit k (close-request :node "root/f-done/t" :request "d-1"))
+        "the done leaf close was refused")
+    (ok (submit k (close-request :node "root/f-partial/t1" :request "p-1"))
+        "the partial first leaf close was refused")
+    ;; A completion-only read is a tick for fully verified, a cross otherwise --
+    ;; and the three cross states stay distinct in the check counts rather than
+    ;; collapsing into one "not green".
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm")
+      (ok okp "percent over the axisless roadmap was refused: ~A" line)
+      (check-equal 0 code "percent exit")
+      ;; green is the tick: only the fully verified row counts.
+      (ok (search "green=1" line)
+          "green did not count only the fully verified row: ~A" line)
+      ;; The denominator is unchanged by completion: all three rows remain
+      ;; rows, and the cross states reduce neither.
+      (ok (search "applicable=3" line)
+          "applicable was not 3 (denominator unchanged): ~A" line)
+      (ok (search "rows=3" line)
+          "rows was not 3 (denominator unchanged): ~A" line)
+      ;; The partial cell keeps its k/n instead of a bare cross.
+      (ok (search "k/n=1/2" line)
+          "the partial cell lost its 1/2 k/n: ~A" line)
+      ;; The unknown cell keeps its unknown= count, distinct from plain open.
+      (ok (search "unknown=1" line)
+          "the unknown cell did not keep its unknown= count: ~A" line)
+      ;; done-unverified (the missing-evidence count) is a count of its own,
+      ;; printed beside done and never folded into green.
+      (ok (search "done-unverified=0" line)
+          "done-unverified was not kept distinct: ~A" line))
+    ;; In S the states stay distinct too: the projection changed no node state
+    ;; and no branch.
+    (check-equal :c (node-branch (kernel-state k) "root/f-done")
+                 "the fully verified feature did not settle into C")
+    (check-equal :o (node-branch (kernel-state k) "root/f-partial")
+                 "a completion-only read moved the partial feature out of O")
+    (check-equal :unknown (node-state (kernel-state k) "root/f-unknown/t")
+                 "the unknown leaf lost its :unknown state")))
