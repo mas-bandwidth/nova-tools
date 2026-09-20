@@ -607,9 +607,16 @@ func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 // range -- rev-parse, merge-base, the diff this package reverts -- would then be
 // reading the base's objects, not the head's. The ref lives under `refs/replace/`
 // and is never in the diff, so nothing else in the range can see it.
+//
+// The child also drops GIT_DIR / GIT_WORK_TREE / GIT_CONFIG_* and secret-named
+// variables. cmd.Dir is the repo this command is about; a parent GIT_DIR still
+// pointed at the job clone would make every call operate there, run the
+// worker's clean filters, and write the seed into the copy the gate was
+// pointed at (#1897).
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
 	cmd.Dir = dir
+	cmd.Env = dropGitIdentity(goenv.WithoutSecrets(goenv.Clean(os.Environ())))
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
@@ -619,6 +626,34 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// dropGitIdentity removes the variables that would make a child git or go test
+// operate on the gate's repository instead of cmd.Dir. The names are the
+// overrides; GIT_EXEC_PATH is not one, and git still has to find its own
+// binaries.
+func dropGitIdentity(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if gitIdentityVar(name) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func gitIdentityVar(name string) bool {
+	up := strings.ToUpper(strings.TrimSpace(name))
+	switch up {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+		"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_TEMPLATE_DIR",
+		"GIT_PREFIX", "GIT_ATTR_SOURCE", "GIT_CONFIG":
+		return true
+	}
+	return strings.HasPrefix(up, "GIT_CONFIG_")
 }
 
 // countHunks is how much was put back: the number of `@@` hunks in the base..head diff
