@@ -276,3 +276,66 @@
       (declare (ignore answer))
       (check-equal 2 code "show refuses --expect")
       (ok (search "--expect" line) "show names --expect as not a show flag: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; TestE08F01RefuseStaleDiscoveryAndInvalid   docs/SPEC-WORK.md:2219
+;;; ------------------------------------------------------------------
+;;; E08-F01-03 "Refuse stale discovery and invalid suggested actions"
+;;; (docs/roadmaps/nova-work.sexp:1007). The criterion names two refusals, each
+;;; pinned below to the SPEC-WORK line that states it:
+;;;
+;;;   stale discovery   docs/SPEC-WORK.md:2219 -- "A request whose expectation
+;;;     is not the current value of its kind is refused at exit 1 ... : stale,
+;;;     ... (apply rejects stale preconditions)". A mutation whose --expect
+;;;     names a revision the live object has already left is refused, never
+;;;     applied against the stale reading.
+;;;
+;;;   invalid suggested actions   docs/SPEC-WORK.md:2117 -- "a dependent with
+;;;     an unmet need ... is refused by every admission verb until its needs are
+;;;     met". `query ready` (docs/SPEC-WORK.md:2110) is the machine list of next
+;;;     valid actions; a node whose need is still open is not listed as one, and
+;;;     the suggestion to start it (`state --to doing`) is refused naming the
+;;;     blocking need.
+
+(deftest "TestE08F01RefuseStaleDiscoveryAndInvalid" "docs/SPEC-WORK.md:2219"
+    "expected=stale-discovery-refused;invalid-suggestion-unlisted-and-refused"
+  ;; half 1: a discovery whose --expect names a revision the object has left is
+  ;; refused `stale`, printing the current value, and nothing is written.
+  (let ((store (make-goal-store :scope "C" :node-state :doing :rev 5)))
+    (multiple-value-bind (admitted line code)
+        (goal-set store :goal "G" :expect 5 :as "C" :reason "start G")
+      (ok admitted "the in-revision goal set is admitted: ~A" line)
+      (check-equal 0 code "the in-revision set is exit 0"))
+    (multiple-value-bind (admitted line code)
+        (goal-update store :stop t :reason "stop" :expect 5 :as "C")
+      (check-equal nil admitted "a discovery stamped one revision behind is refused")
+      (check-equal 1 code "the stale refusal is exit 1")
+      (ok (search "stale" line) "the refusal names stale: ~A" line)
+      (ok (search "current=6" line) "the refusal prints the current revision: ~A" line))
+    (check-equal 6 (goal-store-rev store) "the stale discovery wrote nothing"))
+  ;; half 2: a suggested action that is not a valid next action is unlisted and
+  ;; refused: `ws/d` needs the still-open `ws/n`, so the machine never names it
+  ;; as ready and refuses the transition that would start it.
+  (let* ((k (make-kernel :state (make-seed-state
+                                 '((:id "ws"       :type :work-set :parent nil :state :unknown)
+                                   (:id "ws/ready" :type :task     :parent "ws" :state :todo)
+                                   (:id "ws/d"     :type :task     :parent "ws" :state :todo
+                                    :deps ("ws/n"))
+                                   (:id "ws/n"     :type :task     :parent "ws" :state :doing)))
+                         :journal (make-ordering-journal) :rev-base 1))
+         (rev-before (state-revision (kernel-state k))))
+    (ok (member "ws/ready" (ready-nodes (kernel-state k)) :test #'string=)
+        "a leaf with no open need is a valid next action")
+    (ok (not (member "ws/d" (ready-nodes (kernel-state k)) :test #'string=))
+        "a dependent whose need is open is not listed as a next valid action")
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb :state-to-doing :node "ws/d" :by "rowan" :reason "started"
+                        :request "r-doing" :stamp "2026-09-16T12:00:00Z" :clock :tool
+                        :generation-owner "gen-1"))
+      (check-equal nil okp "the invalid suggestion to start ws/d is refused")
+      (check-equal 1 code "the refusal is exit 1")
+      (ok (search "needs ws/n" line) "the refusal names the blocking need: ~A" line))
+    (check-equal rev-before (state-revision (kernel-state k))
+                 "the refused suggestion wrote nothing")
+    (check-equal :todo (node-state (kernel-state k) "ws/d")
+                 "the refused suggestion moved no node")))
