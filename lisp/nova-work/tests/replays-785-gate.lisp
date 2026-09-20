@@ -616,3 +616,68 @@ event.")
       (ok (getf record :events) "the take wrote no event record")
       (check-equal :lease (getf (first (getf record :events)) :kind)
                    "an event carries its kind"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F02VerifyGenerationFencingUnderPartitions
+;;;
+;;; Criterion E02-F02-04 (docs/roadmaps/nova-work.sexp): "Verify generation
+;;; fencing under partitions and clock skew; reject unsafe takeover rather than
+;;; relying on PID locks alone".
+;;;   docs/SPEC-WORK.md:244-246 — the partitioned owner fences at `until` with
+;;;   no network at all, and a takeover is refused until `until` plus `--skew`
+;;;   has passed on the taker's clock;
+;;;   docs/SPEC-WORK.md:7671 — a local PID/file lock alone only protects one
+;;;   host, so the fence is the lease's generation and clock, never a pid.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F02VerifyGenerationFencingUnderPartitions"
+    "docs/SPEC-WORK.md:244-246"
+    "expected=live-lease-refuses-a-competing-taker-naming-holder-generation-and-until;takeover-still-refused-within-until-plus-skew;an-expired-lease-is-taken-at-the-next-generation-with-a-fresh-token"
+  ;; A live lease -- the old owner partitioned away, its process unreachable and
+  ;; its PID useless as any signal -- still refuses a competing taker: the
+  ;; claim fences and names holder, generation and `until`. The fence is the
+  ;; lease's generation and clock, not a PID lock two processes could both hold.
+  (let ((live (make-ownership-record :owner "emma" :generation 3 :token "tok-emma"
+                                     :stamp "2026-09-14T11:59:00Z"
+                                     :until "2026-09-14T12:01:00Z" :bench "bench-a")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim live "stella" :now "2026-09-14T12:00:30Z"
+                                  :every "30s" :skew "5s" :token "tok-stella"
+                                  :my-bench "bench-b")
+      (declare (ignore record))
+      (check-equal :fenced action "a live lease was taken by a competing taker")
+      (check-equal 1 exit-code "the competing take did not refuse")
+      (ok (search "SESSION FAIL" line) "the refusal is not a SESSION FAIL: ~A" line)
+      (ok (search "owner=emma" line) "the refusal does not name the holder: ~A" line)
+      (ok (search "generation=3" line) "the refusal does not name the held generation: ~A" line)
+      (ok (search "held" line) "the refusal does not say held: ~A" line)))
+  ;; Clock skew: `until` has passed but `until + --skew` has not, so the takeover
+  ;; stays refused on the taker's clock (SPEC-WORK.md:245-246).
+  (let ((near (make-ownership-record :owner "emma" :generation 3 :token "tok-emma"
+                                     :stamp "2026-09-14T11:59:00Z"
+                                     :until "2026-09-14T12:01:00Z" :bench "bench-a")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim near "stella" :now "2026-09-14T12:01:03Z"
+                                  :every "30s" :skew "5s" :token "tok-stella"
+                                  :my-bench "bench-b")
+      (declare (ignore record))
+      (check-equal :fenced action "a takeover within --skew was admitted")
+      (check-equal 1 exit-code "the within-skew takeover did not refuse")
+      (ok (search "held" line) "the within-skew refusal does not say held: ~A" line)))
+  ;; Partition with no network at all: once `until + --skew` is in the past on
+  ;; the taker's clock the take succeeds, and the generation is fenced forward
+  ;; to the next one with a fresh token -- a take, never a resume (SPEC-WORK.md:244-246).
+  (let ((expired (make-ownership-record :owner "emma" :generation 3 :token "tok-emma"
+                                        :stamp "2026-09-14T11:59:00Z"
+                                        :until "2026-09-14T12:01:00Z" :bench "bench-a")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim expired "stella" :now "2026-09-14T12:01:30Z"
+                                  :every "30s" :skew "5s" :token "tok-stella"
+                                  :my-bench "bench-b")
+      (check-equal :take action "an expired lease was not taken after until+skew")
+      (check-equal 0 exit-code "the take is not green")
+      (check-equal 4 (owner-generation record) "the generation was not fenced to the next one")
+      (check-string= "stella" (owner-owner record) "the taker does not own the new generation")
+      (check-string= "tok-stella" (owner-token record) "a take did not mint a fresh token")
+      (check-string= "bench-b" (owner-bench record) "the taker's bench was not recorded")
+      (ok (search "generation=4" line) "SESSION OK does not name the new generation: ~A" line))))
