@@ -27,6 +27,10 @@ import (
 // with a .provider-failed marker.
 
 const (
+	// AutoRequeueEnabled gates automatic background requeue in harvest/reap/wire.
+	// SPEC-AHEAD (#2078 split): Disabled until shared total-attempt budget exists (#2040, #2079).
+	AutoRequeueEnabled = false
+
 	// DefaultMaxProviderRetries is the maximum auto-requeue attempts for provider errors.
 	DefaultMaxProviderRetries = 3
 
@@ -157,9 +161,9 @@ func RequeueProviderCardWithRoute(readyDir, launchedDir string, cardBase string,
 // ReadProviderRetry reads a .provider-retry marker file beside a card in dir.
 // It fails closed if the marker cannot be read or is a directory.
 func ReadProviderRetry(dir, cardBase string) (*ProviderRetryState, error) {
-	markerPath := findMarkerPath(dir, cardBase, ProviderRetrySuffix)
-	if markerPath == "" {
-		return nil, os.ErrNotExist
+	markerPath, err := findMarkerPath(dir, cardBase, ProviderRetrySuffix)
+	if err != nil {
+		return nil, err
 	}
 	st, err := os.Stat(markerPath)
 	if err != nil {
@@ -310,23 +314,38 @@ func findCardPath(dir, base string) string {
 	return ""
 }
 
-func findMarkerPath(dir, base, suffix string) string {
-	p := filepath.Join(dir, base+suffix)
-	if _, err := os.Stat(p); err == nil {
-		return p
+func findMarkerPath(dir, base, suffix string) (string, error) {
+	candidates := []string{
+		filepath.Join(dir, base+suffix),
 	}
 	if strings.HasSuffix(base, ".md") {
-		alt := filepath.Join(dir, strings.TrimSuffix(base, ".md")+suffix)
-		if _, err := os.Stat(alt); err == nil {
-			return alt
-		}
+		candidates = append(candidates, filepath.Join(dir, strings.TrimSuffix(base, ".md")+suffix))
 	} else {
-		alt := filepath.Join(dir, base+".md"+suffix)
-		if _, err := os.Stat(alt); err == nil {
-			return alt
+		candidates = append(candidates, filepath.Join(dir, base+".md"+suffix))
+	}
+
+	for _, p := range candidates {
+		fi, err := os.Lstat(p)
+		if err == nil {
+			if fi.IsDir() {
+				return "", fmt.Errorf(".provider-retry is a directory: %s", p)
+			}
+			if fi.Mode()&os.ModeSymlink != 0 {
+				targetFi, terr := os.Stat(p)
+				if terr != nil {
+					return "", fmt.Errorf(".provider-retry is a broken symlink: %s: %w", p, terr)
+				}
+				if targetFi.IsDir() {
+					return "", fmt.Errorf(".provider-retry symlink points to a directory: %s", p)
+				}
+			}
+			return p, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
 		}
 	}
-	return ""
+	return "", os.ErrNotExist
 }
 
 func detectCardRoute(cardPath, launchedDir, base string) string {

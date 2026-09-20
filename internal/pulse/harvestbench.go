@@ -577,15 +577,18 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 		}
 
 		if (st == "failed" || st == "provider") && isProvErr {
-			requeued, _, rerr := RequeueProviderCard(readyDir, in.Launched, base, DefaultMaxProviderRetries)
-			if rerr == nil && requeued {
-				_ = os.Remove(launchedMarker(in.Launched, base))
-				note := fmt.Sprintf("%s\tlane=%s\tbench=%s\tlabel=%s\twhy=%s\n", stamp, m["lane"], m["bench"], label, "provider-requeued")
-				_ = os.WriteFile(marker(readyDir, base, "requeued", stamp), []byte(note), 0o644)
-				drained++
-				lines.Line(fmt.Sprintf("HARVEST DRAIN card=%s lane=%s state=%s bench=%s why=%s",
-					field(base), field(m["lane"]), "requeued", field(m["bench"]), "provider-requeued"))
-				continue
+			// SPEC-AHEAD (#2078 split): AutoRequeueEnabled is disabled until shared attempt budget exists (#2040).
+			if AutoRequeueEnabled {
+				requeued, _, rerr := RequeueProviderCard(readyDir, in.Launched, base, DefaultMaxProviderRetries)
+				if rerr == nil && requeued {
+					_ = os.Remove(launchedMarker(in.Launched, base))
+					note := fmt.Sprintf("%s\tlane=%s\tbench=%s\tlabel=%s\twhy=%s\n", stamp, m["lane"], m["bench"], label, "provider-requeued")
+					_ = os.WriteFile(marker(readyDir, base, "requeued", stamp), []byte(note), 0o644)
+					drained++
+					lines.Line(fmt.Sprintf("HARVEST DRAIN card=%s lane=%s state=%s bench=%s why=%s",
+						field(base), field(m["lane"]), "requeued", field(m["bench"]), "provider-requeued"))
+					continue
+				}
 			}
 			st = "failed"
 			why = "provider-failed"

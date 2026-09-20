@@ -4172,10 +4172,13 @@ route	provider	model	tier	concurrency	cost_per_mtoken	error_threshold	notes
 2. **Error rate tripwire**: `fill` tracks a rolling window of recent dispatches per route (e.g. via `RollingErrorWatch`). If the provider error rate meets or exceeds `error_threshold` (e.g. `0.20` for a 20% failure rate over the window), the route trips into cooldown and is skipped during route selection.
 3. **Automatic spillover in cost order**: When a primary route reaches its concurrency ceiling or trips its circuit breaker, `fill` automatically spills eligible cards to alternative capable routes for that card's tier, sorted in cost order (`cost_per_mtoken` ascending): *quality floor first, then lowest cost per token (free wins when good, paid fallback)*.
 
-### Provider auto-requeue (`.provider-retry`)
+### Provider auto-requeue (`.provider-retry`) — SPEC-AHEAD
 
-When a launched card ends in `NATIVE PROVIDER` or an early provider launch failure, the harvest/fill loop writes a `.provider-retry` marker beside the card under `--launched`:
-- The card is moved back to `--ready` without advancing its attempt counter or penalizing its retry budget.
+*(SPEC-AHEAD: Automatic background requeue and in-place provider retry are disabled pending the shared total-attempt budget in #2040 and #2079. Provider fault classification and terminal-usage reporting remain fully active.)*
+
+When a launched card ends in `NATIVE PROVIDER` or an early provider launch failure, once the shared attempt budget lands:
+- The harvest/fill loop writes a `.provider-retry` marker beside the card under `--launched`.
+- The card is moved back to `--ready` without advancing its card-quality defect counter while consuming one of its allowed total attempts.
 - Existing job execution logs and scratch files are preserved (e.g. parked as `<job>.attempt<n>`) so diagnostic evidence survives.
-- The card is immediately available for dispatch on the next tick, eligible for spillover to alternate providers while the failing provider cools down.
+- The card is available for dispatch on subsequent ticks, eligible for spillover to alternate providers while the failing provider cools down.
 

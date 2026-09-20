@@ -439,6 +439,21 @@ func TestDrainLaunchedProviderErrorAutoRequeue(t *testing.T) {
 		t.Fatalf("drainLaunched drained = %d, want 1", drained)
 	}
 
+	// SPEC-AHEAD: When AutoRequeueEnabled is false (pending shared budget #2040),
+	// provider failures drain to failedDir with why=provider-failed, NOT automatically requeued.
+	if !AutoRequeueEnabled {
+		if _, err := os.Stat(filepath.Join(failedDir, cardName)); err != nil {
+			t.Fatalf("card not found in failedDir when AutoRequeueEnabled=false: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(pendingDir, cardName)); !os.IsNotExist(err) {
+			t.Fatalf("card must NOT be in pendingDir while AutoRequeueEnabled is false")
+		}
+		if _, err := os.Stat(filepath.Join(launchedDir, cardName)); !os.IsNotExist(err) {
+			t.Fatalf("card should no longer be in launchedDir")
+		}
+		return
+	}
+
 	// Card should be moved to pendingDir
 	if _, err := os.Stat(filepath.Join(pendingDir, cardName)); err != nil {
 		t.Fatalf("card not found in pendingDir: %v", err)
@@ -450,5 +465,33 @@ func TestDrainLaunchedProviderErrorAutoRequeue(t *testing.T) {
 	// Card should not be in launchedDir
 	if _, err := os.Stat(filepath.Join(launchedDir, cardName)); !os.IsNotExist(err) {
 		t.Fatalf("card should no longer be in launchedDir")
+	}
+}
+
+// TestReadProviderRetryFailsClosedOnDirectoryOrBrokenSymlink proves that findMarkerPath
+// and ReadProviderRetry fail closed when .provider-retry is a directory or broken symlink.
+func TestReadProviderRetryFailsClosedOnDirectoryOrBrokenSymlink(t *testing.T) {
+	dir := t.TempDir()
+	cardName := "card-test.md"
+
+	// 1. Directory instead of file
+	markerDir := filepath.Join(dir, cardName+".provider-retry")
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ReadProviderRetry(dir, cardName)
+	if err == nil || st != nil {
+		t.Fatalf("ReadProviderRetry must fail when marker is a directory, got st=%v, err=%v", st, err)
+	}
+	_ = os.RemoveAll(markerDir)
+
+	// 2. Broken / dangling symlink
+	symlinkPath := filepath.Join(dir, cardName+".provider-retry")
+	if err := os.Symlink(filepath.Join(dir, "nonexistent-target"), symlinkPath); err != nil {
+		t.Fatal(err)
+	}
+	st, err = ReadProviderRetry(dir, cardName)
+	if err == nil || st != nil {
+		t.Fatalf("ReadProviderRetry must fail when marker is a broken symlink, got st=%v, err=%v", st, err)
 	}
 }

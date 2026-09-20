@@ -234,6 +234,16 @@ func main() {
 		if !published {
 			os.Exit(1)
 		}
+	} else if _, ok := directive(prompt, "FAKE-GATEWAY-TIMEOUT"); ok {
+		fmt.Fprintln(os.Stderr, "The gateway returned 504 Gateway Timeout")
+		if !published {
+			os.Exit(1)
+		}
+	} else if _, ok := directive(prompt, "FAKE-CONNRESET"); ok {
+		fmt.Fprintln(os.Stderr, "error: connection reset by peer")
+		if !published {
+			os.Exit(1)
+		}
 	}
 	// FAKE-TIMELINE REPORTS THE HARNESS'S OWN EVENTS (card 8964): a model turn and five tool
 	// calls, one span at a time, on the child's output. The native run timestamps each report

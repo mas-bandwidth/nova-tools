@@ -136,3 +136,20 @@ func TestNativeNonProviderFailureRemainsIncomplete(t *testing.T) {
 		t.Fatalf("a normal card failure must not be NATIVE PROVIDER:\n%s", out)
 	}
 }
+
+// TestNativeProviderVerdictNegativeControlOnPromptDiscussion proves that discussing 502, 503, 504,
+// or ECONNRESET in prompt/transcript does not trigger NATIVE PROVIDER and remains NATIVE INCOMPLETE on exit 1.
+func TestNativeProviderVerdictNegativeControlOnPromptDiscussion(t *testing.T) {
+	card := `# Discussion of 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout, and ECONNRESET
+We need to ensure connection reset by peer is handled properly in mock server.
+FAKE-RC 1
+`
+	out, _, _, _ := nativeRunCapture(t, "prompt-disc", card)
+
+	if !strings.Contains(out, "NATIVE INCOMPLETE ") {
+		t.Fatalf("prompt discussion must remain NATIVE INCOMPLETE on failure:\n%s", out)
+	}
+	if strings.Contains(out, "NATIVE PROVIDER") {
+		t.Fatalf("prompt discussion must never trigger NATIVE PROVIDER:\n%s", out)
+	}
+}

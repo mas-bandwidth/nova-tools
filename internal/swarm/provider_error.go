@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -37,11 +38,54 @@ var (
 	providerRateLimitLineRE = regexp.MustCompile(`(?i)\b(http\s+429|429\s+too\s+many\s+requests|rate\s+limit\s+reached|quota\s+exceeded|input\s+token\s+limit\s+exceeded|code\s*=\s*resourceexhausted)\b`)
 
 	// Specific server error patterns on runner error lines
-	providerServerErrLineRE = regexp.MustCompile(`(?i)\b(unexpected\s+server\s+error|internal\s+server\s+error)\b`)
+	providerServerErrLineRE = regexp.MustCompile(`(?i)\b(unexpected\s+server\s+error|internal\s+server\s+error|econnreset|connection\s+reset(?:\s+by\s+peer)?)\b`)
 
 	// Specific HTTP 5xx error patterns on runner error lines
 	provider5xxLineRE = regexp.MustCompile(`(?i)\b(502\s+bad\s+gateway|503\s+service\s+unavailable|504\s+gateway\s+timeout|\b529\b|returned\s+(?:500|502|503|504|529)|answered\s+(?:500|502|503|504|529)|http\s+(?:500|502|503|504|529))\b`)
 )
+
+type jsonUnknownErrorPayload struct {
+	Name string `json:"name"`
+	Data struct {
+		Message string `json:"message"`
+		Ref     string `json:"ref"`
+	} `json:"data"`
+}
+
+func parseStructuredJSONUnknownError(s string) (ProviderFailure, bool) {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		clean := strings.TrimSpace(ansiRE.ReplaceAllString(l, ""))
+		if clean == "" {
+			continue
+		}
+		var jsonText string
+		if strings.HasPrefix(clean, "{") {
+			jsonText = strings.Join(lines[i:], "\n")
+		} else if strings.HasPrefix(strings.ToLower(clean), "error:") {
+			rest := strings.TrimSpace(clean[6:])
+			if strings.HasPrefix(rest, "{") {
+				firstLine := rest
+				restLines := append([]string{firstLine}, lines[i+1:]...)
+				jsonText = strings.Join(restLines, "\n")
+			}
+		}
+		if jsonText != "" {
+			dec := json.NewDecoder(strings.NewReader(jsonText))
+			var payload jsonUnknownErrorPayload
+			if err := dec.Decode(&payload); err == nil && strings.EqualFold(payload.Name, "UnknownError") {
+				ref := strings.TrimSpace(payload.Data.Ref)
+				why := "unknown-error"
+				msg := strings.ToLower(payload.Data.Message)
+				if strings.Contains(msg, "unexpected server error") || strings.Contains(msg, "internal server error") || strings.Contains(msg, "econnreset") || strings.Contains(msg, "connection reset") {
+					why = "unexpected-server-error"
+				}
+				return ProviderFailure{Why: why, Ref: ref}, true
+			}
+		}
+	}
+	return ProviderFailure{}, false
+}
 
 // ClassifyProviderFailure inspects captured child output for provider-side errors.
 // It requires structured error markers ([PROVIDER_ERROR]), JSON UnknownError payloads,
@@ -61,11 +105,11 @@ func ClassifyProviderFailure(raw []byte) (ProviderFailure, bool) {
 	}
 
 	// 1. Structured JSON UnknownError payload (e.g. from SDK or gateway)
-	if providerJSONUnknownRE.MatchString(s) {
-		if providerServerErrLineRE.MatchString(s) {
-			return ProviderFailure{Why: "unexpected-server-error", Ref: ref}, true
+	if pf, ok := parseStructuredJSONUnknownError(s); ok {
+		if pf.Ref == "" {
+			pf.Ref = ref
 		}
-		return ProviderFailure{Why: "unknown-error", Ref: ref}, true
+		return pf, true
 	}
 
 	// 2. Line-by-line check for structured runner error lines or [PROVIDER_ERROR] markers
@@ -90,6 +134,8 @@ func ClassifyProviderFailure(raw []byte) (ProviderFailure, bool) {
 				return ProviderFailure{Why: "unknown-error", Ref: lineRef}, true
 			case strings.Contains(lower, "502") || strings.Contains(lower, "503") || strings.Contains(lower, "504") || strings.Contains(lower, "529") || strings.Contains(lower, "500"):
 				return ProviderFailure{Why: "provider-5xx", Ref: lineRef}, true
+			case strings.Contains(lower, "econnreset") || strings.Contains(lower, "connection reset"):
+				return ProviderFailure{Why: "unexpected-server-error", Ref: lineRef}, true
 			default:
 				return ProviderFailure{Why: "unexpected-server-error", Ref: lineRef}, true
 			}

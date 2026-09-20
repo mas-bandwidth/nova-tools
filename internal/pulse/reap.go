@@ -205,10 +205,13 @@ func reapLaunchedCards(in ReapInput, roots []string, now time.Time) (requeued, f
 		}
 		label := strings.TrimSuffix(name, ".md")
 		if isProviderFailure(roots, label) {
-			requeuedCard, _, rerr := RequeueProviderCard(filepath.Join(in.Queue, "pending"), launched, name, DefaultMaxProviderRetries)
-			if rerr == nil && requeuedCard {
-				requeued++
-				continue
+			// SPEC-AHEAD (#2078 split): AutoRequeueEnabled is disabled until shared attempt budget exists (#2040).
+			if AutoRequeueEnabled {
+				requeuedCard, _, rerr := RequeueProviderCard(filepath.Join(in.Queue, "pending"), launched, name, DefaultMaxProviderRetries)
+				if rerr == nil && requeuedCard {
+					requeued++
+					continue
+				}
 			}
 			failed++
 			if !in.DryRun {
