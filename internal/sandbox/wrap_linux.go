@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -40,12 +41,51 @@ const Backend = "landlock"
 //
 // /run/systemd/resolve is here because the resolver and TLS need it (issue #893): a
 // harness that cannot resolve a name inside the sandbox is a sandbox bug, not a network
-// one. It is part of this one table, enforced by addRules, and not switchable.
+// one. It is part of this one table, applied by addRules through linuxRoots (which adds
+// the resolver's own resolved directory for a machine whose config points elsewhere), and
+// not switchable.
 //
 // /proc, NOT /proc/self: a /proc/self opened O_PATH resolves at open time to the pid
 // that opened it -- the tool's -- so a rule built on it would grant the wrapped process
 // its own /proc entry and grant every child it spawns nothing.
 var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/run/systemd/resolve", "/opt", "/dev", "/proc"}
+
+// resolvConfPath is the system resolver's own configuration file. It is a var, and the one
+// seam here, so that a test can stand a symlink in front of it: the whole point of #1737 is
+// that the RESOLVED TARGET of this file may sit outside every static root in the table
+// above. Nothing outside a test changes it.
+var resolvConfPath = "/etc/resolv.conf"
+
+// linuxRoots is the roots addRules applies: the static table plus the directory the system
+// resolver's configuration resolves to on THIS machine. It exists because a table of fixed
+// paths cannot cover a symlink whose target is the machine's choice: measured 2026-09-19 on
+// WSL2 (kernel 6.18.33.2), the distro's /etc/resolv.conf -> /mnt/wsl/resolv.conf, /mnt/wsl
+// is in no row above, and glibc inside the wall had no nameserver -- every lookup failed
+// with "Could not resolve host" while TCP by IP still worked. systemd machines are already
+// covered (their /etc/resolv.conf -> /run/systemd/resolve/...), but that was a hardcoded
+// path, not the property; this grants the property.
+//
+// The directory is granted rather than the file: WSL rewrites /mnt/wsl/resolv.conf, and a
+// rule on the old inode would be left behind holding a file that is no longer read. It is
+// read-only and skip-if-absent, exactly like every other root -- a machine with no resolver
+// config is the machine's shape, not a caller's mistake.
+func linuxRoots() []string {
+	roots := append([]string{}, linuxReadRoots...)
+	resolved, err := filepath.EvalSymlinks(resolvConfPath)
+	if err != nil {
+		return roots
+	}
+	dir := filepath.Dir(resolved)
+	if dir == "" || dir == "/" || dir == "." {
+		return roots
+	}
+	for _, r := range roots {
+		if r == dir {
+			return roots
+		}
+	}
+	return append(roots, dir)
+}
 
 // linuxWriteFiles is the rest of that table: /dev is READ-only above, and these two are
 // the writable exceptions in it. Measured, not assumed -- with /dev read-only and these
@@ -251,8 +291,9 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 	read := uint64(fsReadSubset)
 	write := writeSubset(abi)
 
-	// The roots, read-only, skipped if absent.
-	for _, root := range linuxReadRoots {
+	// The roots, read-only, skipped if absent. linuxRoots is the static table plus the
+	// directory the system resolver's config resolves to (#1737).
+	for _, root := range linuxRoots() {
 		if err := addPathRule(rulesetFd, root, read); err != nil {
 			continue // absent on this image, or not a directory: the table is skip-if-absent
 		}

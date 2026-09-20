@@ -143,7 +143,7 @@ func Harvest(in HarvestInput) int {
 	}
 	_ = cardsPath
 
-	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
+	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
@@ -221,8 +221,11 @@ func Harvest(in HarvestInput) int {
 			// and anything below the floor leaves today's path exactly as it was.
 			classTail := ""
 			if in.Decide {
-				class := in.decideClass(jobDir, branch, resultLines)
-				classTail = " " + classFields(class, in.Floor)
+				class, res := in.decideHarvest(jobDir, branch, resultLines)
+				classTail = " " + classFields(class, in.Floor) + " " + resultFields(res)
+				if res.result == "unknown" {
+					unread++
+				}
 				switch class.kind {
 				case "no-change", "already-fixed":
 					writeSeen(in.Root, c, "done")
@@ -236,6 +239,19 @@ func Harvest(in HarvestInput) int {
 					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s remedy=%s",
 						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
 					continue
+				}
+				// The result reading advises beside the class: a skip-precondition
+				// never started, so it is marked harvested and re-queued nothing;
+				// a defect is a candidate for a person or a stronger reader, one
+				// line, filed nowhere. Anything else harvests as today.
+				if res.result == "skip-precondition" {
+					writeSeen(in.Root, c, "done")
+					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail))
+					continue
+				}
+				if res.result == "defect" {
+					lines = append(lines, fmt.Sprintf("HARVEST FINDING-CANDIDATE job=%s pointer=%s",
+						field(c.Label), field(jobDir)))
 				}
 			}
 			// A RESULT.md is a report, never an instruction (SPEC-SWARM:40-44). The
@@ -298,6 +314,12 @@ func Harvest(in HarvestInput) int {
 	appendStatusIndex(in.Root, indexDirs)
 
 	usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
+	// A launched pulse has no saved swarm packet: launch records pulses/<id>.tsv,
+	// never a .packet. The spend the run just wrote into each job's usage.tsv is
+	// already on disk, so sum it rather than printing a dash.
+	if usd == "-" {
+		usd = sumUsageSpend(indexDirs)
+	}
 
 	grouped := bound(in.Stdout, in.Max)
 	for _, l := range lines {
@@ -320,6 +342,12 @@ func Harvest(in HarvestInput) int {
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,
 		in.Now().Sub(started).Round(time.Millisecond), tail)
+
+	// Below the floor the pair is unknown and today's path ran: the job is
+	// listed once here for whoever ran the verb to read themselves.
+	if in.Decide && unread > 0 {
+		fmt.Fprintf(in.Stdout, "HARVEST UNREAD n=%d escalate=caller\n", unread)
+	}
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.
@@ -729,6 +757,69 @@ func parsePRNumber(s string) int {
 		}
 	}
 	return 0
+}
+
+// sumUsageSpend sums the usd column of the folded jobs' usage.tsv files. Columns
+// are read by header name so column order never matters; a row whose usd cell is
+// a dash or unparseable is not a zero and is skipped. It returns "-" when no
+// measured row is found, so an unmeasured spend stays unknown, never a wrong zero.
+func sumUsageSpend(jobDirs []string) string {
+	seen := map[string]bool{}
+	var total float64
+	var found bool
+	for _, dir := range jobDirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		for _, v := range usageSpendValues(filepath.Join(dir, "usage.tsv")) {
+			total += v
+			found = true
+		}
+	}
+	if !found {
+		return "-"
+	}
+	return strconv.FormatFloat(total, 'f', 4, 64)
+}
+
+// usageSpendValues returns the parseable usd cells of one job's usage.tsv.
+func usageSpendValues(path string) []float64 {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	head := strings.Split(lines[0], "\t")
+	usdIdx := -1
+	for i, name := range head {
+		if strings.TrimSpace(name) == "usd" {
+			usdIdx = i
+			break
+		}
+	}
+	if usdIdx < 0 {
+		return nil
+	}
+	var out []float64
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		values := strings.Split(line, "\t")
+		if usdIdx >= len(values) {
+			continue
+		}
+		if v := strings.TrimSpace(values[usdIdx]); v != "" && v != "-" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
 }
 
 // readUSD parses the usd token from a saved swarm packet's BATCH line, else "-".

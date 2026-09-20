@@ -59,7 +59,7 @@ usage:
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--max <n>] | --rules
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
@@ -535,6 +535,11 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// --route-usage are REQUIRED with it: accounting is not optional, and a
 	// call nobody can account for is not made (SPEC-DECIDE).
 	route := f.fs.Bool("route", false, "")
+	// H4 (#1625): routing is the launcher's default, so --route is kept only
+	// for callers that spell it out, and --no-route --reason is the one way
+	// out. Neither flag is required.
+	noRoute := f.fs.Bool("no-route", false, "")
+	routeReason := f.fs.String("reason", "", "")
 	routeRegistry := f.fs.String("route-registry", "", "")
 	routeFloor := f.fs.Float64("route-floor", swarm.DefaultRouteFloor, "")
 	routeLog := f.fs.String("route-log", "", "")
@@ -545,9 +550,16 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	// H4 (#1625): routing is the launcher's default; the only way out is an
+	// explicit --no-route carrying the --reason that opens it, so a launch
+	// cannot forget the route the way a sentence in a brief can.
+	routeOn := *route || !*noRoute
+	if *noRoute && strings.TrimSpace(*routeReason) == "" {
+		f.add("--no-route needs --reason <text>: a skipped route is a fact in the log, so the reason that opens the skip is not optional")
+	}
 	if *cards != "" {
 		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
-			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
+			routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
 				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
@@ -654,7 +666,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // routeFlags is the --route family, held together so the batch verb's own
 // signature stays readable.
 type routeFlags struct {
-	on       bool
+	on bool
+	// reason is the --reason that opens an explicit --no-route. It is empty
+	// whenever the launcher routes.
+	reason   string
 	registry string
 	floor    float64
 	log      string
@@ -672,18 +687,22 @@ type routeFlags struct {
 // model, so the loop runs on a bench with no API at all.
 func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	if !r.on {
-		return nil
+		if strings.TrimSpace(r.reason) == "" {
+			return nil
+		}
+		// An explicit --no-route --reason still needs the log home for its
+		// skipped row, so the reason is a fact in the log and not an absence.
+		return &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
 	}
 	if err := decide.ValidFloor(r.floor); err != nil {
 		f.add(fmt.Sprintf("--route-floor %s is not a confidence; it wants a number between 0 and 1, such as --route-floor 0.9",
 			oneline.Field(strconv.FormatFloat(r.floor, 'g', -1, 64))))
 		return nil
 	}
+	// H4 (#1625): a missing accounting home is not a refusal. The rules answer,
+	// no call is made, and the receipt says why=no-accounting; the one way out
+	// of the route is --no-route --reason.
 	in := &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
-	if ok, why := in.Accountable(); !ok {
-		f.add(why + "; pass --route-log ./decide.jsonl --route-usage ./usage.tsv, or drop --route")
-		return nil
-	}
 	reg, err := decide.LoadRegistry(r.registry)
 	if err != nil {
 		f.add(fmt.Sprintf("--route-registry: %s", oneline.Err(err)))
@@ -750,9 +769,10 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
 		SlotsStore: slotsStore, SlotOwner: slotOwner,
-		Route:  routed,
-		Worker: w,
-		Stdout: stdout, Stderr: stderr,
+		Route:     routed,
+		RouteSkip: route.reason,
+		Worker:    w,
+		Stdout:    stdout, Stderr: stderr,
 	})
 }
 

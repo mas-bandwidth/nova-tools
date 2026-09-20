@@ -860,7 +860,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity|read|fix|text|replay|drift|tone|models.tsv>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -2051,6 +2051,7 @@ RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
 RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN WAIT slots owner=<owner> holders=<owner:count,...>
+RUN ROUTED-OUT id=<id> dest=<routed-out> rung=<name> why=<rung-is-asked-not-run>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -2787,6 +2788,27 @@ file instead — the tool has no list of blessed task shapes.
 **kind** is a template plus a gate and a negative control declared in the tool, chosen by the
 card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
 card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
+
+### The pulse card templates
+
+`nova-pulse cut` reads a templates directory holding `read.md`, `fix.md`,
+`text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv` (SPEC-PULSE rule 4).
+The same files are shipped in this binary, so the directory is built from the tool
+rather than copied out of `cmd/nova-pulse/testdata`:
+
+```
+nova-swarm template --name read       > read.md
+nova-swarm template --name fix        > fix.md
+nova-swarm template --name text       > text.md
+nova-swarm template --name replay     > replay.md
+nova-swarm template --name drift      > drift.md
+nova-swarm template --name tone       > tone.md
+nova-swarm template --name models.tsv > models.tsv
+```
+
+`read`, `text` and `tone` are text-only cards and carry rule 6's no-build line;
+`fix`, `replay` and `drift` carry the red-then-green row. These are cards, not task
+templates: `add --template` and `batch --template` refuse them, as they refuse `result`.
 
 ## The `RESULT.md` template
 

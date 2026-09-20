@@ -2430,7 +2430,7 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sa
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity            # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv   # the conditions, the forms, and the pulse card templates, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
@@ -2478,15 +2478,16 @@ explains. The rule tokens and what each wants are in `docs/WORKER-CARDS.md`; the
 
 routes: see docs/MODELS.md
 
-**`--route`: the ladder chooses the model, not the TSV.** `batch --cards` reads `label<TAB>slot<TAB>model<TAB>card-path`, and until `--route` that `model` column was the last word — a string a fill script wrote by hand. With `--route`, the batch asks the ladder one typed decision per card, in process, **before the card is assigned a model**: which mind does this unit of work. The answer's rung names the model id, from the registry; the TSV's model becomes the **fallback**, which is exactly today's behaviour (SPEC-DECIDE rule 5).
+**Routing is the launcher's default: the ladder chooses the model, not the TSV.** `batch --cards` reads `label<TAB>slot<TAB>model<TAB>card-path`, and that `model` column used to be the last word — a string a fill script wrote by hand. The batch now asks the ladder one typed decision per card, in process, **before the card is assigned a model**: which mind does this unit of work. The answer's rung names the model id, from the registry; the TSV's model becomes the **fallback**, which is exactly today's behaviour (SPEC-DECIDE rule 5). Routing is a launcher step and not a line in a brief (#1625).
 
 ```
-nova-swarm batch --cards <tsv> --route --route-log <path> --route-usage <path>
+nova-swarm batch --cards <tsv> [--route-log <path>] [--route-usage <path>]
                  [--route-registry <path>] [--route-floor 0.9]
                  [--route-key-env JEV_API_KEY] [--route-base-url <url>]
+                 [--no-route --reason <text>]
 ```
 
-`--route-log` and `--route-usage` are **required** with `--route`: accounting is not optional, and a call nobody can account for is not made. Every card carries one receipt line, said on stderr in TSV order and written into the card's job directory as `route.txt`:
+A launcher that names no accounting home does not skip the route: the rules answer, no call is made, and the receipt says `why=no-accounting`. `--route-log` and `--route-usage` are where the decision's records go when they are named; accounting is not optional, and a call nobody can account for is not made, but the card is still routed. **The one way out is `--no-route --reason <text>`**, which writes a `"source":"skipped"` row carrying the reason to the route log, so a skipped route is a fact in the log and not an absence. Every routed card carries one receipt line, said on stderr in TSV order and written into the card's job directory as `route.txt`:
 
 ```
 ROUTE card-742 ROUTE jev=flash conf=0.94 rung=flash model=opencode/deepseek-v4-flash why=-
@@ -2510,7 +2511,7 @@ TOUCHES: sandbox
 
 Where the card names no `KIND:`, the kind is read from its contract line by a deterministic table of phrases — security phrases first, so security never falls through to a cheaper reading of the same line. A card whose kind cannot be read is **not routed at all**: no evidence is no decision, its line says `why=card-names-no-kind`, and today's model stands. What reaches the provider is never the card: it is the bucketed public projection of the unit and nothing else (SPEC-DECIDE rule 4).
 
-**Two routes, two questions — do not point both at the same column.** `internal/swarm/route.go` (`nova-swarm route`, `nova-pulse launch --routes`) asks what KIND of work a card's text is and picks the **worker description** for it from a routes table, writing that path into the cards TSV's model column. `--route` here asks which MIND does the unit — over the registry ladder, with the escalation policy on it — and names that mind's **model id**. One chooses the harness a card runs under; the other chooses who does the work, and neither answer is the other's. They write the same column, so a pulse that already rewrote it with `--routes` should run `nova-swarm batch` **without** `--route`, and a batch that routes by the ladder should be handed a TSV carrying model ids.
+**Two routes, two questions — do not point both at the same column.** `internal/swarm/route.go` (`nova-swarm route`, `nova-pulse launch --routes`) asks what KIND of work a card's text is and picks the **worker description** for it from a routes table, writing that path into the cards TSV's model column. `--route` here asks which MIND does the unit — over the registry ladder, with the escalation policy on it — and names that mind's **model id**. One chooses the harness a card runs under; the other chooses who does the work, and neither answer is the other's. They write the same column, so a pulse that already rewrote it with `--routes` should run `nova-swarm batch` with `--no-route --reason <text>` (the skip is logged), and a batch that routes by the ladder should be handed a TSV carrying model ids.
 
 **No key is no call.** An absent key is said once, by the name of the variable and never by its value, and the batch runs on today's models — so the loop runs on a bench with no API at all.
 
@@ -2743,6 +2744,14 @@ capacity` is refused the way `add --template result` and `add --template setup` 
 key, no token, and no private host detail is ever printed by it, and a filled form
 supplies no account access — an automatic scheduler is separate staged work with its own
 authorization.
+
+`nova-swarm template --name read` (and `fix`, `text`, `replay`, `drift`, `tone` and
+`models.tsv`) prints the six typed card templates SPEC-PULSE rule 4 names and the cost
+table rule 7 reads, so the templates directory `nova-pulse cut --templates <dir>` needs is
+built from the tool instead of copied out of `cmd/nova-pulse/testdata`. `read`, `text` and
+`tone` are text-only cards and carry rule 6's no-build line; `fix`, `replay` and `drift`
+carry the red-then-green row. They are cards, not task templates: `add --template read`
+is refused the way `add --template result` is.
 
 ### The harness contract
 
