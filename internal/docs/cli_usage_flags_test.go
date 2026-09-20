@@ -114,9 +114,33 @@ func docSynopsisLines(doc, section, tool string) []string {
 		}
 	}
 	return joinWraps(block, func(line string) bool {
-		return strings.HasPrefix(line, tool+" ") &&
-			(strings.ContainsRune(line, '<') || strings.ContainsRune(line, '['))
+		return strings.HasPrefix(line, tool+" ") && (strings.ContainsRune(line, '<') ||
+			strings.ContainsRune(line, '[') || allFlagsAfterTheVerb(line))
 	})
+}
+
+// allFlagsAfterTheVerb is the second shape a synopsis line can take: a verb form that
+// takes NO argument at all, so it holds neither a placeholder nor an optional and the
+// rule above cannot see it (`nova-pulse accept --kinds`). It is still not an example,
+// because every token after the verb is a `--flag`: a worked example spells real values
+// (`--bench hulk`, `--root ~/rowan-swarm-root`) and this cannot.
+//
+// The binary's side of this test has always read such a line -- usageLines takes every
+// line beginning with the tool's name -- so without this the two sides parse the same
+// document shape by different rules, and a no-argument form is reported as undocumented
+// however it is written. Widening the doc side makes the test STRICTER in both
+// directions: more synopsis lines are read, so more flags must match.
+func allFlagsAfterTheVerb(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 3 {
+		return false
+	}
+	for _, f := range fields[2:] {
+		if !strings.HasPrefix(f, "--") {
+			return false
+		}
+	}
+	return true
 }
 
 // joinWraps folds a synopsis's continuation lines into the line they continue. Both sources
