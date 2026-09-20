@@ -2223,7 +2223,7 @@ FLEET <bench> STANDARD DRIFT drift=<k>/<n>
 
 The checks are **data, one table per operating system** (`pulse.FleetStandardChecks`), so
 the standard is read rather than traced through a shell script. Linux: the Go toolchain at
-`--go` (default `go1.26.5`), `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one
+`--go` (default the tree's `go.mod` `go` line; `--go` is an explicit override), `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one
 seat key, and free space at `--min-free` (default 25 GB). darwin: the Go SDK and `sbcl`
 under `~/sdk`, real git ahead of the Xcode shim, and every runner's `.path` carrying it,
 with the stamp, seat and space checks shared. Left out, `--os` is asked of the bench with

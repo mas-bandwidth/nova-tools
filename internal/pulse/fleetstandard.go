@@ -18,6 +18,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,10 +59,57 @@ type StandardCheck struct {
 	Root string
 }
 
+// goDirectiveLine matches go.mod's `go <version>` line.
+var goDirectiveLine = regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+
+// GoDirective returns the `go1.X.Y` token go.mod's `go` line names, or "".
+func GoDirective(mod []byte) string {
+	m := goDirectiveLine.FindSubmatch(mod)
+	if m == nil {
+		return ""
+	}
+	return "go" + string(m[1])
+}
+
+// GoWantFromTree is the toolchain the working tree's go.mod asks for. Empty
+// means the file was not found or had no go line. --go and $NOVA_GO override
+// this; this is the default, not a copied patch.
+func GoWantFromTree() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for i := 0; i < 16; i++ {
+		raw, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+		if err == nil {
+			return GoDirective(raw)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+func resolveGoWant(goWant string) string {
+	if strings.TrimSpace(goWant) != "" {
+		return goWant
+	}
+	if w := GoWantFromTree(); w != "" {
+		return w
+	}
+	// MatchContains of "" is true for every value, so an unread tree must not
+	// pass. The token is one no `go version` line carries.
+	return "go.mod-unread"
+}
+
 // FleetStandardChecks is the standard itself: the checks for one operating system, in the
-// order they print. goWant is the Go toolchain the fleet is on, stamp is the nova bins'
-// build stamp (empty means "report whatever this bench has"), and minFreeGB is the floor
-// under HOME (launch refuses below 25 GB).
+// order they print. goWant is the Go toolchain the fleet is on (empty reads go.mod's go
+// line; --go overrides), stamp is the nova bins' build stamp (empty means "report
+// whatever this bench has"), and minFreeGB is the floor under HOME (launch refuses
+// below 25 GB).
 //
 // The Linux list is tools/bench-standard.sh's toolchain half: the Go SDK, sbcl, the safe-rm
 // helper every bench script sources, and the nova stamp. The darwin list is
@@ -77,9 +127,7 @@ type StandardCheck struct {
 // that the bench has a working Go at all is what the `go` check above asserts. The wall
 // skips an absent root either way, so the report is the wall's argv read in advance.
 func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCheck {
-	if strings.TrimSpace(goWant) == "" {
-		goWant = "go1.26.5"
-	}
+	goWant = resolveGoWant(goWant)
 	stampMatch, stampWant := MatchNonempty, ""
 	if strings.TrimSpace(stamp) != "" {
 		stampMatch, stampWant = MatchContains, stamp
@@ -237,7 +285,7 @@ type FleetStandardInput struct {
 	Name      string // the one bench to check
 	SSH       string // the ssh program; empty is "ssh"
 	OS        string // "linux" or "darwin"; empty asks the bench with uname -s
-	Go        string // the Go toolchain the fleet is on; empty is go1.26.5
+	Go        string // the Go toolchain the fleet is on; empty reads go.mod's go line
 	Want      string // the nova bins' stamp; empty reports what the bench has
 	MinFreeGB int    // the floor on free space under HOME
 	Timeout   time.Duration

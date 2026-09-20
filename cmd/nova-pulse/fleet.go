@@ -319,6 +319,11 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "FLEET REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	// Piped through `bash -s`, so $0 is not the checkout. Pin the tree's go
+	// line the same way fleet standard does when --go is empty (#1500).
+	if goWant := pulse.GoWantFromTree(); goWant != "" {
+		script = "NOVA_GO=" + goWant + "\n" + script
+	}
 	// The lock (Glenn 2026-09-18): a survey is an ssh and a script on the machine, which
 	// is load, so the benches file's names are held against the machines registry before a
 	// single child starts. A refused machine prints its line and is not surveyed; the rest
