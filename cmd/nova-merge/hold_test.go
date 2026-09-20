@@ -142,6 +142,59 @@ func TestLandWithoutAReceiptRefusesRatherThanSkipTheMemberFold(t *testing.T) {
 	absent(t, stdout, "LAND OK")
 }
 
+// 1c. TestLandWithAStaleReceiptRefusesAHeldMember: the same 02:34Z hold, but the landing
+// carries a leftover BATCH OK whose members= is not a list of pull request numbers
+// (members=- is what land used to print on LAND OK while skipping the fold). A stale
+// receipt is not a fold: land must refuse rather than enqueue a held member it cannot name.
+func TestLandWithAStaleReceiptRefusesAHeldMember(t *testing.T) {
+	t.Parallel()
+	revFile := testReviewerFile(t, t.TempDir(), defaultReviewersTSV)
+	head := strings.Repeat("a", 40)
+	const memberHead = "6adbbd1d89869455e920a43ccf7378daf4375add"
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	h.PRs[1551] = merge.PR{Number: 1551, HeadOID: memberHead, Mergeable: "MERGEABLE"}
+	h.SetVerdicts(1551, merge.Verdict{
+		ID: "comment:202", Who: "alice", Word: "hold", Head: memberHead,
+		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
+	})
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=- dropped=none"
+
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560", "--receipt", receipt, "--reviewers", revFile)
+	if exit != 1 {
+		t.Fatalf("land with a stale receipt cannot re-read the members it lands and must refuse, got exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("the queue was touched by a batch whose member fold never ran: %v", q.enqueued)
+	}
+	contains(t, stderr, "no-receipt: cannot re-read members")
+	absent(t, stdout, "LAND OK")
+}
+
+// 1d. TestLandWithAFreshReceiptOfUnheldMembersStillEnqueues: the same fixture, no hold on
+// the member, and a current BATCH OK that names it. The fold runs, finds nothing held, and
+// land still enqueues. The no-receipt refuse must not become a refuse of every landing.
+func TestLandWithAFreshReceiptOfUnheldMembersStillEnqueues(t *testing.T) {
+	t.Parallel()
+	revFile := testReviewerFile(t, t.TempDir(), defaultReviewersTSV)
+	head := strings.Repeat("a", 40)
+	const memberHead = "6adbbd1d89869455e920a43ccf7378daf4375add"
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	h.PRs[1551] = merge.PR{Number: 1551, HeadOID: memberHead, Mergeable: "MERGEABLE"}
+	receipt := "BATCH OK name=integration-12t2 base=" + strings.Repeat("d", 40) +
+		" head=" + head + " members=1551 dropped=none skipped=none checks=required"
+
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560", "--receipt", receipt, "--reviewers", revFile)
+	if exit != 0 {
+		t.Fatalf("a fresh receipt of unheld members must still land, got exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("unheld members must still enqueue, got %v", q.enqueued)
+	}
+	contains(t, stdout, "LAND OK pr=1560")
+	contains(t, stdout, "members=1551")
+	absent(t, stderr, "LAND REFUSED")
+}
+
 // 2. TestAHoldInAnySourceStops: lane record, review CHANGES_REQUESTED, comment.
 func TestAHoldInAnySourceStops(t *testing.T) {
 	t.Parallel()

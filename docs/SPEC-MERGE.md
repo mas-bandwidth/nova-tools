@@ -1555,11 +1555,11 @@ A card writes these first, each seen red before it is trusted; the network, the 
 **One caller.**
 
 ```
-nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
 nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
 ```
 
-`land` reads the pull request back from the forge and enqueues it at the front after three refusals: not open, its own checks not green, or a head that is not a batch's. The two green-nesses are different questions and both are asked — the gate's green is a bench's, CI's green is the forge's on the commit the queue will take, and integration-4 went green on hulk and red on three CI legs. `--receipt-file` takes the LAST line of a file, so a caller may hand it the gate's whole output. A refusal is exit 1 (the verb ran and said NO); a read that failed is exit 2.
+`land` reads the pull request back from the forge and enqueues it at the front after three refusals: not open, its own checks not green, or a head that is not a batch's. The two green-nesses are different questions and both are asked — the gate's green is a bench's, CI's green is the forge's on the commit the queue will take, and integration-4 went green on hulk and red on three CI legs. `--receipt-file` takes the LAST line of a file, so a caller may hand it the gate's whole output. **The receipt is what names the members:** before `Enqueuer.Enqueue`, land folds every `members=` number again from the wire, so a HOLD posted on a member after `BATCH OK` refuses the whole landing (#1894, the 02:34Z hole). A head under `rowan/integration-*` is a branch's name and not that list, so a land that carries no `members=` list to fold is `LAND REFUSED` `no-receipt` rather than enqueued with the fold skipped. A refusal is exit 1 (the verb ran and said NO); a read that failed is exit 2.
 
 `queue audit` is the other half: it lists every open pull request carrying an auto-merge and takes it off — the hand sweep that removed 27 that morning, as a verb, with every entry named and one line of counts. `--dry-run` lists and writes nothing. It is not a lane verb and names its repository outright.
 
