@@ -81,6 +81,16 @@ const (
 	PlaceholderBody    = "<the note goes here>"
 )
 
+// ContainsPlaceholderBody reports whether body is empty or contains the template placeholder line.
+func ContainsPlaceholderBody(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) == PlaceholderBody {
+			return true
+		}
+	}
+	return false
+}
+
 // Skeleton is a draft's header before anybody has written the note: the verb `draft`
 // resolves the names against the roster and this renders them.
 //

@@ -63,7 +63,7 @@ import (
 const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
-  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--file <path> | > <file>]
+  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] | > <file>]
   nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
         [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
@@ -640,7 +640,9 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	subject := f.fs.String("subject", "", "the subject line (default: a placeholder you must replace)")
 	var re stringList
 	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
-	file := f.fs.String("file", "", "write the draft skeleton to this file instead of standard output")
+	out := f.fs.String("out", "", "write the draft skeleton to this file instead of standard output")
+	overwrite := f.fs.Bool("overwrite", false, "allow replacing an existing file named by --out")
+	f.fs.String("file", "", "retired: use --out instead")
 	// The reply form's flags. Every one of them is inert without --reply-to, which is what
 	// keeps the released form byte-identical: see cmd/nova-bus/reply.go.
 	replyTo := f.fs.String("reply-to", "", "an id, a path, or the SUBJECT of a note on your live listing to ANSWER: the reply form, which refreshes the bus and writes the whole header for you")
@@ -655,6 +657,10 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	given := map[string]bool{}
 	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	if given["file"] {
+		fmt.Fprint(stderr, "nova-bus draft: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)\n")
+		return 2
+	}
 	if !given["reply-to"] {
 		// A reply-only flag without the flag that means the reply form: this form runs no
 		// git and writes no file, so there is nothing for it to do. Exit 2, which is what
@@ -691,8 +697,8 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
 	// not on the bus is two mistakes and one run.
 	var problems []error
-	if *file != "" {
-		cur := filepath.Dir(*file)
+	if *out != "" {
+		cur := filepath.Dir(*out)
 		for {
 			if fi, err := os.Stat(cur); err == nil && fi.IsDir() {
 				break
@@ -706,7 +712,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		curResolved := resolveForCompare(cur)
 		root := resolveForCompare(*busDir)
 		if curResolved == root || strings.HasPrefix(curResolved, root+string(filepath.Separator)) {
-			problems = append(problems, fmt.Errorf("--file %s is inside the bus checkout at %s; drafts go outside the bus, because send needs its tree clean", *file, root))
+			problems = append(problems, fmt.Errorf("--out %s is inside the bus checkout at %s; drafts go outside the bus, because send needs its tree clean", *out, root))
 		}
 	}
 	if err := bus.OneLine("--subject", *subject); err != nil {
@@ -789,12 +795,16 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	skeleton := bus.Skeleton{From: me.Name, To: *to, Cc: *cc, Re: re, Subject: *subject}.Render()
-	if *file != "" {
-		if err := os.WriteFile(*file, []byte(skeleton), 0o644); err != nil {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(*file), oneline.Err(err))
+	if *out != "" {
+		if _, err := os.Stat(*out); err == nil && !*overwrite {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s exists; pass --overwrite to replace it\n", oneline.Field(*out))
+			return 1
+		}
+		if err := os.WriteFile(*out, []byte(skeleton), 0o644); err != nil {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(*out), oneline.Err(err))
 			return 2
 		}
-		fmt.Fprintf(stdout, "DRAFT OK path=%s\n", oneline.Field(*file))
+		fmt.Fprintf(stdout, "DRAFT OK path=%s\n", oneline.Field(*out))
 		return 0
 	}
 	fmt.Fprint(stdout, skeleton)
@@ -965,8 +975,8 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			return 1
 		}
 		to, _ := p.Note.Header.Recipients(c)
-		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s wakes=%d\n",
-			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State), len(to))
+		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s wakes=%d body_bytes=%d\n",
+			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State), len(to), len(p.Note.Body))
 		return 0
 	}
 
@@ -1110,8 +1120,8 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 1
 	}
 	to, _ := prepared.Note.Header.Recipients(t.Config)
-	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d\n",
-		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to))
+	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d body_bytes=%d\n",
+		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to), len(prepared.Note.Body))
 	return 0
 }
 

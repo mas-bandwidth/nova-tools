@@ -402,8 +402,14 @@ func replyBody(path string, budget int, stderr io.Writer) ([]byte, int) {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.Err(err))
 		return nil, 2
 	}
-	if n == 0 {
+	bodyStr := string(buf[:n])
+	trimmed := strings.TrimSpace(bodyStr)
+	if trimmed == "" {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is empty; a reply with no body is not a reply\n", oneline.Field(path))
+		return nil, 1
+	}
+	if trimmed == bus.PlaceholderBody || bus.ContainsPlaceholderBody(bodyStr) {
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is the unedited template placeholder (<the note goes here>)\n", oneline.Field(path))
 		return nil, 1
 	}
 	if n > budget {
