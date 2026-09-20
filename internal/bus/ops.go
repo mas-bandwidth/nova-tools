@@ -87,8 +87,11 @@ func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (
 	if senderKnown && sender.Lane == "" {
 		problems = append(problems, fmt.Errorf("%s: %q has no lane on this bus, so has nowhere to send from", KeyFrom, sender.Name))
 	}
-	if strings.TrimSpace(NormalizeBody(n.Body)) == "" {
+	normBody := strings.TrimSpace(NormalizeBody(n.Body))
+	if normBody == "" {
 		problems = append(problems, errors.New("the note has no body"))
+	} else if normBody == PlaceholderBody || ContainsPlaceholderBody(n.Body) {
+		problems = append(problems, fmt.Errorf("the body is the unedited template placeholder (%s)", PlaceholderBody))
 	}
 	// THE RE LINES, WHICH ARE HOW A NOTE CLOSES ANOTHER. A target that names an id or a
 	// path on the bus is what a Re line has always been. A target that names NOTHING used

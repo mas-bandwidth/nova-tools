@@ -432,24 +432,16 @@ func firstLine(out string, err error) string {
 // its own process group so that a check which spawns children is killed whole when
 // --timeout expires; a deadline that kills only the shell leaves the tree running.
 //
-// A nil env is this process's own CLEANED by goenv.Clean, which is what `simulate` hands
-// it; `batch` hands it an environment whose temp directory is the batch's own, so that two
-// gates running on one bench cannot write over each other's scratch -- built from
-// goenv.Clean too, because its steps are go commands whose output this verb parses.
+// A nil env is this process's own, which is what `simulate` hands it; `batch` hands it
+// an environment whose temp directory is the batch's own, so that two gates running on
+// one bench cannot write over each other's scratch. Both go through checkChildEnv:
+// goenv.Clean plus the credential names Clean still keeps, because the child runs
+// code from the tree under test (#1836).
 func runCheck(dir, check string, timeout time.Duration, env []string) (string, error) {
 	name, args := shellCommand(check)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	// The checks are go commands -- defaultChecks is `go build ./...,go test
-	// ./internal/ci/` -- and SIMULATE POISON quotes the first line of what they
-	// print. A caller's GOFLAGS=-json, which CI's `make test` exports, would make
-	// that first line a JSON object instead of the failure a reader needs. A nil
-	// env is therefore this process's environment CLEANED, never the raw one, and
-	// a caller that hands its own builds it from Clean the same way (ciTestEnv).
-	if env == nil {
-		env = goenv.Clean(os.Environ())
-	}
-	cmd.Env = env
+	cmd.Env = checkChildEnv(env)
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -469,4 +461,30 @@ func runCheck(dir, check string, timeout time.Duration, env []string) (string, e
 		<-done
 		return buf.String(), fmt.Errorf("no answer within the %s --timeout", timeout)
 	}
+}
+
+// checkChildEnv is the environment a simulate or batch check child is started with.
+// A nil env is this process's own. Clean drops GOFLAGS-class names and any NAME
+// carrying KEY, TOKEN or SECRET; this also drops PASSWORD and WEBHOOK, which are
+// credentials this tree holds (SMTP_PASSWORD, BSKY_APP_PASSWORD, DISCORD_*_WEBHOOK)
+// and which Clean still keeps. The drop is by NAME, never by value (#1836).
+func checkChildEnv(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	cleaned := goenv.Clean(env)
+	out := make([]string, 0, len(cleaned))
+	for _, entry := range cleaned {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && extraCheckSecret(name) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func extraCheckSecret(name string) bool {
+	up := strings.ToUpper(strings.TrimSpace(name))
+	return strings.Contains(up, "PASSWORD") || strings.Contains(up, "WEBHOOK")
 }
