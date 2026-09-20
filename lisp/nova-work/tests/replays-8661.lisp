@@ -229,3 +229,60 @@
       ;; equipment does not complete: nothing a machine does is evidence.
       (check-equal nil (machine-completion-evidence-p machine)
                    "nothing a machine does is completion evidence"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE05F04ResolveReleaseVersionThroughThe      SPEC-WORK.md:2083
+;;; ------------------------------------------------------------------
+;;; E05-F04-03 (docs/roadmaps/nova-work.sexp): resolve release version
+;;; through the release task reference. The disposition row's `released=`
+;;; reads the `:version` of the settled release task that names this item
+;;; in its `:deps`, found through the reverse-dependency index, and `-`
+;;; while that task is in O.
+
+(deftest "TestE05F04ResolveReleaseVersionThroughThe" "docs/SPEC-WORK.md:2083"
+    "expected=released-reads-the-referencing-release-task-version;dash-while-release-open;earlier-settle-stamp-wins;dash-when-no-release-task-names-it"
+  ;; the version comes from the release task that *names* this item in its
+  ;; :deps, never from the finding itself.
+  (let ((finding (make-finding "acme/sec/alex-2" :branch :c :disposition :done
+                               :evidence '())))
+    ;; while the naming release task is open the fix is not yet distributed.
+    (let ((open (list (make-release-task "acme/release/v0.4.3"
+                                         :version "v0.4.3"
+                                         :deps '("acme/sec/alex-2")
+                                         :branch :o))))
+      (check-equal "-" (finding-released finding open)
+                   "released=- while the naming release task is open"))
+    ;; a settled release task that does not name the item cannot supply a version.
+    (let ((other (list (make-release-task "acme/release/v0.4.3"
+                                          :version "v0.4.3"
+                                          :deps '("acme/sec/alex-9")
+                                          :branch :c
+                                          :settle-stamp "2026-09-13T00:00:00Z"))))
+      (check-equal "-" (finding-released finding other)
+                   "a settled release task that does not name the item reads -")
+      (check-equal "-" (getf (disposition-row finding other) :released)
+                   "the disposition row reads released=- too"))
+    ;; a settled release task naming the item resolves to its :version.
+    (let ((settled (list (make-release-task "acme/release/v0.4.3"
+                                            :version "v0.4.3"
+                                            :deps '("acme/sec/alex-2")
+                                            :branch :c
+                                            :settle-stamp "2026-09-13T00:00:00Z"))))
+      (check-equal "v0.4.3" (finding-released finding settled)
+                   "released resolves to the naming release task's version"))
+    ;; two settled release tasks naming one item: the earlier settle stamp wins.
+    (let ((two (list (make-release-task "acme/release/v0.4.4"
+                                        :version "v0.4.4"
+                                        :deps '("acme/sec/alex-2")
+                                        :branch :c
+                                        :settle-stamp "2026-09-14T00:00:00Z")
+                     (make-release-task "acme/release/v0.4.3"
+                                        :version "v0.4.3"
+                                        :deps '("acme/sec/alex-2")
+                                        :branch :c
+                                        :settle-stamp "2026-09-13T00:00:00Z"))))
+      (check-equal "v0.4.3" (finding-released finding two)
+                   "the earlier settle stamp wins, not list order"))
+    ;; no release task names the item at all: the version is unresolved.
+    (check-equal "-" (finding-released finding '())
+                 "no naming release task reads -")))
