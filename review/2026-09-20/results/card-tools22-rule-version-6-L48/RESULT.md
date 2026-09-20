@@ -1,0 +1,10 @@
+RESULT tools22-rule-version-6-L48 sha=5298f6be12ea — does the code at this base do what docs/SPEC-VERSION.md rule 6 says?
+GAP internal/update/snapverb.go:84-89
+SPEC docs/SPEC-VERSION.md:48 rule 6
+PKG cmd/nova-version
+ASK Whenever the code reads a binary's version stamp (in snapshot, moved, or apply --sha postflight), it must also read that binary's source metadata (repository, revision, dirty flag, build host) and verify it against the build manifest, refusing with exit 2 if missing or disagreeing.
+`parseVersionLine` at internal/update/snapverb.go:84-89 calls `buildinfo.Parse` which can return extras (key=value pairs) but the function returns only stamp, revision, platform — the source metadata fields (repository, dirty flag, build host) are neither extracted nor verified against any manifest.
+The snapshot verb (snapverb.go:177) uses only the three returned fields and never consults a manifest for source metadata verification. The rule's other two places (`apply --sha`'s postflight and `moved`'s per-revision readback) are not implemented in cmd/nova-version: no `--sha` flag exists on `apply` (cli.go:215-216 uses `--version`, not `--sha`), and no `moved` verb exists in the codebase. The spec's demanded test `TestStampCheckAlsoVerifiesSourceMetadata` is absent.
+Greps run: `grep -rn "stamp\|metadata\|dirty\|repository\|build\.host\|source\.metadata" --include='*.go' cmd/nova-version/` (only a comment hit); `grep -rn "SourceMetadata\|sourceMetadata\|source_metadata" --include='*.go' internal/update/` (no hits); `grep -rn "\"moved\"\|case \"moved\"\|movedVerb" --include='*.go' .` (no verb dispatch); `grep -rn "apply.*--sha\|--sha\|applySha" --include='*.go' .` (only an error-string reference in snapverb.go:189); `grep -rn "TestStampCheckAlsoVerifiesSourceMetadata" --include='*_test.go' .` (absent). Explored `cmd/nova-version/`, `internal/update/`, `internal/release/`, `internal/buildinfo/`.
+Left owed
+git status --short — nothing printed

@@ -1,0 +1,4 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-work4p-E11-F03-03	1	2026-09-20T19:06:23Z	2026-09-20T19:06:25Z	1	inception	mercury-2.5	-	-	-	-	-	-
+card-work4p-E11-F03-03	2	2026-09-20T19:06:45Z	2026-09-20T19:06:48Z	1	inception	mercury-2.5	-	-	-	-	-	-
+card-work4p-E11-F03-03	3	2026-09-20T19:07:41Z	2026-09-20T19:07:46Z	1	inception	mercury-2.5	-	-	-	-	-	-

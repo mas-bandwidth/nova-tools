@@ -1,0 +1,2 @@
+RESULT tools22-pre-865-r2 sha=5298f6be12ea -- a pre-read of mas-bandwidth/nova-tools#865 at head 49aa717c4342: pulse: failure by cause, tools file their own edges, the cut stamp, no "whole" (classes I, J, P
+ABSTAIN infrastructure failure: mirror /tmp/nova-tools-mirror.git does not exist and /tmp is not accessible from the sandbox (read=7 write=5 no /tmp in paths). The staged repo at `<JOBDIR>/repo` was never created — `.git` has no objects and no commits. Cannot run `git fetch` to verify head 49aa717c4342. No diff, no analysis possible.

@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-board-first-run-r15	1	2026-09-20T21:12:39Z	2026-09-20T21:16:01Z	0	openrouter	qwen/qwen3.7-flash	72168	6044	0	361600	9432	0.0094

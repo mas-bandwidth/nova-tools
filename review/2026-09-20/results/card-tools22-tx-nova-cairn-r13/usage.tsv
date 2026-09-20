@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-tx-nova-cairn-r17	1	2026-09-20T19:26:11Z	2026-09-20T19:28:30Z	0	inception	mercury-2.5	33542	104	0	7134	1891	0.0017

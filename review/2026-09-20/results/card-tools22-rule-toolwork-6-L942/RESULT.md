@@ -1,0 +1,13 @@
+RESULT tools22-rule-toolwork-6-L942 sha=5298f6be12ea
+NOT-CODE
+SPEC docs/SPEC-TOOLWORK.md:942 rule 6
+PKG internal/docs
+ASK A transcript-test card that finds the document and the tool disagree must report it as a finding — line 2 `BLOCKED drift <file:line>` with the two lines, no edit to `docs/TESTS.md` — and leave which of the two is wrong to a person, who then cuts a `fix-red` or a `text` card.
+BINDS The rule addresses the transcript-test card writer (what it may not edit and what its line 2 must say) and a person (who decides which of the document and the tool is wrong before any `fix-red` or `text` card follows); nova-post's `fake` channel (Q5) is the named first such decision, already a person's call (spec: re-cut the block; a fake channel does not ship), not a behaviour the binary performs.
+CONTEXT docs/SPEC-TOOLWORK.md:942-946 "A `transcript-test` card may not touch `docs/TESTS.md` (§5). When the document and the tool disagree the card's line 2 is `BLOCKED drift <file:line>` with the two lines, and which of the two is wrong is a person's decision and a `fix-red` or a `text` card afterwards — nova-post's `fake` channel is the first such decision (Q5)."
+No code in the tree implements this: `grep -rn "BLOCKED drift" --include='*.go' .` finds nothing; `grep -rn "doc-edited"` finds nothing; `internal/pulse/kinds.go` does not exist at this base (the §5 kinds table, the `doc-edited`/`transcript-not-read` reject tokens and the PATHS refusal for `docs/TESTS.md` are planned, not shipped). The only related machinery is generic and older: any RESULT.md whose line 2 begins `BLOCKED` is classed blocked/mismatch — `internal/pulse/harvest.go:504`, `internal/pulse/statusindex.go:212`, `internal/decide/harvestclass.go:160-161` (`Line2Blocked`) — and `internal/decide/ladder.go:53,97,120` knows the kind `transcript-test` for routing only. None of it parses `BLOCKED drift <file:line>`, none refuses an edit to `docs/TESTS.md`, and none decides which side is wrong.
+GREPS grep -rn "BLOCKED drift" --include='*.go' . ; grep -rn "BLOCKED" --include='*.go' . ; grep -rn '"fake"' --include='*.go' internal/ cmd/ ; grep -rn "doc-edited" --include='*.go' . ; grep -rn "transcript-test\|transcript_test\|TranscriptTest" --include='*.go' . ; grep -rn "TESTS.md" --include='*.go' . ; grep -rn "drift" --include='*.go' internal/pulse/ internal/decide/ ; ls internal/pulse/
+FILES-READ docs/SPEC-TOOLWORK.md (889-968, 682-760, 1044-1062), internal/decide/harvestclass.go, internal/decide/ladder.go, internal/pulse/harvest.go (495-515), internal/pulse/statusindex.go (200-225), internal/post/post.go (100-125), internal/hygiene/hygiene_test.go (347-351)
+Left owed
+git status --short:
+(clean)

@@ -1,0 +1,2 @@
+RESULT tools22-dog-nova-bus-first-run-r23 sha=5298f6be12ea — read `nova-bus First run` against docs/CLI.md:361-392 and say CLEAN or DRIFT
+SKIP the installed nova-* binaries in /home/gaffer/.local/bin/ are not executable by this process (Permission denied); the documented commands cannot be run verbatim on this machine

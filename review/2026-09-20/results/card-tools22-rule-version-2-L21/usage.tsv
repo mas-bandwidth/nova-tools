@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-rule-version-2-L21	1	2026-09-20T21:07:24Z	2026-09-20T21:08:41Z	0	openrouter	qwen/qwen3.7-flash	40724	2808	0	286464	1854	0.0035

@@ -1,0 +1,2 @@
+RESULT: s17g-f7-rust sha=7c29513b0e8f
+BLOCKED-TOOLCHAIN: missing git bundle /tmp/schema14-ftf.bundle — the harness did not place it at the expected path, so the base repo cannot be fetched. No work possible.

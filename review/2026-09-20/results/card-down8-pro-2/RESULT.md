@@ -1,0 +1,3 @@
+RESULT: FLEET PROBE ok
+echo: FLEET-PROBE-OK-20260919
+bench: vision

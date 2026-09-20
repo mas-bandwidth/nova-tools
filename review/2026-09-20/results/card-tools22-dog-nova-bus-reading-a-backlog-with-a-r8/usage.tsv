@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-reading-a-backlog-with-a-r8	1	2026-09-20T21:14:39Z	2026-09-20T21:17:22Z	0	openrouter	deepseek/deepseek-v4-flash	57824	3083	0	229888	3541	0.0042

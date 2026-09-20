@@ -1,0 +1,3 @@
+RESULT: s17pr2-948 sha=7c29513b0e8f
+
+**CANNOT READ** — The base tree in `repo/` does not exist; the bundle at `/tmp/schema14-ftf.bundle` is absent; and the working `.git` has zero objects. The diff is also truncated at 6000 of 33710 bytes (`docs/FIXED-FORM-ALGORITHM.md`), so the majority of the change is invisible. I cannot read the base version of any file the diff touches, nor verify the laws in `docs/FIXED-FORM-ALGORITHM.md`, `docs/SPEC.md`, or `docs/PORTING.md`. The missing file is `docs/FIXED-FORM-ALGORITHM.md` (and any other file touched by the truncated portion of the diff).

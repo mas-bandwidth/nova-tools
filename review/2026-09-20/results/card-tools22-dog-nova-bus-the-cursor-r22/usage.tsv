@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-the-cursor-r22	1	2026-09-20T21:15:04Z	2026-09-20T21:16:39Z	0	inception	mercury-2.5	266357	583	0	67713	3397	0.0115

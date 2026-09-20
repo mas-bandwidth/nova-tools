@@ -1,0 +1,2 @@
+RESULT spec-release-r2 sha=5298f6be12ea — SPEC-RELEASE.md has no "Tests this spec demands" section. Read the spec, say which demanded behaviours the tree already tests and which it does not, and draft the issues for the ones it does not.
+BLOCKED head=d576bf6bbabb39068096a97b4560de9b5e245970

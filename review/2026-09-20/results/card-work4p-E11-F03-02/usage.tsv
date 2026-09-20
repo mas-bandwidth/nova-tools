@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-work4p-E11-F03-02	1	2026-09-20T20:38:42Z	2026-09-20T20:43:37Z	0	inception	mercury-2.5	515463	508	0	68320	2337	0.0213

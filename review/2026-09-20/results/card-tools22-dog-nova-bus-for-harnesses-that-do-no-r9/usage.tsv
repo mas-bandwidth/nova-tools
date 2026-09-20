@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-for-harnesses-that-do-no-r9	1	2026-09-20T21:14:13Z	2026-09-20T21:15:50Z	0	inception	mercury-2.5	411722	778	0	160865	4537	0.0179

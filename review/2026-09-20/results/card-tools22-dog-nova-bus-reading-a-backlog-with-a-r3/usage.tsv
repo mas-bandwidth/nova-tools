@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-reading-a-backlog-with-a-r3	1	2026-09-20T21:14:29Z	2026-09-20T21:17:05Z	0	openrouter	qwen/qwen3.7-flash	86361	4668	0	633728	6852	0.0163

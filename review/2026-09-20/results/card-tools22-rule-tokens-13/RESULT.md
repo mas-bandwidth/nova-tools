@@ -1,0 +1,11 @@
+RESULT tools22-rule-tokens-13 sha=5298f6be12ea — does the code at this base do what docs/SPEC-TOKENS.md rule 13 says?
+CONFORMS docs/CLI.md:3336
+SPEC docs/SPEC-TOKENS.md:2464 rule 13
+PKG internal/tokens
+ASK The nova-tokens `### First run` in docs/CLI.md must show one fold (one fixture transcript plus one fixture bus note) into a temp directory, then `check` and `sum`, every path a flag, as the transcript the tool really prints, with the fixture bus lane on example.com.
+CONFORMS docs/CLI.md:3336 — "The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. Three lines: fold one fixture transcript and one fixture bus note into an output directory, check it, sum it. Every path is a flag — there is no default output directory, no default transcript directory, no default bus and no default rules file, and no environment variable is consulted."
+docs/CLI.md:3334 `### First run` is the nova-tokens section's own; the transcript itself is docs/TESTS.md:702-740: fixture `cmd/nova-tokens/testdata/example-bench` (copied into a temp dir; "the bus lane is `example.com`"), then `$ nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus`, `$ nova-tokens check --out ./out`, `$ nova-tokens sum --out ./out --month 2026-09` — one fixture transcript (window.jsonl, files=1), one fixture bus note (bus/from-emma, files=1), every path a flag.
+Fixture lane confirms example.com: cmd/nova-tokens/testdata/example-bench/bus/participants.json — "git_email": "emma@example.com" / "rowan@example.com".
+GUARDED-BY cmd/nova-tokens/firstrun_test.go:205 TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine (executes the three documented steps line-for-line against a copy of the fixture in t.TempDir(); also TestTheTranscriptIsWhatTheToolPrints at :140). Verified passing: GOMAXPROCS=8 go test ./cmd/nova-tokens/ -count=1 -run 'TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine|TestTheTranscriptIsWhatTheToolPrints' → ok.
+Greps: `grep -n "### First run" docs/CLI.md` (nova-tokens section is the one at :3334); `grep -rn "example.com" docs/ --include='*.md'` (TESTS.md:702); `grep -rn "example-bench" cmd/nova-tokens/ --include='*.go'` (firstrun_test.go); `grep -n "func Test" cmd/nova-tokens/firstrun_test.go`.
+Left owed

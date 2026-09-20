@@ -1,0 +1,11 @@
+RESULT tools22-rule-pulse-17-L1899 sha=5298f6be12ea — does the code at this base do what docs/SPEC-PULSE.md rule 17 says?
+CONFORMS internal/pulse/harvest.go:316
+SPEC docs/SPEC-PULSE.md:1899 rule 17
+PKG internal/pulse
+ASK A harvest must print on its HARVEST OK line a `usd=` value copied byte-for-byte from the `usd=` token of the saved swarm packet's first (`BATCH`) line — a literal `-` when that token is `-` — and must never emit a model id in any verb's argv log other than the `nova-swarm batch --model` flag.
+DECIDING internal/pulse/harvest.go:316 `usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))`
+DECIDING internal/pulse/harvest.go:835-846 `func readUSD(path string) string { ... first := strings.SplitN(string(raw), "\n", 2)[0]; for _, tok := range strings.Fields(first) { if v, ok := strings.CutPrefix(tok, "usd="); ok { return v } } ... }` — returns the token's value verbatim (no parse/reformat), so HARVEST OK's `usd=` at internal/pulse/harvest.go:351 is the BATCH line's byte-for-byte.
+UNGUARDED
+MODEL-CLAUSE internal/pulse/launch.go:354 `exec.Command(swarmBin.Path, "batch", ...)` passes the model only inside `--cards` (a TSV, never an argv slot); no pulse verb lists a model id in argv (grep `--model` over internal/pulse hits only a cut_test.go comment), so the argv-log clause holds.
+GREPS `grep -rn "usd=" internal/pulse` · `grep -rn "HARVEST OK" internal/pulse` · `grep -rn ".packet" internal/pulse` · `grep -rn -- "--model" internal/pulse` · `grep -rn "\.packet" --include='*_test.go' .`
+Left owed The byte-for-byte copy path is real but untested: the only usd test is TestHarvestSumsUsageSpendWithoutPacket (internal/pulse/harvest_usd_test.go:12), which exercises the no-packet sum fallback — nothing writes a `pulses/<id>.packet` with a numeric `BATCH … usd=N` and asserts the verbatim copy. Also note readUSD's `"-"` sentinel confuses "no packet" with "packet says `usd=-`": when the packet is absent harvest sums usage.tsv (internal/pulse/harvest.go:320-322), and a packet that literally said `usd=-` would likewise be summed rather than echoed as `-` (unreachable today only because the swarm's `formatUSD` always emits a number, internal/swarm/batch.go:1475).

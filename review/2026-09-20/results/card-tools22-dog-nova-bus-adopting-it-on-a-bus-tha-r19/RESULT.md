@@ -1,0 +1,2 @@
+RESULT tools22-dog-nova-bus-adopting-it-on-a-bus-tha-r19 sha=5298f6be12ea — read `nova-bus Adopting it on a bus that already exists: the switch day` against docs/CLI.md:542-555 and say CLEAN or DRIFT
+BROKEN nova-bus: command not found — no nova tools installed on this machine

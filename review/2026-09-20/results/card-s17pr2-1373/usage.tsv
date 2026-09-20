@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-s17pr2-1373	1	2026-09-20T19:55:48Z	2026-09-20T20:01:52Z	0	opencode	deepseek-v4-flash	30231	22916	0	563712	0	0.0264

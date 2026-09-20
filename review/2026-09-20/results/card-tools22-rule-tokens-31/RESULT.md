@@ -1,0 +1,8 @@
+RESULT tools22-rule-tokens-31 sha=5298f6be12ea — does the code at this base do what docs/SPEC-TOKENS.md rule 31 says?
+ABSENT
+SPEC docs/SPEC-TOKENS.md:2361 rule 31
+PKG internal/tokens
+ASK An implementation would need a `publish` verb that, for each run, creates a random-suffixed private directory under the git dir, exclusively-creates staged files there, removes its own directory on ordinary exit, lets a killed run's leftovers block nothing, rejects pre-existing staged paths (exit 2 naming the path, file byte-identical), rejects flag aliases resolved through symlinks (exit 2 naming both flags), and checks that the day file has not changed between lock and push (exit 1 `reason=changed`).
+The `publish` verb is deliberately not shipped. docs/SPEC-TOKENS.md:1929-1930: "It does not publish. The publish verb and the PUBLISH output lines are struck from this draft: the shipped binary has no publish case." None of the rule-31 behaviour — random temp suffixes, read-tree, staged-path rejection, alias-via-symlink checking, reason=changed — exists in internal/tokens/. Greps run: `grep -rn "publish\|Publish" --include='*.go' internal/tokens/` (no publish verb), `grep -rn "reason=changed" --include='*.go' .` (no match), `grep -rn "read-tree\|readTree\|ReadTree" internal/tokens/` (no match), `grep -rn "staged" internal/tokens/` (no match), `grep -rn "alias" --include='*.go' internal/tokens/` (no flag-alias checking), `grep -rn "symlink" --include='*.go' internal/tokens/` (only package-level batch symlink rejection for rule 29). What does exist — the fold lock, TempSuffix in dayfile.go, check.go stepping over .tsv.tmp, AtomicNoReplaceRename in package.go — implements rules 8, 13, and 29, not rule 31.
+Left owed.
+git status --short

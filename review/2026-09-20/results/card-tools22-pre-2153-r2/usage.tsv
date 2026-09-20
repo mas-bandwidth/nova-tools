@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-pre-2153-r1	1	2026-09-20T19:28:19Z	2026-09-20T19:32:15Z	0	inception	mercury-2.5	141047	399	0	17356	3586	0.0063

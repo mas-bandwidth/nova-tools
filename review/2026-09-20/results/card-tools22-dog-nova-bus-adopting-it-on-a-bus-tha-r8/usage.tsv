@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-adopting-it-on-a-bus-tha-r8	1	2026-09-20T21:14:38Z	2026-09-20T21:26:07Z	0	openrouter	qwen/qwen3.7-flash	79423	8368	0	696192	4935	0.0126

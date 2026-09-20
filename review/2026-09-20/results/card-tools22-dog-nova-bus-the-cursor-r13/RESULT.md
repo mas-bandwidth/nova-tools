@@ -1,0 +1,2 @@
+RESULT tools22-dog-nova-bus-the-cursor-r13 sha=5298f6be12ea — read `nova-bus The cursor` against docs/CLI.md:522-527 and say CLEAN or DRIFT
+BLOCKED installed build is command not found, not the card's base

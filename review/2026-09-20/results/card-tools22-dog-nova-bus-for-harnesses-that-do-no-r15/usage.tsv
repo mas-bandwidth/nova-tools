@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-for-harnesses-that-do-no-r15	1	2026-09-20T21:15:39Z	2026-09-20T21:21:22Z	0	openrouter	deepseek/deepseek-v4-flash	14637	1665	0	97024	1347	0.0014

@@ -1,0 +1,2 @@
+RESULT tools22-rule-review-6 sha=5298f6be12ea — does the code at this base do what docs/SPEC-REVIEW.md rule 6 says?
+BLOCKED head=repo not found: /tmp/nova-tools-mirror.git does not exist on this machine, cannot clone or checkout base sha 5298f6be12eaa0f7e6622334d2b6a1eb427649e3

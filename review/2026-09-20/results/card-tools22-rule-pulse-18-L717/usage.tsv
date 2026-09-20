@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-rule-pulse-18-L717	1	2026-09-20T20:49:35Z	2026-09-20T20:52:47Z	0	opencode	deepseek-v4-pro	25818	2403	0	245054	2178	0.0980

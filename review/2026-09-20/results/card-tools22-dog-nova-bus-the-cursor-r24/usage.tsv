@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-the-cursor-r24	1	2026-09-20T21:15:06Z	2026-09-20T21:17:08Z	0	openrouter	qwen/qwen3.7-flash	48034	4458	0	409728	3019	0.0049

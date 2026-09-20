@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-work4p-E11-F03-04	1	2026-09-20T18:54:44Z	2026-09-20T18:59:45Z	-	openrouter	qwen/qwen3.7-flash	9084	70	0	0	114	0.0003

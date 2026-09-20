@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-rule-wake-13-L2188	1	2026-09-20T21:07:02Z	2026-09-20T21:09:17Z	0	inception	mercury-2.5	760425	815	0	251413	5637	0.0324

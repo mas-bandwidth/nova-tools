@@ -1,0 +1,2 @@
+"RESULT tools22-dog-nova-bus-the-rule-this-tool-does-r16 sha=5298f6be12ea — read `nova-bus The rule this tool does not enforce` against docs/CLI.md:560-563 and say CLEAN or DRIFT
+BLOCKED installed build is Permission denied, not the card's base

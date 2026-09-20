@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-rule-swarm-profiles-1	1	2026-09-20T19:47:29Z	2026-09-20T19:54:43Z	0	opencode	deepseek-v4-pro	47665	5372	0	938038	3951	0.2548

@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-the-cursor-r13	1	2026-09-20T21:12:42Z	2026-09-20T21:13:58Z	0	openrouter	deepseek/deepseek-v4-flash	12050	1175	0	60672	1699	0.0011

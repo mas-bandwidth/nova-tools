@@ -1,0 +1,17 @@
+RESULT tools22-rule-wake-13-L4267 sha=5298f6be12ea — does the code at this base do what docs/SPEC-WAKE.md rule 13 says?
+CONFORMS internal/wake/source.go:144
+SPEC docs/SPEC-WAKE.md:4267 rule 13
+PKG internal/wake
+ASK Every line the watch prints — every verdict and every item line — must be one grammar whose first token is `WAKE`, replacing the prototype's tokenless `no change in 1200s` and its ad-hoc `bus:` / `PR 942:` / `report:` item shapes with one fielded shape per kind.
+Deciding lines:
+  internal/wake/source.go:148: `return fmt.Sprintf("WAKE BUS id=%s from=%s addr=%s at=%s commit=%s path=%s: %s", ...`
+  internal/wake/source.go:162: `return fmt.Sprintf("WAKE ENTRY %s state=%s fail=%s pending=%s pass=%s final=%t failing=%s", ...`
+  internal/wake/source.go:168: `return fmt.Sprintf("WAKE REPORT path=%s lines=%s bytes=%s %s", ...`
+  internal/wake/source.go:178: `return fmt.Sprintf("WAKE PR %s comments=%s reviews=%s threads=%s ...`, ...`
+  (every other case of Render — WAKE RUN/BRANCH/LOCK/LINE — is the same shape; the default at source.go:222 is `WAKE NOTE ...`)
+  cmd/nova-wake/main.go:1243: `fmt.Fprintf(w.stdout, "WAKE CHANGE after=%s polls=%d bus=%d entries=%d reports=%d lines=%d prs=%d runs=%d branches=%d locks=%d pending=%d\n", ...`
+  cmd/nova-wake/main.go:1259: `fmt.Fprintf(w.stdout, "WAKE QUIET after=%s polls=%d default=%s sources-failing=%d: deadline, default taken\n", ...`
+The item lines the rule names are now `WAKE BUS` / `WAKE PR` / `WAKE REPORT` etc. (source.go Render, one grammar), the `CHANGE after=…` verdict is `WAKE CHANGE` with fields, and the tokenless `no change in 1200s` is `WAKE QUIET` with fields; `WAKE BROKEN`/`WAKE STOPPED`/`WAKE SOURCE`/`WAKE MORE`/`WAKE POLL`/`WAKE REFUSED` are the same grammar. A `grep -rn "WAKE " internal/wake/ cmd/nova-wake/" turns up no printed line whose first token is not WAKE (the tool's invocation-refusal `nova-wake: ...` and the `awake` subcommand's `AWAKE ...` are separate verbs with their own SPEC.md/SPEC-WORK.md shapes, not the watch grammar rule 13 governs).
+GUARDED-BY cmd/nova-wake/main_test.go:1125 TestASourceThatRecoversHasItsChangeCounted (asserts the verdict has prefix `WAKE CHANGE`; also cmd/nova-wake/events_test.go:235 TestEveryWaitIsASource's --baseline subtest requires `WAKE PR`/`WAKE RUN`/`WAKE BRANCH`/`WAKE LOCK` and cmd/nova-wake/lessons_test.go:64 TestNoFalseWakeOnReload requires `WAKE BUS `/`WAKE ENTRY `/`WAKE REPORT `/`WAKE LINE ` tokens). Within internal/wake/ itself no test asserts the `WAKE` prefix on a Render line — the item-line grammar is only pinned at the cmd/nova-wake end-to-end tests.
+Greps ran: `grep -rn "WAKE" internal/wake/`, `grep -rn "no change\|after=\|change in" internal/wake/`, `grep -rn "WAKE " internal/wake/ cmd/nova-wake/"`, `grep -rn "WAKE\|no change\|CHANGE after" cmd/nova-wake/`, `grep -rn "func Test" internal/wake/`, `grep -rn "func Test" cmd/nova-wake/`, `grep -rn "strings.HasPrefix/Contains.*WAKE" cmd/nova-wake/*_test.go`; read internal/wake/source.go, cmd/nova-wake/main.go:1220-1299,1500-1569, internal/wake/bus.go:59-113, internal/bounded/bounded.go:155-204, cmd/nova-wake/lessons_test.go:50-75, cmd/nova-wake/events_test.go:200-245, cmd/nova-wake/main_test.go:1101-1125. Ran `GOMAXPROCS=8 go test ./internal/wake/ -count=1 -run TestTheStoredFormOfAWatchedKeyCarriesThePrintedLabel|TestTheSpecNamesEveryWaitShapeTheCodeSuppresses` (ok) and `GOMAXPROCS=8 go test ./cmd/nova-wake/ -count=1 -run TestASourceThatRecoversHasItsChangeCounted|TestNoFalseWakeOnReload` (ok).
+Left owed: nothing.

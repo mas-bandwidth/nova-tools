@@ -1,0 +1,2 @@
+RESULT work4s-E06-F01-02 sha=5298f6be12ea — nova-work E06-F01: does the contract say it? criterion E06-F01-02: Create validated snapshots with schema, revision, boundary and manifest
+BLOCKED repo/ directory not staged — launcher did not create it; local mirror /tmp/nova-tools-mirror.git not found; no network available to clone

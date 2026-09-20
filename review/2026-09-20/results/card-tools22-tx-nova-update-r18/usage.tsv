@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-tx-nova-update-r10	1	2026-09-20T19:24:49Z	2026-09-20T19:37:17Z	0	openrouter	qwen/qwen3.7-flash	19971	2222	0	243840	1626	0.0026

@@ -1,0 +1,3 @@
+RESULT: s17pr2-973 sha=7c29513b0e8f
+
+**CANNOT READ** — The base tree in `repo/` does not exist. `git rev-parse HEAD` fails because the directory `/Users/glenn/rowan-working/tmp/dd2cc172-d285-3961-b480-ccab19d738d2-card-s17pr2-973/jobs/card-s17pr2-973/repo` is absent. The bundle at `/tmp/schema14-ftf.bundle` is inaccessible (Operation not permitted or does not exist). Without the base tree, I cannot read the files the diff touches, consult `docs/FIXED-FORM-ALGORITHM.md`, `docs/SPEC.md`, or `docs/PORTING.md`, or verify the change against the law. No hunk was reachable.

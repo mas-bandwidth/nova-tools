@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-rule-toolwork-7-L840	1	2026-09-20T21:07:07Z	2026-09-20T21:09:45Z	0	opencode	deepseek-v4-flash	58189	16784	0	1223424	0	0.0471

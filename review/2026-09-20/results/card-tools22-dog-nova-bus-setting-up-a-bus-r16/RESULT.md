@@ -1,0 +1,2 @@
+RESULT tools22-dog-nova-bus-setting-up-a-bus-r16 sha=5298f6be12ea — read `nova-bus Setting up a bus` against docs/CLI.md:393-433 and say CLEAN or DRIFT
+BLOCKED installed build is /usr/bin/bash: line 1: /home/glenn/.local/bin/nova-version: Permission denied, not the card's base

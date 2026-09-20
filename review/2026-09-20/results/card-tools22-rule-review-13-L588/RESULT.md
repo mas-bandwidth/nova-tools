@@ -1,0 +1,2 @@
+RESULT tools22-rule-review-13-L588 sha=5298f6be12ea — does the code at this base do what docs/SPEC-REVIEW.md rule 13 says?
+BLOCKED head=fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.

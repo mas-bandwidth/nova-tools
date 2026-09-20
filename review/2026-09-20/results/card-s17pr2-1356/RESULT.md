@@ -1,0 +1,3 @@
+RESULT: s17pr2-1356 sha=unreachable
+
+**CANNOT READ** — the base repository required by STEP 1 does not exist. No `repo/` directory is present in the job working directory, the bundle `/tmp/schema14-ftf.bundle` is absent from the filesystem, and the local `.git` is empty (zero objects, zero refs, no packs). Without the base tree at 7c29513b0e8f42f457189d1bec23e1de475d4ed8, I cannot read the pre-image of any file the diff touches (`test/dart-tables/fixedform.dart`), quote any law from `docs/`, or evaluate any hunk for correctness.

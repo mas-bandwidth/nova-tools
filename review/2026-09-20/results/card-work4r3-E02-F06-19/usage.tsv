@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-work4r3-E02-F06-19	1	2026-09-20T20:06:26Z	2026-09-20T20:31:38Z	0	opencode	deepseek-v4-pro	90753	8843	0	2769438	20343	0.6716

@@ -1,0 +1,7 @@
+RESULT tools22-dog-nova-bus-for-harnesses-that-do-no-r10 sha=5298f6be12ea — read `nova-bus For harnesses that do not wake you` against docs/CLI.md:528-541 and say CLEAN or DRIFT
+BROKEN /home/glenn/.local/bin/nova-version and /home/glenn/.local/bin/nova-bus: Permission denied (binary cannot be read or executed despite mode 0755, owned by glenn, on ext4 with no noexec)
+TOOL nova-bus, VERB For harnesses that do not wake you, DOC docs/CLI.md:528-541, REPLICA 10 of 24, BUILD (nova-version could not run)
+| 1 | nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m --advance --remote origin --branch main | exit (could not run) | SKIP |
+BROKEN docs/CLI.md:528-541: The nova-bus binary cannot be executed at all on this machine. Permission denied. `/home/glenn/.local/bin/nova-version` and `/home/glenn/.local/bin/nova-bus` both fail with `/usr/bin/bash: line 1: /home/glenn/.local/bin/nova-version: Permission denied` despite mode 0755, owned by glenn:glenn, on ext4 with no noexec mount. This is a system-level restriction (likely landlock or LSM) that prevents the nova tools from running. Without the tool, no command in the section can be exercised.
+RAN 0, SKIPPED 1
+Left owed: Entire section `### For harnesses that do not wake you` (docs/CLI.md:528-541) could not be exercised because the nova-bus binary itself cannot execute on this machine.

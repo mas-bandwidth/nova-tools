@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-rule-toolwork-2-L646	1	2026-09-20T21:06:28Z	2026-09-20T21:16:46Z	0	openrouter	deepseek/deepseek-v4-flash	158438	6356	0	1232128	18300	0.0162

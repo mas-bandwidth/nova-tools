@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-tools22-dog-nova-bus-reading-a-backlog-with-a-r10	1	2026-09-20T21:14:18Z	2026-09-20T21:14:54Z	0	inception	mercury-2.5	256100	582	0	55552	4049	0.0112

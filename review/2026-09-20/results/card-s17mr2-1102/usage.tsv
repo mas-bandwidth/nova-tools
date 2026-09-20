@@ -1,0 +1,2 @@
+job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
+card-s17mr2-1102	1	2026-09-20T19:54:44Z	2026-09-20T19:59:43Z	0	openrouter	deepseek/deepseek-v4-flash	37139	2913	0	211200	4526	0.0078

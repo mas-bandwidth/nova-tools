@@ -1,0 +1,21 @@
+RESULT tools22-rule-toolwork-4 sha=5298f6be12ea — does the code at this base do what docs/SPEC-TOOLWORK.md rule 4 says?
+GAP internal/onboarding/transcript_test.go:104
+SPEC docs/SPEC-TOOLWORK.md:932 rule 4
+PKG internal/docs
+ASK The transcript comparator must be red on the three one-edit seeds — a dropped line, an altered value, a moved line — in its own tests, and the transcript-test kind's control must apply the same three seeds to a copy of each tool's real docs/TESTS.md section and demand the new test goes red on each, proving the test reads the document and not a fixture of its own.
+
+Half the rule is true at this base. The comparator here is `onboarding.Compare` (internal/onboarding/transcript.go:627), and its own tests carry the three one-edit seeds, each red, all passing:
+
+- line dropped -> red: internal/onboarding/transcript_test.go:104 `TestAnAbridgedTranscriptIsRed` — `step := Step{Line: "$ nova-alpha list", Want: []string{"LIST ENTRY name=gate"}}` against `res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}`; `if len(problems) != 1 { t.Fatalf("Compare found %d problems, want 1...` (lines 104-114).
+- line moved -> red: internal/onboarding/transcript_test.go:119 `TestAReorderedTranscriptIsRed` — the same two lines in the other order; `if len(Compare(step, res, nil)) != 2 { t.Error("Compare accepted the documented lines in the wrong order")` (lines 119-125).
+- value altered -> red: internal/onboarding/transcript_test.go:130 `TestAWrongValueIsRed` — `Want: []string{"LIST OK n=1"}` against `Result{Stdout: "LIST OK n=2\n"}`; `if len(problems) != 1` (lines 130-139).
+
+The other half is missing. Rule 4's second sentence — "Per tool, the `transcript-test` kind's control (§5) applies the same three seeds to a copy of that tool's real section and demands red" — has no implementation at this base, and neither do the nouns it leans on:
+- `onboarding.CompareTranscript` and `onboarding.Volatile` (rule 2's only-comparator and shared value table) do not exist — grep for `CompareTranscript|Volatile` finds only `onboarding.Compare` (internal/onboarding/transcript.go:627) and an unrelated `internal/update/read.go:356`.
+- The §5 kinds table `internal/pulse/kinds.go` (SPEC-TOOLWORK.md:731) does not exist; there is no `nova-pulse accept` verb (no `accept.go`, no `cmdAccept`), and nothing applies the three seeds to a copy of a tool's section.
+- No class test `TestEveryTranscriptIsExecutedLineForLine` (rule 3) nor `transcript-test-rejects-an-edit-to-the-document` nor the red-test names `compare-rejects-a-*` exist anywhere in Go.
+- The spec's own work list confirms these are pending builders' items: T6 "the kinds table with `fix-red` and `transcript-test`" and T7 "`onboarding.CompareTranscript`, `onboarding.Volatile`, the three seeded reds, and `TestEveryTranscriptIsExecutedLineForLine`" (docs/SPEC-TOOLWORK.md:981-982), with T8/T9 the per-tool transcript-test cards. (A `CompareTranscript` implementation sits unmerged on `remotes/origin/rowan/toolwork-t07-comparator`, not at this base.)
+
+Greps run: `grep -rn "CompareTranscript|Volatile" --include='*.go' .`; `grep -rn "transcript-not-read|doc-edited|TranscriptRejectsAnEdit|kinds-table-matches-the-spec|transcript-test-rejects-an-edit-to-the-document" --include='*.go' .`; `grep -rn "TestEveryTranscriptIsExecutedLineForLine|compare-rejects-a-dropped-line|compare-rejects-a-moved-line|compare-rejects-an-altered-value" .`; `grep -rn "three seeds|one line dropped|applied to a copy" --include='*.go' .`; `grep -rn "func Test" internal/ci/*.go`; `ls internal/pulse/kinds.go`; `ls cmd/nova-pulse/`; read internal/onboarding/transcript_test.go, cmd/nova-cairn/firstrun_test.go, internal/docs/mutate_lines_test.go, docs/SPEC-TOOLWORK.md (912-958, 682-760, 960-1002).
+
+Left owed: the per-tool `transcript-test` control — the §5 machinery that copies each tool's real section, applies the three one-edit seeds, and demands the new test goes red on each (T6/T7/T8/T9). The comparator's own three-seed tests already conform.
