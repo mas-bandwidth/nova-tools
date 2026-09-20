@@ -1085,6 +1085,16 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	}
 	offered := offer(reg, u, rules.Rung.Height, tried, failedAt)
 	rules.Offered = mindNames(offered)
+	// #1513 / Stella's HOLD on #1860: mechanical work with no CONFIRMED failure
+	// never reaches the provider -- not even when the supported height holds
+	// more than one eligible mind (offer()'s own bound only limits how many
+	// HEIGHTS are gathered; a height can hold two lineages). The semantic
+	// decision boundary is HERE: a fact about the unit and its attempts, never
+	// a proxy on len(offered).
+	if Mechanical(u.Kind) && len(failedAt) == 0 {
+		rules.Reason += "; one eligible rung, so no decision to ask"
+		return rules, nil
+	}
 	if len(offered) < 2 {
 		rules.Reason += "; one eligible rung, so no decision to ask"
 		return rules, nil
@@ -1151,6 +1161,15 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt map[int]map[string]bool) []Mind {
 	var out []Mind
 	rungs := 0
+	// #1513: a mechanical kind with no CONFIRMED failure is offered its
+	// supported rung ALONE -- there is no step the evidence has earned, so no
+	// decision is asked for it at all. A confirmed failure (see
+	// Attempt.Failed) restores the ordinary offer of the supported rung and
+	// the next one that holds a mind.
+	bound := 2
+	if Mechanical(u.Kind) && len(failedAt) == 0 {
+		bound = 1
+	}
 	for _, h := range reg.Heights() {
 		if h < height {
 			continue
@@ -1166,7 +1185,7 @@ func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt ma
 		}
 		out = append(out, at...)
 		rungs++
-		if rungs == 2 {
+		if rungs == bound {
 			break
 		}
 	}
