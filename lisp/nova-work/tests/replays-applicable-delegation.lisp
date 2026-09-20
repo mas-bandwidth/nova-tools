@@ -295,3 +295,28 @@
                  "a verdict is not reused across an unchecked rebase")
     (check-equal t (review-reusable-p v "abc123")
                  "a verdict is reusable while head, content and dependencies are unchanged")))
+
+;;; ------------------------------------------------------------------
+;;; TestE07F05FeedFindingsIntoNEXTTOOLS         criterion E07-F05-03
+;;; ------------------------------------------------------------------
+;;; docs/SPEC-WORK.md:7883 — "The post-Fixed-Tables review feeds
+;;; `NEXT-TOOLS.md` and the production specs before implementation
+;;; begins." The paragraph it closes (:7880-7883) states the review's
+;;; obligation: "Each proposed tool capability should cite the observed
+;;; friction, the smallest operation that would remove it, its safety
+;;; boundary, a measurable benefit and an acceptance replay." The
+;;; roadmap's E07-F05 "Pilot retrospective and scope evolution" carries
+;;; this as its third subfeature, "Feed findings into NEXT-TOOLS and
+;;; production specs before implementation."
+;;;
+;;; This replay is deliberately RED: the slice-1 kernel registers no
+;;; record that carries a proposed capability's five citations and no
+;;; gate that refuses to begin production implementation until a finding
+;;; has been fed into NEXT-TOOLS.md and the production specs. It stays
+;;; RED until a later slice provides that record and gate, at which
+;;; point its body is rewritten to assert the behaviour over them.
+
+(deftest "TestE07F05FeedFindingsIntoNEXTTOOLS" "docs/SPEC-WORK.md:7883"
+    "expected=red;no-next-tools-feed-record-in-slice-1-kernel"
+  (ok nil
+      "E07-F05-03 feed-findings-into-next-tools-and-production-specs: expected a kernel record carrying a proposed capability's observed friction, smallest operation, safety boundary, measurable benefit and acceptance replay, and a gate feeding it into NEXT-TOOLS.md and the production specs before implementation begins; slice 1 (lisp/nova-work/src/) exposes none"))
