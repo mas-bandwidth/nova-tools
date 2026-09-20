@@ -372,11 +372,19 @@ func runBatch(in LaunchInput, id, cardsPath, runner string, swarmBin resolvedSwa
 	if err := cmd.Run(); err != nil {
 		reason := strings.TrimSpace(errb.String())
 		if reason == "" {
-			// `exit status 3` is a Go *exec.ExitError stringified with nothing added.
-			// It is still the truth about the child, so it is still said -- but it is
-			// said as the exit of a NAMED binary, and the caller adds what the job
-			// tree recorded (issue #1761).
-			reason = fmt.Sprintf("%s batch: %s (it said nothing on stderr)", oneline.Field(swarmBin.Path), oneline.Err(err))
+			// nova-swarm batch writes its ABSTAIN / THEN SKIPPED lines on stdout.
+			// Relaying only stderr is how `PULSE REFUSED: exit status 3` named
+			// nothing while the card, the reason and the door were already said
+			// (issue #1761, Glenn's re-measure).
+			if said := strings.TrimSpace(out.String()); said != "" {
+				reason = oneline.Escape(said)
+			} else {
+				// `exit status 3` is a Go *exec.ExitError stringified with nothing added.
+				// It is still the truth about the child, so it is still said -- but it is
+				// said as the exit of a NAMED binary, and the caller adds what the job
+				// tree recorded (issue #1761).
+				reason = fmt.Sprintf("%s batch: %s (it said nothing on stderr)", oneline.Field(swarmBin.Path), oneline.Err(err))
+			}
 		}
 		return reason, false
 	}
