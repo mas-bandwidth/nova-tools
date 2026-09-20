@@ -385,6 +385,58 @@ a closed node D, under the coordinator scope \"coord\"."
                "an explicit true is admitted")
   (check-equal nil (nova-work::%seed-required '(:required nil))
                "an explicit nil is admitted")
-  (ok (handler-case (progn (nova-work::%seed-required '(:required :yes)) nil)
-        (error () t))
-      "a truthy non-boolean required flag is refused, never guessed"))
+   (ok (handler-case (progn (nova-work::%seed-required '(:required :yes)) nil)
+         (error () t))
+       "a truthy non-boolean required flag is refused, never guessed"))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02TrackPendingConfirmedAndFailed  docs/SPEC-WORK.md:7576-7581
+;;;
+;;; E09-F02-03 (ROADMAP.md:911): "Track pending, confirmed and failed
+;;; outbound actions with receipts". SPEC-WORK.md:7576-7581 fixes the
+;;; correspondence contract: every outbound action toward a public issue is
+;;; tracked as :pending, :confirmed or :failed under a stable request id and a
+;;; receipt; an uncertain action retried under the same request id is never
+;;; duplicated; and a reopened issue produces a reconciliation signal that
+;;; never erases earlier completion evidence.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F02TrackPendingConfirmedAndFailed" "docs/SPEC-WORK.md:7576-7581"
+    "expected=pending-confirmed-failed-with-request-id-and-receipt;idempotent-retry;reopen-reconciles-without-erasing"
+  (let ((l (make-correspondence-ledger)))
+    ;; A started outbound action is :pending, carries its request id, no receipt.
+    (let ((a (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close)))
+      (check-equal :pending (outbound-action-state a) "a started action is pending")
+      (check-equal "req-1" (outbound-action-request a) "the action carries its request id")
+      (ok (null (outbound-action-receipt a)) "a pending action carries no receipt"))
+    ;; Confirmation records the receipt.
+    (let ((a (confirm-outbound l "req-1" "close-receipt-7")))
+      (check-equal :confirmed (outbound-action-state a) "the confirmed close is :confirmed")
+      (check-equal "close-receipt-7" (outbound-action-receipt a)
+                   "the confirmation carries its receipt"))
+    ;; A failed outbound action is :failed with its failure receipt.
+    (start-outbound l :request "req-2" :issue "acme/work#8" :kind :report-fix)
+    (let ((a (fail-outbound l "req-2" "http-500")))
+      (check-equal :failed (outbound-action-state a) "a failed action is :failed")
+      (check-equal "http-500" (outbound-action-receipt a) "the failure carries its receipt"))
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the confirmed state is queryable by request id")
+    (check-equal :failed (outbound-state l "req-2")
+                 "the failed state is queryable by request id")
+    ;; Retrying an uncertain outbound action under the same request id is
+    ;; idempotent: no second entry is recorded.
+    (let ((n (length (correspondence-ledger-actions l))))
+      (start-outbound l :request "req-2" :issue "acme/work#8" :kind :report-fix)
+      (check-equal n (length (correspondence-ledger-actions l))
+                   "retrying an uncertain action writes no second entry"))
+    ;; A reopened issue reconciles: the earlier confirmed close and its receipt
+    ;; survive, and a new pending reconciliation signal is recorded.
+    (let ((r (reopen-ledger l :issue "acme/work#7" :request "req-3")))
+      (check-equal :pending (outbound-action-state r)
+                   "the reopen is a pending reconciliation signal")
+      (check-equal "req-3" (outbound-action-request r)
+                   "the reconciliation carries its own request id"))
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the earlier confirmed close is not erased by the reopen")
+    (check-equal "close-receipt-7" (outbound-receipt l "req-1")
+                 "the earlier completion receipt survives the reopen")))

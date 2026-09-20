@@ -2139,7 +2139,24 @@
     #:notes-write
     #:notes-supersede
     #:check-not-weaker-kind
-    #:make-replacement-note))
+    #:make-replacement-note
+    ;; correspondence actions: pending/confirmed/failed outbound actions with
+     ;; request ids and receipts (SPEC-WORK.md:7576-7581; E09-F02-03)
+     #:outbound-action
+     #:outbound-action-p
+     #:outbound-action-request
+     #:outbound-action-issue
+     #:outbound-action-kind
+     #:outbound-action-state
+     #:outbound-action-receipt
+     #:make-correspondence-ledger
+     #:correspondence-ledger-actions
+     #:start-outbound
+     #:confirm-outbound
+     #:fail-outbound
+     #:outbound-state
+     #:outbound-receipt
+     #:reopen-ledger))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
