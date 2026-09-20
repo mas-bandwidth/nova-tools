@@ -43,4 +43,9 @@ func (c *Capture) Bytes() []byte {
 	defer c.mu.Unlock()
 	return append([]byte(nil), c.data...)
 }
+func (c *Capture) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.data)
+}
 func (c *Capture) Hit() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.hit }

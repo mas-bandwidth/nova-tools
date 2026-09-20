@@ -129,7 +129,7 @@ func TestShellDenialReasonAssertsNoCauseItCannotProve(t *testing.T) {
 		{name: "walled", wall: "landlock"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ShellDenialReason("a-card", "/jobs/a-card", tc.wall, 0, d)
+			got := ShellDenialReason("a-card", "/jobs/a-card", tc.wall, 0, d, nil)
 			for _, forbidden := range []string{
 				"never executed", "never compiled", "nothing compiled",
 				"the program", "the gate never", "could not execute",
@@ -152,18 +152,45 @@ func TestShellDenialReasonAssertsNoCauseItCannotProve(t *testing.T) {
 
 func TestShellDenialReasonDoesNotAssertMissingRootsWithoutAdmittedSet(t *testing.T) {
 	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
-	got := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d)
+	got := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d, nil)
 	if strings.Contains(got, "under no root this wall was handed") {
 		t.Fatalf("reason parse has no admitted root set, so it cannot assert missing roots:\n%s", got)
 	}
 	if !strings.Contains(got, "operation=unverified") {
 		t.Errorf("the reason still names the unverified operation:\n%s", got)
 	}
+	if !strings.Contains(got, "Verify the relevant admission/operation before changing roots") {
+		t.Errorf("the reason's diagnostic is to verify admission/operation:\n%s", got)
+	}
+}
+
+func TestShellDenialReasonAlreadyAdmittedPathDoesNotAssertMissingRoots(t *testing.T) {
+	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
+	got := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d, []string{"/opt/sdk tool"})
+	for _, forbidden := range []string{
+		"under no root this wall was handed",
+		"under no admitted root this wall was handed",
+		"would be the read_roots entries",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("an already-admitted path cannot assert missing roots (%q):\n%s", forbidden, got)
+		}
+	}
+	for _, want := range []string{
+		"already under an admitted root",
+		"ordinary file modes",
+		"Verify the relevant admission/operation before changing roots",
+		"operation=unverified",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the already-admitted case names %q:\n%s", want, got)
+		}
+	}
 }
 
 func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) {
 	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
-	got := ShellDenialReason("a-card", "/jobs/a-card", SandboxNoneByFlag, 0, d)
+	got := ShellDenialReason("a-card", "/jobs/a-card", SandboxNoneByFlag, 0, d, nil)
 	for _, forbidden := range []string{"read_roots", "the wall refused"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("an unwalled run attributes nothing to a wall or its read set (%q):\n%s", forbidden, got)
@@ -172,7 +199,7 @@ func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) 
 	if !strings.Contains(got, "no sandbox") {
 		t.Errorf("an unwalled run says so in the reason:\n%s", got)
 	}
-	walled := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d)
+	walled := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d, nil)
 	if !strings.Contains(walled, "read_roots") || !strings.Contains(walled, "/opt/sdk tool/bin") {
 		t.Errorf("a walled run offers the complete candidate root:\n%s", walled)
 	}

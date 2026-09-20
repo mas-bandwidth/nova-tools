@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -169,21 +170,21 @@ func wallRefusedInLog(path string) (WallRefusal, bool) {
 // printed none. A card that died at its second step says so, so the remedy can name where.
 func WallStep(log []byte) string {
 	step := ""
-	for _, raw := range strings.Split(string(log), "\n") {
-		line := strings.TrimSpace(stripPaint(raw))
+	eachCaptureLine(log, func(line string) bool {
 		rest, ok := strings.CutPrefix(line, WallStepMark)
 		if !ok {
-			continue
+			return true
 		}
 		fields := strings.Fields(rest)
 		if len(fields) == 0 {
-			continue
+			return true
 		}
 		n := strings.TrimRight(fields[0], ".:)(")
 		if n != "" && isAllDigits(n) {
 			step = n
 		}
-	}
+		return true
+	})
 	return step
 }
 
@@ -354,7 +355,10 @@ func WallDeathFrom(raw []byte, jobDir, task string) (string, bool) {
 // over an unread denial is what cost the card of #1465. The run is refused. The line is
 // quoted verbatim, the operation is labelled `operation=unverified`, and the remedy is to
 // re-run the gate and read its stderr -- not a cause invented to fill the field. On a WALLED
-// run the read set is offered as ONE CANDIDATE, said to be a candidate.
+// run the read set is offered as ONE CANDIDATE, said to be a candidate, and only after the
+// caller hands the admitted root set: without that set the reason cannot assert missing
+// roots, and a path already under an admitted root cannot either (ordinary file modes and
+// a denied write print the same line).
 //
 // WHAT THIS STILL CANNOT DO. It cannot bind the verdict to the card's own declared gate,
 // because `native` is handed a card as free text and no machine-readable declaration of what
@@ -374,6 +378,10 @@ var execShells = map[string]bool{
 // refusal attributes a denial to a wall that was not there.
 const SandboxNoneByFlag = "none-by-flag"
 
+// ClassifiedCaptureMax is the bound on the parent-owned classification stream
+// (issue #1892 HOLD). Overflow is unverifiable and refused, never silently OK.
+const ClassifiedCaptureMax = 1 << 20
+
 // permissionDeniedMark is the refusal itself, matched case-insensitively: bash capitalises
 // it, Go's os/exec does not.
 const permissionDeniedMark = "permission denied"
@@ -389,18 +397,47 @@ type ShellDenial struct {
 
 // ShellDenied reports the FIRST denial a card's shell printed in one capture, and whether it
 // printed any. The first is the one that matters: every later line is downstream of the same
-// closed path.
+// closed path. The capture is clipped to ClassifiedCaptureMax and walked one line at a time.
 func ShellDenied(log []byte) (ShellDenial, bool) {
-	for _, raw := range strings.Split(string(log), "\n") {
-		line := strings.TrimSpace(stripPaint(raw))
+	log = clipClassified(log)
+	var found ShellDenial
+	ok := false
+	eachCaptureLine(log, func(line string) bool {
+		p, match := deniedPath(line)
+		if !match {
+			return true
+		}
+		found = ShellDenial{Path: p, Step: WallStep(log), Line: line}
+		ok = true
+		return false
+	})
+	return found, ok
+}
+
+func clipClassified(log []byte) []byte {
+	if len(log) > ClassifiedCaptureMax {
+		return log[:ClassifiedCaptureMax]
+	}
+	return log
+}
+
+func eachCaptureLine(log []byte, fn func(line string) bool) {
+	log = clipClassified(log)
+	for len(log) > 0 {
+		var raw []byte
+		if i := bytes.IndexByte(log, '\n'); i >= 0 {
+			raw, log = log[:i], log[i+1:]
+		} else {
+			raw, log = log, nil
+		}
+		line := strings.TrimSpace(stripPaint(string(raw)))
 		if line == "" {
 			continue
 		}
-		if p, ok := deniedPath(line); ok {
-			return ShellDenial{Path: p, Step: WallStep(log), Line: line}, true
+		if !fn(line) {
+			return
 		}
 	}
-	return ShellDenial{}, false
 }
 
 // deniedPath is the grammar, and nothing outside it is this class. Five spellings are read,
@@ -523,11 +560,12 @@ func DeniedPathRoots(denied string) []string {
 //     sentence says why, so nobody reads a cause into it.
 //   - THE REMEDY IS A MEASUREMENT, not a guess: re-run the card's own gate against this
 //     commit and read its stderr. On a walled run the read set is offered beside it as one
-//     candidate among the others.
+//     candidate among the others, and only after `admitted` names the roots this wall was
+//     handed: without that set the reason cannot assert missing roots.
 //
 // `wall` is the wall's own name, or empty for a run that had none; a run with no wall is told
 // so and nothing is attributed to a sandbox that was not there.
-func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string {
+func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial, admitted []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s a denial the card's shell reported went unread, so this run's disposition is refused rather than OK: step=%s rc=%d wall=%s denied_path=%s operation=unverified job=%s line=%q",
 		oneline.Field(label), oneline.Field(dashOr(d.Step)), rc, oneline.Field(dashOr(wall)),
@@ -540,11 +578,20 @@ func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string
 		b.WriteString("; this run had no sandbox, so nothing here is attributable to one")
 		return b.String()
 	}
+	b.WriteString(". Verify the relevant admission/operation before changing roots")
+	if admittedHolds(d.Path, admitted) {
+		b.WriteString(". That path is already under an admitted root this wall was handed; the same permission line can occur because of ordinary file modes or a denied write, so missing roots are not established")
+		return b.String()
+	}
 	roots := DeniedPathRoots(d.Path)
 	if len(roots) == 0 {
 		return b.String()
 	}
-	b.WriteString(". One candidate among the others, if that path was one the child had to read or execute: it is under no root this wall was handed, and ")
+	if len(admitted) > 0 {
+		b.WriteString(". One candidate among the others, if that path was one the child had to read or execute: it is under no admitted root this wall was handed, and ")
+	} else {
+		b.WriteString(". One candidate among the others, if that path was one the child had to read or execute: ")
+	}
 	for i, r := range roots {
 		if i > 0 {
 			b.WriteString(" and ")
@@ -557,4 +604,32 @@ func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string
 	}
 	b.WriteString(". That is a candidate and not the diagnosis")
 	return b.String()
+}
+
+// admittedHolds reports whether path is one of the admitted roots or sits under one.
+// String prefix only: a denied path may not exist, so this does not Stat.
+func admittedHolds(path string, admitted []string) bool {
+	if path == "" || len(admitted) == 0 {
+		return false
+	}
+	for _, root := range admitted {
+		if root == "" {
+			continue
+		}
+		if path == root {
+			return true
+		}
+		prefix := strings.TrimRight(root, "/") + "/"
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifiedCaptureOverflowReason is the ONE line an overflowed parent tee owes
+// its caller: truncated classification is unverifiable, never silently OK.
+func ClassifiedCaptureOverflowReason(label, jobDir string) string {
+	return fmt.Sprintf("%s the parent-owned classification stream overflowed the %d-byte bound, so this run's disposition is unverifiable and refused rather than OK job=%s",
+		oneline.Field(label), ClassifiedCaptureMax, oneline.Field(jobDir))
 }

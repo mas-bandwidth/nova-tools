@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A CARD CANNOT REWRITE THE CAPTURE THE PARENT CLASSIFIES (issue #1892).
@@ -127,8 +130,7 @@ func TestNativeOversizedCaptureIsNeverOK(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	// 1 MiB is the parent-owned classification bound; one byte past it is overflow.
-	if err := os.WriteFile(cardPath, []byte("FAKE-CAPTURE-BYTES 1048577\n"), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(fmt.Sprintf("FAKE-CAPTURE-BYTES %d\n", swarm.ClassifiedCaptureMax+1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
@@ -147,7 +149,7 @@ func TestNativeOversizedCaptureIsNeverOK(t *testing.T) {
 	if !strings.Contains(line, "NATIVE REFUSED") {
 		t.Fatalf("the run owes one refusal line naming the class:\n%s", line)
 	}
-	for _, want := range []string{"unverifiable", "1048576"} {
+	for _, want := range []string{"unverifiable", fmt.Sprintf("%d", swarm.ClassifiedCaptureMax)} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the refusal names %q; it reads:\n%s", want, line)
 		}

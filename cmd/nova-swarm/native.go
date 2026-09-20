@@ -14,9 +14,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -70,26 +70,28 @@ type nativeRunConfig struct {
 
 // nativeRunResult is what one run records when the child has gone.
 type nativeRunResult struct {
-	rc           int               // the child's exit code; -1 when the deadline killed it
-	wallSeconds  float64           // the wall the run took
-	wall         string            // the wall's own name from its SANDBOX OK line, or "none"
-	cardSHA256   string            // sha256 of the card text, lowercase hex
-	binarySHA256 string            // sha256 of the harness binary, lowercase hex
-	job          string            // the job directory <slot>/jobs/<label> the child ran in
-	usageState   string            // the store path the NATIVE OK line names when no store answered, "" otherwise
-	usageReason  string            // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
-	configSHA    string            // sha8 of the carried provider config, "" when --config named none
-	tmp          string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
-	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
-	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
-	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
-	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
-	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
-	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
-	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
-	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
-	idled        bool              // the idle watch ended the run, not the deadline and not the child
-	blockedPath  string            // the report the run wrote FOR a card that published none, "" when it wrote none
+	rc              int               // the child's exit code; -1 when the deadline killed it
+	wallSeconds     float64           // the wall the run took
+	wall            string            // the wall's own name from its SANDBOX OK line, or "none"
+	cardSHA256      string            // sha256 of the card text, lowercase hex
+	binarySHA256    string            // sha256 of the harness binary, lowercase hex
+	job             string            // the job directory <slot>/jobs/<label> the child ran in
+	usageState      string            // the store path the NATIVE OK line names when no store answered, "" otherwise
+	usageReason     string            // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
+	configSHA       string            // sha8 of the carried provider config, "" when --config named none
+	tmp             string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness         string            // ok | silent: silent when the capture holds no words of the child's and no result was found
+	fence           string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	wallReport      string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	wallRefusal     swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
+	shellDenial     swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
+	captureOverflow bool              // the parent tee overflowed ClassifiedCaptureMax; classification is unverifiable
+	admitted        []string          // roots this wall was handed; empty when there was no wall
+	end             string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	terminated      bool              // a TERM from outside ended the run mid-flight, not the deadline
+	idleEnd         swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
+	idled           bool              // the idle watch ended the run, not the deadline and not the child
+	blockedPath     string            // the report the run wrote FOR a card that published none, "" when it wrote none
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -463,6 +465,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	runPath := bin
 	runArgv := []string{"run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card)}
 	wall := cfg.sandbox
+	var admitted []string
 	if wall == "" && !cfg.noWall {
 		found, err := exec.LookPath(swarm.SandboxBinary)
 		if err != nil {
@@ -479,6 +482,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 		runPath = wall
 		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
+		admitted = nativeAdmittedRoots(runArgv)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -545,16 +549,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	// THE CLASSIFIED BYTES ARE THE PARENT'S TEE (issue #1892). The job directory is a
-	// --write, so the child can unlink-and-replace <job>/harness-output.log after it
-	// prints a denial. O_NOFOLLOW defends a planted symlink; it does not defend a new
-	// inode at the same name. native.log is --read on a walled run and still writable
-	// under --no-wall. The in-memory copy is the one pipe the card cannot open. stdout
-	// and stderr copy concurrently, so the buffer is locked.
-	var classified bytes.Buffer
-	var classifiedMu sync.Mutex
-	parentTee := &lockedWriter{mu: &classifiedMu, w: &classified}
-	capture := io.MultiWriter(log, harnessOut, timeline, reader, parentTee)
+	// THE CLASSIFIED BYTES ARE THE PARENT'S TEE (issue #1892), BOUNDED (HOLD on #2073).
+	// The job directory is a --write, so the child can unlink-and-replace
+	// <job>/harness-output.log after it prints a denial. O_NOFOLLOW defends a planted
+	// symlink; it does not defend a new inode at the same name. native.log is --read on
+	// a walled run and still writable under --no-wall. The in-memory copy is the one
+	// pipe the card cannot open. It is capped at ClassifiedCaptureMax: a noisy worker
+	// cannot exhaust parent memory, and overflow is unverifiable, never silently OK.
+	classified := bounded.NewCapture(swarm.ClassifiedCaptureMax, nil)
+	capture := io.MultiWriter(log, harnessOut, timeline, reader, classified)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -564,6 +567,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		wall:         "none",
 		configSHA:    configSHA,
 		tmp:          tmpDir,
+		admitted:     admitted,
 	}
 	if cfg.noWall {
 		res.wall = swarm.SandboxNoneByFlag
@@ -587,9 +591,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	termCh := nativeTermCh()
 	defer stopNativeTerm(termCh)
 	for attempt := 1; ; attempt++ {
-		classifiedMu.Lock()
 		before := classified.Len()
-		classifiedMu.Unlock()
 		cmd := exec.Command(runPath, runArgv...)
 		ownChildGroup(cmd)
 		cmd.Env = childEnv
@@ -677,9 +679,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		classifiedMu.Lock()
-		chunk := append([]byte(nil), classified.Bytes()[before:]...)
-		classifiedMu.Unlock()
+		if classified.Hit() {
+			break
+		}
+		chunk := classified.Bytes()[before:]
 		_, launchFailure := swarm.ProviderLaunchFailure(chunk)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
@@ -690,19 +693,70 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	log.Close()
 	harnessOut.Close()
 	// AFTER BOTH WRITERS ARE CLOSED, classify the parent's own bytes -- never a re-read of
-	// <job>/harness-output.log, which the child may have replaced (issue #1892).
-	classifiedMu.Lock()
-	captureBytes := append([]byte(nil), classified.Bytes()...)
-	classifiedMu.Unlock()
-	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
-	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
-	res.harness = harnessState(captureBytes, jobDir)
-	// AND WHETHER THE FENCE STOPPED THE CARD (issue #644), asked of the same capture and for
-	// the same reason: the harness prints its own rejection and then the model stops, so a
-	// run that ends with no result and a rejection in its capture is not a model that chose
-	// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
-	// it and scores the card `fence` instead of `no-result`.
-	res.fence = fenceRejected(captureBytes)
+	// <job>/harness-output.log, which the child may have replaced (issue #1892). Overflow
+	// is unverifiable: do not classify a truncated prefix as a truthful disposition.
+	captureBytes := classified.Bytes()
+	if classified.Hit() {
+		res.captureOverflow = true
+	} else {
+		// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
+		// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
+		res.harness = harnessState(captureBytes, jobDir)
+		// AND WHETHER THE FENCE STOPPED THE CARD (issue #644), asked of the same capture and for
+		// the same reason: the harness prints its own rejection and then the model stops, so a
+		// run that ends with no result and a rejection in its capture is not a model that chose
+		// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
+		// it and scores the card `fence` instead of `no-result`.
+		res.fence = fenceRejected(captureBytes)
+		// A WALL DEATH (issue #918). When the fence stopped the card AND no result was
+		// published, the death is `end=wall` and its report names the rejected path and the
+		// commits ./repo kept, so the harvester can push the work rather than leave it
+		// stranded with the card. A rejection beside a published result is not a death:
+		// WallDeath asks the result first.
+		if report, ok := swarm.WallDeathFrom(captureBytes, jobDir, cfg.label); ok {
+			res.wallReport = report
+		}
+
+		// AND WHETHER THE WALL ITSELF STOPPED IT (issue #644's follow-up). The harness's own
+		// `permission ... auto-rejecting` line is above; the sandbox's `SANDBOX REFUSED` and
+		// `Operation not permitted` on a path are the OS wall's words in the same capture. A run
+		// with either and no result ends `wall`, and the usage row and the report line say so.
+		// ONLY WITHOUT A RESULT. A card that published despite the line is done, and naming it
+		// walled would take a finished report away from the harvester (wall_batch_test.go).
+		//
+		// AND IT IS THE REFUSAL THE CARD NEVER MOVED PAST, not the first one in the file
+		// (WallStopped, not WallRefused). `js-under-20-bytes` took a refusal in the harness's
+		// own STARTUP BANNER -- line 5, before STEP 1 -- ran sixteen more model steps, and died
+		// twenty minutes later inside a provider turn that never answered; the post-mortem scan
+		// reported `WALL task=js-under-20-bytes path=/var/db/xcode_select_link step=-` and a
+		// whole shift went looking at the wall for a provider stall. The bytes are the parent
+		// tee (issue #1892), not a re-read of the job file.
+		if _, published := swarm.FindCardResult(jobDir); !published {
+			if wr, ok := swarm.WallStopped(captureBytes); ok {
+				res.wallRefusal = wr
+			}
+		}
+		// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
+		// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
+		// published despite a refusal routed around it and finished. This one does not, and that
+		// is the whole point: the card of #1465 published an honest RESULT.md saying its
+		// `go test` could not be built or run, the child exited 0, and the run said
+		// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
+		//
+		// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
+		// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
+		// THE BYTES ARE THE PARENT TEE (issue #1892), not a re-read of the job file.
+		if sd, ok := swarm.ShellDenied(captureBytes); ok {
+			res.shellDenial = sd
+		}
+		res.end = swarm.EndDone
+		if res.rc != 0 {
+			res.end = swarm.EndFailed
+		}
+		if (res.wallRefusal != swarm.WallRefusal{}) || (res.shellDenial != swarm.ShellDenial{}) {
+			res.end = swarm.EndWall
+		}
+	}
 	// The timeline lands beside RESULT.md and usage.tsv once the child is gone, with one
 	// row per model turn and per tool call, in report order. A run whose harness reported no
 	// events writes no file: an absent timeline is an empty measurement, never a zero row.
@@ -710,53 +764,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if err := swarm.WriteTimeline(filepath.Join(jobDir, swarm.TimelineFileName), rows); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the timeline.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
-	}
-	// A WALL DEATH (issue #918). When the fence stopped the card AND no result was
-	// published, the death is `end=wall` and its report names the rejected path and the
-	// commits ./repo kept, so the harvester can push the work rather than leave it
-	// stranded with the card. A rejection beside a published result is not a death:
-	// WallDeath asks the result first.
-	if report, ok := swarm.WallDeathFrom(captureBytes, jobDir, cfg.label); ok {
-		res.wallReport = report
-	}
-
-	// AND WHETHER THE WALL ITSELF STOPPED IT (issue #644's follow-up). The harness's own
-	// `permission ... auto-rejecting` line is above; the sandbox's `SANDBOX REFUSED` and
-	// `Operation not permitted` on a path are the OS wall's words in the same capture. A run
-	// with either and no result ends `wall`, and the usage row and the report line say so.
-	// ONLY WITHOUT A RESULT. A card that published despite the line is done, and naming it
-	// walled would take a finished report away from the harvester (wall_batch_test.go).
-	//
-	// AND IT IS THE REFUSAL THE CARD NEVER MOVED PAST, not the first one in the file
-	// (WallStopped, not WallRefused). `js-under-20-bytes` took a refusal in the harness's
-	// own STARTUP BANNER -- line 5, before STEP 1 -- ran sixteen more model steps, and died
-	// twenty minutes later inside a provider turn that never answered; the post-mortem scan
-	// reported `WALL task=js-under-20-bytes path=/var/db/xcode_select_link step=-` and a
-	// whole shift went looking at the wall for a provider stall.
-	if _, published := swarm.FindCardResult(jobDir); !published {
-		if wr, ok := swarm.WallStopped(captureBytes); ok {
-			res.wallRefusal = wr
-		}
-	}
-	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
-	// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
-	// published despite a refusal routed around it and finished. This one does not, and that
-	// is the whole point: the card of #1465 published an honest RESULT.md saying its
-	// `go test` could not be built or run, the child exited 0, and the run said
-	// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
-	//
-	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
-	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
-	// THE BYTES ARE THE PARENT TEE (issue #1892), not a re-read of the job file.
-	if sd, ok := swarm.ShellDenied(captureBytes); ok {
-		res.shellDenial = sd
-	}
-	res.end = swarm.EndDone
-	if res.rc != 0 {
-		res.end = swarm.EndFailed
-	}
-	if (res.wallRefusal != swarm.WallRefusal{}) || (res.shellDenial != swarm.ShellDenial{}) {
-		res.end = swarm.EndWall
 	}
 	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
 	// `no-result` -- the token for a MODEL that chose to publish nothing -- and a card the
@@ -866,18 +873,6 @@ func harnessSpoke(raw []byte) bool {
 		return true
 	}
 	return false
-}
-
-// lockedWriter serialises Write so stdout and stderr copy goroutines can share one buffer.
-type lockedWriter struct {
-	mu *sync.Mutex
-	w  io.Writer
-}
-
-func (w *lockedWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.w.Write(p)
 }
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test
@@ -1100,6 +1095,26 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 		return nil
 	}
 	return cfg.worker.ReadRoots
+}
+
+// nativeAdmittedRoots is the set of --read, --write and --read-noexec paths the wall
+// argv was actually handed. ShellDenialReason cannot assert missing roots without it.
+func nativeAdmittedRoots(argv []string) []string {
+	var roots []string
+	for i := 0; i < len(argv); i++ {
+		if argv[i] == "--" {
+			break
+		}
+		switch argv[i] {
+		case "--read", "--write", "--read-noexec":
+			if i+1 >= len(argv) || argv[i+1] == "--" {
+				return roots
+			}
+			roots = append(roots, argv[i+1])
+			i++
+		}
+	}
+	return roots
 }
 
 // keepNativeEnv says whether one inherited name survives into the native child: the names a

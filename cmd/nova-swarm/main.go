@@ -1865,8 +1865,12 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// reason labels it `operation=unverified`, quotes the line, and asks for the one
 	// measurement that would settle it. The job directory is named, so the work and the usage
 	// row the child did produce are still harvestable.
+	if res.captureOverflow {
+		refuseNative(stderr, swarm.ClassifiedCaptureOverflowReason(cfg.label, res.job))
+		return 2
+	}
 	if (res.shellDenial != swarm.ShellDenial{}) {
-		refuseNative(stderr, swarm.ShellDenialReason(cfg.label, res.job, res.wall, res.rc, res.shellDenial))
+		refuseNative(stderr, swarm.ShellDenialReason(cfg.label, res.job, res.wall, res.rc, res.shellDenial, res.admitted))
 		return 2
 	}
 	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said

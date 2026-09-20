@@ -18,4 +18,7 @@ func TestCaptureCancelsAtExactLimitWithoutKeepingACompletePrefix(t *testing.T) {
 	if string(b.Bytes()) != "abcd" || ctx.Err() == nil {
 		t.Fatal("capture not capped/cancelled")
 	}
+	if b.Len() != 4 {
+		t.Fatalf("Len is the retained prefix, got %d", b.Len())
+	}
 }

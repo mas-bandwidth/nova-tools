@@ -90,6 +90,26 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	}
 }
 
+func TestNativeAdmittedRootsReadsTheWallArgv(t *testing.T) {
+	argv := []string{
+		"--read", "/slot",
+		"--write", "/job",
+		"--read-noexec", "/cache",
+		"--cwd", "/job",
+		"--", "/bin/harness",
+	}
+	got := nativeAdmittedRoots(argv)
+	want := []string{"/slot", "/job", "/cache"}
+	if len(got) != len(want) {
+		t.Fatalf("admitted roots %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("admitted roots %v, want %v", got, want)
+		}
+	}
+}
+
 // TestNativeArgvReadsTheBenchToolchainRoots is the edge the schema dogfood loop found on
 // 2026-09-18, and it is the whole bug in one assertion: the provisioning standard puts Go
 // and sbcl under `~/sdk` with `~/go/bin` on PATH and the module cache at `~/go/pkg/mod`,
