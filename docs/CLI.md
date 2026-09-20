@@ -2098,6 +2098,12 @@ So `harvest --working` and a bare swarm root — neither of which carries a laun
 want `--clone <owner>/<name>=<dir>`, and on `--working` exactly one, because choosing between
 several would mean reading the worker's own report.
 
+**A returned branch whose base is stale never becomes a PR** (issue #2032). Before any
+push, harvest takes `git diff --name-only <current-target>..<branch>` (two-dot, the live
+target, not the merge-base) and refuses when that diff contains a path the card did not
+declare on `PATHS:`, naming the offending files. Opening the branch as it came off the
+bench would revert later landings.
+
 **`--machines` holds `--bench` against the machines registry before the first ssh.**
 A harvest opens a connection to the machine it names, and runner hosts are CI-only, so the
 NAME is resolved at the verb's edge: an unknown machine, a runner host, the coordination

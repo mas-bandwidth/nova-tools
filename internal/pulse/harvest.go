@@ -288,6 +288,14 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
 				continue
 			}
+			// Two-dot against the current target, before any push (issue #2032).
+			globs, declared := harvestDeclaredPaths(c.Card, resultLines)
+			if err := staleBaseRefusal(cloneDir(jobDir), "", branch, globs, declared); err != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
+			}
 			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue

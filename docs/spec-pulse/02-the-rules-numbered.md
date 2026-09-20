@@ -133,6 +133,10 @@
     **Amended by `docs/SPEC-TOOLWORK.md` §1 (draft, 2026-09-19):** between this rule's
     verify and its push stands `nova-pulse accept` — the card's claim is executed, its test is seen
     red without its change, and a rejected card pushes nothing.
+    **Amended for issue #2032:** before any push or PR, `git diff --name-only <current-target>..<branch>`
+    (two-dot against the live target, not the merge-base) must contain only the card's declared
+    `PATHS:`; otherwise harvest refuses and names the offending files. A stale base would
+    otherwise revert later landings.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and

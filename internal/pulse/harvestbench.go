@@ -280,6 +280,14 @@ func harvestBench(in HarvestInput) int {
 			lines.Line(err.Error())
 			continue
 		}
+		// Two-dot against origin/<base> in the coordinator clone (issue #2032).
+		globs, declared := harvestDeclaredPaths(launchedCardFor(in.Launched, label), j.Result)
+		if err := staleBaseRefusal(clone, "origin/"+base, ref, globs, declared); err != nil {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST REFUSED stale-base bench=%s label=%s: %s",
+				field(in.Bench), field(label), oneline.Err(err)))
+			continue
+		}
 		if out, err := gitIn(clone, "push", "origin", ref+":refs/heads/"+branch); err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST PUSH-FAIL bench=%s label=%s branch=%s: %s",
