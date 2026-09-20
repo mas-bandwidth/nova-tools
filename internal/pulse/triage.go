@@ -43,11 +43,15 @@ const PacketMax = 5000
 // the card carries so a hand reading the card knows what it was written for).
 const TriageRoute = "deepseek-v4-flash"
 
-// TriageKinds are the seven cases that took a coordinator turn each on 2026-09-16 and
-// which a rule row plus a packet decides instead. A kind outside this list is refused:
-// a case nobody named is a case with no rule rows to offer, and a packet with no candidate
-// rows is a packet asking a model to invent policy.
-var TriageKinds = []string{"signature", "scope", "docs-only", "nosha", "orphan", "fence", "hold-line"}
+// CaseProvider is the triage case for upstream provider infrastructure failures
+// (5xx server errors, 429 quota/rate limit, gateway UnknownError, NATIVE PROVIDER).
+// It distinguishes provider failure from card or test failure.
+const CaseProvider = "provider"
+
+// TriageKinds are the eight cases that a rule row plus a packet decides instead. A kind outside
+// this list is refused: a case nobody named is a case with no rule rows to offer, and a packet
+// with no candidate rows is a packet asking a model to invent policy.
+var TriageKinds = []string{"signature", "scope", "docs-only", "nosha", "orphan", "fence", "hold-line", CaseProvider}
 
 // TriageVerdicts are the words the third field may be. They are the dispositions the loop
 // already has: admit the card, refuse it, hold it for a person, retry it once, or escalate.
@@ -415,10 +419,132 @@ func splitEvidence(lines []string) (result []string, refusal string) {
 
 func isRefusalLine(l string) bool {
 	low := strings.ToLower(l)
-	for _, w := range []string{"refused", "refusing", "denied", "permission", "abstain"} {
+	for _, w := range []string{"refused", "refusing", "denied", "permission", "abstain", "native provider", "provider"} {
 		if strings.Contains(low, w) {
 			return true
 		}
 	}
 	return false
+}
+
+// ClassifyRefusal reads a refusal line or execution verdict as one of the triage cases.
+// It classifies NATIVE PROVIDER as CaseProvider ("provider") rather than a card or test failure.
+func ClassifyRefusal(s string) string {
+	l := strings.ToLower(s)
+	switch {
+	case strings.Contains(l, "native provider") || strings.Contains(l, "why=unexpected-server-error") ||
+		strings.Contains(l, "why=provider-5xx") || strings.Contains(l, "why=rate-limit") ||
+		strings.Contains(l, "why=unknown-error"):
+		return CaseProvider
+	case strings.Contains(l, "signature") || strings.Contains(l, "contract line"):
+		return "signature"
+	case strings.Contains(l, "scope") || strings.Contains(l, "workset"):
+		return "scope"
+	case strings.Contains(l, "docs-only") || strings.Contains(l, "docs only"):
+		return "docs-only"
+	case strings.Contains(l, "sha"):
+		return "nosha"
+	case strings.Contains(l, "orphan") || strings.Contains(l, "job dir"):
+		return "orphan"
+	case strings.Contains(l, "hold"):
+		return "hold-line"
+	case strings.Contains(l, "provider"):
+		return CaseProvider
+	}
+	return "fence"
+}
+
+// ClassifyCase returns the triage case for a given refusal line or multi-line evidence.
+// It classifies NATIVE PROVIDER as CaseProvider ("provider") rather than a card or test failure.
+func ClassifyCase(evidence string) string {
+	lines := strings.Split(evidence, "\n")
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "NATIVE PROVIDER") {
+			return CaseProvider
+		}
+	}
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if isRefusalLine(t) {
+			return ClassifyRefusal(t)
+		}
+	}
+	return ClassifyRefusal(evidence)
+}
+
+// ProviderOf returns the provider portion of a model route (e.g. "opencode" from "opencode/deepseek-v4-flash").
+func ProviderOf(route string) string {
+	route = strings.TrimSpace(route)
+	p, _, ok := strings.Cut(route, "/")
+	if ok && p != "" {
+		return p
+	}
+	return route
+}
+
+// AlternateRoute selects an alternate route from available routes whose provider differs from current.
+// If an alternate is found, it returns (route, true). If no alternate provider is available,
+// it returns ("", false).
+func AlternateRoute(current string, available []string) (string, bool) {
+	currProvider := ProviderOf(current)
+	for _, r := range available {
+		r = strings.TrimSpace(r)
+		if r == "" || strings.HasPrefix(r, "#") {
+			continue
+		}
+		if ProviderOf(r) != currProvider {
+			return r, true
+		}
+	}
+	return "", false
+}
+
+// ModelOfCard extracts the MODEL: line from card content, or empty string if none.
+func ModelOfCard(card string) string {
+	for _, l := range strings.Split(card, "\n") {
+		t := strings.TrimSpace(l)
+		if m, ok := strings.CutPrefix(t, "MODEL: "); ok {
+			return strings.TrimSpace(m)
+		}
+		if m, ok := strings.CutPrefix(t, "MODEL:"); ok {
+			return strings.TrimSpace(m)
+		}
+	}
+	return ""
+}
+
+// RerouteCard updates or adds a MODEL: line in the card content to point to alternateRoute.
+func RerouteCard(card, alternateRoute string) string {
+	lines := strings.Split(card, "\n")
+	found := false
+	var out []string
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "MODEL:") {
+			if !found && alternateRoute != "" {
+				out = append(out, "MODEL: "+alternateRoute)
+				found = true
+			}
+			continue
+		}
+		out = append(out, l)
+		if i == 0 && !found && alternateRoute != "" && !strings.Contains(card, "MODEL:") {
+			out = append(out, "MODEL: "+alternateRoute)
+			found = true
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// RouteToAlternateProvider inspects the card for its current provider/route and routes
+// to an alternate provider from available when one is available.
+// It returns the updated card content, the new route, and whether an alternate was chosen.
+func RouteToAlternateProvider(card string, availableRoutes []string) (string, string, bool) {
+	curr := ModelOfCard(card)
+	alt, ok := AlternateRoute(curr, availableRoutes)
+	if !ok {
+		return card, curr, false
+	}
+	return RerouteCard(card, alt), alt, true
 }

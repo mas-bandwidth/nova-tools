@@ -224,9 +224,16 @@ func main() {
 		}
 		fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 502; ref=err_fake_slow")
 		os.Exit(1)
+	} else if _, ok := directive(prompt, "FAKE-UNKNOWN-ERROR"); ok {
+		fmt.Fprintln(os.Stderr, "Error: {\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_29c29bd4\"\n  }\n}")
+		if !published {
+			os.Exit(1)
+		}
 	} else if _, ok := directive(prompt, "FAKE-5XX"); ok {
 		fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_5xx")
-		os.Exit(1)
+		if !published {
+			os.Exit(1)
+		}
 	}
 	// FAKE-TIMELINE REPORTS THE HARNESS'S OWN EVENTS (card 8964): a model turn and five tool
 	// calls, one span at a time, on the child's output. The native run timestamps each report

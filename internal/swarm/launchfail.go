@@ -47,13 +47,11 @@ func LaunchGrace(w Worker) time.Duration {
 // the provider's ref where the tail carries one. It is the ONE classifier: `run`'s
 // supervisor, the dispatcher's finish and the native runner all ask it the same question.
 func ProviderLaunchFailure(raw []byte) (ref string, ok bool) {
-	if !launchFailureRE.Match(raw) {
+	pf, ok := ClassifyProviderFailure(raw)
+	if !ok {
 		return "", false
 	}
-	if m := providerRefRE.FindSubmatch(raw); m != nil {
-		return string(m[1]), true
-	}
-	return "", true
+	return pf.Ref, true
 }
 
 // ProviderRetryDelay is the wait before the retry of a launch that just failed: 5-20s

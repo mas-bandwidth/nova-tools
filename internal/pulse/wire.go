@@ -718,26 +718,10 @@ func issueRefs(s string) []int {
 	return out
 }
 
-// kindOfRefusal reads a refusal line as one of the seven triage cases, so the note carries
-// the right packet. A refusal no word decides is a fence, which is the case for "a person
-// has to look".
+// kindOfRefusal reads a refusal line as one of the triage cases, so the note carries
+// the right packet. It classifies NATIVE PROVIDER as CaseProvider.
 func kindOfRefusal(s string) string {
-	l := strings.ToLower(s)
-	switch {
-	case strings.Contains(l, "signature"), strings.Contains(l, "contract line"):
-		return "signature"
-	case strings.Contains(l, "scope"), strings.Contains(l, "workset"):
-		return "scope"
-	case strings.Contains(l, "docs-only"), strings.Contains(l, "docs only"):
-		return "docs-only"
-	case strings.Contains(l, "sha"):
-		return "nosha"
-	case strings.Contains(l, "orphan"), strings.Contains(l, "job dir"):
-		return "orphan"
-	case strings.Contains(l, "hold"):
-		return "hold-line"
-	}
-	return "fence"
+	return ClassifyRefusal(s)
 }
 
 func shortHead(h string) string {

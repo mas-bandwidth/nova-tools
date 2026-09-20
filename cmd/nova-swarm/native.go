@@ -83,7 +83,8 @@ type nativeRunResult struct {
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
-	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	providerFailure swarm.ProviderFailure // provider fault classification (issue #2001 & #2011)
+	terminated      bool                  // a TERM from outside ended the run mid-flight, not the deadline
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -590,6 +591,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.rc != 0 {
 			res.end = swarm.EndFailed
 		}
+		attemptBytes := readSince(outLog, before)
+		pf, isProvider := swarm.ClassifyProviderFailure(attemptBytes)
+		if isProvider && !nativeLeftAResult(jobDir) {
+			res.providerFailure = pf
+			res.end = swarm.EndProvider
+		} else {
+			res.providerFailure = swarm.ProviderFailure{}
+		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
@@ -598,8 +607,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
-		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+		if isProvider && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}
@@ -652,6 +660,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	if (res.wallRefusal != swarm.WallRefusal{}) {
 		res.end = swarm.EndWall
+	}
+	if !nativeLeftAResult(jobDir) {
+		if res.providerFailure.Why != "" {
+			res.end = swarm.EndProvider
+		} else if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
+			if pf, ok := swarm.ClassifyProviderFailure(raw); ok {
+				res.providerFailure = pf
+				res.end = swarm.EndProvider
+			}
+		}
+	} else {
+		res.providerFailure = swarm.ProviderFailure{}
 	}
 
 	if wall != "" {

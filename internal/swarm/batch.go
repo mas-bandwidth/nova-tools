@@ -1201,6 +1201,9 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 		if cardHarnessSilent(job) {
 			return "abstain", "harness-silent", "job=" + job, ""
 		}
+		if whyTail, ok := cardNativeProvider(job); ok {
+			return "abstain", "provider", whyTail, ""
+		}
 		// A RUNNER THAT EXITED BEFORE THE HARNESS STARTED (issue #618). No `NATIVE` line in
 		// the runner's own stdout and no harness capture is a run that never happened: the
 		// non-zero exit code is the RUNNER's, and rc=<n> is reserved for the harness. The
@@ -1462,14 +1465,42 @@ func cardFenceRejected(job string) (string, bool) {
 	return "", false
 }
 
-// isNativeVerdictLine reports whether a line is `native`'s own verdict line, in either of
-// its two words. `NATIVE OK` used to be the only one; a run that produced nothing now says
-// `NATIVE INCOMPLETE` instead (nova-tools #1844), and the tokens this file reads off that
-// line -- harness=silent, fence=rejected -- are exactly as true on the incomplete one.
-// Reading only "NATIVE OK " would have silently stopped seeing them for failed runs, which
-// is the class of bug the rename exists to end.
+// cardNativeProvider reports whether the runner's own verdict line was NATIVE PROVIDER,
+// and returns the why/ref tail (issue #2011).
+func cardNativeProvider(job string) (string, bool) {
+	raw, err := readRegular(filepath.Join(job, "harness.log"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "NATIVE PROVIDER ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		why := ""
+		ref := ""
+		for _, tok := range fields {
+			if strings.HasPrefix(tok, "why=") {
+				why = tok
+			} else if strings.HasPrefix(tok, "ref=") {
+				ref = tok
+			}
+		}
+		if why != "" {
+			if ref != "" {
+				return why + " " + ref, true
+			}
+			return why, true
+		}
+		return "why=unknown", true
+	}
+	return "", false
+}
+
+// isNativeVerdictLine reports whether a line is `native`'s own verdict line, in any of
+// its verdict words: NATIVE OK, NATIVE INCOMPLETE (nova-tools #1844), or NATIVE PROVIDER (#2011).
 func isNativeVerdictLine(line string) bool {
-	return strings.HasPrefix(line, "NATIVE OK ") || strings.HasPrefix(line, "NATIVE INCOMPLETE ")
+	return strings.HasPrefix(line, "NATIVE OK ") || strings.HasPrefix(line, "NATIVE INCOMPLETE ") || strings.HasPrefix(line, "NATIVE PROVIDER ")
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }

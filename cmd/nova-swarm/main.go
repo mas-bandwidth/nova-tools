@@ -1855,10 +1855,16 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	case res.rc != 0:
 		verdict, why = "INCOMPLETE", "rc"
 	}
+	if res.providerFailure.Why != "" {
+		verdict, why = "PROVIDER", res.providerFailure.Why
+	}
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
+	}
+	if res.providerFailure.Ref != "" {
+		fmt.Fprintf(stdout, " ref=%s", oneline.Field(res.providerFailure.Ref))
 	}
 	fmt.Fprintln(stdout)
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,

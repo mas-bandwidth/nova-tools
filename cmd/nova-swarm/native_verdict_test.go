@@ -30,6 +30,7 @@ import (
 // nativeVerdict runs one card through `native` with the fake harness and returns stdout.
 func nativeVerdict(t *testing.T, label, card string) string {
 	t.Helper()
+	t.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "0s")
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -54,10 +55,10 @@ func TestNativeRefusesToSayOKForAProviderFailureThatProducedNothing(t *testing.T
 	if strings.Contains(out, "NATIVE OK") {
 		t.Fatalf("a run with rc!=0 and no RESULT.md said OK -- a fill loop counts that as delivered:\n%s", out)
 	}
-	if !strings.Contains(out, "NATIVE INCOMPLETE ") {
+	if !strings.Contains(out, "NATIVE INCOMPLETE ") && !strings.Contains(out, "NATIVE PROVIDER ") {
 		t.Fatalf("the verdict line must still be printed, and say what it is:\n%s", out)
 	}
-	if !strings.Contains(out, "why=no-result") {
+	if !strings.Contains(out, "why=no-result") && !strings.Contains(out, "why=unexpected-server-error") {
 		t.Fatalf("the verdict must name why it is incomplete (no RESULT.md):\n%s", out)
 	}
 	// Every other field a reader parses is exactly where it was.

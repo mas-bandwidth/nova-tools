@@ -2071,6 +2071,8 @@ RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
+NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [budget=<spent|n+|->/<n>|unmetered] [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc>
+NATIVE PROVIDER label=<label> job=<job> tmp=<tmp> rc=<rc> wall=<wall>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [budget=<spent|n+|->/<n>|unmetered] [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<unexpected-server-error|provider-5xx|rate-limit|unknown-error> [ref=<ref>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -4125,3 +4127,55 @@ and must not be swept. Six rules bind it:
 **What this does not change.** The bench slot store (`slots take` / `slots
 release`, above) is capacity accounting and is untouched: a run can hold a seat
 and still be refused its job directory, and that refusal is the correct answer.
+
+## Provider capacity, faults, and routing (#2010, #2011, #2001)
+
+*(This section is added at the end of the document rather than in the numbered rules
+to preserve earlier line citations across repositories.)*
+
+### The provider fault verdict (`NATIVE PROVIDER`)
+
+`NATIVE OK` is a verdict, not a punctuation mark (nova-tools #1844), and provider infrastructure faults are not card defects (#2001, #2010, #2011). When a card fails without publishing a `RESULT.md` due to an upstream provider error rather than a defect in the card or model execution, the verdict is `NATIVE PROVIDER`:
+
+```
+NATIVE PROVIDER label=<label> job=<job> tmp=<tmp> rc=<rc> wall=<wall>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<unexpected-server-error|provider-5xx|rate-limit|unknown-error> [ref=<ref>]
+```
+
+Four failure classes define `why=`:
+1. `rate-limit`: HTTP 429, rate limit, quota exceeded, or resource exhaustion signals from the provider or gateway.
+2. `unexpected-server-error`: Upstream unexpected server error or internal server error messages.
+3. `unknown-error`: Structured gateway or SDK errors (e.g. `{"name": "UnknownError", "data": {"message": "Unexpected server error...", "ref": "<ref>"}}`).
+4. `provider-5xx`: Upstream HTTP 500, 502, 503, 504, or 529 status responses.
+
+Where the provider or gateway emits an incident reference (`ref=err_...` or `"ref": "err_..."`), it is captured verbatim as `ref=<ref>`.
+
+A run that has already published a valid `RESULT.md` is **`NATIVE OK`**, even if transient provider warnings or retry notices appeared in logs earlier: a result earned and published is never turned into a provider death. Conversely, a run that fails with non-zero exit or without a result due to card syntax, build failures, harness panics, or model silence with no provider fault remains **`NATIVE INCOMPLETE`**.
+
+### Distinguishing provider failures from card bugs
+
+A card bug or harness defect (`NATIVE INCOMPLETE`) indicates that the card, its tests, or the model's generated code failed to produce a valid outcome. Such failures count against the card's attempt budget and register as red outcomes in model evaluation metrics.
+
+A provider infrastructure fault (`NATIVE PROVIDER`) is external to both the card and the model:
+- **No red count**: A `NATIVE PROVIDER` verdict does not count against the card's retry/attempt budget, nor does it count against the model's pass/fail reliability metric.
+- **Accounting**: The run records `end=provider` in `usage.tsv` alongside whatever tokens and wall clock elapsed up to the failure.
+- **No slot holding**: The native runner must never spin through repeated in-place retries while holding an expensive bench slot lease during an upstream provider outage. The bench slot lease is released immediately.
+
+### Provider capacity registry and `nova-pulse fill --providers <file>`
+
+Provider capacity is a bounded fleet resource, not an infinite sink. `nova-pulse fill --providers <file>` configures the fleet provider registry (e.g. `queue/control/providers.tsv`), mapping available provider routes:
+
+```tsv
+route	provider	model	tier	concurrency	cost_per_mtoken	error_threshold	notes
+```
+
+1. **Concurrency ceilings**: `fill` tracks active in-flight cards across the fleet per route. When a route reaches its configured `concurrency` ceiling, additional cards are not dealt to that route.
+2. **Error rate tripwire**: `fill` tracks a rolling window of recent dispatches per route (e.g. via `RollingErrorWatch`). If the provider error rate meets or exceeds `error_threshold` (e.g. `0.20` for a 20% failure rate over the window), the route trips into cooldown and is skipped during route selection.
+3. **Automatic spillover in cost order**: When a primary route reaches its concurrency ceiling or trips its circuit breaker, `fill` automatically spills eligible cards to alternative capable routes for that card's tier, sorted in cost order (`cost_per_mtoken` ascending): *quality floor first, then lowest cost per token (free wins when good, paid fallback)*.
+
+### Provider auto-requeue (`.provider-retry`)
+
+When a launched card ends in `NATIVE PROVIDER` or an early provider launch failure, the harvest/fill loop writes a `.provider-retry` marker beside the card under `--launched`:
+- The card is moved back to `--ready` without advancing its attempt counter or penalizing its retry budget.
+- Existing job execution logs and scratch files are preserved (e.g. parked as `<job>.attempt<n>`) so diagnostic evidence survives.
+- The card is immediately available for dispatch on the next tick, eligible for spillover to alternate providers while the failing provider cools down.
+

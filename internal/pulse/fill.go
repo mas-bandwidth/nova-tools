@@ -123,9 +123,10 @@ func (g guardedLauncher) Launch(bench, card string) error {
 type FillInput struct {
 	Ready    string        // the queue/ready directory the card-<n>.md are popped from
 	Launched string        // the queue/launched directory they are moved into; its cards are live
-	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
-	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
-	Session  string        // the session id stamped into every launched card's marker
+	Lanes     string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
+	Machines  string        // the machines registry; a bench whose roles lack `bench` is refused
+	Providers string        // the provider registry; empty disables provider routing
+	Session   string        // the session id stamped into every launched card's marker
 	Benches  []string      // the benches to fill, in order
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
@@ -207,6 +208,15 @@ func Fill(in FillInput) int {
 		}
 	}
 
+	var provReg *fleet.ProviderRegistry
+	if strings.TrimSpace(in.Providers) != "" {
+		r, err := fleet.ReadProviderRegistry(in.Providers)
+		if err != nil {
+			return refusal(in.Stderr, "FILL", err)
+		}
+		provReg = r
+	}
+
 	for tick := 1; ; tick++ {
 		// THE STOP FILE, checked before a card is claimed and never in the middle of a
 		// tick: the tick in flight finishes, no further card is claimed, and every card
@@ -218,7 +228,7 @@ func Fill(in FillInput) int {
 				"no new launches; the live cards are untouched and nothing was killed")
 			return 0
 		}
-		lines, res := fillTick(in, tick)
+		lines, res := fillTick(in, tick, provReg)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
 		}
@@ -258,10 +268,12 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // move out of ready is the claim, so a card another hand already took is skipped and never
 // launched twice; a launcher that fails moves its card back and releases its lane. It
 // returns the FILL line first and then one FILL HELD line per held card.
-func fillTick(in FillInput, tick int) ([]string, tickResult) {
+func fillTick(in FillInput, tick int, provReg *fleet.ProviderRegistry) ([]string, tickResult) {
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
+	inFlight := inFlightRoutes(in.Launched)
+	errorRates := buildErrorRates(in, provReg)
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
@@ -327,6 +339,20 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 					continue
 				}
 			}
+			routeKey, providerName, modelName := "", "", ""
+			if provReg != nil {
+				tier := cardTier(card)
+				avail := provReg.AvailableRoutes(tier, inFlight, errorRates)
+				if len(avail) == 0 {
+					held = append(held, fmt.Sprintf("FILL HELD card=%s tier=%s reason=providers-saturated",
+						oneline.Field(filepath.Base(card)), oneline.Field(tier)))
+					continue
+				}
+				chosen := avail[0]
+				routeKey = chosen.Route
+				providerName = chosen.Provider
+				modelName = chosen.Model
+			}
 			base := filepath.Base(card)
 			moved := filepath.Join(in.Launched, base)
 			if err := os.Rename(card, moved); err != nil {
@@ -334,14 +360,20 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				// one place at every moment, and a card is never launched twice.
 				continue
 			}
-			writeLaunchedMarker(in, moved, base, lane, bench)
+			writeLaunchedMarker(in, moved, base, lane, bench, routeKey, providerName, modelName)
 			if lane != "" {
 				live[lane] = base
+			}
+			if routeKey != "" {
+				inFlight[routeKey]++
 			}
 			want[i]--
 			if err := in.Launcher.Launch(bench, moved); err != nil {
 				failed[i]++
-				failLaunch(in, moved, base, lane, live, err)
+				if routeKey != "" {
+					inFlight[routeKey]--
+				}
+				failLaunch(in, moved, base, lane, routeKey, live, err)
 				if res.err == nil {
 					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(bench), err)
 				}
@@ -380,7 +412,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 // released so the lane is not held by a card that never ran, and a `.failed-<n>` marker
 // beside it carries the attempt number and the reason. The card is ready again on the next
 // tick, and the markers are the count of how often it has failed.
-func failLaunch(in FillInput, moved, base, lane string, live map[string]string, cause error) {
+func failLaunch(in FillInput, moved, base, lane, route string, live map[string]string, cause error) {
 	if lane != "" && live[lane] == base {
 		delete(live, lane)
 	}
@@ -394,8 +426,11 @@ func failLaunch(in FillInput, moved, base, lane string, live map[string]string, 
 		return
 	}
 	n := len(failedMarkers(in.Ready, base)) + 1
-	line := fmt.Sprintf("%s\tattempt=%d\t%s\n",
-		in.Now().UTC().Format(time.RFC3339), n, oneline.Cap(oneline.Err(cause), oneline.TailBytes))
+	line := fmt.Sprintf("%s\tattempt=%d", in.Now().UTC().Format(time.RFC3339), n)
+	if route != "" {
+		line += fmt.Sprintf("\troute=%s", route)
+	}
+	line += fmt.Sprintf("\t%s\n", oneline.Cap(oneline.Err(cause), oneline.TailBytes))
 	_ = os.WriteFile(marker(in.Ready, base, "failed", strconv.Itoa(n)), []byte(line), 0o644)
 }
 
@@ -522,15 +557,25 @@ func launchedMarker(dir, base string) string {
 // writeLaunchedMarker records what the card took the moment it became live: the lane it
 // holds, the bench it went to, its label and the session that cut it. `harvest` reads this
 // to release the lane and to know whose job it is looking at.
-func writeLaunchedMarker(in FillInput, moved, base, lane, bench string) {
+func writeLaunchedMarker(in FillInput, moved, base, lane, bench, route, provider, model string) {
 	now := in.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	body := fmt.Sprintf("lane=%s\nbench=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
+	var b strings.Builder
+	fmt.Fprintf(&b, "lane=%s\nbench=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
 		lane, bench, strings.TrimSuffix(base, ".md"), in.Session, base,
 		now().UTC().Format(time.RFC3339))
-	_ = os.WriteFile(launchedMarker(in.Launched, base), []byte(body), 0o644)
+	if route != "" {
+		fmt.Fprintf(&b, "route=%s\n", route)
+	}
+	if provider != "" {
+		fmt.Fprintf(&b, "provider=%s\n", provider)
+	}
+	if model != "" {
+		fmt.Fprintf(&b, "model=%s\n", model)
+	}
+	_ = os.WriteFile(launchedMarker(in.Launched, base), []byte(b.String()), 0o644)
 }
 
 // readLaunchedMarker reads one launched marker into its key=value fields. A missing or
@@ -630,3 +675,233 @@ func strayCards(dir string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// cardTier determines the card's tier: "flash" by default or from card metadata/tag.
+func cardTier(cardPath string) string {
+	raw, err := os.ReadFile(cardPath)
+	if err != nil {
+		return "flash"
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(trimmed, "TIER:"); ok {
+			if t := strings.ToLower(strings.TrimSpace(v)); t != "" {
+				return t
+			}
+		}
+		if v, ok := strings.CutPrefix(trimmed, "TIER="); ok {
+			if t := strings.ToLower(strings.TrimSpace(v)); t != "" {
+				return t
+			}
+		}
+		for _, tok := range strings.Fields(trimmed) {
+			if v, ok := strings.CutPrefix(tok, "tier="); ok {
+				if t := strings.ToLower(strings.TrimSpace(v)); t != "" {
+					return t
+				}
+			}
+		}
+	}
+	return "flash"
+}
+
+// inFlightRoutes counts in-flight cards per route from --launched markers.
+func inFlightRoutes(launchedDir string) map[string]int {
+	out := map[string]int{}
+	markers, _ := filepath.Glob(filepath.Join(launchedDir, "*.launched"))
+	for _, mPath := range markers {
+		base := strings.TrimSuffix(filepath.Base(mPath), ".launched")
+		m := readLaunchedMarker(launchedDir, base)
+		if r := m["route"]; r != "" {
+			out[r]++
+		}
+	}
+	return out
+}
+
+// buildErrorRates calculates rolling error rate per route from recent card completion markers.
+func buildErrorRates(in FillInput, provReg *fleet.ProviderRegistry) map[string]float64 {
+	rates := make(map[string]float64)
+	if provReg == nil {
+		return rates
+	}
+	watch := fleet.NewRollingErrorWatch(50)
+	loadRecentCompletionMarkers(in, watch)
+	for _, r := range provReg.Routes() {
+		rates[r.Route] = watch.ErrorRate(r.Route)
+	}
+	return rates
+}
+
+type markerOutcome struct {
+	route  string
+	failed bool
+	time   time.Time
+}
+
+func loadRecentCompletionMarkers(in FillInput, watch *fleet.RollingErrorWatch) {
+	var outcomes []markerOutcome
+
+	dirs := []string{
+		in.Launched,
+		in.Ready,
+		filepath.Join(filepath.Dir(in.Launched), "done"),
+		filepath.Join(filepath.Dir(in.Launched), "failed"),
+		filepath.Join(in.Launched, "done"),
+		filepath.Join(in.Launched, "failed"),
+	}
+
+	seen := make(map[string]bool)
+	for _, d := range dirs {
+		if strings.TrimSpace(d) == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasSuffix(name, ".launched") {
+				continue
+			}
+			if strings.HasPrefix(name, "card-") && strings.HasSuffix(name, ".md") &&
+				!strings.Contains(name, ".done") && !strings.Contains(name, ".failed") && !strings.Contains(name, ".completed") {
+				continue
+			}
+			if strings.Contains(name, ".refused-") {
+				continue
+			}
+
+			fullPath := filepath.Join(d, name)
+			raw, err := os.ReadFile(fullPath)
+			if err != nil {
+				continue
+			}
+			content := string(raw)
+
+			isCompletionMarker := strings.Contains(name, ".done") ||
+				strings.Contains(name, ".failed") ||
+				strings.Contains(name, ".completed") ||
+				strings.Contains(name, ".error") ||
+				strings.Contains(name, ".harvested")
+
+			if !isCompletionMarker && !strings.Contains(content, "route=") {
+				continue
+			}
+
+			route := extractRoute(content)
+			if route == "" {
+				base := baseCardName(name)
+				if base != "" {
+					lm := readLaunchedMarker(in.Launched, base)
+					route = lm["route"]
+				}
+			}
+			if route == "" {
+				continue
+			}
+
+			info, _ := entry.Info()
+			t := markerTime(content, info)
+			failed := isFailureOutcome(name, content)
+
+			outcomes = append(outcomes, markerOutcome{
+				route:  route,
+				failed: failed,
+				time:   t,
+			})
+		}
+	}
+
+	sort.Slice(outcomes, func(i, j int) bool {
+		return outcomes[i].time.Before(outcomes[j].time)
+	})
+
+	for _, o := range outcomes {
+		if o.failed {
+			watch.RecordFailure(o.route, true)
+		} else {
+			watch.RecordSuccess(o.route)
+		}
+	}
+}
+
+func extractRoute(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		for _, part := range strings.Fields(line) {
+			if v, ok := strings.CutPrefix(part, "route="); ok {
+				return strings.Trim(v, "\"'")
+			}
+		}
+		for _, part := range strings.Split(line, "\t") {
+			part = strings.TrimSpace(part)
+			if v, ok := strings.CutPrefix(part, "route="); ok {
+				return strings.Trim(v, "\"'")
+			}
+		}
+	}
+	return ""
+}
+
+func baseCardName(name string) string {
+	if i := strings.Index(name, ".md."); i >= 0 {
+		return name[:i+3]
+	}
+	return ""
+}
+
+func isFailureOutcome(name, content string) bool {
+	lowerName := strings.ToLower(name)
+	if strings.Contains(lowerName, ".failed") || strings.Contains(lowerName, ".error") {
+		return true
+	}
+	if strings.Contains(lowerName, ".done") || strings.Contains(lowerName, ".success") || strings.Contains(lowerName, ".ok") {
+		return false
+	}
+	lowerContent := strings.ToLower(content)
+	if strings.Contains(lowerContent, "state=failed") ||
+		strings.Contains(lowerContent, "state=error") ||
+		strings.Contains(lowerContent, "status=failed") ||
+		strings.Contains(lowerContent, "status=error") ||
+		strings.Contains(lowerContent, "why=provider") ||
+		strings.Contains(lowerContent, "why=error") ||
+		strings.Contains(lowerContent, "why=5xx") ||
+		strings.Contains(lowerContent, "error=true") {
+		return true
+	}
+	if strings.Contains(lowerContent, "state=done") ||
+		strings.Contains(lowerContent, "state=ok") ||
+		strings.Contains(lowerContent, "status=ok") ||
+		strings.Contains(lowerContent, "status=success") ||
+		strings.Contains(lowerContent, "error=false") {
+		return false
+	}
+	return false
+}
+
+func markerTime(content string, info os.FileInfo) time.Time {
+	fields := strings.Fields(content)
+	if len(fields) > 0 {
+		if t, err := time.Parse(time.RFC3339, fields[0]); err == nil {
+			return t
+		}
+	}
+	for _, tok := range fields {
+		if v, ok := strings.CutPrefix(tok, "at="); ok {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				return t
+			}
+		}
+	}
+	if info != nil {
+		return info.ModTime()
+	}
+	return time.Now()
+}
+
