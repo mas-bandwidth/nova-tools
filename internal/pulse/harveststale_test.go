@@ -55,11 +55,12 @@ func TestHarvestRefusesAReturnedBranchWhoseBaseIsStale(t *testing.T) {
 	}
 	realGit(t, "-C", b.job, "add", "later/merged.go")
 	realGit(t, "-C", b.job, "commit", "-m", "later files landed on the target")
+	realGit(t, "-C", b.job, "push", "origin", "HEAD:dev")
 	realGit(t, "-C", b.job, "checkout", branch)
 
 	out, errs := runHarvest(t, b.root)
 
-	if got := refs(t, b.honest); len(got) != 0 {
+	if got := refs(t, b.honest); containsRef(got, "refs/heads/"+branch) {
 		t.Fatalf("a stale-base branch became a push: %s holds %v\nstdout=%s\nstderr=%s", b.honest, got, out, errs)
 	}
 	if strings.Contains(out, "HARVEST PR") || strings.Contains(out, "prs=1") {
@@ -122,6 +123,90 @@ func TestHarvestBenchRefusesAReturnedBranchWhoseBaseIsStale(t *testing.T) {
 	}
 }
 
+// TestHarvestRefusesWhenTheRemoteAdvancedAfterClone is Stella's HOLD on #2117:
+// the worker clone's origin/dev is left stale while a later landing is pushed to
+// the authorized destination. Harvest must fetch that destination and refuse;
+// comparing the cached origin/dev would clear and open a PR.
+func TestHarvestRefusesWhenTheRemoteAdvancedAfterClone(t *testing.T) {
+	b := newDestBench(t)
+	label := "card-2032-hold"
+	branch := "rowan/card"
+	addCard(t, b.root, label, "1", "flash", "RESULT "+label+" sha=aaa",
+		"RESULT "+label+" sha=aaa\nDONE\nBRANCH "+branch+"\nREPO owner/repo\nBASE dev\n")
+	cardPath := filepath.Join(b.root, "cardsrc", label+".md")
+	raw, err := os.ReadFile(cardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cardPath, append(raw, []byte("PATHS: card.go\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.job = filepath.Join(b.root, "1", "jobs", label)
+	realGit(t, "init", "-b", "dev", b.job)
+	realGit(t, "-C", b.job, "remote", "add", "origin", honestURL)
+	if err := os.WriteFile(filepath.Join(b.job, "card.go"), []byte("package card\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit(t, "-C", b.job, "add", "card.go")
+	realGit(t, "-C", b.job, "commit", "-m", "old target")
+	realGit(t, "-C", b.job, "push", "origin", "HEAD:dev")
+	// Pin the worker's origin/dev to that old SHA. Fetch the local bare repo
+	// directly: dest.url is a forge URL, and this is the clone's cached tracking
+	// ref, the one the HOLD says must not be treated as current.
+	realGit(t, "-C", b.job, "fetch", b.honest, "+refs/heads/dev:refs/remotes/origin/dev")
+	realGit(t, "-C", b.job, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(b.job, "card.go"), []byte("package card\n\nfunc Fix() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit(t, "-C", b.job, "add", "card.go")
+	realGit(t, "-C", b.job, "commit", "-m", "the card")
+
+	advanceDestDev(t, b, "later.go", "package later\n")
+
+	old := strings.TrimSpace(realGit(t, "-C", b.job, "rev-parse", "origin/dev"))
+	live := strings.TrimSpace(realGit(t, "-C", b.honest, "rev-parse", "refs/heads/dev"))
+	if old == live {
+		t.Fatal("the worker origin/dev still matches the destination; the remote did not advance")
+	}
+
+	out, errs := runHarvest(t, b.root)
+
+	if got := refs(t, b.honest); containsRef(got, "refs/heads/"+branch) {
+		t.Fatalf("a stale origin/dev was treated as current: the branch was pushed\norigin/dev=%s dest/dev=%s\nstdout=%s\nstderr=%s", old, live, out, errs)
+	}
+	if strings.Contains(out, "HARVEST PR") || strings.Contains(out, "prs=1") {
+		t.Fatalf("stale origin/dev was treated as current: a PR opened\nstdout=%s\nstderr=%s", out, errs)
+	}
+	if !strings.Contains(out, "later.go") && !strings.Contains(errs, "later.go") {
+		t.Fatalf("the refusal must name the later landing, not clear against stale origin/dev\norigin/dev=%s dest/dev=%s\nstdout=%s\nstderr=%s", old, live, out, errs)
+	}
+}
+
+func advanceDestDev(t *testing.T, b *destBench, rel, body string) {
+	t.Helper()
+	tmp := t.TempDir()
+	realGit(t, "clone", "-b", "dev", b.honest, tmp)
+	dir := filepath.Dir(filepath.Join(tmp, filepath.FromSlash(rel)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit(t, "-C", tmp, "add", rel)
+	realGit(t, "-C", tmp, "commit", "-m", "later landing on the destination")
+	realGit(t, "-C", tmp, "push", "origin", "HEAD:dev")
+}
+
+func containsRef(refs []string, want string) bool {
+	for _, r := range refs {
+		if r == want {
+			return true
+		}
+	}
+	return false
+}
+
 // The positive control: a card branch cut from the current target, two-dot inside
 // PATHS, still opens. A guard that refuses everything is not a guard.
 func TestHarvestOpensAPRWhenTheTwoDotDiffStaysInsidePATHS(t *testing.T) {
@@ -149,6 +234,7 @@ func TestHarvestOpensAPRWhenTheTwoDotDiffStaysInsidePATHS(t *testing.T) {
 	}
 	realGit(t, "-C", b.job, "add", "card/fix.go")
 	realGit(t, "-C", b.job, "commit", "-m", "current target")
+	realGit(t, "-C", b.job, "push", "origin", "HEAD:dev")
 	realGit(t, "-C", b.job, "checkout", "-b", branch)
 	if err := os.WriteFile(filepath.Join(b.job, "card", "fix.go"), []byte("package card\n\nfunc Fix() {}\n"), 0o644); err != nil {
 		t.Fatal(err)

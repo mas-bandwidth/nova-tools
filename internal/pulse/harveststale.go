@@ -15,8 +15,27 @@ import (
 // cut from an older base shows later landings as extra paths in `git diff
 // <target>..<head>`; opening that as a PR reverts them. hygiene.Check rewrites
 // the base to the merge-base and so cannot see this.
-func staleBaseRefusal(dir, target, head string, globs []string, declared bool) error {
-	bad, rng, err := staleBaseOffenders(dir, target, head, globs, declared)
+//
+// The target is the coordinator-authorized destination, fetched and pinned to an
+// OID before the diff (HOLD on #2117). The worker clone's origin/dev is not the
+// current target: it is a cached remote-tracking ref the worker can leave stale.
+// An empty destURL or target is a refusal, never a walk of local fallbacks.
+func staleBaseRefusal(dir, destURL, target, head string, globs []string, declared bool) error {
+	if strings.TrimSpace(destURL) == "" {
+		return fmt.Errorf("stale-base: no authorized destination to fetch")
+	}
+	target = harvestTargetName(target)
+	if target == "" {
+		return fmt.Errorf("stale-base: no explicit target branch")
+	}
+	if strings.TrimSpace(head) == "" {
+		head = "HEAD"
+	}
+	oid, err := pinAuthorizedTarget(dir, destURL, target)
+	if err != nil {
+		return fmt.Errorf("stale-base unread: %s", oneline.Err(err))
+	}
+	bad, rng, err := staleBaseOffenders(dir, oid, head, globs, declared)
 	if err != nil {
 		return fmt.Errorf("stale-base unread: %s", oneline.Err(err))
 	}
@@ -27,15 +46,56 @@ func staleBaseRefusal(dir, target, head string, globs []string, declared bool) e
 		field(joinOffenders(bad)), field(rng))
 }
 
-func staleBaseOffenders(dir, target, head string, globs []string, declared bool) (bad []string, rng string, err error) {
-	if strings.TrimSpace(head) == "" {
-		head = "HEAD"
+func pinAuthorizedTarget(dir, destURL, target string) (string, error) {
+	destURL = strings.TrimSpace(destURL)
+	target = harvestTargetName(target)
+	if destURL == "" || target == "" {
+		return "", fmt.Errorf("no authorized target to fetch")
 	}
-	two, used, err := currentTargetNames(dir, target, head)
+	pin := "refs/harvest/target/" + target
+	refspec := "+refs/heads/" + target + ":" + pin
+	if out, err := gitIn(dir, "fetch", "--no-tags", destURL, refspec); err != nil {
+		return "", fmt.Errorf("fetch %s %s: %s", field(destURL), field(target), oneline.Cap(out, 200))
+	}
+	oid, err := gitIn(dir, "rev-parse", "--verify", pin+"^{commit}")
+	if err != nil || !isHex(oid) {
+		return "", fmt.Errorf("pinned target %s is empty", field(pin))
+	}
+	return oid, nil
+}
+
+func harvestTargetBranch(in HarvestInput, resultLines []string) string {
+	if b := harvestTargetName(resultField(resultLines, "BASE")); b != "" {
+		return b
+	}
+	if b := harvestTargetName(in.Base); b != "" {
+		return b
+	}
+	return DefaultBase
+}
+
+func harvestTargetName(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "refs/heads/")
+	s = strings.TrimPrefix(s, "origin/")
+	if s == "" || s == "HEAD" || isHex(s) {
+		return ""
+	}
+	if strings.ContainsAny(s, " \t\n\\:") || strings.Contains(s, "..") {
+		return ""
+	}
+	return s
+}
+
+func staleBaseOffenders(dir, oid, head string, globs []string, declared bool) (bad []string, rng string, err error) {
+	if strings.TrimSpace(oid) == "" || strings.TrimSpace(head) == "" {
+		return nil, "", fmt.Errorf("missing pinned target or head")
+	}
+	rng = oid + ".." + head
+	two, err := gitNameOnly(dir, rng)
 	if err != nil {
 		return nil, "", err
 	}
-	rng = used + ".." + head
 	if declared {
 		for _, p := range two {
 			if !declaredCovers(globs, p) {
@@ -44,7 +104,7 @@ func staleBaseOffenders(dir, target, head string, globs []string, declared bool)
 		}
 		return bad, rng, nil
 	}
-	three, err := gitNameOnly(dir, used+"..."+head)
+	three, err := gitNameOnly(dir, oid+"..."+head)
 	if err != nil {
 		return nil, rng, err
 	}
@@ -58,37 +118,6 @@ func staleBaseOffenders(dir, target, head string, globs []string, declared bool)
 		}
 	}
 	return bad, rng, nil
-}
-
-func currentTargetNames(dir, target, head string) (names []string, used string, err error) {
-	seen := map[string]bool{}
-	var cands []string
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] {
-			return
-		}
-		seen[s] = true
-		cands = append(cands, s)
-	}
-	add(target)
-	add("origin/dev")
-	add("dev")
-	add("origin/main")
-	add("main")
-	var last error
-	for _, t := range cands {
-		n, e := gitNameOnly(dir, t+".."+head)
-		if e != nil {
-			last = e
-			continue
-		}
-		return n, t, nil
-	}
-	if last == nil {
-		last = fmt.Errorf("no current target ref in %s", field(dir))
-	}
-	return nil, "", last
 }
 
 func gitNameOnly(dir, spec string) ([]string, error) {

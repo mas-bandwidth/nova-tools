@@ -494,7 +494,7 @@ func TestHarvestBenchRefusesARepoMismatchAndOpensNoPR(t *testing.T) {
 		// The COORDINATOR's own clone, on the coordinator's own disk: `--clone` is
 		// required on this verb, so THIS is the manager-side record, and the bench
 		// job's own origin is never read here at all.
-		{Arg: 3, Equals: "remote", Stdout: "https://example.com/real/repo.git"},
+		{Arg: 5, Equals: "remote.origin.url", Stdout: "https://example.com/real/repo.git"},
 	}})
 	mine := "/home/gaffer/rowan-swarm-root/0/jobs/card-1"
 	shell := &fakeShell{answer: func(bench, script string) (string, error) {

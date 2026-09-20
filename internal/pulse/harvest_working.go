@@ -281,7 +281,7 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
 	globs, declared := harvestDeclaredPaths("", lines)
-	if err := staleBaseRefusal(clone, r.base12, "HEAD", globs, declared); err != nil {
+	if err := staleBaseRefusal(clone, dest.url, harvestTargetBranch(r.in, lines), "HEAD", globs, declared); err != nil {
 		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}

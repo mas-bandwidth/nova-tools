@@ -288,9 +288,9 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
 				continue
 			}
-			// Two-dot against the current target, before any push (issue #2032).
+			// Two-dot against the fetched authorized target, before any push (issue #2032; HOLD on #2117).
 			globs, declared := harvestDeclaredPaths(c.Card, resultLines)
-			if err := staleBaseRefusal(cloneDir(jobDir), "", branch, globs, declared); err != nil {
+			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, harvestTargetBranch(in, resultLines), branch, globs, declared); err != nil {
 				refused++
 				writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))

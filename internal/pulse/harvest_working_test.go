@@ -170,6 +170,7 @@ func TestHarvestWorkingLeaseComesFromLsRemote(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/rowan/y"},
+		{Arg: 3, Equals: "rev-parse", Stdout: "aaaa000000000000000000000000000000000000"},
 		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
@@ -300,6 +301,7 @@ func TestHarvestWorkingClassesAreTheFive(t *testing.T) {
 		{Arg: 1, Equals: "log", Stdout: "abcd000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "abcd000000000000000000000000000000000000\trefs/heads/rowan/f"},
 		originRule("o/r"),
+		pinRule(),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[
