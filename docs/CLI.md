@@ -2430,7 +2430,7 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sa
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity            # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv   # the conditions, the forms, and the pulse card templates, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
@@ -2743,6 +2743,14 @@ capacity` is refused the way `add --template result` and `add --template setup` 
 key, no token, and no private host detail is ever printed by it, and a filled form
 supplies no account access — an automatic scheduler is separate staged work with its own
 authorization.
+
+`nova-swarm template --name read` (and `fix`, `text`, `replay`, `drift`, `tone` and
+`models.tsv`) prints the six typed card templates SPEC-PULSE rule 4 names and the cost
+table rule 7 reads, so the templates directory `nova-pulse cut --templates <dir>` needs is
+built from the tool instead of copied out of `cmd/nova-pulse/testdata`. `read`, `text` and
+`tone` are text-only cards and carry rule 6's no-build line; `fix`, `replay` and `drift`
+carry the red-then-green row. They are cards, not task templates: `add --template read`
+is refused the way `add --template result` is.
 
 ### The harness contract
 
