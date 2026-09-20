@@ -214,6 +214,9 @@ func kindTestProblem(test string) string {
 	if v == "" || v == "none" {
 		return ""
 	}
+	if strings.ContainsAny(v, "\n\r") {
+		return "--test has a line break (pass <package> <TestName> on one line, or none)"
+	}
 	fields := strings.Fields(v)
 	if len(fields) != 2 {
 		return "--test wants `<package> <TestName>` or none (pass two fields, the name a Go test name)"

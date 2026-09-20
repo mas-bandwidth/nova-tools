@@ -216,6 +216,43 @@ func TestCutKindNamedPathsAndTestLandOnTheCard(t *testing.T) {
 	}
 }
 
+// cut-kind-test-line-break: --test with an embedded LF or CRLF is two fields to
+// strings.Fields, so cut used to accept it, write TEST: as two physical lines,
+// and leave lint --card with test-named plus stranded LEGS: and SOURCE: (Stella
+// HOLD on #2116). A test name with a line break is a bad card: refuse it.
+func TestCutKindRejectsTestWithLineBreak(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		test string
+	}{
+		{"LF", "./internal/pulse\nTestThing"},
+		{"CRLF", "./internal/pulse\r\nTestThing"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+			code, _, errs, card := cutKind(t, CutKindInput{
+				Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 123, Title: "fix",
+				Test: c.test, Out: out, Queue: queue,
+			})
+			if code != 2 {
+				if card != "" {
+					if fs := swarm.LintCardHeader([]byte(card), nil, false); len(fs) != 0 {
+						t.Errorf("the card that left cut fails lint --card:\n%s\n%s", dumpHeaderFindings(fs), card)
+					}
+				}
+				t.Fatalf("exit = %d, want 2 (--test with a line break is not two fields via strings.Fields); stderr=%s", code, errs)
+			}
+			if !strings.Contains(errs, "CUT REFUSED") || !strings.Contains(errs, "--test") || !strings.Contains(errs, "(") {
+				t.Errorf("refusal = %q, want CUT REFUSED naming --test and a remedy", errs)
+			}
+			if card != "" {
+				t.Errorf("a refused cut wrote a card:\n%s", card)
+			}
+		})
+	}
+}
+
 // cut-kind-rebase: the rebase card's line 1 is the contract the harvest matches, and its
 // steps carry the branch the worker checks out and the base it rebases onto.
 func TestCutKindRebaseNamesTheBranchAndTheBase(t *testing.T) {
