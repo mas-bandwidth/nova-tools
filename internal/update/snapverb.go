@@ -46,6 +46,15 @@ var snapshotChildTimeout = 30 * time.Second
 // per-run `--budget` -- that `check`, `report` and `watch` already take.
 var snapshotBudget = 60 * time.Second
 
+// snapshotAdoptedTimeout bounds one ADOPTED tool's identity read, the --file
+// shape of this verb. It is report's own per-tool read, so an entry whose
+// installed column records a version is known without starting a process; only
+// an installed argv is probed, and it gets this deadline and no more. The bound
+// is report's five-second default rather than the directory shape's thirty,
+// because a recorded version never pays a first-exec toll and the count is a
+// manifest of adopted tools, not a scan of freshly installed binaries (#890).
+var snapshotAdoptedTimeout = 5 * time.Second
+
 // snapshotHeader is the TSV shape `snapshot` writes and `diff` reads. It is one
 // string so the writer and the reader cannot drift.
 const snapshotHeader = "name\tstamp\trevision\tplatform"
@@ -89,20 +98,30 @@ func parseVersionLine(s string) (stamp, revision, platform string, ok bool) {
 	return f.Version, revisionOf(f.Version), f.Platform, true
 }
 
-// snapshotVerb inventories a directory of binaries by running each one's own
-// `version`. Every path comes from a flag; neither the file's name nor PATH is
-// trusted for the reading.
+// snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
+// rule-2 manifest (#622): it reads the manifest's entries the way report does
+// and reports how many answer -- the adopted sixteen -- never how many nova-*
+// executables sit in a bin directory or on PATH. With --bin/--out it inventories
+// a directory of binaries by running each one's own `version`. Every path comes
+// from a flag; neither the file's name nor PATH is trusted for the reading.
 func snapshotVerb(name string, args []string, out, errs io.Writer, env Environment) int {
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var bin, outPath string
+	var bin, outPath, file string
 	timeout, budget := snapshotChildTimeout, snapshotBudget
 	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
 	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
+	fs.StringVar(&file, "file", "", "manifest of adopted tools")
 	fs.DurationVar(&timeout, "timeout", timeout, "one binary's read deadline")
 	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
+	}
+	if file != "" {
+		if len(fs.Args()) != 0 {
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
+		}
+		return snapshotAdopted(file, out, errs)
 	}
 	var missing []string
 	if bin == "" {
@@ -199,4 +218,40 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	}
 	fmt.Fprintf(out, "SNAPSHOT OK bin=%s out=%s tools=%d stamp=%s\n", field(bin), field(outPath), len(rows), field(rows[0].stamp))
 	return 0
+}
+
+// snapshotAdopted counts how many of the adopted manifest's tools answer, and is
+// the --file shape of snapshotVerb (#622). It reads the rule-2 manifest --file
+// names and asks each entry its identity exactly as report does, so a recorded
+// installed version is known without a process and an installed argv is probed
+// once. The count is the manifest's own -- the adopted sixteen -- never the
+// thirty-two nova-* executables a bin directory or PATH might hold, and no file
+// is written: the manifest is adopted, not discovered. The verdict mirrors
+// report's: one count line, exit 0 when every adopted tool answers and exit 1
+// when any does not.
+func snapshotAdopted(file string, out, errs io.Writer) int {
+	f, err := os.Open(file)
+	if err != nil {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
+	}
+	entries, err := Load(f)
+	f.Close()
+	if err != nil {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s: %w", file, err))
+	}
+	known := 0
+	for _, e := range entries {
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotAdoptedTimeout)
+		r := Installed(ctx, e, snapshotAdoptedTimeout, true)
+		cancel()
+		if r.Known() {
+			known++
+		}
+	}
+	code, result, w := 0, "OK", out
+	if known != len(entries) {
+		code, result, w = 1, "FAIL", errs
+	}
+	fmt.Fprintf(w, "SNAPSHOT %s checked=%d known=%d unknown=%d file=%s\n", result, len(entries), known, len(entries)-known, field(file))
+	return code
 }

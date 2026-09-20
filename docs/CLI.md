@@ -3176,8 +3176,11 @@ answer a bare invocation with a usage refusal, are read rather than reported
 UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
-needs no bus. Updates require an explicit `nova-update apply --file ... name`;
-models are listed for the owner to evaluate and pull themselves. No timer is installed.
+needs no bus. `nova-version snapshot --file <manifest>` counts the adopted tools the
+manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line —
+the adopted 16, never how many `nova-*` executables sit on PATH. Updates require an explicit
+`nova-update apply --file ... name`; models are listed for the owner to evaluate and
+pull themselves. No timer is installed.
 
 ### Capture and compare installed binaries
 
@@ -3208,8 +3211,16 @@ refused healthy binaries and named a build repair that would have found nothing
 executing the binaries.
 
 This four-column inventory is **not** the six-column manifest accepted by
-`report --file`; `snapshot` has no `--owner` flag. The report's `--snapshot` option
-below is a separate delivery-recovery file.
+`report --file`; the `--bin/--out` shape has no `--owner` flag. The report's
+`--snapshot` option below is a separate delivery-recovery file.
+
+`snapshot`'s `--file` shape instead reads the six-column manifest the caller has
+already adopted and counts how many of its tools answer, printing one
+`SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line — the
+adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
+It writes no file and mirrors `report`'s read, so a recorded version is known
+without running a process; it exits 1 when any adopted tool does not answer
+([#622](https://github.com/mas-bandwidth/nova-tools/issues/622)).
 
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it, so a tool's named `key=value` extras — `nova-merge`'s `build=<12 hex>`,

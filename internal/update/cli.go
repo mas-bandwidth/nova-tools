@@ -76,7 +76,8 @@ nova-update help`
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
-const versionVerbs = `nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
+const versionVerbs = `nova-version snapshot --file <manifest: ` + manifestShape + `>
+nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
 nova-version diff --from <a.tsv> --to <b.tsv>
 nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
