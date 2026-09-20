@@ -1442,9 +1442,31 @@ the third call too.
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut --kind read|fix|replay|spec|rebase --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--branch <b>] [--base <b>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--card-kind <kind> --paths <globs> --test "<pkg> <TestName>"] [--legs <a,b>]
 ```
 
+
+**`cut --kind` and the typed header (SPEC-TOOLWORK §5 rule 1).** The five kinds are
+`read`, `fix`, `replay`, `spec` and `rebase`, and each has its own line 1 and its own
+required flags: `read` wants `--pr` and `--head`, `fix` wants `--issue` and `--title`,
+`replay` wants `--names` and `--spec-lines`, `spec` wants `--title`, and `rebase` wants
+`--pr`, `--branch`, `--base` and `--title`. The card number never comes from a flag: it
+comes from the queue's state file under its lock, so two cutters never share one.
+
+Four flags write the **typed header** the accept gate reads, directly under the contract
+line and above any prose, so `nova-pulse accept` reads them whole:
+
+| flag | header line | what it is |
+|---|---|---|
+| `--card-kind <kind>` | `KIND:` | the gate kind from the tool's own table — `nova-pulse accept --kinds` prints it, and a name the table does not hold is refused with the nearest name it does hold |
+| `--paths <globs>` | `PATHS:` | the comma-separated globs the card may touch, at most eight, each repo-relative |
+| `--test "<pkg> <TestName>"` | `TEST:` | the test that must be red without the change, or `none` for an ungated kind |
+| `--legs <a,b>` | `LEGS:` | the toolchains the card needs on the bench |
+
+`SOURCE:` is written for you from `--repo` and the card's own issue or PR number. A gated
+`--card-kind` with no `--paths`, or with no `--test`, is refused before any card is
+written: a card the gate cannot judge is not a card. Passing no `--card-kind` at all
+writes no header, and such a card is ungated — the HARVEST row says `gate=none`.
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
 is required of the form that uses it and of no other. `--root` is where `--pool`
 writes `skipped.tsv`; the validated forms write nothing under it, and used to demand

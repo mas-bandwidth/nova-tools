@@ -40,6 +40,11 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	prior := f.fs.String("prior", "", "")
 	names := f.fs.String("names", "", "")
 	specLines := f.fs.String("spec-lines", "", "")
+	// A rebase card names the branch it checks out and the base it is replayed onto:
+	// internal/pulse requires both of the kind, and without these two flags the kind
+	// was declared, documented and unusable (Emma, #1855).
+	branch := f.fs.String("branch", "", "")
+	base := f.fs.String("base", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
 	// The typed header (SPEC-TOOLWORK §5 rule 1). --card-kind names the gate kind from
@@ -55,6 +60,7 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
 		BodyFile: *bodyFile, Prior: *prior, Names: *names, SpecLines: *specLines,
+		Branch: *branch, Base: *base,
 		CardKind: *cardKind, Paths: *paths, Test: *test, Legs: *legs,
 		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
 	})
