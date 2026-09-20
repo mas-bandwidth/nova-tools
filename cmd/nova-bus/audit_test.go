@@ -52,7 +52,7 @@ var messageBusAudit = audit.Config{
 			"oneline.Escape, so the one-line guarantee is made once over the finished sentence rather than twice over its parts. The value itself is a " +
 			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",
 		"main.go|hiddenReason|at": "the same sentence, and a time this code formatted itself with bus.LegacyInstantLayout; two sites in the one call.",
-		"main.go|cmdDraft|name":   "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
+		"draft.go|cmdDraft|name":   "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
 		"reply.go|cmdDraftReply|offTheListingReason(c, t, target, me, legacy, hasCursor, replyTargetName(target))": "not an event line's argument but a SENTENCE this package built, the way hiddenReason's is: " +
 			"every value inside it went through oneline.Field at the site that wrote it, and the sentence is one line by construction. The one-line " +
 			"guarantee is made once over the finished sentence rather than twice over its parts. TestTargetNotOnTheOpenListIsItsOwnRefusal is the " +
@@ -60,12 +60,13 @@ var messageBusAudit = audit.Config{
 		"reply.go|cmdDraftReply|note": "one DRAFT NOTE sentence out of the finite, enumerated set in docs/SPEC-BUS-REPLY.md, built above this loop: every value in " +
 			"one is a literal or has been through oneline.Field or oneline.Quote at the site that wrote it. TestReplyReceiptStaysOneLineAtSixHundredOpenNotes " +
 			"holds the count and TestReplySubjectMatchingTwoNotesTakesTheNewestAndSaysSo holds the text.",
-		"main.go|cmdDraft|skeleton": "the skeleton itself, printed to stdout VERBATIM because it is a FILE and not an event line: a header of " +
+		"draft.go|cmdDraft|skeleton": "the skeleton itself, printed to stdout VERBATIM because it is a FILE and not an event line: a header of " +
 			"several lines that a person redirects into a draft, and an escape would fold it into one unusable line -- the same mistake " +
 			"as the escaped rebase transcript below. Every value in it has been checked before this line runs: From is the roster's own " +
 			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
 			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
 			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
+		"draft.go|writeDraftOut|skeleton": "the skeleton itself, written to the draft file outside the bus; content is checked before this runs",
 		"main.go|printSendDraft|note": "the shaped note itself, printed to stdout VERBATIM because it is the thing `send --dry-run` " +
 			"frames and a caller pipes to a file: escaping it would fold the very bytes the verb promises to carry. Every value in it " +
 			"has been checked before this line runs -- the header is the same Render the commit writes, from a note that passed the " +
