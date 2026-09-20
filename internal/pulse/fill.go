@@ -121,23 +121,23 @@ func (g guardedLauncher) Launch(bench, card string) error {
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
 // directories and stub seams.
 type FillInput struct {
-	Ready    string        // the queue/ready directory the card-<n>.md are popped from
-	Launched string        // the queue/launched directory they are moved into; its cards are live
+	Ready     string        // the queue/ready directory the card-<n>.md are popped from
+	Launched  string        // the queue/launched directory they are moved into; its cards are live
 	Lanes     string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
 	Machines  string        // the machines registry; a bench whose roles lack `bench` is refused
 	Providers string        // the provider registry; empty disables provider routing
 	Session   string        // the session id stamped into every launched card's marker
-	Benches  []string      // the benches to fill, in order
-	Only     []string      // glob patterns over a card's filename; empty takes every ready card
-	Once     bool          // true runs exactly one tick and returns
-	Interval time.Duration // how long between ticks; 0 takes FillInterval
-	Stop     string        // touch this file to stop the loop; empty names no stop file
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Now      func() time.Time
-	Sleep    func(time.Duration)
-	Launcher CardLauncher
-	Capacity Capacity
+	Benches   []string      // the benches to fill, in order
+	Only      []string      // glob patterns over a card's filename; empty takes every ready card
+	Once      bool          // true runs exactly one tick and returns
+	Interval  time.Duration // how long between ticks; 0 takes FillInterval
+	Stop      string        // touch this file to stop the loop; empty names no stop file
+	Stdout    io.Writer
+	Stderr    io.Writer
+	Now       func() time.Time
+	Sleep     func(time.Duration)
+	Launcher  CardLauncher
+	Capacity  Capacity
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -904,4 +904,3 @@ func markerTime(content string, info os.FileInfo) time.Time {
 	}
 	return time.Now()
 }
-

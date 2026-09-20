@@ -102,10 +102,10 @@ route-mid-a	p5	m5	any	10	0.50	0.20	-
 	}
 
 	expectedOrder := []string{
-		"route-free-a",  // cost 0.00, name 'a'
-		"route-free-z",  // cost 0.00, name 'z'
-		"route-mid-a",   // cost 0.50, name 'a'
-		"route-mid-b",   // cost 0.50, name 'b'
+		"route-free-a",    // cost 0.00, name 'a'
+		"route-free-z",    // cost 0.00, name 'z'
+		"route-mid-a",     // cost 0.50, name 'a'
+		"route-mid-b",     // cost 0.50, name 'b'
 		"route-expensive", // cost 2.50
 	}
 

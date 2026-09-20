@@ -68,21 +68,21 @@ type nativeRunConfig struct {
 
 // nativeRunResult is what one run records when the child has gone.
 type nativeRunResult struct {
-	rc           int               // the child's exit code; -1 when the deadline killed it
-	wallSeconds  float64           // the wall the run took
-	wall         string            // the wall's own name from its SANDBOX OK line, or "none"
-	cardSHA256   string            // sha256 of the card text, lowercase hex
-	binarySHA256 string            // sha256 of the harness binary, lowercase hex
-	job          string            // the job directory <slot>/jobs/<label> the child ran in
-	usageState   string            // the store path the NATIVE OK line names when no store answered, "" otherwise
-	usageReason  string            // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
-	configSHA    string            // sha8 of the carried provider config, "" when --config named none
-	tmp          string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
-	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
-	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
-	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
-	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
-	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	rc              int                   // the child's exit code; -1 when the deadline killed it
+	wallSeconds     float64               // the wall the run took
+	wall            string                // the wall's own name from its SANDBOX OK line, or "none"
+	cardSHA256      string                // sha256 of the card text, lowercase hex
+	binarySHA256    string                // sha256 of the harness binary, lowercase hex
+	job             string                // the job directory <slot>/jobs/<label> the child ran in
+	usageState      string                // the store path the NATIVE OK line names when no store answered, "" otherwise
+	usageReason     string                // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
+	configSHA       string                // sha8 of the carried provider config, "" when --config named none
+	tmp             string                // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness         string                // ok | silent: silent when the capture holds no words of the child's and no result was found
+	fence           string                // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	wallReport      string                // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	wallRefusal     swarm.WallRefusal     // the path and step a wall refused, zero when it refused nothing
+	end             string                // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 	providerFailure swarm.ProviderFailure // provider fault classification (issue #2001 & #2011)
 	terminated      bool                  // a TERM from outside ended the run mid-flight, not the deadline
 }

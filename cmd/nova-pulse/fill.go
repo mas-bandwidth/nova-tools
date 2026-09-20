@@ -134,22 +134,22 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		})
 	}
 	return pulse.Fill(pulse.FillInput{
-		Ready:    *ready,
-		Launched: *launched,
+		Ready:     *ready,
+		Launched:  *launched,
 		Lanes:     *lanes,
 		Machines:  *machines,
 		Providers: *providers,
 		Session:   *session,
-		Benches:  []string(benches),
-		Only:     []string(only),
-		Once:     *once,
-		Interval: tick,
-		Stop:     *stop,
-		Stdout:   stdout,
-		Stderr:   stderr,
-		Now:      func() time.Time { return now },
-		Capacity: reader,
-		Launcher: flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Benches:   []string(benches),
+		Only:      []string(only),
+		Once:      *once,
+		Interval:  tick,
+		Stop:      *stop,
+		Stdout:    stdout,
+		Stderr:    stderr,
+		Now:       func() time.Time { return now },
+		Capacity:  reader,
+		Launcher:  flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
 	})
 }
 
