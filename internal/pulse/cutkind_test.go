@@ -13,6 +13,10 @@ import (
 
 func cutKind(t *testing.T, in CutKindInput) (int, string, string, string) {
 	t.Helper()
+	// A fix card lists PRs on the forge; the empty list is "nothing already
+	// carries this issue", so existing tests still cut.
+	specs := fakePATH(t)
+	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: "[]"}})
 	var out, errs bytes.Buffer
 	in.Stdout, in.Stderr = &out, &errs
 	code := CutKind(in)

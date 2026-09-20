@@ -2,6 +2,7 @@ package main
 
 // `cut --kind` — the typed cutter, and the only place a card number comes from. Without
 // --kind, `cut` is the pool-driven cutter of internal/pulse/cut.go and nothing here runs.
+// A fix card whose issue an open or recently merged PR already names is refused (#2041).
 //
 // There is no --number flag, and passing one is a refusal that names why: the number comes
 // only from the queue's state file, under the queue's lock (issue #828, class B).

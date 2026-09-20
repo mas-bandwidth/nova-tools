@@ -54,11 +54,26 @@ type CutKindInput struct {
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
-// 0 when the card was written and 2 when the invocation was refused.
+// 0 when the card was written and 2 when the invocation was refused. A fix card whose
+// issue an open or recently merged PR already names is refused (#2041): generators
+// call this cutter, so they cannot re-cut work a PR already carries.
 func CutKind(in CutKindInput) int {
 	if problem := cutKindProblem(in); problem != "" {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
 		return 2
+	}
+	if in.Kind == "fix" {
+		state, pr, how, err := prCarryingIssue(in.Repo, in.Issue)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: cannot list PRs for %s: %s (check gh auth; cut will not write a card while the forge is unread)\n",
+				oneline.Field(in.Repo), oneline.Err(err))
+			return 2
+		}
+		if pr != 0 {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: %s PR %d already carries #%d via %s (do not cut a second card for work a PR already carries)\n",
+				state, pr, in.Issue, oneline.Escape(how))
+			return 2
+		}
 	}
 	body := ""
 	if in.BodyFile != "" {

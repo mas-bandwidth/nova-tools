@@ -1259,6 +1259,33 @@ refuses each of the four before a card exists.
 8. `cut-refuses-the-first-failing-check`: a bad branch and a missing path at once name
    `check=branch` and no path check runs — the order is the contract.
 
+## Cut refuses a card an open PR already carries (#2041)
+
+The 2026-09-20 fix wave re-cut 27 of 27: every DONE card duplicated an open or
+just-landed PR. Generators call `cut --kind fix`, so the floor is the cutter.
+Before writing a fix card it lists open PRs, then recently merged PRs, and
+matches the issue on `Fixes #N` / `Closes #N` / `Resolves #N` in title or body,
+`#N` in the title or body, or the issue number as a path token of the head
+branch. A match is exit 2, no card:
+
+```
+CUT REFUSED: open PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)
+CUT REFUSED: merged PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)
+CUT REFUSED: cannot list PRs for <repo>: <err> (check gh auth; cut will not write a card while the forge is unread)
+```
+
+A forge that does not answer is the same refusal: cut never writes a card while
+unread. A PR that does not name the issue is not a match, and the card is cut.
+
+**Red tests.**
+
+9. `cut-kind-fix-refuses-when-an-open-pr-already-carries-the-issue`: a fixture
+   `gh` answering an open PR whose body is `Fixes #1979` refuses the fix card
+   for 1979, names PR 1960, and writes no card. The same refusal holds when the
+   title carries `#1979`, when the head branch is `johnny/1979-the-widget`, when
+   a recently merged PR closes the issue, and when `gh` itself cannot answer. An
+   unrelated open PR still cuts.
+
 ## The cost of a card (#855), 2026-09-16
 
 Measured 2026-09-16 over 1,068 jobs, all benches, from `usage.tsv`: input 62.1M, output

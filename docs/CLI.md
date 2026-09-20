@@ -1605,6 +1605,18 @@ runs:
 CUT REFUSED: --repo <path> is not a directory (name the clone every git call runs in; cut never reads the working directory)
 ```
 
+`cut --kind fix` lists open and recently merged PRs on that `--repo` before it
+writes a card. A PR that already names the issue — `Fixes #N` / `Closes #N` /
+`Resolves #N`, the title, or the head branch — is refused, exit 2, no card:
+
+```
+CUT REFUSED: <open|merged> PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)
+```
+
+A `gh` that does not answer is the same refusal: the cutter will not write a
+card while the forge is unread. Generators call this cutter, so they inherit
+the floor (#2041; the 2026-09-20 fix wave re-cut 27 of 27).
+
 `cut` reads **one** source and refuses none and refuses two: naming no source is
 `cut wants one source; it wants --pool, --issue, --rows or --branch-from`, and
 naming two is `cut reads one source; pass only one of ...`, both exit 2 with the

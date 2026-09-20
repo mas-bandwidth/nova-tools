@@ -173,3 +173,7 @@ handoff (rule **The manager tier**).
     draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
     `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
     shape harvest's own read card has (rule 13).
+51. `cut-kind-fix-refuses-when-an-open-pr-already-carries-the-issue`: a fixture `gh`
+    answering an open PR whose body is `Fixes #1979` refuses the fix card for 1979
+    and writes no card; title, branch, a recently merged PR, and an unread forge
+    refuse the same way (#2041).

@@ -71,6 +71,7 @@ func wiredFixture(t *testing.T, now time.Time) (queue, root string, work *fakeWo
 func TestWiredOnceTickRunsEverySeam(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: filepath.Join(t.TempDir(), "swarm.log"), Default: fakeRule{Stdout: "BATCH OK\n"}})
+	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: "[]"}})
 
 	now := time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC)
 	queue, root, work, restarter := wiredFixture(t, now)
