@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+func TestObservationWaitDelayIsPositive(t *testing.T) {
+	if ObservationWaitDelay <= 0 {
+		t.Fatal("ObservationWaitDelay is not positive; a killed observation whose descendants hold the pipe blocks forever")
+	}
+}
+
 func TestIsolationArgvBypassesControlMaster(t *testing.T) {
 	got := strings.Join(IsolationArgv(false, "bench.test", "true"), " ")
 	for _, want := range []string{

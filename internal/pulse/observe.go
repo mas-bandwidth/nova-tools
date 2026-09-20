@@ -14,7 +14,14 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
+
+// ObservationWaitDelay bounds how long Wait may sit on leftover copy pipes
+// after the observation child is gone. Zero (Go's default) waits forever for a
+// descendant that inherited stdout -- a 1s probe then blocked past its deadline
+// (#2009 HOLD on 5914cd01).
+const ObservationWaitDelay = 2 * time.Second
 
 // IsolationOptions is the argv every observation remote call carries.
 // ControlMaster=no so a stale multiplexed socket to a dead host cannot hang a

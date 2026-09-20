@@ -275,6 +275,7 @@ func (s ServiceRestarter) Restart(name string) error {
 	} else {
 		cmd = exec.CommandContext(ctx, "ssh", args...)
 	}
+	BoundObservation(cmd)
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w (%s)", command, err, oneline.Escape(strings.TrimSpace(string(raw))))
 	}

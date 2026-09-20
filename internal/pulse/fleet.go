@@ -183,6 +183,7 @@ func fleetSSH(ctx context.Context, program, target, script string) (string, erro
 	args := IsolationArgv(true, target, "bash", "-s")
 	testguard.RefuseHosts(program, args...)
 	cmd := exec.CommandContext(ctx, program, args...)
+	BoundObservation(cmd)
 	cmd.Stdin = strings.NewReader(script)
 	raw, err := cmd.CombinedOutput()
 	return string(raw), err
@@ -644,6 +645,7 @@ func (in FleetRebootInput) ssh(target, script string) (string, error) {
 	args := IsolationArgv(false, target, script)
 	testguard.RefuseHosts(program, args...)
 	cmd := exec.CommandContext(ctx, program, args...)
+	BoundObservation(cmd)
 	raw, err := cmd.CombinedOutput()
 	return string(raw), err
 }
@@ -805,6 +807,7 @@ func checkFleetSeat(ctx context.Context, ssh string, b fleetBench) fleetSeat {
 	args := IsolationArgv(true, b.Target, "bash", "-s")
 	testguard.RefuseHosts(ssh, args...)
 	cmd := exec.CommandContext(ctx, ssh, args...)
+	BoundObservation(cmd)
 	cmd.Stdin = strings.NewReader(fleetSeatScript(b.Home))
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

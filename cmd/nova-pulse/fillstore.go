@@ -113,6 +113,7 @@ const probeAnswerLimit = 64 << 10
 // runProbe runs the probe, reads a BOUNDED answer, and keeps the child's last line, so a
 // probe that failed says why rather than answering a bare exit status.
 func runProbe(cmd *exec.Cmd) (string, error) {
+	pulse.BoundObservation(cmd)
 	out := &capped{limit: probeAnswerLimit}
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = out, said

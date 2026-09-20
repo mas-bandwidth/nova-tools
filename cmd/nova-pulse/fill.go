@@ -243,6 +243,7 @@ func (c sshCapacity) Capacity(bench string) (int, error) {
 	args := pulse.IsolationArgv(false, bench, capacityScript(c.root))
 	testguard.RefuseHosts(ssh, args...)
 	cmd := exec.CommandContext(ctx, ssh, args...)
+	pulse.BoundObservation(cmd)
 	var out bytes.Buffer
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = &out, said

@@ -1002,6 +1002,7 @@ func (s sshShell) Run(bench, script string) (string, error) {
 	args := IsolationArgv(false, bench, script)
 	testguard.RefuseHosts(prog, args...)
 	cmd := exec.CommandContext(ctx, prog, args...)
+	BoundObservation(cmd)
 	var out bytes.Buffer
 	said := &benchTail{}
 	cmd.Stdout, cmd.Stderr = &out, said
