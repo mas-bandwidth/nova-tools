@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -493,5 +494,58 @@ func TestReadProviderRetryFailsClosedOnDirectoryOrBrokenSymlink(t *testing.T) {
 	st, err = ReadProviderRetry(dir, cardName)
 	if err == nil || st != nil {
 		t.Fatalf("ReadProviderRetry must fail when marker is a broken symlink, got st=%v, err=%v", st, err)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a present dangling symlink must not classify as absence: %v", err)
+	}
+	if !errors.Is(err, ErrRetryMarkerUnreadable) {
+		t.Fatalf("broken symlink want ErrRetryMarkerUnreadable, got %v", err)
+	}
+}
+
+// TestRequeueRefusesDanglingRetryMarker proves a present dangling .provider-retry
+// symlink is a hard error through RequeueProviderCard: no move, no attempt reset.
+func TestRequeueRefusesDanglingRetryMarker(t *testing.T) {
+	dir := t.TempDir()
+	readyDir := filepath.Join(dir, "ready")
+	launchedDir := filepath.Join(dir, "launched")
+	if err := os.MkdirAll(readyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(launchedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cardName := "card-dangling.md"
+	cardPath := filepath.Join(launchedDir, cardName)
+	if err := os.WriteFile(cardPath, []byte("RESULT: CARD\nMODEL: deepseek-direct\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launchedDir, cardName+".launched"), []byte("lane=pulse\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(launchedDir, cardName+".provider-retry")
+	if err := os.Symlink(filepath.Join(launchedDir, "nonexistent-target"), marker); err != nil {
+		t.Fatal(err)
+	}
+
+	requeued, nextAttempt, err := RequeueProviderCard(readyDir, launchedDir, cardName, 3)
+	if err == nil || requeued {
+		t.Fatalf("dangling retry marker must refuse before mutation: requeued=%v attempt=%d err=%v", requeued, nextAttempt, err)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("broken symlink must not classify as absence: %v", err)
+	}
+	if !errors.Is(err, ErrRetryMarkerUnreadable) {
+		t.Fatalf("want ErrRetryMarkerUnreadable, got %v", err)
+	}
+	if _, err := os.Stat(cardPath); err != nil {
+		t.Fatalf("card must remain in launched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(readyDir, cardName)); !os.IsNotExist(err) {
+		t.Fatalf("card must not move to ready")
+	}
+	if raw, rerr := os.ReadFile(filepath.Join(readyDir, cardName+".provider-retry")); rerr == nil {
+		t.Fatalf("ready retry marker must not be written, got %s", raw)
 	}
 }

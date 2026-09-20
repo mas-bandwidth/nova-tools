@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A LAUNCH THAT DIES FAST ON A PROVIDER 5XX IS RETRIED (issue #900). The provider answered
@@ -163,10 +165,10 @@ func TestProvider5xxPastTheGraceIsNotRetried(t *testing.T) {
 	}
 }
 
-// TestNativeRetriesAProvider5xxLaunch: the native path retries a launch that dies inside the
-// grace on a provider server error, keeps the same job, harvests the second attempt's result
-// and writes one usage row per attempt for the one job.
-func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
+// TestNativeDoesNotRetryAProvider5xxLaunch: SPEC-AHEAD (#2078 split) — in-place
+// native retry is disabled pending the shared total-attempt budget. A fast 5xx
+// that would have retried (FAKE-5XX-FIRST) is one launch, no RESULT, end=provider.
+func TestNativeDoesNotRetryAProvider5xxLaunch(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "retry-5xx"
@@ -182,45 +184,29 @@ func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
 	}
-	if res.rc != 0 {
-		t.Fatalf("the second attempt succeeds and the run records rc=0, got %d:\n%s", res.rc, errOut.String())
+	if res.rc == 0 {
+		t.Fatalf("in-place retry is disabled so the first 5xx is the run, want rc!=0, got %d:\n%s", res.rc, errOut.String())
 	}
-	// The harvested result is the second attempt's: the first died before publishing and
-	// the second published, so RESULT.md exists in the job directory.
+	if res.end != swarm.EndProvider {
+		t.Fatalf("end=%s, want provider", res.end)
+	}
 	jobDir := filepath.Join(slot, "jobs", label)
-	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
-		t.Errorf("the second attempt's result was not harvested: %v", err)
+	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err == nil {
+		t.Fatal("the first 5xx must not publish RESULT.md when retry is disabled")
 	}
-	// One usage row per launch, attempt=1 and attempt=2, for the one job.
+	launchesRaw, err := os.ReadFile(filepath.Join(jobDir, "launches"))
+	if err != nil {
+		t.Fatalf("launches record missing: %v", err)
+	}
+	if n := strings.Count(string(launchesRaw), "launch"); n != 1 {
+		t.Fatalf("automatic in-place retry must be disabled, got %d launches, want 1", n)
+	}
 	raw, err := os.ReadFile(filepath.Join(jobDir, "usage.tsv"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rows := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(rows) != 3 {
-		t.Fatalf("a retried card wants a header and two rows, got %d:\n%s", len(rows), raw)
-	}
-	head := strings.Split(rows[0], "\t")
-	attemptAt := -1
-	usdAt := -1
-	for i, name := range head {
-		switch name {
-		case "attempt":
-			attemptAt = i
-		case "usd":
-			usdAt = i
-		}
-	}
-	if attemptAt < 0 || usdAt < 0 {
-		t.Fatalf("the header does not carry attempt and usd:\n%s", rows[0])
-	}
-	if got := strings.Split(rows[1], "\t")[attemptAt]; got != "1" {
-		t.Errorf("the first launch row carries attempt=%s, want 1", got)
-	}
-	if got := strings.Split(rows[2], "\t")[attemptAt]; got != "2" {
-		t.Errorf("the second launch row carries attempt=%s, want 2", got)
-	}
-	if got := strings.Split(rows[1], "\t")[usdAt]; got != "-" {
-		t.Errorf("an unreported usd stays a dash, got %q", got)
+	if len(rows) != 2 {
+		t.Fatalf("one launch wants a header and one row, got %d:\n%s", len(rows), raw)
 	}
 }

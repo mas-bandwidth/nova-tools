@@ -25,6 +25,11 @@ const DefaultLaunchGrace = 15 * time.Second
 // two retries the grace earns.
 const MaxProviderAttempts = 3
 
+// NativeProviderRetryEnabled gates in-place native retries of a provider launch
+// failure. SPEC-AHEAD (#2078 split): disabled until the shared total-attempt
+// budget exists (#2040, #2079). Classification and end=provider remain active.
+const NativeProviderRetryEnabled = false
+
 // launchFailureRE matches the provider's own words for a server error, case-insensitively:
 // OpenCode's `Unexpected server error ... ref=err_...`, the same while it says `internal
 // server error`, and the bare statuses 502, 503 and 529 as whole words.

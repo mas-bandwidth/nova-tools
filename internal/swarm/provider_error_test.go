@@ -187,6 +187,22 @@ func TestClassifyProviderFailure(t *testing.T) {
 			wantOK: false,
 		},
 		{
+			name: "negative control: markdown-fenced JSON UnknownError source example",
+			log: "source example:\n" +
+				"```json\n" +
+				`{"name":"UnknownError","data":{"message":"internal server error"}}` +
+				"\n```\n",
+			wantOK: false,
+		},
+		{
+			name: "negative control: tilde-fenced JSON UnknownError source example",
+			log: "source example:\n" +
+				"~~~json\n" +
+				`{"name":"UnknownError","data":{"message":"internal server error"}}` +
+				"\n~~~\n",
+			wantOK: false,
+		},
+		{
 			name:   "negative control: escaped JSON UnknownError inside code string",
 			log:    "code = \"\\\"name\\\": \\\"UnknownError\\\"\"\n",
 			wantOK: false,

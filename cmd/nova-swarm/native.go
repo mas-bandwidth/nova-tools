@@ -523,10 +523,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
-	// answered before the request began, and the slot was spent on nothing. The SAME card
-	// is retried -- 5-20s jittered, then 30-60s -- and each launch writes its own usage row
-	// (attempt=1,2,3). A failure past the grace is a real run that failed and is not
-	// retried.
+	// answered before the request began, and the slot was spent on nothing.
+	//
+	// SPEC-AHEAD (#2078 split): automatic in-place retry of that launch is disabled until
+	// the shared total-attempt budget exists (#2040, #2079). NativeProviderRetryEnabled
+	// is the gate; while it is false the loop classifies once, records end=provider, and
+	// breaks. A failure past the grace is a real run that failed and is not retried.
 	//
 	// EACH LAUNCH OWNS ITS PROCESS GROUP (issue #779). The child is the leader of a group
 	// of its own, so the deadline -- and a TERM from outside -- kill the WHOLE tree the card
@@ -608,7 +610,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		if isProvider && !hasResult && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+		if swarm.NativeProviderRetryEnabled && isProvider && !hasResult && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}

@@ -26,6 +26,11 @@ import (
 // Up to maxRetries (default 3). When retries are exhausted, the card remains in launched
 // with a .provider-failed marker.
 
+// ErrRetryMarkerUnreadable is returned when a .provider-retry candidate exists
+// but cannot be used (directory, broken symlink). It must not unwrap to
+// os.ErrNotExist: a present broken link is not an absent marker.
+var ErrRetryMarkerUnreadable = errors.New("provider-retry marker unreadable")
+
 const (
 	// AutoRequeueEnabled gates automatic background requeue in harvest/reap/wire.
 	// SPEC-AHEAD (#2078 split): Disabled until shared total-attempt budget exists (#2040, #2079).
@@ -167,10 +172,13 @@ func ReadProviderRetry(dir, cardBase string) (*ProviderRetryState, error) {
 	}
 	st, err := os.Stat(markerPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s: %v", ErrRetryMarkerUnreadable, markerPath, err)
+		}
 		return nil, err
 	}
 	if st.IsDir() {
-		return nil, fmt.Errorf(".provider-retry is a directory: %s", markerPath)
+		return nil, fmt.Errorf("%w: .provider-retry is a directory: %s", ErrRetryMarkerUnreadable, markerPath)
 	}
 	raw, err := os.ReadFile(markerPath)
 	if err != nil {
@@ -328,15 +336,18 @@ func findMarkerPath(dir, base, suffix string) (string, error) {
 		fi, err := os.Lstat(p)
 		if err == nil {
 			if fi.IsDir() {
-				return "", fmt.Errorf(".provider-retry is a directory: %s", p)
+				return "", fmt.Errorf("%w: .provider-retry is a directory: %s", ErrRetryMarkerUnreadable, p)
 			}
 			if fi.Mode()&os.ModeSymlink != 0 {
 				targetFi, terr := os.Stat(p)
 				if terr != nil {
-					return "", fmt.Errorf(".provider-retry is a broken symlink: %s: %w", p, terr)
+					// Do not wrap terr with %w: Stat of a dangling symlink is
+					// os.ErrNotExist, and RequeueProviderCardWithRoute treats
+					// that class as an absent marker (reset attempts, move card).
+					return "", fmt.Errorf("%w: .provider-retry is a broken symlink: %s: %v", ErrRetryMarkerUnreadable, p, terr)
 				}
 				if targetFi.IsDir() {
-					return "", fmt.Errorf(".provider-retry symlink points to a directory: %s", p)
+					return "", fmt.Errorf("%w: .provider-retry symlink points to a directory: %s", ErrRetryMarkerUnreadable, p)
 				}
 			}
 			return p, nil

@@ -91,6 +91,14 @@ func main() {
 			f.Close()
 		}
 	}
+	// FAKE-ECHO-PROMPT reprints the card on stdout so a native production-path
+	// classifier test can feed transcript fixtures through harness-output.log.
+	if _, ok := directive(prompt, "FAKE-ECHO-PROMPT"); ok {
+		fmt.Print(prompt)
+		if !strings.HasSuffix(prompt, "\n") {
+			fmt.Println()
+		}
+	}
 
 	// FAKE-PUBLISH-FIRST publishes the revision BEFORE the directives that spend, sleep or
 	// get this worker killed. It is how a budget, an unverifiable source and a deadline are

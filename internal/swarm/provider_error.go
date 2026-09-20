@@ -52,6 +52,27 @@ type jsonUnknownErrorPayload struct {
 	} `json:"data"`
 }
 
+// excludeTranscriptCode drops Markdown fenced code (``` / ~~~) so a source
+// example in model or tool transcript cannot spoof a provider payload.
+func excludeTranscriptCode(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	inFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
 func parseStructuredJSONUnknownError(s string) (ProviderFailure, bool) {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
@@ -94,7 +115,7 @@ func ClassifyProviderFailure(raw []byte) (ProviderFailure, bool) {
 	if len(raw) == 0 {
 		return ProviderFailure{}, false
 	}
-	s := string(raw)
+	s := excludeTranscriptCode(string(raw))
 
 	// Extract ref if present
 	ref := ""

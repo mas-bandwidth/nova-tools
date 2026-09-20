@@ -38,7 +38,7 @@ func nativeRunCapture(t *testing.T, label, card string) (stdout, stderr string, 
 // (issue #2001) produces NATIVE PROVIDER with why=unexpected-server-error and ref=<ref>,
 // and sets end=provider in usage.tsv.
 func TestNativeProviderVerdictOnUnknownError(t *testing.T) {
-	out, _, _, slot := nativeRunCapture(t, "unknown-err", "FAKE-UNKNOWN-ERROR\n")
+	out, _, _, slot := nativeRunCapture(t, "unknown-err", "FAKE-LAUNCHES\nFAKE-UNKNOWN-ERROR\n")
 
 	if strings.Contains(out, "NATIVE OK") {
 		t.Fatalf("a provider error must never say OK:\n%s", out)
@@ -63,6 +63,50 @@ func TestNativeProviderVerdictOnUnknownError(t *testing.T) {
 	}
 	if !strings.Contains(string(usageRaw), "\tprovider\t") {
 		t.Fatalf("usage.tsv must record end=provider:\n%s", usageRaw)
+	}
+
+	launchesRaw, err := os.ReadFile(filepath.Join(slot, "jobs", "unknown-err", "launches"))
+	if err != nil {
+		t.Fatalf("launches record missing: %v", err)
+	}
+	launches := strings.Count(string(launchesRaw), "launch")
+	if launches != 1 {
+		t.Fatalf("automatic in-place retry must be disabled, got %d launches, want 1", launches)
+	}
+}
+
+// TestNativeMarkdownFencedUnknownErrorIsNotProviderFailure proves a Markdown-fenced
+// UnknownError JSON source example in the production capture is transcript, not a
+// provider event: one launch, NATIVE INCOMPLETE, never NATIVE PROVIDER.
+func TestNativeMarkdownFencedUnknownErrorIsNotProviderFailure(t *testing.T) {
+	card := "source example:\n" +
+		"```json\n" +
+		`{"name":"UnknownError","data":{"message":"internal server error"}}` +
+		"\n```\nFAKE-ECHO-PROMPT\nFAKE-LAUNCHES\nFAKE-RC 1\n"
+	out, _, _, slot := nativeRunCapture(t, "fenced-json", card)
+
+	capture, err := os.ReadFile(filepath.Join(slot, "jobs", "fenced-json", "harness-output.log"))
+	if err != nil {
+		t.Fatalf("harness-output.log missing: %v", err)
+	}
+	if !strings.Contains(string(capture), `"name":"UnknownError"`) {
+		t.Fatalf("production capture must contain the fenced fixture:\n%s", capture)
+	}
+
+	if strings.Contains(out, "NATIVE PROVIDER") {
+		t.Fatalf("markdown-fenced source example classified as provider failure:\n%s", out)
+	}
+	if !strings.Contains(out, "NATIVE INCOMPLETE ") {
+		t.Fatalf("fenced transcript with rc=1 must remain NATIVE INCOMPLETE:\n%s", out)
+	}
+
+	launchesRaw, err := os.ReadFile(filepath.Join(slot, "jobs", "fenced-json", "launches"))
+	if err != nil {
+		t.Fatalf("launches record missing: %v", err)
+	}
+	launches := strings.Count(string(launchesRaw), "launch")
+	if launches != 1 {
+		t.Fatalf("fenced transcript must not retry, got %d launches, want 1", launches)
 	}
 }
 
