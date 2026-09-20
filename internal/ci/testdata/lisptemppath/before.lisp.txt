@@ -1,0 +1,29 @@
+;;;; before.lisp.txt --- the pre-fix shape, kept as a fixture so the scanner in
+;;;; lisptemppath_class_test.go can be shown to still match it (nova-tools#1699).
+;;;; Not loaded by anything: it is data for a Go test.
+
+(in-package #:nova-work/tests)
+
+(defvar *journal-test-counter* 0)
+
+(defun test-journal-path (name)
+  (let* ((base (uiop:default-temporary-directory))
+         (dir (merge-pathnames "nova-work-test-journals/" base)))
+    (ensure-directories-exist dir)
+    (format nil "~A~A-~D-~D.journal" (namestring dir) name (get-universal-time) (incf *journal-test-counter*))))
+
+(defun dedup-root-temp-dir ()
+  "A fresh 0700 directory, the one place this file writes."
+  (let* ((tmp (sb-posix:getenv "TMPDIR"))
+         (base (if (and tmp (plusp (length tmp))) tmp "/var/folders/")))
+    (ensure-directories-exist base)
+    base))
+
+(defun %request-line-dir ()
+  (let ((dir (merge-pathnames "nova-work-reqline/" #p"/tmp/")))
+    (ensure-directories-exist dir)
+    dir))
+
+(deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727" "expected=x"
+  (let ((base (format nil "nw-~D" (random 1000000))))
+    (ok base "a base")))

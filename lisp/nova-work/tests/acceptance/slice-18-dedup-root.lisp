@@ -13,25 +13,15 @@
 
 (in-package #:nova-work/tests)
 
-(defvar *dedup-root-test-counter* 0)
-
 (defvar *dedup-root-evaluated* nil
   "Set by the payload of the reader-refusal case if evaluation ever runs.")
 
 (defun dedup-root-temp-dir ()
-  "A fresh 0700 directory under TMPDIR, the one place this file writes."
-  (let* ((tmp (sb-posix:getenv "TMPDIR"))
-         (base (if (and tmp (plusp (length tmp)))
-                   (concatenate 'string tmp
-                                (if (char= #\/ (char tmp (1- (length tmp)))) "" "/"))
-                   (namestring (uiop:default-temporary-directory)))))
-    (let ((dir (merge-pathnames
-                (format nil "nova-work-test-dedup-root/~D-~D/"
-                        (get-universal-time) (incf *dedup-root-test-counter*))
-                (pathname base))))
-      (ensure-directories-exist dir)
-      #+sbcl (ignore-errors (sb-posix:chmod (namestring dir) #o700))
-      dir)))
+  "A fresh 0700 directory under this run's own root, the one place this file
+writes. It was `nova-work-test-dedup-root/<universal-time>-<counter>/` in the
+shared temporary directory, which two suites on one host name alike
+(nova-tools#1699)."
+  (test-temp-dir "dedup-root"))
 
 (defun dedup-root-delete-tree (dir)
   (ignore-errors (uiop:delete-directory-tree dir :validate t

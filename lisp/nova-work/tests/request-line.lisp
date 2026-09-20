@@ -13,14 +13,23 @@
 (defun %request-line-dir ()
   "A fresh 0700 directory for one endpoint. The endpoint refuses a directory
 whose mode is not 0700, which is the spec's own requirement, so the test makes
-one rather than borrowing the bench's temp directory."
-  (let* ((name (format nil "nova-work-reqline-~D-~D"
-                       (sb-posix:getpid)
+one rather than borrowing the bench's temp directory.
+
+It stays on /tmp rather than under the harness's run root because sun_path is
+capped at 104 bytes on darwin and the run root's name does not fit inside that
+with a socket under it. The run's own random tag carries the uniqueness instead
+(`test-short-tag`, harness.lisp): the pid alone kept two LIVE processes apart
+but not two runs, so a recycled pid met the socket an earlier run left behind,
+and `rmdir` never removed a directory that still had one in it. Registering the
+directory hands it to the harness's exit cleanup (nova-tools#1699)."
+  (let* ((name (format nil "nova-work-reqline-~A-~D"
+                       (test-short-tag "reqline")
                        (incf *request-line-socket-counter*)))
          (dir (merge-pathnames (concatenate 'string name "/")
                                #p"/tmp/")))
     (ensure-directories-exist dir)
     (sb-posix:chmod (namestring dir) #o700)
+    (test-temp-register dir)
     dir))
 
 (defun call-with-served-session (fn &key (owner "rowan"))

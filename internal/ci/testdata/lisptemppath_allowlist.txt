@@ -1,0 +1,26 @@
+# The forms under lisp/nova-work/tests/ that may still name the SHARED temporary
+# directory, one `file:definition` per line with its reason.
+#
+# The rule (nova-tools#1699): a temp path is built under `test-run-root` with
+# `test-temp-dir` or `test-temp-file`, so its name carries this run's own token
+# -- a real entropy source plus the pid -- and two suites sharing a host can
+# never build the same path. Every entry below is a path that CANNOT live under
+# that root, and there is exactly one reason for that: an AF_UNIX socket path
+# lives in a fixed-size `sun_path` (104 bytes on darwin, 108 on Linux), and the
+# run root's name does not fit inside it with a socket underneath. Those paths
+# take their uniqueness from `test-short-tag` instead and are handed to the
+# harness's exit cleanup with `test-temp-register`.
+#
+# lisp/nova-work/tests/harness.lisp is not listed and is not scanned: it DEFINES
+# the helper, so the rule cannot be stated over it without forbidding its own
+# implementation. See lispHelperHome in lisptemppath_class_test.go.
+#
+# Checked in BOTH directions by lisptemppath_class_test.go -- an unlisted finding
+# is a red run, and a listed entry that no longer names one is also a red run --
+# so this list can only ever shrink. It shrinks for real when the AF_UNIX
+# fixtures get a short per-run root of their own.
+
+lisp/nova-work/tests/request-line.lisp:%request-line-dir  # the session endpoint's socket: sun_path is 104 bytes on darwin, so the directory stays on /tmp and takes its uniqueness from test-short-tag
+lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:short-socket-base  # its whole job is to find a writable root short enough for a sun_path, so it must name the candidates (/dev/shm, /run/user/<uid>, /var/tmp, TMPDIR) by hand; the NAME it makes under them is test-short-tag's
+lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:endpoint-is-local-and-private  # measures the ambient temporary directory's length to decide whether the socket needs short-socket-base at all; it builds no name from it
+lisp/nova-work/tests/acceptance/slice-12-session-ownership.lisp:session-server-daemon-and-session-start  # the same length measurement for the daemon's socket; the name it builds is test-short-tag's

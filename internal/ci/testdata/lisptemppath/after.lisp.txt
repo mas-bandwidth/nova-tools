@@ -1,0 +1,36 @@
+;;;; after.lisp.txt --- the post-fix shape of before.lisp.txt, kept as a fixture
+;;;; so the scanner in lisptemppath_class_test.go can be shown to say nothing
+;;;; about it (nova-tools#1699). Not loaded by anything: it is data for a Go test.
+;;;;
+;;;; Its COMMENTS quote the banned constructs on purpose -- this line names
+;;;; uiop:default-temporary-directory, (sb-posix:getenv "TMPDIR"), #p"/tmp/" and
+;;;; (random 1000000) -- because a scanner that could not tell code from a
+;;;; comment would need an allowlist entry for every paragraph that told the
+;;;; truth. The docstrings below say the same things in words instead, because
+;;;; string literals stay visible to the scanner: that is where a real offending
+;;;; path lives.
+
+(in-package #:nova-work/tests)
+
+(defun test-journal-path (name)
+  "A journal path under this run's own root. It used to be built from the
+shared temporary directory, a fixed sub-directory name, the universal time and
+a counter that starts at zero in every image."
+  (test-temp-file name "journal"))
+
+(defun dedup-root-temp-dir ()
+  "A fresh 0700 directory under this run's own root, the one place this file
+writes. It used to read the TMPDIR environment variable directly."
+  (test-temp-dir "dedup-root"))
+
+(defun %request-line-dir ()
+  "A fresh 0700 directory for one endpoint, named on this run's short tag. It
+used to be a fixed name under the system temporary directory."
+  (let ((dir (merge-pathnames (concatenate 'string (test-short-tag "reqline") "/")
+                              (test-run-root))))
+    (ensure-directories-exist dir)
+    dir))
+
+(deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727" "expected=x"
+  (let ((base (test-short-tag "s05-endpoint")))
+    (ok base "a base")))

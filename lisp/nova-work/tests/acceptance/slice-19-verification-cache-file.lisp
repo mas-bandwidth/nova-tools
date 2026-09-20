@@ -8,18 +8,19 @@
 (in-package #:nova-work/tests)
 
 (defvar *cache-file-seq* 0
-  "The per-process counter that keeps each case's temp file apart.")
+  "The counter that keeps each case's temp file apart INSIDE this run's root.
+It carries no uniqueness of its own: the root's name does (harness.lisp).")
 
 (defun cache-temp-path (&optional (suffix ""))
-  "A fresh path under TMPDIR (falling back to /tmp/ only when unset), named on
-this process's pid and a counter (docs/SPEC-WORK.md:1294-1325)."
-  (let* ((dir (or (sb-posix:getenv "TMPDIR") "/tmp/"))
-         (dir (if (or (zerop (length dir))
-                      (char= (char dir (1- (length dir))) #\/))
-                  dir
-                  (concatenate 'string dir "/"))))
-    (format nil "~Anova-work-cache-~D-~D~A"
-            dir (sb-posix:getpid) (incf *cache-file-seq*) suffix)))
+  "A fresh cache path under this run's own root (docs/SPEC-WORK.md:1294-1325).
+It was `$TMPDIR/nova-work-cache-<pid>-<counter>`, written straight into the
+directory every job on the box shares. The pid kept two LIVE processes apart
+but not two runs: a recycled pid met the file an earlier run left behind, and
+nothing ever removed these (nova-tools#1699). SUFFIX is still appended raw, so
+the `-absent/cache` case can name a path inside a directory that does not
+exist."
+  (format nil "~Acache-~D~A" (namestring (test-run-root))
+          (incf *cache-file-seq*) suffix))
 
 (defun remove-cache-file (path)
   "Remove PATH and its writer's temporary PATH.new, ignoring absence."

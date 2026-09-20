@@ -23,21 +23,11 @@
 
 (in-package #:nova-work/tests)
 
-(defvar *s19-counter* 0)
-
 (defun s19-temp-dir ()
-  (let* ((tmp (sb-posix:getenv "TMPDIR"))
-         (base (if (and tmp (plusp (length tmp)))
-                   (concatenate 'string tmp
-                                (if (char= #\/ (char tmp (1- (length tmp)))) "" "/"))
-                   (namestring (uiop:default-temporary-directory)))))
-    (let ((dir (merge-pathnames
-                (format nil "nova-work-test-rotation/~D-~D/"
-                        (get-universal-time) (incf *s19-counter*))
-                (pathname base))))
-      (ensure-directories-exist dir)
-      #+sbcl (ignore-errors (sb-posix:chmod (namestring dir) #o700))
-      dir)))
+  "A fresh 0700 directory under this run's own root. It was
+`nova-work-test-rotation/<universal-time>-<counter>/` in the shared temporary
+directory, which two suites on one host name alike (nova-tools#1699)."
+  (test-temp-dir "rotation"))
 
 (defun s19-delete-tree (dir)
   (ignore-errors (uiop:delete-directory-tree dir :validate t
