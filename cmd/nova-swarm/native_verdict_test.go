@@ -35,7 +35,8 @@ func nativeVerdict(t *testing.T, label, card string) string {
 }
 
 // nativeVerdictRun is nativeVerdict plus stderr and the process exit, so a test can
-// pin that a finished card never looks like ssh's never-started (exit 255, #2058).
+// pin that a finished card never exits 255 (#2058). Local ssh(1) 255 is any error,
+// not proof the remote command never started.
 func nativeVerdictRun(t *testing.T, label, card string) (stdout, stderr string, code int) {
 	t.Helper()
 	windowsIsNotABench(t)
@@ -53,19 +54,6 @@ func nativeVerdictRun(t *testing.T, label, card string) (stdout, stderr string, 
 		"--deadline", "30s", "--no-wall"},
 		strings.NewReader(""), &out, &errb, time.Now())
 	return out.String(), errb.String(), code
-}
-
-// nativePrintedAVerdict reports whether stdout or stderr holds one of the three
-// native verdict lines a launcher may key a card on.
-func nativePrintedAVerdict(out string) bool {
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "NATIVE OK ") ||
-			strings.HasPrefix(line, "NATIVE INCOMPLETE ") ||
-			strings.HasPrefix(line, "NATIVE REFUSED") {
-			return true
-		}
-	}
-	return false
 }
 
 // THE C18 SHAPE: the provider answers 5xx at request start, the harness exits 1, and the
@@ -127,24 +115,49 @@ func TestNativeStillSaysOKForARunThatProducedItsResult(t *testing.T) {
 // `> build · <model>`, then the card's commands and "Wrote file successfully".
 // The launcher printed the CAPACITY line and then nothing: no attempt=, no
 // NATIVE OK/INCOMPLETE, exit 255. rr-run.sh retried in place and ran the card
-// twice. 255 is ssh's own "could not start"; a native that finishes a card and
-// then exits 255 is a finished card read as never started.
+// twice. Local ssh(1) exits 255 for any error, which is not proof the remote
+// command never started: the outcome is potentially UNKNOWN, and a retry waits
+// on reconciliation. A native that finishes a card and then exits 255 is a
+// finished card a launcher can misread as a transport failure and retry.
 //
-// RED WITHOUT THE FIX: process exit 255 (the child's code passed through).
+// RED WITHOUT THE FIX: process exit 255 (the child's code passed through), or
+// any verdict other than exactly one NATIVE INCOMPLETE with rc=255 why=rc.
 func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
 	stdout, stderr, code := nativeVerdictRun(t, "fsevents", "FAKE-FSEVENTS\n")
 	combined := stdout + stderr
-	if !nativePrintedAVerdict(combined) {
-		t.Fatalf("a harness that exited 255 after writing RESULT.md printed no NATIVE OK|INCOMPLETE|REFUSED line:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
+	if strings.Contains(combined, "NATIVE OK") {
+		t.Fatalf("a harness that exited 255 after writing RESULT.md must not say OK:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
+	}
+	if strings.Contains(combined, "NATIVE REFUSED") {
+		t.Fatalf("a harness that exited 255 after writing RESULT.md must not say REFUSED:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
+	}
+	var incomplete []string
+	for _, line := range strings.Split(combined, "\n") {
+		if strings.HasPrefix(line, "NATIVE INCOMPLETE ") {
+			incomplete = append(incomplete, line)
+		}
+	}
+	if len(incomplete) != 1 {
+		t.Fatalf("want exactly one NATIVE INCOMPLETE line, got %d:\nstdout:\n%s\nstderr:\n%s\nexit %d", len(incomplete), stdout, stderr, code)
+	}
+	line := incomplete[0]
+	hasRC, hasWhy := false, false
+	for _, f := range strings.Fields(line) {
+		if f == "rc=255" {
+			hasRC = true
+		}
+		if f == "why=rc" {
+			hasWhy = true
+		}
+	}
+	if !hasRC || !hasWhy {
+		t.Fatalf("the INCOMPLETE line must carry rc=255 and why=rc:\n%s", line)
 	}
 	if code == 255 {
-		t.Fatalf("native exited 255, which a launcher reads as ssh never-started; the child's 255 belongs on the line as rc=255:\n%s\nstderr:\n%s", stdout, stderr)
+		t.Fatalf("native exited 255; local ssh(1) 255 is any error and is potentially UNKNOWN, so a launcher may retry a finished card. The child's 255 belongs on the line as rc=255:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 	if code != 1 {
 		t.Fatalf("the verb ran and said NO, want exit 1, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, " rc=255 ") {
-		t.Fatalf("the child's 255 is reported on the verdict line:\n%s", stdout)
 	}
 }
 
