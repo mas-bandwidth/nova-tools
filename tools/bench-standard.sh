@@ -314,6 +314,19 @@ elif [ "$free_g" -lt "$NOVA_MIN_FREE_G" ]; then
   drift "disk free=${free_g}G want>=${NOVA_MIN_FREE_G}G (both launchers refuse below it); largest under $HOME_DIR: $largest"
 fi
 
+# (8) sshd MaxStartups and MaxSessions (#2018): at ~300 cards the launchers
+# open dozens of ssh handshakes per tick; sshd's default MaxStartups 10:30:100
+# drops them, the reachability probe fails and the sampler misses ticks. The fix
+# is applied to /etc/ssh/sshd_config.d/10-nova-fleet.conf by provisioning.
+MAX_STARTUPS="$(sed -n 's/^MaxStartups //p' /etc/ssh/sshd_config.d/10-nova-fleet.conf 2>/dev/null || sed -n 's/^MaxStartups //p' /etc/ssh/sshd_config 2>/dev/null)"
+MAX_SESSIONS="$(sed -n 's/^MaxSessions //p' /etc/ssh/sshd_config.d/10-nova-fleet.conf 2>/dev/null || sed -n 's/^MaxSessions //p' /etc/ssh/sshd_config 2>/dev/null)"
+if [ "$MAX_STARTUPS" != "300:30:600" ]; then
+  drift "sshd MaxStartups=[${MAX_STARTUPS:-unset}] want=300:30:600; at scale the default drops connections and the sampler misses ticks (#2018)"
+fi
+if [ "$MAX_SESSIONS" != "200" ]; then
+  drift "sshd MaxSessions=[${MAX_SESSIONS:-unset}] want=200; at scale the default is too low (#2018)"
+fi
+
 if [ "$DRIFTS" = "0" ]; then
   echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G"
   exit 0

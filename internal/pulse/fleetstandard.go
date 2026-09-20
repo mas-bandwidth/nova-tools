@@ -186,6 +186,19 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 			Name: "disk-free", Match: MatchAtLeast, Want: strconv.Itoa(minFreeGB),
 			Probe: `df -Pk "$HOME" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}'`,
 		},
+		// sshd MaxStartups and MaxSessions are part of the bench standard: at
+		// scale the launchers open dozens of ssh handshakes per tick and sshd's
+		// default MaxStartups 10:30:100 drops them, the reachability probe fails
+		// and the sampler misses ticks. The fix is applied to
+		// /etc/ssh/sshd_config.d/10-nova-fleet.conf by provisioning (#1946).
+		{
+			Name: "sshd-maxstartups", OS: "linux", Match: MatchContains, Want: "300:30:600",
+			Probe: `sed -n 's/^MaxStartups //p' /etc/ssh/sshd_config.d/10-nova-fleet.conf 2>/dev/null || sed -n 's/^MaxStartups //p' /etc/ssh/sshd_config 2>/dev/null`,
+		},
+		{
+			Name: "sshd-maxsessions", OS: "linux", Match: MatchContains, Want: "200",
+			Probe: `sed -n 's/^MaxSessions //p' /etc/ssh/sshd_config.d/10-nova-fleet.conf 2>/dev/null || sed -n 's/^MaxSessions //p' /etc/ssh/sshd_config 2>/dev/null`,
+		},
 	}
 	out := make([]StandardCheck, 0, len(all))
 	for _, c := range all {

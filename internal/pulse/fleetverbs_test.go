@@ -666,3 +666,32 @@ esac
 		t.Errorf("generated bash script must preserve $_ for PowerShell without expansion:\n%s", script)
 	}
 }
+
+// TestIssue2018Repro: the linux bench standard demands sshd MaxStartups and
+// MaxSessions are raised above sshd's defaults, because at ~300 cards the
+// launchers open dozens of ssh handshakes per tick and the default
+// MaxStartups 10:30:100 drops them, making the sampler miss ticks.
+func TestIssue2018Repro(t *testing.T) {
+	linux := FleetStandardChecks("linux", "go1.26.5", "abc123", 25)
+	found := map[string]bool{"sshd-maxstartups": false, "sshd-maxsessions": false}
+	for _, c := range linux {
+		if c.Name == "sshd-maxstartups" {
+			found["sshd-maxstartups"] = true
+			if c.Match != MatchContains || c.Want != "300:30:600" {
+				t.Errorf("sshd-maxstartups check: want match=contains want=300:30:600, got match=%s want=%s", c.Match, c.Want)
+			}
+		}
+		if c.Name == "sshd-maxsessions" {
+			found["sshd-maxsessions"] = true
+			if c.Match != MatchContains || c.Want != "200" {
+				t.Errorf("sshd-maxsessions check: want match=contains want=200, got match=%s want=%s", c.Match, c.Want)
+			}
+		}
+	}
+	if !found["sshd-maxstartups"] {
+		t.Error("linux standard must check sshd-maxstartups; issue #2018: sshd MaxStartups default 10:30:100 drops connections at ~300 cards and the sampler misses ticks")
+	}
+	if !found["sshd-maxsessions"] {
+		t.Error("linux standard must check sshd-maxsessions; issue #2018: MaxSessions default too low for fleet scale; bench needs MaxSessions 200")
+	}
+}
