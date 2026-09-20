@@ -14,13 +14,16 @@
 # below is one line, and no prose anywhere states a number that this file can outgrow.
 # No /tmp: the scratch lives beside this script by default. Works from any cwd.
 #
-# Two environment variables, both for a caller that is a TEST rather than an operator:
+# Three environment variables, for a caller that is a TEST rather than an operator:
 #   NOVA_CHECK_SCRATCH     put the scratch tree here instead of beside the script, so a
 #                          Go test can hand it t.TempDir() and reach outside nothing
 #                          (SPEC-SANDBOX test 16, docs/CONTRIBUTING.md: test code is code).
 #   NOVA_CHECK_NO_NETWORK  1 to SKIP the two DNS checks, which are the only ones that
 #                          touch the network. The operator run keeps them: they are the
 #                          rule-7 measurement and a Go test is the wrong place for it.
+#   NOVA_CHECK_DUMP_PROFILE 1 to print the filled profile on stdout and exit 0 before
+#                          any check runs, so a test can compare the hand filler with
+#                          the tool generator without executing the suite.
 
 set -euo pipefail
 
@@ -65,19 +68,46 @@ PROFILE="$SCRATCH/p.sb"
 ancestors_of() { local d; d="$(dirname -- "$1")"; while [[ "$d" != "/" ]]; do printf '%s\n' "$d"; d="$(dirname -- "$d")"; done; }
 
 OPTROOTS=""
+OPTROOT_PATHS=()
 # the documented darwin optional roots, and nothing else: a check that grants a root
 # the spec's table does not name is testing a broader policy than the document.
-# /usr/bin/git is an Xcode shim; the profile grants xcode_select_link (#1557), so
-# a caller stuck with the shim no longer needs --read /private/var/db.
-for r in /opt/homebrew /opt/local "$(dirname -- "$GIT")"; do
-  # skip-if-absent: an absent root is never a refusal
-  [[ -d "$r" ]] || continue
-  case "$r" in /usr/*|/bin|/sbin|/System/*) continue;; esac
-  case "$OPTROOTS" in *"\"$r\""*) continue;; esac
+# Skip-if-absent, and skip a root the template already grants as a subpath, matching
+# internal/sandbox.OptionalRoots (including /Library: CommandLineTools lives there).
+add_optroot() {
+  local r="$1"
+  [[ -d "$r" ]] || return 0
+  case "$r" in
+    /usr|/usr/*|/bin|/sbin|/System|/System/*|/Library|/Library/*|/private/etc|/private/etc/*|/private/var/select|/private/var/select/*|/dev|/dev/*) return 0;;
+  esac
+  case "$OPTROOTS" in *"\"$r\""*) return 0;; esac
   OPTROOTS+="(allow file-read* (subpath \"$r\"))"$'\n'
+  OPTROOT_PATHS+=("$r")
+}
+for r in /opt/homebrew /opt/local "$(dirname -- "$GIT")"; do
+  add_optroot "$r"
+done
+# #1557: follow xcode_select_link the way OptionalRoots does. CommandLineTools
+# sits under /Library. Xcode.app/Contents does not; Contents, not
+# Contents/Developer, because the shims read Info.plist and SharedFrameworks.
+for link in /var/db/xcode_select_link /private/var/db/xcode_select_link; do
+  [[ -L "$link" ]] || continue
+  target="$(readlink "$link")" || continue
+  [[ -n "$target" ]] || continue
+  case "$target" in /*) ;; *) target="$(dirname -- "$link")/$target";; esac
+  if [[ -d "$target" ]]; then
+    target="$(cd -- "$target" && pwd -P)"
+  fi
+  case "$target" in */Contents/Developer) target="${target%/Developer}";; esac
+  add_optroot "$target"
 done
 ANCESTORS="$(
-  { ancestors_of "$W"; ancestors_of "$REF"; } | sort -u |
+  {
+    ancestors_of "$W"
+    ancestors_of "$REF"
+    if ((${#OPTROOT_PATHS[@]})); then
+      for r in "${OPTROOT_PATHS[@]}"; do ancestors_of "$r"; done
+    fi
+  } | sort -u |
   while IFS= read -r d; do printf '(allow file-read-metadata (literal "%s"))\n' "$d"; done
 )"
 READS='(allow file-read* (subpath (param "READ0")))'
@@ -95,6 +125,7 @@ while IFS= read -r line; do
     '@@OPTROOTS@@')  printf '%s' "$OPTROOTS" >> "$PROFILE" ;;
     '@@ANCESTORS@@') printf '%s\n' "$ANCESTORS" >> "$PROFILE" ;;
     '@@READS@@')     printf '%s\n' "$READS" >> "$PROFILE" ;;
+    '@@READSNOEXEC@@') ;; # this check names no --read-noexec; leave the marker empty
     '@@WRITES@@')    printf '%s\n' "$WRITES" >> "$PROFILE" ;;
     '@@NET@@')       printf '%s\n' "$NET" >> "$PROFILE" ;;
     *)               printf '%s\n' "$line" >> "$PROFILE" ;;
@@ -125,6 +156,11 @@ done <<< "$CALLER_ENV"
 if [[ -n "${NOVA_SANDBOX_FILL:-}" ]]; then
   HOME="$HOME_DIR" "$NOVA_SANDBOX_FILL" policy --read "$REF" --write "$W" > "$PROFILE" \
     || { echo "CHECK FAIL name=tool_generated_profile ($NOVA_SANDBOX_FILL policy refused)"; exit 1; }
+fi
+
+if [[ "${NOVA_CHECK_DUMP_PROFILE:-}" == "1" ]]; then
+  cat "$PROFILE"
+  exit 0
 fi
 
 # ---- the runner --------------------------------------------------------------

@@ -664,6 +664,65 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	}
 }
 
+// #1557 HOLD: darwin-check.sh fills the template two ways. The tool generator
+// follows xcode_select_link into OptionalRoots; the hand filler did not, so a
+// reader running the script without NOVA_SANDBOX_FILL got the link literal
+// without the selected Xcode root, while cxx_compile required that root.
+func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
+	needDarwin(t)
+	var xcode []string
+	for _, r := range sandbox.OptionalRoots("/bin/echo") {
+		if strings.Contains(r, "Xcode.app") {
+			xcode = append(xcode, r)
+		}
+	}
+	if len(xcode) == 0 {
+		t.Skip("skipped: xcode-select's developer dir is already a fixed root or absent on this machine")
+	}
+
+	j := newJob(t)
+	p, bad := sandbox.Build(sandbox.Input{
+		Reads:  []string{j.read},
+		Writes: []string{j.write},
+		Home:   j.home,
+		Argv:   []string{"/bin/echo"},
+	})
+	if len(bad) > 0 {
+		t.Fatalf("generated policy refused: %v", bad)
+	}
+	generated, _, err := sandbox.DarwinProfile(p)
+	if err != nil {
+		t.Fatalf("generated profile: %v", err)
+	}
+
+	root := repoRoot(t)
+	script := filepath.Join(root, "profiles", "darwin-check.sh")
+	cmd := exec.Command("bash", script)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"NOVA_CHECK_SCRATCH="+filepath.Join(t.TempDir(), "check"),
+		"NOVA_CHECK_DUMP_PROFILE=1",
+		"NOVA_CHECK_NO_NETWORK=1")
+	hand, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hand-filling darwin-check.sh: %v\n%s", err, hand)
+	}
+	handText := string(hand)
+
+	for _, r := range xcode {
+		grant := `(allow file-read* (subpath "` + r + `"))`
+		if !strings.Contains(generated, grant) {
+			t.Fatalf("the generated profile does not grant %s, which OptionalRoots named: %v", grant, xcode)
+		}
+		if !strings.Contains(handText, grant) {
+			t.Errorf("the hand-filled profile does not grant %s, which the generated profile has; the two filler modes drifted", grant)
+		}
+	}
+	if t.Failed() {
+		t.Logf("hand-filled profile:\n%s", handText)
+	}
+}
+
 // repoRoot walks up from this package to the module root, so the test can find the
 // script without a guessed path (SPEC.md: no guessed paths).
 func repoRoot(t *testing.T) string {
