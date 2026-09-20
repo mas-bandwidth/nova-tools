@@ -43,7 +43,7 @@ func TestSlotsStoreProbeAsksTheOwnersShareAndItsLiveLeases(t *testing.T) {
 		t.Fatalf("ssh was never run: %v", err)
 	}
 	argv := string(raw)
-	for _, want := range []string{"bench-a", "$HOME/nova-bench/slots", "swarm-bench-a", "shares.tsv", "slots list"} {
+	for _, want := range []string{"bench-a", "$HOME/nova-bench/slots", "swarm-bench-a", "shares.tsv", "slots list", "ControlMaster=no", "ControlPath=none"} {
 		if !strings.Contains(argv, want) {
 			t.Fatalf("the probe does not ask for %q: %q", want, argv)
 		}

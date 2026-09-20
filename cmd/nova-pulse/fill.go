@@ -17,6 +17,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -221,16 +222,27 @@ type fixedCapacity int
 func (c fixedCapacity) Capacity(string) (int, error) { return int(c), nil }
 
 // sshCapacity reads one bench's capacity over the same ssh the hand loop used. root is the
-// swarm root on the BENCH, whose volume the disk term measures.
-type sshCapacity struct{ ssh, root string }
+// swarm root on the BENCH, whose volume the disk term measures. timeout is the wall-clock
+// budget of one probe; 0 takes FillProbeTimeout.
+type sshCapacity struct {
+	ssh, root string
+	timeout   time.Duration
+}
 
 func (c sshCapacity) Capacity(bench string) (int, error) {
 	ssh := c.ssh
 	if ssh == "" {
 		ssh = "ssh"
 	}
-	testguard.RefuseHosts(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript(c.root))
-	cmd := exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, capacityScript(c.root))
+	timeout := c.timeout
+	if timeout <= 0 {
+		timeout = pulse.FillProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	args := pulse.IsolationArgv(false, bench, capacityScript(c.root))
+	testguard.RefuseHosts(ssh, args...)
+	cmd := exec.CommandContext(ctx, ssh, args...)
 	var out bytes.Buffer
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = &out, said

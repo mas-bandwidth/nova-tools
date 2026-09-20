@@ -180,8 +180,9 @@ func fleetSSH(ctx context.Context, program, target, script string) (string, erro
 	if program == "" {
 		program = "ssh"
 	}
-	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
-	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
+	args := IsolationArgv(true, target, "bash", "-s")
+	testguard.RefuseHosts(program, args...)
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = strings.NewReader(script)
 	raw, err := cmd.CombinedOutput()
 	return string(raw), err
@@ -640,8 +641,9 @@ func (in FleetRebootInput) ssh(target, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
-	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
+	args := IsolationArgv(false, target, script)
+	testguard.RefuseHosts(program, args...)
+	cmd := exec.CommandContext(ctx, program, args...)
 	raw, err := cmd.CombinedOutput()
 	return string(raw), err
 }
@@ -800,7 +802,9 @@ func fleetSeatParse(out string) (fleetSeat, bool) {
 
 // checkFleetSeat runs one bench's seat script under the per-bench timeout.
 func checkFleetSeat(ctx context.Context, ssh string, b fleetBench) fleetSeat {
-	cmd := exec.CommandContext(ctx, ssh, b.Target, "bash", "-s")
+	args := IsolationArgv(true, b.Target, "bash", "-s")
+	testguard.RefuseHosts(ssh, args...)
+	cmd := exec.CommandContext(ctx, ssh, args...)
 	cmd.Stdin = strings.NewReader(fleetSeatScript(b.Home))
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

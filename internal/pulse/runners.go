@@ -265,14 +265,15 @@ func (s ServiceRestarter) Restart(name string) error {
 	// exec in the text, and a rule that reads "before the first child" is worth
 	// more than one that reads "before the right child".
 	remote := svc.Host != "" && svc.Host != "-"
+	args := IsolationArgv(false, svc.Host, command)
 	if remote {
-		testguard.RefuseHosts("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, command)
+		testguard.RefuseHosts("ssh", args...)
 	}
 	var cmd *exec.Cmd
 	if !remote {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	} else {
-		cmd = exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, command)
+		cmd = exec.CommandContext(ctx, "ssh", args...)
 	}
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w (%s)", command, err, oneline.Escape(strings.TrimSpace(string(raw))))

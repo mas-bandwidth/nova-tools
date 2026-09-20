@@ -11,10 +11,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -45,6 +47,7 @@ type storeProbeConfig struct {
 	Root     string          // the swarm root, for the legacy formula's disk term
 	Local    map[string]bool // benches read by this machine's own shell, never over ssh
 	MaxLoad  float64         // the load brake, per core; 0 is no brake
+	Timeout  time.Duration   // per-probe budget; 0 takes FillProbeTimeout
 	Stderr   io.Writer       // where a braked bench says so
 }
 
@@ -65,9 +68,16 @@ func storeProbeCapacity(c storeProbeConfig) pulse.Capacity {
 func (c storeProbeConfig) probeOwner(bench, owner string) (string, error) {
 	script := storeScript(c.Store, owner, c.SlotsBin, c.Root)
 	if c.Local[bench] {
-		return runProbeLocally(script)
+		return runProbeLocally(script, c.Timeout)
 	}
 	return c.runProbeOverSSH(bench, script)
+}
+
+func (c storeProbeConfig) probeTimeout() time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return pulse.FillProbeTimeout
 }
 
 // runProbeOverSSH is the raw ssh seam: one probe, one bench, the line it printed.
@@ -76,14 +86,23 @@ func (c storeProbeConfig) runProbeOverSSH(bench, script string) (string, error) 
 	if ssh == "" {
 		ssh = "ssh"
 	}
-	testguard.RefuseHosts(ssh, "-n", "-o", "BatchMode=yes", bench, script)
-	return runProbe(exec.Command(ssh, "-n", "-o", "BatchMode=yes", bench, script))
+	ctx, cancel := context.WithTimeout(context.Background(), c.probeTimeout())
+	defer cancel()
+	args := pulse.IsolationArgv(false, bench, script)
+	testguard.RefuseHosts(ssh, args...)
+	return runProbe(exec.CommandContext(ctx, ssh, args...))
 }
 
 // runProbeLocally reads a bench that IS this machine with this machine's own shell. No
-// host is reached, so there is no host to guard.
-func runProbeLocally(script string) (string, error) {
-	return runProbe(exec.Command("/bin/sh", "-c", script))
+// host is reached, so there is no host to guard. The budget still holds: a local script
+// that never answers is the same hang as a remote one.
+func runProbeLocally(script string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = pulse.FillProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return runProbe(exec.CommandContext(ctx, "/bin/sh", "-c", script))
 }
 
 // probeAnswerLimit bounds what a bench may say. A bench is the least trusted thing on this

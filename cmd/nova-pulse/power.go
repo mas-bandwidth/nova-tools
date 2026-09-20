@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -221,8 +222,9 @@ func (r powerSSHRunner) Run(ctx context.Context, target, script string) (string,
 	if program == "" {
 		program = "ssh"
 	}
-	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
-	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
+	args := pulse.IsolationArgv(true, target, "bash", "-s")
+	testguard.RefuseHosts(program, args...)
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = strings.NewReader(script)
 	powerSetProcessGroup(cmd)
 	cmd.Cancel = func() error { return powerKillProcessGroup(cmd) }

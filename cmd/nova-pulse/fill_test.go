@@ -175,6 +175,39 @@ func TestFillNeverLaunchesACardTwice(t *testing.T) {
 // The dogfood edges of 2026-09-18 at the command's own edge: a capacity reader that threw
 // the reason away, and a lane logic no hand could reach without a live bench.
 
+// TestSSHCapacityBypassesControlMaster: monitoring ssh must not reuse a multiplexed
+// connection. A stale ControlMaster socket to a dead host hangs new sessions even with
+// ConnectTimeout (#2009).
+func TestSSHCapacityBypassesControlMaster(t *testing.T) {
+	specs := fakePATH(t)
+	log := filepath.Join(t.TempDir(), "ssh.log")
+	fakeTool(t, specs, "ssh", fakeSpec{Log: log, Default: fakeRule{Stdout: "1\n"}})
+	n, err := sshCapacity{}.Capacity("bench-x")
+	if err != nil {
+		t.Fatalf("capacity: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("capacity = %d, want 1", n)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		"ControlMaster=no",
+		"ControlPath=none",
+		"ServerAliveInterval=2",
+		"ServerAliveCountMax=2",
+		"ConnectTimeout=",
+		"BatchMode=yes",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ssh argv missing %q: %q", want, got)
+		}
+	}
+}
+
 // TestSSHCapacityCarriesTheChildsLastLine: `exit status 255` alone says nothing. The last
 // line of the child's stderr is kept, bounded, and joined to the exit status.
 func TestSSHCapacityCarriesTheChildsLastLine(t *testing.T) {

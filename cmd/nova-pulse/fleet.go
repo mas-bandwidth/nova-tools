@@ -70,8 +70,9 @@ func (r fleetSSHRunner) Run(ctx context.Context, target, script string) (string,
 	if program == "" {
 		program = "ssh"
 	}
-	testguard.RefuseHosts(program, target, "bash -s")
-	cmd := exec.CommandContext(ctx, program, target, "bash -s")
+	args := pulse.IsolationArgv(true, target, "bash", "-s")
+	testguard.RefuseHosts(program, args...)
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
 	return string(out), err

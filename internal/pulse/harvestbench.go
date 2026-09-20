@@ -999,8 +999,9 @@ func (s sshShell) Run(bench, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	testguard.RefuseHosts(prog, "-n", "-o", "BatchMode=yes", bench, script)
-	cmd := exec.CommandContext(ctx, prog, "-n", "-o", "BatchMode=yes", bench, script)
+	args := IsolationArgv(false, bench, script)
+	testguard.RefuseHosts(prog, args...)
+	cmd := exec.CommandContext(ctx, prog, args...)
 	var out bytes.Buffer
 	said := &benchTail{}
 	cmd.Stdout, cmd.Stderr = &out, said

@@ -1374,6 +1374,9 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 	if !strings.Contains(joined, "BatchMode=yes") {
 		t.Fatalf("BatchMode=yes is missing: %s", joined)
 	}
+	if !strings.Contains(joined, "ControlMaster=no") || !strings.Contains(joined, "ControlPath=none") {
+		t.Fatalf("ControlMaster=no is not said out loud: %s", joined)
+	}
 	for _, never := range []string{"ForwardAgent=yes", "-i ", "IdentityFile", "-A", "StrictHostKeyChecking=no", "Password"} {
 		if strings.Contains(joined, never) {
 			t.Fatalf("the ssh options carry %q: %s", never, joined)

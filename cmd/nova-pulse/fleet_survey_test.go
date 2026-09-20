@@ -312,8 +312,11 @@ func TestFleetSSHRunnerStartsTheProgramWithTheScriptOnStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(raw); !strings.Contains(got, "argv: fake-alpha bash -s") || !strings.Contains(got, "echo hello") {
+	if got := string(raw); !strings.Contains(got, "fake-alpha") || !strings.Contains(got, "bash -s") || !strings.Contains(got, "echo hello") {
 		t.Fatalf("the child saw %q, want the target, `bash -s` and the script on stdin", got)
+	}
+	if got := string(raw); !strings.Contains(got, "ControlMaster=no") {
+		t.Fatalf("the child saw %q, want ControlMaster=no so a stale mux cannot hang survey", got)
 	}
 }
 

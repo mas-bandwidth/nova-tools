@@ -60,6 +60,7 @@ package pulse
 // ssh connection or spawns a process.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -81,6 +82,12 @@ const FillCap = 30
 
 // FillInterval is how often the loop ticks when --once is absent (fill-loop.sh's sleep 300).
 const FillInterval = 300 * time.Second
+
+// FillProbeTimeout is the wall-clock budget of one capacity probe. A host that
+// misses it is MISSED this tick and the others proceed. The 10-second sampler
+// that wedged the dealer on 2026-09-20 had no such budget, so one DOWN bench
+// froze every row.
+const FillProbeTimeout = 10 * time.Second
 
 // CardLauncher launches one card that Fill has already moved into --launched. It is the
 // per-card seam of the launch verb (internal/pulse/launch.go): one call, in order, one
@@ -324,6 +331,7 @@ type FillInput struct {
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
+	Timeout  time.Duration // per-host probe budget; 0 takes FillProbeTimeout
 	Stop     string        // touch this file to stop the loop; empty names no stop file
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -459,15 +467,45 @@ type tickResult struct {
 }
 
 // allBenchesFailed says whether the tick reached no bench at all: every named bench either
-// refused its capacity read or failed every launch it attempted. That is a red fleet, and a
-// red fleet is exit 1 -- the dogfood edge where a whole tick of `exit status 255` still
-// answered 0.
+// refused its capacity read, missed its probe budget, or failed every launch it attempted.
+// That is a red fleet, and a red fleet is exit 1 -- the dogfood edge where a whole tick of
+// `exit status 255` still answered 0.
 func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed == r.benches }
 
+// runCapacity is one bench's capacity read, cancelled when ctx is done so a
+// hanging probe cannot hold ObserveHosts. The Capacity seam has no context; the
+// goroutine is abandoned on timeout and the production ssh child is killed by
+// CommandContext on the other side of the seam. Seat is the registry seat
+// Fill resolved once (368d348); a reader that only implements Capacity(bench)
+// is asked the old way.
+func runCapacity(ctx context.Context, c Capacity, bench, seat string) (int, error) {
+	type reply struct {
+		n   int
+		err error
+	}
+	ch := make(chan reply, 1)
+	go func() {
+		n, err := capacityFor(c, bench, seat)
+		ch <- reply{n, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.n, r.err
+	case <-ctx.Done():
+		select {
+		case r := <-ch:
+			return r.n, r.err
+		default:
+			return 0, ctx.Err()
+		}
+	}
+}
+
 // fillTick is one turn: reap the markers nobody is waiting on, list ready once in filename
-// order, read each bench's capacity once, then deal one card per bench in turn until every
-// bench is at its cap or the pool is empty. A LANE card is launched only when its lane has
-// no live card; otherwise it is held, and the live card it is held behind is named. A
+// order, read each bench's capacity once in parallel under Timeout, then deal one card per
+// bench in turn until every bench is at its cap or the pool is empty. A LANE card is launched
+// only when its lane has no live card; otherwise it is held, and the live card it is held
+// behind is named. A
 // LANE the lanes file does not name is refused, once per card per lanes-file mtime. The
 // move out of ready is the claim, so a card another hand already took is skipped and never
 // launched twice; a launcher that fails moves its card back and releases its lane. It
@@ -488,25 +526,46 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 			"fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut")
 	}
 
-	// ONE capacity read per bench per tick, before any card is dealt: the probe is an ssh
-	// to the machine, so a read inside the round-robin would multiply the calls by the
-	// pool. want[i] is bench i's remaining cards, clamped by FillCap and at zero.
+	// ONE capacity read per bench per tick, in parallel, each bounded by Timeout:
+	// a host that misses its budget is MISSED and skipped, and the others proceed.
+	// A serial unbounded probe was the 2026-09-20 wedge: one DOWN bench hung the
+	// dealer. want[i] is bench i's remaining cards, clamped by FillCap and at zero.
+	// A miss is not free=0: that reads as "bench full".
+	timeout := in.Timeout
+	if timeout <= 0 {
+		timeout = FillProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	obs := ObserveHosts(ctx, in.Benches, func(ctx context.Context, bench string) (int, error) {
+		return runCapacity(ctx, in.Capacity, bench, seats[bench])
+	})
+
 	want := make([]int, len(in.Benches))
 	capacityFailed := make([]bool, len(in.Benches))
+	capacityMissed := make([]bool, len(in.Benches))
 	for i, bench := range in.Benches {
-		if n, err := capacityFor(in.Capacity, bench, seats[bench]); err != nil {
+		o := obs[i]
+		switch {
+		case o.Missed:
+			capacityMissed[i] = true
+			fmt.Fprintf(in.Stderr, "FILL MISSED bench=%s reason=timeout\n", field(bench))
+			if res.err == nil {
+				res.err = fmt.Errorf("capacity on %s: timeout", field(bench))
+			}
+		case o.Err != nil:
 			capacityFailed[i] = true
 			// FAIL CLOSED, AND SAY SO, PER BENCH. A probe or parse failure is zero free
 			// slots on THAT bench -- never a deal, never a fall-through -- and every
 			// failing bench gets its own line: the tick used to keep only the first
 			// reason, so a fleet nobody could read named one machine and went quiet.
 			fmt.Fprintf(in.Stderr, "FILL UNREADABLE bench=%s free=0 reason=%s\n",
-				field(bench), oneline.Err(err))
+				field(bench), oneline.Err(o.Err))
 			if res.err == nil {
-				res.err = fmt.Errorf("capacity on %s: %w", field(bench), err)
+				res.err = fmt.Errorf("capacity on %s: %w", field(bench), o.Err)
 			}
-		} else {
-			want[i] = n
+		default:
+			want[i] = o.Value
 		}
 		if want[i] > FillCap {
 			want[i] = FillCap
@@ -613,8 +672,12 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 
 	parts := make([]string, 0, len(in.Benches))
 	for i, bench := range in.Benches {
-		if capacityFailed[i] || (launched[i] == 0 && failed[i] > 0) {
+		if capacityFailed[i] || capacityMissed[i] || (launched[i] == 0 && failed[i] > 0) {
 			res.failed++
+		}
+		if capacityMissed[i] {
+			parts = append(parts, fmt.Sprintf("%s:missed=1", oneline.Field(bench)))
+			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d",
 			oneline.Field(bench), launched[i], failed[i]))

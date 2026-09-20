@@ -374,6 +374,10 @@ func (s ExecSSH) sshArgs(machine string) []string {
 var SSHOptions = []string{
 	"-o", "BatchMode=yes",
 	"-o", "ConnectTimeout=10",
+	"-o", "ControlMaster=no",
+	"-o", "ControlPath=none",
+	"-o", "ServerAliveInterval=2",
+	"-o", "ServerAliveCountMax=2",
 	"-o", "ForwardAgent=no",
 }
 
