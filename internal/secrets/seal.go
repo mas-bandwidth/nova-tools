@@ -164,6 +164,14 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	if home == "" || home == "HEAD" {
 		return "", fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", opts.StoreDir)
 	}
+	// checkout -f of home would discard these. Refuse before checkout -b.
+	status, err := sealGitOutput(run, opts.StoreDir, opts.GitPath, "status", "--porcelain", "-uno")
+	if err != nil {
+		return "", err
+	}
+	if status != "" {
+		return "", fmt.Errorf("store %s is not clean; commit, stash, or restore tracked changes before seal (git status). seal will not discard them", opts.StoreDir)
+	}
 
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
 	opts.say("committing on branch %s", branch)

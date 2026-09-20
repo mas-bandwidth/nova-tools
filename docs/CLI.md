@@ -3579,7 +3579,9 @@ uses the store's SOPS configuration. `--no-pr` creates a branch and commits the
 encrypted change locally, without pushing or opening a pull request. It then
 returns the working copy to the branch it started on; the seal commit stays on
 the `seal/...` branch and the OK line names it. A leftover seal branch has no
-upstream, and `exec` would refuse every later card on that store.
+upstream, and `exec` would refuse every later card on that store. A dirty store
+(staged or unstaged tracked changes) is refused before any branch switch, so
+local edits are not discarded.
 
 Without `--no-pr`, the command pushes its branch, opens a PR and waits up to two
 minutes for the gate's approval, reporting progress while it waits. Once approved,

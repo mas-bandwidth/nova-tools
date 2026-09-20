@@ -348,6 +348,111 @@ func TestSealNoPRMakesNoGHCalls(t *testing.T) {
 	}
 }
 
+// TestReviewSealNoPRPreservesStartingDirtyWorktree: checkout -f of the
+// starting branch discards caller-owned tracked edits (#2016 HOLD). Seal must
+// refuse a dirty store before checkout -b so unstaged and staged tracked
+// changes are still there after the refusal.
+func TestReviewSealNoPRPreservesStartingDirtyWorktree(t *testing.T) {
+	skipPOSIXFakesOnWindows(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	const marker = "caller-owned-edit"
+	cases := []struct {
+		name   string
+		staged bool
+	}{
+		{name: "unstaged tracked", staged: false},
+		{name: "staged tracked", staged: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSealFixture(t, "TARGET: old\n")
+			initTrackedGitStore(t, f.storeDir)
+
+			gitBin, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			owned := filepath.Join(f.storeDir, ".sops.yaml")
+			origOwned, err := os.ReadFile(owned)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dirty := append(append([]byte{}, origOwned...), []byte("# "+marker+"\n")...)
+			if err := os.WriteFile(owned, dirty, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.staged {
+				gitC(t, f.storeDir, "add", ".sops.yaml")
+			}
+
+			origBranch := gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD")
+			origHEAD := gitC(t, f.storeDir, "rev-parse", "HEAD")
+			origSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var gitLog []string
+			opts := f.options(t, "TARGET", "placeholder-value\n", true)
+			opts.GitPath = gitBin
+			opts.Exec = func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
+				if name == gitBin || filepath.Base(name) == "git" {
+					gitLog = append(gitLog, strings.Join(args, " "))
+					return realExecCommand(stdin, env, dir, gitBin, args...)
+				}
+				return realExecCommand(stdin, env, dir, name, args...)
+			}
+
+			line, runErr := RunSeal(opts)
+			if strings.Contains(line, marker) {
+				t.Errorf("caller edit leaked into the OK line: %s", line)
+			}
+			if runErr == nil {
+				t.Errorf("RunSeal accepted a dirty worktree")
+			} else {
+				msg := strings.ToLower(runErr.Error())
+				if !strings.Contains(msg, "clean") && !strings.Contains(msg, "dirty") {
+					t.Errorf("refusal does not name a dirty/clean store: %v", runErr)
+				}
+				if !strings.Contains(msg, "git status") && !strings.Contains(msg, "commit") {
+					t.Errorf("refusal is not actionable: %v", runErr)
+				}
+				if strings.Contains(runErr.Error(), marker) {
+					t.Errorf("caller edit leaked into the error: %v", runErr)
+				}
+			}
+
+			gotOwned, err := os.ReadFile(owned)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(gotOwned) != string(dirty) {
+				t.Errorf("starting dirty worktree was not restored")
+			}
+			gotSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(gotSeat) != string(origSeat) {
+				t.Errorf("seat file was rewritten despite a dirty starting worktree")
+			}
+			if gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD") != origBranch {
+				t.Errorf("left the starting branch")
+			}
+			if gitC(t, f.storeDir, "rev-parse", "HEAD") != origHEAD {
+				t.Errorf("moved HEAD")
+			}
+			joined := strings.Join(gitLog, "\n")
+			if strings.Contains(joined, "checkout -b") || strings.Contains(joined, "checkout -f") {
+				t.Errorf("dirty store still switched branches:\n%s", joined)
+			}
+		})
+	}
+}
+
 func TestSealFullPathOpensPRAndMerges(t *testing.T) {
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\n")

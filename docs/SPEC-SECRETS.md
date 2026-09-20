@@ -527,7 +527,9 @@ existing `NAME:` line, appends `NAME: value`, and re-encrypts **from stdin** wit
 `--filename-override <seat>.yaml` so the store's own rule picks the recipients, writing the
 ciphertext into place atomically. The value never touches argv, a plaintext file, or output.
 
-**What it does after.** It makes a branch `seal/<seat>-<NAME>-<stamp>`, commits, pushes, opens
+**What it does after.** A dirty store (staged or unstaged tracked changes) is refused
+before any branch switch, so `checkout -f` cannot discard caller-owned edits. It then
+makes a branch `seal/<seat>-<NAME>-<stamp>`, commits, pushes, opens
 a `gh` pull request, waits up to two minutes for the seat-rule gate's `reviewDecision=APPROVED`,
 merges with `--squash`, pulls, and runs `check` on the seat. `--no-pr` stops after the commit
 and makes no `gh` call, then returns the working copy to the branch it started on so `exec`
