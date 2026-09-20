@@ -1,34 +1,16 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package control
 
 import (
-	"errors"
+	"fmt"
 	"os"
-	"path/filepath"
 )
 
-// tryLockFile on non-unix platforms uses an exclusive sentinel file creation.
+// tryLockFile refuses platforms without a holder-lifetime kernel lock in the
+// standard library. A crash-stale .held sentinel is not a lock.
 func tryLockFile(f *os.File) (bool, error) {
-	held, err := os.OpenFile(sentinel(f), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrPermission) {
-			return false, nil
-		}
-		return false, err
-	}
-	if err := held.Close(); err != nil {
-		_ = os.Remove(sentinel(f))
-		return false, err
-	}
-	return true, nil
+	return false, fmt.Errorf("%w: coordinator.lock requires a holder-lifetime kernel lock (flock or LockFileEx)", ErrUnsupportedLock)
 }
 
-// unlockFile removes the sentinel file.
-func unlockFile(f *os.File) {
-	_ = os.Remove(sentinel(f))
-}
-
-func sentinel(f *os.File) string {
-	return filepath.Clean(f.Name()) + ".held"
-}
+func unlockFile(f *os.File) {}

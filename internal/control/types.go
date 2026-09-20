@@ -25,7 +25,47 @@ var (
 	ErrInvalidState       = errors.New("invalid control state")
 	ErrInvalidAck         = errors.New("invalid control ack")
 	ErrLockTimeout        = errors.New("coordinator lock timeout")
+	ErrAmbiguous          = errors.New("ambiguous control result")
+	ErrUnsupportedLock    = errors.New("coordinator lock unsupported on this platform")
+	ErrUnsafePath         = errors.New("control path is a symlink")
 )
+
+// AmbiguousError is a typed degraded result: the write or callback may already
+// have landed. Callers reconcile the same lifecycle attempt and must not mint
+// a new start token.
+type AmbiguousError struct {
+	Op    string
+	Path  string
+	Cause error
+}
+
+func (e *AmbiguousError) Error() string {
+	if e == nil {
+		return "control: ambiguous result; reconcile the lifecycle ledger, do not consume a new token"
+	}
+	cause := e.Cause
+	if cause == nil {
+		cause = ErrAmbiguous
+	}
+	if e.Path != "" {
+		return fmt.Sprintf("control: %s at %s is ambiguous; reconcile the lifecycle ledger, do not consume a new token: %v", e.Op, e.Path, cause)
+	}
+	if e.Op != "" {
+		return fmt.Sprintf("control: %s is ambiguous; reconcile the lifecycle ledger, do not consume a new token: %v", e.Op, cause)
+	}
+	return fmt.Sprintf("control: ambiguous result; reconcile the lifecycle ledger, do not consume a new token: %v", cause)
+}
+
+func (e *AmbiguousError) Unwrap() error {
+	if e == nil || e.Cause == nil {
+		return ErrAmbiguous
+	}
+	return e.Cause
+}
+
+func (e *AmbiguousError) Is(target error) bool {
+	return target == ErrAmbiguous
+}
 
 // State is the durable fleet control record stored in control/state.json.
 // Format: generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet by=<identity> at=<RFC3339> reason=<token> expires=<RFC3339>
@@ -78,15 +118,4 @@ type Ack struct {
 	Bench      string    `json:"bench"`
 	Desired    string    `json:"desired"`
 	Observed   time.Time `json:"observed"`
-}
-
-// Status aggregates acknowledgements against desired fleet control state.
-type Status struct {
-	Generation int64  `json:"generation"`
-	Desired    string `json:"desired"`
-	Acked      int    `json:"acked"`
-	Pending    int    `json:"pending"`
-	Unknown    int    `json:"unknown"`
-	Owned      int    `json:"owned"`
-	Complete   bool   `json:"complete"`
 }

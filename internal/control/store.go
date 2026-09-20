@@ -14,43 +14,20 @@ import (
 	"time"
 )
 
-// Handle represents an open control directory store.
+const defaultLockTimeout = 10 * time.Second
+
+// Handle is an open control directory store.
 type Handle struct {
-	controlDir     string
-	maxRUN         int
-	maxRUNDuration time.Duration
-	lockTimeout    time.Duration
+	controlDir  string
+	maxRUN      time.Duration
+	lockTimeout time.Duration
 }
 
-// Store is an alias for Handle for callers who refer to the store type.
-type Store = Handle
-
-// Option configures an open Handle.
-type Option func(*Handle)
-
-// WithMaxRUNDuration explicitly sets the maximum RUN duration.
-func WithMaxRUNDuration(d time.Duration) Option {
-	return func(h *Handle) {
-		if d > 0 {
-			h.maxRUNDuration = d
-		}
-	}
-}
-
-// WithLockTimeout sets the maximum duration to wait when acquiring coordinator.lock.
-func WithLockTimeout(d time.Duration) Option {
-	return func(h *Handle) {
-		if d > 0 {
-			h.lockTimeout = d
-		}
-	}
-}
-
-// Open opens a control directory store at controlDir with a required maxRUN bound.
-// Empty controlDir is refused; maxRUN must be a positive duration.
-// The package reads and writes controlDir/state.json, controlDir/acks/<owner>.json,
-// and controlDir/coordinator.lock. It does not join "control/" itself.
-func Open(controlDir string, maxRUN int, opts ...Option) (*Handle, error) {
+// Open opens the control store at the named directory with a required positive
+// maxRUN bound. Empty controlDir is refused. The package reads and writes
+// controlDir/state.json, controlDir/acks/<owner>.json, and
+// controlDir/coordinator.lock. It does not join "control/" itself.
+func Open(controlDir string, maxRUN time.Duration) (*Handle, error) {
 	cleanDir := filepath.Clean(strings.TrimSpace(controlDir))
 	if cleanDir == "" || cleanDir == "." && strings.TrimSpace(controlDir) == "" {
 		return nil, errors.New("controlDir cannot be empty")
@@ -59,66 +36,35 @@ func Open(controlDir string, maxRUN int, opts ...Option) (*Handle, error) {
 		return nil, errors.New("maxRUN must be a positive duration")
 	}
 
-	dur := time.Duration(maxRUN) * time.Second
-	if maxRUN > 1_000_000 {
-		dur = time.Duration(maxRUN)
+	if err := ensurePlainDir(cleanDir); err != nil {
+		return nil, fmt.Errorf("creating control directory %s: %w", cleanDir, err)
+	}
+	acks := filepath.Join(cleanDir, "acks")
+	if err := ensurePlainDir(acks); err != nil {
+		return nil, fmt.Errorf("creating acks directory %s: %w", acks, err)
 	}
 
-	h := &Handle{
-		controlDir:     cleanDir,
-		maxRUN:         maxRUN,
-		maxRUNDuration: dur,
-		lockTimeout:    10 * time.Second,
-	}
-
-	for _, opt := range opts {
-		if opt != nil {
-			opt(h)
-		}
-	}
-
-	if h.maxRUNDuration <= 0 {
-		return nil, errors.New("maxRUNDuration must be positive")
-	}
-
-	if err := os.MkdirAll(h.controlDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating control directory %s: %w", h.controlDir, err)
-	}
-	if err := os.MkdirAll(h.AcksDir(), 0o755); err != nil {
-		return nil, fmt.Errorf("creating acks directory %s: %w", h.AcksDir(), err)
-	}
-
-	return h, nil
+	return &Handle{
+		controlDir:  cleanDir,
+		maxRUN:      maxRUN,
+		lockTimeout: defaultLockTimeout,
+	}, nil
 }
 
-// Dir returns the underlying control directory path.
-func (h *Handle) Dir() string {
-	return h.controlDir
-}
-
-// MaxRUNDuration returns the maximum RUN duration.
-func (h *Handle) MaxRUNDuration() time.Duration {
-	return h.maxRUNDuration
-}
-
-// StatePath returns the path to state.json.
-func (h *Handle) StatePath() string {
+func (h *Handle) statePath() string {
 	return filepath.Join(h.controlDir, "state.json")
 }
 
-// LockPath returns the path to coordinator.lock.
-func (h *Handle) LockPath() string {
+func (h *Handle) lockPath() string {
 	return filepath.Join(h.controlDir, "coordinator.lock")
 }
 
-// AcksDir returns the path to the acks/ subdirectory.
-func (h *Handle) AcksDir() string {
+func (h *Handle) acksDir() string {
 	return filepath.Join(h.controlDir, "acks")
 }
 
-// AckPath returns the path to a specific owner's ack JSON file.
-func (h *Handle) AckPath(owner string) string {
-	return filepath.Join(h.AcksDir(), owner+".json")
+func (h *Handle) ackPath(owner string) string {
+	return filepath.Join(h.acksDir(), owner+".json")
 }
 
 // Load reads and parses control/state.json without acquiring coordinator.lock.
@@ -129,23 +75,22 @@ func (h *Handle) Load(now time.Time) (State, error) {
 }
 
 func (h *Handle) loadUnlocked(now time.Time) (State, error) {
-	data, err := os.ReadFile(h.StatePath())
+	_ = now
+	data, err := os.ReadFile(h.statePath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return State{}, fmt.Errorf("%w: %s", ErrStateNotFound, h.StatePath())
+			return State{}, fmt.Errorf("%w: %s", ErrStateNotFound, h.statePath())
 		}
 		return State{}, fmt.Errorf("reading control state: %w", err)
 	}
 
 	var st State
-	if err := json.Unmarshal(data, &st); err != nil {
-		return State{}, fmt.Errorf("malformed control state in %s: %w", h.StatePath(), err)
+	if err := decodeJSON(data, &st); err != nil {
+		return State{}, fmt.Errorf("malformed control state in %s: %w", h.statePath(), err)
 	}
-
 	if err := ValidateState(st); err != nil {
-		return State{}, fmt.Errorf("invalid control state in %s: %w", h.StatePath(), err)
+		return State{}, fmt.Errorf("invalid control state in %s: %w", h.statePath(), err)
 	}
-
 	return st, nil
 }
 
@@ -155,7 +100,7 @@ func (h *Handle) loadUnlocked(now time.Time) (State, error) {
 // Renewal requires generation n+1 and never extends in-place.
 // PAUSE, DRAIN, and STOP updates work even after an earlier RUN has expired.
 func (h *Handle) Update(now time.Time, expectedGeneration int64, nextState State) (State, error) {
-	unlock, err := takeCoordinatorLock(context.Background(), h.LockPath(), h.lockTimeout)
+	unlock, err := takeCoordinatorLock(context.Background(), h.lockPath(), h.lockTimeout)
 	if err != nil {
 		return State{}, fmt.Errorf("acquiring coordinator lock for update: %w", err)
 	}
@@ -182,14 +127,13 @@ func (h *Handle) Update(now time.Time, expectedGeneration int64, nextState State
 		nextState.At = now
 	}
 
-	if err := ValidateUpdate(currentGen, expectedGeneration, nextState, now, h.maxRUNDuration); err != nil {
+	if err := ValidateUpdate(currentGen, expectedGeneration, nextState, now, h.maxRUN); err != nil {
 		return State{}, err
 	}
 
-	if err := writeDurableJSON(h.StatePath(), nextState); err != nil {
+	if err := writeDurableJSON(h.statePath(), nextState); err != nil {
 		return State{}, fmt.Errorf("durable write of control state: %w", err)
 	}
-
 	return nextState, nil
 }
 
@@ -204,10 +148,28 @@ func (h *Handle) WriteAck(now time.Time, ack Ack) error {
 	if err := ValidateAck(ack); err != nil {
 		return err
 	}
-
-	targetFile := h.AckPath(ack.Owner)
-	if err := writeDurableJSON(targetFile, ack); err != nil {
+	if err := h.refuseOwnerRebind(ack); err != nil {
+		return err
+	}
+	if err := writeDurableJSON(h.ackPath(ack.Owner), ack); err != nil {
 		return fmt.Errorf("durable write of ack for %s: %w", ack.Owner, err)
+	}
+	return nil
+}
+
+func (h *Handle) refuseOwnerRebind(ack Ack) error {
+	existing, err := h.readAckFile(ack.Owner)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if existing.Owner != ack.Owner {
+		return fmt.Errorf("%w: existing ack owner %q does not match filename %q", ErrInvalidAck, existing.Owner, ack.Owner)
+	}
+	if existing.Bench != ack.Bench {
+		return fmt.Errorf("%w: owner %q is bound to bench %q", ErrInvalidAck, ack.Owner, existing.Bench)
 	}
 	return nil
 }
@@ -218,58 +180,40 @@ func (h *Handle) LoadAck(owner string) (Ack, error) {
 	if owner == "" || strings.ContainsAny(owner, "/\\:*?\"<>|\x00") || strings.Contains(owner, "..") {
 		return Ack{}, fmt.Errorf("%w: invalid owner name %q", ErrInvalidAck, owner)
 	}
+	ack, err := h.readAckFile(owner)
+	if err != nil {
+		return Ack{}, err
+	}
+	if ack.Owner != owner {
+		return Ack{}, fmt.Errorf("%w: ack owner %q does not match filename owner %q", ErrInvalidAck, ack.Owner, owner)
+	}
+	return ack, nil
+}
 
-	targetFile := h.AckPath(owner)
+func (h *Handle) readAckFile(owner string) (Ack, error) {
+	targetFile := h.ackPath(owner)
 	data, err := os.ReadFile(targetFile)
 	if err != nil {
 		return Ack{}, err
 	}
-
 	var ack Ack
-	if err := json.Unmarshal(data, &ack); err != nil {
+	if err := decodeJSON(data, &ack); err != nil {
 		return Ack{}, fmt.Errorf("malformed ack in %s: %w", targetFile, err)
 	}
-
 	if err := ValidateAck(ack); err != nil {
 		return Ack{}, fmt.Errorf("invalid ack in %s: %w", targetFile, err)
 	}
-
 	return ack, nil
 }
 
-// LoadAcks reads all valid acknowledgement records from control/acks/*.json.
-func (h *Handle) LoadAcks() ([]Ack, error) {
-	entries, err := os.ReadDir(h.AcksDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading acks directory: %w", err)
-	}
-
-	var acks []Ack
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		owner := strings.TrimSuffix(entry.Name(), ".json")
-		ack, err := h.LoadAck(owner)
-		if err != nil {
-			return nil, fmt.Errorf("loading ack %s: %w", entry.Name(), err)
-		}
-		acks = append(acks, ack)
-	}
-	return acks, nil
-}
-
 // WithCoordinator provides the one admission linearization.
-// It takes coordinator.lock (via flock), loads and validates current fleet RUN authority
+// It takes coordinator.lock, loads and validates current fleet RUN authority
 // (desired=RUN, scope=fleet, unexpired at now), and runs callback under the lock.
 // The callback is never called on invalid or expired authority.
-// If callback returns an error, no rollback is performed and no new token is consumed;
-// the coordinator reconciles possible STARTING.
+// If callback returns an error, the result is typed ambiguous: no rollback is
+// performed and no new token is consumed; the caller reconciles possible STARTING.
 func (h *Handle) WithCoordinator(ctx context.Context, now time.Time, callback func(State) error) error {
-	unlock, err := takeCoordinatorLock(ctx, h.LockPath(), h.lockTimeout)
+	unlock, err := takeCoordinatorLock(ctx, h.lockPath(), h.lockTimeout)
 	if err != nil {
 		return fmt.Errorf("taking coordinator lock: %w", err)
 	}
@@ -279,67 +223,23 @@ func (h *Handle) WithCoordinator(ctx context.Context, now time.Time, callback fu
 	if err != nil {
 		return fmt.Errorf("loading control state under coordinator lock: %w", err)
 	}
-
 	if err := st.IsValidAuthority(now); err != nil {
 		return fmt.Errorf("control admission refused: %w", err)
 	}
-
 	if err := callback(st); err != nil {
-		return err
+		return &AmbiguousError{Op: "callback", Cause: err}
 	}
-
 	return nil
 }
 
-// WithCoordinator is a package-level convenience function delegating to h.WithCoordinator.
-func WithCoordinator(ctx context.Context, h *Handle, now time.Time, callback func(State) error) error {
-	if h == nil {
-		return errors.New("nil control Handle")
-	}
-	return h.WithCoordinator(ctx, now, callback)
-}
+var (
+	durableWrite    = func(f *os.File, p []byte) (int, error) { return f.Write(p) }
+	durableSyncFile = func(f *os.File) error { return f.Sync() }
+	durableClose    = func(f *os.File) error { return f.Close() }
+	durableRename   = os.Rename
+	durableSyncDir  = fsyncDir
+)
 
-// Status aggregates acknowledgements against required owner identities.
-func (h *Handle) Status(now time.Time, requiredOwners []string) (Status, error) {
-	st, err := h.Load(now)
-	if err != nil {
-		return Status{}, err
-	}
-
-	acks, err := h.LoadAcks()
-	if err != nil {
-		return Status{}, err
-	}
-
-	ackMap := make(map[string]Ack, len(acks))
-	for _, a := range acks {
-		ackMap[a.Owner] = a
-	}
-
-	status := Status{
-		Generation: st.Generation,
-		Desired:    st.Desired,
-		Owned:      len(requiredOwners),
-	}
-
-	for _, owner := range requiredOwners {
-		ack, ok := ackMap[owner]
-		if !ok {
-			status.Pending++
-			continue
-		}
-		if ack.Generation == st.Generation && ack.Desired == st.Desired {
-			status.Acked++
-		} else {
-			status.Pending++
-		}
-	}
-
-	status.Complete = status.Owned > 0 && status.Acked == status.Owned
-	return status, nil
-}
-
-// fsyncDir flushes directory dentries to disk.
 func fsyncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
@@ -349,7 +249,6 @@ func fsyncDir(dir string) error {
 	return d.Sync()
 }
 
-// makeNonce generates a 16-byte random hex string for unguessable tmp file names.
 func makeNonce() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -358,7 +257,6 @@ func makeNonce() string {
 	return hex.EncodeToString(b[:])
 }
 
-// checkDurableMatch verifies whether targetPath exists and has identical byte content to data.
 func checkDurableMatch(targetPath string, data []byte) bool {
 	existing, err := os.ReadFile(targetPath)
 	if err != nil {
@@ -372,7 +270,8 @@ func checkDurableMatch(targetPath string, data []byte) bool {
 // 2. fsyncs file and closes it.
 // 3. Renames tmp file over targetPath.
 // 4. fsyncs the parent directory.
-// An ambiguous post-rename error is reconciled by verifying targetPath content.
+// Pre-rename failures return the cause and leave old bytes. A rename or
+// directory-sync error after the new bytes are visible is AmbiguousError.
 func writeDurableJSON(targetPath string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -381,7 +280,7 @@ func writeDurableJSON(targetPath string, v any) error {
 	data = append(data, '\n')
 
 	dir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensurePlainDir(dir); err != nil {
 		return fmt.Errorf("creating directory %s: %w", dir, err)
 	}
 
@@ -395,35 +294,30 @@ func writeDurableJSON(targetPath string, v any) error {
 	}
 
 	writeErr := func() error {
-		if _, err := f.Write(data); err != nil {
+		if _, err := durableWrite(f, data); err != nil {
 			return err
 		}
-		if err := f.Sync(); err != nil {
+		if err := durableSyncFile(f); err != nil {
 			return err
 		}
-		return f.Close()
+		return durableClose(f)
 	}()
-
 	if writeErr != nil {
 		_ = f.Close()
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("writing temp file %s: %w", tmpPath, writeErr)
 	}
 
-	if err := os.Rename(tmpPath, targetPath); err != nil {
+	if err := durableRename(tmpPath, targetPath); err != nil {
 		_ = os.Remove(tmpPath)
 		if checkDurableMatch(targetPath, data) {
-			return nil
+			return &AmbiguousError{Op: "rename", Path: targetPath, Cause: err}
 		}
 		return fmt.Errorf("renaming %s to %s: %w", tmpPath, targetPath, err)
 	}
 
-	if err := fsyncDir(dir); err != nil {
-		if checkDurableMatch(targetPath, data) {
-			return nil
-		}
-		return fmt.Errorf("fsync directory %s: %w", dir, err)
+	if err := durableSyncDir(dir); err != nil {
+		return &AmbiguousError{Op: "dirsync", Path: dir, Cause: err}
 	}
-
 	return nil
 }

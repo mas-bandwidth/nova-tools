@@ -9,7 +9,7 @@ import (
 )
 
 // tryLockFile attempts to acquire an exclusive, non-blocking advisory flock.
-// Returns (true, nil) if acquired, (false, nil) if held by another process, or (false, err) on OS error.
+// The kernel releases it when the process dies.
 func tryLockFile(f *os.File) (bool, error) {
 	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err == nil {
@@ -21,7 +21,6 @@ func tryLockFile(f *os.File) (bool, error) {
 	return false, err
 }
 
-// unlockFile releases the advisory flock on f.
 func unlockFile(f *os.File) {
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }

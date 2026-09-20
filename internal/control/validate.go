@@ -24,6 +24,19 @@ func validateScope(scope string) error {
 	return nil
 }
 
+func validateExpiry(desired string, expires *time.Time) error {
+	if desired == DesiredRun {
+		if expires == nil {
+			return fmt.Errorf("%w: RUN state must include expires timestamp", ErrInvalidState)
+		}
+		return nil
+	}
+	if expires != nil {
+		return fmt.Errorf("%w: %s must not include expires", ErrInvalidState, desired)
+	}
+	return nil
+}
+
 // ValidateState validates an existing or unmarshaled State record.
 func ValidateState(st State) error {
 	if st.Generation <= 0 {
@@ -41,10 +54,7 @@ func ValidateState(st State) error {
 	if st.At.IsZero() {
 		return fmt.Errorf("%w: at timestamp cannot be zero", ErrInvalidState)
 	}
-	if st.Desired == DesiredRun && st.Expires == nil {
-		return fmt.Errorf("%w: RUN state must include expires timestamp", ErrInvalidState)
-	}
-	return nil
+	return validateExpiry(st.Desired, st.Expires)
 }
 
 // ValidateUpdate validates a state transition according to CAS and duration bounds.
@@ -65,11 +75,11 @@ func ValidateUpdate(currentGen int64, expectedGen int64, next State, now time.Ti
 	if strings.TrimSpace(next.By) == "" {
 		return fmt.Errorf("%w: by field cannot be empty", ErrInvalidState)
 	}
+	if err := validateExpiry(next.Desired, next.Expires); err != nil {
+		return err
+	}
 
 	if next.Desired == DesiredRun {
-		if next.Expires == nil {
-			return fmt.Errorf("%w: RUN state requires an expires timestamp", ErrInvalidState)
-		}
 		if !next.Expires.After(now) {
 			return fmt.Errorf("%w: RUN expires (%s) must be in the future (after %s)", ErrInvalidState, next.Expires.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
 		}

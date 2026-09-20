@@ -77,6 +77,29 @@ func TestValidateState(t *testing.T) {
 	if err := control.ValidateState(pauseSt); err != nil {
 		t.Fatalf("PAUSE state failed validation: %v", err)
 	}
+
+	// Non-RUN states must not carry expiry
+	pauseExp := pauseSt
+	pauseExp.Expires = &exp
+	if err := control.ValidateState(pauseExp); err == nil {
+		t.Fatal("expected error for PAUSE with expires")
+	}
+}
+
+func TestValidateUpdate_NonRUNMustNotExpire(t *testing.T) {
+	now := time.Now().UTC()
+	exp := now.Add(10 * time.Second)
+	next := control.State{
+		Generation: 1,
+		Desired:    control.DesiredStop,
+		Scope:      control.ScopeFleet,
+		By:         "test",
+		At:         now,
+		Expires:    &exp,
+	}
+	if err := control.ValidateUpdate(0, 0, next, now, 30*time.Second); err == nil {
+		t.Fatal("expected error for STOP with expires")
+	}
 }
 
 func TestValidateAck(t *testing.T) {

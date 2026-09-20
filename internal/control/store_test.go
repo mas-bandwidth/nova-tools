@@ -3,6 +3,7 @@ package control_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,51 +15,88 @@ import (
 )
 
 func TestOpen(t *testing.T) {
-	// Empty dir rejected
-	if _, err := control.Open("", 30); err == nil {
+	if _, err := control.Open("", 30*time.Second); err == nil {
 		t.Fatal("expected error for empty controlDir, got nil")
 	}
-	if _, err := control.Open("   ", 30); err == nil {
+	if _, err := control.Open("   ", 30*time.Second); err == nil {
 		t.Fatal("expected error for whitespace controlDir, got nil")
 	}
 
-	// Non-positive maxRUN rejected
 	tmpDir := t.TempDir()
 	if _, err := control.Open(tmpDir, 0); err == nil {
 		t.Fatal("expected error for maxRUN=0, got nil")
 	}
 	if _, err := control.Open(tmpDir, -5); err == nil {
-		t.Fatal("expected error for maxRUN=-5, got nil")
+		t.Fatal("expected error for negative maxRUN, got nil")
 	}
 
-	// Valid Open creates controlDir and acks dir
 	ctrlDir := filepath.Join(tmpDir, "ctrl")
-	h, err := control.Open(ctrlDir, 60, control.WithLockTimeout(2*time.Second))
+	h, err := control.Open(ctrlDir, 60*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	if h.Dir() != ctrlDir {
-		t.Fatalf("expected Dir %s, got %s", ctrlDir, h.Dir())
-	}
-	if h.MaxRUNDuration() != 60*time.Second {
-		t.Fatalf("expected MaxRUNDuration 60s, got %s", h.MaxRUNDuration())
-	}
-
 	if _, err := os.Stat(ctrlDir); err != nil {
 		t.Fatalf("expected control directory to exist: %v", err)
 	}
-	if _, err := os.Stat(h.AcksDir()); err != nil {
+	if _, err := os.Stat(filepath.Join(ctrlDir, "acks")); err != nil {
 		t.Fatalf("expected acks directory to exist: %v", err)
+	}
+
+	now := time.Now().UTC()
+	tooFar := now.Add(61 * time.Second)
+	if _, err := h.Update(now, 0, control.State{
+		Desired: control.DesiredRun,
+		By:      "tester",
+		Expires: &tooFar,
+	}); err == nil {
+		t.Fatal("expected error for expires exceeding maxRUN duration")
+	}
+	okExp := now.Add(30 * time.Second)
+	if _, err := h.Update(now, 0, control.State{
+		Desired: control.DesiredRun,
+		By:      "tester",
+		Expires: &okExp,
+	}); err != nil {
+		t.Fatalf("valid RUN within maxRUN duration failed: %v", err)
+	}
+}
+
+func TestOpen_MaxRUNIsDurationNotIntegerHeuristic(t *testing.T) {
+	// 999999 as an integer used to mean seconds (~11 days) while 1000000 was
+	// treated as nanoseconds. Open takes time.Duration, so 999999ns is 999999ns.
+	h, err := control.Open(t.TempDir(), 999999*time.Nanosecond)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	now := time.Now().UTC()
+	exp := now.Add(time.Second)
+	if _, err := h.Update(now, 0, control.State{
+		Desired: control.DesiredRun,
+		By:      "tester",
+		Expires: &exp,
+	}); err == nil {
+		t.Fatal("999999 nanoseconds must not be treated as 999999 seconds")
+	}
+
+	h2, err := control.Open(t.TempDir(), time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	short := now.Add(500 * time.Millisecond)
+	if _, err := h2.Update(now, 0, control.State{
+		Desired: control.DesiredRun,
+		By:      "tester",
+		Expires: &short,
+	}); err != nil {
+		t.Fatalf("1s maxRUN must accept a 500ms expiry: %v", err)
 	}
 }
 
 func TestLoad_AbsentStateFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 30)
+	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-
 	now := time.Now().UTC()
 	_, err = h.Load(now)
 	if err == nil {
@@ -70,8 +108,7 @@ func TestLoad_AbsentStateFailsClosed(t *testing.T) {
 }
 
 func TestUpdate_InitAndCAS(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 60)
+	h, err := control.Open(t.TempDir(), 60*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -79,7 +116,6 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 	now := time.Now().UTC()
 	expires := now.Add(30 * time.Second)
 
-	// Attempting CAS with expectedGeneration=1 when empty must fail
 	_, err = h.Update(now, 1, control.State{
 		Desired: control.DesiredRun,
 		By:      "test-caller",
@@ -92,7 +128,6 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 		t.Fatalf("expected ErrGenerationMismatch, got %v", err)
 	}
 
-	// Initialization from expectedGen=0 creates generation 1
 	st1, err := h.Update(now, 0, control.State{
 		Desired: control.DesiredRun,
 		By:      "test-init",
@@ -112,7 +147,6 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 		t.Fatalf("expected scope fleet, got %s", st1.Scope)
 	}
 
-	// Verify durable state.json on disk
 	loaded, err := h.Load(now)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
@@ -121,7 +155,6 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 		t.Fatalf("loaded state mismatch: %+v", loaded)
 	}
 
-	// Renewal: expectedGen=1 creates generation 2
 	expires2 := now.Add(45 * time.Second)
 	st2, err := h.Update(now, 1, control.State{
 		Desired: control.DesiredRun,
@@ -136,7 +169,6 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 		t.Fatalf("expected generation 2, got %d", st2.Generation)
 	}
 
-	// Stale CAS expectedGen=1 must fail now that state is generation 2
 	_, err = h.Update(now, 1, control.State{
 		Desired: control.DesiredPause,
 		By:      "stale-caller",
@@ -150,16 +182,13 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 }
 
 func TestUpdate_RUNExpiryBounds(t *testing.T) {
-	tmpDir := t.TempDir()
-	// maxRUN is 30 seconds
-	h, err := control.Open(tmpDir, 30)
+	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
 
 	now := time.Now().UTC()
 
-	// Missing expires on RUN must fail
 	_, err = h.Update(now, 0, control.State{
 		Desired: control.DesiredRun,
 		By:      "tester",
@@ -168,7 +197,6 @@ func TestUpdate_RUNExpiryBounds(t *testing.T) {
 		t.Fatal("expected error for RUN without expires, got nil")
 	}
 
-	// Expires in the past must fail
 	past := now.Add(-5 * time.Second)
 	_, err = h.Update(now, 0, control.State{
 		Desired: control.DesiredRun,
@@ -179,7 +207,6 @@ func TestUpdate_RUNExpiryBounds(t *testing.T) {
 		t.Fatal("expected error for past expires, got nil")
 	}
 
-	// Expires equal to now must fail
 	nowExact := now
 	_, err = h.Update(now, 0, control.State{
 		Desired: control.DesiredRun,
@@ -190,7 +217,6 @@ func TestUpdate_RUNExpiryBounds(t *testing.T) {
 		t.Fatal("expected error for expires == now, got nil")
 	}
 
-	// Expires exceeding maxRUN must fail
 	tooFar := now.Add(31 * time.Second)
 	_, err = h.Update(now, 0, control.State{
 		Desired: control.DesiredRun,
@@ -201,7 +227,6 @@ func TestUpdate_RUNExpiryBounds(t *testing.T) {
 		t.Fatal("expected error for expires exceeding maxRUN, got nil")
 	}
 
-	// Valid expires within (now, now+maxRUN] succeeds
 	validExpires := now.Add(25 * time.Second)
 	st, err := h.Update(now, 0, control.State{
 		Desired: control.DesiredRun,
@@ -217,8 +242,7 @@ func TestUpdate_RUNExpiryBounds(t *testing.T) {
 }
 
 func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 10)
+	h, err := control.Open(t.TempDir(), 10*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -226,7 +250,6 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 	t0 := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	exp0 := t0.Add(5 * time.Second)
 
-	// 1. Initial RUN at generation 1
 	st1, err := h.Update(t0, 0, control.State{
 		Desired: control.DesiredRun,
 		By:      "coordinator",
@@ -239,7 +262,6 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 		t.Fatalf("expected generation 1, got %d", st1.Generation)
 	}
 
-	// 2. Advance time past expiry
 	tExpired := t0.Add(10 * time.Second)
 	loaded, err := h.Load(tExpired)
 	if err != nil {
@@ -252,7 +274,6 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 		t.Fatal("expected IsValidAuthority to fail on expired state")
 	}
 
-	// 3. Updating to PAUSE after expired RUN must still work (generation 1 -> 2)
 	st2, err := h.Update(tExpired, 1, control.State{
 		Desired: control.DesiredPause,
 		By:      "emergency-pause",
@@ -265,7 +286,6 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 		t.Fatalf("expected generation 2 PAUSE, got %+v", st2)
 	}
 
-	// 4. Update to DRAIN (generation 2 -> 3)
 	st3, err := h.Update(tExpired, 2, control.State{
 		Desired: control.DesiredDrain,
 		By:      "drain-operator",
@@ -277,7 +297,6 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 		t.Fatalf("expected generation 3 DRAIN, got %+v", st3)
 	}
 
-	// 5. Update to STOP (generation 3 -> 4)
 	st4, err := h.Update(tExpired, 3, control.State{
 		Desired: control.DesiredStop,
 		By:      "stop-operator",
@@ -290,9 +309,24 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 	}
 }
 
+func TestUpdate_NonRUNExpiresRefused(t *testing.T) {
+	h, err := control.Open(t.TempDir(), 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	now := time.Now().UTC()
+	exp := now.Add(10 * time.Second)
+	if _, err := h.Update(now, 0, control.State{
+		Desired: control.DesiredStop,
+		By:      "admin",
+		Expires: &exp,
+	}); err == nil {
+		t.Fatal("STOP with expires must be refused")
+	}
+}
+
 func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 30)
+	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -300,7 +334,6 @@ func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
 	now := time.Now().UTC()
 	ctx := context.Background()
 
-	// 1. WithCoordinator on absent state: must fail without executing callback
 	called := false
 	err = h.WithCoordinator(ctx, now, func(st control.State) error {
 		called = true
@@ -313,7 +346,6 @@ func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
 		t.Fatal("callback must not be called on absent state")
 	}
 
-	// 2. State is PAUSE: must refuse authority
 	_, err = h.Update(now, 0, control.State{
 		Desired: control.DesiredPause,
 		By:      "admin",
@@ -337,7 +369,6 @@ func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
 		t.Fatal("callback must not be called when state is PAUSE")
 	}
 
-	// 3. State is RUN but expired: must refuse authority
 	expPast := now.Add(5 * time.Second)
 	_, err = h.Update(now, 1, control.State{
 		Desired: control.DesiredRun,
@@ -364,7 +395,6 @@ func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
 		t.Fatal("callback must not be called when RUN is expired")
 	}
 
-	// 4. Valid unexpired RUN: callback IS called and receives State
 	expFuture := now.Add(20 * time.Second)
 	_, err = h.Update(now, 2, control.State{
 		Desired: control.DesiredRun,
@@ -395,7 +425,7 @@ func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
 
 func TestWithCoordinator_CallbackErrorReconciliation(t *testing.T) {
 	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 30)
+	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -413,16 +443,28 @@ func TestWithCoordinator_CallbackErrorReconciliation(t *testing.T) {
 		t.Fatalf("init update failed: %v", err)
 	}
 
-	// Simulated callback error (e.g. durable STARTING append failed or crashed after append)
+	marker := filepath.Join(tmpDir, "starting.marker")
 	simulatedErr := errors.New("simulated append failure")
 	err = h.WithCoordinator(ctx, now, func(st control.State) error {
+		if werr := os.WriteFile(marker, []byte("STARTING\n"), 0o644); werr != nil {
+			return werr
+		}
 		return simulatedErr
 	})
+	if !errors.Is(err, control.ErrAmbiguous) {
+		t.Fatalf("expected ErrAmbiguous, got %v", err)
+	}
 	if !errors.Is(err, simulatedErr) {
-		t.Fatalf("expected simulated error returned, got %v", err)
+		t.Fatalf("ambiguous error must preserve the cause, got %v", err)
+	}
+	var amb *control.AmbiguousError
+	if !errors.As(err, &amb) {
+		t.Fatalf("expected *AmbiguousError, got %T", err)
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatalf("durable STARTING marker must remain: %v", statErr)
 	}
 
-	// State on disk is not rolled back or mutated
 	loaded, err := h.Load(now)
 	if err != nil {
 		t.Fatalf("load failed: %v", err)
@@ -431,7 +473,6 @@ func TestWithCoordinator_CallbackErrorReconciliation(t *testing.T) {
 		t.Fatalf("state was corrupted or rolled back: %+v", loaded)
 	}
 
-	// Subsequent WithCoordinator call still executes with valid authority
 	secondCallSuccess := false
 	err = h.WithCoordinator(ctx, now, func(st control.State) error {
 		secondCallSuccess = true
@@ -446,8 +487,7 @@ func TestWithCoordinator_CallbackErrorReconciliation(t *testing.T) {
 }
 
 func TestWithCoordinator_LockMutualExclusion(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 30, control.WithLockTimeout(500*time.Millisecond))
+	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -498,16 +538,15 @@ func TestWithCoordinator_LockMutualExclusion(t *testing.T) {
 	}
 }
 
-func TestWriteAck_And_LoadAcks(t *testing.T) {
+func TestWriteAck_And_LoadAck(t *testing.T) {
 	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 30)
+	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
 
 	now := time.Now().UTC()
 
-	// Invalid owner path traversal rejected
 	err = h.WriteAck(now, control.Ack{
 		Generation: 1,
 		Owner:      "../evil",
@@ -518,7 +557,6 @@ func TestWriteAck_And_LoadAcks(t *testing.T) {
 		t.Fatal("expected error for path traversal in ack owner, got nil")
 	}
 
-	// Valid acks for two separate bench owners
 	ack1 := control.Ack{
 		Generation: 1,
 		Owner:      "bench-1",
@@ -541,15 +579,13 @@ func TestWriteAck_And_LoadAcks(t *testing.T) {
 		t.Fatalf("WriteAck 2 failed: %v", err)
 	}
 
-	// Verify separate files exist
-	if _, err := os.Stat(h.AckPath("bench-1")); err != nil {
+	if _, err := os.Stat(filepath.Join(tmpDir, "acks", "bench-1.json")); err != nil {
 		t.Fatalf("ack file for bench-1 does not exist: %v", err)
 	}
-	if _, err := os.Stat(h.AckPath("bench-2")); err != nil {
+	if _, err := os.Stat(filepath.Join(tmpDir, "acks", "bench-2.json")); err != nil {
 		t.Fatalf("ack file for bench-2 does not exist: %v", err)
 	}
 
-	// Load individual ack
 	loadedAck, err := h.LoadAck("bench-1")
 	if err != nil {
 		t.Fatalf("LoadAck failed: %v", err)
@@ -557,67 +593,227 @@ func TestWriteAck_And_LoadAcks(t *testing.T) {
 	if loadedAck.Owner != "bench-1" || loadedAck.Generation != 1 || loadedAck.Desired != control.DesiredRun {
 		t.Fatalf("loaded ack mismatch: %+v", loadedAck)
 	}
-
-	// Load all acks
-	allAcks, err := h.LoadAcks()
-	if err != nil {
-		t.Fatalf("LoadAcks failed: %v", err)
-	}
-	if len(allAcks) != 2 {
-		t.Fatalf("expected 2 acks, got %d", len(allAcks))
-	}
 }
 
-func TestStatusAggregation(t *testing.T) {
+func TestLoadAck_OwnerMustMatchFilename(t *testing.T) {
 	tmpDir := t.TempDir()
-	h, err := control.Open(tmpDir, 30)
+	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
+	now := time.Now().UTC()
+	acks := filepath.Join(tmpDir, "acks")
+	body := fmt.Sprintf(`{
+  "generation": 1,
+  "owner": "other-bench",
+  "bench": "other-bench",
+  "desired": "RUN",
+  "observed": %q
+}
+`, now.Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(acks, "bench-1.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.LoadAck("bench-1")
+	if err == nil {
+		t.Fatal("LoadAck must refuse a file whose JSON owner does not match the filename")
+	}
+	if !errors.Is(err, control.ErrInvalidAck) {
+		t.Fatalf("expected ErrInvalidAck, got %v", err)
+	}
+}
 
+func TestWriteAck_RefusesBenchRebind(t *testing.T) {
+	h, err := control.Open(t.TempDir(), 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := h.WriteAck(now, control.Ack{
+		Generation: 1,
+		Owner:      "mac-studio",
+		Bench:      "mac-studio",
+		Desired:    control.DesiredRun,
+	}); err != nil {
+		t.Fatalf("first WriteAck failed: %v", err)
+	}
+	err = h.WriteAck(now, control.Ack{
+		Generation: 2,
+		Owner:      "mac-studio",
+		Bench:      "other-bench",
+		Desired:    control.DesiredRun,
+	})
+	if err == nil {
+		t.Fatal("WriteAck must preserve the owner-to-bench binding")
+	}
+	loaded, err := h.LoadAck("mac-studio")
+	if err != nil {
+		t.Fatalf("LoadAck after refused rebind: %v", err)
+	}
+	if loaded.Bench != "mac-studio" {
+		t.Fatalf("bench binding was overwritten: %+v", loaded)
+	}
+	if err := h.WriteAck(now, control.Ack{
+		Generation: 2,
+		Owner:      "mac-studio",
+		Bench:      "mac-studio",
+		Desired:    control.DesiredPause,
+	}); err != nil {
+		t.Fatalf("same-bench replacement must be allowed: %v", err)
+	}
+}
+
+func TestLoad_UnknownFieldsRefused(t *testing.T) {
+	tmpDir := t.TempDir()
+	h, err := control.Open(tmpDir, 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
 	now := time.Now().UTC()
 	exp := now.Add(20 * time.Second)
+	body := fmt.Sprintf(`{
+  "generation": 1,
+  "desired": "RUN",
+  "scope": "fleet",
+  "by": "admin",
+  "at": %q,
+  "expires": %q,
+  "extra": true
+}
+`, now.Format(time.RFC3339Nano), exp.Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(tmpDir, "state.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Load(now); err == nil {
+		t.Fatal("Load must refuse unknown JSON fields")
+	}
+}
 
-	_, err = h.Update(now, 0, control.State{
-		Desired: control.DesiredRun,
-		By:      "admin",
-		Expires: &exp,
+func TestLoad_TrailingJSONRefused(t *testing.T) {
+	tmpDir := t.TempDir()
+	h, err := control.Open(tmpDir, 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	now := time.Now().UTC()
+	exp := now.Add(20 * time.Second)
+	body := fmt.Sprintf(`{
+  "generation": 1,
+  "desired": "RUN",
+  "scope": "fleet",
+  "by": "admin",
+  "at": %q,
+  "expires": %q
+}
+{"generation": 99}
+`, now.Format(time.RFC3339Nano), exp.Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(tmpDir, "state.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Load(now); err == nil {
+		t.Fatal("Load must refuse a trailing JSON value")
+	}
+}
+
+func TestLoadAck_UnknownAndTrailingJSONRefused(t *testing.T) {
+	tmpDir := t.TempDir()
+	h, err := control.Open(tmpDir, 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	now := time.Now().UTC()
+	acks := filepath.Join(tmpDir, "acks")
+	unknown := fmt.Sprintf(`{
+  "generation": 1,
+  "owner": "bench-1",
+  "bench": "bench-1",
+  "desired": "RUN",
+  "observed": %q,
+  "extra": true
+}
+`, now.Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(acks, "bench-1.json"), []byte(unknown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.LoadAck("bench-1"); err == nil {
+		t.Fatal("LoadAck must refuse unknown JSON fields")
+	}
+
+	trailing := fmt.Sprintf(`{
+  "generation": 1,
+  "owner": "bench-2",
+  "bench": "bench-2",
+  "desired": "RUN",
+  "observed": %q
+}
+{"generation": 9}
+`, now.Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(acks, "bench-2.json"), []byte(trailing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.LoadAck("bench-2"); err == nil {
+		t.Fatal("LoadAck must refuse a trailing JSON value")
+	}
+}
+
+func TestOpen_SymlinkedControlDirRefused(t *testing.T) {
+	outside := t.TempDir()
+	root := t.TempDir()
+	link := filepath.Join(root, "ctrl")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("this filesystem will not make a symlink: %v", err)
+	}
+	_, err := control.Open(link, 30*time.Second)
+	if err == nil {
+		t.Fatal("Open must refuse a symlinked control directory")
+	}
+	if !errors.Is(err, control.ErrUnsafePath) {
+		t.Fatalf("expected ErrUnsafePath, got %v", err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("Open wrote through the symlink into %s: %v", outside, names(entries))
+	}
+}
+
+func TestWriteAck_SymlinkedAcksDirRefused(t *testing.T) {
+	tmpDir := t.TempDir()
+	h, err := control.Open(tmpDir, 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	outside := t.TempDir()
+	acks := filepath.Join(tmpDir, "acks")
+	if err := os.RemoveAll(acks); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, acks); err != nil {
+		t.Skipf("this filesystem will not make a symlink: %v", err)
+	}
+	err = h.WriteAck(time.Now().UTC(), control.Ack{
+		Generation: 1,
+		Owner:      "bench-1",
+		Bench:      "bench-1",
+		Desired:    control.DesiredRun,
 	})
-	if err != nil {
-		t.Fatalf("init update failed: %v", err)
+	if err == nil {
+		t.Fatal("WriteAck must refuse a symlinked acks directory")
 	}
+	if !errors.Is(err, control.ErrUnsafePath) {
+		t.Fatalf("expected ErrUnsafePath, got %v", err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("WriteAck escaped into %s: %v", outside, names(entries))
+	}
+}
 
-	requiredOwners := []string{"bench-1", "bench-2", "bench-3"}
-
-	// Before any acks written: 0 acked, 3 pending, complete=false
-	status, err := h.Status(now, requiredOwners)
-	if err != nil {
-		t.Fatalf("Status failed: %v", err)
+func names(entries []os.DirEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Name())
 	}
-	if status.Acked != 0 || status.Pending != 3 || status.Complete {
-		t.Fatalf("unexpected status: %+v", status)
-	}
-
-	// bench-1 and bench-2 write matching ack
-	_ = h.WriteAck(now, control.Ack{Generation: 1, Owner: "bench-1", Bench: "bench-1", Desired: control.DesiredRun})
-	_ = h.WriteAck(now, control.Ack{Generation: 1, Owner: "bench-2", Bench: "bench-2", Desired: control.DesiredRun})
-
-	status, err = h.Status(now, requiredOwners)
-	if err != nil {
-		t.Fatalf("Status failed: %v", err)
-	}
-	if status.Acked != 2 || status.Pending != 1 || status.Complete {
-		t.Fatalf("unexpected status after 2 acks: %+v", status)
-	}
-
-	// bench-3 writes matching ack: complete becomes true!
-	_ = h.WriteAck(now, control.Ack{Generation: 1, Owner: "bench-3", Bench: "bench-3", Desired: control.DesiredRun})
-
-	status, err = h.Status(now, requiredOwners)
-	if err != nil {
-		t.Fatalf("Status failed: %v", err)
-	}
-	if status.Acked != 3 || status.Pending != 0 || !status.Complete {
-		t.Fatalf("unexpected status after all acks: %+v", status)
-	}
+	return out
 }

@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
 const lockPoll = 15 * time.Millisecond
 
-// takeCoordinatorLock acquires an exclusive flock on lockPath, waiting up to wait duration
-// or until ctx is cancelled. It returns a release function that releases the lock and closes
-// the underlying file. The release function is safe to call multiple times.
+// takeCoordinatorLock acquires an exclusive holder-lifetime lock on lockPath,
+// waiting up to wait or until ctx is cancelled. The release function is safe
+// to call more than once. The kernel drops the lock when the holder dies.
 func takeCoordinatorLock(ctx context.Context, lockPath string, wait time.Duration) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -38,6 +40,7 @@ func takeCoordinatorLock(ctx context.Context, lockPath string, wait time.Duratio
 			return nil, fmt.Errorf("coordinator lock at %s could not be taken: %w", lockPath, lockErr)
 		}
 		if ok {
+			stampHolder(f)
 			released := false
 			return func() {
 				if released {
@@ -50,8 +53,9 @@ func takeCoordinatorLock(ctx context.Context, lockPath string, wait time.Duratio
 		}
 
 		if !time.Now().Before(deadline) {
+			held := holderPID(lockPath)
 			_ = f.Close()
-			return nil, fmt.Errorf("%w: another coordinator holds %s, waited %s", ErrLockTimeout, lockPath, wait)
+			return nil, fmt.Errorf("%w: another coordinator holds %s (pid %s), waited %s", ErrLockTimeout, lockPath, held, wait)
 		}
 
 		select {
@@ -61,4 +65,38 @@ func takeCoordinatorLock(ctx context.Context, lockPath string, wait time.Duratio
 		case <-time.After(lockPoll):
 		}
 	}
+}
+
+func stampHolder(f *os.File) {
+	line := fmt.Sprintf("pid=%d at=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
+	if err := f.Truncate(0); err != nil {
+		return
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return
+	}
+	_, _ = f.WriteString(line)
+	_ = f.Sync()
+}
+
+func holderPID(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "-"
+	}
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "-"
+	}
+	for _, tok := range strings.Fields(s) {
+		if v, ok := strings.CutPrefix(tok, "pid="); ok {
+			if _, err := strconv.Atoi(v); err == nil {
+				return v
+			}
+		}
+	}
+	if _, err := strconv.Atoi(s); err == nil {
+		return s
+	}
+	return "-"
 }
