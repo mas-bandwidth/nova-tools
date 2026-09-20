@@ -33,10 +33,12 @@ package pulse
 // (internal/fleet), and a bench whose roles lack `bench` is refused BY NAME before any ssh
 // is opened -- exit 2, nothing launched. That is Glenn's lock of 2026-09-18: runner hosts
 // are CI-only, and a card on a machine serving the merge group's shards makes the shard
-// slow, the gate red and the queue stop. The guard is in three places on purpose: the whole
-// bench list is checked before the first tick, and then EVERY capacity read and EVERY launch
-// goes through a wrapper that asks the registry again -- so a bench name that arrives by
-// some other road later still cannot reach a runner host.
+// slow, the gate red and the queue stop. A row that is both runner and bench without the
+// dated allow-shared note is different (#2031): that bench is DISABLED with a named line
+// each tick, and every other bench deals. The guard is in three places on purpose: the
+// whole bench list is checked before the first tick, and then EVERY capacity read and EVERY
+// launch goes through a wrapper that asks the registry again -- so a bench name that arrives
+// by some other road later still cannot reach a runner host.
 //
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
@@ -82,17 +84,49 @@ type Capacity interface {
 // refuseNonBenches holds every named bench against the registry BEFORE the first tick, so
 // a fill naming a runner host launches nothing at all rather than launching what it can and
 // refusing the rest. Every refused name gets its own line: a person who typed two wrong
-// names learns both at once.
+// names learns both at once. A shared-without-note row is not this: fill disables that
+// bench per tick and keeps dealing to its neighbours (#2031).
 func refuseNonBenches(stderr io.Writer, reg *fleet.Registry, benches []string) int {
 	code := 0
 	for _, bench := range benches {
 		var r *fleet.Refusal
 		if err := reg.RequireBench(bench); errors.As(err, &r) {
+			if r.Reason == fleet.ReasonSharedWithoutNote {
+				continue
+			}
 			fmt.Fprintln(stderr, r.Line("FILL"))
 			code = 2
 		}
 	}
 	return code
+}
+
+// dropLockFailed takes the poisoned shared rows out of the deal list so they do not appear
+// as a filling bench. The DISABLED line is how they are named.
+func dropLockFailed(reg *fleet.Registry, benches []string) []string {
+	if len(reg.LockFailed()) == 0 {
+		return benches
+	}
+	failed := make(map[string]bool, len(reg.LockFailed()))
+	for _, m := range reg.LockFailed() {
+		failed[m.Name] = true
+	}
+	var keep []string
+	for _, b := range benches {
+		if !failed[b] {
+			keep = append(keep, b)
+		}
+	}
+	return keep
+}
+
+// printDisabledLock names every row that failed the runner/bench lock, once per tick.
+func printDisabledLock(stderr io.Writer, reg *fleet.Registry) {
+	for _, m := range reg.LockFailed() {
+		r := reg.SharedLockRefusal(m)
+		fmt.Fprintf(stderr, "FILL DISABLED bench=%s reason=%s remedy=%s\n",
+			oneline.Field(r.Name), oneline.Field(r.Reason), oneline.Quote(r.Remedy))
+	}
 }
 
 // guardedCapacity is the capacity seam with the registry in front of it: a capacity probe
@@ -192,16 +226,23 @@ func Fill(in FillInput) int {
 	// registry carries. The pool was a Go literal -- `hulk, vision, space` -- so a bench
 	// certified last night was not filled until someone edited a tool and cut a release.
 	// Now the row IS the enrolment, and the tool holds no fleet name at all.
-	if len(in.Benches) == 0 {
+	named := len(in.Benches) > 0
+	if !named {
 		in.Benches = reg.CertifiedBenchNames()
-		if len(in.Benches) == 0 {
-			return refusal(in.Stderr, "FILL", fmt.Errorf(
-				"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
-				in.Machines))
-		}
 	}
+	in.Benches = dropLockFailed(reg, in.Benches)
 	if code := refuseNonBenches(in.Stderr, reg, in.Benches); code != 0 {
 		return code
+	}
+	if len(in.Benches) == 0 {
+		printDisabledLock(in.Stderr, reg)
+		if named {
+			return refusal(in.Stderr, "FILL", fmt.Errorf(
+				"every named bench is disabled by the runner/bench lock; add `allow-shared=<YYYY-MM-DD> <why>` to the shared row's notes, or name a bench that may take a card"))
+		}
+		return refusal(in.Stderr, "FILL", fmt.Errorf(
+			"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
+			in.Machines))
 	}
 	// Belt and braces: even a bench that passed the list check is asked again at the
 	// moment the card, or the capacity probe, would reach the machine.
@@ -224,6 +265,7 @@ func Fill(in FillInput) int {
 				"no new launches; the live cards are untouched and nothing was killed")
 			return 0
 		}
+		printDisabledLock(in.Stderr, reg)
 		lines, res := fillTick(in, tick)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)

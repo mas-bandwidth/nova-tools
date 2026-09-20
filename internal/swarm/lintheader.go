@@ -51,11 +51,12 @@ import (
 // restating one. When `cardheader.go` lands, the shape rules above should go the same
 // way, with the class test that the two agree in the lane that owns `internal/pulse`.
 //
-// WHAT IS STILL OWED, AND WHY IT IS NOT HERE. Two of Emma's findings ask the lint to
-// check `KIND:` against the kinds table and to refuse `TEST: none` on a gated kind. The
-// kinds table is `internal/pulse/kinds.go`, which SPEC-TOOLWORK.md §5 rule 3 makes the
-// one source of truth and which is not on `dev` either. Writing a second table here to
-// close them would be the same mistake `validGlobs` just undid, so they wait for T06a.
+// KIND: IS THE NAME SET, NOT A SECOND TABLE (#1853). `hygiene.KindDeclared` reads
+// internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
+// already refuse. The gate TABLE -- steps, control, reject tokens -- is still
+// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3) and is not on `dev`; refusing
+// `TEST: none` on a gated kind needs that table, so that half still waits. Writing
+// a second name list here would be the same mistake `validGlobs` just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
@@ -235,7 +236,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		}
 	}
 
-	// 1. KIND: is declared, and not declared empty.
+	// 1. KIND: is declared, not empty, and is a name the toolchain holds.
 	kind := h["KIND"]
 	switch {
 	case !kind.found && stranded["KIND"] > 0:
@@ -245,6 +246,12 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		add("kind-declared", 1, "no KIND: line under the contract line")
 	case kind.value == "":
 		add("kind-declared", kind.line, "KIND: with no kind after it")
+	case !hygiene.KindDeclared(kind.value):
+		// AN UNKNOWN KIND IS NOT A KIND (#1853). The line used to need only a
+		// value, so `KIND: completely-unknown-kind` linted clean and died at
+		// accept. The names are hygiene.Kinds(), the same set `nova-check hygiene
+		// --kind` prints when it refuses.
+		add("kind-declared", kind.line, fmt.Sprintf("KIND: %q is not a kind this toolchain declares; one of: %s", kind.value, strings.Join(hygiene.Kinds(), ", ")))
 	}
 
 	// 2. PATHS: is declared, and every glob is one the gate could use.

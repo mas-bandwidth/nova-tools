@@ -441,6 +441,31 @@ func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
 	}
 }
 
+// #1853.1 A WINDOWS DRIVE LETTER IS AN ABSOLUTE PATH ON EVERY BENCH. The check is
+// lexical (`^[A-Za-z]:`), not filepath.VolumeName, because a card is linted on one
+// bench and run on another.
+func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
+	for _, bad := range []string{`C:/foo/bar`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
+		if err := ValidatePaths([]string{bad}); err == nil {
+			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: a drive letter is absolute", bad)
+		}
+	}
+	if err := ValidatePaths([]string{"internal/hygiene/glob.go"}); err != nil {
+		t.Fatalf("a repo-relative path is clean: %v", err)
+	}
+}
+
+// #1853.4 THE NAME SET IS kinds.txt. A kind the file does not hold is not declared;
+// there is no default kind (SPEC-TOOLWORK.md §5 rule 3).
+func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
+	if KindDeclared("completely-unknown-kind") {
+		t.Fatal("completely-unknown-kind is not in kinds.txt")
+	}
+	if !KindDeclared("fix-red") {
+		t.Fatal("fix-red is a kind this toolchain declares")
+	}
+}
+
 // A check that could not run has found nothing, and must never report clean.
 func TestCheckRefusesRatherThanReportingClean(t *testing.T) {
 	dir := lab(t)
