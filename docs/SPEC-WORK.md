@@ -4249,6 +4249,22 @@ line that runs it rather than a promise:
 | Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` (SPEC-WAKE's third shape) | unproven | unproven | unproven | unproven |
 | a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` | unproven | unproven | unproven | unproven |
 
+**Which harness at the table can a process start for one bounded run.** Measured on the Studio,
+wiring a wake loop per friend (#1519):
+
+| harness | non-interactive run verb | wakeable by a process |
+|---|---|---|
+| Grok Build | `grok -p <prompt>` (also `grok agent`) | yes — proven |
+| Codex | `codex exec <prompt>` | yes (not yet wired on this bench) |
+| OpenCode | `opencode run <message>` | yes in principle; their launcher is retired and the provider key file is absent |
+| Antigravity | **none** | **no** — IDE with no CLI; `/Applications/Antigravity.app/Contents/Resources/bin` holds `language_server` and `webm_encoder` and nothing else, ships no `code`-style launcher |
+| Gemini CLI | **none supported** | **no** — 0.46.0 exits immediately with `IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products`; reasonCode: UNSUPPORTED_CLIENT tierId: free-tier |
+
+Antigravity is an IDE with no CLI: nothing outside the IDE can start one bounded run. Gemini CLI
+0.46.0 now refuses the free tier entirely. So Emma is **NOT WAKEABLE** by machinery today, on either
+seat, and that is a fact about Google's products — it belongs in the table so nobody plans a loop
+for a window that cannot have one.
+
 **The last four columns are the presence facts of rule 3 of the duty-tier amendment (#500), and a
 harness's row is proved by that line's own nova-wake drill** (SPEC-WAKE, replay
 `wake-drill-note-after-turn-wakes-parent`): **process alive**; **beat written**; **delivery
