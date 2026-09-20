@@ -260,7 +260,8 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
 
 (defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
                                 fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp
-                                (take-lock t) (bench nil))
+                                (take-lock t) (bench nil)
+                                max-bytes max-depth max-nodes session)
   (let* ((journal (make-instance 'file-journal
                                  :path (namestring (merge-pathnames path))
                                  :capacity capacity
@@ -283,40 +284,51 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
             (error 'journal-held :path full-path))))
     (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
     (if exists
-        (let ((seq 0))
-          ;; 1. Read and validate entire file read-only. Failure leaves file untouched.
-          (with-open-file (in full-path :direction :input :element-type 'character :external-format :utf-8)
-            (let* ((header (read-header in full-path initial-state-hash))
-                   (hplist (rest header)))
-              (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
-              (when (getf hplist :capacity)
-                (setf (slot-value journal 'capacity) (getf hplist :capacity)))
-              (when (getf hplist :bench)
-                (setf (journal-bench journal) (getf hplist :bench)))
-              ;; A rotated segment's first record continues the chain after the
-              ;; header's copied boundary; a legacy or fresh journal seeds at 0
-              ;; (docs/SPEC-WORK.md:471-482).
-              (let ((boundary (getf hplist :copied-boundary)))
-                (when (and (consp boundary)
-                           (integerp (getf boundary :sequence)))
-                  (setf seq (1- (getf boundary :sequence))))))
-            (loop
-              (let ((frame (read-record-frame in full-path (1+ seq))))
-                (unless frame (return))
-                (incf seq)
-                (let* ((record (getf (rest frame) :record))
-                       (req (getf record :request))
-                       (digest (getf record :digest))
-                       (line (getf record :line))
-                       (rev (getf record :rev)))
-                  (when (and (>= (hash-table-count (journal-records journal)) (journal-capacity journal))
-                             (null (gethash req (journal-records journal))))
-                    (error 'journal-corrupt-data :path full-path
-                           :reason (format nil "journal contains ~D records, exceeding capacity ~D"
-                                           (1+ (hash-table-count (journal-records journal)))
-                                           (journal-capacity journal))))
-                  (setf (gethash req (journal-records journal)) (list digest line rev))
-                  (push req (journal-order-slot journal))))))
+        (let* ((seq 0)
+               (has-bounds (or max-bytes max-depth max-nodes session)))
+          (flet ((parse-stream (in)
+                   (let* ((header (read-header in full-path initial-state-hash))
+                          (hplist (rest header)))
+                     (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
+                     (when (getf hplist :capacity)
+                       (setf (slot-value journal 'capacity) (getf hplist :capacity)))
+                     (when (getf hplist :bench)
+                       (setf (journal-bench journal) (getf hplist :bench)))
+                     ;; A rotated segment's first record continues the chain after the
+                     ;; header's copied boundary; a legacy or fresh journal seeds at 0
+                     ;; (docs/SPEC-WORK.md:471-482).
+                     (let ((boundary (getf hplist :copied-boundary)))
+                       (when (and (consp boundary)
+                                  (integerp (getf boundary :sequence)))
+                         (setf seq (1- (getf boundary :sequence))))))
+                   (loop
+                     (let ((frame (read-record-frame in full-path (1+ seq))))
+                       (unless frame (return))
+                       (incf seq)
+                       (let* ((record (getf (rest frame) :record))
+                              (req (getf record :request))
+                              (digest (getf record :digest))
+                              (line (getf record :line))
+                              (rev (getf record :rev)))
+                         (when (and (>= (hash-table-count (journal-records journal)) (journal-capacity journal))
+                                    (null (gethash req (journal-records journal))))
+                           (error 'journal-corrupt-data :path full-path
+                                  :reason (format nil "journal contains ~D records, exceeding capacity ~D"
+                                                  (1+ (hash-table-count (journal-records journal)))
+                                                  (journal-capacity journal))))
+                         (setf (gethash req (journal-records journal)) (list digest line rev))
+                         (push req (journal-order-slot journal)))))))
+            (if has-bounds
+                (let ((text (read-bounded-file full-path :max-bytes max-bytes
+                                                        :max-depth max-depth
+                                                        :max-nodes max-nodes
+                                                        :session session
+                                                        :require-all nil
+                                                        :signal-error t)))
+                  (with-input-from-string (in text)
+                    (parse-stream in)))
+                (with-open-file (in full-path :direction :input :element-type 'character :external-format :utf-8)
+                  (parse-stream in))))
           (setf (journal-seq journal) seq)
           ;; 2. Reopen for append once validated.
           (let ((out (open full-path :direction :output
@@ -457,46 +469,60 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
         (values t (first record) (second record))
         (values nil nil nil))))
 
-(defun replay-journal (journal target-kernel &key (stop-at-seq nil))
+(defun replay-journal (journal target-kernel &key (stop-at-seq nil) max-bytes max-depth max-nodes session)
   "Replay entries from JOURNAL into TARGET-KERNEL from its current revision.
 TARGET-KERNEL must start at the seed state matching the journal's initial state hash.
 Replays into private working state and installs into TARGET-KERNEL only after the
-requested replay cut completes without error.
+requested replay cut completes without error. Governed by session bounds when supplied (SPEC-WORK.md:839-845).
 Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
-  (let* ((path (journal-path journal))
+  (let* ((path (if (or (stringp journal) (pathnamep journal))
+                   (namestring (merge-pathnames journal))
+                   (journal-path journal)))
          (expected-initial (root-digest (kernel-state target-kernel)))
          (working-state (kernel-state target-kernel))
          (working-next-rev (kernel-next-rev target-kernel))
          (seq 0)
          (record-count 0)
-         (event-count 0))
-    (with-open-file (in path :direction :input :element-type 'character :external-format :utf-8)
-      (let* ((header (read-header in path expected-initial))
-             (boundary (getf (rest header) :copied-boundary)))
-        (when (and (consp boundary)
-                   (integerp (getf boundary :sequence)))
-          (setf seq (1- (getf boundary :sequence)))))
-      (loop
-        (when (and stop-at-seq (>= seq stop-at-seq))
-          (return))
-        (let ((frame (read-record-frame in path (1+ seq))))
-          (unless frame (return))
-          (incf seq)
-          (incf record-count)
-          (let* ((record (getf (rest frame) :record))
-                 (req (getf record :request))
-                 (digest (getf record :digest))
-                 (rev (getf record :rev))
-                 (events (loop for e in (getf record :events)
-                               collect (record-form->event
-                                        e :session-written-p
-                                        (member (getf e :kind) '(:settle :revive :refusal)))))
-                 (envelope (list :request req :digest digest :events events)))
-            (incf *replays*)
-            (incf event-count (length events))
-            (let ((candidate (apply-envelope working-state envelope)))
-              (setf working-state candidate)
-              (setf working-next-rev (max working-next-rev (1+ rev))))))))
+         (event-count 0)
+         (has-bounds (or max-bytes max-depth max-nodes session)))
+    (flet ((do-replay (in)
+             (let* ((header (read-header in path expected-initial))
+                    (boundary (getf (rest header) :copied-boundary)))
+               (when (and (consp boundary)
+                          (integerp (getf boundary :sequence)))
+                 (setf seq (1- (getf boundary :sequence)))))
+             (loop
+               (when (and stop-at-seq (>= seq stop-at-seq))
+                 (return))
+               (let ((frame (read-record-frame in path (1+ seq))))
+                 (unless frame (return))
+                 (incf seq)
+                 (incf record-count)
+                 (let* ((record (getf (rest frame) :record))
+                        (req (getf record :request))
+                        (digest (getf record :digest))
+                        (rev (getf record :rev))
+                        (events (loop for e in (getf record :events)
+                                      collect (record-form->event
+                                               e :session-written-p
+                                               (member (getf e :kind) '(:settle :revive :refusal)))))
+                        (envelope (list :request req :digest digest :events events)))
+                   (incf *replays*)
+                   (incf event-count (length events))
+                   (let ((candidate (apply-envelope working-state envelope)))
+                     (setf working-state candidate)
+                     (setf working-next-rev (max working-next-rev (1+ rev)))))))))
+      (if has-bounds
+          (let ((text (read-bounded-file path :max-bytes max-bytes
+                                              :max-depth max-depth
+                                              :max-nodes max-nodes
+                                              :session session
+                                              :require-all nil
+                                              :signal-error t)))
+            (with-input-from-string (in text)
+              (do-replay in)))
+          (with-open-file (in path :direction :input :element-type 'character :external-format :utf-8)
+            (do-replay in))))
     (setf (kernel-state target-kernel) working-state)
     (setf (kernel-next-rev target-kernel) working-next-rev)
     (values target-kernel event-count record-count)))

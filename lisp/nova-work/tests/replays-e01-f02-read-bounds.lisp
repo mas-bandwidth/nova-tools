@@ -9,6 +9,23 @@
 
 (defvar *bounds-test-counter* 0)
 
+#+sbcl
+(defclass %test-counting-stream (sb-gray:fundamental-binary-input-stream)
+  ((count :initform 0 :accessor %test-counting-stream-count)
+   (limit :initform 1000000 :initarg :limit :accessor %test-counting-stream-limit)))
+
+#+sbcl
+(defmethod cl:stream-element-type ((stream %test-counting-stream))
+  '(unsigned-byte 8))
+
+#+sbcl
+(defmethod sb-gray:stream-read-byte ((stream %test-counting-stream))
+  (if (>= (%test-counting-stream-count stream) (%test-counting-stream-limit stream))
+      :eof
+      (progn
+        (incf (%test-counting-stream-count stream))
+        65)))
+
 (defun test-bounds-temp-dir (name)
   (let* ((base (uiop:default-temporary-directory))
          (dir (merge-pathnames (format nil "nova-work-test-bounds/~A-~D-~D/"
@@ -40,6 +57,42 @@
          (sample-content "((:id \"root\" :type :work-set :parent nil))"))
     (write-state-export source export-dir :id "exp-bounds")
     (write-temp-bounds-file sample-file sample-content)
+
+    ;; 0. Incremental stream reading: reading halts at max-bytes + 1 without consuming the entire stream
+    (let ((s (make-instance '%test-counting-stream)))
+      (multiple-value-bind (octets line code)
+          (read-bounded-octets s :max-bytes 10 :signal-error nil)
+        (ok (null octets) "reading oversized stream succeeded")
+        (check-equal 2 code "oversized stream did not exit 2")
+        (ok (search "--max-bytes" line) "refusal message omits --max-bytes: ~A" line)
+        (check-equal 11 (%test-counting-stream-count s)
+                     (format nil "stream read was not incremental: read ~D bytes instead of 11"
+                             (%test-counting-stream-count s)))))
+
+    (let ((s (make-instance '%test-counting-stream))
+          (signaled nil))
+      (handler-case
+          (read-bounded-octets s :max-bytes 10 :signal-error t)
+        (read-bounds-exceeded (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "stream condition bound")
+          (check-equal 10 (read-bounds-exceeded-limit c) "stream condition limit")
+          (check-equal 11 (read-bounds-exceeded-observed c) "stream condition observed")
+          (ok (search "--max-bytes" (unsupported-input-what c))
+              "unsupported-input-what describes condition: ~A" (unsupported-input-what c))))
+      (ok signaled "read-bounds-exceeded not signaled for stream")
+      (check-equal 11 (%test-counting-stream-count s)
+                   (format nil "stream read was not incremental when signaling: read ~D bytes instead of 11"
+                           (%test-counting-stream-count s))))
+
+    ;; Single-open file reading: incremental bounds enforcement prevents reading beyond bound
+    (let ((growth-file (format nil "~A/growth.sexp" dir)))
+      (write-temp-bounds-file growth-file "123456789012345")
+      (multiple-value-bind (text line code)
+          (read-bounded-file growth-file :max-bytes 10 :max-depth 10 :max-nodes 10 :signal-error nil)
+        (ok (null text) "read-bounded-file exceeded max-bytes")
+        (check-equal 2 code "file overrun did not exit 2")
+        (ok (search "--max-bytes" line) "file overrun refusal omits --max-bytes: ~A" line)))
 
     ;; 1. Missing bounds refuse before parsing finishes with "refusing to guess" (exit 2)
     ;; state-load missing bounds:
@@ -166,6 +219,8 @@
   (let* ((dir (test-bounds-temp-dir "e01-f02-session"))
          (sess (session-start :max-bytes 5000 :max-depth 12 :max-nodes 300))
          (tight-sess (session-start :max-bytes 15 :max-depth 10 :max-nodes 100))
+         (export-dir (format nil "~A/exp-snap/" dir))
+         (snap-dir (format nil "~A/loaded-snap/" dir))
          ;; Five files representing the five session read surfaces:
          (snap-file (write-temp-bounds-file (format nil "~A/snap.sexp" dir)
                                             "((:id \"root\" :type :work-set :parent nil))"))
@@ -174,14 +229,30 @@
          (journal-file (write-temp-bounds-file (format nil "~A/journal.sexp" dir)
                                                "((:kind :node-add :id \"n1\" :type :task))"))
          (cache-file (write-temp-bounds-file (format nil "~A/cache.sexp" dir)
-                                             "(:pointer \"p1\" :subject \"s1\" :resolver \"r1\" :fact :passes :stamp \"2026-09-20T00:00:00Z\")"))
+                                             "(:pointer \"p1\" :subject \"s1\" :resolver \"r1\" :fact :holds :stamp \"2026-09-20T00:00:00Z\")"))
          (bundle-file (write-temp-bounds-file (format nil "~A/bundle.sexp" dir)
                                               "(:bundle-id \"b1\" :requests ())")))
 
-    ;; 1. Session start stores bounds
+    ;; 1. Session start stores bounds and applies defaults when omitted
     (check-equal 5000 (session-max-bytes sess) "session-max-bytes stored")
     (check-equal 12 (session-max-depth sess) "session-max-depth stored")
     (check-equal 300 (session-max-nodes sess) "session-max-nodes stored")
+
+    (let ((default-sess (session-start)))
+      (check-equal *default-session-max-bytes* (session-max-bytes default-sess)
+                   "default session-max-bytes applied")
+      (check-equal *default-session-max-depth* (session-max-depth default-sess)
+                   "default session-max-depth applied")
+      (check-equal *default-session-max-nodes* (session-max-nodes default-sess)
+                   "default session-max-nodes applied")
+      (multiple-value-bind (mb md mn) (session-bounds default-sess)
+        (check-equal *default-session-max-bytes* mb "session-bounds default mb")
+        (check-equal *default-session-max-depth* md "session-bounds default md")
+        (check-equal *default-session-max-nodes* mn "session-bounds default mn"))
+      (multiple-value-bind (mb md mn) (session-bounds nil)
+        (check-equal *default-session-max-bytes* mb "session-bounds nil mb")
+        (check-equal *default-session-max-depth* md "session-bounds nil md")
+        (check-equal *default-session-max-nodes* mn "session-bounds nil mn")))
 
     ;; 2. Five session file types read cleanly under session bounds
     (multiple-value-bind (text line code) (session-read-snapshot sess snap-file)
@@ -278,7 +349,85 @@
       ;; Valid read of loaded snapshot within bounds succeeds:
       (let ((loaded (read-loaded-snapshot snap-dir :max-bytes 100000 :max-depth 10 :max-nodes 100)))
         (ok loaded "read-loaded-snapshot failed within bounds")
-        (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count")))))
+        (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count")))
+
+    ;; 5. Direct verification of real production readers under session bounds
+    ;; A. Journal readers (open-file-journal and replay-journal):
+    (let ((signaled nil))
+      (handler-case
+          (open-file-journal journal-file :session tight-sess)
+        (read-bounds-exceeded (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "open-file-journal bound")))
+      (ok signaled "open-file-journal did not signal read-bounds-exceeded under tight session"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh) :session tight-sess)
+        (read-bounds-exceeded (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "replay-journal bound")))
+      (ok signaled "replay-journal did not signal read-bounds-exceeded under tight session"))
+
+    (let* ((valid-j-path (format nil "~A/valid.journal" dir))
+           (j (open-file-journal valid-j-path :session sess)))
+      (ok j "open-file-journal failed under valid session bounds")
+      (close-file-journal j)
+      (let ((j2 (open-file-journal valid-j-path :session sess)))
+        (ok j2 "reopening valid journal under session bounds failed")
+        (close-file-journal j2)))
+
+    ;; B. Verification cache reader (read-verification-cache):
+    (let ((signaled nil))
+      (handler-case
+          (read-verification-cache cache-file :session tight-sess)
+        (read-bounds-exceeded (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "read-verification-cache bound")))
+      (ok signaled "read-verification-cache did not signal read-bounds-exceeded under tight session"))
+
+    (let ((cache (read-verification-cache cache-file :session sess)))
+      (ok cache "read-verification-cache failed under valid session bounds")
+      (ok (verification-cache-p cache) "read-verification-cache returned valid verification-cache"))
+
+    ;; C. Request bundle readers (read-request-bundle-file and replay-request-bundle):
+    (let ((valid-bundle-file (write-temp-bounds-file
+                              (format nil "~A/valid-bundle.sexp" dir)
+                              "(:request-bundle :base \"base-sha\" :clipped-revision 0 :requests ())")))
+      (let ((bundle (read-request-bundle-file valid-bundle-file :session tight-sess :signal-error nil)))
+        (ok (null bundle) "read-request-bundle-file under tight session succeeded"))
+
+      (let ((signaled nil))
+        (handler-case
+            (read-request-bundle-file valid-bundle-file :session tight-sess :signal-error t)
+          (read-bounds-exceeded (c)
+            (setf signaled t)
+            (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "bundle file bound")))
+        (ok signaled "read-request-bundle-file did not signal read-bounds-exceeded under tight session"))
+
+      (let ((bundle (read-request-bundle-file valid-bundle-file :session sess :signal-error nil)))
+        (ok bundle "read-request-bundle-file failed under valid session bounds"))
+
+      (let ((signaled nil))
+        (handler-case
+            (replay-request-bundle valid-bundle-file (fresh) :session tight-sess)
+          (read-bounds-exceeded (c)
+            (setf signaled t)
+            (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "replay-request-bundle bound")))
+        (ok signaled "replay-request-bundle did not signal read-bounds-exceeded under tight session")))
+
+    ;; D. Snapshot reader under session bounds (read-loaded-snapshot):
+    (let ((signaled nil))
+      (handler-case
+          (read-loaded-snapshot snap-dir :session tight-sess)
+        (read-bounds-exceeded (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "read-loaded-snapshot session bound")))
+      (ok signaled "read-loaded-snapshot did not enforce tight session bounds"))
+
+    (let ((loaded (read-loaded-snapshot snap-dir :session sess)))
+      (ok loaded "read-loaded-snapshot failed under valid session bounds")
+      (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count"))))
 
 ;;; ------------------------------------------------------------------
 ;;; E01-F02-03: Preserve unknown keys and refuse unknown node types

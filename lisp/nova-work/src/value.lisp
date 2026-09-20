@@ -248,38 +248,158 @@ It never calls EVAL or READ, so reader evaluation is disabled by construction."
                    (t (unless in-token (incf nodes) (setf in-token t)))))
     (values peak nodes)))
 
-(defun check-read-bounds (text &key max-bytes max-depth max-nodes (file "input") (require-all nil) (signal-error t))
+(defparameter *default-session-max-bytes* 104857600
+  "Default max-bytes bound when omitted (100MB).")
+
+(defparameter *default-session-max-depth* 64
+  "Default max-depth bound when omitted.")
+
+(defparameter *default-session-max-nodes* 100000
+  "Default max-nodes bound when omitted.")
+
+(defgeneric session-bounds (sess)
+  (:documentation "Return the bounds governing SESS as (values max-bytes max-depth max-nodes)."))
+
+(defmethod session-bounds ((sess t))
+  (values *default-session-max-bytes* *default-session-max-depth* *default-session-max-nodes*))
+
+(defun octets-to-utf8-string (bytes)
+  "Convert a byte vector into a UTF-8 string."
+  #+sbcl (sb-ext:octets-to-string bytes :external-format :utf-8)
+  #-sbcl (map 'string #'code-char bytes))
+
+(defun %read-bounded-octets-from-stream (stream &key max-bytes (file "input") (signal-error t))
+  "Incrementally read octets from STREAM up to MAX-BYTES without reading or allocating beyond limit + 1."
+  (let* ((chunk-size 8192)
+         (buf (make-array chunk-size :element-type '(unsigned-byte 8)))
+         (total 0)
+         (acc (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0)))
+    (loop
+      (let ((to-read chunk-size))
+        (when max-bytes
+          (setf to-read (min chunk-size (- (+ max-bytes 1) total))))
+        (when (and max-bytes (<= to-read 0))
+          (if signal-error
+              (error 'read-bounds-exceeded :file file :bound "--max-bytes" :limit max-bytes :observed total)
+              (return-from %read-bounded-octets-from-stream
+                (values nil (format nil "read ~A: ~D bytes exceeds --max-bytes ~D" file total max-bytes) 2))))
+        (let ((n (read-sequence buf stream :end to-read)))
+          (when (zerop n)
+            (return))
+          (let ((new-total (+ total n)))
+            (when (and max-bytes (> new-total max-bytes))
+              (if signal-error
+                  (error 'read-bounds-exceeded :file file :bound "--max-bytes" :limit max-bytes :observed new-total)
+                  (return-from %read-bounded-octets-from-stream
+                    (values nil (format nil "read ~A: ~D bytes exceeds --max-bytes ~D" file new-total max-bytes) 2))))
+            (let ((old-len (length acc)))
+              (adjust-array acc (+ old-len n) :fill-pointer (+ old-len n))
+              (replace acc buf :start1 old-len :start2 0 :end2 n))
+            (setf total new-total)))))
+    (values acc (format nil "READ OK file=~A bytes=~D" file total) 0)))
+
+(defun read-bounded-octets (source &key max-bytes (file nil) (signal-error t))
+  "Read octets from SOURCE (stream, pathname, or string path) bounded by MAX-BYTES.
+Enforces MAX-BYTES incrementally during read: as soon as MAX-BYTES + 1 bytes are
+read, stops reading immediately and refuses, avoiding unbounded allocation.
+Returns (values octets line exit-code)."
+  (let ((file-str (or file
+                      (cond ((stringp source) (namestring (merge-pathnames source)))
+                            ((pathnamep source) (namestring (merge-pathnames source)))
+                            (t "stream")))))
+    (if (streamp source)
+        (%read-bounded-octets-from-stream source :max-bytes max-bytes :file file-str :signal-error signal-error)
+        (progn
+          (unless (probe-file source)
+            (if signal-error
+                (error 'unsupported-input :what (format nil "file not found: ~A" file-str))
+                (return-from read-bounded-octets (values nil (format nil "file not found: ~A" file-str) 2))))
+          (with-open-file (in source :direction :input :element-type '(unsigned-byte 8))
+            (%read-bounded-octets-from-stream in :max-bytes max-bytes :file file-str :signal-error signal-error))))))
+
+(defun read-bounded-file (source &key max-bytes max-depth max-nodes session (require-all t) (signal-error t))
+  "Read a file under uniform read bounds: max-bytes, max-depth, and max-nodes.
+If SESSION is supplied, its bounds govern the read (SPEC-WORK.md:839-845).
+If REQUIRE-ALL is true and session is omitted, missing bounds refuse exit 2 ('refusing to guess').
+If any bound is exceeded, refuses exit 2 naming which bound and which file, never truncated.
+Reads incrementally in a single open descriptor, preventing check/read races."
+  (multiple-value-bind (sess-mb sess-md sess-mn)
+      (if session (session-bounds session) (values nil nil nil))
+    (let* ((mb (or max-bytes sess-mb (and (null require-all) *default-session-max-bytes*)))
+           (md (or max-depth sess-md (and (null require-all) *default-session-max-depth*)))
+           (mn (or max-nodes sess-mn (and (null require-all) *default-session-max-nodes*)))
+           (file-str (cond ((stringp source) (namestring (merge-pathnames source)))
+                           ((pathnamep source) (namestring (merge-pathnames source)))
+                           (t "stream"))))
+      (when (and require-all (null session))
+        (unless max-bytes
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-bytes")
+              (return-from read-bounded-file (values nil "missing --max-bytes: refusing to guess" 2))))
+        (unless max-depth
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-depth")
+              (return-from read-bounded-file (values nil "missing --max-depth: refusing to guess" 2))))
+        (unless max-nodes
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-nodes")
+              (return-from read-bounded-file (values nil "missing --max-nodes: refusing to guess" 2)))))
+      (multiple-value-bind (octets line code)
+          (read-bounded-octets source :max-bytes mb :file file-str :signal-error signal-error)
+        (unless octets
+          (return-from read-bounded-file (values nil line code)))
+        (let ((text (octets-to-utf8-string octets)))
+          (multiple-value-bind (depth nodes) (intake-scan text)
+            (when (and md (> depth md))
+              (if signal-error
+                  (error 'read-bounds-exceeded :file file-str :bound "--max-depth" :limit md :observed depth)
+                  (return-from read-bounded-file
+                    (values nil (format nil "read ~A: depth ~D exceeds --max-depth ~D" file-str depth md) 2))))
+            (when (and mn (> nodes mn))
+              (if signal-error
+                  (error 'read-bounds-exceeded :file file-str :bound "--max-nodes" :limit mn :observed nodes)
+                  (return-from read-bounded-file
+                    (values nil (format nil "read ~A: nodes ~D exceeds --max-nodes ~D" file-str nodes mn) 2)))))
+          (values text (format nil "READ OK file=~A bytes=~D" file-str (length octets)) 0))))))
+
+(defun check-read-bounds (text &key max-bytes max-depth max-nodes session (file "input") (require-all nil) (signal-error t))
   "Check that TEXT obeys max-bytes, max-depth, and max-nodes.
+When SESSION is supplied, its bounds govern the check.
 When REQUIRE-ALL is true, missing bounds refuse with 'refusing to guess'.
 When bounds are exceeded, refuse naming which bound and which file (SPEC-WORK.md:837-845)."
-  (when require-all
-    (unless max-bytes
-      (if signal-error
-          (error 'missing-read-bounds :bound "--max-bytes")
-          (return-from check-read-bounds (values nil "missing --max-bytes: refusing to guess" 2))))
-    (unless max-depth
-      (if signal-error
-          (error 'missing-read-bounds :bound "--max-depth")
-          (return-from check-read-bounds (values nil "missing --max-depth: refusing to guess" 2))))
-    (unless max-nodes
-      (if signal-error
-          (error 'missing-read-bounds :bound "--max-nodes")
-          (return-from check-read-bounds (values nil "missing --max-nodes: refusing to guess" 2)))))
-  (let ((byte-count (utf8-bytes-up-to text (length text))))
-    (when (and max-bytes (> byte-count max-bytes))
-      (if signal-error
-          (error 'read-bounds-exceeded :file file :bound "--max-bytes" :limit max-bytes :observed byte-count)
-          (return-from check-read-bounds
-            (values nil (format nil "read ~A: ~D bytes exceeds --max-bytes ~D" file byte-count max-bytes) 2)))))
-  (multiple-value-bind (depth nodes) (intake-scan text)
-    (when (and max-depth (> depth max-depth))
-      (if signal-error
-          (error 'read-bounds-exceeded :file file :bound "--max-depth" :limit max-depth :observed depth)
-          (return-from check-read-bounds
-            (values nil (format nil "read ~A: depth ~D exceeds --max-depth ~D" file depth max-depth) 2))))
-    (when (and max-nodes (> nodes max-nodes))
-      (if signal-error
-          (error 'read-bounds-exceeded :file file :bound "--max-nodes" :limit max-nodes :observed nodes)
-          (return-from check-read-bounds
-            (values nil (format nil "read ~A: nodes ~D exceeds --max-nodes ~D" file nodes max-nodes) 2)))))
-  (values t (format nil "BOUNDS OK file=~A" file) 0))
+  (multiple-value-bind (sess-mb sess-md sess-mn)
+      (if session (session-bounds session) (values nil nil nil))
+    (let ((mb (or max-bytes sess-mb))
+          (md (or max-depth sess-md))
+          (mn (or max-nodes sess-mn)))
+      (when (and require-all (null session))
+        (unless max-bytes
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-bytes")
+              (return-from check-read-bounds (values nil "missing --max-bytes: refusing to guess" 2))))
+        (unless max-depth
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-depth")
+              (return-from check-read-bounds (values nil "missing --max-depth: refusing to guess" 2))))
+        (unless max-nodes
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-nodes")
+              (return-from check-read-bounds (values nil "missing --max-nodes: refusing to guess" 2)))))
+      (let ((byte-count (utf8-bytes-up-to text (length text))))
+        (when (and mb (> byte-count mb))
+          (if signal-error
+              (error 'read-bounds-exceeded :file file :bound "--max-bytes" :limit mb :observed byte-count)
+              (return-from check-read-bounds
+                (values nil (format nil "read ~A: ~D bytes exceeds --max-bytes ~D" file byte-count mb) 2)))))
+      (multiple-value-bind (depth nodes) (intake-scan text)
+        (when (and md (> depth md))
+          (if signal-error
+              (error 'read-bounds-exceeded :file file :bound "--max-depth" :limit md :observed depth)
+              (return-from check-read-bounds
+                (values nil (format nil "read ~A: depth ~D exceeds --max-depth ~D" file depth md) 2))))
+        (when (and mn (> nodes mn))
+          (if signal-error
+              (error 'read-bounds-exceeded :file file :bound "--max-nodes" :limit mn :observed nodes)
+              (return-from check-read-bounds
+                (values nil (format nil "read ~A: nodes ~D exceeds --max-nodes ~D" file nodes mn) 2)))))
+      (values t (format nil "BOUNDS OK file=~A" file) 0))))

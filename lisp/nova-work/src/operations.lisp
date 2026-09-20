@@ -1743,12 +1743,20 @@ holder-only release: the coordinator never signs for a holder
 written at, the clipped revision its requests expect, and the ordered requests."
   base clipped-revision requests)
 
-(defun read-request-bundle (text)
+(defun read-request-bundle (text &key session max-bytes max-depth max-nodes)
   "Read one restricted s-expression request bundle. The bundle is
 `(:request-bundle :base <sha> :clipped-revision <n> :requests (<request> ...))`
 where each request is a plist carrying `:verb`, `:node`, `:by`, `:request`,
 `:expect` and the verb's own fields. A malformed or absent boundary refuses
-rather than being guessed."
+rather than being guessed.
+Bounds from session or explicit arguments are enforced before parsing finishes (SPEC-WORK.md:839-845)."
+  (when (or session max-bytes max-depth max-nodes)
+    (check-read-bounds text :session session
+                            :max-bytes max-bytes
+                            :max-depth max-depth
+                            :max-nodes max-nodes
+                            :file "bundle"
+                            :signal-error t))
   (let ((form (read-restricted text)))
     (unless (and (consp form) (eq (first form) :request-bundle))
       (error 'unsupported-input :what "not a request bundle"))

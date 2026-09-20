@@ -1162,11 +1162,19 @@ payload (SPEC-WORK.md:2256-2262, :423-425)."
   "The canonical bytes a bundle is written and read as."
   (canonical-string (request-bundle-form bundle)))
 
-(defun read-request-bundle (text)
+(defun read-request-bundle (text &key session max-bytes max-depth max-nodes)
   "Read one restricted s-expression request bundle. The bundle is
 `(:request-bundle :base <sha> :clipped-revision <n> :requests (<request> ...))`
 where each request is a plist carrying `:request` and the verb's own fields. A
-malformed or absent boundary refuses rather than being guessed."
+malformed or absent boundary refuses rather than being guessed.
+Bounds from session or explicit arguments are enforced before parsing finishes (SPEC-WORK.md:839-845)."
+  (when (or session max-bytes max-depth max-nodes)
+    (check-read-bounds text :session session
+                            :max-bytes max-bytes
+                            :max-depth max-depth
+                            :max-nodes max-nodes
+                            :file "bundle"
+                            :signal-error t))
   (let ((form (read-restricted text)))
     (unless (and (consp form) (eq (first form) :request-bundle))
       (error 'unsupported-input :what "not a request bundle"))
@@ -1186,6 +1194,20 @@ malformed or absent boundary refuses rather than being guessed."
         (unless (getf request :request)
           (error 'unsupported-input :what "a bundle request carries no :request id")))
       (make-request-bundle :base base :clipped-revision clipped :requests requests))))
+
+(defun read-request-bundle-file (path &key session max-bytes max-depth max-nodes (signal-error t))
+  "Read a request bundle from PATH governed by SESSION bounds or explicit bounds (SPEC-WORK.md:839-845)."
+  (let ((text (read-bounded-file path :session session
+                                      :max-bytes max-bytes
+                                      :max-depth max-depth
+                                      :max-nodes max-nodes
+                                      :require-all nil
+                                      :signal-error signal-error)))
+    (when text
+      (read-request-bundle text :session session
+                                :max-bytes max-bytes
+                                :max-depth max-depth
+                                :max-nodes max-nodes))))
 
 ;;; ------------------------------------------------------------------
 ;;; `session export`: read the accepted journal, write the bundle.
@@ -1354,14 +1376,27 @@ EXIT): one verdict line per request, exit 0 only when every one applied."
         (when (plusp code) (setf exit 1))))
     (values (zerop exit) (nreverse lines) exit)))
 
-(defun replay-request-bundle (text target-kernel)
+(defun replay-request-bundle (source target-kernel &key session max-bytes max-depth max-nodes)
   "`session replay --from` against a bare TARGET-KERNEL: apply the bundle
-TEXT's requests one at a time, validating each fresh. The bundle is one ordered
+SOURCE's requests one at a time, validating each fresh. SOURCE may be bundle
+text or a pathname/filename to read under session bounds. The bundle is one ordered
 sequence from one session and every request carries the same clipped revision,
 so the check is against the revision the target started at -- a target that
 moved independently refuses the request `stale` and applies nothing. Answers
 (values LINES APPLIED)."
-  (let* ((bundle (read-request-bundle text))
+  (let* ((text (if (and (or (stringp source) (pathnamep source))
+                        (probe-file source))
+                   (read-bounded-file source :session session
+                                             :max-bytes max-bytes
+                                             :max-depth max-depth
+                                             :max-nodes max-nodes
+                                             :require-all nil
+                                             :signal-error t)
+                   source))
+         (bundle (read-request-bundle text :session session
+                                           :max-bytes max-bytes
+                                           :max-depth max-depth
+                                           :max-nodes max-nodes))
          (clipped (request-bundle-clipped-revision bundle))
          (requests (request-bundle-requests bundle))
          (start (state-revision (kernel-state target-kernel)))

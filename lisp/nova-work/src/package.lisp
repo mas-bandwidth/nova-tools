@@ -188,10 +188,17 @@
     #:session-submit
     #:session-check-admission
     #:session-reconfirm
+    #:*default-session-max-bytes*
+    #:*default-session-max-depth*
+    #:*default-session-max-nodes*
+    #:session-bounds
     #:session-max-bytes
     #:session-max-depth
     #:session-max-nodes
+    #:octets-to-utf8-string
+    #:read-bounded-octets
     #:read-bounded-file
+    #:read-request-bundle-file
     #:session-read-file
     #:session-read-snapshot
     #:session-read-archive

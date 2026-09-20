@@ -224,15 +224,11 @@ existing destination is never reused (SPEC-WORK.md:3275-3278)."
   #-sbcl
   (error 'not-implemented))
 
-(defun %state-load-read-octets (path)
-  (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
-    (let ((bytes (make-array (file-length in) :element-type '(unsigned-byte 8))))
-      (read-sequence bytes in)
-      bytes)))
+(defun %state-load-read-octets (path &key max-bytes)
+  (read-bounded-octets path :max-bytes max-bytes :signal-error t))
 
 (defun %state-load-octets-string (bytes)
-  #+sbcl (sb-ext:octets-to-string bytes :external-format :utf-8)
-  #-sbcl (map 'string #'code-char bytes))
+  (octets-to-utf8-string bytes))
 
 (defun %state-load-write-string (path string)
   (with-open-file (out path :direction :output :if-exists :supersede
@@ -292,133 +288,151 @@ export writer the isolated load reads (seam: write-state-export); the resident
       (values manifest (sha256-hex manifest-bytes)
               (namestring (merge-pathnames (getf member :path) directory))))))
 
-(defun state-load (&key from into max-bytes max-depth max-nodes)
+(defun state-load (&key from into max-bytes max-depth max-nodes session)
   "The isolated read-only load (SPEC-WORK.md:3283-3299). FROM is the export
 directory, INTO the new snapshot directory. Verifies and materialises one
 exclusively created directory in the snapshot and cache schemas, then answers
 (values snapshot line); every refusal answers (values nil refusal)."
   (macrolet ((refuse (fmt &rest args)
                `(return-from state-load (values nil (format nil "LOAD FAIL: ~?" ,fmt (list ,@args)) 2))))
-    (unless max-bytes (refuse "missing --max-bytes: refusing to guess"))
-    (unless max-depth (refuse "missing --max-depth: refusing to guess"))
-    (unless max-nodes (refuse "missing --max-nodes: refusing to guess"))
-    (when (and into (probe-file into))
-      (refuse "destination ~A exists" into))
-    (unless (and from (probe-file from)
-                 (ignore-errors
-                   #+sbcl (sb-posix:s-isdir
-                           (sb-posix:stat-mode (sb-posix:stat (namestring from))))
-                   #-sbcl t))
-      (refuse "no export directory ~A" from))
-    (let ((manifest-path (%state-load-join from "MANIFEST.sexp")))
-      (unless (probe-file manifest-path)
-        (refuse "no MANIFEST.sexp in ~A" from))
-      (let* ((manifest-octets (%state-load-read-octets manifest-path))
-             (manifest-hash (sha256-hex manifest-octets))
-             (manifest (handler-case (read-restricted (%state-load-octets-string manifest-octets))
-                         (restricted-data-violation ()
-                           (refuse "corrupt S-expression")))))
-        (unless (equal (getf manifest :version) *state-export-manifest-version*)
-          (refuse "unsupported manifest version ~A" (getf manifest :version)))
-        (let ((schema (getf manifest :schema)))
-          (unless (and (equal (getf schema :id) *state-export-schema-id*)
-                       (equal (getf schema :sha256) (sha256-hex *state-export-schema-id*)))
-            (refuse "schema mismatch: ~A" (getf schema :id))))
-        (let ((rev (getf (getf manifest :captured) :revision))
-              (members (getf manifest :members))
-              (seen '())
-              (total (length manifest-octets))
-              (root-bytes nil)
-              (root-ok nil))
-          (unless (and (listp members) members)
-            (refuse "missing mandatory member the member set"))
-          (when (and max-nodes (> (length members) max-nodes))
-            (refuse "node bound ~D exceeds --max-nodes" (length members)))
-          (unless (integerp rev) (refuse "captured revision"))
-          (dolist (m members)
-            (let ((path (getf m :path)))
-              (unless (%state-load-clean-path-p path)
-                (refuse "path escape ~A" path))
-              (when (member path seen :test #'string=)
-                (refuse "duplicate member ~A" path))
-              (push path seen)
-              (when (and max-depth (> (1+ (count #\/ path)) max-depth))
-                (refuse "depth bound ~A exceeds --max-depth" path))
-              (let ((full (%state-load-join from path)))
-                (unless (probe-file full)
-                  (refuse "missing mandatory member ~A" path))
-                #+sbcl
-                (when (sb-posix:s-islnk
-                       (sb-posix:stat-mode (sb-posix:lstat (namestring full))))
-                  (refuse "symlink member ~A" path))
-                (let ((octets (%state-load-read-octets full)))
-                  (unless (= (length octets) (getf m :bytes))
-                    (refuse "member ~A byte count ~D is not ~D"
-                            path (length octets) (getf m :bytes)))
-                  (unless (equal (sha256-hex octets) (getf m :sha256))
-                    (refuse "changed digest for member ~A" path))
-                  (incf total (length octets))
-                  (when (equal (getf m :kind) :state-root)
-                    (setf root-bytes octets root-ok t))))))
-          (when (and max-bytes (> total max-bytes))
-            (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total max-bytes))
-          (unless root-ok
-            (refuse "missing mandatory member state-root"))
-          ;; Closure: rebuild the model from the stored bytes. A dangling
-          ;; internal reference or a corrupt member refuses; current state is
-          ;; never substituted (SPEC-WORK.md:3251-3270).
-          (let ((state (handler-case
-                           (reconstruct-state (%state-load-octets-string root-bytes))
-                         (unsupported-input (c)
-                           (refuse "dangling internal reference: ~A" (unsupported-input-what c)))
-                         (error () (refuse "corrupt S-expression")))))
-            ;; Materialise: stage in a private sibling, then commit once.
-            (let* ((target (string-right-trim "/" (namestring into)))
-                   (staging (format nil "~A.staging-~D" target (incf *state-load-staging-counter*)))
-                   (snapshot-bytes (canonical-string (state-canonical-form state)))
-                   (cache (list :schema *state-export-schema-id*
-                                :state-sha256 (sha256-hex snapshot-bytes)))
-                   (snapshot-path (%state-load-join into "snapshot.sexp"))
-                   (cache-path (%state-load-join into "cache.sexp")))
-              (%state-load-mkdir staging)
-              (%state-load-write-string (%state-load-join staging "snapshot.sexp") snapshot-bytes)
-              (%state-load-write-string (%state-load-join staging "cache.sexp")
-                                        (canonical-string cache))
-              #+sbcl (sb-posix:rename staging target)
-              (isolation-write into)
-              (values (make-snapshot :state state :revision (state-revision state)
-                                     :directory target :cache cache-path
-                                     :manifest-hash manifest-hash)
-                      (format nil "LOAD OK rev=~D manifest=~A snapshot=~A cache=~A"
-                              rev manifest-hash snapshot-path cache-path)
-                      0))))))))
+    (multiple-value-bind (sess-mb sess-md sess-mn)
+        (if session (session-bounds session) (values nil nil nil))
+      (let ((mb (or max-bytes sess-mb))
+            (md (or max-depth sess-md))
+            (mn (or max-nodes sess-mn)))
+        (unless mb (refuse "missing --max-bytes: refusing to guess"))
+        (unless md (refuse "missing --max-depth: refusing to guess"))
+        (unless mn (refuse "missing --max-nodes: refusing to guess"))
+        (when (and into (probe-file into))
+          (refuse "destination ~A exists" into))
+        (unless (and from (probe-file from)
+                     (ignore-errors
+                       #+sbcl (sb-posix:s-isdir
+                               (sb-posix:stat-mode (sb-posix:stat (namestring from))))
+                       #-sbcl t))
+          (refuse "no export directory ~A" from))
+        (let ((manifest-path (%state-load-join from "MANIFEST.sexp")))
+          (unless (probe-file manifest-path)
+            (refuse "no MANIFEST.sexp in ~A" from))
+          (multiple-value-bind (manifest-octets m-line m-code)
+              (read-bounded-octets manifest-path :max-bytes mb :signal-error nil)
+            (unless manifest-octets
+              (return-from state-load
+                (values nil (format nil "LOAD FAIL: output overrun: ~A" m-line) (or m-code 2))))
+            (let* ((manifest-hash (sha256-hex manifest-octets))
+                   (manifest (handler-case (read-restricted (%state-load-octets-string manifest-octets))
+                               (restricted-data-violation ()
+                                 (refuse "corrupt S-expression")))))
+              (unless (equal (getf manifest :version) *state-export-manifest-version*)
+                (refuse "unsupported manifest version ~A" (getf manifest :version)))
+              (let ((schema (getf manifest :schema)))
+                (unless (and (equal (getf schema :id) *state-export-schema-id*)
+                             (equal (getf schema :sha256) (sha256-hex *state-export-schema-id*)))
+                  (refuse "schema mismatch: ~A" (getf schema :id))))
+              (let ((rev (getf (getf manifest :captured) :revision))
+                    (members (getf manifest :members))
+                    (seen '())
+                    (total (length manifest-octets))
+                    (root-bytes nil)
+                    (root-ok nil))
+                (unless (and (listp members) members)
+                  (refuse "missing mandatory member the member set"))
+                (when (and mn (> (length members) mn))
+                  (refuse "node bound ~D exceeds --max-nodes" (length members)))
+                (unless (integerp rev) (refuse "captured revision"))
+                (dolist (m members)
+                  (let ((path (getf m :path)))
+                    (unless (%state-load-clean-path-p path)
+                      (refuse "path escape ~A" path))
+                    (when (member path seen :test #'string=)
+                      (refuse "duplicate member ~A" path))
+                    (push path seen)
+                    (when (and md (> (1+ (count #\/ path)) md))
+                      (refuse "depth bound ~A exceeds --max-depth" path))
+                    (let ((full (%state-load-join from path)))
+                      (unless (probe-file full)
+                        (refuse "missing mandatory member ~A" path))
+                      #+sbcl
+                      (when (sb-posix:s-islnk
+                             (sb-posix:stat-mode (sb-posix:lstat (namestring full))))
+                        (refuse "symlink member ~A" path))
+                      (let ((member-max (and mb (- mb total))))
+                        (when (and member-max (minusp member-max))
+                          (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
+                        (multiple-value-bind (octets mem-line mem-code)
+                            (read-bounded-octets full :max-bytes member-max :signal-error nil)
+                          (unless octets
+                            (return-from state-load
+                              (values nil (format nil "LOAD FAIL: output overrun: ~A" mem-line) (or mem-code 2))))
+                          (unless (= (length octets) (getf m :bytes))
+                            (refuse "member ~A byte count ~D is not ~D"
+                                    path (length octets) (getf m :bytes)))
+                          (unless (equal (sha256-hex octets) (getf m :sha256))
+                            (refuse "changed digest for member ~A" path))
+                          (incf total (length octets))
+                          (when (and mb (> total mb))
+                            (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
+                          (when (equal (getf m :kind) :state-root)
+                            (setf root-bytes octets root-ok t)))))))
+                (when (and mb (> total mb))
+                  (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
+                (unless root-ok
+                  (refuse "missing mandatory member state-root"))
+                ;; Closure: rebuild the model from the stored bytes.
+                (let ((state (handler-case
+                                 (reconstruct-state (%state-load-octets-string root-bytes))
+                               (unsupported-input (c)
+                                 (refuse "dangling internal reference: ~A" (unsupported-input-what c)))
+                               (error () (refuse "corrupt S-expression")))))
+                  ;; Materialise: stage in a private sibling, then commit once.
+                  (let* ((target (string-right-trim "/" (namestring into)))
+                         (staging (format nil "~A.staging-~D" target (incf *state-load-staging-counter*)))
+                         (snapshot-bytes (canonical-string (state-canonical-form state)))
+                         (cache (list :schema *state-export-schema-id*
+                                      :state-sha256 (sha256-hex snapshot-bytes)))
+                         (snapshot-path (%state-load-join into "snapshot.sexp"))
+                         (cache-path (%state-load-join into "cache.sexp")))
+                    (%state-load-mkdir staging)
+                    (%state-load-write-string (%state-load-join staging "snapshot.sexp") snapshot-bytes)
+                    (%state-load-write-string (%state-load-join staging "cache.sexp")
+                                              (canonical-string cache))
+                    #+sbcl (sb-posix:rename staging target)
+                    (isolation-write into)
+                    (values (make-snapshot :state state :revision rev
+                                           :directory target :cache cache-path
+                                           :manifest-hash manifest-hash)
+                            (format nil "LOAD OK rev=~D manifest=~A snapshot=~A cache=~A"
+                                    rev manifest-hash snapshot-path cache-path)
+                            0)))))))))))
 
-(defun read-loaded-snapshot (directory &key cache max-bytes max-depth max-nodes)
+(defun read-loaded-snapshot (directory &key cache max-bytes max-depth max-nodes session)
   "Read a snapshot materialised by `state load` through a fresh reader that
 rebuilds the model from the stored bytes and checks the cache identity, rather
 than copying an unchecked archive (SPEC-WORK.md:3291-3293).
 Under --snapshot the reader's own three bounds govern the snapshot and the cache alike
 (SPEC-WORK.md:843-845)."
-  (let* ((snap-path (%state-load-join directory "snapshot.sexp"))
-         (snapshot-bytes (%state-load-octets-string (%state-load-read-octets snap-path)))
-         (cache-path (or cache (%state-load-join directory "cache.sexp")))
-         (cache-raw (%state-load-octets-string (%state-load-read-octets cache-path))))
-    (when (or max-bytes max-depth max-nodes)
-      (check-read-bounds snapshot-bytes :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes
-                                        :file snap-path :signal-error t)
-      (check-read-bounds cache-raw :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes
-                                   :file cache-path :signal-error t))
-    (let ((cache-form (read-restricted cache-raw)))
-      (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
-        (error 'unsupported-input :what "the cache does not match the snapshot"))
-      (let ((state (reconstruct-state snapshot-bytes
-                                      :max-bytes max-bytes
-                                      :max-depth max-depth
-                                      :max-nodes max-nodes)))
-        (make-snapshot :state state :revision (state-revision state)
-                       :directory (string-right-trim "/" (namestring directory))
-                       :cache cache-path
-                       :manifest-hash nil)))))
+  (multiple-value-bind (sess-mb sess-md sess-mn)
+      (if session (session-bounds session) (values nil nil nil))
+    (let* ((mb (or max-bytes sess-mb))
+           (md (or max-depth sess-md))
+           (mn (or max-nodes sess-mn))
+           (snap-path (%state-load-join directory "snapshot.sexp"))
+           (cache-path (or cache (%state-load-join directory "cache.sexp")))
+           (snapshot-bytes (read-bounded-file snap-path :max-bytes mb :max-depth md :max-nodes mn
+                                                        :require-all nil :signal-error t))
+           (cache-raw (read-bounded-file cache-path :max-bytes mb :max-depth md :max-nodes mn
+                                                    :require-all nil :signal-error t)))
+      (let ((cache-form (read-restricted cache-raw)))
+        (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
+          (error 'unsupported-input :what "the cache does not match the snapshot"))
+        (let ((state (reconstruct-state snapshot-bytes
+                                        :max-bytes mb
+                                        :max-depth md
+                                        :max-nodes mn)))
+          (make-snapshot :state state :revision (state-revision state)
+                         :directory (string-right-trim "/" (namestring directory))
+                         :cache cache-path
+                         :manifest-hash nil))))))
 
 (defun snapshot-query (snap)
   "The loaded snapshot answers `query --snapshot`; nothing is reloaded."

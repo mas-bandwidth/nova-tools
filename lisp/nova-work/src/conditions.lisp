@@ -75,11 +75,28 @@
                      (read-bounds-exceeded-limit c)
                      (read-bounds-exceeded-observed c)))))
 
+(defmethod unsupported-input-what ((c read-bounds-exceeded))
+  (if (and (slot-boundp c 'what) (slot-value c 'what))
+      (slot-value c 'what)
+      (format nil "read ~A bound ~A exceeded: limit ~D observed ~D"
+              (if (slot-boundp c 'file) (read-bounds-exceeded-file c) "file")
+              (if (slot-boundp c 'bound) (read-bounds-exceeded-bound c) "bound")
+              (if (slot-boundp c 'limit) (read-bounds-exceeded-limit c) 0)
+              (if (slot-boundp c 'observed) (read-bounds-exceeded-observed c) 0))))
+
 (define-condition missing-read-bounds (unsupported-input)
   ((bound :initarg :bound :initform nil :reader missing-read-bounds-bound))
   (:report (lambda (c s)
              (format s "missing ~A: refusing to guess"
                      (or (missing-read-bounds-bound c) "bound")))))
+
+(defmethod unsupported-input-what ((c missing-read-bounds))
+  (if (and (slot-boundp c 'what) (slot-value c 'what))
+      (slot-value c 'what)
+      (format nil "missing ~A: refusing to guess"
+              (if (and (slot-boundp c 'bound) (missing-read-bounds-bound c))
+                  (missing-read-bounds-bound c)
+                  "bound"))))
 
 ;;; Instrumentation. `open-count-is-read-not-computed` (SPEC-WORK.md:3229) asks
 ;;; for zero visits, zero parses and zero replays on a resident current-revision
