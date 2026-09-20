@@ -70,7 +70,10 @@ func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string
 	if !hasReviewers && !hasNoRequire {
 		effective = append(effective, "--no-require-holds", "--reason", "test")
 	}
-	if hasReviewers && !hasLane {
+	// --lane is required whatever the mode (#1896): the hold fold reads the lane's own
+	// read records even under the forge waiver. A test that wants the missing-lane refusal
+	// drives runLandBare instead.
+	if !hasLane {
 		effective = append(effective, "--lane", t.TempDir())
 	}
 	var out, errb bytes.Buffer
@@ -94,11 +97,14 @@ func greenBatchPR(t *testing.T, number int, head string) *merge.FakeHost {
 	return h
 }
 
-// A batch's pull request, green, goes to the FRONT of the queue.
+// A batch's pull request, green, goes to the FRONT of the queue. It carries its BATCH OK
+// line because a head under rowan/integration-* names a branch and not the members land
+// must fold (#1894).
 func TestLandEnqueuesAGreenBatchAtTheFront(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	h, q := greenBatchPR(t, 1341, head), &fakeLandEnqueue{}
-	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "mas-bandwidth/nova-tools", "--pr", "1341")
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "mas-bandwidth/nova-tools", "--pr", "1341", "--receipt", receipt)
 	if exit != 0 {
 		t.Fatalf("land: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -213,7 +219,8 @@ func TestLandRefusesAReceiptForAnotherHead(t *testing.T) {
 func TestLandWithoutJumpQueuesBehind(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	h, q := greenBatchPR(t, 1341, head), &fakeLandEnqueue{}
-	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341", "--no-jump")
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1341", "--receipt", receipt, "--no-jump")
 	if exit != 0 {
 		t.Fatalf("land: exit %d\n%s\n%s", exit, stdout, stderr)
 	}

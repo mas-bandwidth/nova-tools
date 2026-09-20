@@ -164,10 +164,20 @@ YET**. The owner and the wait are two facts and neither hides the other — a se
 designated rung timed out answers with that rung AND the wait.
 
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
-`fixture-retarget`, `fleet-chore`, `dogfood`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`fixture-retarget`, `fleet-chore`, `dogfood`, `transcript-test`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
 `cause-to-find` — size (files, packages, lanes), lane
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
+
+**A second NAME is not a second kind.** `chore` is what the shift lanes typed on 2026-09-19 and
+the ladder refused it — `ROUTE REFUSED reason=no-rung ... has kind "chore", want one of rebase,
+stack, fixture-retarget, fleet-chore, ...` — so the work was dispatched off the ladder and the log
+learned nothing from it. A chore of the fleet IS a `fleet-chore` under a shorter name: the same
+start height, the same mechanical eligibility, the same rung. It is therefore an **alias**, and it
+adds no row to the kind list and no rung to the ladder. The alias is resolved ONCE, where the
+evidence is read, so the kind the ladder decides on and the kind the log records are the same
+name: an alias that reached the log would split every per-kind floor in two. A near miss is still
+a refusal — `choree` is not a kind and the alias table is not a spell-corrector.
 
 **A row test is card work, and its size says so wrongly.** `row-test` is a kind of its own and it
 starts at `pro`, not at the bottom: one row of a table-driven suite, on a leg whose card shape has
@@ -190,6 +200,20 @@ sandbox, sudo, deploy keys and the network. Measured 2026-09-18: 21 Flash cards 
 transcripts found four real drifts for about 20 cents. Naming the work `dogfood` prices it at the
 rung that does it; naming it `guard` was the mistake, and the security rule was doing exactly what
 it says.
+
+**A transcript test is the same comparison, and the ladder had no name for it.** `transcript-test`
+is a kind of its own and starts at the bottom rung, beside `dogfood`: a documented transcript read
+line for line against what the binary prints is a comparison against an exact expected string,
+which is a procedure and not a judgement. It exists because the ladder refused the work outright.
+Measured 2026-09-19 in the shared route log: twelve route calls named `transcript-test` and every
+one of them was REFUSED — `want one of rebase, stack, fixture-retarget, fleet-chore, dogfood,
+row-test, ...` — so twelve units got no answer at all and the managers dispatched them by hand.
+They ran on the bottom rung, direct: tools13's t1 to t6 (#1802, #1789, #1798, #1799, #1795) and
+tools10's c17 and c18. Eleven came back green; the twelfth was an ABSTAIN on the manager's own
+wrong premise (`cmd/nova-play/firstrun_test.go:200` already compared line for line), which is a
+card fault and not the rung's failure. A kind the table does not hold is not a conservative
+answer, it is no answer: the work is dispatched anyway, off the ladder, and the log learns nothing
+from it.
 
 **A mechanical kind that failed on a card rung was not mechanical.** The DeepSeek rungs are
 eligible for mechanical kinds only (friends first), and a mechanical kind is one whose answer is a
@@ -399,6 +423,109 @@ below all flagged needs_human, in the 2026-09-17 abstain trial of 30 calls,
 retained at `mas-bandwidth/rowan-new
 reports/jev/2026-09-17-589-abstain-reason.tsv@4857e071 (model jev-latest, 31
 rows)`. The fallback for `needs_human` is a person, never a second guess.
+
+### a typed question and the criteria it is answered against are ONE versioned pair
+
+Glenn, 2026-09-19: *"Jev needs context to make good decisions, so if you inform it via input
+tokens what sort of criteria it should use to make decisions, I'm sure this will help it
+improve."* The criteria are therefore a **file beside the question**, carried into the request,
+not a paragraph each caller keeps its own copy of. `docs/decide/` holds the pair for each typed
+question: `questions-<name>.json` and `criteria-<name>.md`, the first naming the second and its
+version.
+
+**The pair is loaded, not asserted.** `decide.LoadQuestionFile` reads the question, reads the
+criteria file it names, and refuses when their versions disagree. `QuestionFile.Payload` validates
+the caller's state against the typed `state_fields` the question declares and returns the bytes
+that go out — the criteria first, the state second. Both refusals happen **before the provider is
+dialled**: a required fact the state does not carry, or carries with the wrong type, is a refusal
+and never an answer given over evidence that was not there. The first shape of this shipped a
+parser that admitted `criteria_version`, `criteria_file` and `state_fields` and then discarded
+them, with a documentation test comparing two files on disk; text parity is not ingestion, and the
+request carried the same bytes it always had. The control that keeps this honest is a
+**request capture**: a test reads the body that actually left and asserts the named criteria are
+in it and that a file the question did not name is not.
+
+**The criteria file is read from beside its question and nowhere else.** An absolute path, a
+parent escape, a symlink resolving out, and anything over a 64 KiB cap are all the same refusal: a
+question file is not a way to read an unrelated local file and post it to a provider.
+
+**The normative pair names roles, never a roster.** The questions offer configured roles —
+`security-designate`, `design-authority`, `lane-owner`, `child-review`, `second-child-review`,
+`coordinator`, `all-friends`, `human` — and the binding from a role to a mind is local, is not in
+the pair, and is never sent. A role the registry does not configure is a refusal, because no model
+response creates or overrides an ownership binding. One house's binding and its trial rows live in
+`docs/decide/examples/`, which says on its face that it is not part of the contract. `internal/docs`
+refuses a normative question or criteria file that carries a person, a model or a house role.
+
+### the who-reads question
+
+After every ACCEPT a shift manager asks one typed `choice`: which ROLE reads this card first.
+
+**It names the first read, and the mandatory rules are machinery.** Prose in a criteria file is
+something a high-confidence answer may contradict, and rule 6 already says confidence never
+authorizes. So `internal/decide/readers.go` derives four things and CONSTRAINS the answer with
+them, at every confidence:
+
+1. a settled security designation is taken **with no provider asked at all**;
+2. an unresolved holder of the area keeps its read, and no answer lifts a hold or replaces its
+   holder — `ReadDecision.LiftsHold` is a field so a caller gates on it rather than on the absence
+   of a sentence;
+3. a design read the evidence requires (`design_defaults_taken` above zero, or normative text
+   moved) survives an answer that names somebody else first;
+4. the human is reached only after the friends, which is `help --state`'s own rule.
+
+The red test is an **obediently wrong** answer — the provider naming the cheap reader on a
+security-shaped unit — asserted at 1.00 and at 0.10, because an answer that is wrong at one
+confidence is wrong at both.
+
+**The state carries the facts the criteria turn on, and the asker computes them first**:
+`security_shaped_package`, `design_defaults_taken`, `normative_spec_moved`, `holder_of_the_area`,
+`hold_is_open`. A criterion that names a fact the state does not carry is a criterion the provider
+must infer from prose, and prose is what rule 4 keeps out.
+
+**No floor is set for this reading.** `docs/decide/examples/2026-09-19-local-trial.md` records a
+day of observations — 47 answers from six lanes, joined afterwards to later HOLDs on the message
+bus — and they tune nothing. A later HOLD is an observation, not an adjudication: a pull request
+nobody held is not one that needed no reader, because nobody looked, and "the default would have
+missed it" is a counterfactual nothing tested. The rows also predate this question version and
+this state shape, and their stopping classes are sparse. They are kept as the arithmetic fixture
+for `tune --default` and as the reason to carry the fields, and for nothing else. The reading is
+**untuned until its own contract evidence exists**.
+
+### the issue pre-triage question
+
+One typed `choice` over an open issue: `mechanical-card`, `design-ruling`, `already-fixed`,
+`held`, `repository-machinery`. The pair is `docs/decide/questions-triage.json` and
+`criteria-triage.md`, under the same version gate. **The answer routes and never admits**: no
+classification at any confidence cuts a card, lifts a hold or skips a read.
+
+**The question carries three tree facts the asker computes before asking**, because the provider
+cannot see the repository and guessing about it is the whole of the error: `held_by_open_pr`,
+`cited_path_exists_on_dev`, and `last_comment_says_fixed`.
+
+Observed 2026-09-19: 49 issues triaged, 32 answered `mechanical-card`, and a manager took all 32
+to the tree. Two could be cut. Of the thirty that could not, sixteen were held by an open change,
+six were already fixed or cited a path not in the tree in that shape, five were a design ruling
+the issue's own text asks for, two were an infra prefix a card lane may not touch, and one was a
+sweep rather than one card. **Twenty-two of the thirty are answered by those three facts**, and
+none of the twenty-two is a judgement the provider got wrong — it is a fact it was never shown.
+That is a statement about which fields the question was missing; it is not a precision, and it
+sets no floor.
+
+### the escalate question — `help --state` and then to which role
+
+`nova-decide help --state <json>` answers the second decision from the line's own counters, with
+no provider, no key and no network: `continue`, `ask-all-friends` or `ask-glenn`, and the person
+only after the friends. It was hooked up and **unused on 2026-09-19** — zero calls, while every
+shift lane escalated by hand into a free-text column.
+
+The ESCALATE step is the two halves together: `help --state` first, and where its answer is not
+`continue`, one typed `choice` over the configured roles —
+`docs/decide/questions-escalate.json`, criteria `criteria-escalate.md`. `help_answer` and
+`help_reason` go into the state verbatim, so the typed answer is anchored to counters the line
+measured rather than to how stuck it feels. An answer naming `human` while `help_answer` is
+`ask-all-friends` is **overruled by the machinery** and the friends stand; it is not a preference
+the provider may outbid.
 
 ### nova-bus inbox triage (opt-in, public buses only)
 
@@ -1307,7 +1434,7 @@ open the finding, printed as `red=`, and licenses nothing. No answer turns `reru
 `rerun=licensed`.
 
 **What the caller does.** The closing line gains ` red=<...> rerun=<licensed|no> finding=<yes|no>
-reruns=<n>`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
+reruns=<n> attempt=<n|->`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
 `known-flake` or `infra`; no decider withdrew it; and `reruns`, the forge's own attempt count for
 this job at this sha less one, is zero. That is the whole of "one licensed rerun": a second red at
 the same sha is `finding=yes` whatever the class. Everything else is `finding=yes` at once: a
@@ -1318,6 +1445,22 @@ act. The older *nova-merge classify merge-group failure* adoption (:419-427) kee
 words, including the `rerun=yes` it prints on a provider's answer above its floor; that line is
 older than S4 and does not meet it, and the task for this reading files the follow-up that folds
 that classifier onto this table.
+
+**Where `reruns` comes from, and it is not the caller.** The count is ACQUIRED FROM THE FORGE, in
+the job listing the verb already fetches for the names and the conclusions: `run_attempt` and
+`head_sha` per red job, attempt N meaning N-1 reruns already spent, printed as `attempt=<n>` beside
+`reruns=<n>` so a reader can check the licence against the run. The verb **fails closed**: a red job
+the forge named no attempt or no sha for, and red jobs that disagree with each other about either,
+are a refusal at exit 2 (the invocation could not run: `docs/CLI.md:3259`) with the missing fact named,
+and NO licence field is printed — a verb that cannot tell a first red from a second must not read the
+absence as the first, because the party asking for the licence is the party that wants the rerun. No
+assertion of the caller's may lower the count. `--reruns <n>` survives only as a FLOOR, for a caller
+who knows of a rerun the forge cannot see: the reading takes the greater of it and the forge's count,
+so the flag can withhold a licence and can never grant one the forge's count denies. A run with
+nothing red asks the forge nothing and prints `attempt=-`. The reading is READ-ONLY and consumes
+nothing: two reads of the same immutable attempt are one advisory answer given twice, not a second
+red; it is the caller's own rerun that makes the forge report attempt 2, which is where the licence
+stops.
 
 **The rows.** The next `nova-ci failed --decide` read of the same sha that finds a decision row
 appends an **observed** row (D6): `event=rerun-green` or `event=rerun-red`, with the failing job

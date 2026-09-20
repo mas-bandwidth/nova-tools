@@ -12,7 +12,7 @@ package pulse
 // Five kinds, five line-1 shapes, and line 1 is the contract the harvest matches:
 //
 //	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
-//	fix     RESULT: CARD-<n> <repo> #<issue> fixed with its red test first: <title>
+//	fix     RESULT: CARD-<n> sha=<sha12> <repo> #<issue> fixed with its red test first: <title>
 //	replay  RESULT: CARD-<n> <repo> replays <names> named at spec lines <lines>, red first
 //	spec    RESULT: CARD-<n> <repo> spec: <title>
 //	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
@@ -74,7 +74,7 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (the number comes only from the state file under %s)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
 	}
-	card := renderKindCard(in, n, body)
+	card := contractSHA12(renderKindCard(in, n, body))
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -187,10 +187,10 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	switch in.Kind {
 	case "read":
 		fmt.Fprintf(&b, "RESULT: CARD-%d read of %s PR%d at %s (%s)\n", n, repo, in.PR, oneline.Field(in.Head), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.PR)
+		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
 	case "fix":
-		fmt.Fprintf(&b, "RESULT: CARD-%d %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.Issue)
+		fmt.Fprintf(&b, "RESULT: CARD-%d sha=<sha12> %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
+		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.Issue)
 	case "replay":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s replays %s named at spec lines %s, red first\n", n, repo, oneline.Field(in.Names), oneline.Field(in.SpecLines))
 		fmt.Fprintf(&b, "SOURCE: %s %s\n", in.Repo, oneline.Field(in.Names))
@@ -200,20 +200,22 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "rebase":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s PR #%d rebased onto %s with its conflicts resolved and its tests green: %s\n",
 			n, repo, in.PR, oneline.Field(in.Base), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.PR)
+		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
 	}
-	b.WriteString(kindInstruction(in))
+	b.WriteString(kindInstruction(in, body))
 	if body != "" {
 		b.WriteString(body + "\n")
 	}
 	return b.String()
 }
 
-// kindInstruction is the one paragraph a kind always carries, whatever its body says.
-func kindInstruction(in CutKindInput) string {
+// kindInstruction is the one paragraph a kind always carries, whatever its body says. A fix
+// card cut without --body-file carries the practice-17 STEP skeleton instead of the one
+// paragraph, because a bodyless card has to number its own steps.
+func kindInstruction(in CutKindInput, body string) string {
 	switch in.Kind {
 	case "read":
 		return fmt.Sprintf(`Read pull request %d of %s at head %s. Quote the rule beside every line you hold.
@@ -222,6 +224,9 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then exact
 PR%d: APPROVE|HOLD head=%s repo=%s
 `, in.PR, in.Repo, in.Head, in.PR, in.Head, in.Repo)
 	case "fix":
+		if strings.TrimSpace(body) == "" {
+			return fixKindStepSkeleton(in)
+		}
 		return fmt.Sprintf(`Fix %s #%d with its reproducing test first: the red line, then the green line, one row per item.
 A fix whose diff carries no test is not admitted.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
@@ -240,6 +245,22 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
 `, in.Repo)
 	}
+}
+
+// fixKindStepSkeleton is the practice-17 skeleton a body-less fix card carries: STEP 1 clones
+// and enters the repo, STEP 2 names the red-then-green fix, STEP 3 is the gate verbatim with
+// its deadline, and STEP 4 writes RESULT.md last (#1852 item 4).
+func fixKindStepSkeleton(in CutKindInput) string {
+	return fmt.Sprintf("STEP 1. Clone the repo and enter it.\n\n"+
+		"    git clone -q https://github.com/mas-bandwidth/nova-tools.git repo\n"+
+		"    cd repo\n\n"+
+		"STEP 2. Fix %s #%d with its reproducing test first: the red test, then the "+
+		"green test, one row per item. A fix whose diff carries no test is not admitted.\n\n"+
+		"STEP 3. THE GATES. Run once: go test ./... , then go vet ./... . "+
+		"Finish within 30 minutes.\n\n"+
+		"STEP 4. Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE "+
+		"or ABSTAIN <why>, then BRANCH <name> and REPO %s.\n",
+		in.Repo, in.Issue, in.Repo)
 }
 
 // repoShort is owner/name as line 1 says it: the name alone.

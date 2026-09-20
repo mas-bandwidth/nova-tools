@@ -2150,8 +2150,8 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// them at or above 0.5, and below_floor how many kinds the provider was less sure of
 	// than the floor -- those are suggestions, and the caller keeps today's behaviour.
 	if d != nil {
-		fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d\n",
-			d.counts.n, d.counts.needsReply, d.counts.belowFloor)
+		fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d wake=%d\n",
+			d.counts.n, d.counts.needsReply, d.counts.belowFloor, d.counts.wake)
 	}
 	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
 	r.Changed, r.NoteChanges = scope.Changed, res.NoteChanges
@@ -2461,11 +2461,16 @@ const publicMarker = ".public"
 
 // noteJudgment is one note's typed decision, rendered as the suffix on its INBOX NOTE
 // line. kind is the choice, needsReply and blocked are the provider's noul probabilities,
-// and conf is how sure it was of the kind.
+// wake says whether this note needs its reader (the note reading, #1617), and conf is how
+// sure it was of the kind. owner and refs are mechanical: the note's To: header and the
+// issue references its subject and body carry, read by the tool and asked of nobody.
 type noteJudgment struct {
 	kind       string
 	needsReply float64
 	blocked    float64
+	wake       string
+	owner      string
+	refs       string
 	conf       float64
 }
 
@@ -2492,6 +2497,10 @@ type decideCounts struct {
 	n          int
 	needsReply int
 	belowFloor int
+	// wake is how many notes need their reader: `needs-action` by rule or by answer,
+	// and `unknown` (a note the decider did not label), because an unlabelled note
+	// fails toward a wake and never toward silence.
+	wake int
 }
 
 func newNoteDecider(o inboxOpts) *noteDecider {
@@ -2514,7 +2523,25 @@ func inboxQuestions() map[string]decide.Question {
 		},
 		"needs_reply": {Instructions: "The probability, from 0 to 1, that this note needs a reply from its reader.", Noul: true},
 		"blocked":     {Instructions: "The probability, from 0 to 1, that this note blocks the reader's work until it is answered.", Noul: true},
+		"wake": {
+			Instructions: "Does this note wake its reader? ack: the note only confirms receipt or completion of something the reader already knows, and asks nothing; info: the note reports a fact and asks nothing of this reader; needs-action: the note asks this reader to do, decide, review, answer or stop something, or reports something broken that this reader owns.",
+			Choice: map[string]string{
+				"ack":          "only confirms receipt or completion of something the reader already knows, and asks nothing",
+				"info":         "reports a fact and asks nothing of this reader",
+				"needs-action": "asks this reader to do, decide, review, answer or stop something, or reports something broken that this reader owns",
+			},
+		},
 	}
+}
+
+// decideSuffix is the typed decision appended to an INBOX NOTE line. The four fields
+// that were here before the note reading -- kind, needs_reply, blocked and conf -- keep
+// their names, order and spelling; wake, owner and ref are appended after them, so no
+// existing reader's field positions move.
+func decideSuffix(j noteJudgment) string {
+	return fmt.Sprintf("kind=%s needs_reply=%.2f blocked=%.2f conf=%.2f wake=%s owner=%s ref=%s",
+		oneline.Field(j.kind), j.needsReply, j.blocked, j.conf,
+		oneline.Field(j.wake), oneline.Field(j.owner), oneline.Field(j.refs))
 }
 
 // judge returns the decision for one note, reading its file for the body and cacheing by
@@ -2524,18 +2551,19 @@ func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
 	if j, ok := d.cache[e.Path]; ok {
 		return j, nil
 	}
-	subject, body := e.Subject, ""
+	subject, body, owner := e.Subject, "", ""
 	if raw, err := os.ReadFile(filepath.Join(d.o.busDir, filepath.FromSlash(e.Path))); err == nil {
 		if n, perr := bus.ParseNote(e.Path, string(raw)); perr == nil {
 			if subject == "" {
 				subject = n.Header.Subject
 			}
 			body = n.Body
+			owner = n.Header.To
 		}
 	}
 	var j noteJudgment
 	if structuredSubject(subject) {
-		j = noteJudgment{kind: "edge", needsReply: 1, conf: 1}
+		j = noteJudgment{kind: "edge", needsReply: 1, wake: wakeNeedsAction, conf: 1}
 	} else {
 		if d.client == nil {
 			c, err := decide.New(d.o.baseURL, d.o.keyEnv)
@@ -2553,9 +2581,17 @@ func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
 			kind:       kind.Choice,
 			needsReply: answers["needs_reply"].Noul,
 			blocked:    answers["blocked"].Noul,
+			wake:       answers["wake"].Choice,
 			conf:       kind.Confidence,
 		}
 	}
+	if j.wake == "" {
+		// A note no decider labelled is `unknown`: the absence of an answer wakes,
+		// because silence about a note must never read as permission to sleep.
+		j.wake = wakeUnknown
+	}
+	j.owner = owner
+	j.refs = noteRefs(subject, body)
 	d.cache[e.Path] = j
 	d.counts.n++
 	if j.needsReply >= 0.5 {
@@ -2564,7 +2600,53 @@ func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
 	if j.conf < d.o.floor {
 		d.counts.belowFloor++
 	}
+	if wakesReader(j.wake) {
+		d.counts.wake++
+	}
 	return j, nil
+}
+
+// The note reading's three answers, and the absence of one (#1617, SPEC-DECIDE
+// "1. The note reading"). ack and info report a note that asks nothing; needs-action
+// asks the reader to act; unknown is what a note no decider labelled reads.
+const (
+	wakeAck         = "ack"
+	wakeInfo        = "info"
+	wakeNeedsAction = "needs-action"
+	wakeUnknown     = "unknown"
+)
+
+// wakesReader reports whether an answer is one the reader must be woken for. ack and
+// info defer; everything else -- needs-action, unknown, or any value this code does not
+// know -- wakes, so an answer can never put a window to sleep past a note that needed it.
+func wakesReader(wake string) bool {
+	switch wake {
+	case wakeAck, wakeInfo:
+		return false
+	default:
+		return true
+	}
+}
+
+// noteRefPattern is every issue reference a note names: a bare `#<digits>` and the
+// `<owner>/<repo>#<digits>` that carries a repository. Read mechanically from the text,
+// never asked of a provider.
+var noteRefPattern = regexp.MustCompile(`[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|#[0-9]+`)
+
+// noteRefs lists the issue references in the parts given, in order, at most four of
+// them, then `+<n>`; `-` when there are none.
+func noteRefs(parts ...string) string {
+	var refs []string
+	for _, p := range parts {
+		refs = append(refs, noteRefPattern.FindAllString(p, -1)...)
+	}
+	if len(refs) == 0 {
+		return "-"
+	}
+	if len(refs) > 4 {
+		return strings.Join(refs[:4], ",") + fmt.Sprintf("+%d", len(refs)-4)
+	}
+	return strings.Join(refs, ",")
 }
 
 // structuredSubject reports the subjects a model must never be asked to filter: the
@@ -2646,10 +2728,10 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d *not
 				if err != nil {
 					return shown, err
 				}
-				fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s kind=%s needs_reply=%.2f blocked=%.2f conf=%.2f\n",
+				fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s %s\n",
 					token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
 					oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject),
-					oneline.Field(j.kind), j.needsReply, j.blocked, j.conf)
+					decideSuffix(j))
 				shown++
 				continue
 			}
@@ -2765,7 +2847,7 @@ func printBodyItem(stdout io.Writer, item bus.BodyItem, d *noteDecider) error {
 		if err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s kind=%s needs_reply=%.2f blocked=%.2f conf=%.2f\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject), oneline.Field(j.kind), j.needsReply, j.blocked, j.conf); err != nil {
+		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject), decideSuffix(j)); err != nil {
 			return err
 		}
 	} else if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {

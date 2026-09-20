@@ -27,12 +27,25 @@ var checkAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"hintFor", "buildinfo.Line"},
+	//
+	// oneline.Quote is oneline's third rendering and the sixth escaper: a double-quoted
+	// Go string literal, which escapes every control character, every unprintable rune
+	// (U+2028, U+2029 and the bidi controls among them) and the quote and the backslash
+	// itself, so it is one line whatever the value holds. It renders the four values of
+	// the `hygiene` MORE line's remedy, which is a command a PERSON pastes back into a
+	// shell (#1804): Field would spell an identity `Emma\x20<emma@example.com>`, which
+	// is one token for a scanner and a line nobody can run. TestHygieneMoreCommandRuns-
+	// AsPrinted is the behavioural test for those sites -- it splits the printed remedy
+	// the way a shell would and runs it.
+	Escapers: []string{"hintFor", "buildinfo.Line", "oneline.Quote"},
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"main.go|requireFlags|name":    "a required flag's name, a key of the map this file's callers build from literals",
 		"main.go|cmdAttest|att.SHA256": "sixty-four hex digits from encoding/hex over a SHA-256 sum",
+		`hygiene.go|cmdHygiene|strings.Join(hygiene.Kinds(), ", ")`: "the card kinds this toolchain declares, read from internal/hygiene/kinds.txt, " +
+			"which is embedded into this binary at build time and holds nothing a caller can write. " +
+			"TestHygieneRefusesAKindTheToolDoesNotDeclare and TestHygieneAcceptsEveryDeclaredKind are the behavioural tests for this site.",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads

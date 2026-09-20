@@ -860,7 +860,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity|read|fix|text|replay|drift|tone|models.tsv>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -2051,6 +2051,7 @@ RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
 RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN WAIT slots owner=<owner> holders=<owner:count,...>
+RUN ROUTED-OUT id=<id> dest=<routed-out> rung=<name> why=<rung-is-asked-not-run>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -2415,7 +2416,7 @@ takes a lease per card before it runs and releases it after. The seven rules:
    ```
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
    nova-swarm slots list --store <dir>
    ```
 
@@ -2443,7 +2444,7 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - an expired lease with a live pid is DRIFT and stays;
 - a launch without a lease is refused by the launcher.
 
-A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all]` frees them, and `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
 
 **The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
@@ -2463,9 +2464,23 @@ the other's live seat; a run that refused before it started, on a missing harnes
 delete a lease it never took. An id that is already gone is not an error: a release is
 allowed to be late.
 
-`slots release --store <dir> --owner <o> (--label <text> | --all)` is unchanged and stays
+`slots release --store <dir> --owner <o> (--label <text> | --all) [--force]` still SELECTS
 by owner and label, because that is what a PERSON at a prompt means by it and a person can
 see the store. A deferred cleanup cannot, so it does not get that verb.
+
+**A release never frees a seat whose holder is still running** (nova-tools#1902, Johnny's
+red team of #1601 / #1562). The selection is by owner and label; the fence is the holder.
+A lease whose `pid=` is alive and is not this process is KEPT: the default `slots release`
+counts it in `live=` on the `SLOTS RELEASED` line, prints `SLOTS KEPT owner=<o> live=<n>`
+on stderr, and exits 2. `--owner` is an unauthenticated string and every owner on a shared
+bench is the same unix user, so who CALLED the release is not a fence; the only fence that
+means anything is whether the holder is still there. Giving back your OWN seat is always
+allowed — that is how `run`'s dispatcher and `native`'s cleanup end — and a lease whose pid
+is gone is freed as before. `--force` is the one way past the fence, and it OVERSUBSCRIBES
+the bench: it frees a seat a live process is still sitting in, so the next take puts a
+second card on it. It is an operator's act at a prompt, typed by a person who knows what
+the store cannot see; no card may pass it, and no manager, launcher or cleanup path passes
+it by default.
 
 Asked without either flag, `native` prints exactly one line and exits 2:
 
@@ -2773,6 +2788,27 @@ file instead — the tool has no list of blessed task shapes.
 **kind** is a template plus a gate and a negative control declared in the tool, chosen by the
 card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
 card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
+
+### The pulse card templates
+
+`nova-pulse cut` reads a templates directory holding `read.md`, `fix.md`,
+`text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv` (SPEC-PULSE rule 4).
+The same files are shipped in this binary, so the directory is built from the tool
+rather than copied out of `cmd/nova-pulse/testdata`:
+
+```
+nova-swarm template --name read       > read.md
+nova-swarm template --name fix        > fix.md
+nova-swarm template --name text       > text.md
+nova-swarm template --name replay     > replay.md
+nova-swarm template --name drift      > drift.md
+nova-swarm template --name tone       > tone.md
+nova-swarm template --name models.tsv > models.tsv
+```
+
+`read`, `text` and `tone` are text-only cards and carry rule 6's no-build line;
+`fix`, `replay` and `drift` carry the red-then-green row. These are cards, not task
+templates: `add --template` and `batch --template` refuse them, as they refuse `result`.
 
 ## The `RESULT.md` template
 

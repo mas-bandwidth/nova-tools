@@ -20,13 +20,13 @@ import (
 const usage = `nova-pulse: bounded open work, cut into cards and folded back, no model call (see docs/SPEC-PULSE.md)
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -43,7 +43,7 @@ nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
-nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
+nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>] [--diag-days <n>] [--diag-max-bytes <n>]
 nova-pulse hygiene reap <slot> --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot> --home <dir>
@@ -70,7 +70,10 @@ one cards.tsv -- to nova-swarm batch's card form (--id --cards --deadline
 --runner --root), queueing the rest only when --queue is set. --slots is the
 ceiling on the free slots it may use, and --deadline is the whole pulse's one
 deadline in whole seconds. It makes no model call itself: nova-swarm must be on
-your PATH.
+your PATH. These examples run against a fixture in this repo; lay it down first
+from the repo root, so ./cards.tsv and ./bin/nova-swarm exist where the lines
+name them:
+  cp -R cmd/nova-pulse/testdata/example-pulse/. ./
 
 example:
   nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
@@ -404,6 +407,9 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	floor := f.fs.Float64("floor", 0.9, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
+	runner := f.fs.String("runner", "", "")
+	swarmBin := f.fs.String("swarm", "", "")
+	attempts := f.fs.Int("attempts", pulse.DefaultLaunchAttempts, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -422,6 +428,9 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *floor < 0 || *floor > 1 {
 		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g; answers below it keep the card's own worker", *floor))
 	}
+	if *attempts < 1 {
+		f.add(fmt.Sprintf("--attempts is at least 1, got %d; it is the bound on start-time provider failures, and 1 is no retry at all", *attempts))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -429,6 +438,8 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
 		Benches: *benches, Bench: *bench,
 		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
+		Runner: *runner, Swarm: *swarmBin, Attempts: *attempts, Version: buildVersion(),
+		Max:    *max,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,
 	})
@@ -475,6 +486,11 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if f.refused(stderr) {
 			return 2
 		}
+		// --clone is where a --working harvest's DESTINATION comes from, and the only
+		// place it can come from: every job under --working was written by a worker,
+		// and a worker owns its own clone's `origin` (Johnny's HOLD of #1809 at
+		// 7f692ef6). Without it a job that would publish is refused repo-unknown by
+		// name; the fold itself still runs and still classifies.
 		return pulse.HarvestWorking(pulse.HarvestInput{
 			Working:    *working,
 			Roots:      *roots,
@@ -482,6 +498,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 			SinceStamp: *since,
 			Timer:      *timer,
 			Max:        *max,
+			Clones:     []string(clones),
 			Stdout:     stdout,
 			Stderr:     stderr,
 			Now:        func() time.Time { return now },
@@ -801,6 +818,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	probe := f.fs.Bool("probe", false, "")
 	history := f.fs.String("history", "", "")
 	probeBudget := f.fs.Int("probe-budget", 0, "")
+	validateContract := f.fs.Bool("validate-contract", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -859,7 +877,10 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		Probe:     *probe,
 		History:   *history,
 		Budget:    *probeBudget,
-		Stdout:    stdout,
-		Stderr:    stderr,
+		// ValidateContract preflights the candidate locators before any card file is
+		// written, so a dead repo is refused at cut rather than after admission.
+		ValidateContract: *validateContract,
+		Stdout:           stdout,
+		Stderr:           stderr,
 	})
 }

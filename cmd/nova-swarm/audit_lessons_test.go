@@ -388,6 +388,30 @@ func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
 	mustContain(t, "the run", stdout, "RUN DONE")
 }
 
+// #632: `template` must print the six typed card templates nova-pulse `cut` reads from a
+// templates directory (read, fix, text, replay, drift, tone) plus models.tsv, so a templates
+// dir can be built from the tool instead of copied out of cmd/nova-pulse/testdata.
+func TestTemplatePrintsThePulseCardTemplates(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	for _, name := range []string{"read", "fix", "text", "replay", "drift", "tone", "models.tsv"} {
+		exit, stdout, stderr := b.swarm("template", "--name", name)
+		if exit != 0 {
+			t.Fatalf("`template --name %s` exited %d; nova-pulse cut needs the six typed templates and models.tsv:\n%s%s", name, exit, stdout, stderr)
+		}
+		if strings.TrimSpace(stdout) == "" {
+			t.Fatalf("`template --name %s` printed nothing", name)
+		}
+	}
+	// read is a text-only card and must carry the no-build line and the RESULT contract.
+	exit, stdout, stderr := b.swarm("template", "--name", "read")
+	if exit != 0 {
+		t.Fatalf("`template --name read` exited %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the read card", stdout, "RESULT <label> sha=<sha12>")
+	mustContain(t, "the read card", stdout, "Do not run go build, go test or any toolchain")
+}
+
 // S3: the harness contract was undocumented -- cwd, argv, NOVA_SWARM_JOB, RESULT.md -- and
 // the audit learned it by dumping the fake harness's own environment. The command reference
 // says it, and names the fake harness that already demonstrates it. That reference is

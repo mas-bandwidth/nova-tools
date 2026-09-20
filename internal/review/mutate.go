@@ -515,9 +515,10 @@ func groupByPkg(units []unit) [][]unit {
 var goResult = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): ([A-Za-z_0-9]+)`)
 
 // runUnits runs one package's units in the worktree and reports which of them FAILED. A
-// package that does not build is the strongest red there is -- the tests cannot even
-// compile without the change -- so every unit in it counts failed. A named skip reason
-// comes back when the suite could not be run at all, and then nothing is judged.
+// package that does not build is not a kill: a test that merely CALLS the fix's new
+// symbol breaks the build when the symbol goes away while asserting nothing about it
+// (#1807). So the units are judged by nobody and a named skip reason comes back, exactly
+// as when the suite could not be run at all.
 func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]bool, skip string) {
 	failed = map[string]bool{}
 	if units[0].lisp {
@@ -562,13 +563,13 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 		}
 	}
 	text := string(out)
-	// A package that fails to compile prints no per-test result at all. Every unit in
-	// it is red: the test file cannot even build with the change reverted.
+	// A package that fails to compile prints no per-test result at all, and that is not
+	// a kill: a test that merely CALLS the fix's new symbol breaks the build when the
+	// symbol goes away while asserting nothing about it (#1807). Compilation coupling is
+	// not an assertion, so the units are judged by nobody and the file is skipped with
+	// the reason that says why.
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
-		for _, u := range units {
-			failed[u.name] = true
-		}
-		return failed, ""
+		return nil, SkipRevertNoCompile + ": the package did not compile with the change reverted, so the tests in it assert nothing that the revert could disprove"
 	}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -601,8 +602,13 @@ func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// gitOut runs git with object replacement switched off. A worker who can write the
+// job clone's `.git` can `git replace <head> <base>` and every later read of the
+// range -- rev-parse, merge-base, the diff this package reverts -- would then be
+// reading the base's objects, not the head's. The ref lives under `refs/replace/`
+// and is never in the diff, so nothing else in the range can see it.
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -651,3 +657,17 @@ func countHunks(ctx context.Context, repo, base, head string, others []change) (
 	}
 	return n, nil
 }
+
+// SkipRevertNoCompile is the reason token on a Skip whose package would not COMPILE with
+// the change reverted (#1807, the red team of T03 at 98e3f3a9).
+//
+// It used to be the strongest red there was: "the tests cannot even compile without the
+// change". It is not evidence at all. A test that only CALLS the fix's new symbol --
+// `_ = Mul(2, 3)`, asserting nothing -- breaks the build when the symbol goes away, and
+// that build failure was read as the kill the control was looking for, so the most common
+// vacuous shape there is walked straight through the negative control.
+//
+// A build failure on the reverted side is never a kill. It is named here so the caller
+// can say what it means for the card: compilation coupling is not an assertion, and the
+// accept gate rejects such a file as `vacuous-test`.
+const SkipRevertNoCompile = "revert-did-not-compile"

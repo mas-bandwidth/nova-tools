@@ -137,3 +137,12 @@ func fakeTool(t *testing.T, specs, name string, s fakeSpec) {
 		t.Fatal(err)
 	}
 }
+
+// swarmVersionRule is the arm every fake nova-swarm needs once `launch` asks which build it
+// got before handing it a batch (issue #1760): the real one answers `nova-swarm <version>
+// <os>/<arch> <go>` on one line, so the fake does too. The version is deliberately not a
+// release -- a test binary's own version is a vcs stamp, which is not a release either, so
+// there is nothing here for the equality check to compare and the probe stands alone.
+func swarmVersionRule() fakeRule {
+	return fakeRule{Arg: 1, Equals: "version", Stdout: "nova-swarm devel " + runtime.GOOS + "/" + runtime.GOARCH + " " + runtime.Version()}
+}

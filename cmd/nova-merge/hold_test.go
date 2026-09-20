@@ -113,6 +113,35 @@ func TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand(t *testing.T) {
 	absent(t, lstdout, "LAND OK")
 }
 
+// 1b. TestLandWithoutAReceiptRefusesRatherThanSkipTheMemberFold: the same 02:34Z hold as
+// test 1, but the landing carries no receipt. A head under rowan/integration-* names the
+// branch, not the members it carries, so land cannot name the member whose hold it must
+// fold; it must refuse rather than enqueue and print members=- as the fact.
+func TestLandWithoutAReceiptRefusesRatherThanSkipTheMemberFold(t *testing.T) {
+	t.Parallel()
+	revFile := testReviewerFile(t, t.TempDir(), defaultReviewersTSV)
+	head := strings.Repeat("a", 40)
+	const memberHead = "6adbbd1d89869455e920a43ccf7378daf4375add"
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	h.PRs[1551] = merge.PR{Number: 1551, HeadOID: memberHead, Mergeable: "MERGEABLE"}
+
+	// The hold lands on the MEMBER after BATCH OK, and this land has no receipt to name it by.
+	h.SetVerdicts(1551, merge.Verdict{
+		ID: "comment:202", Who: "alice", Word: "hold", Head: memberHead,
+		At: "2026-09-19T02:34:25Z", Source: "comment-rule",
+	})
+
+	exit, stdout, stderr := runLand(t, h, q, "land", "--repo", "o/n", "--pr", "1560", "--reviewers", revFile)
+	if exit != 1 {
+		t.Fatalf("land without a receipt cannot re-read the members it lands and must refuse, got exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("the queue was touched by a batch whose member fold never ran: %v", q.enqueued)
+	}
+	contains(t, stderr, "no-receipt: cannot re-read members")
+	absent(t, stdout, "LAND OK")
+}
+
 // 2. TestAHoldInAnySourceStops: lane record, review CHANGES_REQUESTED, comment.
 func TestAHoldInAnySourceStops(t *testing.T) {
 	t.Parallel()
@@ -752,20 +781,34 @@ func TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted(t *testing.T) {
 	t.Parallel()
 	l := batchRepo(t)
 	root := filepath.Join(l.dir, "b-waived")
+	laneDir := filepath.Join(l.dir, "lane-waived")
 
+	// The recorded HOLD is a REAL lane read record (SPEC-DECIDE reading 3, *The inputs*
+	// (a)), written through the read verb. It is not a Source:"record" verdict planted
+	// through FakeHost.Verdicts, because production GH.Verdicts only ever returns forge
+	// sources -- a fixture that returns a lane record makes this test a false green.
+	if exit, _, errb := l.run("init", "--lane", laneDir, "--repo", "o/n", "--base", "dev", "--lane-branch", "nova-merge/dev"); exit != 0 {
+		t.Fatalf("init lane failed: %s", errb)
+	}
+	if exit, _, errb := l.run("read", "--lane", laneDir, "--pr", "1", "--who", "alice", "--verdict", "hold", "--head", l.heads[1]); exit != 0 {
+		t.Fatalf("read verb failed: %s", errb)
+	}
+
+	// A forge HOLD as well: the waiver drops the forge sources whole, so the recorded
+	// hold is the one that drops the member.
 	l.host.SetVerdicts(1,
-		merge.Verdict{ID: "record:at1", Who: "alice", Word: "hold", Head: l.heads[1], At: "2026-09-19T01:00:00Z", Source: "record"},
 		merge.Verdict{ID: "comment:1701", Who: "alice", Word: "hold", Head: l.heads[1], At: "2026-09-19T02:00:00Z", Source: "comment-rule"},
 	)
 
 	exit, stdout, stderr := l.run("batch", "--name", "b-waived", "--pr", "1",
 		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
-		"--no-require-holds", "--reason", "emergency")
+		"--lane", laneDir, "--no-require-holds", "--reason", "emergency")
 	if exit != 0 {
 		t.Fatalf("batch exit %d", exit)
 	}
 	// Recorded hold still drops the member
-	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l.heads[1])+" carries an unreleased HOLD\" who=alice hold=record:at1 source=record")
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+merge.Short(l.heads[1])+" carries an unreleased HOLD\" who=alice hold=record:")
+	contains(t, stderr, "source=record")
 	contains(t, stdout, `holds=waived reason="emergency"`)
 }
 
@@ -1067,7 +1110,7 @@ func TestReviewersWithoutLaneRefuses(t *testing.T) {
 	if exit != 2 {
 		t.Fatalf("batch without --lane must exit 2, got %d\nstderr: %s", exit, stderr)
 	}
-	contains(t, stderr, "--lane is required when --reviewers is specified")
+	contains(t, stderr, "--lane is required when --reviewers or --no-require-holds is specified")
 
 	// land with --reviewers but no --lane
 	head := strings.Repeat("a", 40)
@@ -1078,7 +1121,37 @@ func TestReviewersWithoutLaneRefuses(t *testing.T) {
 	if lexit != 2 {
 		t.Fatalf("land without --lane must exit 2, got %d\nstderr: %s", lexit, lstderr)
 	}
-	contains(t, lstderr, "--lane is required when --reviewers is specified")
+	contains(t, lstderr, "--lane is required when --reviewers or --no-require-holds is specified")
+}
+
+// 38b. TestNoRequireHoldsWithoutLaneRefuses (red team #1896): --no-require-holds waives
+// the FORGE sources only, never the lane's own read records (SPEC-DECIDE reading 3,
+// *The inputs* (a)). The fold can only read those records when --lane names the lane, so
+// a batch or a land that waives the forge and names no lane is a run that cannot see a
+// recorded HOLD -- the exact door --ignore-hold would have opened. Both must refuse exit 2
+// and name the missing flag, instead of merging a member a `nova-merge read` just held.
+func TestNoRequireHoldsWithoutLaneRefuses(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "b-waive-no-lane")
+
+	exit, _, stderr := l.runBare("batch", "--name", "waive-no-lane", "--pr", "1",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--no-require-holds", "--reason", "emergency")
+	if exit != 2 {
+		t.Fatalf("batch --no-require-holds without --lane must refuse exit 2, got %d\nstderr: %s", exit, stderr)
+	}
+	contains(t, stderr, "--lane is required")
+
+	head := strings.Repeat("a", 40)
+	h, q := greenBatchPR(t, 1560, head), &fakeLandEnqueue{}
+	receipt := "BATCH OK name=test base=" + strings.Repeat("d", 40) + " head=" + head + " members=1 dropped=none"
+	lexit, _, lstderr := runLandBare(t, h, q, "land", "--repo", "o/n", "--pr", "1560",
+		"--receipt", receipt, "--no-require-holds", "--reason", "emergency")
+	if lexit != 2 {
+		t.Fatalf("land --no-require-holds without --lane must refuse exit 2, got %d\nstderr: %s", lexit, lstderr)
+	}
+	contains(t, lstderr, "--lane is required")
 }
 
 // 39. TestBatchAndLandRefuseMalformedLaneRecord (Rowan row A / Stella blocker 1):
@@ -1184,7 +1257,7 @@ func TestReviewersWithLaneNoneRefuses(t *testing.T) {
 	if exit != 2 {
 		t.Fatalf("batch with --lane none must exit 2, got %d\nstderr: %s", exit, stderr)
 	}
-	contains(t, stderr, "--lane is required when --reviewers is specified")
+	contains(t, stderr, "--lane is required when --reviewers or --no-require-holds is specified")
 
 	// land with --reviewers and --lane none
 	head := strings.Repeat("a", 40)
@@ -1195,7 +1268,7 @@ func TestReviewersWithLaneNoneRefuses(t *testing.T) {
 	if lexit != 2 {
 		t.Fatalf("land with --lane none must exit 2, got %d\nstderr: %s", lexit, lstderr)
 	}
-	contains(t, lstderr, "--lane is required when --reviewers is specified")
+	contains(t, lstderr, "--lane is required when --reviewers or --no-require-holds is specified")
 }
 
 // 42. TestQueueSweepRefusesMalformedLaneRecord (Rowan cold read 3 row 3):

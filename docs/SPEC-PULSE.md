@@ -731,7 +731,7 @@ runner name and the run id on the line.
 
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
@@ -1111,6 +1111,7 @@ CUT OK cards=<n> skipped=<n> zero=<n> flat=<n> metered=<n> out=<dir>
 CUT ROUTE route=<model> reason=<class>
 CUT SKIPPED source=<kind> id=<id> template=<name>: no template
 CUT REFUSED template=<name>: <which rule> (<remedy>)
+CUT REFUSED locator=<owner/repo>: does not resolve (check gh auth and the repo name)
 PULSE OK id=<id> n=<n> free-before=<n> queued=<n> batches=<n> deadline=<s>
 ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value> (<remedy>)
 PULSE REFUSED: <reason> (<remedy>)
@@ -1155,6 +1156,10 @@ line binds the card it heads; the swarm records the same hash at admission and r
 `RESULT.md` whose line 1 differs (SPEC-SWARM, **gather**). Text templates add rule 6's line
 after line 2. `<head>` is the repo's default-branch head at cut time, read once per repo per
 `cut` run; a candidate whose repo cannot be read is `skipped` with the reason, never cut blind.
+`--validate-contract` preflights before any card file is written: a candidate whose locator
+does not resolve (`gh repo view <owner/repo>` non-zero) is refused with
+`CUT REFUSED locator=<owner/repo>: does not resolve (check gh auth and the repo name)` and no
+card is written, so a dead repo never spends admission plus the scaffold before an abstain (#675).
 
 ## Cut, from a validated template
 

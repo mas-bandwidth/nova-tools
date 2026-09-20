@@ -895,6 +895,15 @@
     #:path-absolute-p
     #:path-has-parent-segment-p
     #:render-symlink-escape-p
+    #:render-target-escape-p
+    ;; the filesystem implementation of the render-target seam
+    ;; (SPEC-WORK.md:3147-3157)
+    #:make-filesystem-render-session
+    #:filesystem-render-session
+    #:filesystem-render-session-p
+    #:filesystem-target-escapes-root-p
+    #:resolve-through-links
+    #:truename-string
     #:render-target-read
     #:render-target-write
     #:render-marker-offsets
@@ -1680,6 +1689,20 @@
     #:write-dedup-root
     #:read-dedup-root
     #:dedup-root-holds-p
+    ;; the stable logical journal identity and the real journal rotation
+    ;; (src/journal-identity.lisp, src/journal-rotate.lisp, SPEC-WORK.md:471-482,
+    ;; :7176-7182)
+    #:*journal-identity-byte-source*
+    #:mint-journal-identity
+    #:header-journal-identity
+    #:journal-header-line
+    #:journal-root-header-sha
+    #:journal-logical-identity
+    #:journal-file-identities
+    #:header-covers-cut-p
+    #:journal-chain-covers-cut-p
+    #:rotate-file-journal
+    #:journal-rotation-locator
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite

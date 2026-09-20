@@ -87,6 +87,11 @@ var messageBusAudit = audit.Config{
 		// the value holds. quoteList is this package's own wrapper over it and its body is
 		// walked by the same classifier.
 		"oneline.Quote", "quoteList", "cappedList",
+		// decideSuffix builds the typed-decision suffix on an INBOX NOTE line: every text
+		// field (kind, wake, owner, ref) goes through oneline.Field inside it and the three
+		// numbers use numeric verbs, so its result is safe to interpolate raw. It exists so
+		// the two INBOX NOTE sites cannot drift apart (#1617).
+		"decideSuffix",
 	},
 	Imports: []string{
 		// version.go's resolution order, which now lives once in internal/buildinfo

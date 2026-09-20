@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ usage:
   nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
                    [--label <field, default label>] [--choice <field, default decision>]
                    [--conf <field, default confidence>] [--max-escalation 0.7]
+                   [--observations]
 
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
@@ -47,6 +49,10 @@ usage:
                     (below the floor, re-ask the same question with that rung
                      excluded; every step is a logged decision)
 
+  nova-decide route ... [--paste]
+                    (one more line, for a coordinator to act on:
+                     ROUTE <unit> -> <mind> (<model id>) conf=<x>)
+
   nova-decide help --state <json file|inline json>
   nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
                    [--self-inflicted n] [--class-recurring] [--landing-moved]
@@ -61,7 +67,12 @@ usage:
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
-                      {"questions": {...}} also accepted)
+                      {"questions": {...}} also accepted). The envelope may also
+                      carry criteria_version, criteria_file, state_fields and
+                      machinery: "machinery": "who-reads" answers the question
+                      under internal/decide/readers.go's rules, where a settled
+                      security designation is taken with NO provider call and
+                      the answer is constrained before it is printed or recorded
   --state <file>      state text the decision is about; stdin when absent or "-" (default stdin)
   --floor <f>         confidence floor; answers below it are a suggestion (default 0.9)
   --base-url <url>    Jev endpoint (default https://api.typesafe.ai/v1/systemone)
@@ -81,6 +92,15 @@ usage:
   --choice <field>    field holding the decision (default decision)
   --conf <field>      field holding the confidence (default confidence)
   --max-escalation <f>  escalation-rate cap for the best floor (default 0.7)
+  --observations      read a log whose rows say "adjudicated": false. Their
+                      labels were joined afterwards and nobody adjudicated
+                      them, so a floor tuned from them is tuned from nothing:
+                      without this flag such a log is REFUSED (reason
+                      not-adjudicated), and with it the arithmetic is printed
+                      in full and the closing line is
+                      TUNE OBSERVATIONS ... best_floor=none. A row carrying
+                      no such field is a log from before the field existed and
+                      is read exactly as it always was
 
 route: which mind does this unit of work, over the ladder of minds a registry
 holds. The answer is the LOWEST rung the evidence supports with confidence that
@@ -231,14 +251,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, *prefix, "bad-floor",
 			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
-	raw, err := os.ReadFile(*questions)
-	if err != nil {
-		return refuse(stderr, *prefix, "bad-questions", fmt.Sprintf("cannot read questions: %s", oneline.Err(err)))
-	}
-	qs, err := decide.ParseQuestions(raw)
+	// The question and the criteria it is answered against load as ONE
+	// versioned pair, and the pair is what goes out: the criteria are read
+	// from the file the question names, beside it and nowhere else, and the
+	// state is validated against the typed fields the question declares --
+	// all of it BEFORE the provider is dialled, so a missing fact is a
+	// refusal and never an answer given over evidence that was not there.
+	qf, err := decide.LoadQuestionFile(*questions)
 	if err != nil {
 		return refuse(stderr, *prefix, "bad-questions", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	qs := qf.Questions
 	var state string
 	switch {
 	case *stateFile == "" || *stateFile == "-":
@@ -254,22 +277,121 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		state = string(b)
 	}
+	payload, err := qf.Payload(state)
+	if err != nil {
+		return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	// THE MACHINERY, AT THE CALL BOUNDARY.
+	//
+	// Where the loaded pair DECLARES the who-reads machinery, the rules in
+	// internal/decide/readers.go are the decision and the provider is an
+	// advisor constrained by them. A settled security designation is taken
+	// HERE -- before a client is constructed, before a key is even wanted, at
+	// zero calls and against any confidence -- and every other rule is
+	// installed on the client as a constraint that runs over the answer
+	// before it is recorded or printed, never after a caller has read it.
+	var readState decide.ReadState
+	var readDecision decide.ReadDecision
+	whoReads := qf.Machinery == decide.MachineryWhoReads
+	if whoReads {
+		readState, err = decide.ReadStateOf(state)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+	}
+	// THE CONFIGURED TABLE IS OPENED BEFORE ANY DECISION IS MADE.
+	//
+	// It used to be opened after the settled path had already returned, so a
+	// decision that cost no call also left no row: the real CLI with a fresh
+	// TSV --dsn, a settled state, no key and a dead endpoint printed success
+	// and created nothing. A decision the MACHINERY made is the one nobody can
+	// reconstruct from a provider's log, so it is exactly the one that is owed
+	// a durable row.
+	var store decide.DecisionDriver
+	if strings.TrimSpace(*dsn) != "" {
+		store, err = decisionsOpener(*dsn)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		defer store.Close()
+	}
+	if whoReads {
+		if _, _, settled := decide.MandatoryReader(readState); settled {
+			d, err := decide.ConstrainRead("", 0, readState)
+			if err != nil {
+				return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+			// The receipt, and NO fabricated confidence: the provider was not
+			// asked, so the row's confidence column is a dash and its source
+			// says the machinery decided.
+			receipt := decide.ReceiptNotConfigured
+			if store != nil {
+				q := qs[decide.ReadQuestion]
+				if err := store.Append(decide.DecisionRow{
+					QuestionHash: decide.QuestionHash(payload, decide.ReadQuestion, q),
+					Kind:         q.Kind(),
+					Answer:       string(d.First),
+					Floor:        *floor,
+					Source:       decide.SourceMachinery,
+				}); err != nil {
+					return refuse(stderr, *prefix, "decisions-write-failed",
+						fmt.Sprintf("the decision was settled and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+				}
+				receipt = decide.ReceiptRecorded
+			}
+			fmt.Fprintln(stdout, decide.ReadLine(*prefix, d, readState, 0, false, *floor, receipt))
+			return 0
+		}
+	}
 	client, err := decide.New(*baseURL, *keyEnv)
 	if err != nil {
 		return refuse(stderr, *prefix, "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	client.SetFloor(*floor)
-	if strings.TrimSpace(*dsn) != "" {
-		store, err := decisionsOpener(*dsn)
-		if err != nil {
-			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
-		}
-		defer store.Close()
+	if store != nil {
 		client.UseDecisions(store)
 	}
-	answers, _, err := client.Decide(context.Background(), state, qs)
+	if whoReads {
+		client.Constrain(func(answers map[string]decide.Answer) (map[string]decide.Answer, error) {
+			a := answers[decide.ReadQuestion]
+			d, err := decide.ConstrainRead(decide.Role(a.Choice), a.Confidence, readState)
+			if err != nil {
+				return nil, err
+			}
+			readDecision = d
+			a.Choice = string(d.First)
+			answers[decide.ReadQuestion] = a
+			// A rule that overrode the answer settled the decision, so the row
+			// carries the machinery's source and no provider confidence even
+			// though a call was made: the number that came back is not
+			// evidence about the answer that stands.
+			client.SetRowSource(d.Source, d.Source == decide.SourceProvider)
+			return answers, nil
+		})
+	}
+	answers, _, err := client.Decide(context.Background(), payload, qs)
 	if err != nil {
 		return refuse(stderr, *prefix, "provider-error", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	// A configured table that refused the row is reported, never swallowed: a
+	// caller told the decision succeeded while nothing was written has no
+	// receipt at all.
+	if err := client.RecordErr(); err != nil {
+		return refuse(stderr, *prefix, "decisions-write-failed",
+			fmt.Sprintf("the answer stands and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+	}
+	if whoReads {
+		hasConfidence := readDecision.Source == decide.SourceProvider
+		conf := answers[decide.ReadQuestion].Confidence
+		receipt := decide.ReceiptNotConfigured
+		if store != nil {
+			receipt = decide.ReceiptRecorded
+		}
+		fmt.Fprintln(stdout, decide.ReadLine(*prefix, readDecision, readState, conf, hasConfidence, *floor, receipt))
+		if hasConfidence && conf < *floor {
+			return 3
+		}
+		return 0
 	}
 	fmt.Fprintln(stdout, decide.Line(*prefix, answers, *floor))
 	for _, a := range answers {
@@ -293,6 +415,8 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	label := fs.String("label", "label", "field holding the outcome")
 	choice := fs.String("choice", "decision", "field holding the decision")
 	conf := fs.String("conf", "confidence", "field holding the confidence")
+	dflt := fs.String("default", "", "the answer a below-floor row actually gets; with it each floor reports what that default got right and what it MISSED, and the best floor is the one that misses fewest")
+	observations := fs.Bool("observations", false, "read a log whose rows say adjudicated:false: the arithmetic runs and NO floor is recommended from it")
 	maxEscalation := fs.Float64("max-escalation", decide.DefaultMaxEscalation, "escalation-rate cap for the best floor")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
@@ -325,9 +449,22 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 		Conf:          *conf,
 		Floors:        parsedFloors,
 		MaxEscalation: *maxEscalation,
+		Default:       *dflt,
+		Observations:  *observations,
 	})
 	if err != nil {
-		return refuse(stderr, "TUNE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		// A log of observations gets its own one-word reason: it is not a bad
+		// log, it is a log that cannot set a floor.
+		reason := "bad-decisions"
+		switch {
+		case errors.Is(err, decide.ErrAdjudicatedMalformed):
+			// A marker nobody can read is its own fault, and no flag admits
+			// it: --observations takes a log that says it is observations.
+			reason = "adjudicated-malformed"
+		case errors.Is(err, decide.ErrNotAdjudicated):
+			reason = "not-adjudicated"
+		}
+		return refuse(stderr, "TUNE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if res.Labeled < decide.MinLabeled {
 		return refuse(stderr, "TUNE", "too-few-labeled",
@@ -361,8 +498,15 @@ func runTuneTable(kind, dsn, decisions string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "TUNE kind=%s rows=%d\n", oneline.Field(kind), len(rows))
 	for _, row := range rows {
-		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%.2f floor=%.2f outcome=%s\n",
-			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), row.ProviderConfidence, row.Floor, orDash(row.Outcome))
+		// A row no provider answered carries a DASH, never a number: the
+		// machinery settled it, and a zero printed here would read as a
+		// measured confidence of zero.
+		confidence := "-"
+		if row.HasProviderConfidence {
+			confidence = fmt.Sprintf("%.2f", row.ProviderConfidence)
+		}
+		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%s floor=%.2f outcome=%s source=%s\n",
+			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), confidence, row.Floor, orDash(row.Outcome), orDash(row.Source))
 	}
 	fmt.Fprintf(stdout, "TUNE OK kind=%s rows=%d\n", oneline.Field(kind), len(rows))
 	return 0

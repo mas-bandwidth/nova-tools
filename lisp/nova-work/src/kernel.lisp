@@ -392,6 +392,14 @@ command loop is a defect)."
     ;; revalidates it and admits one envelope. See receipt-admission.lisp.
     (when (member verb '(:acknowledge :decline))
       (return-from %submit (receipt-submit kernel request)))
+    ;; `take` and `release` on a NODE: the lease, journaled on the single
+    ;; writer (nova-tools #1612 lane, src/take-verb.lisp). These are the work
+    ;; tree's own verbs and are not the fleet's `:take`/`:release` above, which
+    ;; are over an allocator; the verb keywords are kept apart for that reason.
+    (when (eq verb :take-node)
+      (return-from %submit (%take-node-submit kernel request)))
+    (when (eq verb :release-node)
+      (return-from %submit (%release-node-submit kernel request)))
     ;; THE NEW VERBS of draft 26 (SPEC-WORK.md:1014-1058) are mutations and
     ;; belong on this one door like every other. `submit-new-verb` used to be a
     ;; SECOND door that read the state, built a candidate and installed it with

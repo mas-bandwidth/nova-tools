@@ -535,8 +535,18 @@
     (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1") "the item settled")
     (check-equal nil (node-holder (kernel-state k) "acme/work/f1/t1")
                  "a settled item reads holder=unowned")
-    (let ((rel (first (state-lease-log (kernel-state k)))))
-      (check-equal :release (getf rel :kind) "the settle wrote a release")
+    ;; The lease log now holds the TAKE before the release that ended it: a
+    ;; `take` is a journaled `:lease` event of its own (nova-tools #1612 lane),
+    ;; where before it was a raw setf that wrote no row at all -- so the log
+    ;; held releases of takes it had never heard of. The release is FOUND here
+    ;; rather than assumed to be first.
+    (let ((rel (find :release (state-lease-log (kernel-state k))
+                     :key (lambda (e) (getf e :kind)))))
+      (ok rel "the settle wrote a release")
+      (let ((take (find :take (state-lease-log (kernel-state k))
+                        :key (lambda (e) (getf e :kind)))))
+        (ok take "the take wrote a row of its own")
+        (check-equal "emma" (getf take :holder) "naming the holder it granted"))
       (check-equal "rowan" (getf rel :by) "the settling author wrote it")
       (check-equal "emma" (getf rel :holder) "it names the holder it ended"))))
 

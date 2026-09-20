@@ -22,7 +22,14 @@ import (
 // TakeLock takes the named lock inside the pool, waiting up to wait for it, and returns the
 // release. The release is safe to call more than once.
 func (p *Pool) TakeLock(name string, wait time.Duration) (func(), error) {
-	path := p.Path(name)
+	return takeFileLock(p.Path(name), wait)
+}
+
+// takeFileLock is the body both kernel locks and the bench slot store share: an flock on a
+// named file, polled until wait runs out, released by a function that is safe to call twice.
+// It is a file lock rather than a file whose existence means "held" for rule 17's reason --
+// the kernel drops it when the holder dies however it dies.
+func takeFileLock(path string, wait time.Duration) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)

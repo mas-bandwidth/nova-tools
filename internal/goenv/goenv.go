@@ -15,9 +15,15 @@
 // working perfectly.
 //
 // Clean is the one answer for the whole class: the parent's environment minus
-// everything that can change the shape of a go command's output. A tool that
-// needs a variable of its own appends it AFTER Clean, where the last value
-// wins.
+// everything that can change the shape of a go command's output, and minus every
+// variable whose NAME carries a credential. The first half is the output-shape
+// filter above. The second is the same class one step further: simulate, batch
+// and review mutate run a check -- code from the tree under test -- through a
+// child, and a GH_TOKEN or any other secret-named variable the caller holds must
+// not reach a process whose code came from a pull request (#1836). The value is
+// never read: the drop is by NAME, so a finding, a log and a diff can all be
+// read without one. A tool that needs a variable of its own appends it AFTER
+// Clean, where the last value wins.
 //
 //	cmd := exec.CommandContext(ctx, "go", args...)
 //	cmd.Env = append(goenv.Clean(os.Environ()), "GOTMPDIR="+scratch)
@@ -26,7 +32,11 @@
 // this package must build its environment from Clean.
 package goenv
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/keyshape"
+)
 
 // Removed is the documented list of what Clean drops, and the only list. It is
 // read by people, not by code -- the rules below are the implementation -- so
@@ -40,11 +50,16 @@ import "strings"
 //	             read by the wrappers CI puts around it.
 //	GO*=...-json any other GO-prefixed variable carrying a -json or --json
 //	             flag, which is the shape of this bug wherever it turns up next.
+//	*KEY* *TOKEN* an environment NAME carrying a credential -- a forge token
+//	*SECRET*     (GH_TOKEN, GITHUB_TOKEN), a provider key (DEEPSEEK_API_KEY) or
+//	             any other secret a caller holds. The matcher reads the name and
+//	             never the value, so nothing has to see a secret to drop it, and
+//	             a child running a pull request's code cannot read one (#1836).
 //
 // GOTMPDIR is deliberately NOT dropped: it names a location, not an output
 // shape, and a bench that sets it usually has a reason (a small /tmp). A tool
 // that wants its own scratch appends GOTMPDIR= after Clean.
-const Removed = "GOFLAGS, GOTEST*, and any GO* variable whose value carries -json"
+const Removed = "GOFLAGS, GOTEST*, any GO* variable whose value carries -json, and any variable whose name carries KEY, TOKEN or SECRET"
 
 // Clean returns a copy of env with the variables named in Removed taken out.
 // The order of what remains is preserved, and env itself is not modified: the
@@ -54,6 +69,30 @@ func Clean(env []string) []string {
 	for _, entry := range env {
 		name, value, ok := strings.Cut(entry, "=")
 		if ok && removes(name, value) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// WithoutSecrets returns a copy of env with every variable whose NAME carries
+// KEY, TOKEN or SECRET taken out. It is not the output-shape rule Clean is:
+// Clean keeps the child `go` command's answers comparable, and this one keeps a
+// program the gate did not write from reading the seat's credentials. The
+// predicate is keyshape.SecretName, the same one the job shell's shim and the
+// harvest's argv log redact by, so there is one definition of a secret name.
+//
+// A gate runs a card's tree -- its git filters and its tests -- and the process
+// it was started in already holds the provider key, GH_TOKEN and the rest
+// (#1814 was the job shell; this is the gate's own children, #1897). The value
+// is never read, printed or copied: the name is what decides, and a variable
+// that does not carry one is left alone.
+func WithoutSecrets(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && keyshape.SecretName(name) {
 			continue
 		}
 		out = append(out, entry)
@@ -73,8 +112,21 @@ func removes(name, value string) bool {
 		return true
 	case strings.HasPrefix(up, "GO") && carriesJSONFlag(value):
 		return true
+	case isSecretName(up):
+		return true
 	}
 	return false
+}
+
+// isSecretName reports whether an environment NAME carries a credential. It is
+// by NAME and never by value: GH_TOKEN, a provider API key and a *_SECRET are
+// dropped without anything reading what they hold. The same predicate
+// internal/keyshape.SecretName is, and cmd/nova-swarm's shell shim unsets by:
+// a name that is a credential is a credential in every one of these places, so
+// Clean can be the one place a child's environment is built.
+func isSecretName(name string) bool {
+	up := strings.ToUpper(strings.TrimSpace(name))
+	return strings.Contains(up, "KEY") || strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET")
 }
 
 // carriesJSONFlag reports whether a value holds a -json or --json flag, in any

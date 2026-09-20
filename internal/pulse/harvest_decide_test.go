@@ -65,7 +65,7 @@ func harvestDecideRun(t *testing.T, root string, dec Decider, floor float64) (st
 func oneDoneCard(t *testing.T, root string) {
 	t.Helper()
 	addCard(t, root, "a", "1", "flash", "RESULT a sha=aaa",
-		"RESULT a sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\nred: TestFooBar -- boom\ngreen: ok\nfiles: a.go b.go\n")
+		"RESULT a sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\nred: TestFooBar -- boom\ngreen: ok\nfiles: a.go b.go\n")
 }
 
 // harvest-class-asks-the-question: the harvest sends the RESULT.md first line, the
@@ -112,7 +112,7 @@ func TestHarvestDecideAsksTheClassQuestion(t *testing.T) {
 	}
 
 	state := <-states
-	for _, want := range []string{"RESULT a sha=aaa", "BRANCH br1", "commits", "files: a.go b.go"} {
+	for _, want := range []string{"RESULT a sha=aaa", "BRANCH rowan/br1", "commits", "files: a.go b.go"} {
 		if !strings.Contains(state, want) {
 			t.Fatalf("the state does not carry %q:\n%s", want, state)
 		}
@@ -242,5 +242,74 @@ func TestHarvestDecideErrorBehavesAsToday(t *testing.T) {
 	}
 	if !strings.Contains(out, "class=unknown") {
 		t.Fatalf("a provider error must read class=unknown:\n%s", out)
+	}
+}
+
+// fakeHarvestDecider answers the harvest's class, result and red_owner questions
+// without a provider: a test picks each answer and its confidence, and counts the
+// calls to prove the three ride one call.
+type fakeHarvestDecider struct {
+	class, result, owner             string
+	classConf, resultConf, ownerConf float64
+	asked                            int
+}
+
+func (f *fakeHarvestDecider) Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+	f.asked++
+	ans := func(choice string, conf float64) decide.Answer {
+		return decide.Answer{Type: "choice", Choice: choice, Probabilities: map[string]float64{choice: conf}, Confidence: conf}
+	}
+	return map[string]decide.Answer{
+		"class":     ans(f.class, f.classConf),
+		"result":    ans(f.result, f.resultConf),
+		"red_owner": ans(f.owner, f.ownerConf),
+	}, decide.Usage{}, nil
+}
+
+// harvest-result-decided-beside-class: the harvest asks result and red_owner beside
+// the branch class question in the same call. An above-floor defect/row answer
+// carries result=defect red_owner=row on the HARVEST line, prints one
+// HARVEST FINDING-CANDIDATE and still harvests as today; and a
+// "command not found" quoted inside a passing test's expected-output block is not
+// a bench red (the rule table does not fire, the provider is asked).
+func TestHarvestResultDecidedBesideClass(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
+	oneDoneCard(t, root)
+
+	dec := &fakeHarvestDecider{class: "fixed", classConf: 0.95, result: "defect", resultConf: 0.95, owner: "row", ownerConf: 0.95}
+	out, _ := harvestDecideRun(t, root, dec, 0.9)
+	if !strings.Contains(out, "result=defect red_owner=row") {
+		t.Fatalf("the HARVEST line must carry result=defect red_owner=row:\n%s", out)
+	}
+	if !strings.Contains(out, "class=fixed") {
+		t.Fatalf("the class question still rides beside the result question:\n%s", out)
+	}
+	if !strings.Contains(out, "HARVEST FINDING-CANDIDATE job=a pointer=") {
+		t.Fatalf("a defect must print one HARVEST FINDING-CANDIDATE line:\n%s", out)
+	}
+	if !strings.Contains(out, "pushed=1") {
+		t.Fatalf("a defect still harvests as today, got:\n%s", out)
+	}
+	if dec.asked != 1 {
+		t.Fatalf("result and red_owner ride the one class call: asked=%d, want 1", dec.asked)
+	}
+
+	root2, specs2, arglog2 := setupPulse(t)
+	fakeGit(t, specs2, arglog2)
+	fakeGH(t, specs2, arglog2, "https://example.com/owner/repo/pull/43")
+	oneDoneCard(t, root2)
+	job := filepath.Join(root2, "1", "jobs", "a")
+	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte("=== RUN TestFooBar\n--- PASS: TestFooBar\nPASS\nok example.com/mod 0.1s\nexpected output:\n```\nsh: gofmt: command not found\n```\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dec2 := &fakeHarvestDecider{class: "fixed", classConf: 0.95, result: "clean", resultConf: 0.95, owner: "na", ownerConf: 0.95}
+	out2, _ := harvestDecideRun(t, root2, dec2, 0.9)
+	if strings.Contains(out2, "result=blocked-toolchain") {
+		t.Fatalf("a quoted expected-output block is not a bench red:\n%s", out2)
+	}
+	if dec2.asked != 1 {
+		t.Fatalf("the quoted toolchain string must not short-circuit the call: asked=%d, want 1", dec2.asked)
 	}
 }
