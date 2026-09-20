@@ -6,6 +6,7 @@
 ;;;;   render-file-refuses-and-leaves-the-file-untouched     SPEC-WORK.md:3151-3154
 ;;;;   render-file-refuses-a-symlink-escape-on-disk          SPEC-WORK.md:3151-3154
 ;;;;   chat-and-file-render-are-byte-identical-on-disk             SPEC-WORK.md:3138
+;;;;   TestE07F06WhenAPublicViewReaches                             SPEC-WORK.md:948-949
 ;;;;
 ;;;; The pure model of src/render.lisp rewrites a CONTENT string handed to it.
 ;;;; These cases hand it nothing: a directory is made, a file is written into
@@ -225,3 +226,30 @@ default for. RENDER-CHECK supplies its own :check mode and is called directly."
                        "the chat artifact's body and the region on disk are the same bytes")
         (check-string= (sha256-hex (subseq on-disk start end)) (getf artifact :sha256)
                        "and they hash the same")))))
+
+;;; ------------------------------------------------------------------
+;;; when-a-public-view-reaches-private-work-through-a-parent  :948-949
+;;; ------------------------------------------------------------------
+;;; nova-work acceptance criterion E07-F06-02: "When a public view reaches
+;;; private work through a parent, print only the private count"
+;;; (docs/SPEC-WORK.md:948-949, 5653982211). `render` never writes a private
+;;; node or its descendants into an output file, and a public view that reaches
+;;; one through a parent prints `private=<n>` and nothing of it. `render-node`
+;;; already prints only `private=1` for a node marked private itself; the gap
+;;; this test pins is the descendant: a task under a private parent is reached
+;;; through that parent, so it must print the count and nothing of its own data.
+
+(deftest "TestE07F06WhenAPublicViewReaches" "docs/SPEC-WORK.md:948-949"
+    "expected=descendant-of-a-private-node-prints-only-private=1"
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/prv" :type :task :parent "root" :state :doing :private t)
+                 (:id "root/prv/kid" :type :task :parent "root/prv" :state :doing
+                       :title "a secret title" :links ("http://x/secret"))))
+         (k (make-kernel :state (make-seed-state seed))))
+    (check-string= "private=1" (render-node k "root/prv")
+                   "a private node prints only the private count")
+    (let ((rendered (render-node k "root/prv/kid")))
+      (check-string= "private=1" rendered
+                     "a public view that reaches private work through a parent prints only the private count")
+      (ok (null (search "secret" rendered))
+          "the descendant's own data leaked into the public render: ~S" rendered))))
