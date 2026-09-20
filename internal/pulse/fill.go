@@ -443,6 +443,7 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 		if len(cards) == 0 {
 			break
 		}
+		cards = fairShareLaneCards(cards)
 		// THE DEAL. Each bench's share of this pool, by free slots, floor of one, smallest
 		// bench first -- and not one launcher has run yet. Cards are handed out one per bench
 		// in turn within those shares, so the benches start together rather than one draining
@@ -919,5 +920,45 @@ func strayCards(dir string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// fairShareLaneCards interleaves pending cards across active lanes round-robin,
+// preventing one lane from starving others when multiple lanes are ready.
+// Within each lane, the original card order (FIFO) is preserved.
+// Active lanes are sorted deterministically so allocation is reproducible.
+func fairShareLaneCards(cards []string) []string {
+	if len(cards) <= 1 {
+		return cards
+	}
+	laneCards := make(map[string][]string)
+	var laneNames []string
+	for _, card := range cards {
+		lane := cardLane(card)
+		if len(laneCards[lane]) == 0 {
+			laneNames = append(laneNames, lane)
+		}
+		laneCards[lane] = append(laneCards[lane], card)
+	}
+	if len(laneNames) <= 1 {
+		return cards
+	}
+	sort.Strings(laneNames)
+
+	out := make([]string, 0, len(cards))
+	for {
+		progressed := false
+		for _, lane := range laneNames {
+			q := laneCards[lane]
+			if len(q) > 0 {
+				out = append(out, q[0])
+				laneCards[lane] = q[1:]
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
 	return out
 }
