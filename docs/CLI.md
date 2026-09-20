@@ -1512,7 +1512,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--markers <dir>] [--stop <file>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1539,6 +1539,41 @@ and that was the floor on "a machine replaces a finished card right away". Ten
 seconds is what the fleet runs at: a card dropped into `--ready` is dealt in two to
 six seconds. A value the flag cannot read is a refusal naming it, never a silent five
 minutes.
+
+**THE POOL IS DEALT BY FREE CAPACITY, AND THE DEAL IS SETTLED BEFORE ANY LAUNCHER
+RUNS (#2008).** Cards go out one per bench in turn, as before, but how many a bench
+may take in a tick is its share of the fleet's free slots: a floor of one card for
+every bench with room, handed out smallest bench first, then the rest in proportion.
+Every card the tick deals is moved out of `--ready` before the first launcher call,
+so the share a bench gets does not depend on how fast it answers. Measured on the
+2026-09-20 load test, before this: the MacBook Air, 93 ms away over the tailnet, sat
+at 0/14 for an hour with a full queue while the benches on the LAN ate.
+
+**THE SEAT COMES FROM THE REGISTRY ROW (#2014).** The launcher is given the seat in
+the machine's `--machines` row, not `swarm-<bench>`. The Studio's seat is `studio`
+and the MacBook Air's is `air`, and every card dealt to them died at
+`SECRETS EXEC FAIL store file .../swarm-studio.yaml is absent` and bounced. A bench
+whose row names no seat, or a seat that is not one plain name (a path separator, a
+`..`, a space), is refused **once, by name, before the first card is dealt** — its
+neighbours keep filling, and a fill left with no seated bench refuses with exit 2:
+
+```
+FILL REFUSED bench=<name> reason=no-seat remedy="..."
+FILL REFUSED bench=<name> reason=seat-not-a-name seat=<seat> remedy="..."
+```
+
+**`--markers <dir>` is where the `.failed-<n>` and `.refused-<k>` markers live, and
+it is never `--ready` (#2013).** The default is a directory beside the queue named
+for it (`<ready>-markers`). A ready directory holds cards, and the whole fleet reads
+its depth: one launcher bug on the night of the load test left 1,275 markers lying in
+`--ready` and every counter read an idle queue as a full one. A marker is taken when
+its card relaunches, a marker whose card has left `--ready` is reaped at the top of
+the tick, and markers written before this rule are moved out of `--ready` where they
+lie:
+
+```
+FILL REAPED tick=<n> markers=<n> dir=<dir> note="..."
+```
 
 **`--stop <file>` takes a resident fill off the fleet without killing anything.**
 Touch the file: the tick in flight finishes -- a kill lands between the move out of
@@ -1711,8 +1746,9 @@ file does not name is a refusal, not a guess**, and the refusal carries the reme
 FILL REFUSED card=card-<n>.md lane=<name> remedy="add the lane to <file> or drop the LANE line"
 ```
 
-It is printed **once per card per lanes-file mtime**, remembered by a marker beside
-the card (`card-<n>.md.refused-<mtime>`), the way `nova-merge rebase --markers`
+It is printed **once per card per lanes-file mtime**, remembered by a marker in the
+markers directory (`card-<n>.md.refused-<mtime>`, see `--markers` below), the way
+`nova-merge rebase --markers`
 remembers: a refusal that reprints every five minutes is noise nobody reads, and
 editing the lanes file is a new answer, so every refusal speaks again and the stale
 marker goes. A missing lanes file is an empty table, so every card naming a lane is

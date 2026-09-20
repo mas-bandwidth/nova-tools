@@ -64,6 +64,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
 	grace := f.fs.String("launch-grace", defaultLaunchGrace.String(), "")
 	interval := f.fs.String("interval", FillIntervalDefault.String(), "")
+	markers := f.fs.String("markers", "", "")
 	stop := f.fs.String("stop", "", "")
 	slotsStore := f.fs.String("slots-store", defaultSlotsStore, "")
 	slotsOwner := f.fs.String("slots-owner", "", "")
@@ -135,6 +136,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return pulse.Fill(pulse.FillInput{
 		Ready:    *ready,
 		Launched: *launched,
+		Markers:  *markers,
 		Lanes:    *lanes,
 		Machines: *machines,
 		Session:  *session,
