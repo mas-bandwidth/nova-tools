@@ -73,6 +73,10 @@ var workAudit = audit.Config{
 		// goes out through record.FormatRow, which renders each field through
 		// oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
+		// capture is the read-only GitHub issue capture adapter; it stages files under
+		// the staging directory and prints nothing to stdout or stderr; output lines go
+		// through oneline.
+		`"github.com/mas-bandwidth/nova-tools/internal/capture"`,
 		// bounded is the capped line writer `results` prints through; every line it
 		// takes is already a record.FormatRow, and it escapes the remedy it writes.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,

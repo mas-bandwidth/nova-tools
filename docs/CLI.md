@@ -3825,6 +3825,7 @@ usage:
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
   nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
+  nova-work capture --repo <owner/repo> --into <dir> [--max-bytes <n>] [--max-body-bytes <n>] [--gh-timeout <duration>] [--resume] [--issues <n,...>]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -3850,6 +3851,7 @@ verbs:
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
   nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
+  nova-work capture        fetches and stages a read-only bundle of GitHub issues with byte bounds
 
 THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
 asks. A unit whose owner is a friend is therefore never cut as a card: ask renders it as

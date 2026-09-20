@@ -1,0 +1,31 @@
+{
+  "provider": "github",
+  "host": "github.com",
+  "repository": "mas-bandwidth/nova-tools",
+  "fetched_at": "2026-09-20T15:42:29.815158Z",
+  "page_count": 1,
+  "total_issues": 2,
+  "staged_bytes": 10110,
+  "issues": [
+    {
+      "number": 2080,
+      "node_id": "I_kwDOTxuLoc8AAAABSPCpDw",
+      "rest_id": 5518698767,
+      "revision": "2026-09-20T15:24:03Z",
+      "url": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+      "file": "issues/issue-2080.json",
+      "bytes": 3996,
+      "sha256": "32f036d54916aaf4f12e6a22fe44475bebf61796d34b924d6383346641363bdf"
+    },
+    {
+      "number": 2085,
+      "node_id": "I_kwDOTxuLoc8AAAABSPEgTQ",
+      "rest_id": 5518729293,
+      "revision": "2026-09-20T15:30:10Z",
+      "url": "https://github.com/mas-bandwidth/nova-tools/issues/2085",
+      "file": "issues/issue-2085.json",
+      "bytes": 6114,
+      "sha256": "5e54d53e9ac51c8a920afeadacb42bf8f9b8224ada2ec4cb1a03de8c862fd843"
+    }
+  ]
+}

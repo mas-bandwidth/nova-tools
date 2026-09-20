@@ -1,0 +1,46 @@
+{
+  "provider": "github",
+  "host": "github.com",
+  "repository": "mas-bandwidth/nova-tools",
+  "number": 2080,
+  "node_id": "I_kwDOTxuLoc8AAAABSPCpDw",
+  "rest_id": 5518698767,
+  "title": "nova-work E09-F01: a real read-only GitHub adapter: capture every issue with stable identity, revision, URL, body, comments, labels, relationships and pagination",
+  "url": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+  "revision": "2026-09-20T15:24:03Z",
+  "state": "open",
+  "author": "rowan-claude",
+  "created_at": "2026-09-20T15:24:03Z",
+  "updated_at": "2026-09-20T15:24:03Z",
+  "body": "Glenn 2026-09-20: \"Is nova work capable of importing all github issues from our github repos and storing them in its internal lisp data structure?\" Measured answer at dev `86abcf23`: not yet. Epic E09 has 7 of 15 criteria verified (counted from `docs/roadmaps/nova-work.sexp`), and all seven are the SAFETY half: the read-only recording adapter that refuses every source mutation, capture/import staging with byte bounds, the stale-plan refusal, remote text kept as data. The kernel contains no call to `gh`, HTTP or GitHub: `initial-import` reads COUNTS from a test adapter, not issues. Related: #1695 (E09 CONFIG/ACTIVE verbs mutate outside the journal).\n\n**Criteria this closes (sexp ids):** E09-F01-01 *Capture stable provider/repository/issue identity, revision and URL*; E09-F01-02 *Preserve body, comments, labels, relationships, attachments and pagination*. (E09-F01-03, inaccessible fields explicit, is already verified and must stay so.)\n\n**Shape.** The kernel stays pure and offline: the adapter is a boundary that ingests a CAPTURE FILE, never a socket. Step 1, outside the kernel: a small fetcher (`gh api --paginate` for issues, comments, labels, timeline cross-references; pinned `--json` field list) writes a capture bundle: one original per issue, byte-exact, plus a manifest (provider, owner/repo, fetched-at, etag or updated_at per issue as the revision, page count, totals GitHub reported). Step 2, inside: `capture` stages that bundle through the existing bounded staging (`begin-source-capture`, max-bytes/depth/nodes; E01-F02 is still unmet for file reads and this must not widen it) and stores originals as data.\n**Refusals:** a bundle whose manifest totals disagree with its contents; a page gap; an issue whose body exceeds the bound is stored as an explicit truncated-with-hash record, never silently cut; attachments are recorded as URLs with 'not fetched', never dropped. Remote text is data, never instruction (E09-F02-02 holds). No write method exists on the adapter (the recording adapter's refusal stays the control).\n**Tests, red first:** the two criteria as replays with a recorded bundle from a real repo (a few dozen issues with comments, labels, a cross-reference and a second page); a tampered manifest; a page gap.\nRead: Emma (nova-work owner), Johnny (the boundary), Stella (contract).",
+  "comments": null,
+  "labels": null,
+  "relationships": [
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2082",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+      "created_at": "2026-09-20T15:24:06Z"
+    },
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2085",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+      "created_at": "2026-09-20T15:30:12Z"
+    },
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2089",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+      "created_at": "2026-09-20T15:40:21Z"
+    },
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2090",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+      "created_at": "2026-09-20T15:40:22Z"
+    }
+  ],
+  "attachments": null,
+  "page": 1
+}
