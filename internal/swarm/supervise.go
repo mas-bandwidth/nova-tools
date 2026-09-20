@@ -46,6 +46,10 @@ type SuperviseInput struct {
 	// is a seam beside Now so a test can run the bounded drain and grace waits to their
 	// ends without holding the machine's clock; nil is time.Sleep.
 	Sleep func(time.Duration)
+	// Term fires when this supervisor should end from outside (SIGTERM in the process
+	// that runs `supervise`). Nil never fires. A closed or signalled channel reaps the
+	// harness group and returns; default Go death of this process would leave that group.
+	Term <-chan struct{}
 }
 
 // now is the input's clock, defaulting to the real one.
@@ -198,9 +202,21 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 	failures := 0
 	var seen ProviderUsage
 	spent, partial, observed := 0, false, false
+	poolTick := time.NewTicker(poolRootPoll)
+	defer poolTick.Stop()
 
 	for {
 		select {
+		case <-in.Term:
+			survived := Reap(jobPgid, jobStarted, TerminateGrace)
+			<-done
+			return ExitRecord{RC: -1, Signal: "terminated", End: EndKilled, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial, Reason: "terminated"}
+		case <-poolTick.C:
+			if poolRootGone(in.Pool) {
+				survived := Reap(jobPgid, jobStarted, TerminateGrace)
+				<-done
+				return ExitRecord{RC: -1, End: EndUnknown, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial, Reason: "the pool root is gone"}
+			}
 		case err := <-done:
 			// A WORKER THAT EXITS NON-ZERO IS A FAILED JOB (SPEC-SWARM.md:544), and `end`
 			// is the column the token ledger reads: a job whose provider refused its key
@@ -432,6 +448,19 @@ func groupStillAlive(jobPgid int, jobStarted string, sleep func(time.Duration)) 
 // property, not a fact about anybody's job: long enough for a wrapper's exit to land after
 // the work's, short enough that it is invisible beside a launch.
 const GroupDrainWait = 300 * time.Millisecond
+
+// poolRootPoll is how often a supervisor asks whether its pool directory still exists.
+// A gone pool is a test that finished or a runner that removed the tree; staying alive
+// then is the leak that held CI temp directories for hours (#1598).
+const poolRootPoll = time.Second
+
+func poolRootGone(p *Pool) bool {
+	if p == nil || p.Dir == "" {
+		return false
+	}
+	_, err := os.Stat(p.Dir)
+	return os.IsNotExist(err)
+}
 
 // abort is rule 18's losing path, and its ORDER is the rule: never spawn the harness; count
 // the processes in its own group other than itself; write aborted.json through .tmp, fsync
