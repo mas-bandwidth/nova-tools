@@ -1588,7 +1588,7 @@ the third call too.
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 ```
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
@@ -2437,6 +2437,7 @@ never forms an opinion about code and never merges anything.
 nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
 nova-review mutate --repo <dir> --base <ref> --head <ref> [--test <name>] [--timeout <seconds>] [--max <n>]
 nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
+nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
 nova-review version
 nova-review help
 ```
@@ -2502,6 +2503,21 @@ still exit 2 (#1850).
 MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
 ```
 
+`guard` is the post-landing negative control (#2042). It reverts the commit's
+non-test files, keeps the tests, and runs the named packages. The verdict is
+computed from exit codes and test names, never judged: `GUARDED` when tests go
+red, `UNGUARDED` when they stay green, `COMPILER-HELD` when the revert does not
+compile, `NOT-APPLICABLE` when the file is excluded on this OS. `--tests` is the
+only judgement (which packages to run); omitted, the packages are the commit's
+changed `.go` files. Both test tails and `platform=<goos>/<goarch>` are recorded.
+The verdict is `status=`, never the last token. It writes nothing into the repo
+it is pointed at.
+
+```
+GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> status=<GUARDED|UNGUARDED|COMPILER-HELD>
+GUARD <head8> platform=<goos>/<goarch> status=NOT-APPLICABLE reason=build-tags
+```
+
 Reverting nothing runs the head's own suite, so the control cannot be PROVED,
 which is not the same as a run that broke and is not acceptance either: it is
 never a `PASS`, never a `REJECT` and never permission to push. Every
@@ -2511,7 +2527,7 @@ different condition and still refuses, `MUTATE <head8> no-tests-changed`: it can
 be an ordinary production fix missing the red test it was required to have, and
 calling that harmless is the inference this verb must not make.
 
-The other verbs are `packet`, `version` and `help`. `packet` is the one that works:
+The other verbs are `packet`, `version` and `help`. `guard` is above. `packet` is the one that works:
 it reads one entry on a lane at one head and writes one bounded file, capped at
 `--max-bytes` (default 131072), past which the packet holds the hunk list and
 the command that prints the rest; `--max` (default 20) caps the prior-verdicts

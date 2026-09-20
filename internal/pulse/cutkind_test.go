@@ -185,6 +185,7 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		{"no queue", CutKindInput{Kind: "read", Repo: "o/n", PR: 1, Head: "h", Out: dir}, "--queue"},
 		{"rebase without a branch", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Base: "dev", Title: "t", Out: dir, Queue: dir}, "--branch"},
 		{"rebase without a base", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Branch: "rowan/x", Title: "t", Out: dir, Queue: dir}, "--base"},
+		{"guard without a head", CutKindInput{Kind: "guard", Repo: "o/n", Out: dir, Queue: dir}, "--head"},
 	} {
 		var out, errs bytes.Buffer
 		in := c.in
@@ -195,6 +196,39 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		if !strings.Contains(errs.String(), "CUT REFUSED") || !strings.Contains(errs.String(), c.want) || !strings.Contains(errs.String(), "(") {
 			t.Errorf("%s: refusal = %q, want CUT REFUSED naming %s and a remedy", c.name, errs.String(), c.want)
 		}
+	}
+}
+
+func TestCutKindGuardCardForbidsJudgingTheVerdict(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "guard", Repo: "mas-bandwidth/nova-tools", Head: "ddce356eabcd",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if got := strings.SplitN(card, "\n", 2)[0]; got != "RESULT: CARD-1 guard of nova-tools at ddce356eabcd" {
+		t.Errorf("line 1 = %q", got)
+	}
+	if !strings.Contains(card, "nova-review guard --repo ./repo --head ddce356eabcd") {
+		t.Errorf("the card does not name the mechanical verb:\n%s", card)
+	}
+	if !strings.Contains(card, "COMPUTED, never judged") {
+		t.Errorf("the card does not forbid judging:\n%s", card)
+	}
+	if strings.Contains(card, "last token") {
+		t.Errorf("N/A and ABSTAIN end in reason/prose; the card must not copy the last token:\n%s", card)
+	}
+	if !strings.Contains(card, "status=") {
+		t.Errorf("the card must name the status= field to copy, not a last token:\n%s", card)
+	}
+	if !strings.Contains(line, "kind=guard") {
+		t.Errorf("the one line = %q", line)
 	}
 }
 
