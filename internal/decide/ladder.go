@@ -50,6 +50,7 @@ const (
 	KindDesign          = "design"
 	KindGuard           = "guard"
 	KindCauseToFind     = "cause-to-find"
+	KindTranscriptTest  = "transcript-test"
 )
 
 // The outcome of one attempt.
@@ -93,6 +94,7 @@ var startHeights = map[string]int{
 	KindFixtureRetarget: 0,
 	KindFleetChore:      0,
 	KindDogfood:         0,
+	KindTranscriptTest:  0,
 	KindRowTest:         1,
 	KindFixWithRedTest:  2,
 	KindNewVerb:         2,
@@ -115,6 +117,7 @@ var mechanicalKinds = map[string]bool{
 	KindFixtureRetarget: true,
 	KindFleetChore:      true,
 	KindDogfood:         true,
+	KindTranscriptTest:  true,
 	KindRowTest:         true,
 }
 
@@ -137,8 +140,30 @@ var ordinaryPlatforms = map[string]bool{
 
 // Kinds is every kind a unit may name, in the order the spec names them.
 var Kinds = []string{
-	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindRowTest,
+	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindTranscriptTest, KindRowTest,
 	KindFixWithRedTest, KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
+}
+
+// kindAliases are the names a caller may use for a kind the table already
+// holds. `chore` is the one the manager lanes actually typed on 2026-09-19 and
+// it cost them `ROUTE REFUSED reason=no-rung ... want one of rebase, stack,
+// fixture-retarget, fleet-chore, ...` (schema-issues HANDOFF D1). A chore of
+// the fleet is a fleet-chore under a shorter name, with the same start height
+// and the same mechanical eligibility; it is an alias, not a new kind, so it
+// adds no row to Kinds and no rung to the ladder.
+var kindAliases = map[string]string{
+	"chore": KindFleetChore,
+}
+
+// CanonicalKind resolves an alias to the kind the table holds and returns
+// anything else unchanged. It is applied ONCE, where the evidence is read, so
+// the kind the ladder decides on and the kind the route log records are the
+// same name -- an alias that reached the log would split every per-kind floor.
+func CanonicalKind(kind string) string {
+	if canon, ok := kindAliases[kind]; ok {
+		return canon
+	}
+	return kind
 }
 
 // KnownKind reports whether the kind is one of the ten.
@@ -245,6 +270,8 @@ func ParseUnit(data []byte) (Unit, error) {
 	if err := unmarshalStrict(data, &u); err != nil {
 		return Unit{}, fmt.Errorf("decide: bad unit: %w", err)
 	}
+	// An alias is resolved here, once, before any validation or logging.
+	u.Kind = CanonicalKind(u.Kind)
 	return u, nil
 }
 

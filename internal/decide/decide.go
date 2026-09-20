@@ -23,6 +23,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -86,13 +87,33 @@ type Usage struct {
 func (u Usage) Known() bool { return u.HasInput || u.HasOutput }
 
 // Client talks to one Jev endpoint with one key the caller named.
+//
+// One client's Decide is handed around as a decideFunc and called from several
+// goroutines at once (internal/swarm's task decider does exactly that), so the
+// per-call bookkeeping the receipt needs -- the row source and what the
+// decisions table did with the row -- is guarded. The fields set once before
+// any call, and read-only during them, are not.
 type Client struct {
 	baseURL   string
 	key       string
 	http      *http.Client
 	decisions DecisionDriver
 	floor     float64
+	constrain func(map[string]Answer) (map[string]Answer, error)
+
+	mu               sync.Mutex
+	rowSource        string
+	rowHasConfidence bool
+	recorded         int
+	recordErr        error
 }
+
+// Constrain installs the machinery that stands over a provider's answers. It
+// runs after the answers are validated against their own questions and BEFORE
+// anything records or prints them, so a rule the evidence settles is never
+// something a confident answer can be read past. A nil function leaves the
+// client forwarding the provider's answer, which is every ordinary question.
+func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)) { c.constrain = fn }
 
 // New reads the key from the environment variable keyEnv (DefaultKeyEnv when
 // empty, with FallbackKeyEnv also accepted) and refuses with an error naming
@@ -223,6 +244,17 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 	if err := ValidateAnswers(qs, answers); err != nil {
 		return nil, usage, err
 	}
+	// Machinery the caller installed stands OVER the answer, and it stands
+	// here: before the row is recorded and before the caller can print it, so
+	// what is persisted and what is read are the constrained decision and not
+	// the provider's advice (Stella, 2026-09-19, r2 of the #1925 hold).
+	if c.constrain != nil {
+		constrained, err := c.constrain(answers)
+		if err != nil {
+			return nil, usage, err
+		}
+		answers = constrained
+	}
 	c.record(state, qs, answers)
 	return answers, usage, nil
 }
@@ -297,7 +329,18 @@ func ParseQuestions(data []byte) (map[string]Question, error) {
 		return nil, fmt.Errorf("decide: bad questions: not a JSON object: %w", err)
 	}
 	raw := top
-	if inner, ok := top["questions"]; ok && len(top) == 1 {
+	if inner, ok := top["questions"]; ok {
+		// The envelope may carry the criteria the question is answered
+		// against -- their version, their file, and the state fields the
+		// asker computes first -- so that a question and its criteria are
+		// ONE versioned pair. Anything else beside it is a refusal that
+		// names the key: a misspelled metadata key that fell through to
+		// the bare form used to be read as a question.
+		for key := range top {
+			if key != "questions" && !questionEnvelopeKeys[key] {
+				return nil, fmt.Errorf("decide: bad questions: %q stands beside \"questions\" and is not one of comment, criteria_version, criteria_file, state_fields, machinery", key)
+			}
+		}
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(inner, &m); err != nil {
 			return nil, fmt.Errorf("decide: bad questions: \"questions\" is not an object")
@@ -407,4 +450,19 @@ func Line(prefix string, answers map[string]Answer, floor float64) string {
 		b.WriteString(strings.Join(below, ","))
 	}
 	return b.String()
+}
+
+// questionEnvelopeKeys are the keys a question file may carry BESIDE its
+// questions: the criteria those questions are answered against, so the pair is
+// versioned together (Glenn, 2026-09-19 -- the criteria go in as input tokens),
+// and a comment. Anything else is a refusal that names it.
+var questionEnvelopeKeys = map[string]bool{
+	"comment":          true,
+	"criteria_version": true,
+	"criteria_file":    true,
+	"state_fields":     true,
+	// The rules the question is answered UNDER, so the binding between a
+	// question and its machinery lives in the versioned pair rather than in a
+	// name match inside a verb.
+	"machinery": true,
 }
