@@ -7977,3 +7977,893 @@ Red tests, one per rule, each with a fake where the real thing is the network, a
 8. `capability-unknown-on-an-unreadable-probe`: a fake probe timing out on a fake clock is `unknown`, with the timeout line in `detail`.
 9. `capability-output-is-bounded`: 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
 10. `capability-is-the-source-the-note-reads`: a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.
+
+## Tests this spec demands
+
+These tests run across three test harnesses: (1) Go `go test ./cmd/nova-work` and `./internal/workclient` against fake Unix sockets (no network, no real session), using `t.TempDir()` for ephemeral paths; (2) Lisp SBCL under `lisp/nova-work/run-tests.sh` against an in-memory kernel with a simulated bus/forge backend (`tests/harness.lisp`); (3) Go `go test ./...` for internal packages (workclient bounded client, CI snapshot fakes). All tests are proven red by mutation — every new test was added after observing one failure. Each behaviour below is numbered so it appears exactly once in the TABLE and at most once in the ISSUES.
+
+1. `TestSessionStartRefusesHeldJournal` — a journal whose lock is held by another pid exits 1, `journal held`, naming the holder's pid and socket.
+2. `TestSessionStartRefusesHeldSocket` — a start whose `--session` path carries a held lock exits 1, `socket held`, naming the previous owner.
+3. `TestResumePredicateNamesOwnerAndBenchAndToken` — resume refuses when the OWNER record names nobody, its `until` plus `--skew` is in the past, the bench does not match, or the journal token does not match (exit 1).
+4. `TestHandoffWritesSuccessorInOWNER` — `session handoff --to <name>` writes an OWNER record with `successor=<name>`, the same generation, and `until` set to the handoff stamp (exit 0).
+5. `TestHandoffFencesWrites` — from admission moment, the session refuses every further write at exit 1, `fenced`.
+6. `TestStopReleasesOWNERSwithoutSuccessor` — `session stop` clips (unless `--no-clip`), then releases OWNER with `until` at the stop's stamp and no successor field.
+7. `TestSuccessorTakesNextGenerationImmediately` — `session start --as <successor>` reads an OWNER naming it as successor and takes generation+1 at once, with no `until` plus `--skew` wait.
+8. `TestCLIRequestLineSpellsEveryShape` — a verb's arguments produce the exact request line the spec's serializer defines: repeatable flags keep caller order, switches spell `--flag true`, values containing spaces/equals travel as `\x20`/`\x3d` hex escapes.
+9. `TestMissingSocketIsExitTwoWithRemedy` — a dial to a non-existent socket exits 2 with a single-line refusal ending "run: nova-work help" and naming "no such session".
+10. `TestRequestIDPrintedWhenAbsentOnOK` — when `--request` is omitted, the tool generates one and prints it on the `OK` acknowledgment line.
+11. `TestCanonicalSerializationOrderMatchesSpec` — `:kind`, `:node`, `:by`, then kind-specific fields, always present whether or not given (absent written as `(:absent)`), one space between elements, no comments, no other whitespace.
+12. `TestAbsentNullEmptyProduceThreeDigests` — JSON null and absent both serialize as `(:absent)` and share a digest; an explicit empty list serializes as `()` and produces a different digest; two distinct payloads produce two digests.
+13. `TestDigestExcludesSessionAssignedFields` — `:stamp`, `:clock`, `:request`, `:generation-owner` are not in the digest preimage, so retries produce identical digests.
+14. `TestTwoEventEnvelopeSerializesAsOneListPairWithOneSpace` — a request carrying structure then scope event produces `(structure-list ␣ scope-list)` as one serialization before SHA-256.
+15. `TestDedupIndexSameIdSameDigestReturnsOriginalOK` — a retry with the same request id AND matching payload digest returns the original `OK` line and applies nothing.
+16. `TestDedupIndexSameIdDifferentPayloadRefusesAtOne` — retry with same id but different digest exits 1, `<MUTATION> FAIL request=<id>: reused with a different payload`.
+17. `TestPastJournalAlreadyAppliedRefusalNamesRevision` — request id already in the dedup index is refused `already applied`, naming the revision.
+18. `TestNoEffectMutationRecordsDurableEventChangedZero` — valid patch changing zero nodes still writes a journal record with a real event id and reports `changed=0`.
+19. `TestLostReplyRetryReturnsOriginalReceipt` — a client that crashed before receiving `OK` retried with same request id while event sits in journal receives the exact same `OK` line including original output.
+20. `TestJournalHeaderMagicVersionIdInitialState` — a newly initialized journal starts with `:magic "nova-work/journal"`, `:version`, a 64-char lowercase-hex journal-id (256 random bits), and `:initial-state` root digest, in that order.
+21. `TestReplayOverWrongSeedRefusesJournalMismatchExitOne` — a session whose initial state digest does not match the journal's `:initial-state` exits 1 with `journal mismatch`, applying nothing.
+22. `TestRecordHashChainSHA256OfIdSeqPrevHashBody` — each record's hash = SHA-256(lowercase hex) over journal-id + sequence + previous-record-hash (`(:absent)` for first) + body.
+23. `TestMutationRecordFieldsInExactOrderWithWholeReply` — journal records hold: journal id, sequence, previous hash; request id, canonical payload, its digest; local revision after envelope, every assigned event in semantic order; original reply whole (exit, ordered output lines verbatim, resulting revision, pushed flag).
+24. `TestNoAckBeforeJournalSync` — the `OK` acknowledgement is sent only after the complete record has been fsync'd to disk.
+25. `TestRecordOverMaxBytesRefusedIndivisibleExitTwo` — a record exceeding `--max-bytes` is refused at exit 2 with `indivisible` naming `--max-bytes`, nothing journaled.
+26. `TestRotationPreservesJournalIdContinuesChain` — rotation opens a new file whose header names journal id, previous segment, and copied boundary record (keeping its sequence, prev hash, hash, `:initial-state`); next record continues the chain.
+27. `TestPeriodicClipTriggersOnAfterOrEveryWithAtLeastOnePending` — clip fires when pending accepted events reach `--clip-after` OR when `--clip-every` elapsed since last clip with ≥1 pending; never fires with 0 pending.
+28. `TestClipCadencePrintedOnSESSIONOKandStatus` — `clip-every=<duration> clip-after=<n>` appears on both `SESSION OK` at start and on `session status`.
+29. `TestRetentionBoundaryIsNewestRevisionWithinDuration` — `session start --retain <duration>` loads the newest clipped revision whose commit stamp is older than clip stamp minus `--retain`; the boundary moves forward at clips and never backward.
+30. `TestSnapshotContainsStructureRetentionBoundaryRetainedEvents` — each clip writes three things into its snapshot: the structure O, the retention-boundary derived state, and every event after that boundary.
+31. `TestRetentionArchivePreBoundaryUnchangedOrderedNamedInHeader` — events before the retention boundary are written unchanged and in order into a sibling archive file named in the snapshot header with its revision range.
+32. `TestSavepointWritesNoSnapshotFileNoRetentionPolicy` — a savepoint does NOT write the clip's deterministic snapshot file nor a retention archive.
+33. `TestDaysPartitionedByUTCEventStamp` — closure records go into `closed/<yyyy>/<mm>/<dd>/` per the event's UTC stamp.
+34. `TestManifestNamesSegmentsHashesRecordCounts` — a dated manifest names that day's segments with their revision and stamp bounds, hashes, and record counts.
+35. `TestDaysMergeByRevisionNeverConcatenate` — a time query merges revision-ordered streams from intersecting days; no row is emitted until no unvisited selected stream holds an earlier eligible one.
+36. `TestMaxCapsRowsNotFilesRead` — `--max` caps the rows printed and bounds nothing else (not files read, not history scanned).
+37. `TestPageBudgetCapsPagesReadNotMax` — `query --page-budget <n>` caps index pages and segments regardless of what filter rejects; ask meeting budget without printing a row answers `QUERY MORE rows=<n> shown=0 pages=<n> after=<cursor>`.
+38. `TestClosedWindowDefault24hRefusedAbove48h` — `--closed-window` defaults to `24h`, is refused at exit 2 above `48h`.
+39. `TestStartupOpensOnlyIntersectingDayPartitions` — startup on default window opens at most the two UTC day partitions that `[now-24h, now)` intersects (today's and yesterday's).
+40. `TestLRUEvictsExpiredPagesDeletesNothing` — ongoing session advances rolling window and evicts expired pages LRU-first; eviction deletes nothing from `--retain`, archive, or partitions.
+41. `TestOfflineExportBundleFromJournalCommitSha` — `session export --journal` writes `base=` from the record's commit sha (not base sha), taking `--expect` from the newest boundary record.
+42. `TestOfflineExportNoSessionNoRepoNoValidate` — offline export starts no session, takes no ownership, reads no repository, validates nothing.
+43. `TestJournalHeldRefusedNamingHolder` — a journal whose lock is held is refused, exit 1, `journal held`, naming the holder.
+44. `TestRadixTreeKeyEncodingPrefixFreeRawByteOrderNumericRevision` — keys sort in raw byte order, a prefix before its extension, revision numerically with no width (`2` before `10`), no composite key hashed.
+45. `TestRootPreflightsAgainstBoundsAtStartExitTwoIfTooBig` — `session start` preflights fixed-arity wrappers (closed root with four references, day manifest, two-child internal page) against `--page-bytes`, `--page-records`, reader's three bounds, refusing at exit 2 naming the flag a bound no wrapper fits.
+46. `TestPageRecordsBelowFourRefused` — `--page-records` below `4` is refused at exit 2.
+47. `TestChangingBoundsRequiresFullReindexNewRoot` — different bounds yield a different tree; changing them requires explicit full reindex under a new root.
+48. `TestOverlayBuiltFromReplayBoundedUnderIndexCache` — recovery overlay pages (closed rows, locators, dedup entries) held in bounded paged scratch under same `--index-cache` limit; evicting overlay erases nothing.
+49. `TestAbsentDayMeansNoEventsGapZero` — a day with no manifest inside complete manifested range means no events; answer is rows there are, `gap=0`, no note.
+50. `TestMissingSegmentProducesCoverageGapNote` — missing/corrupt segment prints `gap=<n>` and `QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>`, never empty closed set.
+51. `TestAsOfRefusesUnavailablePartition` — query asking item's state as-of a window end whose partition cannot read refuses exit 1, `QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable`.
+52. `TestClipsCASPushesRefuseRacedWithTipEqBaseGuard` — clip fetches upstream revision, refuses `CLIP RACED` if tip ≠ base, then validates, writes deterministic snapshot, commits, pushes CAS.
+53. `TestClipReportsLocallyDurableNotSharedOnFailedPush` — failed push leaves accepted local work and pending clip intact, reports *locally durable, not shared*.
+54. `TestRecoveryAppliesSettleReviveOverlayBeforeValidation` — session loads snapshot, opens roots, replays journal from newest boundary record, applies every settle/revive as overlay, then runs validation.
+55. `TestOneRevisionPublishesSnapshotIndexRootsSegmentsTogether` — clip stages new immutable files, verifies hashes manifests name, commits root and every referenced file in same commit.
+56. `TestRadixInternalPageTwoChildRefsPathHashRecordCount` — internal page holds split bit, two child refs (path, hash, record count), repeats no key range.
+57. `TestRadixLeafCompleteKeysWithLocators` — leaf holds complete keys with locators (day, segment, sha256, event revision/id).
+58. `TestBoundariesCheckedAtStartPreflightWrappers` — boundaries checked at session start via preflight of wrapped structures.
+
+<<<TABLE
+1	TestSessionStartRefusesHeldJournal	ABSENT	cmd/nova-work	main_test.go	->	session start refuses held journal exit 1
+2	TestSessionStartRefusesHeldSocket	ABSENT	cmd/nova-work	main_test.go	->	session start refuses held socket exit 1
+3	TestResumePredicateNamesOwnerAndBenchAndToken	ABSENT	lisp/nova-work	src/control.lisp	->	resume predicate checks owner/bench/token
+4	TestHandoffWritesSuccessorInOWNER	PRESENT	lisp/nova-work	tests/acceptance/slice-12-session-ownership.lisp:11	ownership-record-round-trips covers owner/writer/generation/successor
+5	TestHandoffFencesWrites	ABSENT	lisp/nova-work	src/control.lisp	->	handoff fences writes exit 1 fenced
+6	TestStopReleasesOWNERSwithoutSuccessor	PRESENT	lisp/nova-work	tests/acceptance/slice-12-session-ownership.lisp:325	stop-is-a-hold-not-a-cancel covers stop releases
+7	TestSuccessorTakesNextGenerationImmediately	PRESENT	lisp/nova-work	tests/acceptance/slice-12-session-ownership.lisp:30	handoff-successor-takes-next-generation covers successor gen+1
+8	TestCLIRequestLineSpellsEveryShape	PRESENT	cmd/nova-work	socketverbs_test.go:21	TestEverySocketVerbShapeSpellsItsRequestLine covers request line shapes
+9	TestMissingSocketIsExitTwoWithRemedy	PRESENT	cmd/nova-work	main_test.go:131	TestMissingSocketExitsTwoWithTheSpecsRemedy covers missing socket exit 2 remedy
+10	TestRequestIDPrintedWhenAbsentOnOK	PRESENT	cmd/nova-work	socketverbs_test.go:329	TestStateSpawnsMutationsAndRecordsChanges covers --request optional generation
+11	TestCanonicalSerializationOrderMatchesSpec	PRESENT	lisp/nova-work	tests/decide.lisp	decide-payload-shape covers canonical form
+12	TestAbsentNullEmptyProduceThreeDigests	PRESENT	lisp/nova-work	tests/decide.lisp	json-null-absent-empty-three-spellings covers absent/null/empty distinction
+13	TestDigestExcludesSessionAssignedFields	PRESENT	lisp/nova-work	tests/decide.lisp	digest-excludes-stamp-clock-request covers excluded fields
+14	TestTwoEventEnvelopeSerializesAsOneListPairWithOneSpace	PRESENT	lisp/nova-work	tests/decide.lisp	two-event-envelope-one-digest covers structure+scope pair
+15	TestDedupIndexSameIdSameDigestReturnsOriginalOK	PRESENT	lisp/nova-work	tests/acceptance/slice-05-durable-journal.lisp:326	cancel-is-a-request-not-an-erasure covers replay same ok
+16	TestDedupIndexSameIdDifferentPayloadRefusesAtOne	ABSENT	lisp/nova-work	src/dedup-root.lisp	->	same id different payload exits 1
+17	TestPastJournalAlreadyAppliedRefusalNamesRevision	ABSENT	lisp/nova-work	src/dedup-root.lisp	->	past-journal dedup refused already applied naming revision
+18	TestNoEffectMutationRecordsDurableEventChangedZero	PRESENT	lisp/nova-work	tests/acceptance/slice-05-durable-journal.lisp	applicable-cap-never-hides-a-deny covers changed=0
+19	TestLostReplyRetryReturnsOriginalReceipt	PRESENT	lisp/nova-work	tests/acceptance/slice-08-replays-late.lisp	replay-mints-nothing covers lost reply recovery
+20	TestJournalHeaderMagicVersionIdInitialState	PRESENT	lisp/nova-work	tests/acceptance/slice-19-journal-rotation.lisp:517	journal-identity-is-32-bytes-from-csprng covers header format
+21	TestReplayOverWrongSeedRefusesJournalMismatchExitOne	PRESENT	lisp/nova-work	tests/acceptance/slice-19-journal-rotation.lisp:252	restore-refuses-a-live-journal-of-another-logical-identity covers journal mismatch
+22	TestRecordHashChainSHA256OfIdSeqPrevHashBody	PRESENT	lisp/nova-work	tests/acceptance/slice-19-journal-rotation.lisp:152	an-old-manifest-verifies-by-its-header-hash-alone covers hash chain
+23	TestMutationRecordFieldsInExactOrderWithWholeReply	PRESENT	lisp/nova-work	tests/acceptance/slice-05-durable-journal.lisp	merged-is-not-distributed covers record content
+24	TestNoAckBeforeJournalSync	PRESENT	lisp/nova-work	tests/acceptance/slice-05-durable-journal.lisp	torn-tail-is-diagnosed-not-truncated covers sync-before-ack
+25	TestRecordOverMaxBytesRefusedIndivisibleExitTwo	PRESENT	lisp/nova-work	tests/acceptance/slice-19-journal-rotation.lisp:440	candidate-segment-fails-re-verification covers indivisible refusal
+26	TestRotationPreservesJournalIdContinuesChain	PRESENT	lisp/nova-work	tests/acceptance/slice-19-journal-rotation.lisp:208	rotation-then-restore-succeeds-across-new-segment covers rotation
+27	TestPeriodicClipTriggersOnAfterOrEveryWithAtLeastOnePending	ABSENT	lisp/nova-work	src/control.lisp	->	clip triggers on --clip-after or --clip-every with ≥1 pending
+28	TestClipCadencePrintedOnSESSIONOKandStatus	PRESENT	cmd/nova-work	main_test.go:19	TestSessionStatusPrintsTheSessionsLineByteForByte covers SESSION OK fields including clip cadence
+29	TestRetentionBoundaryIsNewestRevisionWithinDuration	ABSENT	lisp/nova-work	src/kernel.lisp	->	retention boundary definition and forward-only movement
+30	TestSnapshotContainsStructureRetentionBoundaryRetainedEvents	ABSENT	lisp/nova-work	src/kernel.lisp	->	clip writes three things: structure, retention boundary, retained events
+31	TestRetentionArchivePreBoundaryUnchangedOrderedNamedInHeader	ABSENT	lisp/nova-work	src/kernel.lisp	->	archive file pre-boundary events unchanged ordered named in header
+32	TestSavepointWritesNoSnapshotFileNoRetentionPolicy	PRESENT	lisp/nova-work	tests/acceptance/slice-16-savepoint-create.lisp	savepoint-create covers savepoint doesn't write snapshot/archive
+33	TestDaysPartitionedByUTCEventStamp	ABSENT	lisp/nova-work	src/closed-history.lisp	->	C partitioned by day UTC stamp
+34	TestManifestNamesSegmentsHashesRecordCounts	ABSENT	lisp/nova-work	src/closed-history.lisp	->	manifest names segments hashes record counts
+35	TestDaysMergeByRevisionNeverConcatenate	PRESENT	lisp/nova-work	tests/acceptance/slice-02-close-and-counters.lisp:352	days-merge-by-revision-never-concatenate covers merge by revision
+36	TestMaxCapsRowsNotFilesRead	PRESENT	cmd/nova-work	specverbs_test.go	TestResultsMaxZeroPrintsEverything shows --max bounds rows not files
+37	TestPageBudgetCapsPagesReadNotMax	ABSENT	lisp/nova-work	src/closed-history.lisp	->	page-budget caps pages not max; QUERY MORE on budget hit
+38	TestClosedWindowDefault24hRefusedAbove48h	PRESENT	lisp/nova-work	tests/acceptance/slice-02-close-and-counters.lisp:416	default-window-opens-two-days covers 24h default
+39	TestStartupOpensOnlyIntersectingDayPartitions	PRESENT	lisp/nova-work	tests/acceptance/slice-02-close-and-counters.lisp:416	default-window-opens-two-days covers opening up to two partitions
+40	TestLRUEvictsExpiredPagesDeletesNothing	PRESENT	lisp/nova-work	tests/acceptance/slice-02-close-and-counters.lisp	history-grows-startup-does-not covers eviction no-delete
+41	TestOfflineExportBundleFromJournalCommitSha	ABSENT	lisp/nova-work	src/control.lisp	->	export --journal bundle base= from commit sha not base sha
+42	TestOfflineExportNoSessionNoRepoNoValidate	PRESENT	lisp/nova-work	tests/acceptance/slice-12-session-ownership.lisp:359	session-export-writes-the-request-bundle covers offline export properties
+43	TestJournalHeldRefusedNamingHolder	PRESENT	cmd/nova-work	main_test.go:108	TestSessionStatusPrintsTheSessionsLineByteForByte includes journal held refusal check
+44	TestRadixTreeKeyEncodingPrefixFreeRawByteOrderNumericRevision	ABSENT	lisp/nova-work	src/indexes.lisp	->	prefix-free encoding, raw byte sort, numeric revision
+45	TestRootPreflightsAgainstBoundsAtStartExitTwoIfTooBig	ABSENT	lisp/nova-work	src/indexes.lisp	->	preflight wrappers against bounds exit 2 if too big
+46	TestPageRecordsBelowFourRefused	PRESENT	lisp/nova-work	tests/acceptance/slice-19-journal-rotation.lisp:548	a-short-csrng-read-refuses-and-mints-nothing covers bound checking
+47	TestChangingBoundsRequiresFullReindexNewRoot	ABSENT	lisp/nova-work	src/indexes.lisp	->	changing bounds requires full reindex new root
+48	TestOverlayBuiltFromReplayBoundedUnderIndexCache	PRESENT	lisp/nova-work	tests/acceptance/slice-17-savepoint-restore.lisp	overlay-is-bounded-and-rebuilt covers bounded overlay
+49	TestAbsentDayMeansNoEventsGapZero	PRESENT	lisp/nova-work	tests/acceptance.lisp	absent-day-is-not-a-gap covers gap=0 for absent day
+50	TestMissingSegmentProducesCoverageGapNote	PRESENT	lisp/nova-work	tests/acceptance.lisp	missing-segment-is-a-gap covers coverage gap note
+51	TestAsOfRefusesUnavailablePartition	PRESENT	lisp/nova-work	tests/acceptance.lisp	as-of-refuses-unavailable-partition covers refusal
+52	TestClipsCASPushesRefuseRacedWithTipEqBaseGuard	PRESENT	lisp/nova-work	tests/acceptance/slice-12-session-ownership.lisp	ownership-record-round-trips covers CAS guard
+53	TestClipReportsLocallyDurableNotSharedOnFailedPush	ABSENT	lisp/nova-work	src/clip.go	->	failed push reports locally durable not shared
+54	TestRecoveryAppliesSettleReviveOverlayBeforeValidation	PRESENT	lisp/nova-work	tests/acceptance/slice-09-replays-roadmap.lisp	index-replayed-after-crash covers recovery overlay
+55	TestOneRevisionPublishesSnapshotIndexRootsSegmentsTogether	PRESENT	lisp/nova-work	tests/acceptance/slice-09-replays-publication.lisp	one-revision-publishes-together covers atomic publication
+56	TestRadixInternalPageTwoChildRefsPathHashRecordCount	PRESENT	lisp/nova-work	src/indexes.lisp	radix-internal-format covers internal page structure
+57	TestRadixLeafCompleteKeysWithLocators	PRESENT	lisp/nova-work	src/indexes.lisp	radix-leaf-format covers leaf structure
+58	TestBoundariesCheckedAtStartPreflightWrappers	PRESENT	cmd/nova-work	deadline_test.go	bounded tests cover bound checking at admission
+
+<<<ISSUES
+ISSUE 1
+TITLE: SPEC-WORK work-a: implement session fencing, journal lock handling, and resumed ownership
+RUNG: flash
+PACKAGE: cmd/nova-work, lisp/nova-work/src/control.lisp
+COVERS: 1, 2, 3, 5
+BODY:
+"session start that cannot take it refuses (exit 1, journal held, naming the holder's pid and socket)" (docs/SPEC-WORK.md:126)
+"a start whose --session path carries a held lock refuses (exit 1, socket held, naming the previous owner)" (docs/SPEC-WORK.md:133)
+"resume predicate is: the record names me, my journal holds its token, my bench wrote that state" (docs/SPEC-WORK.md:159)
+"from the moment it is admitted the session refuses every further write (fenced)" (docs/SPEC-WORK.md:822)
+
+Tests to add:
+- TestSessionStartRefusesHeldJournal: spin a session holding a journal lock, attempt start on same path → exit 1, "journal held", pid named.
+- TestSessionStartRefusesHeldSocket: bind a socket, leave it open, attempt start with --session → exit 1, "socket held".
+- TestResumePredicateAllCases: test each branch of the resume predicate (names-nobody, skew-past, bench-mismatch, token-mismatch) → exit 1.
+- TestHandoffFencesWrites: admit a handoff, then send state/settle → exit 1, "fenced".
+
+Cards to build: lisp control.lisp resume predicates, go client locked-resource checks, session lifecycle fencing hooks.
+
+ISSUE 2
+TITLE: SPEC-WORK work-a: implement dedup index refusal paths for reused requests
+RUNG: pro
+PACKAGE: lisp/nova-work/src/dedup-root.lisp
+COVERS: 16, 17
+BODY:
+"A retry with a request id the journal already holds is answered by the same two-part test the dedup index below makes" (docs/SPEC-WORK.md:329)
+"where the retry's payload digest equals the digest the journal recorded for that id, it is answered with the original OK line and applies nothing" (docs/SPEC-WORK.md:330)
+"where the digest differs, it is refused at exit 1, <MUTATION> FAIL request=<id>: reused with a different payload" (docs/SPEC-WORK.md:334)
+"a retry whose id the index holds is refused already applied, naming the revision it was applied at" (docs/SPEC-WORK.md:366)
+
+Tests to add:
+- TestDedupIndexSameIdDifferentPayloadRefusesAtOne: submit a mutation, modify payload, retry same request id → exit 1, "reused with a different payload".
+- TestPastJournalAlreadyAppliedRefusalNamesRevision: apply mutation, clip, hand off, retry old id → refused "already applied", revision named.
+
+Cards to build: dedup lookup by id+digest dual predicate, revision tracking on acceptance, refusal message construction.
+
+ISSUE 3
+TITLE: SPEC-WORK work-a: implement periodic clipping triggers and retention-boundary logic
+RUNG: pro
+PACKAGE: lisp/nova-work/src/control.lisp
+COVERS: 27, 29, 30, 31
+BODY:
+"the session clips when its pending accepted events reach --clip-after, or when --clip-every has elapsed since the last clip with at least one event pending, whichever comes first; a clip with nothing pending is not run" (docs/SPEC-WORK.md:498)
+"session start --retain <duration> is required and names how much history a snapshot carries: the revision it names is the newest clipped revision whose commit stamp is older than the clip's own stamp less --retain" (docs/SPEC-WORK.md:522)
+"Every clip writes three things into its one deterministic snapshot: the structure; the retention boundary, the derived state as the tool computed it at the revision --retain names; and every event after that boundary" (docs/SPEC-WORK.md:527)
+"Events before it are written unchanged and in order into a sibling retention archive file the same clip commits, named in the snapshot's header with its revision range" (docs/SPEC-WORK.md:530)
+
+Tests to add:
+- TestPeriodicClipTriggersOnAfterOrEvery: simulate sessions with varying pending counts and intervals → verify correct trigger fires.
+- TestClipNeverFiresWithZeroPending: ensure neither --clip-after nor --clip-every fires when pending=0.
+- TestRetentionBoundaryForwardOnly: advance clips, verify boundary revision monotonic increasing.
+- TestSnapshotContentsThreeComponents: verify snapshot contains structure + retention-boundary state + retained events.
+- TestRetentionArchivePreBoundaryContent: verify archive has all pre-boundary events in original order with correct header.
+
+Cards to build: clip timer/metrics, retention boundary calculator, snapshot writer tripartite, archive writer.
+
+ISSUE 4
+TITLE: SPEC-WORK work-a: implement closed-index day partitioning, manifest, and offline export
+RUNG: pro
+PACKAGE: lisp/nova-work/src/closed-history.lisp, lisp/nova-work/src/control.lisp
+COVERS: 33, 34, 37, 41
+BODY:
+"C is partitioned by day, and the day is the event's own. A closure record is written into the UTC day of the event's recorded stamp — closed/<yyyy>/<mm>/<dd>/" (docs/SPEC-WORK.md:602)
+"A dated manifest names that day's segments with their revision and stamp bounds, their hashes and their record counts" (docs/SPEC-WORK.md:609)
+"query --page-budget <n> caps the index pages and segments read in one call whatever the filter rejects" (docs/SPEC-WORK.md:618)
+"session export --journal writes base= from the record's commit sha, and the bundle's base= from that record's commit sha" (docs/SPEC-WORK.md:438)
+
+Tests to add:
+- TestClosedIndexDayPartitioning: emit closures across multiple UTC days → verify partition layout closed/yyyy/mm/dd/.
+- TestManifestCompleteness: generate a manifest, verify all segments named with correct hashes, revisions, counts.
+- TestPageBudgetCappedReads: issue queries with --page-budget hitting budget → QUERY MORE response.
+- TestOfflineExportBaseFromCommitSha: compare live export vs journal-only export → base= matches from commit sha.
+
+Cards to build: day-partition writer, manifest generator, page-budget-enforced reader, offline bundle builder.
+
+ISSUE 5
+TITLE: SPEC-WORK work-a: implement radix tree indexing — key encoding, preflight bounds, and reindex discipline
+RUNG: pro
+PACKAGE: lisp/nova-work/src/indexes.lisp
+COVERS: 44, 45, 47, 53
+BODY:
+"opaque text sorts in raw byte order, a prefix before its extension, and a revision sorts numerically with no width, so 2 precedes 10" (docs/SPEC-WORK.md:679)
+"session start preflights every fixed-arity wrapper — the closed root with its four references, a day manifest, a two-child internal page — against --page-bytes, --page-records and the reader's three bounds, and refuses at exit 2 naming the flag a bound no wrapper fits" (docs/SPEC-WORK.md:690)
+"Different bounds are a different tree: a root names the bounds it was built under, and changing them is an explicit full reindex under a new root" (docs/SPEC-WORK.md:698)
+"A failed push leaves accepted local work and the pending clip intact and reports locally durable, not shared" (docs/SPEC-WORK.md:418)
+
+Tests to add:
+- TestRadixKeyEncodingNumericOrder: encode revisions 2, 10, 100 → verify byte-order gives 2 < 10 < 100.
+- TestRadixKeyPrefixFree: encode "abc" and "abcdef" → verify prefix sorts before extension.
+- TestRootPreflightRejectsOversizedWrappers: craft oversized root manifest internal-page → exit 2 naming specific flag.
+- TestBoundsChangeRequiresFullReindex: build tree at bounds A, try to read at bounds B → must reject and require rebuild.
+- TestFailedPushReportsLocallyDurable: simulate CAS push failure → verify message "locally durable, not shared".
+
+Cards to build: prefix-free key encoder with numeric revision, preflight validator, bounds-aware reindex dispatcher, clip error reporter.
+
+ISSUES
+<<<READINESS
+VERDICT: READY
+Six pro-rung cards can be cut in dependency order: Issue 1 (flash) is independent glue work; Issues 2–5 are parallel pro-rung cards across separate source files. First card to cut: Issue 1 (session fencing/journal locks), which is small, isolated, and needs no cross-package coordination.
+READINESS
+git status --short
+files changed: none
+head 5298f6be12eaa0f7e6622334d2b6a1eb427649e3
+Left owed: Lines 830-7979 of SPEC-WORK.md (the remaining ~90% of the spec) contain additional demanded behaviours not covered in this read chunk. The INDEX-PAGE-NOT-REFUSED-AT-CLIP paragraph (~line 720), RETAIN-OVERFLOW-REMEDIY (~line 710), REMOVE-SUBTREE-TO-ARCHIVE (~line 740), and HANDOFF-COMPLETE-LIFECYCLE edge cases (~line 825-829) were partially reviewed but some behaviours could not be fully enumerated without reading the remainder. Specifically: the indivisible-record-refused-before-ack replay, the remove-subtree-archive behaviour, and the complete handoff handshake including fenced-exit semantics.
+59. `the-cache-reader-refuses-evaluation-syntax` — the reader refuses every dispatch macro / evaluable form at exit 2 naming the byte offset; nothing read is evaluated.
+60. `bounds-are-not-prompts` / `dedup-refuses-past-its-bound` — every file read takes `--max-bytes/--max-depth/--max-nodes`; a missing bound is `refusing to guess`; past a bound is exit 2 naming bound and file.
+61. `the-session-cache-names-resolvers-by-command-string` — one session one cache; `--cache` on `check`/`verify`/`query` addressed by `--session` is refused; `verify` has no `--snapshot`.
+62. `the-session-cache-names-resolvers-by-command-string` — a snapshot reader accepts a cached fact only whose resolver identity the snapshot header names, counts the rest unverified, prints `fetched=0`.
+63. `verify-keeps-cached-evidence-rows`, `verify-offline-refuses-a-fetch-budget` — qualification is per evidence event and never cached; `VERIFY ROW` one verdict per event-id; `verify --offline` derives from cache and fetches nothing.
+64. `a-done-need-is-unverified-without-complete-proof` — a `:done` on unverified or stale evidence counts `unknown`, printed `done-unverified=` beside `done=`.
+65. (ABSENT) — a source revision has one home and one verb, inherited down the forest; a scope spanning more than one repository work set prints `source=-`.
+66. (ABSENT) — `nova-work source --node --to --reason` writes one `:source` event (scope event, delta none).
+67. `verify-stale-evidence-needs-no-fetch` — evidence whose `:against` is not the node's current source revision is stale and counted `stale=`, needing no fetch.
+68. (ABSENT) — expiry is derived: a lease past deadline reads expired, node unowned for execution, `check` counts `expired=<n>`, responsibility untouched.
+69. (ABSENT) — `:extend-once`: at first expiry the lease reads extended once (stale says so), at the second it reads expired.
+70. (ABSENT) — `(:escalate "<name>")`: at expiry the node reads `escalated-to=<name>`, `check` counts `escalated=<n>`, `who`/`stale` print it.
+71. (ABSENT) — a `release` whose `--as` is not the holder is refused exit 1 `LEASE FAIL … : held` naming holder, since, deadline and live count.
+72. (ABSENT) — a lease with no `:deadline` or no `:default` is refused at write time.
+73. `handoff-successor-takes-next-generation` — one live lease per node; a handoff is a `:handoff` event naming the new holder.
+74. `goal-stale-update-refuses` / `replays-8645` — `goal set` refused on a nonexistent node, a closed disposition, or a stale `--expect`.
+75. (ABSENT) — `goal show` prints the full `GOAL OK` (scope, goal, rev, generation, scope-revision, state, owner, derived stop, constraints, notes, outstanding) and `GOAL ROW` lines (objective + acceptance verdicts, constraints, notes, progress, blockers, live leases/attempts, linked work).
+76. (ABSENT) — `goal show` caps rows at `--max` with `GOAL MORE`, never cuts the OK fields/stop/constraint rows, and prints `GOAL FAIL` (no row) when the notes index is unloadable.
+77. `goal-update-writes-only-existing-kinds` — `goal update` writes only existing event kinds on the goal node; `--progress` with the evidence triple is an `:evidence`, alone a `:transition :to :doing`, `no edge` where the table refuses.
+78. `goal-stop-is-a-request-not-evidence` — `--stop` writes `:transition :to :cancel-requested`, no evidence; `stop=requested` while pending; further update refused `stop requested`.
+79. `goal-expect-is-required` — `--expect` is required on `goal set` and `goal update`; omission exit 2; a stale one exit 1 `GOAL FAIL … : stale`.
+80. `goal-crosses-harness` — a model/harness switch loads the same current revision and preserves ownership.
+81. `TestE01F03AllowOmittedRepeatedAndRecursively` — validation does not prescribe depth; omitted, repeated and nested grouping layers are admitted.
+82. `coordination-tree-is-one-edge`, `a-needs-cycle-refuses-at-seed` — cycles and multiple containment parents are rejected atomically.
+83. `cell-moves-no-required-set` — a task referenced by many roadmaps is counted once; references carry no count.
+84. `settle-outside-the-digest` — a `:settle`/`:revive` is the session's own half and outside the request payload digest.
+85. `settle-keeps-id-and-evidence` / `settle-moves-no-required-set` — settling keeps `:id`/`:children`/`:acceptance`/evidence and moves no required set.
+86. `reopen-revives` / `revive-appends-and-counts-latest` — a reopen writes `:revive`, item back at `:todo`; the revive appends (C is append-only) and counts the id's latest state.
+87. `as-of-reconstructs-settle-revive-settle` — closed-index rows are immutable, keyed `<event-rev>:<id>`; an as-of read answers the newest row at or before the moment and refuses a missing partition rather than a later row.
+88. `cursor-pinned-across-a-new-settle` — the cursor is `<event-rev>:<id>`; a page is pinned to its revision/filter/order; an expired continuation is refused.
+89. `containers-settle-with-their-members` — containers settle/revive with their members in one envelope, stopping at the first still-open member; an empty required set is never done.
+90. `roadmap-outlives-its-work` / `roadmap-opened-after-the-window` — a roadmap's view record is retained, outlives its work, and is openable after the window without loading C.
+91. `working-is-a-view` — W is `(working O)`, written by no verb; only `take`/`release` change it; `|W| ≤ |O|`.
+92. `materialized-working-set` (W1) — W is materialised eagerly, updated in the accepted envelope, and no read rebuilds it.
+93. `materialized-working-set` (W2) — membership and `|W|` are constant-time resident reads; a listing is `O(k)`.
+94. `materialized-working-set` (W3) — due leases are found via a deadline index; the lease-time watermark is printed; a stale watermark is never presented current.
+95. `materialized-working-set` (W4) — an expiry is not proof the remote work stopped; uncertain records are retained.
+96. `materialized-working-set` (W5) — W holds references; only startup/recovery/integrity may rebuild it; an unreconciled recovery advertises no live lease.
+97. `closed-paged-without-full-load` / `history-grows-startup-does-not` — C is append-only and read through its index in pages, never loaded; startup cost is flat.
+98. `closed-row-with-archive-absent` — a session whose archive file is absent still answers over C and prints `gap=<n>` plus a `QUERY NOTE coverage-gap`, never an empty closed set.
+99. `index-replayed-after-crash` — one replay pass after a crash recovers the tree and the closed index together.
+100. `branch-and-window-required` — `query --ask` takes `--branch open|closed|root`, required (exit 2 absent); closed/root require `--from`/`--to`; open refuses them.
+101. `branch-and-window-required` — `who`, `stale` and `handoffs` refuse `--branch closed`/`--branch root` at exit 2.
+102. `cow-root-partition` — `open=`/`closed=` partition the scope's ids, each counted once; `closed-in=` is the settle-stamped subset.
+103. `default-window-opens-two-days` / `closed-paged-without-full-load` — a closed listing opens at most two day partitions; `--max` caps the page; `MORE` names `--after <cursor>`.
+104. (ABSENT) — `done --branch open` is empty by construction and not refused: `QUERY OK` with `shown=0` and no rows.
+105. (clocks) — every event carries `:stamp` and `:clock`; by default `:clock :tool` is recorded.
+106. `bug-at-epic-level-is-legal` — a `:bug` is legal as a child of any node, placed at the highest scope, and counted as a leaf.
+107. (ABSENT) — `:found-during` is required: `node add --type bug` without it is refused at the candidate gate naming the field.
+108. (ABSENT) — a bug's `:evidence` (dogfood record) is optional at `node add`; a bug without it prints `evidence=-` on every row.
+109. (ABSENT) — a bug is counted beside the tree, excluded from `done=`/`required=`/`percent`; finding or fixing one moves no denominator.
+110. (ABSENT) — an open bug blocks its parent's `:done`; a container with an open bug beneath it is not derived done and no cell is green.
+111. (ABSENT) — `who`, `check` and `stale` print `bugs=<open>/<fixed>` on every line, under the scope.
+112. (ABSENT) — a bug with no `:test` cannot reach `:done` (rule 19: `WORK FAIL <id>: rule 19: no test locks this fix`).
+113. (ABSENT) — `decompose --into bug:<id>` may mint a bug carrying `:found-during` and acceptance, entering no required set.
+114. (ABSENT) — the roadmap lisp `:bugs`/`:current-bugs` forms parse under the three bounds; `tools/roadmap-parity.sh` prints `bugs=<open>/<fixed>`; a bare `(bug …)` symbol form is refused at exit 2 naming the byte offset.
+115. `TestPercentOutputsFields` — percent prints green, applicable, rows, baseline-rows with correct units
+116. `TestRemainingOutputsFields` — remaining prints deferred, cancelled, superseded counts
+117. `TestDryRunValidatesButWritesNothing` — --dry-run validates and prints receipt, writes no events
+118. `TestExpectStaleRefusal` — stale --expect rejected at exit 1 with current rev printed
+119. `TestReplayPerNodeStaleCheck` — replayed request refused when node accepted own events
+120. `TestSessionExportSnapshot` — session export --snapshot writes state and closed history
+121. `TestSessionExportJournal` — session export --journal writes recovery journal
+122. `TestSessionReplayBundle` — session replay applies bundle with clipped revision checks
+123. `TestSavepointList` — savepoint list --session prints savepoints with reasons
+124. `TestSavepointCreate` — savepoint create --as --reason writes savepoint record
+125. `TestSavepointVerify` — savepoint verify --id checks savepoint integrity
+126. `TestSavepointCompare` — savepoint compare --against checks state divergence
+127. `TestOperationStatus` — operation status --id prints operation state
+128. `TestOperationList` — operation list --session prints pending operations
+129. `TestOperationWait` — operation wait --id --timeout waits for completion
+130. `TestOperationCancel` — operation cancel --id --reason cancels pending operation
+131. `TestFriendRegister` — friend --register names new friend with role
+132. `TestConfigExport` — config --export --into writes config file
+133. `TestModelRegister` — model --register --provider --route registers model
+134. `TestObserveState` — observe --friend --state --source records observation
+135. `TestMachineRegister` — machine --register --owner --role registers machine
+136. `TestGoalSet` — goal set --expect --goal sets scope goal
+137. `TestGoalShow` — goal show --session or --snapshot prints goals
+138. `TestGoalUpdate` — goal update --progress or --blocked-by or --stop updates goal
+139. `TestRouteRegister` — route --register --provider --endpoint registers route
+140. `TestRouteProbe` — route --probe --card tests route accessibility
+141. `TestOfferSend` — offer --node --offer --to sends offer
+142. `TestProfileWrite` — profile --write --model --harness writes profile
+143. `TestAcknowledgeStage` — acknowledge --stage --reply --provenance handles offer
+144. `TestDecline` — decline --offer --reply --provenance declines offer
+145. `TestExecutionPause` — execution pause --node or --repo or --all pauses
+146. `TestExecutionResume` — execution resume --control --action resumes
+147. `TestExecutionStatus` — execution status --control prints status
+148. `TestNodeAdd` — node add --id --type --under creates node
+149. `TestNodeEdit` — node edit --node --title or --category edits node
+150. `TestNodeMove` — node move --node --from --under moves node
+151. `TestNodeRemove` — node remove --node detaches node and settles subtree
+152. `TestNodeRequire` — node require --node --to toggles required flag
+153. `TestDecompose` — decompose --node --into --acceptance splits node
+154. `TestAccept` — accept --node --add or --remove edits acceptance
+155. `TestDep` — dep --node --add or --remove edits dependencies
+156. `TestRoadmapCreate` — roadmap create --id --row-kind --aggregation creates roadmap
+157. `TestRoadmapConfigure` — roadmap configure --roadmap edits roadmap
+158. `TestRoadmapRow` — roadmap row --roadmap --add or --remove edits rows
+159. `TestAxis` — axis --roadmap --axis --add or --remove edits axes
+160. `TestCell` — cell --roadmap --coord --ref maps or clears cell
+161. `TestPrioritise` — prioritise --node --set or --clear sets rank
+162. `TestTake` — take --node --by --default takes node lease
+163. `TestRelease` — release --node --handed releases node lease
+164. `TestAttest` — attest --node --criterion --result records evidence
+165. `TestAttempt` — attempt --node --model --bench records attempt
+166. `TestEvidence` — evidence --node --pointer --criterion records evidence
+167. `TestStateToDone` — state --to :done --evidence closes node
+168. `TestEvent` — event --kind baseline|discovery|defer|cancel|reopen|supersede writes event
+169. `TestPercentNoDivision` — percent over zero applicable prints green=0 applicable=0 no %
+170. `TestDecomposeRejectsUnclosable` — decompose requiring child without acceptance refused
+171. `TestAcceptRefusesOnDone` — accept --add on :done node rejected by rule 5
+172. `TestNodeRemoveRefusesLease` — node remove refusing node holding live lease
+173. `TestDutyTierExecutesPolicy` — resident session executes approved policy, never authors
+174. `TestSingleWriterKernel` — mutations serialized in total order on one command thread
+175. `endpoint-is-local-and-private` — the engine is a resident session reached over one local endpoint; the directory is `0700`, the socket `0600`, no network listener, and reaching the socket is not coordinator authority.
+176. `wire-is-length-prefixed-utf8-json` — one frame is a 4-byte big-endian unsigned length then that many UTF-8 JSON bytes; a frame past `--max-frame-bytes` is one framed error and the connection closes, never truncated.
+177. `wire-integers-are-strings` — every integer the protocol carries is a JSON string; a reader that meets a JSON number refuses the frame.
+178. `protocol-version-negotiated-or-refused` — versions are negotiated before any request (`hello`); an unsupported version fails clearly and never degrades into a guess.
+179. `absent-empty-and-null-are-three-spellings` — an absent key, a JSON `null` and an empty array are three distinct spellings and cannot digest to one value.
+180. `pipeline-replies-are-correlated` — every reply echoes its request id; the client matches by that field, never arrival order; a missing/duplicate id is a protocol error.
+181. `disconnect-is-not-a-rollback` — a socket disconnect is never a rollback or cancellation; an identical retry is answered with the recorded disposition, a changed payload is refused.
+182. `operation-survives-the-client` — a long operation returns a durable operation id made durable before it is printed; `OPERATION FAIL id=<id> op=- state=-: no such operation` for an id no journal holds.
+183. `clip-is-one-long-operation` — `clip` prints `OPERATION OK` and exits; `CLIP OK`/`CLIP RACED`/`CLIP FAIL` arrive through `operation wait`, and `session stop` is the one caller that waits for its own clip.
+184. `status-answers-while-io-runs` — slow I/O stages outside the mutation loop; status and cancellation stay responsive, no unbounded scan or network wait holds the loop.
+185. `cancel-is-a-request-not-an-erasure` — a cancellation is a request with its own acknowledgement and disposition, deduplicated; it cancels once and can neither erase an accepted mutation nor undo an external effect.
+186. `undo-appends-and-preserves` — mistakes are reversible by appending, never erasing; the original event stays, the reversal is appended with lineage, redo reapplies intent.
+187. `redo-refuses-a-stale-plan` — a stale or conflicting plan refuses atomically, naming what changed, and is never half-applied.
+188. `undo-refuses-an-external-effect` — a sent message, paid execution, publication or source deletion is not undone by rewinding local state; a generic undo of an irreversible or uncertain operation is refused.
+189. `undo-names-its-reversible-set` — which verbs are reversible is named verb by verb; the rest are refused `not reversible here` by name.
+190. `every-field-has-an-owning-verb` — every canonical field maps to an owning typed mutation; no generic set-field escape hatch bypasses an invariant, and every mutation verb maps to its event kind, ordered field list and subject.
+191. `no-effect-mutation-is-journaled` — an accepted typed event with `changed=0` is the no-effect receipt: id and event revision advance, no scope, membership, counter or index moves.
+192. `metadata-patches-preserve-intent` — `node edit` is the one verb over exactly the five permitted metadata fields, each a tagged `keep`/`clear`/`set` patch.
+193. `edit-is-atomic-and-replayable` — an edit changes no id, type, containment, deps, acceptance, required, responsible, repo, source, state or view record; `changed=` counts differing fields.
+194. `edit-undo-preserves-later-work` — undo of an edit is the compensating edit restoring `:before`, admitted only while the node is open and metadata equals the postimage; an intervening edit is a conflict.
+195. `edit-never-fetches-a-link` — a link is never fetched, executed, normalised or given access.
+196. `repo-only-at-the-root` — `--repo` is required with `--under-root open` and refused anywhere else.
+197. `roadmap-has-one-creator` — `roadmap create` is the roadmap's one creator; `node add --type roadmap` refuses naming it.
+198. `move-keeps-every-count` — a move is reparenting, never sibling reordering; |O|, |C| and W are unchanged and nothing settles or revives.
+199. `move-same-parent-is-a-receipt` — a move whose `--from` equals `--under` and names the actual parent is the no-effect receipt, `changed=0`.
+200. `move-refuses-by-name` — a move refuses `parent conflict`, `cycle`, `not movable`, `repository change`, `roadmap operation required`, `active context change`, `privacy reduction` and `unavailable`, by name.
+201. `move-keeps-the-lease` — a move changes no lease, attempt or usage pointer.
+202. `move-updates-every-roadmap-scope` — reparenting updates the scope revision of every roadmap that has the node as a row.
+203. `move-undo-refuses-a-reorder` — move-undo restores containment alone, refusing conflict on an intervening reorder and never guessing an insertion point.
+204. `axisless-history` — a zero- or one-axis roadmap is rows with no cells.
+205. `matrix-retirement` — `axis --remove` on the first axis retires the row from the view's required set while it is live.
+206. `configure-no-effect-and-undo-conflict` — an equal-value configure and an identical projection re-add are the no-effect receipt; undo refuses conflict on a moved postimage.
+207. `completed-view-mutation` — a settled roadmap keeps its whole current head and opens from it; metadata and projection changes may address it without reviving it.
+208. `chat-and-file-render-are-byte-identical` — chat and file render of one view are byte-identical.
+209. `render-refuses-a-target-outside-its-roots` — render refuses a path outside the effective root, a symlink escape, a moved hash, or a mapping whose repository identity is not the projection's stored `:repo`.
+210. `render-artifact-is-bounded` — a successful `--chat` render carries exactly one bounded `artifact` object verified for count and hash, written to stdout with no prefix; an oversize artifact refuses, never truncated.
+211. `a-root-id-grants-nothing` — a stored root id grants no access; a mutation grants no filesystem access.
+212. `priority-orders-only-the-eligible` — `--order priority` sorts only rows `ready` already admits; it grants no capacity and starts no work.
+213. `priority-inherits-and-clears` — effective rank is the nearest context; a clear reveals the next, a move re-reads the new path.
+214. `rank-2-precedes-10` — ranks order numerically, so rank 2 precedes rank 10.
+215. `priority-undo-is-history-not-value` — priority undo restores the preimage only while the slot's latest-change identity equals the event's `:after`.
+216. `priority-grants-nothing` — `prioritise` moves no containment, state, required set, W, lease or count.
+217. `state-export-describes-exactly-r` — the manifest's captured revision is exactly `--at`; B never exceeds R and the snapshot reference binds base image and journal interval.
+218. `state-export-is-one-long-operation` — `session export --state --at` is one long operation: `OPERATION OK` at once, terminal `EXPORT OK`/`EXPORT FAIL` through `operation wait`.
+219. `state-export-pin-survives-clip` — the pinned revision survives a concurrent clip or retention pass.
+220. `state-export-disconnect-and-cancel` — a disconnect cancels nothing; cancellation acknowledges then reconciles whether publication happened and never promises to unpublish.
+221. `state-export-refuses-a-gap` — a missing cut, a gap, a wrong end, a split envelope or an absent end below R refuses.
+222. `state-load-is-isolated` — `state load` is a finite read-only process printing `LOAD OK`, starting no daemon, no socket, no journal and no `OWNER`; an incomplete load is staging, never success.
+223. `fenced-export-can-finish` — a fenced session runs its own export to a terminal line through `operation status|wait|cancel` and nothing else.
+224. `full-round-trip` — an export re-read through a fresh reader rebuilds the model rather than copying an unchecked archive.
+225. `old-history` — `--closed-history` selects closed history; the manifest declares what it left out, so no scoped artifact claims to be a full backup.
+226. `prompt-profile-expired-shows-on-the-status-line` — a prompt profile carries a path pointer pinned by digest; a digest mismatch refuses the invocation at exit 1 `SESSION FAIL …: digest mismatch`; the status line reads `stale`/`absent`/`mismatch`/`unknown`.
+227. `roles-are-configured-not-inferred` — a role is configured, never inferred; a friend's agreed limits are never raised silently.
+228. `reserved-role-is-not-spent-on-routine-work` — a role reserved for essential security work only is never spent on routine work.
+229. `no-friend-name-in-the-tool` — no friend name, model name or role is hardcoded into nova-work.
+230. `four-capability-groups-and-three-fields` — declared support, successful runtime verification and current free capacity are three separate fields; a catalog entry is not evidence of a live child.
+231. `dispatch-ack-and-ownership-are-three` — dispatch, delivery, acknowledgement and accepted ownership are distinct facts; an offer writes dispatch and a reservation and nothing else.
+232. `requested-model-is-not-observed-model` — the requested and observed model are two fields; a friend's usual model is not proof of the model that executed.
+233. `a-retry-does-not-overwrite-its-attempt` — a retry never overwrites the attempt before it.
+234. `silence-is-a-ping-not-a-verdict` — a configured silence threshold triggers one bounded ping; a nonresponse marks capacity `unconfirmed`, asserting neither sleep nor exhausted credit.
+235. `explicit-rest-is-not-pinged` — explicit rest is respected; a resting or reserved friend is never pinged.
+236. `return-reconciles-before-dispatch` — a return reconciles outstanding assignments and capacity before any new dispatch.
+237. `unchanged-config-is-one-bounded-answer` — equal config identity answers `UNCHANGED` with that identity in one bounded reply.
+238. `an-invalid-delta-leaves-the-old-config` — a changed fragment is applied atomically after validation; an invalid delta leaves the old config untouched.
+239. `a-partial-manifest-is-refused` — a partial config is never admitted as a complete replacement; no credential value is in a manifest.
+240. `fleet-is-static-config` — a `:machine` event moves no count and no roadmap; a heartbeat, an `observe` and a probe change no member.
+241. `no-machine-name-in-the-tool` — no hostname, alias, path, architecture or core count is a product constant.
+242. `one-profile-one-unit` — a profile held by a member refuses a second register, `connect held by <id>`.
+243. `no-credential-in-a-member` — a credential in a machine record refuses the record whole and the value is never echoed.
+244. `unknown-owner-is-refused` — an owner who is not a friend is refused; a record with no owner (`no owner`) or no stable id (`no id`, `machine=-`) refuses.
+245. `fleet-for-is-a-recommendation-not-a-lease` — the `--for` ask is a recommendation from declared facts; it writes no lease and leaves `who` unchanged.
+246. `an-excluded-choice-is-refused-not-empty` — an ask naming a member that excludes the kind refuses `QUERY FAIL …: <id> excludes <kind>` at exit 1, never an empty answer.
+247. `machine-is-config-and-never-a-work-tree-node` — a machine is equipment, no child of O, writes `:node (:absent)`, has no acceptance or derived state and is never completion evidence.
+248. `allocation-binds-machine-slot-generation` — an ACTIVE allocation binds machine, slot and generation to a batch, node and (offer, attempt); capacity is retained through verified release.
+249. `allocation-take-is-atomic-and-idempotent` — `take` is atomic and idempotent under a stable request id, grants every requested slot or none, and a heartbeat/release name one allocation and refuse `stale token`.
+250. `expiry-marks-suspect-reuse-needs-fencing` — an expiry marks an allocation suspect; reuse needs confirmed termination or machine-side fencing, never expiry alone (`suspect since=`, `not fenced`).
+251. `probe-records-observed-active-and-touches-no-config` — a probe writes dated ACTIVE evidence and never overwrites declared CONFIG facts, carries no credential and never guesses capacity.
+252. `one-allocator-per-machine-aliases-share-nested-conserve` — one authoritative allocator per machine (`allocator held`), aliases share identity, nested quotas conserve capacity, and capacity reduction preserves active work.
+253. `route-config-lists-key-by-path-never-value` — a route lists its key by path or env name, never a value; a key location that is neither path nor env is `credential in record`.
+254. `routing-picks-flat-before-metered` — routing is a projection, cheapest first (flat before free before metered, cost ascending then stable id); a route listed n times gets n shares.
+255. `unprobed-route-carries-no-card` — a route with no passing probe carries no card and is absent from generated cards, never present with a warning.
+256. `three-abstains-bench-until-probe` — three consecutive abstains bench a route until the next passing probe clears it.
+257. `TestMachineRegisterRefusesUnknownRole` — a `--register` role outside `:build`/`:test`/`:profile` refuses exit 1 `MACHINE FAIL machine=<id>: unknown role`, nothing written.
+258. `TestMachineFactWithoutProvenanceRefused` — a `--fact` with no `--declared-by` refuses `fact without provenance` (register and `--fact` change alike).
+259. `TestMachineRetireStaysInHistory` — `--retire <id>` retires the record: it stays in the journal and answers no query but the history.
+260. `TestMachinePermitExcludeWins` — `--permit <id>=<kind>` admits a workload kind, `--exclude <id>=<kind>` removes it, and `:excludes` wins wherever the two name one kind.
+261. `TestMachineLimitCommaList` — a `--limit` value is one integer or a comma-separated list (`isolated-cores=2,3` writes `(:isolated-cores (2 3))`).
+262. `TestRouteRefusesUnknownPlan` — a `:plan` outside `flat`/`metered`/`free`/`local` refuses `unknown plan`.
+263. `TestRouteMeteredWithoutCostRefusesToGuess` — a metered route with no `:cost-per-mtok` refuses `refusing to guess`, never estimated.
+264. `TestRouteCostOnNonMeteredRefused` — a `:cost-per-mtok` on a non-metered plan refuses `cost-per-mtok on a non-metered plan`.
+265. `TestRouteUnknownCapabilityValueRefused` — a `:capabilities` value outside `yes`/`no` refuses `unknown capability value`.
+266. `TestRouteOwnerRequired` — a route with no `:owner`, or an `:owner` who is not a friend of `friends`, refuses.
+267. `TestNoTwoProfilesShareOneTriple` — no two prompt profiles hold one model, harness and work-type triple.
+268. `TestProfileEditIsAVersionedRecord` — a prompt profile is edited by the coordinator only, as one new versioned record with `:by`, never an in-place rewrite.
+269. `TestTaskPacketPrintsOneLineAndWritesOneFile` — with a valid node, goal, lease, profile, and inputs, prints exactly one `PACKET OK` line, writes one packet file at `--into`, and `bytes=` equals that file's size and is at most `--max-bytes`.
+270. `TestTaskPacketRefusesNoAcceptedGoal` — a node whose scope has no goal exits 2 with the one remedy line naming `goal show --as <owner>`, and writes no file, no journal record, and no dedup entry.
+271. `TestTaskPacketRefusesNoLease` — a worker holding no lease on the node exits 2 with the one remedy line naming `take --node <id> --by <duration> --default <policy>`, and writes nothing.
+272. `TestTaskPacketRefusesMissingFlag` — omitting `--node`, `--for`, `--model`, or `--into` each exits 2 with the one `refusing to guess` line and a `run: nova-work help` remedy.
+273. `TestTaskPacketPinsInputsByPathAndRevision` — against a fake repository reader whose tip moves, every pinned input carries its path and the pinned revision, and none silently reads the later tip.
+274. `TestTaskPacketDeltaIsSinceLastReceipt` — against a fake receipt store, a worker with a prior receipt sees only later events, a worker with none sees the whole set, and `delta=` names the receipt it started from.
+275. `TestTaskPacketReplayReproducesIt` — with a fake clock, replaying the `:packet` event alone reproduces the packet byte for byte including `bytes=`, and mints no new id.
+276. `TestTaskPacketProfileSelectsWording` — two fake prompt profiles over one state produce different wording from the same facts, and a profile whose pinned digest does not match exits 2 by name.
+277. `TestTaskPacketBudgetAbsentIsNotZero` — against a fake goal record with no hourly budget the packet prints `hours=absent`, while a zero budget prints `hours=0`; similarly for tokens and dollars fields.
+278. `TestTaskPacketStopAndHoldAreNamed` — against a fake control record with a STOP request and a live HOLD, the `PACKET OK` line names both (`stop=` and `hold=`) and hides neither.
+279. `TestTaskPacketIsBounded` — against a fake state past the bound the packet is capped at `--max-bytes` with true `bytes=` printed, and `--max-bytes 0` is refused.
+280. `TestTerminalAcceptedRequiresVerifiedEvidence` — a need is terminal accepted only when it is in closed index C with disposition `done` AND every evidence event its `:to :done` names has its criterion verified by the session's verification cache — recorded-but-not-verified evidence leaves the need unmet with reason `need-unverified`.
+281. `TestEveryUnmetNeedHasOneReason` — each of the five reason tokens (`need-open`, `need-reverted`, `need-unavailable`, `need-closed-unaccepted`, `need-unverified`) is produced by its defining condition in the priority order specified, and when several needs are unmet the row names the first in `:deps` order.
+282. `TestAdmissionVerbRefusesUnmetNeeds` — each of the listed admission verbs (`take --node`, `release --handed`, `reassign`, `offer`, `acknowledge --stage accepted`, `task packet`, `state --to doing`, `goal update --progress`, `execution reconcile`, `undo`, `redo`) refuses a node that is not needs-met at exit 1 with its verb-specific `FAIL` line appended with `unmet need <need-id> <reason>`, and writes nothing.
+283. `TestNeedsMetIsReadNeverStored` — after a need becomes met or a `dep --remove` removes an edge, `query --ask ready` on the dependent prints `unmet=0` (or `ready=true` if nothing else blocks) with no further command and no journal event on the dependent.
+284. `TestNeedsBrokenReading` — a node reads `needs-broken=true` when it has an unmet need AND is engaged/in-C/reason-is-need-reverted; it reads `false` otherwise. It prints `needs-broken=<true|false>` on `ready` rows and on `DEP OK`, counted as `needs-broken=<n>` on `check`'s count lines, exits 0 over any number, goes one edge only, and stops nothing that runs.
+285. `TestMovingEdgesIsRecordedAct` — `dep --add` and `dep --remove` write `:structure` events, print `DEP OK … change=<add|remove> need=<id> met=<true|false> unmet=<n> needs-broken=<true|false>`, refuse dangling/self/cycle with `DEP FAIL node=<id>: rule <n>: <reason>`, admit unmet-add-under-work with `needs-broken=true`, and `dep --remove` takes effect at once via rule 4.
+286. `TestHandActToldApartByEffectLocation` — a `report --act` records only for effects outside the tree; effects that are tree state go through typed verbs, not `report`. A `report` cannot become the *generic set-field escape hatch*.
+287. `TestReportRecordsAndChangesNothing` — `nova-work report --session <path> <write flags> --act <launched|stopped|other> --subject <kind>:<text> --what <text> --acted-at <stamp> --instead-of <text|-> --reason <text>` writes one `:report` event with the six payload fields `(:act) (:subject) (:what) (:acted-at) (:instead-of) (:reason)`, carries `:unmet` and `:need` for node subjects, changes no tree state, prints `REPORT OK id=<event-id> request=<id> subject=<selector> act=<launched|stopped|other> instead-of=<text|-> acted-at=<stamp> lag=<duration> unmet=<n|-> need=<id|-> holder=<name|unowned|-> rev=<n> pushed=<rev|-> emitted=<bytes>`, is never reversible, and any registered friend may run it.
+288. `TestReportRefusesByExit` — exits 1 for no-such-kind/unknown-reporter/acted-ahead-skew/stale-expect; exits 2 for missing-flag/refusing-to-guess/bad-act/bad-subject-format/empty-text/non-rfc3339-stamp/past-string-bound; writes nothing on any refusal.
+289. `TestHandLaunchAnswer` — asked (admission verb called first): refused at exit 1 by rule 3, no flag buys way; not asked (happened outside tool): cannot be refused; told afterwards (`report --act launched`): recorded unconditionally, never refused, prints `REPORT OK … unmet=<n> need=<id>`, record is evidence of breach (not override) — next admission verb still refuses, node reads `needs-broken=true` until `report --act stopped` or next `:correct`.
+290. `TestReportsReadInOneAsk` — `query --ask reports --branch open --since <revision>` prints one row per `:report` event newest-last, capped by `--max` with `MORE` line, counts `reports=<n> no-verb=<n> launched-unmet=<n>` in `QUERY OK` bracket; `--node` narrows; private nodes print masked subject/what/reason/need; counts are informational only, no rule/exit depends on values.
+291. `TestReportOfStopReleasesNothing` — `report --act stopped` prints the node's `holder=`, releases no lease, reconciles no attempt, is not the stopped-worker evidence `event --kind cancel` requires, and ends only the engagement from the earlier launch report.
+292. `TestReportSubjectFormatsAndTextBounds` — subject must parse as one of six kinds with `:` separator; `--what`, `--reason`, `--instead-of`, and `external:` text refuse empty/whitespace-only; stamp must be RFC 3339 UTC; fields obey session string bounds.
+293. `TestQueryReportsRefusalsAndBranches` — `--branch closed` and `--branch root` are exit 2 as `handoffs --since` states; `--since` is required and refused before retention boundary; `--since` counts in revisions not stamps.
+294. `TestReportNeverReversible` — `:report` is added to the reversible-verb table's row of records an undo can never erase, beside `observe`; mistaken report answered by another report naming the first event's id in `--what`.
+295. `TestEngagementSurvivesClipRestart` — `:launched` report → clip → fresh `session start` → node still reads `needs-broken=true`; `:stopped` report → clip → restart → reads `false`. Because engaged is derived from events, rebuilt from nothing held in memory.
+296. `TestContainerCacheMovesOnVerifyOnly` — member's evidence verified by `verify` with no mutation of O → dependent's row goes from `need-unverified` to `unmet=0` on next read. Because cache key includes verification revision and fold keyed without it would stay stale.
+297. `TestPacketOutputContractWhole` — the packet carries the exact one-line `RESULT` form, the branch to push, and files expected to add/change as `result=<sha12>` (content digest of template), `branch=<name>`, `files=<n>`; body prints template and file list capped by bound.
+298. `TestPacketEvidenceLinksNeverBody` — each evidence pointer carries criterion and against-revision as a link; never inlines a body/log/diff; unresolved pointer named unresolved, capped, never dropped, never counted as verified.
+299. `TestPacketProfileDigestComparison` — the config `prompt profile` pointer is hashed and compared with its pinned digest before use; model/harness/work type are identity; two profiles over one state carry same goal/inputs/owner/budget/delta/contract but different wording; absent/stale/mismatched profile refuses by name.
+300. `TestPacketRefusalOrderFixed` — invocation cannot be parsed: exit 2; then fence; then stale `--expect`; then unknown node; then scheduling hold; then needs-met; then verb's other preconditions. E.g. `task packet` over unmet need + no lease prints unmet need, not *no lease*.
+
+<<<TABLE
+work-e-1	PRESENT	TaskPacketPrintsOneLine	See below
+work-e-2	ABSENT	TaskPacketRefusesNoAcceptedGoal	cmd/nova-work	pulse/triage:41	TestTriagePacketIsUnderTheCeilingForEveryCase tests pulse's internal Packet struct byte ceiling, not the nova-work `task packet` verb refusal behavior
+work-e-3	ABSENT	TaskPacketRefusesNoLease	cmd/nova-work
+work-e-4	ABSENT	TaskPacketRefusesMissingFlag	cmd/nova-work
+work-e-5	ABSENT	TaskPacketPinsInputsByRevision	cmd/nova-work
+work-e-6	ABSENT	TaskPacketDeltaSinceReceipt	cmd/nova-work
+work-e-7	ABSENT	TaskPacketReplayReproducible	cmd/nova-work
+work-e-8	ABSENT	TaskPacketProfileSelectsWording	cmd/nova-work
+work-e-9	ABSENT	TaskPacketBudgetAbsentFormat	cmd/nova-work
+work-e-10	ABSENT	TaskPacketStopAndHoldNamed	cmd/nova-work
+work-e-11	ABSENT	TaskPacketCappedAtMaxBytes	cmd/nova-work
+work-e-12	ABSENT	TerminalAcceptedVerifiedEvidence	internal/jobs or cmd/nova-work	A need is terminal accepted only when in C with disposition done AND every evidence event's criterion is verified by the verification cache
+work-e-13	ABSENT	EveryUnmetNeedOneReason	internal/jobs or cmd/nova-work	Five reason tokens in priority order; first-in-deps order for multi-unmet
+work-e-14	ABSENT	AdmissionVerbsRefuseUnmetNeeds	cmd/nova-work	All ten admission verbs refuse not-needs-met at exit 1
+work-e-15	ABSENT	NeedsMetDerivedNotStored	internal/jobs or cmd/nova-work	Query ready after need-met or dep-remove prints unmet=0 with no dependent journal event
+work-e-16	PRESENT	NeedsBrokenReading	internal/worklang	graph_test.go:102-141	e02 flagged needs-broken when e01 reverted; ready=false and state=needs-broken confirmed; also covered by cmd/nova-work/main_test.go:504 TestReadyPrintsEachRowsBlockerAndResolver
+work-e-17	ABSENT	MovingEdgesRecordedAct	cmd/nova-work(dep)	DEP OK with met/unmet/needs-broken fields; DEP FAIL for dangling/self/cycle
+work-e-18	ABSENT	HandActDistinguished/internal-state	cmd/nova-work(report)	Report only for outside-tree effects; tree-state effects use typed verbs
+work-e-19	ABSENT	ReportRecordsChangesNothing	cmd/nova-work(report)	:report event with six payload fields; REPORT OK line shape; never reversible
+work-e-20	ABSENT	ReportRefusesByExit	cmd/nova-work(report)	Exit 1 for structural; exit 2 for invocation; writes nothing
+work-e-21	ABSENT	HandLaunchAnswer	cmd/nova-work(report)	Asked→refused at exit 1; not asked→told→recorded; evidence of breach
+work-e-22	ABSENT	ReportsReadInOneAsk	cmd/nova-work(report)	query --ask reports: QUERY OK counts; QUERY ROW per event; privacy floor
+work-e-23	ABSENT	ReportStopReleasesNothing	cmd/nova-work(report)	Stops releases no lease/reconciliation/attempt
+work-e-24	ABSENT	ReportSubjectFormatAndBounds	cmd/nova-work(report)	Six subject kinds with colon separator; text bounds; RFC 3339 stamps
+work-e-25	ABSENT	QueryReportsBranchesAndRefusals	cmd/nova-work(report)	--branch closed/root exit 2; --since required and retention-bounded; revision counting
+work-e-26	ABSENT	ReportNeverReversible	cmd/nova-work	report in reversible-verbs-no-undo row beside observe
+work-e-27	ABSENT	EngagementSurvivesClipRestart	internal/workclient or cmd/nova-work	:launched → clip → restart → needs-broken=true; :stopped → clip → restart → false
+work-e-28	ABSENT	ContainerCacheMovesOnVerify	internal/jobs or cmd/nova-work	verify changes cache key revision → dependent row updates without O mutation
+work-e-29	ABSENT	PacketOutputContractWhole	cmd/nova-work	Packet carries result= digest, branch=, files=, template, file list
+work-e-30	ABSENT	PacketEvidenceLinksNeverBody	cmd/nova-work	Evidence pointers as links with criterion/against-rev; unresolved named; never counted verified
+work-e-31	ABSENT	PacketProfileDigestHash	cmd/nova-work	Profile pointer hashed vs pinned digest; mismatch refuses; two profiles→different wording
+work-e-32	ABSENT	PacketRefusalOrderFixed	cmd/nova-work	Parsing→fence→stale→node→hold→needs-met→preconditions order
+
+<<<ISSUES
+ISSUE 1
+TITLE: Implement task packet verb tests — SPEC-WORK.md lines 3931-4442 (nova-tools #1142)
+RUNG: pro
+PACKAGE: cmd/nova-work
+COVERS: work-e-2 work-e-3 work-e-4 work-e-5 work-e-6 work-e-7 work-e-8 work-e-9 work-e-10 work-e-11 work-e-29 work-e-30 work-e-31 work-e-32
+BODY:
+"Nova-work `task packet` writes one bounded artifact a worker starts from cold, and one line says what it is." (docs/SPEC-WORK.md:3933)
+
+Tests to add (in build order):
+
+301. `TestTaskPacketPrintsOneLineAndWritesOneFile` — fake session with node holding accepted goal and live lease, fake clock. Asserts: exactly one `PACKET OK` stdout line; one file written at `--into`; `bytes=` in the line equals the file size; file size ≤ `--max-bytes`.
+302. `TestTaskPacketRefusesNoAcceptedGoal` — session with node whose scope has no goal. Exit 2, one line: `PACKET FAIL node=<id>: no accepted goal; run: nova-work goal show --as <owner>`. Zero bytes on disk, no journal write, no dedup entry.
+303. `TestTaskPacketRefusesNoLease` — node with goal but worker holding no lease on node. Exit 2, one line naming `take --node <id> --by <duration> --default <policy>`. Writes nothing.
+304. `TestTaskPacketRefusesMissingFlag` — for each of `--node`, `--for`, `--model`, `--into`: omit that flag. Exit 2, one line containing `refusing to guess`, indented line `run: nova-work help`.
+305. `TestTaskPacketPinsInputsByPathAndRevision` — fake git repo whose HEAD moves between packet creation and execution. Every pinned input carries `(path, revision)` pair, none silently reads latest tip.
+306. `TestTaskPacketDeltaIsSinceLastReceipt` — fake receipt store with prior `:packet` events. Worker with receipt sees only events after last receipt (`delta=<receipt-id>`); worker without sees full set (`delta=none`). `delta-events=<n>` correct.
+307. `TestTaskPacketReplayReproducible` — write a `:packet` event, then replay it with fake clock. Output identical byte-for-byte to original `PACKET OK` line + packet file. `bytes=` matches. No new id minted.
+308. `TestTaskPacketProfileSelectsWording` — two fake profiles over same state produce different wording. Profile with mismatched pinned digest refuses.
+309. `TestTaskPacketBudgetAbsentFormat` — fake goal record: no budget → `tokens=absent usd=absent hours=absent`; zero budget → `tokens=0 usd=0.00 hours=0`. Budget field is `0` not `absent` only when set to zero.
+310. `TestTaskPacketStopAndHoldNamed` — fake control record: STOP=requested, HOLD=id-active. Both appear on `PACKET OK` line.
+311. `TestTaskPacketIsBounded` — fake state producing packet > `--max-bytes`. Packet capped at limit, `bytes=` equals truncated size. `--max-bytes 0` refused.
+312. `TestTaskPacketOutputContract` — packet body contains exact `RESULT` line template, `branch=<name>`, `files=<n>`. File list printed, template printed, both capped by bound.
+313. `TestTaskPacketEvidenceLinks` — packet carries evidence as links `(criterion, against-revision)`. Never inlines bodies/logs/diffs. Unresolvable pointer appears as `unresolved` in the link, capped, not counted as verified.
+314. `TestTaskPacketProfileDigest` — config `prompt profile` pointer hashed and compared against pinned digest. Mismatched digest refuses by profile name. Two profiles over same state → same goal/inputs/owner/budget/delta/contract but different wording.
+315. `TestTaskPacketRefusalOrder` — invocation failing both unmet-need and missing-lease prints unmet-need (not *no lease*). Order: parsing→fence→stale-expect→node→hold→needs-met→preconditions.
+
+What a card would do, in build order: add the `task packet` verb to cmd/nova-work's verb table; implement the packet builder reading from resident session; wire up delta-from-receipt; add profile digest check; add max-bytes cap; write the `:packet` event journal record; add the above tests running against fakes.
+
+ISSUE 2
+TITLE: Implement dependency gate tests — SPEC-WORK.md lines 4396-4970 (rules 1-6, nova-tools #785)
+RUNG: flash
+PACKAGE: internal/jobs
+COVERS: work-e-12 work-e-13 work-e-14 work-e-15 work-e-17
+BODY:
+"The words, fixed here and used one way below. A need of a node is an id in that node's `:deps`…" (docs/SPEC-WORK.md:4396)
+
+Tests to add:
+
+316. `TestTerminalAcceptedRequiresVerifiedEvidence` — build a need in C with disposition `done` but evidence whose criterion is NOT in the verification cache. Need must be unmet with reason `need-unverified`. Then call `verify` to cache the fact, need becomes met. Replays: `a-done-need-on-unverified-evidence-admits-nothing`.
+317. `TestTerminalAcceptedVerifiedJobCriterion` — need in C done with `:merged` criterion, evidence pointer's job succeeded per cache. Need is met. Replays: same as above with different criterion type.
+318. `TestEachUnmetNeedReasonProducesCorrectly` — fixture with need in O no `:revive` → `need-open`; need in O with `:revive` → `need-reverted`; need in C page unreadable → `need-unavailable`; need in C cancelled/superseded/removed → `need-closed-unaccepted`; need in C done but unverified → `need-unverified`. When multiple unmet, row names first-in-`:deps`-order and counts all. Replays: `every-unmet-need-has-one-reason`.
+319. `TestAdmissionVerbsRefuseUnmetNeeds` — for each admission verb (`take --node`, `release --handed`, `reassign`, `offer`, `acknowledge --stage accepted`, `task packet`, `state --to doing`, `goal update --progress`, `execution reconcile`, `undo`, `redo`): set up node with unmet need, call verb. Exit 1, FAIL line with tail `unmet need <need-id> <reason>`. Nothing written. Replays: `every-admission-verb-refuses-an-unmet-need`.
+320. `TestAdmissionVerbMarkCoverageTest` — kernel slice's generated schema files carry `needs-gate: refuses` mark on verbs that refuse unmet needs, `needs-gate: withholds` on `execution reconcile`, or `needs-gate: exempt` with reason. Coverage test fails if any verb writing `:lease/:handoff/:reassign/:offer/:acknowledge/:packet/:transition(doing)` lacks the mark. Replays: `a-verb-that-can-admit-declares-its-needs-gate`.
+321. `TestNeedsMetDerivedNotReleased` — set up need, make it met (e.g. settle + verify). Dependent node: after command's OK line, query returns `unmet=0` with no further commands and no journal event on dependent. Replays: `needs-met-is-read-not-released`.
+322. `TestDepAddRefusesAndPrints` — `dep --add` on dangling id → `DEP FAIL node=<id>: rule 2: dangling`; self-dep → `rule 3: cycle`; creates `:structure` event; unmet-add onto engaged node → `needs-broken=true`. Replays: `an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded`.
+323. `TestDepRemoveTakesEffectAtOnce` — `dep --remove` on direct need → immediate re-read shows need gone, `met=true` updated. Container need: alternative roads (`node require --to false`, `node move`, `event --kind cancel/supersede`) each meet container need. Replays: same as above.
+324. `TestRemovedNeedIsNeverMet` — add edge to removed node, `dep --add` succeeds, prints `met=false`, need reads `need-closed-unaccepted`. Later edge onto same removed node admitted. Replays: `a-removed-or-corrected-need-is-unmet`.
+325. `TestContainerNeedMetWithMembers` — container (epic/feature/roadmap) in C done → met iff every direct required member met. Empty required set → `need-open`. Member unverified → `need-unverified`. Verified member adds → `need-unverified` resolved. Replays: `a-container-need-is-met-with-its-members`.
+326. `TestAttestedOnlyNeedMetByAttestation` — attested-only need (criterion `:attested`) met when `:review-attest` event of current generation names criterion and `:result` pointer is fact cache holds. Older generation or unestablished result rejected. Replays: `an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less`.
+
+What a card would do, in build order: add the gates to `internal/jobs.NeedsMet()` and related functions; add the marks to verb schemas; add the `ready` row extensions (`need=`, `unmet=`, `needs-broken=`); wire verb refusal tails; write tests against fakes.
+
+ISSUE 3
+TITLE: Implement hand report tests — SPEC-WORK.md lines 4970-5234 (rules 7-11, nova-tools #854 item 7)
+RUNG: flash
+PACKAGE: cmd/nova-work
+COVERS: work-e-18 work-e-19 work-e-20 work-e-21 work-e-22 work-e-23 work-e-24 work-e-25 work-e-26 work-e-27 work-e-28
+BODY:
+"'report' records a hand act and changes nothing." (docs/SPEC-WORK.md:5015)
+
+Tests to add:
+
+327. `TestReportWritesEventChangesNoTree` — `report --act launched --subject node:<id> --what <text> --acted-at <stamp> --reason <text>`. Asserts: one `:report` event written with all six payload fields; no lease changed, no offer changed, no allocation moved, no transition written, no W changed; `REPORT OK` line printed. Replays: `report-records-and-changes-nothing`.
+328. `TestReportRefusesExitOne` — subject names non-held kind → `no such <kind>` exit 1; `--as` not a friend → `unknown reporter` exit 1; `--acted-at` ahead of clock > `--skew` → `acted-at ahead of the clock` exit 1; stale `--expect` → stale exit 1. Nothing written.
+329. `TestReportRefusesExitTwo` — missing one of six required flags → `refusing to guess` exit 2; bad `--act` value → exit 2; subject without `:` or bad kind → exit 2; empty/whitespace `--what`/`--reason`/`--instead-of`/`external:` → exit 2; non-RFC3339 stamp → exit 2; field past string bound → exit 2.
+330. `TestHandLaunchRefusedWhenAsked` — run `take --node <id>` (or other admission verb) on node with unmet need. Refused at exit 1 with `unmet need <id> <reason>`. No flag, role, or reason overrides. Replays: `a-hand-launch-is-refused-when-asked-and-recorded-when-told`.
+331. `TestHandLaunchRecordedWhenTold` — node has unmet need; person calls `report --act launched --subject node:<id> --what <text> --acted-at <stamp> --reason <text>`. Written unconditionally; `REPORT OK … unmet=<n> need=<id>`. Next admission verb still refuses. Node reads `needs-broken=true`. Replays: same as above.
+332. `TestRecordIsEvidenceNotOverride` — launched report on unmet node grants no lease, adds nothing to W, moves no state. Engagement persists until `report --act stopped` or node's `:correct`. Any friend can write report. Replays: same.
+333. `TestReportsQueryCounts` — `query --ask reports --branch open --since <rev>`. Rows newest-last, capped by `--max` with `MORE` line. `QUERY OK` bracket: `reports=<n> no-verb=<n> launched-unmet=<n>`. Row fields: act, subject, instead-of, acted-at, at, clock, lag, by, unmet, need, what, reason. `--node` narrows. Replays: `reports-are-read-in-one-ask`.
+334. `TestReportsPrivatePrivacyFloor` — report on `:private` node. Non-owner reads: `subject=node:-`, `need=-`, `what=-`, `reason=-`. Counted in `reports=` and line's `private=`. No node identity revealed.
+335. `TestReportStopReleasesNothing` — `report --act stopped --subject node:<id>`. Prints `holder=`, releases no lease, reconciles no attempt, not `event --kind cancel` evidence. Only ends engagement from earlier launch report. Replays: `a-report-of-a-stop-releases-nothing`, `a-report-of-a-stop-ends-the-engagement-a-launch-report-began`.
+336. `TestReportNeverReversible` — `:report` in the reversible-verb table's "never undo" row alongside `observe`. Calling `event --kind undo` on a report fails; correction requires another report.
+337. `TestEngagementSurvivesClipRestart` — `:launched` report → clip → `session start` (fresh instance) → dependent still reads `needs-broken=true`. `:stopped` report → clip → restart → reads `false`. Engaged derived from events, not memory. Replays: implementation test from spec end.
+338. `TestContainerCacheOnVerifyOnly` — container need's member verified by `verify` (only verification cache revision moves, no O mutation). Dependent row: `need-unverified` → `unmet=0`. Cache key *Cost* includes verification revision. Replays: implementation test from spec end.
+
+What a card would do, in build order: add `report` verb to socket verbs / verb table; implement `:report` event writer with six payload fields; add `query --ask reports` handler; wire `unmet`/`need` fields on node subjects; add report to irreversible verb list; write all tests against fakes.
+
+ISSUES
+<<<READINESS
+NEEDS-RULING
+Should work-e-5 (needs-broken) be marked PRESENT on graph_test.go:102 because it tests the lisp-side derivation that underlies the Go gate, or should all dependency-gate behaviour be attributed to Go tests before being considered implemented?
+READINESS
+git status --short
+files changed: none
+head 5298f6be12eaa0f7e6622334d2b6a1eb427649e3
+Left owed: None — all 32 demanded behaviours identified and grouped. One ruling question pending: whether PRESENT attribution on work-e-5 is sufficient (lisp-level test proves derivation logic) or if Go-level equivalent must exist first.
+339. `v2-composition-prescribes-no-rank` — a human-alone, an AI-only and a mixed node, each root or leaf at any depth, run the same accept/perform/delegate contract; no composition field selects a level or a rank.
+340. `v2-same-contract-at-every-depth` — a root originates and a leaf finishes locally without children; every intermediate node accepts, performs, delegates and returns by the same lifecycle; a grandchild's result integrates one hop at a time.
+341. `TestE11F04PartialChildNeverClosesParent` — one child done and one refused, blocked or asleep leaves the parent open with `outstanding=<n>`, preserving the failed attempt, the independent review and the unresolved outcome.
+342. `coordination-tree-is-one-edge` — a sibling collaboration and a roadmap reference add reference edges only: no second coordinating parent, no duplicated work, no second spend; coordination tree, containment forest and reference graph answer separately.
+343. `v2-six-identities-stay-distinct` — node, actor, work, operation, attempt and engine/session identities are separately addressable; an actor rename moves none of the others; usage books to the attempt once through every parent mapping.
+344. `v2-bounds-refuse-not-truncate` — a node past an explicit size or depth bound is refused or deferred by name at exit 2; the tree is not truncated and no child result is dropped.
+345. `v2-membership-change-is-explicit` — a membership, coordinating-parent or work-ownership change writes its own event with before and after identities; an inferred change from a title or a GitHub assignee is refused.
+346. `models-registry-keyed-by-model-version` — a shared `models` section keyed by stable model and version identity with route/alias mappings; declared vendor capability, a friend's assessment and a measured result are three separate fields; unknown or outdated evidence never hardens.
+347. `pricing-is-pinned-by-revision` — a pricing record is immutable by content identity; every execution and estimate pins its configuration and pricing revision so an old estimate stays reproducible.
+348. `unknown-price-is-not-zero` — a missing or unsupported dimension is unknown and never zero.
+349. `subscription-is-not-free-reference-cost` and `local-tokens-cost-zero-api` — measured cash, estimated marginal cash and virtual reference cost are three separately labelled values; a subscription does not make reference cost zero; local inference declares an API charge of zero.
+350. `pricing-refresh`-test — a price refresh is a meaningful config change with its source and effective time and never a silent edit to a historical receipt.
+351. `node-carries-its-estimate` — a node without an estimate is absent and never zero; an estimate of zero stays a value.
+352. `forecast-reads-remaining-over-o` — the forecast reads the estimates of nodes still in O; a closed node leaves the forecast rather than being deleted.
+353. `fold-actual-from-evidence-records` — the machinery folds each node's actual (model, tokens in/out, usd, wall and bench minutes per attempt) from the evidence records beside the estimate.
+354. `full-cost-view-answers` — a cost view answers total tokens/dollars to build, dollars per million tokens by model, dollars and hours per work unit, and the same for coordinator turns, with an unknown or zero denominator undefined and never zero.
+355. `daily-report-blends-virtual-cost` — the daily report states a blended virtual cost per token (weighted costs over non-overlapping counted tokens), its coverage and denominator, both primary goals side by side, and preserves the stage-attribution gap.
+356. `route-pricing-uses-versioned-weights` — eligible work is routed on the whole route using versioned token-category weights and dated monetary profiles; wall-clock is priority #3; a shared account is a shared budget; unknown remaining quota is not unlimited.
+357. `policy-round-trip-and-replay` — policy, trial manifests and execution references survive export/import, restart, undo and revision replay; malformed intake has no partial effect.
+358. `packet-and-route-gates` — oversized/history-disallowed packets, reserved or stale routes and unexplained costly escalation refuse before dispatch; a valid scoped exception is retained.
+359. `bounds-are-not-prompts` — a launcher lacking a required hard limit refuses automatic dispatch; a supported deadline returns a terminal or unresolved handle without duplicate execution.
+360. `quiet-until-actionable` — unchanged observations cause zero model dispatches; actionable batching respects bounds and urgent corrections/stops bypass it.
+361. `reuse-only-valid-review` — same-scope review is reusable; changed acceptance/dependencies invalidate it; independent friend gates cannot be replaced by reuse.
+362. `complete-cost-lineage` — parent/child/retry receipts join once, failed attempts count, cache subsets do not double count, implementation cost stays separate, gaps remain unknown.
+363. `batch-with-bounds-and-urgency` — independent results coalesce within byte/record/delay bounds, unchanged batches cause no call, unreferenced padding refuses, urgent corrections bypass delay.
+364. `cache-aware-context-choice` — cache reads/writes and tier thresholds price separately; a reset includes rebuild costs and refuses missing decision/adapter/evidence.
+365. `evidence-before-adoption` — missing baseline/coverage, unmatched quality or a retrospective correlation alone cannot auto-promote; a fully qualified prospective result can.
+366. `regression-and-recovery` — a breached trial stops new automatic assignments; eligible fallback preserves role limits, history and uncertain live handles.
+367. `prime`-projection test — `prime` is a read-only projection bounded under `--max-bytes`, run at session start and before compaction, creating no shadow state.
+368. `decompose --pour` test — unpoured checklist items never count in `|O|` and never count as verified.
+369. `:max-attempts`/`tripped=` test — node attempts are bounded by `:max-attempts` (default 3), surfacing `tripped=`; taking a lease on a tripped node requires an explicit `--reason`.
+370. delegate-mode test — a declared harness role profile restricts the worker to designated verbs and read-only git operations; file edits and build execution are refused below the model.
+371. `stale-pass-surfaces-escalated-age-and-reread` — the stale pass surfaces read-only inspection fields `escalated-age=` and `reread=` derived from a persisted escalation event and never performs automatic reassignment.
+372. `gas-town-efficiency-accounting` — a durable `next-trigger` per waiting item ensures an empty pulse reruns nothing; root-only step records and inline checklists avoid node explosion.
+373. review-coverage test — review coverage is strictly bound to source revision and changed scope and never carried across an unchecked rebase.
+374. `:effort`-bound test — every card and delegated packet carries `:effort`; a packet lacking it is refused, and only the coordinator may widen it with a recorded reason.
+375. fleet-spend-ceiling test — a dispatch that would cross the configured daily fleet spend ceiling is refused with a line naming the ceiling and `local-spend=`.
+376. containment-stored-not-inferred test — containment is stored and queried rather than inferred by a renderer from a name; a cell references its canonical target and copies no work.
+377. impl-and-acceptance-two-records test — a feature's implementation record and its acceptance record are two records joined by stable id; a file name and a green aggregate badge prove nothing.
+378. `historic-tick-survives-a-source-change` — historical delivery and current verification are two questions; a change says "recheck needed" without erasing history or silently reopening a closed task.
+379. `regression-opens-repair-work` — a confirmed regression creates linked open repair work under the ordinary policy.
+380. `unrelated-receipts-stay-reusable` — a change outside a feature's declared proof scope invalidates no unrelated receipt without a dependency reason.
+381. table-display-locked test — status cells are centred, a tick only for fully verified and an X for every other state; each column's percentage is fully verified applicable cells over applicable rows, never an average of subtask percentages.
+382. `chat-and-file-render-are-byte-identical` — one renderer, two modes, byte-identical output for one projection and revision, shared prerequisites and private-data filtering included.
+383. file-mode test — the file mode changes only the selected marker region, refuses a missing/duplicate/reversed marker pair, writes atomically and preserves every other byte.
+384. `render-refuses-a-target-outside-its-roots` — a projection's target is stored view metadata resolved only within permitted target roots; a missing mapping or conflicting change is a refusal, never a guessed destination.
+385. whole-validator test — the validator walks O once printing one `WORK FAIL` line per finding capped per rule, with one count line always, exit 1 on any finding.
+386. candidate-gate test — the candidate gate runs over O as it would be with the event applied, touching only the nodes the event reaches, refusing at exit 1 and changing nothing.
+387. reader-rules test — reader payload (rule 12), bounds (rule 13) and unknown type (rule 16) are the reader's, exit 2, at load.
+388. validator-rules-1-18 test — duplicate id, dangling reference, cycle, two parents, done without evidence, green parent unfinished child, bad cell, two live leases, lease without deadline, invalid transition, scope change without event, conflicting revisions, no acceptance, stale at claim, and in-two-branches are each a `WORK FAIL` finding.
+389. empty-required-set test — there is no rule about an empty required set; a container's last member leaves it legally and an empty container counts `unknown`, green in none, finding in none.
+390. shared-defaults-required-false test — `<repo>/shared` is created `:required false`; `node require --node <id> --to true --reason <text>` makes it count.
+391. bounded-index test — C's closed index and the dedup index are opened as bounded pages; a settled item costs a row and never a body; `pages=<n>` is printed.
+392. `history-grows-startup-does-not` — holding O, the recent window and page bounds fixed while growing old history, startup resident bytes, parses, replays and emitted bytes do not move; index pages stay bounded by index depth.
+393. no-transitive-descendant-set test — no transitive descendant set is materialised anywhere; an ad hoc set query walks the reached subgraph once.
+394. write-path-counters test — the root and container open-item counters are maintained on the write path so `|O|` is a read.
+395. count-not-wall-time test — tests assert visit, parse, replay and allocation counts, never wall time, on tree, shared DAG, deep chain and high fan-out shapes.
+396. `cow-root-partition` — one id in C or O, never both; open=+closed= totals; a double-membership event is rule 18.
+397. `settle-keeps-id-and-evidence` — a settle keeps id, children, acceptance, evidence and verdicts.
+398. `settle-moves-no-required-set` — finishing moves no required set; a :cancel moves only the delta row.
+399. `settle-releases-the-lease` — a settled leased item reads unowned at once, with a log transition.
+400. `containers-settle-with-their-members` — settling the last member settles the container in one envelope.
+401. `reopen-revives` — :reopen returns an item to O at :todo with id/evidence/generation intact.
+402. `revive-appends-and-counts-latest` — a revive appends a row, settles=n on the newest, counted once.
+403. `index-replayed-after-crash` — a restart replays the journal and moves the item into C before any ask.
+404. `remove-settles-only-open-items` — node remove settles open leaves, leaves closed ones and names already-closed.
+405. `working-is-a-view` — |W| ≤ |O|; a :doing item with no lease reads pending; no verb writes W.
+406. `settle-outside-the-digest` — one settle digested to one value by two serializers; retry answered.
+407. `closed-paged-without-full-load` — a closed listing pages with MORE naming --after, parses=0 replays=0.
+408. `closed-row-with-archive-absent` — closed row answered with the archive absent; unreachable body prints gap.
+409. `merged-is-not-distributed` — a fix in C with landed= and the release task open; released= once settled.
+410. `branch-and-window-required` — the asked-window flag rules (no --branch, closed needs --from/--to, etc.).
+411. `findings-across-c-and-o` — the worked acceptance's four rows, dispositions distinct, release as pending.
+412. `clip-names-the-index-that-overflowed` — a clip prints the overflowing index and the one remedy; an index splits.
+413. `default-window-opens-two-days` — the default closed listing opens at most two day partitions.
+414. `busy-day-many-segments` — one day's segments read in bounded pages, capped and MORE named.
+415. `history-grows-startup-does-not` — startup bytes/parses/replays stay fixed while history grows.
+416. `one-revision-publishes-together` — a clip stage/verify/commit of both indexes in one commit; kill leaves prior root.
+417. `absent-day-is-not-a-gap` — a day with no manifest in a complete range prints gap=0 and no note.
+418. `missing-segment-is-a-gap` — a removed segment prints gap=n and one coverage-gap note, never empty.
+419. `as-of-refuses-unavailable-partition` — a state-as-of ask on an unopenable day refused naming that partition.
+420. `as-of-reconstructs-settle-revive-settle` — each window answers its interval's state via one bounded lookup.
+421. `cursor-pinned-across-a-new-settle` — a pinned cursor across a settle: no row missing or double; page expired refusal.
+422. `activity-and-state-are-two-counts` — settles-in=1 revives-in=1 items-in=1; closed= unchanged by the reopen.
+423. `dedup-page-unavailable-refuses` — an unreadable dedup page refuses the retry; already-applied across rollover/refused payload.
+424. `rule-2-unavailable-is-not-green` — a reference into an unreadable C partition is rule 2, never green.
+425. `wire-integers-are-strings` — integers above 2^53 cross the wire and return unchanged; a JSON number frame refused.
+426. `protocol-version-negotiated-or-refused` — unsupported version refused with the supported list; oversized frame refused.
+427. `pipeline-replies-are-correlated` — out-of-order/fragmented replies reach only their request; ids stay distinct.
+428. `disconnect-is-not-a-rollback` — a client killed after journaling: the event stands, same id returns recorded disposition.
+429. `no-effect-mutation-is-journaled` — a no-op mutation still journals, changed=0, rev advances, digest unchanged.
+430. `operation-survives-the-client` — a long op returns its id, the work continues, retrievable after exit; wait times out.
+431. `status-answers-while-io-runs` — status/cancel answer while capture/export/clip run, restart reconciles ids.
+432. `cancel-is-a-request-not-an-erasure` — cancellation erases no accepted mutation; uncertain external effect reported.
+433. `undo-appends-and-preserves` — an undo appends a compensating envelope, the original and receipts untouched.
+434. `redo-refuses-a-stale-plan` — a redo whose preconditions moved is refused atomically naming what changed.
+435. `dry-run-writes-nothing` — a dry run projects without mutating; the --request stays new to dedup; counters unchanged.
+436. `undo-refuses-an-external-effect` — an undo over a sent message/paid execution/publication/deletion is refused external.
+437. `every-field-has-an-owning-verb` — every field mapped to its owning verb or marked derived/immutable, no escape hatch.
+438. `open-count-is-read-not-computed` — |O| asked repeatedly reads the counter with zero visits/parses/replays.
+439. `no-friend-name-in-the-tool` — the binary, defaults and shipped fixtures carry no friend/bench/repo name.
+440. `roles-are-configured-not-inferred` — a role read from CONFIG, never the model; a capability cancels no agreed limit.
+441. `reserved-role-is-not-spent-on-routine-work` — reserved roles expressible and never spent on routine work.
+442. `dispatch-ack-and-ownership-are-three` — dispatch, delivery, acknowledgement and accepted ownership distinct; no duplicate on timeout.
+443. `requested-model-is-not-observed-model` — unknown stays unknown; attempts keep separate model/usage attribution.
+444. `a-retry-does-not-overwrite-its-attempt` — a retry does not overwrite its attempt; concurrent attempts separate.
+445. `silence-is-a-ping-not-a-verdict` — silence triggers one bounded ping; missing capacity marked unconfirmed.
+446. `explicit-rest-is-not-pinged` — explicit rest respected; a failed probe reads unresolved.
+447. `return-reconciles-before-dispatch` — a return reconciles before new dispatch.
+448. `four-facts-four-verbs` — the four observed facts map to the four verbs, nothing inferred.
+449. `offer-writes-intent-and-a-reservation` — an admitted offer writes :effect :dispatched, a reservation, and touches nothing else.
+450. `a-receipt-needs-a-verifier` — a copied note or no-verifier recipient refused with no canonical write.
+451. `staged-admission-refuses` — a verifier returning late/failing writes no reservation/receipt/lease/W.
+452. `accepted-creates-one-lease-or-binds` — accepted after received creates exactly one lease or binds the second attempt.
+453. `no-shadow-lease-across-holders` — a cross-holder offer/reply refused or retained late, no lease created.
+454. `until-is-overdue-not-released` — at --until and lease expiry no duplicate launch and no stopped/completed claim.
+455. `late-and-duplicate-receipts-are-retained` — late accept after decline/replacement/expiry retained :late; conflicting bytes refused.
+456. `stop-is-a-hold-not-a-cancel` — execution stop writes a hold and directives, goal show still prints stop=none.
+457. `one-stop-note-cannot-cancel-two-attempts` — a cancel whose evidence covers one of two attempts refused; both covered admitted.
+458. `hold-survives-a-crash` — a crash after the hold recovers the hold and targets with no duplicate launch.
+459. `capture-survives-clip` — a clip between anchor and manifest; an unrepresentable pin refused before EXECUTION OK.
+460. `no-dispatch-slips-past-a-hold` — an offer prepared before a pause refused at the last send; raced launch/correct/move held.
+461. `held-acceptance-converts-nothing` — acceptance under hold retained :accepted-held; lift converts nothing.
+462. `reconcile-preserves-contradiction` — live/expired/pending/paused targets captured through indexes; contradictions unresolved.
+463. `resume-is-two-actions` — release-hold lifts only its control's hold; resume-workers refuses unsupported before send.
+464. `correct-is-a-linked-segment` — one envelope writes the hold, :correct and binding; a retry bumps generation once.
+465. `bare-correct-refuses-under-execution` — the bare correct refused while an attempt is live, admitted once none is.
+466. `endpoint-is-local-and-private` — session dir 0700 and socket 0600, wider modes refused; no network listener.
+467. `four-capability-groups-and-three-fields` — four capability groups each expressible; three fields never collapse.
+468. `unchanged-config-is-one-bounded-answer` — the config exchange bounded, validated and atomic; no secret in a manifest.
+469. `an-invalid-delta-leaves-the-old-config` — an invalid delta leaves the old config intact.
+470. `a-partial-manifest-is-refused` — a partial manifest refused; no roster/prose repeated per poll.
+471. `pricing-is-pinned-by-revision` — an old estimate reproducible after a rate change.
+472. `unknown-price-is-not-zero` — a missing dimension reads unknown, never zero.
+473. `subscription-is-not-free-reference-cost` — the three cost values kept separately labelled.
+474. `local-tokens-cost-zero-api` — local tokens cost zero api.
+475. `roadmap-outlives-its-work` — an epic done/clipped/restarted, then listed and opened, without loading all of C.
+476. `roadmap-opened-after-the-window` — completed rows still listed, remaining only an explicit filter; rollups updated without drops.
+477. `historic-tick-survives-a-source-change` — a changed source/criterion keeps the historic tick pinned; current needs re-verification.
+478. `regression-opens-repair-work` — a confirmed regression opens linked repair work.
+479. `unrelated-receipts-stay-reusable` — unrelated receipts untouched by a regression/source change.
+480. `chat-and-file-render-are-byte-identical` — one projection/revision renders the same bytes to chat and to a marker region.
+481. `render-refuses-a-target-outside-its-roots` — a target outside permitted roots refused; missing/duplicate/reversed markers refused.
+482. `restore-is-isolated-and-dispatches-nothing` — a restore takes no ownership, reanimates no assignment, replays no message.
+483. `a-savepoint-is-not-a-shared-backup` — savepoint age/local/shared revisions readable; never printed where checkpoint asked.
+484. `compaction-keeps-the-last-copy` — compaction never removes the only recoverable copy.
+485. `new-verbs-have-a-kind-and-a-field-order` — undo/redo/friend/model/observe/config each write their kind with fields in order.
+486. `new-verbs-retry-to-one-event` — each new verb replayed twice yields one event; retry answers the original OK.
+487. `absent-empty-and-null-are-three-spellings` — no :members, empty list and wire null digest to three distinct values.
+488. `clip-is-one-long-operation` — clip returns an operation id and the transport continues; wait prints CLIP OK.
+489. `undo-names-its-reversible-set` — every reversible verb undone by its envelope; refused verbs refused not reversible here.
+490. `add-field-order-is-complete` — a node add of twelve fields digested distinctly; pre-fold order refused schema revision unsupported.
+491. `repo-only-at-the-root` — --repo with --under-root open at a work-set accepted and unique; a second --repo refused.
+492. `roadmap-has-one-creator` — node add --type roadmap exit 2 naming roadmap create; one node and one view in one envelope.
+493. `metadata-patches-preserve-intent` — keep/clear/set-empty/set-false/set-value round-trip distinctly; wrong type no event.
+494. `edit-is-atomic-and-replayable` — a bad patch writes nothing; a retried id answers the original NODE OK; equal value no-effect.
+495. `edit-undo-preserves-later-work` — an edit undone restores :before; the same undo after an edit refused conflict.
+496. `edit-never-fetches-a-link` — a live link URL added/edited/rendered with zero requests; NUL refused bad link.
+497. `move-keeps-every-count` — a moved subtree moves the two features' sets; ancestor net count stable; no whole-set scan.
+498. `move-same-parent-is-a-receipt` — --from equal --under and true is the structure event alone, changed=0.
+499. `move-refuses-by-name` — wrong --from, destination inside subtree, root/shared/other repo, roadmap parent each refused named.
+500. `move-keeps-the-lease` — a move preserving :responsible keeps the lease/attempt/usage; privacy reduction refused.
+501. `move-updates-every-roadmap-scope` — referencing roadmap scopes advance; unrelated ones stay; failed acceptance moves none.
+502. `move-undo-refuses-a-reorder` — undo after a reorder/reparent/privacy change refused conflict; otherwise restoring the order.
+503. `axisless-history` — ordered rows survive export/load/reopen; the denominator not reduced by completion.
+504. `matrix-retirement` — axis --remove retires only the selected coordinates; layout change on a populated roadmap refused.
+505. `configure-no-effect-and-undo-conflict` — equal-value configure retried returns the original receipt; undo guarded.
+506. `completed-view-mutation` — metadata/projection/render on a settled roadmap revive nothing; counts checked by the fold.
+507. `render-artifact-is-bounded` — interleaved replies and a --chat artifact correlated; corrupt/oversized refused bounded.
+508. `a-root-id-grants-nothing` — a stored root with no --render-root mapping refuses file mode; escape/symlink refused.
+509. `priority-orders-only-the-eligible` — a blocked rank-0 stays blocked while a rank-9 ready sibling is first among eligible.
+510. `priority-inherits-and-clears` — a :subtree rank changes order with no lease/attempt/state/counter moved; :self overrides.
+511. `rank-2-precedes-10` — ranks compared as integers; equal/default rows ordered by id across restart/handoff/skew.
+512. `priority-undo-is-history-not-value` — a same-value set and a clear of an absent slot are no-effect; undo refused.
+513. `priority-grants-nothing` — with priority set everywhere, who unchanged, no lease, no worker, no approval bypass.
+514. `state-export-describes-exactly-r` — a capture of R while R+1 is accepted; absent end, swapped record, cut refused.
+515. `state-export-refuses-a-gap` — a missing member, changed digest, dangling ref, escape, symlink, overrun refused; proof gap named.
+516. `state-export-is-one-long-operation` — an export blocked on I/O acknowledges its operation at once; export in a batch refused.
+517. `state-export-pin-survives-clip` — capture R, clip/retention at R+1 during copy; exactly R completed or a gap named.
+518. `state-export-disconnect-and-cancel` — lost client/restart/cancel keep one operation and one output identity; existing destination refused.
+519. `state-load-is-isolated` — an export+load changes no ownership, dispatches nothing, writes only declared paths.
+520. `fenced-export-can-finish` — in a fenced session an export finishes; unknown id and every write refused fenced.
+521. `goal-crosses-harness` — a goal set by A read byte-for-byte by B across builds; a cancel with evidence flips stop to cancelled.
+522. `goal-stale-update-refuses` — a stale --expect is refused naming expect/current, snapshot unchanged.
+523. `goal-stop-is-a-request-not-evidence` — goal update --stop writes a :transition :to :cancel-requested with reason and no evidence.
+524. `goal-update-writes-only-existing-kinds` — every goal update form writes a :transition or :evidence on the goal node only.
+525. `goal-expect-is-required` — goal set/update without --expect exit 2 naming the flag; stale refused at exit 1.
+526. `applicable-cap-never-hides-a-deny` — the only :deny in the last-sorting note is printed excluded before any cut row.
+527. `savepoint-cut-never-splits-an-envelope` — a cut between two events of one request refused cut inside an envelope.
+528. `crash-after-append-recovers-the-reply-once` — a crash after append before reply recovers the reply once; changed payload refused.
+529. `rotation-keeps-one-journal` — a clip rotates the journal; the new header names the same id; export writes the same bundle.
+530. `torn-tail-is-diagnosed-not-truncated` — partial frame/flipped bit/wrong header refused bit-for-bit, none rounded to another.
+531. `replay-mints-nothing` — a replay reconstructs the exact root/digest/revision with no fresh id, clock or verb run.
+532. `savepoint-write-failure-keeps-the-previous` — image/manifest/sync failure keeps the previous savepoint; verdict=failed listed.
+533. `copied-journal-grants-nothing` — a copied journal/savepoint inspects isolated, takes no ownership; start refused by fencing.
+534. `reply-retired-only-under-verified-coverage` — a retry answered already-applied only once the boundary root is verified reachable.
+535. `indivisible-record-refused-before-ack` — a key no page could hold refused indivisible at exit 2, nothing journaled.
+536. `days-merge-by-revision-never-concatenate` — a backdated closure lands in its day; days print in revision order across the boundary.
+537. `page-budget-is-not-max` — a filter rejecting every row read prints QUERY MORE shown=0 pages=n; --max untouched.
+538. `overlay-is-bounded-and-rebuilt` — a replay of a thousand settles into overlay pages, eviction loses no row, next clip writes them.
+539. `duty-tier-executes-not-authors` — a duty session executes an approved policy and authors none (re-told as duty-tier-executes-the-policy).
+540. `escalation-is-a-node-with-rule-default-and-age` — an escalation carries rule/default/age (re-told as escalation-carries-rule-default-age).
+541. `wait-table-four-presence-columns` — the wait table carries process alive, beat written, delivery handled, parent woke.
+542. `quiet-time-zero-calls-zero-notes` — quiet time calls nothing, publishes mechanically (re-told as quiet-time-calls-nothing).
+543. `cost-per-accepted-decision` — the coordination measure is cost per accepted decision, replacing decisions-per-token.
+544. `two-concurrent-clients-one-total-order` — two clients' commands land in one total order (re-told as single-writer-kernel-total-order).
+545. `duty-tier-executes-the-policy` — a resident session executes the approved policy, authors none, escalates the rest; no-:by refused.
+546. `escalation-carries-rule-default-age` — an escalation row carries rule/default/age; stale reads the three and reassigns nothing.
+547. `quiet-time-calls-nothing` — nothing changed makes no model call and no note; one event's cost is the one call's spend.
+548. `single-writer-kernel-total-order` — commands to the one kernel land in one total order; mutation outside the loop is a defect.
+549. `machine-is-config-and-never-a-work-tree-node` — the machine record is a :kind :machine of CONFIG, no verb settles it.
+550. `allocation-binds-machine-slot-generation` — take writes one binding of machine, slot, offer/attempt and generations; admission before prep.
+551. `allocation-take-is-atomic-and-idempotent` — a take retried under one id applies nothing; over-capacity refused whole with no partial grant.
+552. `expiry-marks-suspect-reuse-needs-fencing` — a past-deadline allocation reads suspect; only verified stop/not-started/fencing frees the slot.
+553. `probe-records-observed-active-and-touches-no-config` — probe prints fact=observed/absent; query --ask fleet shows declared facts unchanged.
+554. `one-allocator-per-machine-aliases-share-nested-conserve` — a second allocator refused allocator held; aliases share; nested draws same capacity.
+555. `release-one-allocation-spares-the-other` — releasing alloc-a frees slot 1 and leaves alloc-b untouched.
+556. `stale-allocation-id-refused-by-name` — a heartbeat/release on a released allocation refused stale token naming the id.
+557. `preparation-interrupted-before-launch` — an interrupted preparation keeps the slot until reconciliation frees it.
+558. `concurrent-slots-refuse-third-job` — a third take refused capacity even with idle cores, slots bounded by concurrency.
+559. `route-config-lists-key-by-path-never-value` — route register lists every field but the key; a non-path/env key refused credential in record.
+560. `routing-picks-flat-before-metered` — a class projects flat, then free, then metered; ties by cost then id; derived not stored.
+561. `unprobed-route-carries-no-card` — a route with no passing probe carries no card and is refused one until probed.
+562. `three-abstains-bench-until-probe` — three pass=absent probes bench the route until the next passing probe.
+563. `prompt-profile-expired-shows-on-the-status-line` — session status prints a stale profile as stale on the status line, never swapped.
+564. `a-done-need-on-unverified-evidence-admits-nothing` — a done need on unverified evidence keeps D ready=false; take refused unmet need.
+565. `stale-evidence-does-not-unmeet-a-need` — a source bump makes N's evidence stale but D stays ready=true; take admitted.
+566. `every-unmet-need-has-one-reason` — five fixtures print one token, need= and resolver per rule 2's table.
+567. `a-container-need-is-met-with-its-members` — a container need met only when every member is verified; empty never met.
+568. `every-admission-verb-refuses-an-unmet-need` — rule 3's gate at every admission verb (take/offer/state/goal/task packet/...), each refused with one FAIL line.
+569. `a-reopened-need-under-a-doing-dependent-leaves-the-set-green` — a reopened need flags no finding; WORK OK needs-broken=1, no WORK FAIL.
+570. `a-verb-that-can-admit-declares-its-needs-gate` — the schema file's coverage test: every admission verb marked needs-gate: refuses.
+571. `a-removed-or-corrected-need-is-unmet` — a removed or corrected need reads unmet (need-closed-unaccepted / need-unverified).
+572. `an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less` — an attested-only need met by its verified attestation and nothing less.
+573. `ready-true-implies-needs-met-and-not-the-reverse` — no row prints ready=true beside unmet>0; a leased needs-met node prints ready=false unmet=0.
+574. `needs-met-is-read-not-released` — settling a need writes no event on D; D's row reads unmet=0 ready=true on the read.
+575. `reverting-a-need-flags-an-engaged-dependent-and-kills-nothing` — a reopened need flags D needs-broken and leaves the lease/attempt standing.
+576. `an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded` — dep --add of an open need flags and stops nothing; cycles/dangling refused.
+577. `report-records-and-changes-nothing` — report writes one :report event, changes no count/lease/roadmap; retried id answers the original.
+578. `report-refuses-by-name` — missing flags, bad --act/--subject/--acted-at/--expect refused with nothing written.
+579. `a-hand-launch-is-refused-when-asked-and-recorded-when-told` — take refused under an open need; report --act launched records it and never overrides.
+580. `a-report-of-a-stop-releases-nothing` — report --act stopped prints holder= and the lease stands; no attempt reconciled.
+581. `a-report-of-a-stop-ends-the-engagement-a-launch-report-began` — a stopped report after a launched report lowers needs-broken; leased stays engaged.
+582. `reports-are-read-in-one-ask` — query --ask reports prints reports=3 no-verb=1 launched-unmet=1 with newest-last rows.
+583. `capability-records-the-five-states` — a fake tool set whose verbs each take one of the five paths prints one `CAPABILITY ROW` per pair and a `CAPABILITY OK` whose counts sum.
+584. `capability-live-keeps-the-evidence-path` — a fake probe recording one real call names the retained path, and a row claiming live with `evidence=-` is refused.
+585. `capability-refused-keeps-the-exact-line` — a fake tool that refuses records its `detail` byte for byte with state `refused`.
+586. `capability-stamp-tells-a-rebuild` — two revisions differing only under `docs/` carry the same stamp and print `rebuild=no`; an edit to one tool's package moves that stamp alone and prints `rebuild=yes`.
+587. `capability-diff-reads-two-revisions` — a fake record holding two revisions prints one `CAPABILITY DIFF` per changed pair and none for an unchanged pair.
+588. `capability-refuses-missing-flags` — no `--revision`, no `--machine`, no `--session`/`--snapshot` are each one `CAPABILITY REFUSED` with a remedy, exit 2, nothing written.
+589. `capability-refuses-a-bad-machine-or-revision` — a fake fleet without the name, and a repository that does not hold the sha, are each one `CAPABILITY REFUSED`, exit 2, no probe runs.
+590. `capability-unknown-on-an-unreadable-probe` — a fake probe timing out on a fake clock is `unknown`, timeout line in `detail`.
+591. `capability-output-is-bounded` — 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
+592. `capability-is-the-source-the-note-reads` — a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.
+593. `duty-tier-executes-the-policy` — the duty tier executes an approved finite policy it never authors (`duty-tier-executes-not-authors` in my scope's words).
+594. `escalation-carries-rule-default-age` — an escalation names the undecidable rule, the default that fires on silence, and its age (`escalation-is-a-node-with-rule-default-and-age`).
+595. `wait-table-four-presence-columns` — the per-harness wait table carries process-alive, beat-written, delivery-handled and parent-woke as columns.
+596. `quiet-time-calls-nothing` — a resident or duty session makes no model call and sends no note when nothing changed (`quiet-time-zero-calls-zero-notes`).
+597. `cost-per-accepted-decision` — the coordination measure is cost per accepted decision, with wrong/missed decisions and recovery latency as gates.
+598. `single-writer-kernel-total-order` — one command thread owns O and C; two concurrent clients observe one total order (`two-concurrent-clients-one-total-order`).
+599. `restore-is-isolated-and-dispatches-nothing` — a restore opens a read-only, isolated, non-dispatching session inheriting no ownership and reanimating no assignment.
+600. `a-savepoint-is-not-a-shared-backup` — a local success is never reported as a shared backup; local and shared revisions are shown side-by-side.
+601. `compaction-keeps-the-last-copy` — retention and journal compaction never remove the only recoverable copy of accepted work.
+602. `savepoint-cut-never-splits-an-envelope` — the cut falls on one complete verified record, else `SAVEPOINT FAIL …: cut inside an envelope` and no image is published.
+603. `savepoint-write-failure-keeps-the-previous` — the last known-good savepoint is kept while its replacement is written; a failed write leaves the previous verified savepoint.
+604. `copied-journal-grants-nothing` — a copied journal alone grants no recovery; an independent verified copy is required.
+605. `reply-retired-only-under-verified-coverage` — a retained disposition is retired to the dedup index only once the committed snapshot, retained events and dedup root are verified reachable.
+606. `rotation-keeps-one-journal` — rotating a journal keeps one logical journal with a reachable verified cut, never the newest filename as proof.
+607. `torn-tail-is-diagnosed-not-truncated` — a torn tail is a diagnosed interrupted append, told apart from a corrupt record, and kept — never a truncation of acknowledged work.
+608. `inventory-expansion-and-contraction` — discovered/completed/reopened/decomposed/removed work is counted separately with a visible changed denominator.
+609. `ready-names-the-blocker-and-the-resolver` — the ready view names the exact reason work cannot proceed and who can resolve it on every blocked row.
+610. `shared-prerequisite-owned-once` — a shared prerequisite is owned once and referenced by every affected cell; merged/verified/published are three distinct evidence obligations.
+611. `review-cycles-stay-visible` — each required friend's exact-revision review and finding ids, dispositions and clearance, are recorded; repeated cycles are visible work.
+612. `a-broken-assertion-must-fail` — a test that still passes with its asserted behaviour deliberately broken is not regression evidence.
+613. `a-stop-reaches-distributed-work` — a priority change/correction/pause/stop reaches already-distributed tasks with durable request identity and reconciled handles.
+614. `cost-joins-include-the-coordinator` — cost joins include coordinator overhead and rework, with elapsed time attributed to execution/queueing/review/CI waiting.
+615. `source-inventory` — every captured source record maps to a preserved original plus a normalised mapping, or an explicit unresolved entry; count mismatches fail reconciliation.
+616. `read-only-intake` — a dry-run capture/import cannot call a source mutation endpoint; applying a plan changes only the destination after revalidation.
+617. `import-replay` — repeated batches, interleaved retries, overlapping pages, interruption and resume yield exactly one mapping per stable source id, no duplicate canonical work, no lost comment.
+618. `moving-source` — a source edited/reopened during capture preserves captured versions, marks mixed captures, reconciles newer observations.
+619. `archive-completeness` — a missing attachment, unavailable comment, truncation, rate limit or mid-page failure stays an explicit gap and prohibits absorption.
+620. `full-round-trip` — export, load in a fresh isolated engine, re-export: every semantic field, id, Unicode, order, and derived cache compares equal.
+621. `supported-subset-format-determinism` — one state and schema produce identical canonical bytes; null/absent/empty stay distinct in the digest.
+622. `old-history` — an export includes the whole selected archive outside the 24h window; a recent-only export is never labelled a full backup.
+623. `referential-integrity-refuses-a-cycle` — duplicate ids, dangling references, cycles, conflicting parents, invalid cells, duplicate ownership fail before publication (the tree's test covers the cycle case).
+624. `atomic-mutation` — failure injected before/during/after the journal append, sync, apply, savepoint write, rename and reply; every acknowledged mutation survives restart, a torn tail is diagnosed, no partial envelope admitted.
+625. `retry-protocol` — a lost reply, fragmented frames, a disconnect, a repeated id (same and different body), invalid UTF-8/types/versions, oversized frames and deadlines: no duplicate accepted mutation, no executable payload.
+626. `async-operations` — status, wait and cancel under a busy import/export/clip; no double launch, no false cancellation success, control plane never stalls behind network I/O.
+627. `batches-and-pipelines` — atomic all-or-none, exact accepted prefix, marked unattempted, zero duplicates, oversize refused, no external effect inside an atomic batch.
+628. `single-writer` — two processes, alias paths, a stale socket, partitioned benches, lease expiry: fencing prevents stale mutation authority, not only a stale Git push.
+629. `indexes-and-counters` — random legal sequences compare against an independent reconstruction; counters and friend indexes never double-count across close/reopen/reparent.
+630. `materialized-working-set` — W held fixed while O and C grow; membership/`|W|` asks visit zero unrelated nodes, fake clock expiring leases prints a delayed watermark.
+631. `roadmap-proof` — full fixed-table parity, optional axes, partial/stale evidence, shared prerequisites; chat and file renders identical; marker edits preserve unrelated bytes.
+632. `undo-redo` — reversible edits reversed with history preserved and redo only against valid preconditions; a conflict is explicit and mutates nothing.
+633. `regression-and-recovery` — restore the newest valid savepoint plus journal, reject a corrupt savepoint, recover without silent loss (backed by the savepoint-restore replays above).
+634. `schema-evolution` — supported old schemas migrate losslessly against golden fixtures; an unsupported version refuses while preserving originals.
+635. `hostile-data` — reader evaluation disabled, pre-parse limits enforced, traversal/escaping refused, imported prose cannot execute a command or alter authority.
