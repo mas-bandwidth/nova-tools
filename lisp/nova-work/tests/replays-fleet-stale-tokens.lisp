@@ -126,3 +126,60 @@
     ;; Reading a finding never changes it: the original is untouched.
     (check-equal 7 (friend-lease-generation lease) "the fence mutated the lease it read")
     (ok (held-lease-p lease) "the fence mutated the lease it read")))
+
+;;; ------------------------------------------------------------------
+;;; E07-F06-03: preserve private state in O and validation while applying
+;;; filtering only at projection boundaries. docs/roadmaps/nova-work.sexp
+;;; E07-F06 "Private-node projection filtering", subfeature three;
+;;; docs/SPEC-WORK.md:947-949 (plus the privacy floor at :3027-3028). A node
+;;; that carries :private t is ordinary, complete work in O: its title, its
+;;; flag and its descendants stay resident, so the whole validation still
+;;; walks it. The omission is a filtering applied at the render (projection)
+;;; boundary alone, and it never reaches back into O.
+
+(deftest "TestE07F06PreservePrivateStateInO"
+    "docs/SPEC-WORK.md:947-949,3027-3028"
+    "expected=private-state-preserved-in-o;filtering-at-the-projection-boundary-only;validation-still-sees-the-private-node"
+  ;; O holds a public feature and a private feature whose descendant is also
+  ;; private.
+  (let* ((seed '((:id "root"    :type :work-set :parent nil      :state :unknown
+                  :repo "acme/work")
+                 (:id "root/f1" :type :feature  :parent "root"   :state :unknown)
+                 (:id "root/f2" :type :feature  :parent "root"   :state :unknown
+                  :private :true :title "secret feature")
+                 (:id "root/f2/t1" :type :task :parent "root/f2" :state :doing
+                  :private :true :title "secret task")))
+         (k (make-kernel :state (make-seed-state seed)))
+         (state (kernel-state k)))
+    ;; 1. The private node's state is preserved in O, whole: its flag, its title
+    ;; and its descendant are all resident, not fenced or stripped at rest.
+    (check-equal :true (node-private state "root/f2")
+                 "the private feature lost its :private marker in O")
+    (check-string= "secret feature" (node-title state "root/f2")
+                   "the private feature lost its title in O")
+    (check-equal '("root/f2/t1") (node-children state "root/f2")
+                 "the private feature lost its descendant in O")
+    (check-equal :true (node-private state "root/f2/t1")
+                 "the private descendant lost its :private marker in O")
+    ;; 2. Filtering happens only at the projection boundary: the render omits
+    ;; the private row and its descendant and keeps the public row.
+    (let ((body (render-view-body
+                 (list :revision 3 :private '("root/f2" "root/f2/t1"))
+                 (list :kind :rows :rows '("root/f1" "root/f2" "root/f2/t1")))))
+      (ok (search "row=root/f1" body) "the render dropped the public row: ~A" body)
+      (ok (not (search "row=root/f2" body)) "the render leaked the private row: ~A" body)
+      (ok (not (search "row=root/f2/t1" body)) "the render leaked the private descendant: ~A" body))
+    ;; after the render, O still holds the private state -- the filtering did not
+    ;; reach back into O.
+    (check-equal :true (node-private state "root/f2")
+                 "the render stripped the private marker out of O")
+    (check-string= "secret feature" (node-title state "root/f2")
+                   "the render stripped the private title out of O")
+    (check-equal '("root/f2/t1") (node-children state "root/f2")
+                 "the render stripped the private descendant out of O")
+    ;; 3. Validation still sees the private node: the whole-load partition holds
+    ;; with the private node still counted in O, and its disposition is computed.
+    (ok (cow-partition-holds-p state)
+        "validation lost the private node: the O partition does not hold")
+    (check-equal :pending (node-disposition state "root/f2")
+                 "validation no longer computes the private node's disposition")))
