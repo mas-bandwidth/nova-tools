@@ -452,5 +452,3 @@ func TestDrainLaunchedProviderErrorAutoRequeue(t *testing.T) {
 		t.Fatalf("card should no longer be in launchedDir")
 	}
 }
-
-

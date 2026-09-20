@@ -146,4 +146,3 @@ func isRunnerErrorLine(line string) bool {
 	}
 	return false
 }
-
