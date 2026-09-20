@@ -142,3 +142,26 @@ func TestSlowTestsOverPackagesAreOrderedWorstFirst(t *testing.T) {
 		t.Errorf("second over line = %q, want the smaller offender second", lines[1])
 	}
 }
+
+// TestEvents pins the spec sentence: "The engine is the internal/ci/slowtests
+// subpackage's Parse and Sum: the events come from the caller, the budget comes
+// from the caller, and nothing reads a file, the clock or the network."
+func TestEvents(t *testing.T) {
+	// Parse reads newline-delimited TestEvent JSON from the caller.
+	fixture := `{"Action":"run","Package":"example.com/pkg","Test":"TestA"}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
+`
+	events, err := Parse(strings.NewReader(fixture))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
+	}
+	// Sum aggregates package-level Elapsed; budget comes from caller.
+	report := Sum(events, slowBudget)
+	if report.ExitCode() != 0 {
+		t.Errorf("ExitCode = %d, want 0", report.ExitCode())
+	}
+}
