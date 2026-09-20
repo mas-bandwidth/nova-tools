@@ -123,7 +123,7 @@ SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
@@ -2795,7 +2795,7 @@ SEND NOTE <what a tolerance did to this draft>
 SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
 SEND NOTE Re: subject matched <n> notes; closed the newest <id>; name the id to be exact
 DRAFT NOTE <what --re resolved, on stderr, because draft's stdout is a file>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
