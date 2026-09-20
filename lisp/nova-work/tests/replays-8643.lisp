@@ -266,3 +266,59 @@
       (multiple-value-bind (okp line) (reconcile-inventory authoritative divergent)
         (check-equal nil okp "a divergent capture reconciled against the repository")
         (ok (search "content" line) "a content mismatch is not named: ~A" line)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F06ProvideReproducibleBuildInstallAnd     SPEC-WORK.md:299,302-310
+;;; ------------------------------------------------------------------
+;;;
+;;; E02-F06-03 — Provide reproducible build/install and small
+;;; startup/status/shutdown smoke tests (ROADMAP.md:339). Stated at
+;;; docs/SPEC-WORK.md:299 ("packaging and its supported platforms are pinned
+;;; and tested before any release") and :302-310 — every running binary names
+;;; its build through the build=<identity> field of `session status`, and a
+;;; session's identity, bounds and state are explicit at start, readable at
+;;; any time and stopped explicitly. This smoke test drives the pure session
+;;; lifecycle once and asserts the reproducible build and the three verbs.
+
+(deftest "TestE02F06ProvideReproducibleBuildInstallAnd" "docs/SPEC-WORK.md:299,302-310"
+    "expected=build-identity-reproducible-and-names-the-pinned-runtime;start-answers-session-ok-with-owner-and-generation;status-reads-every-bound-and-the-build;stop-fences-and-still-answers-status"
+  ;; (a) reproducible build/install: the build identity the running binary
+  ;; prints is deterministic and names the pinned SBCL runtime (SPEC-WORK.md:302-303).
+  (let ((id1 (session-build-identity))
+        (id2 (session-build-identity)))
+    (ok (and (stringp id1) (plusp (length id1)))
+        "the build identity is empty: ~S" id1)
+    (check-string= id1 id2
+        "the build identity is not reproducible across two calls")
+    (ok (search (lisp-implementation-type) id1)
+        "the build identity does not name the pinned runtime: ~S" id1))
+  ;; (b) startup, status and shutdown on one session.
+  (multiple-value-bind (sess line code)
+      (session-start :path "acme/work" :owner "rowan"
+                     :now "2026-09-20T00:00:00Z")
+    ;; startup: an explicit start answers SESSION OK naming owner and generation.
+    (check-equal 0 code "a session start answered a nonzero exit code")
+    (ok (search "SESSION OK" line) "start does not print SESSION OK: ~A" line)
+    (ok (search "owner=rowan" line) "start does not name the owner: ~A" line)
+    (ok (search "generation=1" line) "start does not name the generation: ~A" line)
+    ;; status: reads every bound and names the build rather than remembering it.
+    (let ((status (session-status-line sess)))
+      (ok (search "SESSION OK" status) "status is not a SESSION OK line: ~A" status)
+      (ok (search "state=live" status) "status does not read the state: ~A" status)
+      (ok (search "build=" status) "status does not say which build it is: ~A" status)
+      (ok (search "every=" status) "status does not read every: ~A" status)
+      (ok (search "max-bytes=" status) "status does not read max-bytes: ~A" status)
+      (ok (search "closed-window=" status) "status does not read closed-window: ~A" status))
+    ;; shutdown: an explicit stop fences the session and releases the owner.
+    (multiple-value-bind (ok stop-lines)
+        (session-stop-lifecycle sess :no-clip t :now "2026-09-20T00:05:00Z")
+      (ok ok "the stop was refused: ~S" stop-lines)
+      (check-equal :fenced (session-state sess) "the stopped session is not fenced")
+      (check-equal "" (session-owner sess) "the stopped session still names an owner"))
+    ;; a fenced session still answers status, so the harness that started it can
+    ;; read its shutdown.
+    (let ((after (session-status-line sess)))
+      (ok (search "SESSION OK" after)
+          "a fenced session does not answer status: ~A" after)
+      (ok (search "state=fenced" after)
+          "status does not read the fenced state after stop: ~A" after))))
