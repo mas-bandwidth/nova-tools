@@ -290,7 +290,7 @@ func RouteFailure(queueDir, cardID string, cardContent []byte, attempts, maxAtte
 		return res, nil
 
 	case FailureInfraCrash:
-		if fc.Quarantinable && attempts >= maxAttempts {
+		if fc.Quarantinable && (!fc.Retriable || attempts >= maxAttempts) {
 			res.Action = ActionQuarantine
 			res.Message = fmt.Sprintf("quarantined infrastructure crash: %s", fc.Details)
 			qDir, err := QuarantineCard(queueDir, fc.Reason, cardID, cardContent, QuarantineRecord{
@@ -348,6 +348,12 @@ func ReconcileQueueLimbo(queueDir string, maxAttempts int) ([]ReconcileRecord, e
 	taken := filepath.Join(queueDir, TakenName)
 	if _, err := os.Stat(taken); err == nil {
 		dirsToSearch = append(dirsToSearch, taken)
+	}
+	if filepath.Base(queueDir) == QueueName {
+		siblingTaken := filepath.Join(filepath.Dir(queueDir), TakenName)
+		if fi, err := os.Stat(siblingTaken); err == nil && fi.IsDir() {
+			dirsToSearch = append(dirsToSearch, siblingTaken)
+		}
 	}
 
 	for _, d := range dirsToSearch {
@@ -463,8 +469,10 @@ func extractCardID(name string) string {
 	cleaned = strings.TrimSuffix(cleaned, ProviderFailedExt)
 	// Strip .card if present
 	cleaned = strings.TrimSuffix(cleaned, CardExt)
-	// Strip worker prefix if present (worker-cardname)
-	if idx := strings.Index(cleaned, "-"); idx > 0 && !strings.HasPrefix(cleaned, "card-") {
+	// Strip worker prefix if present (e.g. worker-01-card-36 or w1-card-36)
+	if cardIdx := strings.Index(cleaned, "card-"); cardIdx > 0 {
+		cleaned = cleaned[cardIdx:]
+	} else if idx := strings.Index(cleaned, "-"); idx > 0 && !strings.HasPrefix(cleaned, "card-") {
 		cleaned = cleaned[idx+1:]
 	}
 	return cleaned
@@ -505,3 +513,62 @@ func TriageQuarantineSummary(queueDir string) string {
 		len(records), byReason["input-limit"], byReason["malformed-syntax"],
 		byReason["provider-exhausted"], byReason["infra-crash"]+byReason["oom-killed"]+byReason["segfault"])
 }
+
+// QuarantineGC performs a full garbage collection and reconciliation pass on queueDir:
+//  1. Reconciles all limbo files (.provider-failed) via ReconcileQueueLimbo,
+//     transitioning exhausted or defective cards to quarantine/ and restoring retriable cards.
+//  2. Cleans up orphan lock files (.lock) in queue and taken directories where no process holds a live flock.
+//  3. Prunes empty reason directories in quarantine/.
+func QuarantineGC(queueDir string, maxAttempts int) ([]ReconcileRecord, error) {
+	// 1. Reconcile any limbo files.
+	records, err := ReconcileQueueLimbo(queueDir, maxAttempts)
+	if err != nil {
+		return records, err
+	}
+
+	// 2. Clean up any orphan lock files (.lock) in queue and taken directories.
+	dirs := []string{queueDir}
+	if filepath.Base(queueDir) == QueueName {
+		dirs = append(dirs, filepath.Join(filepath.Dir(queueDir), TakenName))
+	} else {
+		dirs = append(dirs, filepath.Join(queueDir, TakenName))
+	}
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".lock") {
+				lockPath := filepath.Join(d, e.Name())
+				f, err := os.OpenFile(lockPath, os.O_RDWR, 0o644)
+				if err == nil {
+					if ok, _ := tryLockFile(f); ok {
+						unlockFile(f)
+						_ = f.Close()
+						_ = os.Remove(lockPath)
+					} else {
+						_ = f.Close()
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Prune empty reason directories in quarantine/
+	qRoot := QuarantineDir(queueDir)
+	if entries, err := os.ReadDir(qRoot); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				rDir := filepath.Join(qRoot, e.Name())
+				sub, err := os.ReadDir(rDir)
+				if err == nil && len(sub) == 0 {
+					_ = os.Remove(rDir)
+				}
+			}
+		}
+	}
+
+	return records, nil
+}
+
