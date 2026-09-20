@@ -1596,11 +1596,12 @@ and exited 255 — prints exactly one `NATIVE INCOMPLETE` with the child's code
 on the line as `rc=255` and `why=rc`, never OK or REFUSED. **The process never
 itself exits 255.** Local `ssh(1)` exits 255 for any error; that is not proof
 the remote command never started, so the outcome is potentially UNKNOWN, and
-a retry waits on reconciliation (a bound execution receipt, or the verdict
-line). A native that passed 255 through made a fill loop treat a finished card
-as a transport failure and run it twice. The child's 255 is `rc=255` on the
-verdict line and the process exits 1 (the verb ran and said NO). A refusal
-before any child starts is `NATIVE REFUSED` at exit 2, as today. **Red test:**
+a retry waits on reconciliation (a bound execution receipt). A standalone
+unbound printed verdict is not reconciliation authority. A native that passed
+255 through made a fill loop treat a finished card as a transport failure and
+run it twice. The child's 255 is `rc=255` on the verdict line and the process
+exits 1 (the verb ran and said NO). A refusal before any child starts is
+`NATIVE REFUSED` at exit 2, as today. **Red test:**
 `TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255` — a fake harness that
 prints the FSEvents line, writes `RESULT.md` and exits 255: exactly one
 `NATIVE INCOMPLETE` with `rc=255` and `why=rc`, no OK/REFUSED, the process is
