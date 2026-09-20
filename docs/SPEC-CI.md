@@ -883,6 +883,63 @@ shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
 `os.Open` and `os.RemoveAll` over one named path in the shared directory are
 questions about that path, which no sibling job can answer wrongly.
 
+### `lisptemppath` — a temp path the Lisp suite builds is this RUN's, never a shared name
+
+**The rule.** Two halves, over every `.lisp` file under `lisp/nova-work/tests/`.
+(a) No file names the SHARED temporary directory —
+`uiop:default-temporary-directory`, `uiop:temporary-directory`,
+`(getenv "TMPDIR")`, a `/tmp` or `/var/tmp` literal — to build a path.
+(b) No file calls `RANDOM`. Both are satisfied by the harness's per-run helpers:
+`test-temp-dir` and `test-temp-file` under `test-run-root`, or, for a path
+`sun_path` keeps out of that root, `test-short-tag`. Uniqueness comes from the
+run's token — a real entropy source plus the pid — never from a counter or a
+clock. It is the Lisp half of what `sharedtemp` and `testoutpath` hold for Go.
+**The hurt.** Every temp path the `lisp/nova-work` acceptance suite made was
+named from `(get-universal-time)` plus a counter that starts at zero in every
+image, under a directory name fixed in the source. Two suites that start inside
+the same second on one host build the SAME path, so one finds the destination
+already there or the journal's lock held by the other: three reds on `#1682`
+(run `35445053795`), a red `ci-ok` on `#1692` on runner `air-nova-2`, and 12–17
+manufactured failures with four suites parallel on `hulk` where the same suites
+one at a time were green (`#1699`). CI runners share hosts — the Air runs two,
+the Studio several, `superman` ten — so it reddened PRs whose changes had nothing
+to do with it and trained reviewers to rerun a red. Half (b) is a second cause
+found while fixing the first: SBCL saves `*random-state*` into its core, so a
+fresh image returns the SAME sequence — three separate images each printed
+`113500 958198 129774` — and the AF_UNIX fixtures named their socket directories
+from it, so two concurrent suites agreed exactly and `short-socket-base` then
+DELETED the other suite's live socket directory before binding. On Linux that is
+`/dev/shm`, shared by every job on the box.
+**The test.** `TestNoLispTestBuildsATempPathWithoutTheHelper` and
+`TestNoLispTestNamesAPathWithRandom`
+(`internal/ci/lisptemppath_class_test.go`), with
+`TestLispTempScannerReadsTheFixtures` over the before/after fixtures in
+`internal/ci/testdata/lisptemppath/` and `TestScrubLispKeepsCodeAndDropsProse`
+over the comment scrubber directly.
+**Its allowlist.** Two, both `file:definition` per row with its reason, both
+shrink-only in both directions.
+`internal/ci/testdata/lisptemppath_allowlist.txt` holds four rows and they are
+all one reason: an AF_UNIX socket path lives in a fixed-size `sun_path` (104
+bytes on darwin) that the run root's name does not fit inside, so those paths
+take their uniqueness from `test-short-tag` and are handed to the harness's exit
+cleanup with `test-temp-register`. `internal/ci/testdata/lisprandom_allowlist.txt`
+holds one: `replays-8642.lisp:async-operations` names a staged-input id, never a
+filesystem path.
+**Its remedy line.** `build the path with test-temp-dir or test-temp-file under
+test-run-root (lisp/nova-work/tests/harness.lisp), or, for a path sun_path keeps
+out of that root, name it with test-short-tag: uniqueness comes from the run's
+token — a real entropy source plus the pid — never from a counter or a clock`.
+**Its narrowings.** Three, named out loud. `lisp/nova-work/tests/harness.lisp`
+is not scanned at all: it DEFINES the helper, so the rule cannot be stated over
+it without forbidding its own implementation. COMMENTS are scrubbed before
+matching, because the paragraphs that say what the old code did quote it exactly
+and a scanner that read prose would need an allowlist row for every sentence
+that told the truth — but STRING LITERALS stay visible, because `#p"/tmp/"` and
+`(getenv "TMPDIR")` are the offence rather than a description of it, so a
+docstring must spell the construct out in words. And attribution is per
+top-level DEFINITION, not per form: a finding names the `defun` or `deftest` it
+sits in, which is the unit an allowlist row can be read against.
+
 ### `busprogress` — progress never enters a protocol stream
 
 **The rule.** Glenn's rule has two halves: a program that takes over 0.1 s says
