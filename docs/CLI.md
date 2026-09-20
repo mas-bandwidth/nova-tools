@@ -2690,8 +2690,9 @@ retiring an individual slot; they are separate from its job evidence.
 
 Because `GOTOOLCHAIN=local` is pinned, the bench's own Go must be reachable
 inside the wall. `nova-swarm native` therefore names the provisioning standard's
-toolchain roots on the wall's argv, read-only and skipped when one is not there.
-It is **one list with two kinds, per operating system**.
+toolchain roots on the wall's argv, skipped when one is not there.
+It is **one list with three kinds, per operating system** — two read-only, and
+one writable root that exists for a single measured need.
 
 On **every** bench:
 
@@ -2703,6 +2704,17 @@ On **every** bench:
   executable**. A card reads a dependency's sources out of it and never runs
   them, and the bench user can write to that tree, so execute there would put a
   dependency's own files one exec away from running inside the wall.
+- `/tmp/.dotnet` as `--write` — the only root that is not read-only. The .NET
+  runtime's named-mutex directory is hard-coded to `/tmp` and ignores `TMPDIR`,
+  so without it every `dotnet build` and `dotnet test` dies in NuGet's restore
+  on `'NuGet-Migrations' … open("/tmp/.dotnet/shm") == -1; errno == EACCES`.
+  It is **shared by every card on the bench**, and it is skipped when it is not
+  there: nothing creates it, because `/tmp` is cleared on a reboot, so it is
+  provisioned `1777` and `bench-standard.sh` checks its mode and owner. The
+  sticky bit stops other users on the machine and **not** one card stopping
+  another, since every card runs as the same bench user.
+  `docs/SPEC-SWARM.md` carries the whole analysis, including why no per-job
+  alternative exists.
 
 On a **Mac** bench the toolchains are installed and on `PATH` rather than
 unpacked into a home, and each one finds its own runtime beside the launcher
@@ -2721,6 +2733,15 @@ and `dotnet` says `Failed to resolve full path of the current executable []`
 Each is skipped when it is not installed, and each reaches the argv resolved
 through its symlinks, because the wall checks the resolved target — on the Air
 `/opt/homebrew/opt/openjdk` resolves to `/opt/homebrew/Cellar/openjdk/27`.
+
+A Mac needs no root for the C toolchain and gets none. `cc` and `rustc` could
+not link inside the wall on batman — `xcode-select: error: unable to read data
+link at '/var/db/xcode_select_link'` — and neither obvious root is the answer:
+`/Library/Developer/CommandLineTools` is already readable with no grant (the
+profile grants `/Library`), and `--read /var/db/xcode_select_link` silently
+grants the link's *target* because rule 5 follows symlinks. `native` therefore
+sets `DEVELOPER_DIR` in the card's environment, from the bench's own
+`xcode-select -p` read outside the wall, and grants no path at all.
 
 One narrowing, measured: with the JDK tree granted, that JDK runs inside the
 wall, but the `/usr/bin/java` **stub** still says `Unable to locate a Java

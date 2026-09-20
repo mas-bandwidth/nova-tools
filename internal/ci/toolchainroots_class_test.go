@@ -24,6 +24,11 @@ const (
 	toolchainRootsEnd   = "# NOVA_TOOLCHAIN_ROOTS END"
 )
 
+// dotnetMutexRoot is the one toolchain root the wall grants `--write` rather than read-only,
+// named here so the class rule below reads as a rule about THAT path and not about whichever
+// path happens to be writable on the day.
+const dotnetMutexRoot = "/tmp/.dotnet"
+
 // TestBenchStandardAndTheWallNameTheSameToolchainRoots is the class rule behind the edge
 // the schema dogfood loop hit on 2026-09-18: TWO CONTRACTS THAT NAME THE SAME PATHS IN TWO
 // PLACES WILL DISAGREE, and the disagreement is discovered by a card that dies. The bench
@@ -103,6 +108,34 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		if _, granted := kind["go/bin"]; granted {
 			t.Errorf("%s: the wall grants the toolchain root ~/go/bin: it is granted under neither kind (Johnny's security read of #1364)", goos)
 		}
+		// THE THIRD KIND, AND THE ONLY ROOT THAT IS NOT READ-ONLY (2026-09-20). /tmp/.dotnet
+		// is the .NET runtime's named-mutex directory: the path is hard-coded to /tmp, TMPDIR
+		// is ignored (strace receipt in internal/swarm/toolchain.go), no DOTNET_ or NUGET_
+		// setting moves it, and neither wall body has a mount namespace to redirect it with,
+		// so it cannot be made per-job. Without it every `dotnet build` and `dotnet test`
+		// dies in NuGet's restore on `'NuGet-Migrations' ... errno == EACCES`.
+		//
+		// It is held HERE, in the class test, for the reason the whole file exists: a
+		// writable root shared by every card on a bench is the one grant nobody may add,
+		// move or widen quietly. The list may carry exactly this one, it must carry it on
+		// both operating systems, and the standard must check the same path -- so a second
+		// writable root, or this one respelled to a parent, is red in the class rather than
+		// red in a security read six weeks later.
+		var writable []string
+		for _, r := range swarm.ToolchainRootList(goos) {
+			if r.Write {
+				writable = append(writable, r.Name)
+			}
+		}
+		if len(writable) != 1 || writable[0] != dotnetMutexRoot {
+			t.Errorf("%s: the wall's writable toolchain roots are %v; the list carries EXACTLY ONE, %s, and it is the only grant here that is not read-only. Adding or widening one needs the measurement and the security read that row carries, not a row.",
+				goos, writable, dotnetMutexRoot)
+		}
+		if exec, granted := kind[dotnetMutexRoot]; !granted {
+			t.Errorf("%s: the wall does not grant %s at all; a cs card cannot take the NuGet-Migrations named mutex and every dotnet build and dotnet test on that OS dies in restore", goos, dotnetMutexRoot)
+		} else if exec {
+			t.Errorf("%s: %s is declared Exec as well as Write; --write already carries read AND execute, so naming both hides which kind was meant", goos, dotnetMutexRoot)
+		}
 		// And the roots are documented where a reader of the wall looks for them, under the
 		// spelling the doc uses: `~/name` for a home root, the path itself for a system one.
 		for _, doc := range []string{"docs/SPEC-SWARM.md", "docs/CLI.md"} {
@@ -127,6 +160,30 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 	// MatchNonempty, asserted in standardRoots.)
 	if !strings.Contains(string(rawBenchStandard(t, root)), "drift \"toolchain root ") {
 		t.Errorf("%s declares the toolchain roots but never drifts on a missing one", benchStandardScript)
+	}
+	// AND THE WRITABLE ROOT IS CHECKED HARDER THAN THE REST. Existence is the whole standard
+	// for a read-only root: it is a toolchain tree nobody writes to. /tmp/.dotnet is shared
+	// and writable by every card on the bench, it lives in /tmp and so does not survive a
+	// reboot, and nothing in the runner creates it -- a runner that created a missing one
+	// would be racing whoever else can write to /tmp for the name. So the standard checks
+	// its MODE and its OWNER, and this is the class rule that keeps it doing so.
+	script := string(rawBenchStandard(t, root))
+	for _, want := range []string{dotnetMutexRoot, "id -un", "drwxrwxrwt"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("%s does not check the writable toolchain root's mode and owner (%q is missing): a world-writable directory shared by every card is the one root whose existence is not enough", benchStandardScript, want)
+		}
+	}
+	// The standard's OWN table must ask the same question, because a Mac bench is never
+	// checked by that script: its probe is what `nova-pulse fleet standard` runs.
+	for _, goos := range oses {
+		for _, c := range pulse.FleetStandardChecks(goos, "", "", 25) {
+			if c.Root != dotnetMutexRoot {
+				continue
+			}
+			if !strings.Contains(c.Probe, "id -un") {
+				t.Errorf("%s: the standard's %s check does not read the owner of the one writable toolchain root: %s", goos, c.Name, c.Probe)
+			}
+		}
 	}
 }
 

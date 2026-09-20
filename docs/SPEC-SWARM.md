@@ -1174,6 +1174,72 @@ grants `process-exec*` globally):
   there and the bench user can write to it, so the exec-carrying kind would put a
   dependency's own files one exec away from running inside the wall.
 
+**And one root on both operating systems is not read-only at all: `/tmp/.dotnet` as
+`--write`** (2026-09-20; Glenn: *"I grant you permission to admin dotnet, and the readlonly
+roots. do that"*). It is the third kind and the costly one, so it is written out in full.
+
+Every `dotnet build` and `dotnet test` dies inside the bare wall in NuGet's restore, which
+takes a named mutex before it does anything else:
+
+```
+NuGet.targets(198,5): error MSB4018: System.IO.IOException: The system cannot open the
+device or file specified. : 'NuGet-Migrations'. One or more system calls failed:
+open("/tmp/.dotnet/shm", 0x80000, 0x0) == -1; errno == EACCES        (hulk, linux)
+stat("/tmp/.dotnet", ...) == -1; errno == EPERM                      (batman, darwin)
+```
+
+**It cannot be made per-job**, which is the question a shared writable root has to answer:
+the path is hard-coded and `TMPDIR` is ignored — with `TMPDIR` pointing at the job's own
+granted tmp the runtime still went to `/tmp/.dotnet/shm`, and the receipt is an `strace` of
+the production failure (`stat("/tmp/.dotnet", …) = 0` then `openat(…, "/tmp/.dotnet/shm",
+O_RDONLY|O_CLOEXEC) = -1 EACCES`), with `strings libcoreclr.so` naming `/tmp` as a bare
+literal and mentioning `TMPDIR` in one message about the debugger pipe. No `DOTNET_*` or
+`NUGET_*` setting moves it. The wall cannot redirect it either: a per-job directory made to
+appear at that path needs a mount namespace, and neither body has one — linux is Landlock
+over the caller's own namespace and darwin is a seatbelt profile. And `--read` is not
+enough; the runtime creates its session directory there.
+
+**So the grant is shared, and here is what that costs.** Every card on a bench runs as the
+same bench user, so this is one directory shared by all of them, and the usual protection
+does not apply: the sticky bit stops one UNIX *user* removing another's entries, and between
+two cards there is only one user, so **sticky buys nothing between cards**. It is set anyway
+— provisioning creates the directory `1777`, which .NET 10 tolerates and does not rewrite
+(measured on hulk and batman) — because it does stop every other user on the machine. What
+card A can do to card B is hold `NuGet-Migrations` and stall B's restore, pre-create a file
+under a name B's runtime will open, or fill the directory. What it cannot do is reach
+anything else: the grant is that one directory, a run leaves it empty (the runtime removes
+its session directories when the last user exits), and nothing under it is read as code by
+anything but the PAL's mutex layer. A bench that wants more than that wants one UID per
+card, which is a different change. `tools/bench-standard.sh` checks the directory's **mode
+and owner**, so a wrong one is a drift line and not a surprise.
+
+**The path is the only narrowing available**, because `--write` carries read and execute
+whatever else is asked, so it was measured rather than assumed: on linux
+`--write /tmp/.dotnet/shm` alone is enough for `dotnet build` and for `dotnet test`'s mutex;
+on darwin it is **not** — the runtime also stats `/tmp/.dotnet/lockfiles`, a sibling of
+`shm`, and dies `errno == EPERM`. The row is the parent on both, because a per-OS split
+would be narrower only for the workloads that happened to be measured. `/tmp` itself is
+never granted, and nothing in the runner CREATES the directory: `/tmp` is cleared on a
+reboot, so it is provisioned, and a runner that created a missing one would be racing
+whoever else can write to `/tmp` for the name.
+
+**One darwin fix turned out not to be a grant at all.** On batman, `cc` and `rustc` could
+not LINK inside the wall — `xcode-select: error: unable to read data link at
+'/var/db/xcode_select_link', expected symbolic link (Operation not permitted)`. The obvious
+reading is two missing read roots, and both are wrong.
+`/Library/Developer/CommandLineTools` is **already readable** inside the wall with no grant
+at all, because `/Library` is one of the darwin profile's own fixed subpaths — a row for it
+would grant nothing, and `--read /Library/Developer/CommandLineTools` on its own leaves `cc`
+red. `/var/db` would work, and it is the whole of `/var/db` — the local user database,
+sudo's state — to buy the `readlink()` of one symlink; the narrower spelling is not
+available, because rule 5 runs `os.Stat`, which *follows* the link, so
+`--read /var/db/xcode_select_link` silently grants CommandLineTools again and `cc` stays
+red. So the answer is **no new root**: `DEVELOPER_DIR` is set in the card's environment from
+the bench's own `xcode-select -p`, read outside the wall exactly as a brew version is read
+off a launcher, and with it `cc`, `c++` and `rustc` build, link and run inside the wall on
+batman and superman with zero paths granted. `swarm.ToolchainEnv` is where it lives, beside
+the roots, because it is the same class of fact.
+
 `~/go/bin` is granted under NEITHER kind: it is GOPATH/bin, every `go install` lands there,
 the bench user can write to it, a card that could exec that tree could run bench-user tools
 inside the wall, and read-without-execute buys nothing in a directory of binaries. Nothing

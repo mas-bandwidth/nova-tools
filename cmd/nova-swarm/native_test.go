@@ -138,19 +138,24 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	// read-only root that slipped onto --read is exactly the widening Johnny's security
 	// read of #1364 refused.
 	for _, root := range swarm.ToolchainRootList("linux") {
+		if !root.Home() {
+			// A system root is that absolute path on the machine the test runs on, not a
+			// path under the test's own home: TestNativeArgvGrantsTheDotnetMutexRootAsAWrite
+			// is where the one system root's kind is held.
+			continue
+		}
 		path := filepath.Join(home, filepath.FromSlash(root.Name))
-		want, wrong := "--read-noexec", "--read"
-		if root.Exec {
-			want, wrong = "--read", "--read-noexec"
+		want := root.Flag()
+		for _, wrong := range []string{"--read", "--read-noexec", "--write"} {
+			if wrong == want {
+				continue
+			}
+			if hasFlagPair(argv, wrong, path) {
+				t.Errorf("the toolchain root %s is on %s and its kind is %s:\n%s", path, wrong, want, strings.Join(argv, " "))
+			}
 		}
 		if !hasFlagPair(argv, want, path) {
 			t.Errorf("the wall argv does not carry the toolchain root %s as %s:\n%s", path, want, strings.Join(argv, " "))
-		}
-		if hasFlagPair(argv, wrong, path) {
-			t.Errorf("the toolchain root %s is on %s, which is the other kind:\n%s", path, wrong, strings.Join(argv, " "))
-		}
-		if hasFlagPair(argv, "--write", path) {
-			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", path, strings.Join(argv, " "))
 		}
 	}
 	// THE MODULE CACHE BY NAME, because it is the root this argv form was added for: READ
@@ -226,15 +231,29 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "darwin"}
 	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, r := range system {
-		// Every darwin system root is a RUNTIME the card runs, so every one of them is the
-		// exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
+		if !filepath.IsAbs(r.Path) || strings.HasSuffix(r.Path, string(filepath.Separator)+"bin") {
+			t.Errorf("the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
+		}
+		// THE ONE WRITABLE SYSTEM ROOT is the .NET named-mutex directory and is held by
+		// TestNativeArgvGrantsTheDotnetMutexRootAsAWrite; here it is only asserted to be on
+		// its own kind and not quietly on a read one.
+		if r.Write {
+			if !hasFlagPair(argv, "--write", r.Path) {
+				t.Errorf("the darwin writable toolchain root %s (%s) is not on --write:\n%s", r.Name, r.Path, strings.Join(argv, " "))
+			}
+			for _, wrong := range []string{"--read", "--read-noexec"} {
+				if hasFlagPair(argv, wrong, r.Path) {
+					t.Errorf("the writable darwin toolchain root %s is also on %s:\n%s", r.Path, wrong, strings.Join(argv, " "))
+				}
+			}
+			continue
+		}
+		// Every other darwin system root is a RUNTIME the card runs, so every one of them is
+		// the exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
 		// checked against the resolved target and `/opt/homebrew/opt/openjdk` is itself a
 		// symlink into the Cellar.
 		if !r.Exec {
 			t.Errorf("the darwin system root %s is granted without execute; it is a runtime the card runs", r.Name)
-		}
-		if !filepath.IsAbs(r.Path) || strings.HasSuffix(r.Path, string(filepath.Separator)+"bin") {
-			t.Errorf("the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
 		}
 		if !hasFlagPair(argv, "--read", r.Path) {
 			t.Errorf("the wall argv does not carry the darwin toolchain root %s (%s) as --read:\n%s", r.Name, r.Path, strings.Join(argv, " "))
@@ -2295,5 +2314,167 @@ func TestNativeHoldsAJobLease(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(jobDir, swarm.JobLeaseName)); !os.IsNotExist(err) {
 		t.Errorf("the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
+	}
+}
+
+// TestNativeArgvGrantsTheDotnetMutexRootAsAWrite is the THIRD KIND on the production argv,
+// and the ORDER it must arrive in.
+//
+// THE KIND. /tmp/.dotnet is the .NET runtime's named-mutex root, hard-coded to /tmp and
+// deaf to TMPDIR, so `dotnet build` and `dotnet test` die inside the bare wall on
+// `'NuGet-Migrations' ... open("/tmp/.dotnet/shm", 0x80000, 0x0) == -1; errno == EACCES`
+// (hulk) and `stat("/tmp/.dotnet", ...) == -1; errno == EPERM` (batman), measured
+// 2026-09-20. --read is NOT enough: the runtime creates its session directory there.
+//
+// THE ORDER. nova-sandbox plants the run's own temp directory in the FIRST --write, and a
+// toolchain write root named ahead of the job put `.nova-sandbox-tmp` inside /tmp/.dotnet,
+// a bench-shared directory (measured). So the first --write on this argv is the job
+// directory, always, and the toolchain roots are appended after every write the run owns.
+func TestNativeArgvGrantsTheDotnetMutexRootAsAWrite(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: runtime.GOOS}
+	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+
+	// THE FIRST --write IS THE JOB, on every argv this builder makes. This holds on a
+	// machine with no /tmp/.dotnet too, which is the point: it is the invariant a future
+	// writable root must not break, not a fact about this bench.
+	var firstWrite string
+	for i, a := range argv {
+		if a == "--write" && i+1 < len(argv) {
+			firstWrite = argv[i+1]
+			break
+		}
+	}
+	if firstWrite != jobDir {
+		t.Errorf("the first --write is %s and not the job directory %s; nova-sandbox plants the run's temp directory in the first write root, and a toolchain write root ahead of the job put it inside a bench-shared directory:\n%s",
+			firstWrite, jobDir, strings.Join(argv, " "))
+	}
+
+	// THE KIND, for every writable root the list declares that is actually on this machine.
+	// A bench without /tmp/.dotnet grants nothing (rule 5 refuses a path that is not there,
+	// so ToolchainRoots skips it) and there is nothing to assert; the declaration itself is
+	// held by internal/swarm's TestTheWallGrantsTheDotnetMutexRoot on every OS regardless.
+	var checked int
+	for _, root := range swarm.ToolchainRoots(runtime.GOOS, home) {
+		if !root.Write {
+			continue
+		}
+		checked++
+		if !hasFlagPair(argv, "--write", root.Path) {
+			t.Errorf("the toolchain root %s is declared writable and is not on --write:\n%s", root.Path, strings.Join(argv, " "))
+		}
+		for _, wrong := range []string{"--read", "--read-noexec"} {
+			if hasFlagPair(argv, wrong, root.Path) {
+				t.Errorf("the writable toolchain root %s is also on %s; a root is on one flag:\n%s", root.Path, wrong, strings.Join(argv, " "))
+			}
+		}
+		// AND IT IS NOT THE FIRST WRITE, which is the same invariant read from the other
+		// side: whatever else moves in this builder, the shared root arrives after the
+		// run's own.
+		if root.Path == firstWrite {
+			t.Errorf("the bench-shared toolchain root %s is the FIRST --write, so the run's temp directory would be planted inside it:\n%s", root.Path, strings.Join(argv, " "))
+		}
+	}
+	if checked == 0 {
+		t.Logf("no writable toolchain root resolves on this machine (%s): the kind's mapping is held by internal/swarm, and the in-wall proof runs on a provisioned bench", runtime.GOOS)
+	}
+}
+
+// TestInWallTheProductionArgvBuildsAndLinks is THE PROOF, and it is deliberately not a unit
+// test: it takes the argv the runner itself builds -- nativeSandboxArgv, the production
+// path, with no grant added by hand -- keeps every wall flag, and swaps only the command
+// after `--` for a one-file build. Anything a hand-written nova-sandbox line would prove is
+// a proof about the hand-written line.
+//
+// It is skipped unless NOVA_WALL_PROOF=1, because it needs a bench provisioned to the
+// standard (a toolchain under ~/sdk, and /tmp/.dotnet for the cs leg). RED on origin/dev and
+// GREEN on this branch, run on hulk and on batman/superman, 2026-09-20.
+func TestInWallTheProductionArgvBuildsAndLinks(t *testing.T) {
+	if os.Getenv("NOVA_WALL_PROOF") == "" {
+		t.Skip("the in-wall proof runs on a provisioned bench: NOVA_WALL_PROOF=1 go test ./cmd/nova-swarm/ -run TestInWallTheProductionArgv")
+	}
+	wall, err := exec.LookPath("nova-sandbox")
+	if err != nil {
+		t.Skipf("no nova-sandbox on PATH: %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legs := []struct {
+		name string
+		os   string
+		file string
+		body string
+		sh   string
+		tok  string
+	}{
+		{name: "cs", file: "Program.cs", body: "System.Console.WriteLine(\"WALL-CS-OK\");\n",
+			sh: "dotnet build p.csproj", tok: "Build succeeded"},
+		{name: "cc", os: "darwin", file: "a.c", body: "#include <stdio.h>\nint main(void){puts(\"WALL-C-OK\");return 0;}\n",
+			sh: "cc -std=c99 -Wall -Werror a.c -o a && ./a", tok: "WALL-C-OK"},
+	}
+	for _, leg := range legs {
+		if leg.os != "" && leg.os != runtime.GOOS {
+			continue
+		}
+		t.Run(leg.name, func(t *testing.T) {
+			bin := nativeHarness(t)
+			_, slot := aSlot(t)
+			jobDir := filepath.Join(slot, "jobs", "wall-proof")
+			dataHome := filepath.Join(slot, "data")
+			tmpDir := filepath.Join(slot, "tmp", "wall-proof")
+			for _, d := range []string{jobDir, dataHome, tmpDir} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(jobDir, leg.file), []byte(leg.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if leg.name == "cs" {
+				csproj := `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>`
+				if err := os.WriteFile(filepath.Join(jobDir, "p.csproj"), []byte(csproj), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: runtime.GOOS, noSharedCaches: true}
+			argv := nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
+			cut := -1
+			for i, a := range argv {
+				if a == "--" {
+					cut = i
+					break
+				}
+			}
+			if cut < 0 {
+				t.Fatalf("the production argv carries no --:\n%s", strings.Join(argv, " "))
+			}
+			// The wall's own flags, verbatim, and then OUR command instead of the harness.
+			run := append(append([]string{}, argv[:cut+1]...), "env",
+				"DOTNET_CLI_HOME="+filepath.Join(home, "sdk", "dotnet-home"),
+				"DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1",
+				"NUGET_PACKAGES="+filepath.Join(dataHome, ".nuget", "packages"))
+			// The toolchain's own environment, from the same one list the roots come from:
+			// on darwin that is DEVELOPER_DIR, which is what replaces a /var/db read root.
+			run = append(run, swarm.ToolchainEnv(runtime.GOOS)...)
+			run = append(run, "sh", "-c", leg.sh)
+			cmd := exec.Command(wall, run...)
+			cmd.Env = append(os.Environ(), "HOME="+dataHome)
+			out, _ := cmd.CombinedOutput()
+			if !strings.Contains(string(out), leg.tok) {
+				t.Errorf("the %s leg did not %s inside the wall built by the production argv.\nargv: %s\noutput:\n%s",
+					leg.name, leg.tok, strings.Join(run, " "), out)
+			}
+		})
 	}
 }

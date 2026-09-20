@@ -130,15 +130,60 @@ fi
 # and every Go card on hulk died on `go.mod requires go >= 1.26 (running go 1.22.2)`.
 # The KIND of each grant lives in internal/swarm/toolchain.go and not here, because it is the
 # wall's decision and not the bench's: ~/sdk is read AND execute (the card runs that go),
-# ~/go/pkg/mod is read WITHOUT execute. A bench only has to HAVE them.
+# ~/go/pkg/mod is read WITHOUT execute, /tmp/.dotnet is the one root granted --write. A bench
+# only has to HAVE them -- and, for the writable one, have it under the right mode and owner.
+# A name beginning with "/" is an ABSOLUTE root and is that path; any other name is joined to
+# the bench home, exactly as the wall joins it.
 # NOVA_TOOLCHAIN_ROOTS BEGIN
-NOVA_TOOLCHAIN_ROOTS="sdk go/pkg/mod"
+NOVA_TOOLCHAIN_ROOTS="sdk go/pkg/mod /tmp/.dotnet"
 # NOVA_TOOLCHAIN_ROOTS END
 for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
-  if [ ! -d "$HOME_DIR/$tcroot" ]; then
-    drift "toolchain root $HOME_DIR/$tcroot missing; the sandbox wall grants this path and a card's go lives under it"
+  case "$tcroot" in
+    /*) tcpath="$tcroot" ;;
+    *)  tcpath="$HOME_DIR/$tcroot" ;;
+  esac
+  if [ ! -d "$tcpath" ]; then
+    case "$tcroot" in
+      /tmp/.dotnet)
+        # PROVISIONING, and it is not once: /tmp is cleared on a reboot, so a bench that has
+        # rebooted has lost this directory and every cs card on it dies until it is back.
+        # Nothing in the runner creates it -- a runner racing for a name in /tmp would grant
+        # --write on whatever that name resolved to -- so it is provisioned, and on a linux
+        # bench that means a systemd-tmpfiles line so the reboot puts it back by itself:
+        #   printf 'd /tmp/.dotnet 1777 %s %s -\nd /tmp/.dotnet/shm 1777 %s %s -\n' ... \
+        #     | sudo tee /etc/tmpfiles.d/nova-dotnet.conf && sudo systemd-tmpfiles --create
+        drift "toolchain root $tcpath missing; the .NET named-mutex root is hard-coded to /tmp (TMPDIR is ignored) and the wall grants it --write, so without it every dotnet build and dotnet test on this bench dies in restore on 'NuGet-Migrations'. /tmp is cleared on a reboot: provision it, do not create it by hand once -- mkdir -p /tmp/.dotnet/shm && chmod 1777 /tmp/.dotnet /tmp/.dotnet/shm, and an /etc/tmpfiles.d entry (linux) or a boot script (macOS) so a reboot puts it back"
+        ;;
+      *)
+        drift "toolchain root $tcpath missing; the sandbox wall grants this path and a card's toolchain lives under it"
+        ;;
+    esac
+    continue
   fi
 done
+# /tmp/.dotnet IS THE ONE WRITABLE ROOT, so it is the one whose MODE AND OWNER are part of
+# the standard and not just its existence. The .NET runtime's named-mutex root is hard-coded
+# to /tmp (TMPDIR is ignored -- measured by strace on hulk, 2026-09-20), so every card on the
+# bench shares this one directory and a cs card cannot restore without --write on it:
+#   error MSB4018: ... : 'NuGet-Migrations'. One or more system calls failed:
+#   open("/tmp/.dotnet/shm", 0x80000, 0x0) == -1; errno == EACCES
+# 1777 is PREFERRED over 0777 and both pass: the sticky bit stops any other UNIX user on the
+# machine removing another's entries, and .NET 10 tolerates it and does not rewrite it
+# (measured on hulk and batman). It does NOT separate one card from another -- every card
+# runs as the same bench user -- which is written out at the row in internal/swarm/toolchain.go.
+# /tmp is cleared on a reboot, so this is a PROVISIONED directory: see fleet provisioning.
+if [ -d /tmp/.dotnet ]; then
+  dmode="$(ls -ld /tmp/.dotnet | cut -c1-10)"
+  downer="$(ls -ld /tmp/.dotnet | awk '{print $3}')"
+  if [ "$downer" != "$(id -un)" ]; then
+    drift "toolchain root /tmp/.dotnet is owned by $downer, not $(id -un); the wall grants it --write to every card on this bench, so it belongs to the bench user"
+  fi
+  case "$dmode" in
+    drwxrwxrwt) ;;
+    drwxrwxrwx) echo "NOTE /tmp/.dotnet is 0777; 1777 (sticky) is the provisioned mode and .NET tolerates it: chmod 1777 /tmp/.dotnet /tmp/.dotnet/shm" ;;
+    *) drift "toolchain root /tmp/.dotnet is [$dmode] want drwxrwxrwt (1777, preferred) or drwxrwxrwx (0777); the .NET named-mutex root is hard-coded to /tmp, TMPDIR is ignored, and .NET rebuilds any level whose mode it dislikes with mkdtemp(\"/tmp/.dotnet.XXXXXX\") in a /tmp a card cannot write" ;;
+  esac
+fi
 
 # (3) go version, sbcl, harness.
 if command -v go >/dev/null 2>&1; then

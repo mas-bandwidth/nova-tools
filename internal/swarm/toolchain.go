@@ -25,9 +25,10 @@ import (
 // every named path. The wall's implicit worker description now names these roots the way an
 // explicit description names `read_roots` -- a toolchain in a user directory is exactly a
 // caller-supplied read-only root (SPEC-SANDBOX, "the two callers") -- and it names each root
-// under ONE OF TWO KINDS: `--read`, which carries EXECUTE on both bodies, for the tree whose
-// `go` the card must run, and `--read-noexec`, which does not, for the tree the card only
-// reads.
+// under ONE OF THREE KINDS: `--read`, which carries EXECUTE on both bodies, for the tree
+// whose `go` the card must run; `--read-noexec`, which does not, for the tree the card only
+// reads; and `--write`, added 2026-09-20 for the ONE root that is not read-only, the .NET
+// runtime's named-mutex directory, whose whole cost is written out at the row itself.
 //
 // THE SAME HURT HAS A DARWIN FACE, measured on the M2 Air 2026-09-18. A Mac bench's
 // toolchains are INSTALLED and on `PATH`, and three of them still died inside the bare wall,
@@ -72,8 +73,23 @@ type ToolchainRoot struct {
 	// set only by ToolchainRoots and is empty in the declaration.
 	Path string
 	// Exec is the kind: true means `--read`, readable AND executable; false means
-	// `--read-noexec`, readable and NOT executable.
+	// `--read-noexec`, readable and NOT executable. It is ignored when Write is set, which
+	// is its own kind and carries both.
 	Exec bool
+	// Write is THE THIRD KIND and the only one that is not read-only: `--write`. It exists
+	// for exactly one measured need -- a .NET card cannot take a named mutex without it --
+	// and it is the kind to reach for last, because a `--write` root carries READ AND
+	// EXECUTE as well (policy.go: "--write carries read AND execute, so the no-exec grant
+	// would buy nothing"), so there is no narrowing available in the KIND. THE ONLY
+	// NARROWING IS THE PATH, which is why the one row that has it names the deepest
+	// directory that was measured to work rather than the tree above it.
+	//
+	// AND IT IS SHARED. A read root is shared harmlessly: every card sees the same bytes
+	// and none of them changes. A write root is shared by every card on the bench at once,
+	// so what card A leaves there, card B's runtime opens. The row below says what that
+	// costs and why no per-job alternative exists; docs/SPEC-SWARM.md carries the same
+	// analysis for a reader who is not reading the code.
+	Write bool
 	// Tool, when set, is the program on the bench's PATH whose resolved launcher names the
 	// ONE versioned directory under Name that this bench actually runs -- `go` resolving to
 	// /opt/homebrew/Cellar/go/1.27.1/libexec/bin/go names /opt/homebrew/Cellar/go/1.27.1.
@@ -90,6 +106,20 @@ type ToolchainRoot struct {
 
 // Home says whether this root is found under a bench home rather than at an absolute path.
 func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
+
+// Flag is the nova-sandbox flag this root's kind maps to, and it is the ONE place the
+// mapping is written: the wall builds its argv from it and the class test reads it, so a
+// kind cannot mean one thing in the declaration and another in the argv.
+func (r ToolchainRoot) Flag() string {
+	switch {
+	case r.Write:
+		return "--write"
+	case r.Exec:
+		return "--read"
+	default:
+		return "--read-noexec"
+	}
+}
 
 // toolchainRoots is the standard's toolchain directories PER GOOS, one list with two kinds.
 //
@@ -131,6 +161,65 @@ func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
 //	                           fails with an EMPTY one ("Failed to resolve full path of the
 //	                           current executable []") when the tree is denied.
 //
+// AND ONE ROOT ON BOTH OSES IS NOT READ-ONLY AT ALL: `/tmp/.dotnet`, the .NET runtime's
+// named-mutex root, granted `--write` (Glenn, 2026-09-19: "I grant you permission to admin
+// dotnet, and the readlonly roots. do that"). This is the third kind and the costly one, so
+// here is the whole of what was measured, on hulk (linux) and batman (darwin), 2026-09-20.
+//
+// WHAT BREAKS WITHOUT IT. Every `dotnet build` and `dotnet test` dies in NuGet's restore,
+// which takes a named mutex called `NuGet-Migrations` before it does anything:
+//
+//	NuGet.targets(198,5): error MSB4018: System.IO.IOException: The system cannot open the
+//	device or file specified. : 'NuGet-Migrations'. One or more system calls failed:
+//	open("/tmp/.dotnet/shm", 0x80000, 0x0) == -1; errno == EACCES        (hulk)
+//	stat("/tmp/.dotnet", ...) == -1; errno == EPERM                      (batman)
+//
+// WHY IT CANNOT BE PER-JOB, which is the question this kind has to answer and the reason
+// the row is not simply "dotnet needs /tmp":
+//
+//   - THE PATH IS HARD-CODED AND TMPDIR IS IGNORED. `TMPDIR` pointed at an existing,
+//     writable, granted directory and the runtime still went to `/tmp/.dotnet/shm`. The
+//     receipt is an strace of the production failure, not a reading of the source:
+//     `stat("/tmp/.dotnet", {st_mode=S_IFDIR|0777, ...}) = 0` then
+//     `openat(AT_FDCWD, "/tmp/.dotnet/shm", O_RDONLY|O_CLOEXEC) = -1 EACCES`, with
+//     `TMPDIR` set to the job's own tmp throughout. `strings libcoreclr.so` names `/tmp`
+//     as a bare literal and mentions `TMPDIR` in exactly one message, about the debugger
+//     pipe -- the PAL's shared-memory root (`SHARED_MEMORY_TEMP_DIRECTORY_PATH`) is the
+//     literal and takes no environment.
+//   - NO DOTNET_ OR NUGET_ SETTING MOVES IT. The SDK's NuGet assemblies carry no
+//     `NUGET_*` name that turns the migration mutex off (`strings` over
+//     NuGet.Build.Tasks, NuGet.Common and NuGet.Configuration: nothing).
+//   - THE WALL CANNOT REDIRECT IT EITHER. A per-job directory made to APPEAR at
+//     /tmp/.dotnet would need a mount namespace, and neither body has one: linux is
+//     Landlock over the caller's own namespace and darwin is a seatbelt profile. There is
+//     no bind anywhere in internal/sandbox.
+//   - AND READ IS NOT ENOUGH: `--read /tmp/.dotnet` fails the same way. The runtime
+//     creates its session directory there. Measured.
+//
+// SO THE GRANT IS SHARED, AND HERE IS WHAT THAT COSTS, PLAINLY. Every card on a bench runs
+// as the SAME bench user, so /tmp/.dotnet is one directory shared by all of them and the
+// usual protection does not apply: the sticky bit stops one UNIX USER deleting another's
+// entries, and between two cards there is only one user, so sticky buys nothing BETWEEN
+// CARDS. It is still set (provisioning creates the directory 1777, measured tolerated by
+// .NET 10 on both OSes and not rewritten by it), because it does stop every OTHER user on
+// the machine. What card A can therefore do to card B: hold `NuGet-Migrations` and stall
+// B's restore; pre-create a file under a name B's runtime will open; fill the directory.
+// What it CANNOT do is reach anything else -- the grant is this one directory, the runtime
+// keeps nothing of value in it (a run leaves it empty; the session directories are removed
+// when the last user exits), and nothing under it is ever read as code by anything but the
+// PAL's own mutex layer. A bench that wants more than that wants one UID per card, which is
+// a different change and is not this one. tools/bench-standard.sh checks the directory's
+// MODE AND OWNER so a wrong one is drift and not a surprise.
+//
+// THE PATH IS THE ONLY NARROWING AVAILABLE, so it was measured rather than assumed. On
+// linux `--write /tmp/.dotnet/shm` alone is enough for `dotnet build` AND for `dotnet
+// test`'s mutex; on darwin it is NOT -- the runtime also stats `/tmp/.dotnet/lockfiles`,
+// a SIBLING of shm, and dies `errno == EPERM` when only shm is granted. The row is
+// therefore the parent on both, because a per-OS split here would be narrower only for the
+// workloads that happened to be measured: the runtime plainly creates siblings under its
+// own root, and the linux row would be right today and wrong on the next one. `/tmp` itself
+// is never granted.
+//
 // ONE ROOT IS DELIBERATELY NOT HERE UNDER EITHER KIND, ON EITHER OS (Johnny's security read
 // of #1364):
 //
@@ -151,6 +240,7 @@ var toolchainRoots = map[string][]ToolchainRoot{
 	"linux": {
 		{Name: "sdk", Exec: true},
 		{Name: "go/pkg/mod", Exec: false},
+		{Name: "/tmp/.dotnet", Write: true},
 	},
 	"darwin": {
 		{Name: "sdk", Exec: true, Optional: true},
@@ -160,7 +250,74 @@ var toolchainRoots = map[string][]ToolchainRoot{
 		{Name: "/opt/homebrew/opt/openjdk", Exec: true, Optional: true},
 		{Name: "/Library/Java/JavaVirtualMachines", Exec: true, Optional: true},
 		{Name: "/usr/local/share/dotnet", Exec: true, Optional: true},
+		{Name: "/tmp/.dotnet", Write: true, Optional: true},
 	},
+}
+
+// THE ONE DARWIN GRANT THAT TURNED OUT NOT TO BE A GRANT (measured on batman and superman,
+// 2026-09-20). `cc` and `rustc` could not LINK inside the wall on batman:
+//
+//	xcode-select: error: unable to read data link at '/var/db/xcode_select_link',
+//	expected symbolic link (Operation not permitted)
+//	warning: failed running `"xcrun" "--sdk" "macosx" "--show-sdk-path"`   (rustc)
+//
+// The obvious reading is two missing read roots -- /Library/Developer/CommandLineTools and
+// /var/db -- and BOTH are wrong:
+//
+//   - /Library/Developer/CommandLineTools IS ALREADY READABLE inside the wall, with no
+//     grant at all: `/Library` is one of profiles/darwin.sb.tmpl's own fixed subpaths
+//     (internal/sandbox.fixedDarwinPrefixes). Measured: a card with no extra root at all
+//     lists CommandLineTools/usr/bin/ld happily. A row for it would grant NOTHING and
+//     would read to the next person as if it were load-bearing. `--read
+//     /Library/Developer/CommandLineTools` on its own leaves `cc` RED.
+//   - /var/db WOULD work, and it is the whole of /var/db -- the local user database,
+//     sudo's state, every other system store -- to buy the readlink() of ONE symlink.
+//     The narrower spelling is not available either: `--read /var/db/xcode_select_link` is
+//     rule 5 running os.Stat, which FOLLOWS the link, so that flag silently grants
+//     CommandLineTools again and `cc` stays RED. Measured, and worth knowing: a caller who
+//     names a symlink to a directory gets the target, not the link.
+//
+// So the answer is NO NEW ROOT. The only thing denied is xcode-select's readlink, and
+// xcode-select is asked only when nothing has said where the developer directory is.
+// DEVELOPER_DIR says it, the bench's own `xcode-select -p` is where its value comes from
+// (read OUTSIDE the wall, where reading the link is allowed, exactly as toolchainVersionDir
+// reads a brew version off a launcher), and with it set `cc`, `c++` and `rustc` all build
+// AND link and run inside the wall on batman and on superman. Zero paths granted.
+const developerDirEnv = "DEVELOPER_DIR"
+
+// ToolchainEnv is the toolchain half of a card's environment that the ROOTS cannot express:
+// names whose value is a fact about this machine, read outside the wall and handed in, so
+// that a tool inside does not have to go and read a path the wall denies. It is `NAME=value`
+// entries, in the order the child should see them, and an OS with nothing to say says
+// nothing at all.
+//
+// Today it is one name, and the comment above is why. It belongs HERE rather than in the
+// runner for the reason the file's header gives: the wall's knowledge of the bench's
+// toolchain is ONE PLACE, and "which developer directory" is the same class of fact as
+// "which Cellar version" -- the machine's, not ours, and stale the moment it is hard-coded.
+func ToolchainEnv(goos string) []string {
+	if goos != "darwin" {
+		return nil
+	}
+	// The bench's own answer, and no default: a Mac that will not say is a Mac where
+	// xcode-select's own search is the best answer there is (superman has no
+	// /var/db/xcode_select_link at all and `cc` links inside the wall without help). An
+	// inherited DEVELOPER_DIR is not re-read -- a caller who set one meant it.
+	if v, ok := os.LookupEnv(developerDirEnv); ok && strings.TrimSpace(v) != "" {
+		return []string{developerDirEnv + "=" + v}
+	}
+	out, err := exec.Command("xcode-select", "-p").Output()
+	if err != nil {
+		return nil
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return nil
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return nil
+	}
+	return []string{developerDirEnv + "=" + dir}
 }
 
 // ToolchainRootList is the declaration itself for one operating system, kinds and all: what
@@ -201,10 +358,19 @@ func ToolchainRootOSes() []string {
 // ToolchainRoots is the wall's side: this machine's list, absolute, carrying each root's
 // kind, and SKIPPED IF ABSENT. Absent is the machine's shape and not the caller's mistake --
 // a Mac bench has no `~/sdk` and may have no dotnet -- while rule 5 of the wall REFUSES a
-// `--read` or a `--read-noexec` naming a path that is not there, so a root that does not
-// exist must never reach the argv. An empty home names no HOME-relative root, because a
-// relative root is a refusal and a root at the filesystem's top is not a toolchain; a system
-// root needs no home and is still named.
+// `--read`, a `--read-noexec` or a `--write` naming a path that is not there, so a root that
+// does not exist must never reach the argv. An empty home names no HOME-relative root,
+// because a relative root is a refusal and a root at the filesystem's top is not a
+// toolchain; a system root needs no home and is still named.
+//
+// SKIP-IF-ABSENT IS ALSO WHY NOTHING HERE CREATES A DIRECTORY, and it matters most for the
+// one `--write` root. /tmp/.dotnet is in /tmp, which is cleared on a reboot, so it is
+// PROVISIONED (tools/bench-standard.sh drifts on it, and the provisioning notes create it
+// 1777) and never made here: a runner that created a missing /tmp/.dotnet would be racing
+// whoever else can write to /tmp for the name, and would then grant `--write` on whatever
+// that name resolved to. A bench that has not provisioned it gets no grant and a cs card
+// that dies with the mutex error above, which is a drift line somebody reads -- not a
+// silent grant on a path a stranger chose.
 //
 // Every path is RESOLVED THROUGH ITS SYMLINKS before it is named, because the grant is
 // checked against the resolved target on both bodies: `/opt/homebrew/opt/openjdk` is itself

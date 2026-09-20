@@ -1418,6 +1418,17 @@ directions — a root the wall grants that the standard does not name is a wall
 granting a path that will not be there, and a root the standard names that the
 wall does not grant is the original bug returning — plus the kinds by name and
 the refusal of any `.../bin`.
+**And the third kind is rationed here** (2026-09-20). One root is granted
+`--write` rather than read-only: `/tmp/.dotnet`, the .NET runtime's named-mutex
+directory, whose path is hard-coded to `/tmp` and deaf to `TMPDIR`, so a cs card
+cannot restore without it and no per-job alternative exists. A writable root
+shared by every card on a bench is the one grant nobody may add, move or widen
+quietly, so the class test holds the list to **exactly that one**, on **both**
+operating systems, and requires the standard to check its **mode and owner** and
+not merely its existence — in `tools/bench-standard.sh` for a linux bench and in
+the darwin check table's own probe for a Mac. A second writable root, or this one
+respelled to a parent, is red in the class rather than red in a security read six
+weeks later.
 **Its allowlist.** None. The list is read from the one source at run time, over
 every OS it speaks for (`swarm.ToolchainRootOSes`), so a root — or an OS — added
 tomorrow is held to the standard and to a kind on the day it appears.

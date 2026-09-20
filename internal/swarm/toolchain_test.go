@@ -148,3 +148,82 @@ func TestToolchainRootsResolveSymlinks(t *testing.T) {
 		t.Error("a symlinked ~/sdk was dropped; it is a directory and it is the card's toolchain")
 	}
 }
+
+// TestTheWallGrantsTheDotnetMutexRoot is the row itself, on every OS the list speaks for.
+//
+// MEASURED 2026-09-20 on hulk (linux) and batman (darwin): every `dotnet build` and
+// `dotnet test` dies inside the bare wall in NuGet's restore, which takes a named mutex
+// before it does anything else --
+//
+//	error MSB4018: System.IO.IOException: The system cannot open the device or file
+//	specified. : 'NuGet-Migrations'. One or more system calls failed:
+//	open("/tmp/.dotnet/shm", 0x80000, 0x0) == -1; errno == EACCES
+//
+// -- and the path is hard-coded: TMPDIR pointed at the job's own granted tmp and the
+// runtime still went to /tmp/.dotnet/shm (strace receipt in the row's comment). This test
+// is deliberately written against the NAMES, so it compiles and FAILS on the commit before
+// the row existed rather than failing to build.
+func TestTheWallGrantsTheDotnetMutexRoot(t *testing.T) {
+	const want = "/tmp/.dotnet"
+	for _, goos := range ToolchainRootOSes() {
+		if goos == "windows" {
+			continue
+		}
+		var found bool
+		for _, name := range ToolchainRootNames(goos) {
+			if name == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: the wall names no %s toolchain root, so a card cannot take the NuGet-Migrations named mutex and every dotnet build and dotnet test on that OS dies in restore; the roots are %v",
+				goos, want, ToolchainRootNames(goos))
+		}
+	}
+}
+
+// TestToolchainRootKindsMapToOneFlagEach holds the THIRD KIND's mapping, which is the whole
+// of what the kind means: a root is on exactly one nova-sandbox flag and the mapping is
+// written once (ToolchainRoot.Flag) so the declaration and the argv cannot mean two things.
+//
+// AND THE WRITE KIND IS RATIONED. `--write` carries read AND execute as well, so there is no
+// narrowing available in the kind and the only narrowing is the path: the list is held to
+// the ONE writable root that was measured to be unavoidable, and a second one added without
+// the same measurement is red here rather than red in a security read.
+func TestToolchainRootKindsMapToOneFlagEach(t *testing.T) {
+	cases := []struct {
+		root ToolchainRoot
+		want string
+	}{
+		{ToolchainRoot{Name: "sdk", Exec: true}, "--read"},
+		{ToolchainRoot{Name: "go/pkg/mod"}, "--read-noexec"},
+		{ToolchainRoot{Name: "/tmp/.dotnet", Write: true}, "--write"},
+		// Write is its own kind and wins: a row that set both would otherwise be granted
+		// read-only while its author believed it was writable, or the reverse.
+		{ToolchainRoot{Name: "/tmp/.dotnet", Write: true, Exec: true}, "--write"},
+	}
+	for _, c := range cases {
+		if got := c.root.Flag(); got != c.want {
+			t.Errorf("%s (exec=%v write=%v) maps to %s; the kind is %s", c.root.Name, c.root.Exec, c.root.Write, got, c.want)
+		}
+	}
+	for _, goos := range ToolchainRootOSes() {
+		var writable []string
+		for _, r := range ToolchainRootList(goos) {
+			if !r.Write {
+				continue
+			}
+			writable = append(writable, r.Name)
+			if r.Home() {
+				t.Errorf("%s: %s is a WRITABLE root under a bench HOME; the writable kind is for one system directory and never for the home the wall deliberately keeps out", goos, r.Name)
+			}
+			if r.Exec {
+				t.Errorf("%s: %s is declared Write AND Exec; --write already carries execute, so naming both hides which kind was meant", goos, r.Name)
+			}
+		}
+		if len(writable) > 1 {
+			t.Errorf("%s: the wall grants %d writable toolchain roots (%v); ONE was measured to be unavoidable (/tmp/.dotnet) and a second needs the same measurement and the same security read, not a row",
+				goos, len(writable), writable)
+		}
+	}
+}

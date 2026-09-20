@@ -56,6 +56,16 @@ type StandardCheck struct {
 	Root string
 }
 
+// dotnetMutexProbe reads the ONE toolchain root the wall grants `--write`: it is there, it
+// is a directory, its mode is one of the two the standard allows, and it belongs to the
+// bench user. One line of POSIX shell, the same on both operating systems, and it answers
+// with WHAT IS WRONG rather than `absent` so the DRIFT line is a thing to act on.
+const dotnetMutexProbe = `d=/tmp/.dotnet; [ -d "$d" ] || { echo absent; exit 0; }; ` +
+	`m=$(ls -ld "$d" | cut -c1-10); o=$(ls -ld "$d" | awk '{print $3}'); ` +
+	`if [ "$o" != "$(id -un)" ]; then echo "owner:$o"; ` +
+	`elif [ "$m" != drwxrwxrwt ] && [ "$m" != drwxrwxrwx ]; then echo "mode:$m"; ` +
+	`else echo present; fi`
+
 // FleetStandardChecks is the standard itself: the checks for one operating system, in the
 // order they print. goWant is the Go toolchain the fleet is on, stamp is the nova bins'
 // build stamp (empty means "report whatever this bench has"), and minFreeGB is the floor
@@ -122,6 +132,19 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 			Name: "toolchain-modcache", OS: "linux", Root: "go/pkg/mod", Match: MatchEquals, Want: "present",
 			Probe: `[ -d "$HOME/go/pkg/mod" ] && echo present || echo absent`,
 		},
+		// The one toolchain root that is granted `--write` rather than read-only: the .NET
+		// runtime's named-mutex directory, whose path is hard-coded to /tmp and ignores
+		// TMPDIR, so every card on the bench shares it and a cs card cannot restore without
+		// it. A LINUX bench must have it, because /tmp is cleared on a reboot and nothing in
+		// the runner creates it: this check IS how a bench that lost it says so, instead of
+		// every C# card dying on `open("/tmp/.dotnet/shm") == -1; errno == EACCES`. The
+		// probe answers `present` only when the MODE AND OWNER are the provisioned ones too
+		// -- 1777 (preferred, sticky) or 0777, owned by the bench user -- because a shared
+		// writable directory with the wrong owner is not the directory the standard meant.
+		{
+			Name: "toolchain-dotnet-mutex", OS: "linux", Root: "/tmp/.dotnet", Match: MatchEquals, Want: "present",
+			Probe: dotnetMutexProbe,
+		},
 		{
 			Name: "toolchain-sdk", OS: "darwin", Root: "sdk", Match: MatchNonempty,
 			Probe: `[ -d "$HOME/sdk" ] && echo present || echo absent`,
@@ -149,6 +172,10 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		{
 			Name: "toolchain-dotnet", OS: "darwin", Root: "/usr/local/share/dotnet", Match: MatchNonempty,
 			Probe: `[ -d /usr/local/share/dotnet ] && echo present || echo absent`,
+		},
+		{
+			Name: "toolchain-dotnet-mutex", OS: "darwin", Root: "/tmp/.dotnet", Match: MatchNonempty,
+			Probe: dotnetMutexProbe,
 		},
 		{
 			Name: "go", OS: "windows", Match: MatchContains, Want: goWant,

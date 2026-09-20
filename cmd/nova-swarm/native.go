@@ -859,12 +859,16 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	// without the Cellar tree the wall left the M2 Air `go: cannot find GOROOT directory:
 	// 'go' binary is trimmed`, `java: Unable to locate a Java Runtime` and `dotnet: Failed to
 	// resolve full path of the current executable []` (measured 2026-09-18).
+	//
+	// AND ONE OF THE KINDS IS `--write` (the .NET named-mutex root, 2026-09-20). THE ORDER
+	// BELOW IS LOAD-BEARING FOR IT: this loop runs AFTER the job directory, the data home
+	// and the slot tmp have been named, so the FIRST `--write` on the argv is still the
+	// job's own. nova-sandbox plants the run's temp directory in the first write root, and
+	// with a toolchain write root named ahead of the job it planted `.nova-sandbox-tmp`
+	// INSIDE /tmp/.dotnet -- a bench-shared directory -- which is measured and is why the
+	// toolchain roots are appended here and never prepended.
 	for _, root := range swarm.ToolchainRoots(benchOS(cfg), benchHome(cfg)) {
-		flag := "--read-noexec"
-		if root.Exec {
-			flag = "--read"
-		}
-		argv = append(argv, flag, root.Path)
+		argv = append(argv, root.Flag(), root.Path)
 	}
 	// The worker description's own read roots (issue #1463): the directories a person at the
 	// desk declared every job of this worker may read. They are --read and never --write and
@@ -964,6 +968,13 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 			"GOTOOLCHAIN=local",
 		)
 	}
+	// THE TOOLCHAIN NAMES THE ROOTS CANNOT EXPRESS (swarm.ToolchainEnv, which is the same
+	// one list's file). On darwin this is DEVELOPER_DIR, read off the bench's own
+	// `xcode-select -p` OUTSIDE the wall: inside it, xcode-select cannot readlink
+	// /var/db/xcode_select_link and `cc` and `rustc` could not LINK at all on batman. The
+	// alternative was granting the whole of /var/db as a read root, and this grants no path
+	// whatever. Measured on batman and superman, 2026-09-20.
+	out = append(out, swarm.ToolchainEnv(swarm.ThisOS())...)
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
 	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
 	out = pathWithShimFirst(out, shimDir)
