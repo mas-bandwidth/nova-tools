@@ -881,7 +881,7 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 | Feature | Criteria verified | Verified |
 |---|:---:|:---:|
-| E09-F01 — Non-destructive issue inventory and capture | 1/3 | ❌ |
+| E09-F01 — Non-destructive issue inventory and capture | 3/3 | ✅ |
 | E09-F02 — Link mode and correspondence reconciliation | 1/3 | ❌ |
 | E09-F03 — Lossless resumable initial migration | 2/3 | ❌ |
 | E09-F04 — Explicit absorb operation and deletion gate | 0/3 | ❌ |
@@ -894,13 +894,13 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 Prerequisites: E06-F05.
 
-- [ ] Capture stable provider/repository/issue identity, revision and URL
-- [ ] Preserve body, comments, labels, relationships, attachments and pagination
+- [x] Capture stable provider/repository/issue identity, revision and URL
+- [x] Preserve body, comments, labels, relationships, attachments and pagination
 - [x] Keep inaccessible or unsupported fields explicit
 
 Source sections: Public issue correspondence survives intake; Source inventory; Archive completeness.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): archive-completeness.
+Verified criteria evidence at dev `86abcf23`, suite `lisp/nova-work/run-tests.sh` (421/421): archive-completeness; capture-stable-identity; capture-preserve-correspondence.
 
 **E09-F02 — Link mode and correspondence reconciliation**
 

@@ -2139,7 +2139,21 @@
     #:notes-write
     #:notes-supersede
     #:check-not-weaker-kind
-    #:make-replacement-note))
+    #:make-replacement-note
+    ;; E09 read-only GitHub capture adapter (SPEC-WORK.md:2721-2760, :6229; Issue #2080)
+    #:make-github-capture-adapter
+    #:github-capture-adapter-p
+    #:github-capture-adapter-bundle-dir
+    #:github-capture-adapter-manifest
+    #:github-capture-adapter-issues
+    #:github-adapter-mutations
+    #:github-adapter-mutate
+    #:github-adapter-close-issue
+    #:github-adapter-add-comment
+    #:github-adapter-edit-issue
+    #:github-adapter-delete-issue
+    #:ingest-capture-bundle
+    #:capture-parse-json))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

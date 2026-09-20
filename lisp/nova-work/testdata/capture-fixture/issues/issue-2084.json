@@ -1,0 +1,54 @@
+{
+  "provider": "github",
+  "host": "github.com",
+  "repository": "mas-bandwidth/nova-tools",
+  "number": 2084,
+  "node_id": "I_kwDOTxuLoc8AAAABSOzS1w",
+  "rest_id": 5518600000,
+  "title": "nova-work uid index",
+  "url": "https://github.com/mas-bandwidth/nova-tools/issues/2084",
+  "revision": "2026-09-20T15:00:00Z",
+  "state": "open",
+  "author": "rowan-claude",
+  "created_at": "2026-09-20T14:50:00Z",
+  "updated_at": "2026-09-20T15:00:00Z",
+  "body": "Every node, card, attempt and evidence record carries a globally unique uid.\nSee attachment: https://github.com/user-attachments/assets/diagram-1234.png for details.",
+  "comments": [
+    {
+      "id": 101,
+      "author": "emma",
+      "created_at": "2026-09-20T15:05:00Z",
+      "updated_at": "2026-09-20T15:05:00Z",
+      "body": "Audit comment with attachment: https://github.com/user-attachments/assets/audit-evidence.png",
+      "url": "https://github.com/mas-bandwidth/nova-tools/issues/2084#issuecomment-101"
+    }
+  ],
+  "labels": [
+    {
+      "name": "efficiency",
+      "color": "0e8a16",
+      "description": "cuts coordination or swarm token spend"
+    }
+  ],
+  "relationships": [
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2080",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2084",
+      "created_at": "2026-09-20T15:01:00Z"
+    }
+  ],
+  "attachments": [
+    {
+      "url": "https://github.com/user-attachments/assets/diagram-1234.png",
+      "status": "not fetched",
+      "found_in": "body"
+    },
+    {
+      "url": "https://github.com/user-attachments/assets/audit-evidence.png",
+      "status": "not fetched",
+      "found_in": "comment:101"
+    }
+  ],
+  "page": 2
+}

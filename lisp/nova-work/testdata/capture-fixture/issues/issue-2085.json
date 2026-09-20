@@ -1,0 +1,40 @@
+{
+  "provider": "github",
+  "host": "github.com",
+  "repository": "mas-bandwidth/nova-tools",
+  "number": 2085,
+  "node_id": "I_kwDOTxuLoc8AAAABSPEgTQ",
+  "rest_id": 5518729293,
+  "title": "nova-work: a two-way correspondence index: node uid → its GitHub issues, and GitHub issue → its nodes, both O(1), both rebuilt from the journal",
+  "url": "https://github.com/mas-bandwidth/nova-tools/issues/2085",
+  "revision": "2026-09-20T15:30:10Z",
+  "state": "open",
+  "author": "rowan-claude",
+  "created_at": "2026-09-20T15:30:10Z",
+  "updated_at": "2026-09-20T15:30:10Z",
+  "body": "Glenn 2026-09-20, verbatim: \"think about what you need to have fast lookup from data structure -\u003e github issues, and github issues -\u003e item in tree in lisp data structure, and implement both lookup directions.\" / \"Add these to issues in nova work for future work.\" Builds on #2084 (generic global uids and the uid index) and #2081 (map and import); used by #2082 (the proving run and the double link).\n\n**What has to be true for both directions to be fast and right.**\n\n1. **The relation is many-to-many, so it is its own record.** One issue maps to many nodes (a tracking issue's checklist: E09-F02-01), and one node can carry many issues (its origin, a duplicate, a follow-up). So correspondence is not a field on the node: it is a CORRESPONDENCE record with its own uid: `(node-uid, external-key, role, revision-seen, back-pointer-receipt)`. `role` is one of `origin` (the node was imported from it), `tracks` (the node is work on it), `mentions`. Created, changed and retired only through the journal, like everything else.\n\n2. **The external key must be stable, and GitHub's human key is not.** `owner/repo#123` changes when a repo is renamed or transferred, or an issue is transferred. The canonical key is the provider's immutable id (GitHub's GraphQL `node_id` / REST `id`), stored with provider and host: `(github, github.com, \u003cnode_id\u003e)`. The human key `owner/repo#n` and the URL are ALIASES captured at each import with the revision they were seen at; an alias that starts resolving to a different immutable id is a listed finding, never silently followed. #2080's capture must record both.\n\n3. **Two hash indexes, both derived.**\n   - forward: `node-uid → {correspondence uids}`: O(1) to the set, then O(k) to list the k issues of a node.\n   - reverse: `canonical external key → {correspondence uids}`: O(1), then O(k) nodes of an issue. Plus an alias index `normalized \"owner/repo#n\" → canonical key` so a human can ask by number or paste a URL (URL and shorthand normalisation is one function under test: `https://github.com/o/r/issues/12`, `o/r#12`, `#12` with a default repo).\n   Both are maintained by the same journal application that writes the correspondence record, rebuilt by reconstruction and compared by `state-index-mismatches` (E04-F04); covered for closed and archived partitions as in #2084 (\"known, not loaded\"). Neither is ever written directly.\n\n4. **From an issue to the ITEM IN THE TREE** is then: alias or key → correspondence set → node uids → (#2084's uid index) records → parent-uid links to the root: O(1) + O(k) + O(depth). From a node to its issues is the forward index. A SUBTREE question (\"every open issue under this feature\") is answered by a rollup kept on the containment path the way the existing counters are (E04: counts are read, not computed), not by walking the subtree at query time.\n\n5. **It is generic, not GitHub-shaped.** The same record and the same two indexes hold pull requests, CI runs, commits and files: the spec already names these subjects for evidence (`pr:\u003cowner/repo\u003e#\u003cn\u003e@\u003csha\u003e`, `run:\u003cowner/repo\u003e#\u003cid\u003e@\u003csha\u003e`, `file:\u003cpath\u003e@\u003csha\u003e`, SPEC-WORK.md:1248). One external-reference index, provider as a field; a second forge is a new provider value, not a new index.\n\n6. **Verification uses the double link.** The back-pointer comment on the issue (#2081) names the node uid; reconcile checks, from the nova-work side, that every `origin` correspondence has a confirmed back-pointer receipt, and from the GitHub side, that every back-pointer names a uid whose reverse lookup returns that same issue. Exactly one `origin` correspondence per issue per store; a second is refused.\n\n**Verbs.** `nova-work issues --of \u003cuid|path\u003e`; `nova-work node --for \u003cowner/repo#n | url | node_id\u003e`; both bounded, both answering with uid, path, kind, state, role and revision-seen; `--subtree` on the first.\n**Tests, red first:** both lookups O(1) at 1e5 and 1e6 correspondences; one issue to three nodes and one node to three issues, both directions; repo rename and issue transfer (alias moves, canonical key holds, nothing duplicates); alias hijack is a finding; reparent a node and both lookups still resolve; indexes equal reconstruction after a crash between journal append and projection; a second `origin` for one issue is refused.\n**Roadmap:** sharpens E09-F02-01 and gives E09-F01-01 its exact meaning of \"stable identity\"; add the criteria to the sexp records (#2044) when this is specified.\nRead: Emma (owner), Stella (contract), Johnny (what an alias may and may not be trusted for).",
+  "comments": null,
+  "labels": null,
+  "relationships": [
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2082",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2085",
+      "created_at": "2026-09-20T15:30:13Z"
+    },
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2089",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2085",
+      "created_at": "2026-09-20T15:40:21Z"
+    },
+    {
+      "kind": "cross-referenced",
+      "target": "https://github.com/mas-bandwidth/nova-tools/issues/2090",
+      "source": "https://github.com/mas-bandwidth/nova-tools/issues/2085",
+      "created_at": "2026-09-20T15:40:22Z"
+    }
+  ],
+  "attachments": null,
+  "page": 1
+}
