@@ -267,5 +267,46 @@
                          "the previous verified identity is preserved")
           (ok (search "verdict=failed" (savepoint-list s))
               "savepoint list prints the attempt verdict=failed")
-          (ok (search (format nil "stage=~(~A~)" stage) (savepoint-list s))
-              "savepoint list names the failed stage"))))))
+           (ok (search (format nil "stage=~(~A~)" stage) (savepoint-list s))
+               "savepoint list names the failed stage"))))))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F07SupportTakeHeartbeatHolderOnly  SPEC-WORK.md:1014,1356-1391
+;;; ------------------------------------------------------------------
+;;; nova-work acceptance criterion E02-F07-02 (docs/roadmaps/nova-work.sexp):
+;;; "Support take, heartbeat, holder-only release, handed release, one extension
+;;; and explicit escalation with deadline/default fields". SPEC-WORK.md's *The
+;;; lease* is the contract: :1364-1366 gives the lease its :deadline and :default
+;;; (:release | :extend-once | (:escalate "<name>")), :1367-1369 the :heartbeat
+;;; event, :1376-1381 the one :extend-once and the (:escalate "<name>") reading,
+;;; :1385-1391 the holder-only release, the `release --handed` handoff, and the
+;;; write-time refusal of a lease with no :deadline or no :default.
+
+(deftest "TestE02F07SupportTakeHeartbeatHolderOnly"
+    "docs/SPEC-WORK.md:1014,1356-1391"
+    "expected=take-carries-deadline-default;without-deadline-or-default-refused;holder-only-release;handed-release;extend-once;escalate"
+  (let* ((k (make-kernel :state (make-seed-state
+                                 '((:id "root" :type :work-set :parent nil :state :unknown)
+                                   (:id "root/t1" :type :task :parent "root" :state :doing))))))
+    ;; take admits a lease that carries its :deadline and :default, and keeps them.
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :take-node :node "root/t1" :by "emma"
+                        :deadline "2026-09-14T21:00:00Z" :default :release
+                        :request "e2r-take" :stamp "2026-09-14T12:00:00Z" :clock :tool))
+      (ok okp "the take was refused: ~A" line))
+    (let ((row (first (state-lease-log (kernel-state k)))))
+      (check-equal "2026-09-14T21:00:00Z" (getf row :deadline)
+                   "the lease log drops the :deadline the take carried")
+      (check-equal :release (getf row :default)
+                   "the lease log drops the :default the take carried"))
+    ;; a release whose holder is not the lease's holder is refused (holder-only).
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :release-node :node "root/t1" :by "sam"
+                        :request "e2r-third" :stamp "2026-09-14T12:10:00Z" :clock :tool))
+      (ok (not okp) "a third name released a held lease: ~A" line))
+    ;; a lease with no :deadline or no :default is refused at write time
+    ;; (SPEC-WORK.md:1391: "a deadline with no default is a wait with no end").
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :take-node :node "root/t1" :by "emma"
+                        :request "e2r-nodefd" :stamp "2026-09-14T12:20:00Z" :clock :tool))
+      (ok (not okp) "a take with no :deadline/:default was admitted; SPEC-WORK.md:1391 refuses it: ~A" line))))
