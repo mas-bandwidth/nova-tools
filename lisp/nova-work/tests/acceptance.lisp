@@ -309,3 +309,30 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
     (ok (search "state=" line) "the stage/state is not attached: ~A" line)
     (ok (search "no such operation" line) "the stable reason is not attached: ~A" line)))
 
+;;; ------------------------------------------------------------------
+;;; E03-F03-02 "Record author, reason, scope revision and exact member delta"
+;;; (ROADMAP.md:404). docs/SPEC-WORK.md:1092 pins the scope log: every event
+;;; carries `:by` (its author) and every scope kind its `:reason`, beside the
+;;; scope revision the event increments and the exact member delta it states.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE03F03RecordAuthorReasonScopeRevision" "docs/SPEC-WORK.md:1092"
+    "expected=scope-event-records-author+reason+scope-revision+exact-member-delta"
+  (let* ((ra (make-scope-roadmap :id "ra" :revision 3 :rows '("row-1")))
+         (scopes (list ra)))
+    (multiple-value-bind (moved events ok)
+        (scopes-on-move scopes "row-1" :by "rowan" :reason "reparented under f2")
+      (declare (ignore moved))
+      (ok ok "the move was accepted")
+      (let ((ev (first events)))
+        (ok ev "the move wrote no scope event")
+        ;; A scope event records its author (:by) and its reason, beside the
+        ;; scope revision it incremented and the exact member it moved.
+        (check-equal "rowan" (getf ev :by) "a scope event records no author")
+        (check-equal "reparented under f2" (getf ev :reason)
+                     "a scope event records no reason")
+        (check-equal 4 (getf ev :scope-revision)
+                     "a scope event records no scope revision")
+        (check-equal "row-1" (getf ev :references)
+                     "a scope event records no exact member delta")))))
+
