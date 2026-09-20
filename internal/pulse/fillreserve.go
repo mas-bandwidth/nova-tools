@@ -21,7 +21,7 @@ import (
 
 // SeatHold is one reserved seat. Release frees a known-failed dispatch.
 // KeepOwned / KeepUnknown persist the outcome; neither is dropped until
-// ReconcileOwned sees a matching live lease label.
+// ReconcileOwned sees a matching live lease for that same bench and card.
 type SeatHold interface {
 	Release()
 	KeepOwned()
@@ -30,10 +30,10 @@ type SeatHold interface {
 
 // SeatReserver claims one of the observed free seats on a bench. ok=false
 // means another dealer already took them; the caller stands down.
-// visible is the set of owned lease labels (and card-*.md aliases) just read.
+// visible is owned lease labels keyed by bench, then card (and card-*.md aliases).
 type SeatReserver interface {
 	Reserve(bench string, observedFree int, card string) (SeatHold, bool, error)
-	ReconcileOwned(visible map[string]bool)
+	ReconcileOwned(visible map[string]map[string]bool)
 }
 
 // fileSeats reserves numbered files under root/<bench>/<n>.
@@ -164,20 +164,21 @@ func readHoldFile(r *fileReserver, path string) (*fileHold, bool) {
 	return h, true
 }
 
-func (r *fileReserver) ReconcileOwned(visible map[string]bool) {
+func (r *fileReserver) ReconcileOwned(visible map[string]map[string]bool) {
 	r.loadPersisted()
 	r.mu.Lock()
 	holds := append([]*fileHold(nil), r.holds...)
 	r.mu.Unlock()
 	for _, h := range holds {
 		h.mu.Lock()
+		bench := h.bench
 		card := h.card
 		outcome := h.outcome
 		h.mu.Unlock()
 		if outcome == "released" {
 			continue
 		}
-		if leaseVisible(visible, card) {
+		if leaseVisible(visible[bench], card) {
 			h.Release()
 		}
 	}

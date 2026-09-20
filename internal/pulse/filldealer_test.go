@@ -319,6 +319,45 @@ func TestReviewOwnedReservationBridgesDelayedLeaseVisibility(t *testing.T) {
 	}
 }
 
+// reviewLeaseCap answers free counts and per-bench lease labels, so a test can
+// feed the production ownedLeaseLabels construction without a slot store.
+type reviewLeaseCap struct {
+	free   map[string]int
+	labels map[string][]string
+}
+
+func (c reviewLeaseCap) Capacity(bench string) (int, error) { return c.free[bench], nil }
+
+func (c reviewLeaseCap) OwnedLeaseLabels(bench string) []string { return c.labels[bench] }
+
+// TestReviewCrossBenchLabelMustNotReleaseReservation is Stella's HOLD at f05833e7:
+// ownedLeaseLabels must not flatten every bench into one card-name set. A
+// card-001 lease observed only on bench-b must not free bench-a's UNKNOWN
+// reservation for the same card basename.
+func TestReviewCrossBenchLabelMustNotReleaseReservation(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".fill-seats")
+	seats := fileSeats(root)
+	hold, ok, err := seats.Reserve("bench-a", 1, "card-001.md")
+	if err != nil || !ok || hold == nil {
+		t.Fatalf("reserve bench-a: ok=%v err=%v", ok, err)
+	}
+	hold.KeepUnknown()
+	path := filepath.Join(root, "bench-a", "0")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("reservation file missing after reserve: %v", err)
+	}
+
+	cap := reviewLeaseCap{
+		free:   map[string]int{"bench-a": 1, "bench-b": 1},
+		labels: map[string][]string{"bench-b": {"card-001"}},
+	}
+	seats.ReconcileOwned(ownedLeaseLabels(cap, []string{"bench-a", "bench-b"}))
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("bench-b label released bench-a reservation: %v", err)
+	}
+}
+
 // TestFillRestartKeepsUNKNOWNReservationFromDisk: a new fileSeats on the same
 // directory must load persisted UNKNOWN and not free the seat.
 func TestFillRestartKeepsUNKNOWNReservationFromDisk(t *testing.T) {

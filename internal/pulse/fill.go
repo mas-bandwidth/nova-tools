@@ -216,8 +216,8 @@ func rememberLeases(c Capacity) Capacity {
 	return c
 }
 
-func ownedLeaseLabels(c Capacity, benches []string) map[string]bool {
-	out := map[string]bool{}
+func ownedLeaseLabels(c Capacity, benches []string) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
 	v, ok := c.(leaseViewer)
 	if !ok {
 		return out
@@ -227,11 +227,14 @@ func ownedLeaseLabels(c Capacity, benches []string) map[string]bool {
 			if lab == "" || lab == "-" {
 				continue
 			}
-			out[lab] = true
+			if out[bench] == nil {
+				out[bench] = map[string]bool{}
+			}
+			out[bench][lab] = true
 			base := strings.TrimSuffix(lab, ".md")
-			out[base] = true
+			out[bench][base] = true
 			if !strings.HasSuffix(lab, ".md") {
-				out[lab+".md"] = true
+				out[bench][lab+".md"] = true
 			}
 		}
 	}
