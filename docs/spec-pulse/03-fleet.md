@@ -58,6 +58,26 @@ That is enforced in the registry rather than remembered:
 do. The native Windows half of that box is parked: see
 `docs/BENCH-STANDARD-WINDOWS.md`.
 
+### The Windows host bootstraps in one step
+
+`tools/bench-wsl2.ps1` is the host half of this standard, run once from an
+elevated PowerShell on a fresh Windows box with one parameter: a Tailscale auth
+key minted once in the admin console and pre-approved. It installs Tailscale,
+points `w32tm` at `time.windows.com`, turns hibernate off (`powercfg /h off`),
+opens the Hyper-V firewall, writes `$HOME\.wslconfig` with `memory=` at 75% of
+RAM and `networkingMode=mirrored`, and registers a startup task that runs
+`wsl -d Ubuntu-24.04 -u root -- systemctl start ssh` with nobody logged in.
+Inside `wsl --install -d Ubuntu-24.04 --no-launch` it creates the `nova` user,
+NOPASSWD sudo, `[boot] systemd=true` and `[user] default=nova` in
+`/etc/wsl.conf`, the PATH in `/etc/environment`, `openssh-server
+build-essential sbcl gh redis-tools`, the Go SDK from go.mod under `~/sdk`, the
+git identity, and the fleet's public keys from `fleet/authorized_keys` — never a
+password and never a generated key. It prints one `CHECK<TAB>name<TAB>value`
+line per item and exits 0 only when sshd answers on the tailnet address. The
+keeper does the rest over ssh: `nova-pulse fleet add`, the registry row,
+`nova-update release adopt --platform linux-amd64`, the runners,
+`nova-pulse fleet standard`.
+
 ### The four bench scripts, retired
 
 `fleet standard`, `fleet mirror`, `fleet join` and `fleet sleep` are the last
