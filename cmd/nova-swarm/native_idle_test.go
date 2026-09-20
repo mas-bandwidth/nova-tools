@@ -111,15 +111,25 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-SLEEP 60\n"), 0o644); err != nil {
+	card := "FAKE-SAY sh: 1: cannot create /etc/hosts: Permission denied\nFAKE-SLEEP 60\n"
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// The end the watch would have sent for `js-under-20-bytes`: a card still for four
 	// minutes that never moved past a refusal. It is CONSTRUCTED here, because what the
 	// watch decides is internal/swarm's question (TestWatchIdleCarriesTheRefusalTheCard
 	// NeverMovedPast) and what the RUN does with the answer is this one's.
+	//
+	// The card is declared idle only once the harness HAS SPOKEN -- it writes `said` the
+	// moment its words are on the pipe -- because a card goes still after doing something,
+	// never before starting, and because everything the run decides from its capture is
+	// undecided until then. That is the thing itself, waited for; not a clock.
+	job := filepath.Join(slot, "jobs", "stillcard")
 	want := swarm.IdleEnd{Idle: 240 * time.Second, Step: "3", Kind: "write", Path: "/etc/hosts", Refused: true}
-	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) { return want, true })
+	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
+		waitForFile(t, filepath.Join(job, "said"), "the fixture harness naming the refusal")
+		return want, true
+	})
 
 	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "stillcard", "--card", cardPath, "--slot", slot,
@@ -156,10 +166,18 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
 		t.Fatalf("a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Fatalf("a card the watch ended still prints the NATIVE OK line:\n%s", stdout.String())
+	// THE SUMMARY LINE IS STILL PRINTED, naming this card and the end it got. The old test
+	// asked for the WORD `OK` here, and that word is no longer this PR's to assert: dev
+	// made it a verdict (#1844, main.go "OK IS A VERDICT, NOT A PUNCTUATION MARK"), and a
+	// card the watch ended carries rc=-1, so its verdict against dev is INCOMPLETE while
+	// this branch alone still prints OK. Pinning the word here would pin #1844's question
+	// from the wrong PR and go red the moment the two meet -- which is exactly what it did.
+	// What this test owes is that the run still reports the card and the end, in fields.
+	for _, want := range []string{"NATIVE ", "label=stillcard", "rc=-1", "wall="} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("a card the watch ended still prints its summary line, carrying %q:\n%s", want, stdout.String())
+		}
 	}
-	job := filepath.Join(slot, "jobs", "stillcard")
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		t.Fatalf("a card the machinery ended is given a report naming the block: %v\n%s", err, stdout.String())
@@ -192,11 +210,19 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-SLEEP 60\n"), 0o644); err != nil {
+	// The card SPEAKS and then stops -- and what it says names no path, because the point
+	// of this branch is a card no wall refused anything to. `js-under-20-bytes` died in a
+	// provider stall exactly like this one.
+	card := "FAKE-SAY thinking about the sixteenth step\nFAKE-SLEEP 60\n"
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	job := filepath.Join(slot, "jobs", "quietcard")
 	want := swarm.IdleEnd{Idle: 300 * time.Second, Step: "16"}
-	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) { return want, true })
+	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
+		waitForFile(t, filepath.Join(job, "said"), "the fixture harness speaking before it goes still")
+		return want, true
+	})
 
 	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "quietcard", "--card", cardPath, "--slot", slot,

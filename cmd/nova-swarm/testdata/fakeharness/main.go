@@ -105,8 +105,15 @@ func main() {
 
 	// FAKE-SAY is the harness's own words on its own stderr -- a provider's `401
 	// unauthorized`, the one diagnosis a failed job has.
+	// It writes `said` once the words are on the pipe, so a test can wait for the thing
+	// itself -- a harness that has spoken -- instead of for a clock. Before that file
+	// exists the run has captured nothing from this child at all, and everything the run
+	// decides from its capture is still undecided.
 	if said, ok := directive(prompt, "FAKE-SAY"); ok {
 		fmt.Fprintln(os.Stderr, "fake harness:", said)
+		if job != "" {
+			_ = os.WriteFile(filepath.Join(job, "said"), []byte("said\n"), 0o644)
+		}
 	}
 	// FAKE-TOUCH and FAKE-CAT are THE WALL'S OWN QUESTIONS, asked from inside the job:
 	// can this worker create a file at a path the dispatcher did not name, and can it read
