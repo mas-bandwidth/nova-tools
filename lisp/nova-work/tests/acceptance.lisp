@@ -309,3 +309,42 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
     (ok (search "state=" line) "the stage/state is not attached: ~A" line)
     (ok (search "no such operation" line) "the stable reason is not attached: ~A" line)))
 
+;;; E01-F03-01 "Model one stable ID per node and one owning containment
+;;; parent" (docs/roadmaps/nova-work.sexp). The two contract lines are
+;;; docs/SPEC-WORK.md:864 (`:id` "stable, never reused, never carries display
+;;; text") and docs/SPEC-WORK.md:877-878 (`:children` is canonical containment:
+;;; "every node has at most one containment parent, the containment edges form
+;;; a forest"). This asserts the positive model the three refusal rules (rules
+;;; 1-3) only guard: a valid seed holds each id once and every node is owned by
+;;; exactly one containment parent.
+(deftest "TestE01F03ModelOneStableIDPer" "docs/SPEC-WORK.md:864,877-878"
+    "expected=one-stable-id-per-node;one-owning-containment-parent;forest"
+  (let ((state (make-seed-state *seed*)))
+    ;; One stable ID per node: the id set holds each id exactly once, and the
+    ;; five seeded ids are the five distinct nodes.
+    (let ((ids (state-node-ids state)))
+      (check-equal 5 (length ids) "five seeded nodes")
+      (check-equal (length ids) (length (remove-duplicates ids :test #'equal))
+                   "each node carries exactly one stable id"))
+    ;; One owning containment parent: a node names zero (root) or one parent,
+    ;; and a parent that is named must exist and own (list) that node.
+    (dolist (id (state-node-ids state))
+      (let ((parent (node-parent state id)))
+        (ok (or (null parent) (member parent (state-node-ids state) :test #'equal))
+            "~A names one existing containment parent or none" id)
+        (when parent
+          (ok (member id (node-children state parent) :test #'equal)
+              "~A is owned by its one containment parent ~A" id parent))))
+    ;; The forest: across every parent's :children list, each child is owned
+    ;; once — no node appears under a second containment parent.
+    (let ((owned '()))
+      (dolist (id (state-node-ids state))
+        (dolist (child (node-children state id))
+          (ok (not (member child owned :test #'equal))
+              "~A is not owned by a second containment parent" child)
+          (push child owned)))
+      (check-equal (length owned)
+                   (length (remove-duplicates owned :test #'equal))
+                   "each owned node has exactly one owning containment parent"))))
+
+
