@@ -260,6 +260,58 @@ func TestCutKindFixRefusesWhenTheMatchingOpenPRIsBeyondTheFirstHundred(t *testin
 	}
 }
 
+// cut-kind-fix-refuses-when-the-matching-merged-pr-sits-after-the-early-stop-row
+// (#2041 HOLD at 573be0af): gh pr list --state merged is createdAt descending;
+// mergedAt is non-monotonic. 100 old-created rows whose last mergedAt is outside
+// the window, then a recently merged Closes #1649 at row 101, must refuse. Stopping
+// because the last row of a full page is old misses that match.
+func TestCutKindFixRefusesWhenTheMatchingMergedPRSitsAfterTheEarlyStopRow(t *testing.T) {
+	out, queue := cutFixDirs(t)
+	now := time.Now().UTC()
+	old := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)
+	recent := now.Add(-time.Hour).Format(time.RFC3339)
+	page1 := fillerPRs(99, 4000)
+	for i := range page1 {
+		page1[i]["mergedAt"] = recent
+	}
+	page1 = append(page1, map[string]any{
+		"number":      1258,
+		"title":       "old merge at the page boundary",
+		"body":        "no carry",
+		"headRefName": "rowan/boundary",
+		"mergedAt":    old,
+	})
+	match := map[string]any{
+		"number":      2121,
+		"title":       "the repair",
+		"body":        "Closes #1649",
+		"headRefName": "rowan/closes-1649",
+		"mergedAt":    recent,
+	}
+	all := append(append([]map[string]any{}, page1...), match)
+	specs := fakePATH(t)
+	fakeTool(t, specs, "gh", fakeSpec{
+		Rules: []fakeRule{
+			{Arg: 6, Equals: "open", Stdout: "[]"},
+			// merged: --state merged --search merged:>=DATE --limit 100; os.Args[10] is 100
+			{Arg: 10, Equals: "100", Stdout: prListJSON(t, page1...)},
+		},
+		Default: fakeRule{Stdout: prListJSON(t, all...)},
+	})
+
+	code, stdout, stderr := runValidatedCut(t, cutFixArgs(t, 1649, "the repair", out, queue)...)
+	if code != 2 {
+		t.Fatalf("merged match on row 101: exit = %d, want 2 (recently merged Closes #1649 sits after the old mergedAt early-stop row); stdout=%q stderr=%q",
+			code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "already carries #1649") || !strings.Contains(stderr, "2121") {
+		t.Fatalf("merged match on row 101: stderr=%q, want CUT REFUSED naming PR 2121 and #1649", stderr)
+	}
+	if names := mdFiles(t, out); len(names) != 0 {
+		t.Fatalf("merged match on row 101: cards written: %v", names)
+	}
+}
+
 func TestCutKindFixRefusesWhenTheForgeCannotBeRead(t *testing.T) {
 	out, queue := cutFixDirs(t)
 	specs := fakePATH(t)

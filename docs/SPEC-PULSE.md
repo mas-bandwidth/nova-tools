@@ -1265,9 +1265,11 @@ The 2026-09-20 fix wave re-cut 27 of 27: every DONE card duplicated an open or
 just-landed PR. Generators call `cut --kind fix`, so the floor is the cutter.
 Before writing a fix card it pages every open PR until a short page — never
 the first 100 only; that window ended at #1736 while omitted #1730 still
-said `Closes #1649` — then pages recently merged PRs through a seven-day
-lookback until a short page or the oldest row of a full page is outside the
-window. It matches the issue on `Fixes #N` / `Closes #N` / `Resolves #N` in
+said `Closes #1649` — then pages recently merged PRs as the seven-day
+search set (`merged:>=YYYY-MM-DD`) until a short page. It does not stop
+from one row's `mergedAt`: `gh pr list --state merged` is createdAt
+descending, so merge times are not monotonic. It matches the issue on
+`Fixes #N` / `Closes #N` / `Resolves #N` in
 title or body, `#N` in the title or body, or the issue number as a path token
 of the head branch. A match is exit 2, no card:
 
@@ -1288,8 +1290,10 @@ unread. A PR that does not name the issue is not a match, and the card is cut.
    title carries `#1979`, when the head branch is `johnny/1979-the-widget`, when
    a recently merged PR closes the issue, and when `gh` itself cannot answer. An
    unrelated open PR still cuts. A fixture of 101 open PRs whose match is the
-   101st row (`Closes #1649` on PR 1730) refuses; a merged PR older than the
-   seven-day lookback still cuts.
+   101st row (`Closes #1649` on PR 1730) refuses; a merged list of 100 old-created
+   rows whose last `mergedAt` is outside the window, then a recently merged
+   `Closes #1649` at row 101, refuses; a merged PR older than the seven-day
+   lookback still cuts.
 
 ## The cost of a card (#855), 2026-09-16
 

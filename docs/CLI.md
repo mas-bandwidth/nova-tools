@@ -1606,7 +1606,8 @@ CUT REFUSED: --repo <path> is not a directory (name the clone every git call run
 ```
 
 `cut --kind fix` pages every open PR on that `--repo`, then recently merged
-PRs inside a seven-day lookback, before it writes a card. A PR that already
+PRs as the seven-day search set (`merged:>=YYYY-MM-DD`) until a short page,
+before it writes a card. It does not stop from one row's `mergedAt`. A PR that already
 names the issue — `Fixes #N` / `Closes #N` / `Resolves #N`, the title, or the
 head branch — is refused, exit 2, no card:
 

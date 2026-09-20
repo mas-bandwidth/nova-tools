@@ -15,8 +15,9 @@ const prListPage = 100
 
 // prMergedLookback is the "recently merged" window. Just-landed PRs of the
 // 2026-09-20 wave were hours old; a week covers a weekend without scanning
-// the whole merge history. The scan pages until a short page or until the
-// oldest row of a full page is outside this window (newest-first).
+// the whole merge history. The seven-day set is named in the forge query
+// (merged:>=YYYY-MM-DD) and paged until a short page. gh pr list --state
+// merged is createdAt descending, so mergedAt is not a stop signal.
 const prMergedLookback = 7 * 24 * time.Hour
 
 type carryingPRRow struct {
@@ -30,7 +31,8 @@ type carryingPRRow struct {
 // prCarryingIssue is the first open, then recently merged, pull request that
 // already names this issue. Open PRs are paged until exhaustion before a
 // miss is concluded — --limit 100 missed live PR #1730 Closes #1649 when 218
-// were open (#2041 HOLD). Merged PRs are paged through prMergedLookback.
+// were open (#2041 HOLD). Merged PRs are the seven-day search set, paged
+// until a short page — never stopped from one row's mergedAt (#2041 HOLD).
 // A forge that does not answer is an error, never "no PR".
 func prCarryingIssue(repo string, issue int) (state string, number int, how string, err error) {
 	now := time.Now().UTC()
@@ -54,7 +56,7 @@ func prCarryingIssue(repo string, issue int) (state string, number int, how stri
 func scanPRs(repo, state string, issue int, now time.Time, window bool) (int, string, error) {
 	limit := prListPage
 	for {
-		rows, err := listCarryingPRs(repo, state, limit)
+		rows, err := listCarryingPRs(repo, state, limit, now, window)
 		if err != nil {
 			return 0, "", err
 		}
@@ -69,17 +71,19 @@ func scanPRs(repo, state string, issue int, now time.Time, window bool) (int, st
 		if len(rows) < limit {
 			return 0, "", nil
 		}
-		if window && len(rows) > 0 && !mergedInWindow(rows[len(rows)-1].MergedAt, now) {
-			return 0, "", nil
-		}
 		limit += prListPage
 	}
 }
 
-func listCarryingPRs(repo, state string, limit int) ([]carryingPRRow, error) {
-	raw, err := ghJSON(childTimeout, "pr", "list", "-R", repo,
-		"--state", state, "--limit", strconv.Itoa(limit),
+func listCarryingPRs(repo, state string, limit int, now time.Time, window bool) ([]carryingPRRow, error) {
+	args := []string{"pr", "list", "-R", repo, "--state", state}
+	if window {
+		day := now.Add(-prMergedLookback).UTC().Format("2006-01-02")
+		args = append(args, "--search", "merged:>="+day)
+	}
+	args = append(args, "--limit", strconv.Itoa(limit),
 		"--json", "number,title,body,headRefName,mergedAt")
+	raw, err := ghJSON(childTimeout, args...)
 	if err != nil {
 		return nil, err
 	}

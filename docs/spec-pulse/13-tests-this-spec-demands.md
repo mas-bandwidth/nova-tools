@@ -177,4 +177,6 @@ handoff (rule **The manager tier**).
     answering an open PR whose body is `Fixes #1979` refuses the fix card for 1979
     and writes no card; title, branch, a recently merged PR, and an unread forge
     refuse the same way (#2041). A list of 101 open PRs whose match is the 101st
-    row refuses (the first-100 cap missed live PR #1730 `Closes #1649`).
+    row refuses (the first-100 cap missed live PR #1730 `Closes #1649`). A
+    merged list of 100 old-created rows plus a recently merged `Closes #1649`
+    at row 101 refuses (mergedAt is not newest-first).
