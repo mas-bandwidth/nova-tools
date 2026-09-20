@@ -84,3 +84,19 @@ func cardPipelineFailure(raw string) string {
 	}
 	return ""
 }
+
+// issue2035Remedy is the refusal for an explore card that lacks TURNS:.
+// Managers run as conversations fill context in ~60 minutes; TURNS: bounds the loop.
+const issue2035Remedy = "`MODE: explore` requires `TURNS: <n>`; an explore card without a turn budget fills context and idles the fleet (SPEC-SWARM issue #2035)"
+
+// cardExploreMissingTurns reports whether an explore card carries no valid TURNS:
+// line and returns the remedy, or "" when the card is acceptable.
+func cardExploreMissingTurns(raw string) string {
+	if !cardExploreMode(raw) {
+		return ""
+	}
+	if _, ok := exploreTurnBudget(raw); ok {
+		return ""
+	}
+	return issue2035Remedy
+}

@@ -2147,6 +2147,9 @@ func cardShapeFailure(model, raw string) string {
 	if reason := cardPipelineFailure(raw); reason != "" {
 		return reason
 	}
+	if reason := cardExploreMissingTurns(raw); reason != "" {
+		return reason
+	}
 	return ""
 }
 

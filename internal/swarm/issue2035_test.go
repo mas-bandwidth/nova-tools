@@ -370,3 +370,33 @@ func TestIssue2386CRLFBodyStaysVerbatim(t *testing.T) {
 		t.Errorf("a second append over a CRLF body did not rewrite in place:\n%q", again)
 	}
 }
+
+// SPEC-SWARM, issue #2035: a MODE: explore card without TURNS: is refused at
+// admission with the remedy naming TURNS:, because managers that run as a
+// conversation fill context in ~60 minutes and idle the fleet every time they
+// stop to report. A TURNS: budget bounds each explore card's loop.
+func TestIssue2035Repro(t *testing.T) {
+	// An explore card with no TURNS: line is refused — this is the defect.
+	why := admitWhyOf(t, t.TempDir(), "e1", "opencode/deepseek-v4-flash",
+		"MODE: explore\nRESULT: find the bug\nSTEP 1 grep\n")
+	if why == "" {
+		t.Fatal("card-shape: `MODE: explore` requires `TURNS: <n>`; an explore card without a turn budget is refused (SPEC-SWARM issue #2035)")
+	}
+	if !strings.Contains(why, "TURNS:") {
+		t.Fatalf("the refusal names the required field %q", why)
+	}
+
+	// An explore card WITH a TURNS: line is admitted.
+	why = admitWhyOf(t, t.TempDir(), "e2", "opencode/deepseek-v4-flash",
+		"MODE: explore\nTURNS: 5\nRESULT: find the bug\nSTEP 1 grep\n")
+	if why != "" {
+		t.Fatalf("an explore card with TURNS: is admitted, got %q", why)
+	}
+
+	// A non-explore pipeline card still needs no TURNS:.
+	why = admitWhyOf(t, t.TempDir(), "p1", "opencode/deepseek-v4-flash",
+		"RESULT: fix the rule\nSTEP 1 read\nSTEP 2 write\nSTEP 3 check\n")
+	if why != "" {
+		t.Fatalf("a non-explore card has no TURNS: requirement, got %q", why)
+	}
+}
