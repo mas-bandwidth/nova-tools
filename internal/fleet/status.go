@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -126,18 +127,39 @@ func QueryNodeStatus(opts QueryNodeOptions) (NodeStatus, error) {
 	return node, nil
 }
 
-// QueryFleetStatus queries all given fleet nodes and computes the aggregated fleet report.
+// QueryFleetStatus queries all given fleet nodes concurrently and computes the aggregated fleet report.
 func QueryFleetStatus(nodes []QueryNodeOptions) (FleetStatusReport, error) {
 	report := FleetStatusReport{
-		Nodes: make([]NodeStatus, 0, len(nodes)),
+		Nodes: make([]NodeStatus, len(nodes)),
+	}
+	if len(nodes) == 0 {
+		return report, nil
 	}
 
-	for _, opt := range nodes {
-		ns, err := QueryNodeStatus(opt)
+	var wg sync.WaitGroup
+	errs := make([]error, len(nodes))
+
+	for i, opt := range nodes {
+		wg.Add(1)
+		go func(idx int, o QueryNodeOptions) {
+			defer wg.Done()
+			ns, err := QueryNodeStatus(o)
+			if err != nil {
+				errs[idx] = fmt.Errorf("query node %s: %w", o.NodeName, err)
+				return
+			}
+			report.Nodes[idx] = ns
+		}(i, opt)
+	}
+	wg.Wait()
+
+	for _, err := range errs {
 		if err != nil {
-			return report, fmt.Errorf("query node %s: %w", opt.NodeName, err)
+			return report, err
 		}
-		report.Nodes = append(report.Nodes, ns)
+	}
+
+	for _, ns := range report.Nodes {
 		report.Summary.TotalNodes++
 		report.Summary.TotalSlots += len(ns.Slots)
 		report.Summary.LiveSlots += ns.LiveCount
