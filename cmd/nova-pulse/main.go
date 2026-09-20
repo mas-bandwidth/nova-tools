@@ -23,6 +23,7 @@ import (
 const usage = `nova-pulse: bounded open work, cut into cards and folded back, no model call (see docs/SPEC-PULSE.md)
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse pool-capacity [--machines <file>] [--benches <file>] [--roots <dirs>] [--queue <dir>] [--providers <file>] [--headroom <n>] [--out <metrics.tsv>] [--overwrite]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--depends-on <cards>] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
@@ -354,7 +355,12 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	case "pool":
+		if len(rest) > 0 && rest[0] == "capacity" {
+			return cmdPoolCapacity(rest[1:], stdout, stderr)
+		}
 		return cmdPool(rest, stdout, stderr)
+	case "pool-capacity":
+		return cmdPoolCapacity(rest, stdout, stderr)
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
 	case "fill":
