@@ -74,13 +74,22 @@ func queueCard(t *testing.T, root, label string) string {
 // push. Tests that want the refusal leave this rule out on purpose and say so.
 func fakeGit(t *testing.T, specs, arglog string) {
 	t.Helper()
-	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{originRule("owner/repo")}})
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		originRule("owner/repo"),
+		pinRule(),
+	}})
 }
 
-// originRule teaches a fake git to answer `git -C <dir> remote get-url origin` -- argument 3
-// is the verb -- with a repository, the way every clone a card made does.
+// originRule teaches a fake git to answer `git -C <dir> config --get remote.origin.url`
+// (cloneOrigin), argument 5 the key, with a repository the way every clone a card made does.
 func originRule(repo string) fakeRule {
-	return fakeRule{Arg: 3, Equals: "remote", Stdout: "https://forge.invalid/" + repo + ".git"}
+	return fakeRule{Arg: 5, Equals: "remote.origin.url", Stdout: "https://forge.invalid/" + repo + ".git"}
+}
+
+// pinRule answers `git -C <dir> rev-parse --verify refs/harvest/target/<base>^{commit}`
+// so a fake-git harvest can pin the authorized target (HOLD on #2117).
+func pinRule() fakeRule {
+	return fakeRule{Arg: 3, Equals: "rev-parse", Stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 }
 
 // fakeGH records every gh invocation, refuses `gh pr view` (no PR exists yet) and answers

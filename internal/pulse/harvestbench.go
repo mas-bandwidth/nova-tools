@@ -317,6 +317,14 @@ func harvestBench(in HarvestInput) int {
 			lines.Line(err.Error())
 			continue
 		}
+		// Two-dot against the fetched authorized destination (issue #2032; HOLD on #2117).
+		globs, declared := harvestDeclaredPaths(launchedCardFor(in.Launched, label), j.Result)
+		if err := staleBaseRefusal(clone, dest.url, base, ref, globs, declared); err != nil {
+			failed++
+			lines.Line(fmt.Sprintf("HARVEST REFUSED stale-base bench=%s label=%s: %s",
+				field(in.Bench), field(label), oneline.Err(err)))
+			continue
+		}
 		if out, err := gitIn(clone, "push", "origin", ref+":refs/heads/"+branch); err != nil {
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST PUSH-FAIL bench=%s label=%s branch=%s: %s",
