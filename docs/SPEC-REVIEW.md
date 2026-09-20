@@ -626,12 +626,13 @@ nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --reade
 nova-review roster  --lane <dir> (--pr <n>|--branch <name>) (--readers <name,...> [--reserved <name,...> --deadline <stamp>] | --policy <id>) [--max <n>]
 nova-review dedupe  --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
 nova-review mutate  --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+nova-review guard   --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
 nova-review cost    --lane <dir> ((--pr <n>|--branch <name>) | --all) [--max <n>]
 nova-review version
 nova-review help
 
-`mutate` is the one verb that takes --repo rather than --lane: it is asked about a range
-in a working copy, not about an entry in a lane, and it records nothing. Every other verb
+`mutate` and `guard` are the verbs that take --repo rather than --lane: they are asked about a range
+in a working copy, not about an entry in a lane, and they record nothing. Every other verb
 BUT version and help takes --lane <dir>; version and help take no
 flag and no argument and refuse at exit 2 when given any, as SPEC.md:251-254
 requires of every binary. Every verb that runs git or gh also takes
@@ -712,6 +713,28 @@ the suites are listed and run once before the patch goes in. And a `--timeout` d
 that kills the run mid-flight is a could-not-run: a non-zero exit counts as the mutant
 dying only when the output says so — a `--- FAIL:` unit, a package-level `FAIL	<pkg>`,
 or a `panic:`.
+
+**`guard` is the post-landing negative control** (nova-tools#2042). A swarm card that
+asked a model whether a landed commit was guarded was wrong about a third of the
+time: `ddce356e` was scored UNGUARDED while two named tests went red, `7afd48c0`
+ran a darwin-only file's control on linux, `51724da5` contradicted its own body.
+The control is mechanical. `nova-review guard --repo <dir> --head <sha> [--tests
+<package>[,<package>...]]` reverts the commit's non-test files in a throwaway
+worktree, keeps the tests, and runs the named packages (or, omitted, the packages
+of the commit's changed `.go` files). The verdict is computed from exit codes and
+test names, never judged:
+
+- `GUARDED` when the control compiled and named tests went red (exit 0)
+- `UNGUARDED` when the control compiled and stayed green (exit 1)
+- `COMPILER-HELD` when the revert does not compile: a test that only calls a new
+  symbol is not an assertion (exit 1)
+- `NOT-APPLICABLE` when every reverted `.go` file is excluded on this OS by a
+  name suffix or a `//go:build` tag — a control that cannot compile the file here
+  is not UNGUARDED (exit 2)
+
+The line carries `platform=<goos>/<goarch>` and both test tails (`GUARD TAIL
+which=baseline` and `which=control`). `--tests` is the only input a model
+supplies. It records nothing and writes nothing into the repo it is pointed at.
 
 **Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1 rule 9 (draft, 2026-09-19):** the range form
 prints `reverted=<n>`, and a `--seed` form applies one patch whose edit count is asserted to be
@@ -842,8 +865,8 @@ the verb could not run, rather than ran and said no.
 
 | code | meaning |
 |------|---------|
-| 0 | the verb ran and passed: a `mutate` whose every changed test file went red with the change reverted — or, with `--test`, whose one named unit went red — a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
-| 1 | the verb ran and said **NO**: a `mutate` `FAIL` (a changed test file with no failing test once the change is reverted, or with `--test` a named unit that RAN and stayed green), `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
+| 0 | the verb ran and passed: a `mutate` whose every changed test file went red with the change reverted — or, with `--test`, whose one named unit went red — a `guard` whose control compiled and named tests went red (`GUARDED`) — a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
+| 1 | the verb ran and said **NO**: a `mutate` `FAIL` (a changed test file with no failing test once the change is reverted, or with `--test` a named unit that RAN and stayed green), a `guard` `UNGUARDED` or `COMPILER-HELD`, `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
 | 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), a `policy` with no `--head`, a `--policy <id>` whose record's `head` is not the head being rostered (`ROSTER POLICY HEAD`, rule 7, draft 6), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4),     a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule`, `--max-bytes`, `--diff-only` or `--files` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, a `mutate` whose `--repo` is not a git working copy or whose `--base` or `--head` names no commit, a `mutate` range with no changed test file (`no-tests-changed`), a `mutate` range with no non-test hunk to revert (the typed `ABSTAIN reason=no-change-to-revert`, which is on stdout and is inability to prove the control rather than a failure to run it, and is never acceptance), a `mutate --test` that names no test of a changed test file, names one two of them declare, or names a unit whose suite could not be run, a `--test` given beside `--seed`, a `mutate --seed` whose seeded tree does not build (`seed does not build`, SPEC-TOOLWORK §1 rule 6: a control that did not compile kills every suite and is not a kill), bad invocation, `git` or `gh` absent |
 
 A findings row that fails its check is exit 2 and not 1 because nothing was
@@ -882,6 +905,13 @@ MUTATE MORE kind=<green|skip> shown=<n> total=<t> nova-review mutate --repo <dir
 MUTATE <head8> no-tests-changed
 MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
 MUTATE REFUSED: <reason>
+GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> <GUARDED|UNGUARDED|COMPILER-HELD>
+GUARD <head8> platform=<goos>/<goarch> NOT-APPLICABLE reason=build-tags
+GUARD TAIL which=<baseline|control> pkg=<path> exit=<n> last=<text>
+GUARD RED test=<name>
+GUARD MORE kind=<tail|red> shown=<n> total=<t> nova-review guard --repo <dir> --head <sha> --max 0
+GUARD <head8> platform=<goos>/<goarch> ABSTAIN reason=<no-change-to-revert|head-red>
+GUARD REFUSED: <reason>
 ~~VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> base_tree=<sha12|-> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true~~
 ~~VERDICT ROW row=<n> id=<id> sev=<block|fix|nit|ok|dup|close> at=<path>:<line>|<finding id> side=<head|base|-> rule=<quoted|base|external|proposed|-> pin=<pin|-> ref=<the third field as written>~~
 ~~VERDICT CLOSED id=<id> <path>:<line> sev=<block|fix|nit|ok>: closed by this record (rule 8)~~
