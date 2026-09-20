@@ -1948,7 +1948,7 @@ bench lines themselves stay on stdout.
 ### accept
 
 ```
-nova-pulse accept --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity "<Name> <<email>>"[,...] [--sandbox <path>] [--timeout <s>] [--max <n>]
+nova-pulse accept --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity "<Name> <email>"[,...] [--sandbox <path>] [--timeout <s>] [--max <n>]
 ```
 
 The mechanical accept gate ([SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1): it reads the
