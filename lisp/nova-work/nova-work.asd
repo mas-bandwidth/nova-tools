@@ -96,4 +96,5 @@
                 (:file "tests/replays-validator-rule-witnesses")
                 (:file "tests/replays-fleet-stale-tokens")
                 (:file "tests/replays-lease-durability")
-                (:file "tests/replays-e08-render-file")))
+                (:file "tests/replays-e08-render-file")
+                (:file "tests/replays-new-verb-door")))

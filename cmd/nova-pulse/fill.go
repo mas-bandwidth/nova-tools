@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -62,10 +63,18 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	swarmRoot := f.fs.String("swarm-root", defaultSwarmRoot, "")
 	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
 	grace := f.fs.String("launch-grace", defaultLaunchGrace.String(), "")
+	interval := f.fs.String("interval", FillIntervalDefault.String(), "")
+	stop := f.fs.String("stop", "", "")
+	slotsStore := f.fs.String("slots-store", defaultSlotsStore, "")
+	slotsOwner := f.fs.String("slots-owner", "", "")
+	slotsBin := f.fs.String("slots-bin", defaultSlotsBin, "")
+	maxLoad := f.fs.Float64("max-load-per-core", defaultMaxLoadPerCore, "")
 	var benches benchFlag
 	var only benchFlag
+	var localBenches benchFlag
 	f.fs.Var(&benches, "bench", "")
 	f.fs.Var(&only, "only", "")
+	f.fs.Var(&localBenches, "local-bench", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -73,6 +82,22 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	wait, err := parseGrace(*grace)
 	if err != nil {
 		f.add(err.Error())
+	}
+	tick, err := parseInterval(*interval)
+	if err != nil {
+		f.add(err.Error())
+	}
+	local, err := localBenchSet([]string(localBenches), []string(benches))
+	if err != nil {
+		f.add(err.Error())
+	}
+	// NaN is not less than zero, so `< 0` alone let `--max-load-per-core NaN` through, and a
+	// NaN threshold compares false against every bench: the brake the caller asked for was
+	// off and nothing said so. Infinity is the same silence, spelled differently.
+	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
+		f.add(fmt.Sprintf(
+			"--max-load-per-core is a finite number of load units per core, 0 or more (0 is the documented no-brake opt-out), got %v; a threshold nothing can exceed is a brake that is silently off",
+			*maxLoad))
 	}
 	if *deadline <= 0 {
 		f.add(fmt.Sprintf("--deadline is the card's deadline in whole seconds, 1 or more, got %d", *deadline))
@@ -86,9 +111,26 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	var reader pulse.Capacity = sshCapacity{root: *swarmRoot}
-	if *capacity >= 0 {
+	// THE STORE LEADS, THE LOAD BRAKES (#1914). With a slot store named -- and one is
+	// named by default -- the capacity is the bench's own free count and the load is only a
+	// guard. `--slots-store ""` asks for the old load formula and nothing else; `--capacity`
+	// is a fixed number for every bench and no probe at all.
+	var reader pulse.Capacity
+	switch {
+	case *capacity >= 0:
 		reader = fixedCapacity(*capacity)
+	case strings.TrimSpace(*slotsStore) == "":
+		reader = sshCapacity{root: *swarmRoot}
+	default:
+		reader = storeProbeCapacity(storeProbeConfig{
+			Store:    *slotsStore,
+			Owner:    *slotsOwner,
+			SlotsBin: *slotsBin,
+			Root:     *swarmRoot,
+			Local:    local,
+			MaxLoad:  *maxLoad,
+			Stderr:   stderr,
+		})
 	}
 	return pulse.Fill(pulse.FillInput{
 		Ready:    *ready,
@@ -99,6 +141,8 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Benches:  []string(benches),
 		Only:     []string(only),
 		Once:     *once,
+		Interval: tick,
+		Stop:     *stop,
 		Stdout:   stdout,
 		Stderr:   stderr,
 		Now:      func() time.Time { return now },
@@ -132,11 +176,42 @@ func shellDoubleQuoted(s string) string {
 	return r.Replace(s)
 }
 
-// capacityScript is fill-loop.sh's formula, run on the bench: the min of core headroom
+// capacityBody is fill-loop.sh's formula, run on the bench: the min of core headroom
 // (cores*1.5 - load1 - cores/8, a CI reserve), disk headroom ((free_gb-25)/2) and memory
-// headroom (memfree_gb/2). The disk term reads the swarm root's volume, not $HOME's.
+// headroom (memfree_gb/2). The disk term reads the swarm root's volume, not $HOME's. It
+// wants $c (cores) and $li (load1 as a whole number) already set, and leaves the number in
+// $a -- so the store probe can fall back to it for a bench that has no slot store without
+// writing the formula down twice.
+//
+// It is the number `fill` answered before the slot store, and it is NOT the capacity any
+// more: a bench earns load by running the cards it was dealt, so this closed the fleet
+// exactly when the fleet was working (#1914).
+func capacityBody(root string) string {
+	return capacityReadings(root) + `; ` + capacityArithmetic()
+}
+
+// capacityReadings takes the formula's two other measurements and leaves them in $f (free
+// GB on the swarm root's volume) and $m (available GB of memory). They are SEPARATE from
+// the arithmetic so the store probe can check that each one was actually read before using
+// it: an unread measurement that arrives as an empty string is a zero to shell arithmetic,
+// and a zero is a number somebody could act on (Stella, R2 of #1945).
+func capacityReadings(root string) string {
+	return swarmRootScript(root) +
+		`; f=$(df -BG "$r" 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')` +
+		`; m=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)`
+}
+
+// capacityArithmetic is the formula itself over $c, $li, $f and $m, leaving the number in
+// $a. It measures nothing; every value it reads was taken by capacityReadings or by the
+// caller.
+func capacityArithmetic() string {
+	return `a1=$(( c*3/2 - li - c/8 )); a2=$(( (f-25)/2 )); a3=$(( m/2 )); a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3`
+}
+
+// capacityScript is capacityBody with the two readings it wants in front of it and the
+// number printed: the whole legacy probe, which `--slots-store ""` still asks for.
 func capacityScript(root string) string {
-	return swarmRootScript(root) + `; c=$(nproc); l=$(cut -d. -f1 /proc/loadavg); f=$(df -BG "$r" | awk 'NR==2{gsub("G","",$4); print $4}'); m=$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo); a1=$(( c*3/2 - l - c/8 )); a2=$(( (f-25)/2 )); a3=$(( m/2 )); a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3; echo "$a"`
+	return `c=$(nproc); li=$(cut -d. -f1 /proc/loadavg); ` + capacityBody(root) + `; echo "$a"`
 }
 
 // fixedCapacity is --capacity: the same number for every bench, and no child at all. It is
@@ -182,6 +257,28 @@ const defaultCardDeadline = 2400
 // binary, a refused ssh, a bad argument -- so the grace catches the failure without waiting
 // for the work.
 const defaultLaunchGrace = 10 * time.Second
+
+// FillIntervalDefault is what a resident fill ticks at unless --interval says otherwise.
+// There was no flag at all until #1915, so a freed slot waited up to five minutes for the
+// next tick -- the floor on "a machine replaces a finished card right away". The default is
+// unchanged; the flag is what makes ten seconds sayable.
+const FillIntervalDefault = pulse.FillInterval
+
+// parseInterval reads --interval: how long a resident loop waits between ticks. A value it
+// cannot read is a refusal that names the flag, never a silent five minutes.
+func parseInterval(s string) (time.Duration, error) {
+	if strings.TrimSpace(s) == "" {
+		return FillIntervalDefault, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("--interval wants a duration like 10s or 5m, got %q", s)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("--interval is more than zero, got %s (a loop that never waits is a fleet nobody can read)", d)
+	}
+	return d, nil
+}
 
 // parseGrace reads --launch-grace: a duration, or 0 to wait for the launcher to finish (the
 // old behaviour, which is what a test with an instant launcher wants).

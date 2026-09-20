@@ -1,13 +1,14 @@
-;;;; replays-8648.lisp --- five acceptance replays named by docs/SPEC-WORK.md.
+;;;; replays-8648.lisp --- six acceptance replays named by docs/SPEC-WORK.md.
 ;;;;
 ;;;; Each deftest names the paragraph(s) it comes from and drives the pure
-;;;; model the kernel exposes for it. The five:
+;;;; model the kernel exposes for it. The six:
 ;;;;
 ;;;;   regression-opens-repair-work                     :4943-4951,5782-5785
 ;;;;   reply-retired-only-under-verified-coverage       :6020-6024,6316-6325
 ;;;;   restore-is-isolated-and-dispatches-nothing       :6285-6290,5790-5793
 ;;;;   reuse-only-valid-review                          :4851
 ;;;;   review-cycles-stay-visible                       :6368-6370
+;;;;   TestE11F04PartialChildNeverClosesParent          :4655,4312
 
 (in-package #:nova-work/tests)
 
@@ -287,3 +288,68 @@
                  "the repeated cycles are visible as work")
     (check-equal 8 (review-ledger-total-cost ledger)
                  "the repeated cycles are visible as operational cost")))
+
+;;; ------------------------------------------------------------------
+;;; partial-child-never-closes-parent       SPEC-WORK.md:4655,4312
+;;; ------------------------------------------------------------------
+;;;
+;;; E11-F04 (ROADMAP.md:1126). docs/SPEC-WORK.md:4655 -- "One child done and
+;;; one refused, blocked or asleep leaves the parent open with
+;;; `outstanding=<n>` and the mapped external issue open; the parent's
+;;; outstanding count and its issue mapping survive the child's refusal
+;;; unchanged." Duty 5 (docs/SPEC-WORK.md:4312): "partial child success never
+;;; closes the parent or the mapped external issue."
+
+(deftest "TestE11F04PartialChildNeverClosesParent" "docs/SPEC-WORK.md:4655"
+    "expected=one-child-done-parent-stays-open;outstanding=1;mapped-issue-open;refusal-changes-neither-count-nor-mapping"
+  ;; One parent work-set mapped to one external issue, with two required
+  ;; children: one that will finish and one that will refuse.
+  (let ((k (make-kernel
+            :state (make-seed-state
+                    '((:id "p"    :type :work-set :parent nil :state :unknown
+                           :links ("acme/repo#42"))
+                      (:id "p/t1" :type :task :parent "p" :state :doing)
+                      (:id "p/t2" :type :task :parent "p" :state :doing))))))
+    ;; before anything moves: two required members outstanding, and the one
+    ;; mapped external issue open.
+    (check-equal 2 (node-required-open (kernel-state k) "p")
+                 "the parent opens with both required children outstanding")
+    (check-equal 1 (open-issue-count k)
+                 "the mapped external issue opens open")
+    ;; the first child is done.
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :state-to-done :node "p/t1" :by "stella"
+                        :reason "shipped" :evidence '("ev-1") :request "e11f04-done-1"
+                        :stamp "2026-09-20T12:00:00Z" :clock :tool
+                        :generation-owner "gen-1"))
+      (ok okp "the first child settles: ~A" line))
+    (check-equal :c (node-branch (kernel-state k) "p/t1")
+                 "the done child is in C")
+    ;; one child done beside one still outstanding (blocked or asleep reads the
+    ;; same here: it simply has not settled) never closes the parent.
+    (check-equal :o (node-branch (kernel-state k) "p")
+                 "one child done beside one outstanding leaves the parent open")
+    (check-equal 1 (node-required-open (kernel-state k) "p")
+                 "the parent stays open with outstanding=1")
+    (check-equal 1 (open-issue-count k)
+                 "the mapped external issue is still open")
+    ;; the second child refuses: a named terminal refusal, never silence and
+    ;; never success.
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :event-cancel :node "p/t2" :by "stella"
+                        :reason "refused: over budget" :request "e11f04-refuse-1"
+                        :stamp "2026-09-20T12:01:00Z" :clock :tool
+                        :generation-owner "gen-1"))
+      (ok okp "the second child's refusal is recorded: ~A" line))
+    (check-equal :cancelled (node-state (kernel-state k) "p/t2")
+                 "the refusal is recorded as a named disposition, never as success")
+    ;; the parent is still open, and the outstanding count and the issue
+    ;; mapping survive the child's refusal unchanged.
+    (check-equal :o (node-branch (kernel-state k) "p")
+                 "the refused child never closes the parent")
+    (check-equal 1 (node-required-open (kernel-state k) "p")
+                 "the outstanding count survives the child's refusal unchanged")
+    (check-equal 1 (open-issue-count k)
+                 "the mapped external issue survives the child's refusal open")
+    (check-equal '("acme/repo#42") (node-links (kernel-state k) "p")
+                 "the issue mapping itself survives the child's refusal unchanged")))

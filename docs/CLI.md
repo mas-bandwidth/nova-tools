@@ -735,6 +735,27 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 
 `green` is `ok` and names the rung that succeeded, `red` is `failed`, `blocked` is `abandoned`, and `skipped` is `skipped` — a unit a precondition stopped before it ran, which is no rung's success and no rung's failure, so it moves no floor in either direction while still being a row `coverage` can see. The kind and the rung are read from that unit's last **decision** row rather than retyped, because a caller who has to retype them will eventually retype them wrong; an outcome for a unit no decision routed is a refusal, not a row. It appends a row of its own — the log is append-only and a row written is never rewritten — marked `source: outcome`, which the summary folds into the rung it names without counting a second decision.
 
+### classify — ask one typed question over one item
+
+```
+nova-decide classify --question <q> --evidence <file|-> --pointer <id>
+                     [--version 1] [--decider rules] [--floor 0.65] [--rules <tsv>]
+                     [--tamper <file>] [--escalate-to <name>] [--log <path>] [--private]
+```
+
+The generic door onto the question table (`docs/SPEC-DECIDE.md` D3). It exists **beside** the `--decide` flags on the tools that own the acts, and the reason runs both ways: a verb alone can be skipped, and a flag alone hides the question inside one tool where nobody else can ask or test it. So a shell script, a fixture, or a person with a text file and a question can ask anything nova-tools asks.
+
+One line out, and one of three exits: **0** an answer at or above the floor (or a stopping member, which the caller acts on), **3** `unknown`, **2** a refusal. `unknown` is a member of no answer set — it is the absence of an answer — and what each caller does with it is always today's behaviour.
+
+```
+$ nova-decide classify --question harvest --evidence ./result.txt --pointer card-9
+CLASSIFY question=harvest/v1 answer=unknown conf=- floor=0.65 decider=none stop=no below=- tamper=no why=no-decider skipped=- escalate=- pointer=card-9 bytes=412
+```
+
+**The chain.** `rules` is always consulted first whether or not you name it, because a question a table can answer is a call not worth making. A **stopping** member ends the walk before the floor is looked at, at any confidence: a first decider's stop is not undone by a later one's permission. Below the floor the answer is kept as `below=` and the walk goes on; when the chain is exhausted the answer is `unknown`, and `why=` says which nothing it was — `no-decider`, `below-floor`, `tamper`. `skipped=` names every decider the walk could not get an answer out of, as bounded `<decider>=<reason>` tokens and never a provider's own error text: without it a chain with no provider and a chain whose provider failed print the same words, and a failure behind a later success disappears from both the line and the row. `--floor` is a confidence: -1, 1.1, NaN and +Inf are refused as `bad-floor` at exit 2 before anything is asked.
+
+**What never happens.** The evidence is redacted, bounded and framed between two markers carrying a nonce drawn fresh per call, every evidence line behind a `| ` so it cannot forge a marker; the instructions are constants and no byte of evidence is interpolated into them. A text addressed to a classifier is screened *before* any call and answers with the question's tamper answer at `tamper=yes`. `--private` evidence never reaches a decider that leaves the machine — the question falls through to the next one instead. An answer outside the question's closed set is a provider error at exit 2 and never a decision. `--log` writes a row carrying a **hash and a size** of the evidence, never its text.
+
 ### log — the escalation log
 
 ```
@@ -1699,7 +1720,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1714,13 +1735,137 @@ bench is a refusal (exit 2) with the remedy on it rather than a tick that fills
 nothing. `--bench` narrows to the names it carries -- it is resolved through the
 registry's role guard exactly as before, so an uncertified bench can still be named
 by hand while it is being proven. `--once` runs exactly one tick, and without it the
-loop runs until it is killed. One line per tick:
+loop runs until it is killed or `--stop` says so. One line per tick:
 
 ```
 FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
 ```
 
-**The capacity formula measures the volume the cards land on.** The three terms are
+**`--interval <d>` is how long a resident tick waits, `5m` by default.** There was no
+flag at all until #1915, so a freed slot waited up to five minutes for the next tick
+and that was the floor on "a machine replaces a finished card right away". Ten
+seconds is what the fleet runs at: a card dropped into `--ready` is dealt in two to
+six seconds. A value the flag cannot read is a refusal naming it, never a silent five
+minutes.
+
+**`--stop <file>` takes a resident fill off the fleet without killing anything.**
+Touch the file: the tick in flight finishes -- a kill lands between the move out of
+`--ready` and the launcher, leaving a card under `--launched` that nobody started --
+and the next tick claims no card, launches nothing, leaves every live card running
+and returns 0:
+
+```
+FILL STOP tick=<n> file=<path> live=<n> note="no new launches; the live cards are untouched and nothing was killed"
+```
+
+**THE CAPACITY IS THE BENCH'S OWN SLOT STORE, AND THE LOAD IS ONLY A BRAKE (#1914).**
+`fill`'s capacity used to be the load formula below, and a bench earns load precisely
+by running the cards it was dealt: measured on 2026-09-19, a bench at load1 45 on 32
+cores answered **-1** -- clamped to zero, dealt nothing -- with **52 free slots in its
+own store**. The harder the fleet worked the less it was fed. The store is the bench's
+own answer to "how many more cards may I take", and it is the same number
+`nova-swarm native --slots-store --owner` enforces at launch:
+
+```
+free = <store>/shares.tsv's <owner> row  -  that owner's held leases (live or DRIFT)
+```
+
+`--slots-store <path>` is the store on the bench, `$HOME/nova-bench/slots` by default
+and expanded by the bench's own shell; `--slots-owner <name>` is the row, `swarm-<bench>`
+by default, the seat the launcher already hands the bench; `--slots-bin <path>` is the
+`nova-swarm` that lists the leases, `$HOME/.local/bin/nova-swarm` by default, because
+a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
+no `nova-swarm` would read zero leases and call a full bench empty.
+
+**`--max-load-per-core <f>` is the brake, `1.5` by default, `0` for none.** A bench
+whose `load1/cores` is above it is dealt nothing this tick and says so by name, with
+the free count it did not fill and the leases it is holding on the line:
+
+```
+FILL BRAKE bench=<name> load1=<f> cores=<n> per-core=<f> max=<f> free=<n> held=<n> remedy="..."
+```
+
+A braked bench is **not** a failed bench -- the tick carries on and the exit is 0 --
+and the brake never shrinks a bench below the leases it already holds: the live cards
+are running, and the one thing a capacity number may never do is ask for them back.
+A machine whose load is made by something other than its own leases wants `0` here.
+`--max-load-per-core` must be a **finite** number: `NaN` and `Inf` compare false
+against every bench, so a threshold nothing can exceed is a brake that is silently
+off, and both are refusals (exit 2) naming the flag. With the brake on, a bench that
+cannot count its cores is refused rather than filled unbraked.
+
+**FAIL CLOSED: every probe or parse failure is `free=0` on that bench, said by name.**
+A bench is the least trusted thing on this wire — it cannot make the coordinator run
+anything, but it can make it *believe* a free count, and every soft edge read HIGH. So
+a failure is never a deal and never a silent fall-through. The bench is dealt nothing,
+one line names it and the reason, and a tick where every bench failed exits 1:
+
+```
+FILL UNREADABLE bench=<name> free=0 reason=<what went wrong>
+```
+
+Every failing bench gets its own line, not just the first. These are the refusals:
+
+| what happened | why it is not zero-free |
+|---|---|
+| `slots list` could not run, or exited non-zero | a full bench would read `held=0` and be dealt its whole share |
+| a row of the listing is not a lease, or has no `owner=`/`state=`, or a `state=` this fill does not know | noise is not the same fact as an empty store |
+| `shares.tsv` is there and cannot be read, or its share is not a whole number | the store exists and its answer is unknown |
+| the owner holds more leases than its share | an owner cannot hold more than its share, so the reading went wrong |
+| the header does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice, or a field this answer has no business carrying | a reading nobody can read one way is not a reading to act on |
+| the bench answered more than 64 KiB | an answer with no end is not an answer |
+| no reader on the bench could measure its **load**, or its **cores**, while the brake is on | a measurement nobody took is not a zero, and `load1=0` passes every brake |
+| a bench with no store row whose disk, memory, load or formula result could not be read | the formula stands on those measurements, and an empty reading is a zero to shell arithmetic |
+
+**A measurement nobody took is not a zero.** The probe reports `cores=unreadable` and
+`load1=unreadable` rather than substituting `0`, and that word travels all the way to
+the brake. With the brake on, an unreadable load or an unreadable core count holds the
+bench at `free=0` — a bench whose load nothing can read is a bench nobody can brake.
+With `--max-load-per-core 0` the caller has said there is no brake, so it does not hold
+the bench, and the unread measurement is still printed:
+
+```
+FILL UNMEASURED bench=<name> cores=<n|unreadable> load1=<unreadable> note="..."
+```
+
+The load formula's own terms are Linux — `/proc/meminfo` and `df -BG` — so on a bench
+where they cannot be measured, a bench with no store row is a **named refusal** rather
+than a formula computed over readings nobody took. The number such a bench answered
+before was zero anyway; it is loud now. Give that bench a share and it is sized by its
+store like any other.
+
+The only number the probe still floors is the load formula's own result, which is
+computed rather than measured: a formula that comes out negative is a bench with no
+room, and that was always its meaning. The swarm root still falls back to `$HOME`, which
+is a documented path and not a measurement.
+
+**The lease read's exit status is the READ's, and the counting is Go's.** It was
+`slots list ... | grep -c`, whose status belongs to grep: a missing `nova-swarm`
+printed nothing, grep counted `0`, the script exited 0, and a bench with every slot
+leased answered `held=0`. The listing now comes back verbatim and `fill` counts it,
+holding every row to `slots list`'s own contract. **A `DRIFT` lease counts as held** —
+expired by the clock with its process still alive — because that is what
+`nova-swarm native` counts when it grants, and a probe that counts fewer deals cards
+the bench then refuses.
+
+An **empty** lease list is not a failure: a store whose owner holds nothing is a bench
+with its whole share free, and it fills.
+
+**The one fall-through to the load formula is positively detected and never silent.**
+It is a bench with no store row — no `shares.tsv` at all, or a readable `shares.tsv`
+with no row for this owner **and a lease read that succeeded** — and it says so:
+
+```
+FILL FORMULA bench=<name> why=<no-shares-file|no-row-for-owner> capacity=<n> note="..."
+```
+
+**`--local-bench <name>` is a bench that is this machine.** Its store is read by this
+machine's own shell and no `ssh` is opened: there is no `ssh` from the Studio to the
+Studio, and there should not be. A `--local-bench` that is not one of the benches this
+run fills is a refusal, because a typo there means a bench read over an `ssh` that
+cannot work.
+
+**The load formula is what a bench with no store still answers.** The three terms are
 core headroom (`cores*1.5 - load1 - cores/8`, a CI reserve), memory headroom
 (`memavail_gb/2`) and disk headroom (`(free_gb-25)/2`), and the disk term reads the
 **swarm root's** volume: `--swarm-root` (default `$HOME/rowan-swarm-root`, expanded
@@ -1728,7 +1873,9 @@ by the bench's own shell) is resolved through its symlinks and that path is what
 `df` is given. A bench whose swarm root is a link onto a second disk -- antman's
 `~/rowan-swarm-root -> /data/swarm` -- used to answer for the volume its home sits
 on, which is not the one the cards fill. A swarm root that is not configured, or is
-configured and not there, falls back to `$HOME`.
+configured and not there, falls back to `$HOME`. A bench whose `--slots-store` holds
+no row for the owner falls back to this number on its own, so adopting the store is
+not a flag day; `--slots-store ""` asks for it and nothing else.
 
 **A launcher that fails is not a card that ran.** The card goes back to `--ready`,
 its lane is released, the tick counts it under `failed=` and never under `launched=`,
@@ -1814,6 +1961,22 @@ dry run over a directory of cards exercises the whole tick, lanes included:
 
 ```
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
+```
+
+`--capacity` is the one thing that beats the slot store: it is a fixed number for
+every bench and reads nothing. It is a dry run's flag, not a fleet's — a single
+number cannot be four benches' free counts.
+
+**The resident form is the whole of it**: one process per launcher, ticking in
+seconds, sized by each bench's own store, braked on load and stopped by a file.
+
+```
+nova-pulse fill --ready ./queue/pull/ready --launched ./queue/pull/launched \
+  --machines ./queue/control/machines.tsv --lanes ./queue/control/lanes.tsv \
+  --launcher ~/bin/flash-native-bench.sh --session <id> \
+  --interval 10s --launch-grace 3s --deadline 1800 \
+  --slots-store '$HOME/nova-bench/slots' --max-load-per-core 1.5 \
+  --stop ./STOP
 ```
 
 **`--session <id>` is stamped into every launched card's marker.** When `fill` moves a
