@@ -519,6 +519,28 @@ func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
 	}
 }
 
+// hygiene-ignores-the-subject-repos-replace-refs: a worker who can write the job
+// clone's `.git` -- the gate's worktree shares it, SPEC-TOOLWORK §1 rule 3 -- can
+// `git replace <head> <base>`. That writes one ref under `refs/replace/`, never a
+// commit in the range, so `out-of-path` and `stray-file` never look at it; every git
+// this package then runs follows the replacement and the four checks report clean over
+// a range that still carries a key.
+func TestHygieneIgnoresTheSubjectReposReplaceRefs(t *testing.T) {
+	dir := lab(t)
+	base := git(t, dir, "rev-parse", "main")
+	git(t, dir, "checkout", "-q", "-b", "card")
+	key := fixtureKey()
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	head := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "replace", head, base)
+	fs := check(t, dir, Options{})
+	if has(fs, "secret") == nil {
+		t.Fatalf("a replace ref in the job clone's .git hid the key: %v", tokens(fs))
+	}
+}
+
 // hygiene-reads-a-diff-the-subject-repo-marked-binary: a committed `.gitattributes`
 // saying `*.go -diff` makes git print "Binary files a/... and b/... differ" instead of
 // the lines, so nothing reaches the shapes and `--check` has nothing to look at either.
