@@ -24,8 +24,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	hygienepaths "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -47,6 +49,8 @@ type CutKindInput struct {
 	Prior     string // fix: what a prior attempt did, so the worker never repeats it
 	Names     string // replay: the replay names, comma separated
 	SpecLines string // replay: the spec lines the replays are named at
+	Paths     string // PATHS: globs, comma separated; empty is none
+	Test      string // TEST: `<package> <TestName>` or none; empty is none
 	Out       string // the directory the card is written into
 	Queue     string // the queue directory holding the state file and its lock
 	Stdout    io.Writer
@@ -167,6 +171,63 @@ func cutKindProblem(in CutKindInput) string {
 			return "--title is required for a rebase card (pass the pull request's own title)"
 		}
 	}
+	if problem := kindHeaderProblem(in); problem != "" {
+		return problem
+	}
+	return ""
+}
+
+// kindGoTestName is the TEST: name the gate and lint --card share (lintheader.go).
+var kindGoTestName = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
+
+// kindHeaderProblem refuses --paths and --test values lint --card would draw as
+// paths-declared or test-named, so a card that leaves this cutter is one the lint
+// will not bounce for its typed header (#1852).
+func kindHeaderProblem(in CutKindInput) string {
+	if problem := kindPathsProblem(in.Paths); problem != "" {
+		return problem
+	}
+	return kindTestProblem(in.Test)
+}
+
+func kindPathsProblem(paths string) string {
+	p := strings.TrimSpace(paths)
+	if p == "" || p == "none" {
+		return ""
+	}
+	var globs []string
+	for _, g := range strings.Split(p, ",") {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			return "--paths has an empty entry between its commas (pass repo-relative globs, or none)"
+		}
+		globs = append(globs, g)
+	}
+	if err := hygienepaths.ValidatePaths(globs); err != nil {
+		return fmt.Sprintf("--paths: %s (pass repo-relative globs with a literal segment, or none)", oneline.Err(err))
+	}
+	return ""
+}
+
+func kindTestProblem(test string) string {
+	v := strings.TrimSpace(test)
+	if v == "" || v == "none" {
+		return ""
+	}
+	fields := strings.Fields(v)
+	if len(fields) != 2 {
+		return "--test wants `<package> <TestName>` or none (pass two fields, the name a Go test name)"
+	}
+	pkg := strings.Trim(fields[0], "/")
+	if pkg == "" {
+		pkg = "."
+	}
+	if err := hygienepaths.ValidatePaths([]string{pkg}); err != nil {
+		return fmt.Sprintf("--test package: %s (the package is repo-relative, like PATHS:)", oneline.Err(err))
+	}
+	if !kindGoTestName.MatchString(fields[1]) {
+		return fmt.Sprintf("--test %s is not a Go test name (pass TestSomething)", oneline.Field(fields[1]))
+	}
 	return ""
 }
 
@@ -179,29 +240,26 @@ func cutKindKnown(kind string) bool {
 	return false
 }
 
-// renderKindCard writes line 1, the source line, the prior attempt if there is one, the
-// kind's own instruction and the body.
+// renderKindCard writes line 1, the five typed header lines lint --card reads
+// (SPEC-TOOLWORK §5 rule 1), the prior attempt if there is one, the kind's own
+// instruction and the body.
 func renderKindCard(in CutKindInput, n int, body string) string {
 	repo := repoShort(in.Repo)
 	var b strings.Builder
 	switch in.Kind {
 	case "read":
 		fmt.Fprintf(&b, "RESULT: CARD-%d read of %s PR%d at %s (%s)\n", n, repo, in.PR, oneline.Field(in.Head), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
 	case "fix":
 		fmt.Fprintf(&b, "RESULT: CARD-%d sha=<sha12> %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.Issue)
 	case "replay":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s replays %s named at spec lines %s, red first\n", n, repo, oneline.Field(in.Names), oneline.Field(in.SpecLines))
-		fmt.Fprintf(&b, "SOURCE: %s %s\n", in.Repo, oneline.Field(in.Names))
 	case "spec":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s spec: %s\n", n, repo, oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s spec\n", in.Repo)
 	case "rebase":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s PR #%d rebased onto %s with its conflicts resolved and its tests green: %s\n",
 			n, repo, in.PR, oneline.Field(in.Base), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
 	}
+	writeKindTypedHeader(&b, in)
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
 	}
@@ -210,6 +268,54 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 		b.WriteString(body + "\n")
 	}
 	return b.String()
+}
+
+// writeKindTypedHeader is the five lines under the contract line and inside its hash.
+// PATHS: and TEST: default to none so a card cut without those flags is still a
+// typed card lint --card will read, not a SOURCE: line that trips the checks and
+// then finds nothing (#1852).
+func writeKindTypedHeader(b *strings.Builder, in CutKindInput) {
+	fmt.Fprintf(b, "KIND: %s\n", in.Kind)
+	fmt.Fprintf(b, "PATHS: %s\n", kindPathsLine(in.Paths))
+	fmt.Fprintf(b, "TEST: %s\n", kindTestLine(in.Test))
+	fmt.Fprintf(b, "LEGS: go\n")
+	fmt.Fprintf(b, "SOURCE: %s\n", kindSourceLine(in))
+}
+
+func kindPathsLine(paths string) string {
+	p := strings.TrimSpace(paths)
+	if p == "" || p == "none" {
+		return "none"
+	}
+	var globs []string
+	for _, g := range strings.Split(p, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			globs = append(globs, g)
+		}
+	}
+	if len(globs) == 0 {
+		return "none"
+	}
+	return strings.Join(globs, ", ")
+}
+
+func kindTestLine(test string) string {
+	v := strings.TrimSpace(test)
+	if v == "" {
+		return "none"
+	}
+	return v
+}
+
+func kindSourceLine(in CutKindInput) string {
+	switch in.Kind {
+	case "read", "rebase":
+		return fmt.Sprintf("%s#%d", in.Repo, in.PR)
+	case "fix":
+		return fmt.Sprintf("%s#%d", in.Repo, in.Issue)
+	default:
+		return in.Repo
+	}
 }
 
 // kindInstruction is the one paragraph a kind always carries, whatever its body says. A fix

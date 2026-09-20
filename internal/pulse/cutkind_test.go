@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 func cutKind(t *testing.T, in CutKindInput) (int, string, string, string) {
@@ -123,6 +126,96 @@ func TestCutKindFixContractLineIsHashedOverEverythingBelowIt(t *testing.T) {
 	}
 }
 
+// cut-kind-lint-card: the #1852 reproducer. `cut --kind fix` writes SOURCE: on line 2,
+// so lint --card treats the card as typed and then draws kind-declared, paths-declared
+// and test-named (and used to draw an unhashed contract line and a duplicated SOURCE
+// repo). The card has to carry the five typed lines under the contract line and inside
+// its hash, in the grammar lint --card and the gate share.
+func TestCutKindFixCardPassesLintCardHeader(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 123, Title: "fix",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	line1 := strings.SplitN(card, "\n", 2)[0]
+	if !regexp.MustCompile(`^RESULT: CARD-1 sha=[0-9a-f]{12} `).MatchString(line1) {
+		t.Errorf("line 1 has no sha=<sha12> binding: %q", line1)
+	}
+	if !strings.Contains(card, "\nSOURCE: mas-bandwidth/nova-tools#123\n") {
+		t.Errorf("SOURCE: is not owner/repo#n:\n%s", card)
+	}
+	if strings.Contains(card, "mas-bandwidth/nova-tools mas-bandwidth/nova-tools") {
+		t.Errorf("SOURCE: repeats the repo:\n%s", card)
+	}
+	fs := swarm.LintCardHeader([]byte(card), nil, false)
+	if len(fs) != 0 {
+		t.Fatalf("lint --card typed-header findings, want none:\n%s\ncard:\n%s", dumpHeaderFindings(fs), card)
+	}
+}
+
+func dumpHeaderFindings(fs []swarm.CardHeaderFinding) string {
+	var b strings.Builder
+	for _, f := range fs {
+		fmt.Fprintf(&b, "%s:%d: %s\n", f.Check, f.Line, f.Excerpt)
+	}
+	return b.String()
+}
+
+// every cut --kind card writes SOURCE:, so every kind has to carry the rest of
+// the typed header or lint --card is dead on arrival the same way.
+func TestCutKindEveryKindPassesLintCardHeader(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+	for i, in := range []CutKindInput{
+		{Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456", Title: "t"},
+		{Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 123, Title: "fix"},
+		{Kind: "replay", Repo: "mas-bandwidth/nova-tools", Names: "one,two", SpecLines: "1-2"},
+		{Kind: "spec", Repo: "mas-bandwidth/nova-tools", Title: "a spec"},
+		{Kind: "rebase", Repo: "mas-bandwidth/nova-tools", PR: 1, Branch: "rowan/x", Base: "dev", Title: "t"},
+	} {
+		in.Out = filepath.Join(dir, fmt.Sprintf("out-%d", i))
+		in.Queue = queue
+		code, _, errs, card := cutKind(t, in)
+		if code != 0 {
+			t.Fatalf("%s: exit = %d, stderr=%s", in.Kind, code, errs)
+		}
+		if fs := swarm.LintCardHeader([]byte(card), nil, false); len(fs) != 0 {
+			t.Errorf("%s: typed-header findings:\n%s\ncard:\n%s", in.Kind, dumpHeaderFindings(fs), card)
+		}
+	}
+}
+
+func TestCutKindNamedPathsAndTestLandOnTheCard(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 123, Title: "fix",
+		Paths: "internal/pulse/cutkind.go, internal/pulse/cutkind_test.go",
+		Test:  "internal/pulse TestCutKindFixCardPassesLintCardHeader",
+		Out:   out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	for _, want := range []string{
+		"KIND: fix\n",
+		"PATHS: internal/pulse/cutkind.go, internal/pulse/cutkind_test.go\n",
+		"TEST: internal/pulse TestCutKindFixCardPassesLintCardHeader\n",
+		"SOURCE: mas-bandwidth/nova-tools#123\n",
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("card missing %q:\n%s", want, card)
+		}
+	}
+	if fs := swarm.LintCardHeader([]byte(card), nil, false); len(fs) != 0 {
+		t.Fatalf("typed-header findings:\n%s", dumpHeaderFindings(fs))
+	}
+}
+
 // cut-kind-rebase: the rebase card's line 1 is the contract the harvest matches, and its
 // steps carry the branch the worker checks out and the base it rebases onto.
 func TestCutKindRebaseNamesTheBranchAndTheBase(t *testing.T) {
@@ -185,6 +278,8 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		{"no queue", CutKindInput{Kind: "read", Repo: "o/n", PR: 1, Head: "h", Out: dir}, "--queue"},
 		{"rebase without a branch", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Base: "dev", Title: "t", Out: dir, Queue: dir}, "--branch"},
 		{"rebase without a base", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Branch: "rowan/x", Title: "t", Out: dir, Queue: dir}, "--base"},
+		{"paths climb", CutKindInput{Kind: "fix", Repo: "o/n", Issue: 1, Title: "t", Paths: "../elsewhere.go", Out: dir, Queue: dir}, "--paths"},
+		{"test not a name", CutKindInput{Kind: "fix", Repo: "o/n", Issue: 1, Title: "t", Test: "not-a-test", Out: dir, Queue: dir}, "--test"},
 	} {
 		var out, errs bytes.Buffer
 		in := c.in

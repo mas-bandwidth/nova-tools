@@ -40,6 +40,8 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	prior := f.fs.String("prior", "", "")
 	names := f.fs.String("names", "", "")
 	specLines := f.fs.String("spec-lines", "", "")
+	paths := f.fs.String("paths", "", "")
+	test := f.fs.String("test", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
 	if !f.parse(args, stderr) {
@@ -48,6 +50,7 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
 		BodyFile: *bodyFile, Prior: *prior, Names: *names, SpecLines: *specLines,
+		Paths: *paths, Test: *test,
 		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
 	})
 }
