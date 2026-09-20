@@ -119,6 +119,41 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 	}
 }
 
+// TestNativeOversizedCaptureIsNeverOK is the overflow control (Stella's HOLD on
+// #2073): a noisy worker that fills the parent tee past the classification bound
+// cannot be silently OK. Truncated classification is unverifiable and refused.
+func TestNativeOversizedCaptureIsNeverOK(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	// 1 MiB is the parent-owned classification bound; one byte past it is overflow.
+	if err := os.WriteFile(cardPath, []byte("FAKE-CAPTURE-BYTES 1048577\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		"--label", "loud-card", "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "30s", "--no-wall"}
+	var stdout, stderr bytes.Buffer
+	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+
+	if strings.Contains(stdout.String(), "NATIVE OK") {
+		t.Errorf("an overflowed classification still reported OK:\n%s", stdout.String())
+	}
+	if rc == 0 {
+		t.Errorf("an overflowed classification exits non-zero, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	line := stderr.String()
+	if !strings.Contains(line, "NATIVE REFUSED") {
+		t.Fatalf("the run owes one refusal line naming the class:\n%s", line)
+	}
+	for _, want := range []string{"unverifiable", "1048576"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the refusal names %q; it reads:\n%s", want, line)
+		}
+	}
+}
+
 // TestNativeOrdinaryRunIsStillOK: a card that merely prints another program's
 // refusal and carries on is a finished run and still says OK.
 func TestNativeOrdinaryRunIsStillOK(t *testing.T) {

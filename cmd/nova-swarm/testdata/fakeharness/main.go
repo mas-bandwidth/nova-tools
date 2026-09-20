@@ -169,6 +169,16 @@ func main() {
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
 	}
+	// FAKE-CAPTURE-BYTES fills the parent tee so a test can prove overflow is
+	// refused rather than silently OK (issue #1892 HOLD: bound classification).
+	if n, ok := number(prompt, "FAKE-CAPTURE-BYTES"); ok && n > 0 {
+		buf := make([]byte, n)
+		for i := range buf {
+			buf[i] = 'x'
+		}
+		_, _ = os.Stdout.Write(buf)
+		fmt.Fprintln(os.Stdout)
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")

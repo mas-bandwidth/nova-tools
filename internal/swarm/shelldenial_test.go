@@ -150,6 +150,17 @@ func TestShellDenialReasonAssertsNoCauseItCannotProve(t *testing.T) {
 	}
 }
 
+func TestShellDenialReasonDoesNotAssertMissingRootsWithoutAdmittedSet(t *testing.T) {
+	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
+	got := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d)
+	if strings.Contains(got, "under no root this wall was handed") {
+		t.Fatalf("reason parse has no admitted root set, so it cannot assert missing roots:\n%s", got)
+	}
+	if !strings.Contains(got, "operation=unverified") {
+		t.Errorf("the reason still names the unverified operation:\n%s", got)
+	}
+}
+
 func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) {
 	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
 	got := ShellDenialReason("a-card", "/jobs/a-card", SandboxNoneByFlag, 0, d)
