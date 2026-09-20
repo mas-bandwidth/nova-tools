@@ -371,3 +371,69 @@ The verbs themselves, the machines file, the retire rule, where `adopt` runs fro
 `adopt` are all in [SPEC-UPDATE.md](SPEC-UPDATE.md). SPEC.md's **Conventions** govern throughout — exit
 codes, the one-line grammar, the field law, no guessed paths — and no unit test of any of this reaches the
 network or a real machine.
+
+## Tests this spec demands
+
+The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly. The suite was seen red first (each test proved able to fail by mutation) before being trusted.
+
+1. `TestCutRefusesASensitiveRangeWithoutJohnnysRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
+2. `TestCutWithJohnnysReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
+3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
+4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
+5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.
+6. `TestCutRefusesARangeTooBigToClassify` — a range whose file list reaches the compare ceiling (300) is refused rather than classified from a prefix.
+7. `TestCutRefusesASecurityReadNoReceiptCouldCarry` — `--security-read` is held to the field law (no whitespace, no `=`, one token) and refused otherwise, even on an ordinary range.
+8. `TestTheTagIsAnnotatedAndCarriesTheSumsDigest` — the tag object's message carries the version, `Cut from <sha>.`, and `sums=<sha256>` (written only with `--sums`).
+9. `TestTheAnnotatedTagIsTheObjectThenTheRef` — the annotated tag is two ordered calls: the tag object (`POST git/tags`) then the ref (`POST git/refs` pointing at that object, never at the commit).
+10. `TestSumsInAnnotationReadsOnlyItsOwnLine` — the `sums=` digest is read by an anchored match on its own line, never a sha drifted into prose.
+11. `TestAdoptReadsTheDigestFromTheTagObject` — `adopt --repo` reads the digest off the tag object, travelling by git rather than beside the bits.
+12. `TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree` — a mismatch refuses and names both digests and the source, and pushes nothing.
+13. `TestAdoptSaysSoWhenTheTagCarriesNoDigest` — a tag with no annotation, or no `sums=` line, is said plainly with the `--expect-sums` remedy.
+14. (absent) — when `--repo` and `--expect-sums` are both given, `--expect-sums` wins.
+15. `TestPullDeletesTheArtifactsHereAndOnEveryMachine` — `pull` deletes the artifacts here and on every machine, keeps the tag, and marks the changelog section with the date and `--reason`.
+16. `TestPullDeletesOnlyWhatTheChecksumFileNames` — deletion is by name from the release's own `SHA256SUMS`; anything else is left alone.
+17. `TestPullDeletesTheArtifactsHereAndOnEveryMachine` — remote deletion is one `rm -f <dir>/<name>` per machine then an `rmdir`, never recursive (`rm -rf` cannot be composed).
+18. (absent) — local deletion goes through `safepath.RemoveUnder` only for regular files; a non-regular file is left alone.
+19. `TestPullRefusesWhenItCannotNameTheFiles` — `--out` must still hold the release; with nothing to read it refuses.
+20. `TestPullRefusesAPathTheRemoteShellWouldReadAsSyntax` — every path is validated (`ValidRemotePath`) on `--dest` and each machine's `dest` column before any remote command is composed.
+21. (absent) — `pull` does not touch an installed binary; it deletes the release's stamp only.
+22. (absent) — a machine that never held the release says so (`held=no`) rather than refusing.
+23. `TestPullDryRunDeletesNothing` — `--dry-run` asks each machine, prints `RELEASE WOULD PULL`, and deletes nothing (changelog included).
+24. `TestMarkPulledIsIdempotentAndRefusesAnUnknownVersion` — the changelog mark is idempotent (a second pull does not stack a note) and an unknown version is refused.
+25. (absent) — artifacts are deleted first, the record last; if the changelog cannot be written the receipt is `PULL FAIL … the artifacts are deleted; mark the section by hand`.
+26. `TestCutNamesTheTruncationBeforeTheHitsItFoundInIt` — a truncated compare is decided and named first, as the field line `RELEASE CUT REFUSED reason=compare-truncated files=300 range=… remedy=…`.
+27. `TestCutRefusesATruncatedRangeEvenWithASecurityRead` — `--security-read` does not get past a truncated compare; only a complete list does.
+28. `TestCutLocalDiffClassifiesTheCompleteListItProduced` — `--local-diff <checkout>` runs `git -C <checkout> diff --name-only <prev>...<head>` (three dots) and classifies that complete list.
+29. `TestCutLocalDiffWritesThePathsFileItClassified` — `--paths-from` is written with `--local-diff` and read back without it.
+30. `TestCutRefusesAPathsFileNobodyProduced` — a paths file without the verb's header line, or for a different range, is refused.
+31. `TestCutLocalDiffWithAReadSaysWhereTheListCameFrom` — the cut prints `RELEASE CUT PATHS source=local-diff|paths-from files=<n> range=…` above its receipt.
+32. `TestBuildTakesSeveralPlatformsAtOnce` — `--platform` is repeatable and comma-separated; every value is resolved.
+33. `TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything` — an unsupported pair refuses before the first compile and leaves nothing behind.
+34. `TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt` — every platform gets its own receipt line and one line names them all (`platforms=`/`sums=` the same list in the same order).
+35. `TestBuildWritesTheSumsDigestBesideTheArtifacts` — `build` writes the digest of the just-verified `SHA256SUMS` to `<release-dir>/SUMS.digest`.
+36. `TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile` — `adopt --expect-sums-from <file>` reads the coordinator's local digest file.
+37. `TestAdoptRefusesADigestFileOnTheFarSide` — `--expect-sums-from host:path` is refused by name.
+38. `TestBuildWritesTheSumsDigestBesideTheArtifacts` — `SUMS.digest` is not listed in the `SHA256SUMS` it digests.
+39. `TestPullDeletesTheDigestFileToo` — `pull` names and removes `SUMS.digest` alongside the listed artifacts, so the final `rmdir` does not find it non-empty.
+40. (absent) — no verb in this package ever asks a machine to hash anything (`sha256sum`, `shasum`, `openssl dgst`).
+41. (absent) — precedence when more than one digest source is given: `--expect-sums`, then `--expect-sums-from`, then `--repo`.
+42. `TestAdoptRefusesWhenTheLocalToolPredatesTheRelease` — `adopt` refuses when the local tool predates the release, naming both versions and the `release install` that fixes it.
+43. (absent) — an adopt whose local binary has no readable stamp does not refuse.
+44. `TestTheStandardScriptLookupSaysWhereItLooked` — the standard-script lookup names the first directory tried, the last, and what it wanted to find there.
+45. `TestTheStandardScriptLookupStopsAtHome` — the walk stops at `$HOME` (never the volume root); a stray script above the stop directory does not answer.
+46. `TestTheStandardScriptLookupWalksUpToTheCheckout` — the walk finds the script from anywhere inside the checkout.
+47. `TestFleetSurveyRefusesARunnerHostAndSurveysTheRest` — `fleet survey --machines <file>` holds benches against the registry (a runner host is refused, its neighbours still surveyed); without `--machines` every bench is surveyed as before.
+48. `TestSnapshotRefusesAMissingFlag` — `nova-version snapshot` requires both `--bin` and `--out` and defaults neither.
+49. `TestTheCommandReferenceDeclaresEveryReleaseVerb` — `docs/CLI.md` declares every release verb, held against `internal/release.Verbs`.
+50. `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec` — the fourth dogfood's lessons are in the release spec.
+51. `TestAdoptTakesWindowsDrivePathsForBinAndDest` — drive-absolute paths are accepted for the windows target only (refused by name elsewhere: `TestAdoptRefusesAWindowsPathForALinuxTarget`).
+52. `TestRemotePathFoldsBackslashesForTheFarSidesShell` — backslashes are folded to forward slashes by `RemotePath` before any command is composed (POSIX shell, no PowerShell: `TestAdoptComposesSlashPathsForAWindowsBench`).
+53. `TestAWindowsPathMayStillCarryNoShellSyntax` — drive-relative (`C:Users\…`) and UNC (`\\…`) paths are refused everywhere.
+54. `TestAdoptFetchesFromAWindowsBuildHost` — `--from host:dir` allows the drive form whatever the target, since that directory belongs to the build host.
+55. `TestTheMachineColumnsTakeAWindowsPath` — the `--machines` columns take the drive form and are normalised the same way.
+56. `TestTheWindowsSumsFileNamesOnlyExeFiles` — `release.ToolFile` is the only place a tool name becomes a file name; a windows release's `SHA256SUMS` lists `.exe` names and nothing else.
+57. `TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout` — `install` reads names out of `SHA256SUMS` rather than rebuilding them, using `.exe` throughout on windows.
+58. `TestAdoptDryRunProbesTheExeOnAWindowsBench` — `adopt` sends/runs `nova-update.exe` (and `pull` removes `.exe`, `snapshot` records the suffix).
+59. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
+60. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the old binary if the fallback also fails.
+61. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.
