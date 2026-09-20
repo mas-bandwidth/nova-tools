@@ -1307,7 +1307,7 @@ open the finding, printed as `red=`, and licenses nothing. No answer turns `reru
 `rerun=licensed`.
 
 **What the caller does.** The closing line gains ` red=<...> rerun=<licensed|no> finding=<yes|no>
-reruns=<n>`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
+reruns=<n> attempt=<n|->`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
 `known-flake` or `infra`; no decider withdrew it; and `reruns`, the forge's own attempt count for
 this job at this sha less one, is zero. That is the whole of "one licensed rerun": a second red at
 the same sha is `finding=yes` whatever the class. Everything else is `finding=yes` at once: a
@@ -1318,6 +1318,22 @@ act. The older *nova-merge classify merge-group failure* adoption (:419-427) kee
 words, including the `rerun=yes` it prints on a provider's answer above its floor; that line is
 older than S4 and does not meet it, and the task for this reading files the follow-up that folds
 that classifier onto this table.
+
+**Where `reruns` comes from, and it is not the caller.** The count is ACQUIRED FROM THE FORGE, in
+the job listing the verb already fetches for the names and the conclusions: `run_attempt` and
+`head_sha` per red job, attempt N meaning N-1 reruns already spent, printed as `attempt=<n>` beside
+`reruns=<n>` so a reader can check the licence against the run. The verb **fails closed**: a red job
+the forge named no attempt or no sha for, and red jobs that disagree with each other about either,
+are a refusal at exit 2 (the invocation could not run: `docs/CLI.md:3259`) with the missing fact named,
+and NO licence field is printed — a verb that cannot tell a first red from a second must not read the
+absence as the first, because the party asking for the licence is the party that wants the rerun. No
+assertion of the caller's may lower the count. `--reruns <n>` survives only as a FLOOR, for a caller
+who knows of a rerun the forge cannot see: the reading takes the greater of it and the forge's count,
+so the flag can withhold a licence and can never grant one the forge's count denies. A run with
+nothing red asks the forge nothing and prints `attempt=-`. The reading is READ-ONLY and consumes
+nothing: two reads of the same immutable attempt are one advisory answer given twice, not a second
+red; it is the caller's own rerun that makes the forge report attempt 2, which is where the licence
+stops.
 
 **The rows.** The next `nova-ci failed --decide` read of the same sha that finds a decision row
 appends an **observed** row (D6): `event=rerun-green` or `event=rerun-red`, with the failing job

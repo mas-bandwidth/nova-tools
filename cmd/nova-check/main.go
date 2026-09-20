@@ -84,6 +84,9 @@ usage:
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 
+cp -R cmd/nova-check/testdata/example-self ./self
+cp -R cmd/nova-check/testdata/example-dogfood/receipts ./dogfood-receipts
+
 example:
   nova-check quickstart --dir ./self
   nova-check attest --home ./self --manifest ./self/MANIFEST

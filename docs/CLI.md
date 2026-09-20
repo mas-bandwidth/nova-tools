@@ -45,11 +45,11 @@ nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3
+LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor\x20list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
-$ nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
+$ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
@@ -380,7 +380,7 @@ INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an anc
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
-INBOX OPEN carrying=3 heard=1
+INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX NOTE id=bo-a57f65f4f21c from=Bo addr=to at=2026-09-12T20:33:50Z path=from-bo/2026-09-12T2033Z-gate-a57f65f4f21c.md: gate
 INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
 INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
@@ -640,7 +640,7 @@ Presence is tracked **per counter**: a 200 with a valid answer and no `usage` ob
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
 ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
-$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
+$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt "opus:failed:missed the cause" --no-jev
 ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- next=- steps=1 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
 ```
 
@@ -848,6 +848,8 @@ AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 Point it at a directory holding `RESULT.md` files and give it a state file of
 its own. `quickstart` passes `--baseline`, so the first run lists the world once
 instead of recording it quietly:
+
+  cp -R cmd/nova-wake/testdata/example-reports ./reports
 
 ```
 $ nova-wake quickstart --state ./wake.state --reports ./reports
@@ -2778,6 +2780,8 @@ run gets wrong.
 
 ### First run
 
+The `probe` and wrapped-command blocks below are multi-line shell commands; paste each whole block, not one line of it.
+
 Ask the machine what it can enforce, then prove the wall before the first job:
 
 ```
@@ -2842,8 +2846,7 @@ The flags above give a command a **wall** around a directory you own and keep.
 `nova-sandbox run` gives it a **place** instead, and then takes the place away:
 
 ```
-$ nova-sandbox run --name j1 --size 8g --timeout 30m \
-               --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
+$ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
 SANDBOX STEP name=create state=start
 SANDBOX STEP name=create state=done ms=2395
 SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Volumes/nova-j1/work ...
@@ -2872,8 +2875,7 @@ same `SANDBOX LEAK` and the same exit codes. What differs is the place and a
 handful of flags ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), rules W1–W12):
 
 ```
-$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 \
-               -- cmd.exe /c "go build ./..."
+$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
 ```
 
 - **The place is a Job Object plus `<scratch>\nova-<n>`, and the two are one
@@ -3180,7 +3182,9 @@ models are listed for the owner to evaluate and pull themselves. No timer is ins
 ### Capture and compare installed binaries
 
 ```sh
+go build -o ./bin/ ./cmd/nova-version
 nova-version snapshot --bin ./bin --out ./before.tsv
+cp ./before.tsv ./after.tsv
 nova-version diff --from ./before.tsv --to ./after.tsv
 ```
 
@@ -3357,6 +3361,35 @@ green report. `--max-lines`
 (default 8) bounds each test's own message lines and counts the rest; `--gh`
 names the executable and `--timeout` (default 2m) budgets one call to it.
 
+`--decide` reads the red rather than only listing it (SPEC-DECIDE.md, *6. The
+CI-red reading*): it classes the failure and appends ` red=<class>
+rerun=<licensed|no> finding=<yes|no> reruns=<n> attempt=<n|->` to the closing
+line. Any
+`--- FAIL` name makes the class `named-test`, or `known-flake` when every
+failing name is in the `--flakes <file>` table (a TSV of test, issue and an
+expiry `YYYY-MM-DD`, read against `--now`, default today, where an expired row
+matches nothing). No `--- FAIL` name and every failed job cancelled is
+`cancelled-leg`; no `--- FAIL` name and every failed job either timed out, had a
+`startup_failure` conclusion, or failed in a step named in `--infra-steps
+<file>` is `infra`. A red the table cannot place prints `red=unknown`. The
+licence is the table's alone: `rerun=licensed` needs a rerunnable class
+(`cancelled-leg`, `known-flake` or `infra`) with no rerun yet spent, and
+everything else is `finding=yes` — a named failing test is never licensed, and a
+second red at one sha is a finding. The reading never reruns anything.
+
+The spent count is the **forge's**, read from the same job listing the verb
+already fetches: the `run_attempt` of the red jobs at this `head_sha`, less one,
+printed as `attempt=<n>` beside `reruns=<n>`. It is not the caller's to set. A
+red job the forge gave no attempt or no sha for, and red jobs that disagree with
+each other about either, are a refusal on stderr at exit 2 and no licence at all,
+because a verb that cannot tell a first red from a second must not guess the
+first. `--reruns <n>` remains only as a FLOOR for a caller who knows of a rerun
+the forge cannot see: the reading takes the greater of it and the forge's count,
+so it can withhold a licence and can never grant one. Re-reading the same
+attempt is not a second red — the answer is advisory and identical each time —
+and the caller's own rerun is what makes the forge report attempt 2, which is
+where the licence stops.
+
 Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
 at=<file:line>` line with that test's own words indented under it; a cancelled
 step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
@@ -3371,8 +3404,9 @@ count, so one missing log never sinks the other jobs' reds. The closing
 `FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n>` always prints,
 and its word is `OK` only when the run said nothing red. It is
 a reader, so exit 1 means the run said something red, exit 0 means it said
-nothing, and exit 2 is a refusal — a bad flag, no such run, or a `gh` that could
-not answer. It runs `gh` for reading only and never merges, enqueues or comments.
+nothing, and exit 2 is a refusal — a bad flag, no such run, a `gh` that could
+not answer, or, under `--decide`, an attempt count the forge would not give.
+It runs `gh` for reading only and never merges, enqueues or comments.
 See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work
