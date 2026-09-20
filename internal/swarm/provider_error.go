@@ -132,6 +132,8 @@ func isRunnerErrorLine(line string) bool {
 		"internal server error",
 		"the upstream",
 		"upstream service",
+		"the gateway",
+		"the provider",
 		"provider is busy",
 		"provider error",
 		"http/",
