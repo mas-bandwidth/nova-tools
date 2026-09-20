@@ -314,8 +314,95 @@ elif [ "$free_g" -lt "$NOVA_MIN_FREE_G" ]; then
   drift "disk free=${free_g}G want>=${NOVA_MIN_FREE_G}G (both launchers refuse below it); largest under $HOME_DIR: $largest"
 fi
 
+# (8) THE TOOLCHAIN MANIFEST: every leg a card may be cut against, at the pin the schema
+# repo's CI uses, RESOLVABLE IN A NON-LOGIN SHELL AND FROM INSIDE THE WALL.
+#
+# Glenn, 2026-09-19: "all fleet machines need to be set up so they can run any cards." Before
+# this block a bench could pass every check above and still refuse two cards in three: the
+# schema manager measured that rust, C# and elixir ran on ONE bench of nine, and fifteen of
+# sixteen cards in one wave came back BLOCKED-TOOLCHAIN.
+#
+# TWO THINGS ARE CHECKED PER ROW, not one.
+#
+#   THE PIN. A toolchain at the wrong version is not a toolchain: hulk's dotnet 8.0.131
+#   against the repo's net10.0 csproj files, and its OTP 25 against the elixir leg's 29.0.5,
+#   each produced a refusal that reads like a code failure.
+#
+#   WHERE IT RESOLVES. internal/swarm/toolchain.go grants exactly TWO home roots on linux --
+#   `sdk` with EXECUTE and `go/pkg/mod` without -- and NOTHING else under HOME. A toolchain
+#   under ~/nova-bench/toolchains, ~/.local/bin or /usr/lib/dotnet is invisible to a card even
+#   though `command -v` finds it. MEASURED, 2026-09-20, on the one bench that was thought to
+#   have all nine:
+#       nova-sandbox --read ~/sdk --read-noexec ~/go/pkg/mod --write /tmp/w \
+#         -- ~/nova-bench/toolchains/rust-1.98.1/bin/rustc --version
+#       SANDBOX OK ...
+#       rustc: error while loading shared libraries: librustc_driver-*.so: cannot open ...
+#   So `sdk` is not a preference, it is the contract, and this block says so per row.
+#
+# THE SHELL IS PART OF THE CHECK. A gate and a card get a NON-LOGIN, NON-INTERACTIVE shell.
+# hetzner had its PATH in ~/.profile, which only a login shell reads, and
+# `make tables-go-fixed-form` died with `/bin/sh: 1: go: not found` while an interactive ssh
+# found go perfectly. The standard's own answer is ~/sdk/env.sh, sourced from the FIRST line
+# of ~/.bashrc (Linux) or ~/.zshenv (macOS), and the row below is what proves it.
+tc_pin() {   # tc_pin <row> <bin> <pin-regex|-> <verargs...>
+  row="$1"; bin="$2"; want="$3"; shift 3
+  path="$(command -v "$bin" 2>/dev/null || true)"
+  if [ -z "$path" ]; then drift "toolchain $row: $bin not on PATH (want ${want:--any-})"; return; fi
+  real="$path"
+  while [ -L "$real" ]; do
+    link="$(readlink "$real")"
+    case "$link" in /*) real="$link" ;; *) real="$(dirname "$real")/$link" ;; esac
+  done
+  out="$("$bin" "$@" 2>&1 | tr -d '\r')"
+  if [ "$want" != "-" ] && ! printf '%s' "$out" | grep -qE -- "$want"; then
+    drift "toolchain $row: $bin is [$(printf '%s' "$out" | grep -v '^$' | head -1)] want $want ($real)"
+    return
+  fi
+  case "$real" in
+    "$SDK_REAL"/*|"$HOME_DIR"/sdk/*|/usr/*|/bin/*|/lib/*) ;;
+    /opt/homebrew/Cellar/go/*|/opt/homebrew/Cellar/sbcl/*|/opt/homebrew/opt/openjdk/*) ;;
+    /Library/Java/JavaVirtualMachines/*|/usr/local/share/dotnet/*) ;;
+    *) drift "toolchain $row: $bin resolves to $real, which is OUTSIDE every root the wall grants (see internal/swarm/toolchain.go); it belongs under $HOME_DIR/sdk" ;;
+  esac
+}
+SDK_REAL="$(cd "$HOME_DIR/sdk" 2>/dev/null && pwd -P)"
+[ -n "$SDK_REAL" ] || SDK_REAL="$HOME_DIR/sdk"
+if [ ! -f "$HOME_DIR/sdk/env.sh" ]; then
+  drift "toolchain env: $HOME_DIR/sdk/env.sh is missing; a card and a gate get a NON-LOGIN shell and a PATH in ~/.profile alone is not read by one"
+fi
+# go is a FLOOR (dev's go.mod asks >= 1.26 and the schema CI pin is the range "1.26"), so it
+# keeps its own NOVA_GO check above; the rest are exact pins from the schema repo.
+tc_pin cargo   cargo   "${NOVA_RUST:-1\.98\.1}"     --version
+tc_pin rustc   rustc   "${NOVA_RUST:-1\.98\.1}"     --version
+tc_pin dotnet  dotnet  "${NOVA_DOTNET:-^10\.0\.}"   --version
+tc_pin elixir  elixir  "${NOVA_ELIXIR:-1\.20\.4}"   --version
+tc_pin erl     erl     "${NOVA_OTP:-^29$}"          -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]),halt().'
+tc_pin node    node    "${NOVA_NODE:-v26\.}"        --version
+tc_pin javac   javac   "${NOVA_JAVA:-^javac 21}"    -version
+tc_pin dart    dart    "${NOVA_DART:-3\.13\.2}"     --version
+tc_pin cc      cc      -                            --version
+tc_pin cxx     c++     -                            --version
+tc_pin make    make    -                            --version
+tc_pin cmake   cmake   -                            --version
+tc_pin git     git     -                            --version
+# sqlite3 is an UNDECLARED BENCH DEPENDENCY found on 2026-09-19 (nova-tools #1948):
+# internal/swarm/opencode.go has `const SQLiteBinary = "sqlite3"` and reads opencode's token
+# database through it, so a bench without it loses token accounting silently.
+tc_pin sqlite3 sqlite3 -                            --version
+# The .NET SDK will not build inside the wall without these two, both measured 2026-09-20.
+if command -v dotnet >/dev/null 2>&1; then
+  for s in "$HOME_DIR"/sdk/dotnet-home/.dotnet/*.dotnetFirstUseSentinel; do
+    [ -e "$s" ] && break
+    drift "toolchain dotnet: no first-use sentinel under $HOME_DIR/sdk/dotnet-home/.dotnet; DotnetFirstTimeUseConfigurer will run NuGet's MigrationRunner and take a named mutex the wall denies"
+  done
+  dmode="$(ls -ld /tmp/.dotnet 2>/dev/null | cut -c1-10)"
+  if [ "$dmode" != "drwxrwxrwx" ]; then
+    drift "toolchain dotnet: /tmp/.dotnet is [${dmode:-absent}] want drwxrwxrwx; the .NET named-mutex root is hard-coded to /tmp (TMPDIR is ignored), .NET rebuilds any level whose mode it dislikes with mkdtemp(\"/tmp/.dotnet.XXXXXX\"), and /tmp is not writable inside the wall"
+  fi
+fi
+
 if [ "$DRIFTS" = "0" ]; then
-  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G"
+  echo "STANDARD OK go=$NOVA_GO bins=${NOVA_WANT:-unset} harness=ok seats=1 free=${free_g}G toolchains=all-legs"
   exit 0
 fi
 echo "STANDARD DRIFT (see lines above)"
