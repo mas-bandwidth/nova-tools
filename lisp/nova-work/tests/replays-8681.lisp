@@ -91,3 +91,42 @@ deadlock nobody can finish.")
         "a is flagged needs-broken after its need is reverted")
     (ok (not (member "acme/work/a" (ready-nodes (kernel-state k)) :test #'string=))
         "a needs-broken dependent is not ready")))
+
+;;; ------------------------------------------------------------------
+;;; E07-F04-01 — Preserve source revision, audit IDs, reports and
+;;; aliases (docs/roadmaps/nova-work.sexp, feature E07-F04 "Fixed Tables
+;;; imported baseline inventory"). The SPEC contract is
+;;; docs/SPEC-WORK.md:7826 — "Original audit IDs, historical reports and
+;;; superseding aliases remain retrievable. They are provenance, not
+;;; current completion assertions." — together with :7786 "Pin the
+;;; baseline membership, source revision and completion unit before
+;;; starting the stream."
+;;;
+;;; A roadmap exported and loaded again must carry the provenance it was
+;;; imported with: its pinned source revision, its audit id, its historical
+;;; reports and its superseding aliases. The kernel's round-trip
+;;; (export-roadmap-view / load-roadmap-view) keeps only :members :axes
+;;; :retired :projections :revision, so the rest is dropped.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE07F04PreserveSourceRevisionAuditIDs" "docs/SPEC-WORK.md:7826"
+    "expected=source-revision,audit-id,reports,aliases=retrievable-after-export/load"
+  (let* ((view (list :id "E07-F04"
+                     :source-revision "8ea5ed8e4656875088250f564e88a965a7135e7c"
+                     :reports '("report-2026-09-15")
+                     :aliases '(("E07-F04-old" . "E07-F04"))
+                     :members '("acme/work/f1")
+                     :axes '()
+                     :retired '()
+                     :projections '()
+                     :revision 3))
+         (loaded (load-roadmap-view (export-roadmap-view view))))
+    (check-string= "8ea5ed8e4656875088250f564e88a965a7135e7c"
+                   (getf loaded :source-revision)
+                   "a roadmap's source revision did not survive export/load")
+    (check-string= "E07-F04" (getf loaded :id)
+                   "a roadmap's audit id did not survive export/load")
+    (check-equal '("report-2026-09-15") (getf loaded :reports)
+                 "a roadmap's historical reports did not survive export/load")
+    (check-equal '(("E07-F04-old" . "E07-F04")) (getf loaded :aliases)
+                 "a roadmap's superseding aliases did not survive export/load")))
