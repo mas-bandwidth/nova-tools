@@ -1,14 +1,17 @@
 package pulse
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -35,6 +38,11 @@ type CutInput struct {
 	Budget    int    // the card's byte budget, when Probe is set; 0 means unbounded
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// ValidateContract preflights every candidate's locator before any card file is
+	// written: a locator that does not resolve (gh repo view non-zero) is refused with
+	// the reason and no card is written, so a dead repo never spends admission plus the
+	// scaffold before an abstain (issue #675).
+	ValidateContract bool
 }
 
 // Cut writes one card per pool.tsv candidate from its typed template and returns the exit
@@ -67,6 +75,20 @@ func Cut(in CutInput) int {
 	zero, flat, metered, flash, pro, skipped, probed := 0, 0, 0, 0, 0, 0, 0
 	skipList := bounded.Capped(in.Stderr, in.Max, "CUT", "skipped", "use --max 0 to show all")
 	var cards []CardRow
+
+	if in.ValidateContract {
+		seen := map[string]bool{}
+		for _, row := range pool {
+			if seen[row.Source] {
+				continue
+			}
+			seen[row.Source] = true
+			if reason := locatorUnresolvable(row.Source); reason != "" {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED locator=%s: %s (check gh auth and the repo name)\n", oneline.Field(row.Source), oneline.Escape(reason))
+				return 2
+			}
+		}
+	}
 
 	for _, row := range pool {
 		if in.Max > 0 && len(cards) >= in.Max {
@@ -150,6 +172,19 @@ func Cut(in CutInput) int {
 }
 
 func isFlashKind(kind string) bool { return textKinds[kind] }
+
+// locatorUnresolvable returns a non-empty reason when the candidate's locator (owner/repo)
+// does not resolve through gh repo view, else "". A locator that does not resolve is a card
+// that would clone nothing and abstain after the scaffold, so cut refuses it up front.
+func locatorUnresolvable(locator string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "repo", "view", locator)
+	if _, err := cmd.Output(); err != nil {
+		return "does not resolve"
+	}
+	return ""
+}
 
 // modelFor decides the model by kind and nowhere else: read/text/tone -> flash, the rest ->
 // pro, with --local naming an ollama/<tag> override for read and text (SPEC-PULSE rule 7).
