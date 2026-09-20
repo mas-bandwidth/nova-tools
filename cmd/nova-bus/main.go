@@ -619,7 +619,6 @@ func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
 
 // ------------------------------------------------------------------------------- verbs
 
-
 func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("prepare")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")

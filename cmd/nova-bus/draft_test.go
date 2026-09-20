@@ -207,3 +207,65 @@ func TestDraftAtomicCreationRace(t *testing.T) {
 	}
 }
 
+func TestDraftOverwriteSymlinkReplacesLinkWithoutTouchingTarget(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sensitive-target.md")
+	initialTargetContent := "SENSITIVE TARGET CONTENT - DO NOT OVERWRITE"
+	if err := os.WriteFile(target, []byte(initialTargetContent), 0o644); err != nil {
+		t.Fatalf("failed to create target file: %v", err)
+	}
+
+	link := filepath.Join(dir, "symlink-draft.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--subject", "gate", "--out", link, "--overwrite").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "DRAFT OK path="+link)
+
+	// Verify target was NEVER overwritten
+	targetData, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("failed to read target: %v", err)
+	}
+	if string(targetData) != initialTargetContent {
+		t.Fatalf("target content was altered! got %q, want %q", string(targetData), initialTargetContent)
+	}
+
+	// Verify link is now a regular file, not a symlink
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("failed to lstat link: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("expected link to be replaced with a regular file, but it is still a symlink")
+	}
+
+	linkData, err := os.ReadFile(link)
+	if err != nil {
+		t.Fatalf("failed to read replaced file: %v", err)
+	}
+	if !strings.Contains(string(linkData), "To: Bo") || !strings.Contains(string(linkData), "From: Ada") {
+		t.Fatalf("replaced file missing draft content:\n%s", string(linkData))
+	}
+}
+
+func TestDraftOverwriteDirectoryRefuses(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+
+	dir := filepath.Join(t.TempDir(), "some-dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--subject", "gate", "--out", dir, "--overwrite").
+		mustCode(t, 1).
+		mustContain(t, "stderr", "is a directory")
+}

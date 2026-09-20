@@ -234,11 +234,28 @@ func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr 
 	}
 
 	// When --overwrite is allowed:
-	// If path is a symlink, remove the symlink itself so we never follow a symlink to write outside.
-	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		_ = os.Remove(path)
+	// If path exists (including as a dangling or valid symlink):
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.IsDir() {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s is a directory\n", oneline.Field(path))
+			return 1
+		}
+		if err := os.Remove(path); err != nil {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: overwrite %s: %s\n", oneline.Field(path), oneline.Err(err))
+			return 2
+		}
 	}
-	if err := os.WriteFile(path, []byte(skeleton), 0o666); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|bus.ONoFollow, 0o666)
+	if err != nil {
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+		return 2
+	}
+	if _, err := fmt.Fprint(f, skeleton); err != nil {
+		f.Close()
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+		return 2
+	}
+	if err := f.Close(); err != nil {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
 		return 2
 	}
