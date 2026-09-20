@@ -1969,6 +1969,19 @@ FILL REFUSED ready=<dir> file=<name> more=<n> remedy="fill reads card-<n>.md and
 One bench takes at most 30 cards in a tick, whatever its capacity says, because the
 rest of the machine is not the fill's to spend.
 
+**Two dealers observing one free seat must not both launch.** Capacity is an
+observation; the claim is a reservation under `--launched/.fill-seats/<bench>/<n>`,
+taken before the card moves out of `--ready`. A losing dealer stands down:
+
+```
+FILL STANDDOWN bench=<name> reason=seat-taken note="another dealer reserved the observed free seat; this tick launches nothing on this bench"
+```
+
+The reservation stays until owned execution is reconciled on a later tick of the
+same process, or a known launch failure releases it. An UNKNOWN launch — the
+launcher started, but owned execution is not established — is not freed. Taking a
+lock around dispatch and dropping it when `Launch` returns is not that reservation.
+
 **`--only <glob>` is the whitelist of cards this run may launch**, repeatable and
 comma-separated, matched against the card's filename with or without the `card-`
 prefix and the `.md` suffix — `--only 96*`, `--only card-9601.md` and `--only 9601`

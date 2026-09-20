@@ -47,6 +47,12 @@ package pulse
 // names no seat, or a seat that is not one plain name, is refused once by name at the loop
 // and dropped from the pool; a fill left with no seated bench refuses with exit 2.
 //
+// Two dealers that both observe one free seat must not both launch (#2029 remainder).
+// Capacity is an observation; the reservation under --launched/.fill-seats is the
+// claim, and it stays until owned execution is reconciled or a known failure
+// releases it. UNKNOWN is not freed. A lock taken around Launch and dropped when
+// Launch returns is not that reservation.
+//
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
 // tick against a fake ready directory, a fake clock and a fake launcher. No test opens an
@@ -84,6 +90,20 @@ const FillInterval = 300 * time.Second
 // nine and wrong for the two that mattered most.
 type CardLauncher interface {
 	Launch(bench, seat, card string) error
+}
+
+// SeatLauncher is an optional CardLauncher that can say a launch is UNKNOWN: the
+// child was started, but owned execution or a known failure is not yet established.
+// Fill keeps that reservation until reconciliation.
+type SeatLauncher interface {
+	LaunchSeat(bench, seat, card string) (unknown bool, err error)
+}
+
+func launchSeat(l CardLauncher, bench, seat, card string) (unknown bool, err error) {
+	if sl, ok := l.(SeatLauncher); ok {
+		return sl.LaunchSeat(bench, seat, card)
+	}
+	return false, l.Launch(bench, seat, card)
 }
 
 // Capacity answers how many cards the named bench can take this tick -- card 9316's
@@ -218,6 +238,13 @@ func plainSeat(s string) bool {
 	})
 }
 
+func (g guardedLauncher) LaunchSeat(bench, seat, card string) (bool, error) {
+	if err := g.reg.RequireBench(bench); err != nil {
+		return false, err
+	}
+	return launchSeat(g.next, bench, seat, card)
+}
+
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
 // directories and stub seams.
 type FillInput struct {
@@ -238,6 +265,7 @@ type FillInput struct {
 	Sleep    func(time.Duration)
 	Launcher CardLauncher
 	Capacity Capacity
+	Seats    SeatReserver // nil uses --launched/.fill-seats
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -322,6 +350,9 @@ func Fill(in FillInput) int {
 			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))
 		}
 	}
+	if in.Seats == nil {
+		in.Seats = fileSeats(filepath.Join(in.Launched, ".fill-seats"))
+	}
 
 	for tick := 1; ; tick++ {
 		// THE STOP FILE, checked before a card is claimed and never in the middle of a
@@ -377,6 +408,9 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // returns the FILL line first, then one FILL HELD line per held card, then the FILL REAPED
 // line when the tick took stale markers away.
 func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickResult) {
+	if in.Seats != nil {
+		in.Seats.ReconcileOwned()
+	}
 	reaped := reapMarkers(in)
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
@@ -418,6 +452,7 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 			want[i] = 0
 		}
 	}
+	observed := append([]int(nil), want...)
 
 	// Round-robin: one card per bench in turn, passes repeat until every bench is at its
 	// capacity or the pool is empty. A card skipped as unknown or held consumes the card
@@ -447,10 +482,34 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 				}
 			}
 			base := filepath.Base(card)
+			var hold SeatHold
+			if in.Seats != nil {
+				got, ok, err := in.Seats.Reserve(bench, observed[i], base)
+				if err != nil {
+					want[i] = 0
+					fmt.Fprintf(in.Stderr, "FILL UNREADABLE bench=%s free=0 reason=%s\n",
+						field(bench), oneline.Err(err))
+					if res.err == nil {
+						res.err = fmt.Errorf("reserve on %s: %w", field(bench), err)
+					}
+					continue
+				}
+				if !ok {
+					want[i] = 0
+					fmt.Fprintf(in.Stderr, "FILL STANDDOWN bench=%s reason=seat-taken note=%q\n",
+						field(bench),
+						"another dealer reserved the observed free seat; this tick launches nothing on this bench")
+					continue
+				}
+				hold = got
+			}
 			moved := filepath.Join(in.Launched, base)
 			if err := os.Rename(card, moved); err != nil {
 				// Another tick or another hand took it first: the card is in exactly
 				// one place at every moment, and a card is never launched twice.
+				if hold != nil {
+					hold.Release()
+				}
 				continue
 			}
 			writeLaunchedMarker(in, moved, base, lane, bench)
@@ -458,13 +517,24 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 				live[lane] = base
 			}
 			want[i]--
-			if err := in.Launcher.Launch(bench, seats[bench], moved); err != nil {
+			unknown, err := launchSeat(in.Launcher, bench, seats[bench], moved)
+			if err != nil {
+				if hold != nil {
+					hold.Release()
+				}
 				failed[i]++
 				failLaunch(in, moved, base, lane, live, err)
 				if res.err == nil {
 					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(bench), err)
 				}
 				continue
+			}
+			if hold != nil {
+				if unknown {
+					hold.KeepUnknown()
+				} else {
+					hold.KeepOwned()
+				}
 			}
 			launched[i]++
 			// The card ran: whatever it failed at before is history, not queue depth (#2013).

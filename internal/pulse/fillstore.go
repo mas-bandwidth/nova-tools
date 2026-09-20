@@ -270,11 +270,14 @@ func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
 // clock ran out AND its process is gone. `live` is held, and so is `DRIFT` -- expired by the
 // clock with the process still running -- because that is what `nova-swarm native` counts
 // when it grants, and a probe that counts fewer deals cards the bench then refuses.
+// UNKNOWN is held: a launch nobody could reconcile is not a free seat (#2029 remainder).
 const leaseStateExpired = "expired"
+const leaseStateUnknown = "UNKNOWN"
 
-// leaseStates is the vocabulary internal/swarm writes. A state outside it is a refusal
-// rather than a guess about which side of held it falls on.
-var leaseStates = map[string]bool{"live": true, "DRIFT": true, leaseStateExpired: true}
+// leaseStates is the vocabulary internal/swarm writes, plus UNKNOWN for a launch
+// that is not yet owned execution. A state outside it is a refusal rather than a
+// guess about which side of held it falls on.
+var leaseStates = map[string]bool{"live": true, "DRIFT": true, leaseStateExpired: true, leaseStateUnknown: true}
 
 // countLeases reads `nova-swarm slots list`'s own output -- one
 // `SLOT <id> owner=<o> pid=<n> label=<l> until=<t> state=<s>` per lease -- and answers how
@@ -306,7 +309,7 @@ func countLeases(listing, owner string) (int, error) {
 		}
 		if !leaseStates[state] {
 			return 0, fmt.Errorf(
-				"the lease listing carries state=%s, which is not one this fill knows (live, DRIFT, expired); refusing to guess whether it is held",
+				"the lease listing carries state=%s, which is not one this fill knows (live, DRIFT, expired, UNKNOWN); refusing to guess whether it is held",
 				oneline.Field(state))
 		}
 		if rowOwner == owner && state != leaseStateExpired {

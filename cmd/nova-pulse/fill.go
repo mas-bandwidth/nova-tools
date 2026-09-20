@@ -313,6 +313,14 @@ type flashLauncher struct {
 // the Studio (`studio`) and the Air (`air`), whose cards all died at
 // `SECRETS EXEC FAIL store file .../swarm-studio.yaml is absent` and bounced.
 func (l flashLauncher) Launch(bench, seat, card string) error {
+	_, err := l.LaunchSeat(bench, seat, card)
+	return err
+}
+
+// LaunchSeat is the grace-aware launch: a child still running when the grace
+// fires is UNKNOWN — started, but not yet owned execution — and fill keeps that
+// reservation until reconciliation.
+func (l flashLauncher) LaunchSeat(bench, seat, card string) (bool, error) {
 	bin := l.bin
 	if bin == "" {
 		bin = "flash-native-bench.sh"
@@ -326,26 +334,26 @@ func (l flashLauncher) Launch(bench, seat, card string) error {
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = io.Discard, said
 	if err := cmd.Start(); err != nil {
-		return said.wrap(err)
+		return false, said.wrap(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	if l.grace <= 0 {
 		if err := <-done; err != nil {
-			return said.wrap(err)
+			return false, said.wrap(err)
 		}
-		return nil
+		return false, nil
 	}
 	timer := time.NewTimer(l.grace)
 	defer timer.Stop()
 	select {
 	case err := <-done:
 		if err != nil {
-			return said.wrap(err)
+			return false, said.wrap(err)
 		}
-		return nil
+		return false, nil
 	case <-timer.C:
-		return nil
+		return true, nil
 	}
 }
 
