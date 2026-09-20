@@ -73,6 +73,37 @@ func excludeTranscriptCode(s string) string {
 	return strings.Join(out, "\n")
 }
 
+// providerEventJSON returns a JSON object carried on an approved provider
+// event line: a runner/client prefix (error:, fake harness:, rpc error:, …)
+// or an explicit [PROVIDER_ERROR] / PROVIDER_ERROR: marker. Bare `{` anywhere
+// in mixed harness output is transcript, not a provider event.
+func providerEventJSON(clean string) (string, bool) {
+	var rest string
+	switch {
+	case strings.HasPrefix(clean, "[PROVIDER_ERROR]"):
+		rest = strings.TrimSpace(clean[len("[PROVIDER_ERROR]"):])
+	case strings.HasPrefix(clean, "PROVIDER_ERROR:"):
+		rest = strings.TrimSpace(clean[len("PROVIDER_ERROR:"):])
+	default:
+		lower := strings.ToLower(clean)
+		matched := false
+		for _, p := range runnerErrorPrefixes {
+			if strings.HasPrefix(lower, p) {
+				rest = strings.TrimSpace(clean[len(p):])
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return "", false
+		}
+	}
+	if !strings.HasPrefix(rest, "{") {
+		return "", false
+	}
+	return rest, true
+}
+
 func parseStructuredJSONUnknownError(s string) (ProviderFailure, bool) {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
@@ -80,37 +111,33 @@ func parseStructuredJSONUnknownError(s string) (ProviderFailure, bool) {
 		if clean == "" {
 			continue
 		}
-		var jsonText string
-		if strings.HasPrefix(clean, "{") {
-			jsonText = strings.Join(lines[i:], "\n")
-		} else if strings.HasPrefix(strings.ToLower(clean), "error:") {
-			rest := strings.TrimSpace(clean[6:])
-			if strings.HasPrefix(rest, "{") {
-				firstLine := rest
-				restLines := append([]string{firstLine}, lines[i+1:]...)
-				jsonText = strings.Join(restLines, "\n")
-			}
+		rest, ok := providerEventJSON(clean)
+		if !ok {
+			continue
 		}
-		if jsonText != "" {
-			dec := json.NewDecoder(strings.NewReader(jsonText))
-			var payload jsonUnknownErrorPayload
-			if err := dec.Decode(&payload); err == nil && strings.EqualFold(payload.Name, "UnknownError") {
-				ref := strings.TrimSpace(payload.Data.Ref)
-				why := "unknown-error"
-				msg := strings.ToLower(payload.Data.Message)
-				if strings.Contains(msg, "unexpected server error") || strings.Contains(msg, "internal server error") || strings.Contains(msg, "econnreset") || strings.Contains(msg, "connection reset") {
-					why = "unexpected-server-error"
-				}
-				return ProviderFailure{Why: why, Ref: ref}, true
+		jsonText := rest
+		if i+1 < len(lines) {
+			jsonText = rest + "\n" + strings.Join(lines[i+1:], "\n")
+		}
+		dec := json.NewDecoder(strings.NewReader(jsonText))
+		var payload jsonUnknownErrorPayload
+		if err := dec.Decode(&payload); err == nil && strings.EqualFold(payload.Name, "UnknownError") {
+			ref := strings.TrimSpace(payload.Data.Ref)
+			why := "unknown-error"
+			msg := strings.ToLower(payload.Data.Message)
+			if strings.Contains(msg, "unexpected server error") || strings.Contains(msg, "internal server error") || strings.Contains(msg, "econnreset") || strings.Contains(msg, "connection reset") {
+				why = "unexpected-server-error"
 			}
+			return ProviderFailure{Why: why, Ref: ref}, true
 		}
 	}
 	return ProviderFailure{}, false
 }
 
 // ClassifyProviderFailure inspects captured child output for provider-side errors.
-// It requires structured error markers ([PROVIDER_ERROR]), JSON UnknownError payloads,
-// or bounded stderr / runner error lines, ensuring transcript prose does not spoof verdicts.
+// It requires structured error markers ([PROVIDER_ERROR]), UnknownError JSON on an
+// approved runner/provider event line, or bounded stderr / runner error lines.
+// Bare JSON in mixed harness output (fenced or unfenced source examples) is transcript.
 func ClassifyProviderFailure(raw []byte) (ProviderFailure, bool) {
 	if len(raw) == 0 {
 		return ProviderFailure{}, false
@@ -189,24 +216,25 @@ func ClassifyProviderFailure(raw []byte) (ProviderFailure, bool) {
 	return ProviderFailure{}, false
 }
 
+var runnerErrorPrefixes = []string{
+	"error:",
+	"fake harness:",
+	"rpc error:",
+	"unexpected server error",
+	"internal server error",
+	"the upstream",
+	"upstream service",
+	"the gateway",
+	"the provider",
+	"provider is busy",
+	"provider error",
+	"http/",
+	"status code:",
+}
+
 func isRunnerErrorLine(line string) bool {
 	lower := strings.ToLower(line)
-	prefixes := []string{
-		"error:",
-		"fake harness:",
-		"rpc error:",
-		"unexpected server error",
-		"internal server error",
-		"the upstream",
-		"upstream service",
-		"the gateway",
-		"the provider",
-		"provider is busy",
-		"provider error",
-		"http/",
-		"status code:",
-	}
-	for _, p := range prefixes {
+	for _, p := range runnerErrorPrefixes {
 		if strings.HasPrefix(lower, p) {
 			return true
 		}

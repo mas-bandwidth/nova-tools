@@ -110,6 +110,40 @@ func TestNativeMarkdownFencedUnknownErrorIsNotProviderFailure(t *testing.T) {
 	}
 }
 
+// TestNativeUnfencedSourceExampleUnknownErrorIsNotProviderFailure proves unfenced
+// UnknownError JSON copied as a source example in mixed harness output is transcript,
+// not a provider event: one launch, NATIVE INCOMPLETE, never NATIVE PROVIDER.
+func TestNativeUnfencedSourceExampleUnknownErrorIsNotProviderFailure(t *testing.T) {
+	card := "source example copied from provider docs:\n" +
+		`{"name":"UnknownError","data":{"message":"internal server error"}}` +
+		"\nFAKE-ECHO-PROMPT\nFAKE-LAUNCHES\nFAKE-RC 1\n"
+	out, _, _, slot := nativeRunCapture(t, "unfenced-json", card)
+
+	capture, err := os.ReadFile(filepath.Join(slot, "jobs", "unfenced-json", "harness-output.log"))
+	if err != nil {
+		t.Fatalf("harness-output.log missing: %v", err)
+	}
+	if !strings.Contains(string(capture), `"name":"UnknownError"`) {
+		t.Fatalf("production capture must contain the unfenced fixture:\n%s", capture)
+	}
+
+	if strings.Contains(out, "NATIVE PROVIDER") {
+		t.Fatalf("unfenced source example classified as provider failure:\n%s", out)
+	}
+	if !strings.Contains(out, "NATIVE INCOMPLETE ") {
+		t.Fatalf("unfenced transcript with rc=1 must remain NATIVE INCOMPLETE:\n%s", out)
+	}
+
+	launchesRaw, err := os.ReadFile(filepath.Join(slot, "jobs", "unfenced-json", "launches"))
+	if err != nil {
+		t.Fatalf("launches record missing: %v", err)
+	}
+	launches := strings.Count(string(launchesRaw), "launch")
+	if launches != 1 {
+		t.Fatalf("unfenced transcript must not retry, got %d launches, want 1", launches)
+	}
+}
+
 // TestNativeProviderVerdictOn5xx proves that a 5xx server error produces NATIVE PROVIDER.
 func TestNativeProviderVerdictOn5xx(t *testing.T) {
 	out, _, _, slot := nativeRunCapture(t, "err-5xx", "FAKE-5XX\n")

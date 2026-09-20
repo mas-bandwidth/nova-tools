@@ -78,11 +78,23 @@ func TestClassifyProviderFailure(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			name:    "bare unknown error",
-			log:     `{"name": "UnknownError", "data": {}}`,
-			wantWhy: "unknown-error",
-			wantRef: "",
+			name:    "runner-channel json unknown error",
+			log:     `fake harness: {"name": "UnknownError", "data": {"message": "Unexpected server error.", "ref": "err_harness_json"}}`,
+			wantWhy: "unexpected-server-error",
+			wantRef: "err_harness_json",
 			wantOK:  true,
+		},
+		{
+			name:    "provider-error marker json unknown error",
+			log:     `[PROVIDER_ERROR] {"name": "UnknownError", "data": {"ref": "err_struct_json"}}`,
+			wantWhy: "unknown-error",
+			wantRef: "err_struct_json",
+			wantOK:  true,
+		},
+		{
+			name:   "negative control: bare JSON UnknownError without runner event",
+			log:    `{"name": "UnknownError", "data": {}}`,
+			wantOK: false,
 		},
 		{
 			name:    "structured marker rate limit with ref",
@@ -192,6 +204,21 @@ func TestClassifyProviderFailure(t *testing.T) {
 				"```json\n" +
 				`{"name":"UnknownError","data":{"message":"internal server error"}}` +
 				"\n```\n",
+			wantOK: false,
+		},
+		{
+			name: "negative control: unfenced source-example JSON UnknownError in mixed harness output",
+			log: "source example copied from provider docs:\n" +
+				`{"name":"UnknownError","data":{"message":"internal server error"}}` +
+				"\n",
+			wantOK: false,
+		},
+		{
+			name: "negative control: mixed harness prose then unfenced UnknownError JSON",
+			log: "fake harness: ran the card\n" +
+				"source example copied from provider docs:\n" +
+				`{"name":"UnknownError","data":{"message":"internal server error"}}` +
+				"\nFAIL\n",
 			wantOK: false,
 		},
 		{
