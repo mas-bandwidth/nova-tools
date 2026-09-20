@@ -825,6 +825,13 @@ and two with one `at` to the second fold **hold-last**, as rule 18 folds
 red-last; the tool deletes no record, and the lane branch's history keeps
 the hold.
 
+**Amended by [SPEC-DECIDE.md](SPEC-DECIDE.md) reading 3, *The hold check* (draft, 2026-09-19;
+#1572, #1627), which [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §6 points to:** `batch`, `land`,
+`queue sweep` and `react` fold holds too — the lane's line-level APPROVE/HOLD records, and the
+forge's comments and reviews, which can only ADD a hold and never approve or release — and
+refuse a held member, read once at admission and again at the door; a scoped APPROVE releases
+only the hold ids it names, and no flag ignores a hold.
+
 **An approve from the author is not a read.** The prototype counts any recorded
 approve, which made a self-approve indistinguishable from a read — and the whole
 point of the read condition is that somebody other than the writer looked
@@ -1543,16 +1550,16 @@ A card writes these first, each seen red before it is trusted; the network, the 
 
 **The rule (Glenn, 2026-09-18).** *Nothing reaches the dev merge queue but a batch.* The batch verb is the only enqueuer; swarms produce branches, never queue entries.
 
-**One function.** `internal/merge.Enqueuer.Enqueue(ctx, pr, jump)` is the ONE function in the tools that admits anything to a merge queue. It speaks the `enqueuePullRequest` GraphQL mutation — at the front of the queue when `jump` — and it is never `gh pr merge` in any spelling, because `--auto` does not enqueue at all: it leaves a standing instruction the forge executes later, with no caller in the room. It refuses, BEFORE reaching the forge, anything whose head branch is not `rowan/integration-*` unless the caller presents that head's own `BATCH OK` receipt: the line `nova-merge batch` prints after it builds, vets, tests and runs the lisp suite over the merged tree. A receipt naming another sha is refused, and so is one whose `members=none` — that batch dropped everything and lands the base.
+**One function.** `internal/merge.Enqueuer.Enqueue(ctx, pr, jump)` is the ONE function in the tools that admits anything to a merge queue. It speaks the `enqueuePullRequest` GraphQL mutation — at the front of the queue when `jump` — and it is never `gh pr merge` in any spelling, because `--auto` does not enqueue at all: it leaves a standing instruction the forge executes later, with no caller in the room. It refuses, BEFORE reaching the forge, anything whose caller does not present that head's own `BATCH OK` receipt: the line `nova-merge batch` prints after it builds, vets, tests and runs the lisp suite over the merged tree. A head under `rowan/integration-*` is a branch a card can also write (nova-tools#1898), not evidence the gate ran, and it is not a key — `nova-merge sweep` and pulse `GHEnqueuer` offer a head with no receipt and run no hold fold, so the prefix alone used to admit a card PR as if it were the batch. A receipt naming another sha is refused, and so is one whose `members=none` — that batch dropped everything and lands the base.
 
 **One caller.**
 
 ```
-nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
 nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
 ```
 
-`land` reads the pull request back from the forge and enqueues it at the front after three refusals: not open, its own checks not green, or a head that is not a batch's. The two green-nesses are different questions and both are asked — the gate's green is a bench's, CI's green is the forge's on the commit the queue will take, and integration-4 went green on hulk and red on three CI legs. `--receipt-file` takes the LAST line of a file, so a caller may hand it the gate's whole output. A refusal is exit 1 (the verb ran and said NO); a read that failed is exit 2.
+`land` reads the pull request back from the forge and enqueues it at the front after three refusals: not open, its own checks not green, or a head that is not a batch's. The two green-nesses are different questions and both are asked — the gate's green is a bench's, CI's green is the forge's on the commit the queue will take, and integration-4 went green on hulk and red on three CI legs. `--receipt-file` takes the LAST line of a file, so a caller may hand it the gate's whole output. **The receipt is what names the members:** before `Enqueuer.Enqueue`, land folds every `members=` number again from the wire, so a HOLD posted on a member after `BATCH OK` refuses the whole landing (#1894, the 02:34Z hole). A head under `rowan/integration-*` is a branch's name and not that list, so a land that carries no `members=` list to fold is `LAND REFUSED` `no-receipt` rather than enqueued with the fold skipped. A refusal is exit 1 (the verb ran and said NO); a read that failed is exit 2.
 
 `queue audit` is the other half: it lists every open pull request carrying an auto-merge and takes it off — the hand sweep that removed 27 that morning, as a verb, with every entry named and one line of counts. `--dry-run` lists and writes nothing. It is not a lane verb and names its repository outright.
 

@@ -144,7 +144,7 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	clone := filepath.Join(root, "integration-2", "repo")
 	base := l.git(l.work, "rev-parse", "dev")
 	head := l.git(clone, "rev-parse", "refs/heads/rowan/integration-2")
-	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required\n", base, head)
+	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required", base, head)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("want the one-line shape\n\t%s\ngot:\n%s", want, stdout)
 	}

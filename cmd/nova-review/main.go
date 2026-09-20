@@ -32,6 +32,10 @@ usage:
   nova-review port --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
   nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
                          revert every non-test hunk in a throwaway worktree at the head and run the changed tests: they must fail
+  nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
+                         apply ONE seeded defect in a throwaway worktree at the head and run the named suites: they must fail. The edit count is asserted, not reported: exactly one, else MUTATE REFUSED.
+  nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
+                         revert the commit's non-test files, keep the tests, run the named packages: the verdict is computed from exit codes and test names, never judged
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -76,6 +80,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return port(args[1:], out, errOut)
 	case "mutate":
 		return mutate(args[1:], out, errOut)
+	case "guard":
+		return guard(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}

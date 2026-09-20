@@ -46,9 +46,21 @@ digest of the bytes it actually read."
   (format nil "body=$(cat); d=$(~A); printf '%s %s %s\\n' ~A ~A \"$d\""
           *shell-sha256* recipient receipt-id))
 
+(defun receipt-kernel (&key (offer "o-1") (node "acme/work/f1/t1") (attempt "a-1")
+                            (generation 1) journal)
+  "A kernel whose control state already pins the offer the receipt will name
+(src/control.lisp `prepare-offer`), so the one writer has an immutable tuple to
+revalidate the receipt against (SPEC-WORK.md:3864-3865)."
+  (let ((k (if journal
+               (make-kernel :state (make-seed-state *seed*) :journal journal)
+               (fresh))))
+    (prepare-offer k offer node attempt :generation generation)
+    k))
+
 (defun ack-request (&key (verb :acknowledge) (node "acme/work/f1/t1") (by "rowan")
                          (offer "o-1") (attempt "a-1") (reply "receipt-1")
                          (stage :received) provenance provenance-sha256 staged
+                         expect staged-payload payload-sha256 generation
                          lease-by lease-default sender receipt-digest effect
                          (request "ack-1") (stamp "2026-09-14T12:00:00Z")
                          (generation-owner "gen-4"))
@@ -58,6 +70,10 @@ digest of the bytes it actually read."
                 :request request :stamp stamp :clock :tool
                 :generation-owner generation-owner)
           (when (eq verb :acknowledge) (list :stage stage))
+          (when expect (list :expect expect))
+          (when staged-payload (list :staged-payload staged-payload))
+          (when payload-sha256 (list :payload-sha256 payload-sha256))
+          (when generation (list :generation generation))
           (when lease-by (list :lease-by lease-by))
           (when lease-default (list :lease-default lease-default))
           (when sender (list :sender sender))
@@ -77,7 +93,7 @@ digest of the bytes it actually read."
 
     ;; (1) No verifier is configured: a copied bus body is provenance data and
     ;; never authority (SPEC-WORK.md:3857-3859).
-    (let* ((k (fresh))
+    (let* ((k (receipt-kernel))
            (before (state-revision (kernel-state k)))
            (staged (stage-receipt k :provenance pointer :recipient "glenn")))
       (check-equal nil (staged-input-valid-p staged)
@@ -96,7 +112,7 @@ digest of the bytes it actually read."
 
     ;; (2) A verifier outage -- the operator's process exits non-zero -- is the
     ;; same refusal, and never a bus body promoted to authority (:3868).
-    (let* ((k (fresh))
+    (let* ((k (receipt-kernel))
            (before (state-revision (kernel-state k))))
       (configure-verifier k :recipient "glenn" :command "exit 7")
       (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
@@ -112,7 +128,7 @@ digest of the bytes it actually read."
 
     ;; (3) A result that names another recipient is not the configured
     ;; verifier's result (SPEC-WORK.md:3859).
-    (let ((k (fresh)))
+    (let ((k (receipt-kernel)))
       (configure-verifier k :recipient "glenn"
                             :command (operator-verifier-command "rowan" "receipt-9"))
       (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
@@ -127,7 +143,7 @@ digest of the bytes it actually read."
 
     ;; (4) The three derived fields are the session's own half and are refused
     ;; when a plain request carries them (SPEC-WORK.md:3860-3862).
-    (let ((k (fresh)))
+    (let ((k (receipt-kernel)))
       (configure-verifier k :recipient "glenn"
                             :command (operator-verifier-command "glenn" "receipt-1"))
       (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
@@ -153,7 +169,7 @@ digest of the bytes it actually read."
     ;; identity, a stable receipt id and the digest of the received bytes; the
     ;; session derives :sender, :receipt-digest and :effect from it, and the one
     ;; writer admits one envelope (SPEC-WORK.md:3859-3865).
-    (let* ((k (fresh))
+    (let* ((k (receipt-kernel))
            (before (state-revision (kernel-state k))))
       (configure-verifier k :recipient "glenn"
                             :command (operator-verifier-command "glenn" "receipt-1"))
@@ -202,7 +218,7 @@ digest of the bytes it actually read."
 
     ;; (6) The grammar's own shape: `--stage accepted` requires --by and
     ;; --default, `--stage received` refuses both (SPEC-WORK.md:2295).
-    (let ((k (fresh)))
+    (let ((k (receipt-kernel)))
       (configure-verifier k :recipient "glenn"
                             :command (operator-verifier-command "glenn" "receipt-1"))
       (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
@@ -221,6 +237,14 @@ digest of the bytes it actually read."
           (check-equal nil okp "--stage received with --by and --default is refused")
           (check-equal 2 code "that refusal is exit 2")
           (ok (search "--by and --default" line) "the refusal names them: ~A" line))
+        ;; An acceptance stands on a verified delivery: the received receipt is
+        ;; admitted first (SPEC-WORK.md:3853-3855).
+        (multiple-value-bind (okp line)
+            (submit k (ack-request :stage :received :provenance pointer
+                                   :provenance-sha256 digest :staged staged
+                                   :reply "receipt-2" :request "ack-received-first"))
+          (ok okp "the received receipt is admitted first: ~A" line)))
+      (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
         (multiple-value-bind (okp line code)
             (submit k (ack-request :stage :accepted :lease-by "30m"
                                    :lease-default "release" :provenance pointer
@@ -245,7 +269,7 @@ digest of the bytes it actually read."
          (journal-path (test-journal-path "receipt-admission"))
          (j1 (open-file-journal journal-path :initial-state-hash init-digest)))
     (unwind-protect
-         (let ((k1 (make-kernel :state (make-seed-state *seed*) :journal j1)))
+         (let ((k1 (receipt-kernel :offer "o-7" :attempt "a-7" :journal j1)))
            (configure-verifier k1 :recipient "glenn" :command command)
            (let ((staged (stage-receipt k1 :provenance pointer :recipient "glenn")))
              (multiple-value-bind (okp line code)
@@ -295,7 +319,7 @@ digest of the bytes it actually read."
         (close-file-journal j2)))
     ;; The fake journal's twin: the same admission over the ordering journal,
     ;; which tests ordering and not durability.
-    (let ((k3 (fresh)))
+    (let ((k3 (receipt-kernel :offer "o-7" :attempt "a-7")))
       (configure-verifier k3 :recipient "glenn" :command command)
       (let ((staged (stage-receipt k3 :provenance pointer :recipient "glenn")))
         (multiple-value-bind (okp line)
