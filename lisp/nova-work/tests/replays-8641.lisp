@@ -300,3 +300,46 @@
                      "the attempt is a field on the event, never a node kind")
       (check-string= "root/f/p/l" (work-event-node ev)
                      "the attempt's event addresses the leaf task, never replaces it"))))
+
+;;; ------------------------------------------------------------------
+;;; E10-F03-03 (docs/SPEC-WORK.md:7239-7240, :7089-7098)
+;;; Map each suite to an owner, command and CI lane without duplicating
+;;; its acceptance evidence.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F03MapEachSuiteToAn"
+    "docs/SPEC-WORK.md:7239-7240,7089-7098"
+    "expected=each-suite=owner-command-lane;lane=per-change-six-nightly-fifteen;owner=non-empty;command=non-empty;evidence=not-duplicated"
+  (let ((per-change *per-change-suites*)
+        (nightly *nightly-suites*))
+    ;; the two named lanes cover the whole preservation/recovery table: six
+    ;; suites run per change, the other fifteen nightly or pre-release.
+    (check-equal 6 (length per-change) "six suites are not named per-change")
+    (check-equal 15 (length nightly) "fifteen suites are not named nightly")
+    (check-equal 21
+                 (length (remove-duplicates (append per-change nightly)
+                                            :test #'string=))
+                 "the two lanes name fewer than 21 distinct suites")
+    ;; each suite is mapped to an owner, a command and a CI lane.
+    (dolist (suite (append per-change nightly))
+      (let ((mapping (suite-mapping-for suite)))
+        (ok mapping "~A is mapped to no owner, command or CI lane" suite)
+        (ok (plusp (length (suite-mapping-owner mapping)))
+            "~A's owner is empty" suite)
+        (ok (plusp (length (suite-mapping-command mapping)))
+            "~A's command is empty" suite)
+        (ok (member (suite-mapping-lane mapping) '(:per-change :nightly))
+            "~A's CI lane is neither per-change nor nightly" suite)))
+    ;; the lane each suite is mapped to is the lane the spec names for it.
+    (dolist (suite per-change)
+      (check-equal :per-change (suite-lane suite)
+                   (format nil "~A is not in the per-change lane" suite)))
+    (dolist (suite nightly)
+      (check-equal :nightly (suite-lane suite)
+                   (format nil "~A is not in the nightly lane" suite)))
+    ;; an unknown name maps to nothing.
+    (check-equal nil (suite-mapping-for "no-such-suite")
+                 "an unknown name resolves to a mapping")
+    ;; no mapping duplicates its suite's acceptance evidence.
+    (check-equal t (acceptance-evidence-not-duplicated-p)
+                 "a suite map entry duplicates its acceptance evidence")))

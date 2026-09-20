@@ -854,6 +854,68 @@ absorbed (SPEC-WORK.md:6232)."
 
 
 ;;; ------------------------------------------------------------------
+;;; map-each-suite-to-an-owner-command-and-ci-lane (SPEC-WORK.md:7089-7098,
+;;; :7239-7240)
+;;; ------------------------------------------------------------------
+
+(defparameter *per-change-suites*
+  '("format-determinism" "referential-integrity" "retry-protocol"
+    "read-only-intake" "undo-redo" "roadmap-proof")
+  "The six suites run per change, over a bounded fixture subset
+(SPEC-WORK.md:7093-7095).")
+
+(defparameter *nightly-suites*
+  '("source-inventory" "import-replay" "moving-source" "archive-completeness"
+    "full-round-trip" "old-history" "atomic-mutation" "async-operations"
+    "single-writer" "indexes-and-counters" "materialized-working-set"
+    "batches-and-pipelines" "recovery" "schema-evolution" "hostile-data")
+  "The fifteen suites run nightly or pre-release, over their whole matrices
+(SPEC-WORK.md:7095-7098).")
+
+(defstruct (suite-mapping
+             (:constructor make-suite-mapping (&key suite owner command lane)))
+  "One suite mapped to its owner, command and CI lane. Only these four fields
+are carried: the suite's acceptance evidence -- its required cases and pass
+condition, which live in the spec's own table -- is not duplicated here
+(SPEC-WORK.md:7239-7240)."
+  suite owner command lane)
+
+(defparameter *suite-map*
+  (append
+   (mapcar (lambda (suite)
+             (make-suite-mapping :suite suite :owner "stella"
+                                 :command "./run-tests.sh" :lane :per-change))
+           *per-change-suites*)
+   (mapcar (lambda (suite)
+             (make-suite-mapping :suite suite :owner "stella"
+                                 :command "./run-tests.sh" :lane :nightly))
+           *nightly-suites*))
+  "Every suite of Preservation and recovery acceptance, mapped to its owner,
+command and CI lane, its acceptance evidence left in the spec's table.")
+
+(defun suite-mapping-for (suite)
+  "The mapping for SUITE, or NIL when it names no accepted suite."
+  (find suite *suite-map* :key #'suite-mapping-suite :test #'string=))
+
+(defun suite-lane (suite)
+  "The CI lane SUITE runs in -- :per-change or :nightly -- or NIL."
+  (let ((mapping (suite-mapping-for suite)))
+    (and mapping (suite-mapping-lane mapping))))
+
+(defun acceptance-evidence-not-duplicated-p ()
+  "True when no suite mapping holds its suite's acceptance evidence. A mapping
+carries the suite name, owner, command and lane only; the required cases and
+pass condition stay in the spec's table, never copied into the mapping
+(SPEC-WORK.md:7239-7240)."
+  (every (lambda (mapping)
+           (and (stringp (suite-mapping-suite mapping))
+                (stringp (suite-mapping-owner mapping))
+                (stringp (suite-mapping-command mapping))
+                (member (suite-mapping-lane mapping) '(:per-change :nightly))))
+         *suite-map*))
+
+
+;;; ------------------------------------------------------------------
 ;;; folded from replays-8645.lisp (nova-tools #1102)
 ;;; ------------------------------------------------------------------
 

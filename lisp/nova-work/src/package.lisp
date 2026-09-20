@@ -1338,6 +1338,13 @@
     #:archive-gaps-explicit-p
     #:archive-absorbable-p
     #:author-retains-source-p
+    ;; map-each-suite-to-an-owner-command-and-ci-lane (SPEC-WORK.md:7089-7098, :7239-7240)
+    #:*per-change-suites* #:*nightly-suites* #:*suite-map*
+    #:suite-mapping #:make-suite-mapping #:suite-mapping-p
+    #:suite-mapping-suite #:suite-mapping-owner
+    #:suite-mapping-command #:suite-mapping-lane
+    #:suite-mapping-for #:suite-lane
+    #:acceptance-evidence-not-duplicated-p
     ;; replays-8642: bounds-are-not-prompts
     #:launcher #:make-launcher
     #:launcher-input-bound #:launcher-output-bound
