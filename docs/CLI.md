@@ -3470,7 +3470,9 @@ bits: `--repo <owner/name>` reads it off the annotated tag, `--expect-sums-from 
 it out of this host's own build (which is how a release with no tag is adopted at all), or
 `--expect-sums <sha256>` names it outright. The digest file must be local. `--machines` is one machine
 per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` asks every machine what
-it holds and installs nothing.
+it holds and installs nothing. The stream lands in `<version>.partial/` and is renamed into place
+only after the bench verifies every artifact against `SHA256SUMS`; "already holds" is that verified
+count (`22/22`), never an existence check.
 
 ```sh
 nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64

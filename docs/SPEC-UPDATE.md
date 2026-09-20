@@ -549,7 +549,12 @@ something it could have known, or hid what it was about to do:
   action=…` line each, nothing streamed and nothing installed. A plan composed without
   asking is a plan about a fleet somebody remembers rather than the one that exists.
 - **`adopt` streams only what a machine does not already have.** It reads that machine's
-  own `SHA256SUMS` first; if it matches, nothing is sent. The receipt carries `sent=yes|no`
+  own `SHA256SUMS` first and then verifies every named artifact against it. "Already holds"
+  prints the verified count (`22/22`), never an existence check: a directory whose checksum
+  file matches but that is missing a file, or carrying a corrupt one, is re-streamed. The
+  stream lands in `<version>.partial/` and is renamed into place only after that verify
+  passes, so a killed transfer cannot leave a final directory the next adopt would trust.
+  The receipt carries `sent=yes|no`
   **separately from** `skipped=`, because they are two different facts: `sent=` is the
   stream, `skipped=` is the tools. A machine can be `sent=no tools=0 skipped=21` — it had
   everything already — or `sent=yes tools=21`. The install runs either way: the bits being
