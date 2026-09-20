@@ -324,3 +324,39 @@ a closed node D, under the coordinator scope \"coord\"."
       (ok (<= *intake-visits* (* 4 (length wide)))
           "the high-fan-out input is scanned linearly (~D visits for ~D bytes)"
           *intake-visits* (length wide)))))
+
+;;; ------------------------------------------------------------------
+;;; E02-F03-03 "Never unlink another live process lock or endpoint"
+;;; (docs/roadmaps/nova-work.sexp:619) — docs/SPEC-WORK.md:166:
+;;; a start that cannot take the journal lock refuses and "never unlinks
+;;; another process's lock"; release keeps the `<journal>.lock` file too,
+;;; so a next taker can still name the holder and the file is never
+;;; removed under anyone (the endpoint half is SPEC-WORK.md:174-175,
+;;; where only a socket whose own lock is free and answers nothing is
+;;; unlinked).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F03NeverUnlinkAnotherLiveProcess" "docs/SPEC-WORK.md:166"
+    "expected=refused-taker-never-unlinks-the-lock-file;release-never-unlinks-it"
+  (let* ((path (test-journal-path "never-unlink"))
+         (lock-path (concatenate 'string path ".lock"))
+         (foreign-lock nil))
+    (unwind-protect
+         (progn
+           ;; A first holder takes the journal lock and its lock file appears.
+           (setf foreign-lock (take-journal-lock path :socket "holder.sock"))
+           (ok foreign-lock "a first holder takes the journal lock")
+           (ok (probe-file lock-path)
+               "the holder's lock file exists while the lock is held")
+           ;; A second, refused taker must not unlink the holder's lock file.
+           (ok (null (take-journal-lock path :socket "wanna-be.sock"))
+               "a second taker is refused the held lock")
+           (ok (probe-file lock-path)
+               "the refused taker left the holder's lock file in place")
+           ;; Releasing the lock leaves the file behind, never unlinks it.
+           (release-journal-lock foreign-lock)
+           (ok (probe-file lock-path)
+               "releasing the lock leaves the lock file (never unlinked)"))
+      (release-journal-lock foreign-lock)
+      (ignore-errors (delete-file path))
+      (ignore-errors (delete-file lock-path)))))
