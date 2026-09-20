@@ -70,12 +70,18 @@ func TestBatchNativeRunnerWithoutASlotsStoreRefuses(t *testing.T) {
 
 // TestBatchNativeRunnerWithSlotsStoreStillRuns is the negative control on
 // the batch side: the native-runner name with a store is not itself a
-// refusal. The runner file is missing, so scatter cannot start it — that
-// is a later, different line, and it is not the no-store refusal.
+// refusal, and the second hop forwards the store and owner as
+// NOVA_SWARM_SLOTS_STORE and NOVA_SWARM_SLOT_OWNER on the runner's
+// environment. A test that only checked exit 0 would stay green if that
+// forwarding were deleted.
 func TestBatchNativeRunnerWithSlotsStoreStillRuns(t *testing.T) {
 	dir := t.TempDir()
 	cards := writeCards(t, dir, [][2]string{{"a", "RESULT a\nok\n"}})
+	store := aBenchSlotStore(t)
+	const owner = "fake-1"
 	named := runnerDoing(t, dir, "nova-native-runner.sh",
+		runnerStep{Op: "write", Path: "{root}/.envstore", Body: "{env:NOVA_SWARM_SLOTS_STORE}"},
+		runnerStep{Op: "write", Path: "{root}/.envowner", Body: "{env:NOVA_SWARM_SLOT_OWNER}"},
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		publishCard("{job}"),
 	)
@@ -83,7 +89,7 @@ func TestBatchNativeRunnerWithSlotsStoreStillRuns(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
 		ID: "with-store", Deadline: 30 * time.Second, Cards: cards, Root: dir,
-		Runner: named, SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
+		Runner: named, SlotsStore: store, SlotOwner: owner,
 		Stdout: &out, Stderr: &errb,
 	})
 	if strings.Contains(errb.String(), NoSlotsStoreRefusal) {
@@ -91,5 +97,11 @@ func TestBatchNativeRunnerWithSlotsStoreStillRuns(t *testing.T) {
 	}
 	if code != 0 {
 		t.Fatalf("a native-runner batch with a store still runs, got exit %d:\n%s%s", code, out.String(), errb.String())
+	}
+	if got := strings.TrimSpace(readTestFile(t, filepath.Join(dir, ".envstore"))); got != store {
+		t.Fatalf("NOVA_SWARM_SLOTS_STORE is %q, want the exact store %q", got, store)
+	}
+	if got := strings.TrimSpace(readTestFile(t, filepath.Join(dir, ".envowner"))); got != owner {
+		t.Fatalf("NOVA_SWARM_SLOT_OWNER is %q, want %q", got, owner)
 	}
 }
