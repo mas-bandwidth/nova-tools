@@ -173,6 +173,90 @@ func TestSignZero(t *testing.T) {
 	}
 }
 
+// The 16ap clone still runs git and go test as the gate process. A parent that
+// already has GIT_DIR / GIT_WORK_TREE pointed at the job clone -- a hook, a
+// `git -C` wrapper, harvest started inside the worker's copy -- makes every
+// `cmd.Dir = throwaway` git child operate on the job clone anyway: `git add -A`
+// runs the worker's clean filter, and the card's Test sees GIT_DIR. Neither is
+// a program the gate may run (#1897). The children drop those overrides, so
+// the filter does not run and the Test does not see the gate's git identity
+// or its secret-named variables.
+func TestMutateSeedDoesNotRunCardGitFiltersOrTheCardsTestInTheGateProcess(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "git", "checkout", "-q", "-b", "fixed")
+	write(t, dir, "sign/sign.go", `package sign
+
+func Sign(n int) int {
+	if n > 0 {
+		return 1
+	}
+	if n == 0 {
+		return 0
+	}
+	return -1
+}
+`)
+	escaped := filepath.Join(t.TempDir(), "escaped")
+	write(t, dir, "sign/sign_test.go", `package sign
+
+import (
+	"os"
+	"testing"
+)
+
+func TestSignZero(t *testing.T) {
+	if os.Getenv("DEEPSEEK_API_KEY") != "" || os.Getenv("GIT_DIR") != "" {
+		_ = os.WriteFile(os.Getenv("NOVA_SEED_MARKER"), []byte("gate"), 0o644)
+	}
+	if Sign(0) != 0 {
+		t.Fatal("zero")
+	}
+}
+`)
+	commit(t, dir, "the zero case, with a test that reads the gate process")
+
+	write(t, dir, "sign/sign.go", mutantSign)
+	patch := run(t, dir, "git", "diff", "--no-ext-diff", "--no-renames")
+	run(t, dir, "git", "checkout", "--", "sign/sign.go")
+	if !strings.Contains(patch, "return 1") {
+		t.Fatalf("the generated seed is not the one-line mutant:\n%s", patch)
+	}
+	seed := filepath.Join(t.TempDir(), "seed.patch")
+	if err := os.WriteFile(seed, []byte(patch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	filterRan := filepath.Join(t.TempDir(), "filter-ran")
+	write(t, dir, ".git/info/attributes", "* filter=leak\n")
+	run(t, dir, "git", "config", "filter.leak.clean", "sh -c 'cat; echo ran > "+filterRan+"'")
+
+	headBefore := strings.TrimSpace(run(t, dir, "git", "rev-parse", "HEAD"))
+	t.Setenv("DEEPSEEK_API_KEY", "sk-not-a-real-key-123456")
+	t.Setenv("NOVA_SEED_MARKER", escaped)
+	t.Setenv("GIT_DIR", filepath.Join(dir, ".git"))
+	t.Setenv("GIT_WORK_TREE", dir)
+
+	res, err := MutateSeed(context.Background(), SeedOptions{
+		Repo: dir, Head: "HEAD", Seed: seed, Tests: []string{"sign"}, TempRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Pass || res.Edits != 1 || res.Red != 1 {
+		t.Fatalf("the seeded run did not kill the mutant: edits=%d red=%d green=%d pass=%v", res.Edits, res.Red, res.Green, res.Pass)
+	}
+	if _, err := os.Stat(filterRan); err == nil {
+		t.Fatalf("the worker's git clean filter ran in the gate process")
+	}
+	if _, err := os.Stat(escaped); err == nil {
+		t.Fatalf("the card's test ran in the gate process: it saw GIT_DIR or DEEPSEEK_API_KEY")
+	}
+	headAfter := strings.TrimSpace(run(t, dir, "git", "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Fatalf("the seed form moved the job clone: before=%s after=%s", headBefore, headAfter)
+	}
+}
+
 // mutantSign is the head's sign.go with its zero case broken: the one edit the
 // generated seed carries. It is written, diffed and checked out, so the patch
 // this test feeds the verb is the same shape a card's seed is.

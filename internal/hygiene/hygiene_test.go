@@ -397,6 +397,79 @@ func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 	}
 }
 
+// hygiene-recognises-the-xai-provider-key: the harvest backstop (internal/keyshape)
+// carries an xai-api-key row and a shorter sk- bound for the seat key this fleet
+// holds (#1814); the hygiene gate must agree, or a card dumping an xai- key into a
+// committed file reads HYGIENE OK.
+func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	// Built by parts so no key-shaped string lands in the tree.
+	xai := "xa" + "i-" + strings.Repeat("B", 30)
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+xai+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("an xai- provider key drew no secret finding: %v", tokens(fs))
+	}
+	if f.At != "sign/sign.go:3" {
+		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
+	}
+	all := f.Token + " " + f.At + " " + f.Why + " " + f.String()
+	if strings.Contains(all, xai) {
+		t.Fatalf("the matched text reached the finding: %q", all)
+	}
+	// A truncated sk- copy (below the old {32,} bound, at the seat key's measured
+	// length in #1814) is still a finding.
+	dir2 := lab(t)
+	git(t, dir2, "checkout", "-q", "-b", "card")
+	short := "sk-" + strings.Repeat("C", 20)
+	write(t, dir2, "sign/sign.go", "package sign\n\nconst token = \""+short+"\"\n")
+	git(t, dir2, "add", "-A")
+	git(t, dir2, "commit", "-q", "-m", "oops")
+	fs2 := check(t, dir2, Options{})
+	if has(fs2, "secret") == nil {
+		t.Fatalf("a truncated sk- provider key drew no secret finding: %v", tokens(fs2))
+	}
+}
+
+// The two embedded lists are one list: a class test fails when they differ, so the
+// gate and the harvest cannot drift the way #1899 found (no xai- row, sk- {32,}).
+func TestHygieneKeyShapesMatchTheHarvestBackstop(t *testing.T) {
+	hygiene := shapeDataRows(t, keyShapeData)
+	raw, err := os.ReadFile(filepath.Join("..", "keyshape", "keyshapes.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	harvest := shapeDataRows(t, string(raw))
+	if len(hygiene) != len(harvest) {
+		t.Fatalf("hygiene has %d shape rows, keyshape has %d\nhygiene=%v\nkeyshape=%v", len(hygiene), len(harvest), hygiene, harvest)
+	}
+	for i := range hygiene {
+		if hygiene[i] != harvest[i] {
+			t.Fatalf("shape row %d drifted: hygiene=%q keyshape=%q", i, hygiene[i], harvest[i])
+		}
+	}
+}
+
+func shapeDataRows(t *testing.T, data string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) == 0 {
+		t.Fatal("no shape rows")
+	}
+	return out
+}
+
 // A key shape that was ALREADY in the base is not this card's finding: the check reads
 // added lines, because a range is judged by what it added.
 func TestHygieneReadsAddedLinesOnly(t *testing.T) {
