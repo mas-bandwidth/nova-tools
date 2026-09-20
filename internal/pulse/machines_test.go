@@ -2,8 +2,8 @@ package pulse
 
 // The lock (Glenn 2026-09-18): runner hosts are CI-only. No card, no probe and no load is
 // placed on a machine that serves the merge group's shards. These are the tests of the
-// guard where it bites: the fill's bench list, the two seams that actually reach a machine,
-// and the single-bench fleet verbs.
+// guard where it bites: the fill's bench list, launch --bench, the two seams that actually
+// reach a machine, and the single-bench fleet verbs.
 
 import (
 	"bytes"
@@ -300,5 +300,87 @@ func TestASingleBenchFleetVerbWithoutARegistryKeepsItsOlderGuard(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "FLEET REFUSED bench=studio") {
 		t.Fatalf("stdout = %q, want the studio refusal", out.String())
+	}
+}
+
+// TestLaunchRefusesARunnerHostBench: a launch naming batman hands the card to nova-swarm
+// batch, whose ssh is exactly the reach a runner host may not take -- so the NAME is
+// resolved against the machines registry before the batch is admitted, and the refused
+// launch reaches no batch at all (issue #1905).
+func TestLaunchRefusesARunnerHostBench(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 1)
+
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 2, Deadline: "600",
+		Bench:    "batman",
+		Machines: machinesFile(t, root, []string{"hulk"}, []string{"batman"}),
+		Now:      func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
+	})
+	line := strings.TrimSpace(errb)
+	if !strings.HasPrefix(line, "PULSE REFUSED bench=batman reason=runner-host remedy=\"") {
+		t.Fatalf("launch admitted a runner-host bench: exit=%d stderr=%q, want the PULSE REFUSED bench=batman reason=runner-host line", code, errb)
+	}
+	if code != 2 {
+		t.Fatalf("launch exit = %d, want 2", code)
+	}
+	if raw, err := os.ReadFile(argvLog); err == nil && strings.TrimSpace(string(raw)) != "" {
+		t.Fatalf("the refused launch still reached nova-swarm batch: %q", raw)
+	}
+}
+
+// TestLaunchAdmitsANamedBench: the lock refuses a runner host, not a bench. hulk is a
+// bench, so a launch that names it still admits the batch and hands --bench hulk through
+// (issue #1905, the negative control).
+func TestLaunchAdmitsANamedBench(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 1)
+
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 2, Deadline: "600",
+		Bench:    "hulk",
+		Machines: machinesFile(t, root, []string{"hulk"}, []string{"batman"}),
+		Now:      func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
+	})
+	if code != 0 {
+		t.Fatalf("launch exit = %d, want 0; stderr=%q", code, errb)
+	}
+	if !strings.Contains(out, "PULSE OK") {
+		t.Fatalf("stdout = %q, want PULSE OK", out)
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "--bench hulk") {
+		t.Fatalf("nova-swarm batch argv lacks --bench hulk: %q", raw)
+	}
+}
+
+// TestLaunchRefusesWithoutTheMachinesRegistry: with no registry the verb cannot tell a
+// bench from a CI runner host, and the one thing it must never do is guess that.
+func TestLaunchRefusesWithoutTheMachinesRegistry(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 1)
+
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 2, Deadline: "600",
+		Bench: "hulk",
+		Now:   func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
+	})
+	if code != 2 {
+		t.Fatalf("launch exit = %d, want 2; stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "missing --machines") {
+		t.Fatalf("stderr = %q, want the missing --machines refusal", errb)
+	}
+	if raw, err := os.ReadFile(argvLog); err == nil && strings.TrimSpace(string(raw)) != "" {
+		t.Fatalf("the refused launch still reached nova-swarm batch: %q", raw)
 	}
 }

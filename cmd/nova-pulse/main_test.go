@@ -305,8 +305,8 @@ func TestCutMaxBoundsCardsCut(t *testing.T) {
 
 // launch-passes-benches-through (issue #637): a launch with --benches <file> and
 // --bench <names> hands both through to nova-swarm batch, so one pulse fills the Studio
-// and Space as SPEC-SWARM's Benches section allows. Today the second bench is only
-// reachable by calling nova-swarm batch yourself: launch does not know the flags.
+// and Space as SPEC-SWARM's Benches section allows. The names are resolved against
+// --machines first, so a runner host is refused before any batch is admitted (#1905).
 func TestLaunchPassesBenchesThrough(t *testing.T) {
 	dir := t.TempDir()
 	specs := fakePATH(t)
@@ -320,9 +320,12 @@ func TestLaunchPassesBenchesThrough(t *testing.T) {
 	card := writeMainFile(t, dir, "card-a.md", "RESULT card-a sha=000000000000\nbody card-a\n")
 	cards := writeMainFile(t, dir, "cards.tsv", "card-a\t-\tpro\t"+card+"\n")
 	benches := writeMainFile(t, dir, "benches.tsv", "name\thost\troot\tcores\tharness\tauth\twall\n")
+	machines := writeMainFile(t, dir, "machines.tsv",
+		"studio\tstudio\tlinux/x64\tbench\tswarm-studio\t64\t-\n"+
+			"space\tspace\tlinux/x64\tbench\tswarm-space\t64\t-\n")
 
 	var out, errb bytes.Buffer
-	code := run([]string{"launch", "--cards", cards, "--root", root, "--slots", "6", "--deadline", "600", "--benches", benches, "--bench", "studio,space"}, &out, &errb, time.Now().UTC())
+	code := run([]string{"launch", "--cards", cards, "--root", root, "--slots", "6", "--deadline", "600", "--benches", benches, "--bench", "studio,space", "--machines", machines}, &out, &errb, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("launch exit = %d, want 0; stderr=%q", code, errb.String())
 	}
@@ -336,6 +339,40 @@ func TestLaunchPassesBenchesThrough(t *testing.T) {
 	}
 	if !strings.Contains(log, "--bench studio,space") {
 		t.Fatalf("nova-swarm batch argv lacks --bench: %q", log)
+	}
+}
+
+// TestLaunchRefusesARunnerHostBench: the issue #1905 receipt. `nova-pulse launch --bench
+// batman` against a registry where batman is runner used to print PULSE OK and hand the
+// name to nova-swarm batch; fill already refused the same name as runner-host.
+func TestLaunchRefusesARunnerHostBench(t *testing.T) {
+	dir := t.TempDir()
+	specs := fakePATH(t)
+	argvLog := filepath.Join(dir, "argv.log")
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: argvLog, Rules: []fakeRule{swarmVersionRule()}})
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	card := writeMainFile(t, dir, "card-a.md", "RESULT card-a sha=000000000000\nbody card-a\n")
+	cards := writeMainFile(t, dir, "cards.tsv", "card-a\t-\tpro\t"+card+"\n")
+	benches := writeMainFile(t, dir, "benches.tsv", "name\thost\troot\tcores\tharness\tauth\twall\n")
+	machines := writeMainFile(t, dir, "machines.tsv",
+		"hulk\thulk\tlinux/x64\tbench\tswarm-hulk\t64\t-\n"+
+			"batman\tbatman\tdarwin/amd64\trunner\t-\t8\tCI-only\n")
+
+	var out, errb bytes.Buffer
+	code := run([]string{"launch", "--cards", cards, "--root", root, "--slots", "6", "--deadline", "600", "--benches", benches, "--bench", "batman", "--machines", machines}, &out, &errb, time.Now().UTC())
+	line := strings.TrimSpace(errb.String())
+	if !strings.HasPrefix(line, "PULSE REFUSED bench=batman reason=runner-host remedy=\"") {
+		t.Fatalf("launch admitted a runner-host bench: exit=%d stderr=%q stdout=%q, want the PULSE REFUSED bench=batman reason=runner-host line", code, errb.String(), out.String())
+	}
+	if code != 2 {
+		t.Fatalf("launch exit = %d, want 2", code)
+	}
+	if raw, err := os.ReadFile(argvLog); err == nil && strings.Contains(string(raw), "batch") {
+		t.Fatalf("the refused launch still reached nova-swarm batch: %q", raw)
 	}
 }
 
