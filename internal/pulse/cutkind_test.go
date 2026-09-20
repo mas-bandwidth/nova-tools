@@ -221,6 +221,12 @@ func TestCutKindGuardCardForbidsJudgingTheVerdict(t *testing.T) {
 	if !strings.Contains(card, "COMPUTED, never judged") {
 		t.Errorf("the card does not forbid judging:\n%s", card)
 	}
+	if strings.Contains(card, "last token") {
+		t.Errorf("N/A and ABSTAIN end in reason/prose; the card must not copy the last token:\n%s", card)
+	}
+	if !strings.Contains(card, "status=") {
+		t.Errorf("the card must name the status= field to copy, not a last token:\n%s", card)
+	}
 	if !strings.Contains(line, "kind=guard") {
 		t.Errorf("the one line = %q", line)
 	}

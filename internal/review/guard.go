@@ -129,7 +129,7 @@ func Guard(ctx context.Context, opts GuardOptions) (*GuardResult, error) {
 	}
 	res.Reverted = n
 
-	if !anyProductionGoApplies(wt, others) {
+	if !productionAppliesHere(wt, others) {
 		res.Verdict = VerdictNotApplicable
 		res.Reason = "build-tags"
 		return res, nil
@@ -223,23 +223,22 @@ func packagesOf(changed []change) []string {
 	return pkgs
 }
 
-// anyProductionGoApplies is false when every reverted .go file is excluded on
-// this GOOS (name suffix or //go:build). A control that cannot compile the file
-// here is NOT-APPLICABLE, not UNGUARDED (#2042, 7afd48c0).
-func anyProductionGoApplies(wt string, others []change) bool {
-	goFiles := 0
+// productionAppliesHere is false only when every reverted production path is a
+// Go file excluded on this GOOS (name suffix or //go:build). A non-Go path
+// keeps the control applicable: reverting value.txt still makes the retained
+// test red (Stella HOLD of #2128). A control that cannot compile the file here
+// is NOT-APPLICABLE, not UNGUARDED (#2042, 7afd48c0).
+func productionAppliesHere(wt string, others []change) bool {
 	for _, c := range others {
-		if !strings.HasSuffix(c.path, ".go") || c.status == "D" {
+		if !strings.HasSuffix(c.path, ".go") {
+			return true
+		}
+		if c.status == "D" {
 			continue
 		}
-		goFiles++
 		if fileAppliesHere(wt, c.path) {
 			return true
 		}
-	}
-	if goFiles == 0 {
-		// A non-Go production change has no platform filter.
-		return true
 	}
 	return false
 }

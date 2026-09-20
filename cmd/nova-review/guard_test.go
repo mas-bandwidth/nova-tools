@@ -67,6 +67,9 @@ func TestGuardVerbIsNotApplicableWhenTheFileIsForAnotherGOOS(t *testing.T) {
 	if hasVerdict(got, "UNGUARDED") {
 		t.Fatalf("a foreign-GOOS file must not be scored UNGUARDED on %s:\n%s", runtime.GOOS, got)
 	}
+	if !strings.Contains(got, "status=NOT-APPLICABLE") {
+		t.Fatalf("N/A ends in reason=; the line must name status= so a card does not copy the last token:\n%s", got)
+	}
 }
 
 func TestGuardVerbReportsCompilerHeldWhenRevertDoesNotCompile(t *testing.T) {
@@ -139,16 +142,19 @@ func TestGuardVerbIgnoresTheCallersGOFLAGS(t *testing.T) {
 	}
 }
 
-// hasVerdict is a last-token match: UNGUARDED contains the letters GUARDED.
+// hasVerdict matches the named status= field: N/A and ABSTAIN end in reason/prose,
+// so a last-token match would copy the wrong word.
 func hasVerdict(got, verdict string) bool {
+	want := "status=" + verdict
 	for _, line := range strings.Split(got, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "GUARD ") {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[len(fields)-1] == verdict {
-			return true
+		for _, f := range strings.Fields(line) {
+			if f == want {
+				return true
+			}
 		}
 	}
 	return false

@@ -733,8 +733,12 @@ test names, never judged:
   is not UNGUARDED (exit 2)
 
 The line carries `platform=<goos>/<goarch>` and both test tails (`GUARD TAIL
-which=baseline` and `which=control`). `--tests` is the only input a model
-supplies. It records nothing and writes nothing into the repo it is pointed at.
+which=baseline` and `which=control`). The verdict is the `status=` field, never
+the last token: `NOT-APPLICABLE` and `ABSTAIN` carry `reason=` after it. `--tests`
+is the only input a model supplies. It records nothing and writes nothing into
+the repo it is pointed at. A non-Go production path keeps the control applicable;
+`NOT-APPLICABLE` is only when every reverted production path is a Go file excluded
+on this OS.
 
 **Amended by [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1 rule 9 (draft, 2026-09-19):** the range form
 prints `reverted=<n>`, and a `--seed` form applies one patch whose edit count is asserted to be
@@ -905,12 +909,12 @@ MUTATE MORE kind=<green|skip> shown=<n> total=<t> nova-review mutate --repo <dir
 MUTATE <head8> no-tests-changed
 MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
 MUTATE REFUSED: <reason>
-GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> <GUARDED|UNGUARDED|COMPILER-HELD>
-GUARD <head8> platform=<goos>/<goarch> NOT-APPLICABLE reason=build-tags
+GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> status=<GUARDED|UNGUARDED|COMPILER-HELD>
+GUARD <head8> platform=<goos>/<goarch> status=NOT-APPLICABLE reason=build-tags
 GUARD TAIL which=<baseline|control> pkg=<path> exit=<n> last=<text>
 GUARD RED test=<name>
 GUARD MORE kind=<tail|red> shown=<n> total=<t> nova-review guard --repo <dir> --head <sha> --max 0
-GUARD <head8> platform=<goos>/<goarch> ABSTAIN reason=<no-change-to-revert|head-red>
+GUARD <head8> platform=<goos>/<goarch> status=ABSTAIN reason=<no-change-to-revert|head-red>
 GUARD REFUSED: <reason>
 ~~VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> base_tree=<sha12|-> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true~~
 ~~VERDICT ROW row=<n> id=<id> sev=<block|fix|nit|ok|dup|close> at=<path>:<line>|<finding id> side=<head|base|-> rule=<quoted|base|external|proposed|-> pin=<pin|-> ref=<the third field as written>~~

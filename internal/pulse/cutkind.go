@@ -254,8 +254,8 @@ The model only picks which packages to run. Then:
 
     nova-review guard --repo ./repo --head %s [--tests <package>[,<package>...]]
 
-Copy the GUARD line's last token onto RESULT.md line 2. A verdict the command did not print is a lie.
-Write RESULT.md: line 1 exactly the line 1 of this card, line 2 the computed verdict, then REPO %s.
+Copy the GUARD line's status= field onto RESULT.md line 2 (GUARDED, UNGUARDED, COMPILER-HELD, NOT-APPLICABLE, or ABSTAIN — never the reason= tail). A verdict the command did not print is a lie.
+Write RESULT.md: line 1 exactly the line 1 of this card, line 2 the status= value, then REPO %s.
 `, oneline.Field(in.Head), in.Repo)
 	default:
 		return fmt.Sprintf(`Amend the spec: numbered rules, each with the test that makes it red, and no rule softened to match code.

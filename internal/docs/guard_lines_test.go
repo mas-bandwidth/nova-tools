@@ -15,8 +15,9 @@ func TestGuardLinesAreDocumented(t *testing.T) {
 		t.Fatalf("docs/SPEC-REVIEW.md: %v", err)
 	}
 	for _, want := range []string{
-		"GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> <GUARDED|UNGUARDED|COMPILER-HELD>",
-		"GUARD <head8> platform=<goos>/<goarch> NOT-APPLICABLE reason=build-tags",
+		"GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> status=<GUARDED|UNGUARDED|COMPILER-HELD>",
+		"GUARD <head8> platform=<goos>/<goarch> status=NOT-APPLICABLE reason=build-tags",
+		"status=ABSTAIN",
 		"GUARD TAIL which=<baseline|control> pkg=<path> exit=<n> last=<text>",
 	} {
 		if !strings.Contains(string(spec), want) {

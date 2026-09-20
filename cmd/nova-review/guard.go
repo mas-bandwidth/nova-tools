@@ -54,10 +54,10 @@ func guard(args []string, out, errOut io.Writer) int {
 	res, err := review.Guard(ctx, review.GuardOptions{Repo: *repo, Head: *head, Tests: pkgs})
 	switch {
 	case errors.Is(err, review.ErrNoChangeToRevert):
-		fmt.Fprintf(out, "GUARD %s platform=%s ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way\n", review.Short(res.Head), platformOf(res))
+		fmt.Fprintf(out, "GUARD %s platform=%s status=ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way\n", review.Short(res.Head), platformOf(res))
 		return 2
 	case errors.Is(err, review.ErrHeadRed):
-		fmt.Fprintf(out, "GUARD %s platform=%s ABSTAIN reason=head-red: the named packages are already red at the head, so this control cannot be proved either way\n", review.Short(res.Head), platformOf(res))
+		fmt.Fprintf(out, "GUARD %s platform=%s status=ABSTAIN reason=head-red: the named packages are already red at the head, so this control cannot be proved either way\n", review.Short(res.Head), platformOf(res))
 		return 2
 	case err != nil:
 		return refuseGuard(errOut, err.Error())
@@ -76,9 +76,9 @@ func guard(args []string, out, errOut io.Writer) int {
 		reds.More()
 	}
 
-	line := fmt.Sprintf("GUARD %s platform=%s reverted=%d red=%d green=%d %s\n", review.Short(res.Head), oneline.Field(res.Platform), res.Reverted, res.Red, res.Green, res.Verdict)
+	line := fmt.Sprintf("GUARD %s platform=%s reverted=%d red=%d green=%d status=%s\n", review.Short(res.Head), oneline.Field(res.Platform), res.Reverted, res.Red, res.Green, oneline.Field(res.Verdict))
 	if res.Verdict == review.VerdictNotApplicable {
-		line = fmt.Sprintf("GUARD %s platform=%s NOT-APPLICABLE reason=%s\n", review.Short(res.Head), oneline.Field(res.Platform), oneline.Field(res.Reason))
+		line = fmt.Sprintf("GUARD %s platform=%s status=NOT-APPLICABLE reason=%s\n", review.Short(res.Head), oneline.Field(res.Platform), oneline.Field(res.Reason))
 	}
 	switch res.Verdict {
 	case review.VerdictGuarded:

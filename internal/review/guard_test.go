@@ -123,6 +123,77 @@ func TestMul(t *testing.T) {
 	}
 }
 
+// Stella HOLD of #2128: a mixed commit (value.txt + a foreign-OS Go file) was
+// scored NOT-APPLICABLE because anyProductionGoApplies skipped the non-Go path.
+// Reverting value.txt still makes the retained test red. N/A only when every
+// production path is excluded Go.
+func TestGuardIsGuardedWhenANonGoFileIsRevertedBesideAnExcludedGoFile(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "sign/value.txt", "base\n")
+	write(t, dir, "sign/sign_test.go", `package sign
+
+import (
+	"os"
+	"testing"
+)
+
+func TestSignPositive(t *testing.T) {
+	if Sign(5) != 1 {
+		t.Fatal("positive")
+	}
+}
+
+func TestValue(t *testing.T) {
+	b, err := os.ReadFile("value.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "base\n" {
+		t.Fatalf("value = %q", b)
+	}
+}
+`)
+	commit(t, dir, "value at base")
+	other := "windows"
+	if runtime.GOOS == "windows" {
+		other = "linux"
+	}
+	run(t, dir, "git", "checkout", "-q", "-b", "mixed")
+	write(t, dir, "sign/value.txt", "head\n")
+	write(t, dir, "sign/sign_"+other+".go", "package sign\n\nfunc Extra() int { return 7 }\n")
+	write(t, dir, "sign/sign_test.go", `package sign
+
+import (
+	"os"
+	"testing"
+)
+
+func TestSignPositive(t *testing.T) {
+	if Sign(5) != 1 {
+		t.Fatal("positive")
+	}
+}
+
+func TestValue(t *testing.T) {
+	b, err := os.ReadFile("value.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "head\n" {
+		t.Fatalf("value = %q", b)
+	}
+}
+`)
+	commit(t, dir, "value.txt plus excluded Go")
+	res, err := guardFixture(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Verdict != VerdictGuarded {
+		t.Fatalf("mixed non-Go + excluded Go: verdict = %s, want GUARDED (reverting value.txt is still a control; N/A only when every production path is excluded Go)", res.Verdict)
+	}
+}
+
 func TestGuardIsNotApplicableForAForeignGOOSFile(t *testing.T) {
 	dir := newRepo(t)
 	other := "windows"

@@ -2462,11 +2462,12 @@ red, `UNGUARDED` when they stay green, `COMPILER-HELD` when the revert does not
 compile, `NOT-APPLICABLE` when the file is excluded on this OS. `--tests` is the
 only judgement (which packages to run); omitted, the packages are the commit's
 changed `.go` files. Both test tails and `platform=<goos>/<goarch>` are recorded.
-It writes nothing into the repo it is pointed at.
+The verdict is `status=`, never the last token. It writes nothing into the repo
+it is pointed at.
 
 ```
-GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> <GUARDED|UNGUARDED|COMPILER-HELD>
-GUARD <head8> platform=<goos>/<goarch> NOT-APPLICABLE reason=build-tags
+GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> status=<GUARDED|UNGUARDED|COMPILER-HELD>
+GUARD <head8> platform=<goos>/<goarch> status=NOT-APPLICABLE reason=build-tags
 ```
 
 Reverting nothing runs the head's own suite, so the control cannot be PROVED,
