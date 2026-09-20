@@ -154,3 +154,67 @@ the next one."
                  "a container with NO required members settled with an optional one")
     (check-equal :o (node-branch (kernel-state k) "v")
                  "and the cascade carried on past it to the root")))
+
+;;;; ------------------------------------------------------------------
+;;;; E08-F01-04: List next valid actions and missing prerequisites
+;;;; without granting authority or executing suggestions.
+;;;;
+;;;; docs/SPEC-WORK.md:2112 -- `ready --node X`: the work that can actually
+;;;; be started under X ... every row that cannot proceed prints its exact
+;;;; reason and who can resolve it, because waiting is not execution.
+;;;;
+;;;; The kernel slice that realises this criterion is `query ready`: it lists
+;;;; the ready items (next valid actions), excludes a dependent whose need is
+;;;; open (the missing prerequisite), and, through `ready-rows`, names that
+;;;; missing prerequisite and its resolver -- all as a pure read that grants no
+;;;; authority and executes nothing. The "next valid actions" and "missing
+;;;; prerequisites" halves are pinned by replays-8681.lisp and
+;;;; slice-05-durable-journal.lisp; what no test yet pins is the other half of
+;;;; the sentence: that the listing is read-only.
+;;;; ------------------------------------------------------------------
+
+(defparameter *e08f01-seed*
+  '((:id "v"         :type :work-set :parent nil  :state :unknown)
+    (:id "v/ready"   :type :task     :parent "v"  :state :todo)
+    (:id "v/blocked" :type :task     :parent "v"  :state :todo
+     :deps ("v/need"))
+    (:id "v/need"    :type :task     :parent "v"  :state :doing))
+  "A work-set with one ready leaf, one leaf whose unmet need blocks it, and
+that open need.")
+
+(deftest "TestE08F01ListNextValidActionsAnd"
+    "docs/SPEC-WORK.md:2112"
+    "expected=next-valid-actions-and-missing-prerequisites-listed;the-listing-is-read-only"
+  (let* ((k (make-kernel :state (make-seed-state *e08f01-seed*)))
+         (rev-before (state-revision (kernel-state k)))
+         (branches-before (mapcar (lambda (id) (node-branch (kernel-state k) id))
+                                  '("v" "v/ready" "v/blocked" "v/need"))))
+    ;; 1. It lists next valid actions and skips the dependent whose missing
+    ;; prerequisite is still open.
+    (let ((ready (ready-nodes (kernel-state k))))
+      (ok (member "v/ready" ready :test #'string=)
+          "a leaf with no open need is a next valid action and is not listed")
+      (ok (not (member "v/blocked" ready :test #'string=))
+          "a dependent whose prerequisite is open is listed as a next valid action"))
+    ;; 2. The missing prerequisite is named, with its resolver.
+    (let ((row (find "v/blocked" (ready-rows
+                                  (list (make-ready-item "v/ready" :branch :o)
+                                        (make-ready-item "v/blocked" :branch :o
+                                                         :deps '("v/need"))
+                                        (make-ready-item "v/need" :branch :o
+                                                         :holder "freddy")))
+                     :key #'ready-row-id :test #'equal)))
+      (ok row "the blocked leaf has no ready row")
+      (ok (not (ready-row-ready row)) "the blocked leaf reads as ready")
+      (check-equal "blocked by v/need" (ready-row-reason row)
+                   "the row does not name the missing prerequisite")
+      (check-equal "freddy" (ready-row-resolver row)
+                   "the row does not name who can resolve the missing prerequisite"))
+    ;; 3. The listing granted no authority and executed nothing: the state is
+    ;; exactly as it was before the queries.
+    (check-equal rev-before (state-revision (kernel-state k))
+                 "querying ready moved the revision")
+    (check-equal branches-before
+                 (mapcar (lambda (id) (node-branch (kernel-state k) id))
+                         '("v" "v/ready" "v/blocked" "v/need"))
+                 "querying ready changed a node's branch")))
