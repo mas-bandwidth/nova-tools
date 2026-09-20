@@ -350,13 +350,16 @@ FILL REFUSED bench=batman reason=runner-host remedy="..."
 ```
 
 The reason is one of `runner-host`, `coordination-host`, `services-host`,
-`not-a-bench`, `unknown-machine`. `nova-pulse fill`, the path a CARD takes,
-**requires** `--machines`: without it the verb cannot tell a bench from a CI
-runner host, and that is the one thing it may not guess. The fleet admin verbs
-take it optionally and keep their older guard without it. A machine that is
-both `runner` and `bench` must carry a dated exception in its notes,
-`allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
-worker runs cards in containers. `nova-pulse fleet registry` lists the file.
+`not-a-bench`, `unknown-machine`, `shared-without-note`. `nova-pulse fill`, the
+path a CARD takes, **requires** `--machines`: without it the verb cannot tell a
+bench from a CI runner host, and that is the one thing it may not guess. The
+fleet admin verbs take it optionally and keep their older guard without it. A
+machine that is both `runner` and `bench` must carry a dated exception in its
+notes, `allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the
+pull worker runs cards in containers. A shared row without that note disables
+**that** bench (`FILL DISABLED bench=<name> reason=shared-without-note`) and
+does not stop the rest of the fleet's tick (#2031). `nova-pulse fleet registry`
+lists the file.
 
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
