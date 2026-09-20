@@ -159,3 +159,72 @@
                          (unrelated-receipts-stay-reusable
                           (list ra rb) (list :path "src/c.lisp")))
                  "a change outside every declared proof scope invalidates no receipt")))
+
+;;; ------------------------------------------------------------------
+;;; TestE03F04SupportEvidenceGuardedStateTransitions  SPEC-WORK.md:1219-1242
+;;; ------------------------------------------------------------------
+
+(deftest "TestE03F04SupportEvidenceGuardedStateTransitions" "docs/SPEC-WORK.md:1219-1242"
+    "done=requires-evidence,blocked=requires-blocked-by,deferred-cancelled-superseded=scope-terminal"
+  ;; E03-F04-01: support evidence-guarded state transitions including blocked,
+  ;; done, deferred, cancelled and superseded. SPEC-WORK.md:1219-1242 fixes the
+  ;; transition table: a :to :done must name evidence (rule 5), a :to :blocked
+  ;; must name a :blocked-by reference, and :deferred/:cancelled/:superseded are
+  ;; entered only by their scope events (:defer/:cancel/:supersede) and are never
+  ;; targets of `state`.
+  ;;
+  ;; :done is guarded by evidence: closing with none is refused, with one reaches
+  ;; :done.
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :state-to-done :node "acme/work/f1/t1" :by "rowan"
+                        :reason "shipped" :evidence '()
+                        :request "sg-done-noev" :stamp "2026-09-14T12:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok (not okp) "a closure to :done without evidence must refuse, got: ~A" line)
+      (ok (search "done without evidence" line)
+          "the :done refusal must name the missing evidence, got: ~A" line))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :state-to-done :node "acme/work/f1/t1" :by "rowan"
+                        :reason "shipped" :evidence '("ev-1")
+                        :request "sg-done-ev" :stamp "2026-09-14T12:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok okp "a closure to :done with evidence must be accepted, got: ~A" line))
+    (check-equal :done (node-state (kernel-state k) "acme/work/f1/t1")
+                 "an evidence-guarded close reaches :done"))
+  ;; :cancelled is entered by its scope event and is terminal.
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :event-cancel :node "acme/work/f1/t1" :by "rowan"
+                        :reason "obsolete" :request "sg-cancel"
+                        :stamp "2026-09-14T12:00:00Z" :clock :tool
+                        :generation-owner "gen-4"))
+      (ok okp "a :cancel scope event must be admitted, got: ~A" line))
+    (check-equal :cancelled (node-state (kernel-state k) "acme/work/f1/t1")
+                 "a :cancel scope event reaches :cancelled"))
+  ;; :blocked is guarded by a :blocked-by reference and is never a bare `state`
+  ;; target (SPEC-WORK.md:1241-1242 describes the edge; the transition table
+  ;; admits it).
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :state-to-blocked :node "acme/work/f1/t1" :by "rowan"
+                        :blocked-by "acme/work/f1/t2" :reason "depends"
+                        :request "sg-blocked" :stamp "2026-09-14T12:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok okp "a transition to :blocked carrying :blocked-by must be supported, got: ~A" line)))
+  ;; :deferred is entered only by its :defer scope event, never by `state`.
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :event-defer :node "acme/work/f1/t1" :by "rowan"
+                        :reason "parked" :request "sg-defer"
+                        :stamp "2026-09-14T12:00:00Z" :clock :tool
+                        :generation-owner "gen-4"))
+      (ok okp "a :defer scope event must reach :deferred, got: ~A" line)))
+  ;; :superseded is entered only by its :supersede scope event, never by `state`.
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :event-supersede :node "acme/work/f1/t1" :by "rowan"
+                        :superseded-by "acme/work/f1/t9" :reason "replaced"
+                        :request "sg-supersede" :stamp "2026-09-14T12:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok okp "a :supersede scope event must reach :superseded, got: ~A" line))))
