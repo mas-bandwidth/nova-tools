@@ -324,6 +324,35 @@ func TestHarvestWorkingClassesAreTheFive(t *testing.T) {
 	wkHasLine(t, out, "HARVEST OK jobs=5 fixed=1 already-fixed=1 no-change=1 off-branch=1 failed=1")
 }
 
+func TestHarvestWorkingRefusesAnInvalidExplicitBASE(t *testing.T) {
+	working := t.TempDir()
+	specs := fakePATH(t)
+	arglog := filepath.Join(working, "argv.log")
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
+		{Arg: 1, Equals: "ls-remote", Stdout: "aaaa000000000000000000000000000000000000\trefs/heads/rowan/w"},
+		originRule("o/r"),
+		pinRule(),
+	}})
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 2, Equals: "list", Stdout: "[]"},
+		{Arg: 2, Equals: "create", Stdout: "https://example.invalid/o/r/pull/1"},
+	}})
+	wkJob(t, working, "g-w", "w", "RESULT w sha=aaa\nDONE\nBRANCH rowan/w\nREPO o/r\nBASE HEAD\n")
+	out, errs, _ := wkRun(t, HarvestInput{Working: working, Base: "0123456789ab", Max: 20})
+	for _, l := range arglogLines(t, arglog) {
+		if strings.HasPrefix(l, "git push") {
+			t.Fatalf("BASE HEAD was treated as omitted and pushed: %s\n%s\n%s", l, out, errs)
+		}
+	}
+	if !strings.Contains(errs, "HARVEST REFUSED") {
+		t.Fatalf("want HARVEST REFUSED for BASE HEAD, got:\n%s\n%s", out, errs)
+	}
+	if !strings.Contains(errs, "HEAD") {
+		t.Fatalf("the refusal must name HEAD:\n%s", errs)
+	}
+}
+
 // rule 9: a fixture systemctl records daemon-reload and enable --now, both unit
 // files carry the harvest flags, and an unknown action is exit 2 with one remedy.
 func TestHarvestWorkingTimerInstall(t *testing.T) {

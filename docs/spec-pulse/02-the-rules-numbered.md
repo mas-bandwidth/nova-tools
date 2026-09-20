@@ -137,8 +137,9 @@
     destination's target, pins that OID, and takes `git diff --name-only <oid>..<branch>`
     (two-dot, not the merge-base and not a cached `origin/dev`). The diff must contain only
     the card's declared `PATHS:`; otherwise harvest refuses and names the offending files.
-    A missing explicit target is a refusal, never a local fallback. A stale base would
-    otherwise revert later landings.
+    A missing explicit target defaults to `dev`. A present invalid `BASE` or `--base`
+    (`HEAD`, a hex OID, malformed) is a refusal, never a fall-through to `dev`. A stale
+    base would otherwise revert later landings.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and

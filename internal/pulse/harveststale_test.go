@@ -251,3 +251,76 @@ func TestHarvestOpensAPRWhenTheTwoDotDiffStaysInsidePATHS(t *testing.T) {
 		t.Fatalf("want pushed=1 prs=1, got:\n%s\n%s", out, errs)
 	}
 }
+
+// TestHarvestRefusesAnInvalidExplicitBASE is the remaining HOLD on #2117: a present
+// invalid BASE (HEAD, a hex OID, malformed) must not be discarded and replaced with
+// default `dev`. Omitted BASE still defaults to `dev`.
+func TestHarvestRefusesAnInvalidExplicitBASE(t *testing.T) {
+	for _, base := range []string{"HEAD", "0123456789abcdef0123456789abcdef01234567", "dev..main"} {
+		t.Run(base, func(t *testing.T) {
+			b := newDestBench(t)
+			label := "card-invalid-target"
+			branch := "rowan/invalid-target"
+			addCard(t, b.root, label, "1", "flash", "RESULT "+label+" sha=aaa",
+				"RESULT "+label+" sha=aaa\nDONE\nBRANCH "+branch+"\nREPO owner/repo\nBASE "+base+"\n")
+			cardPath := filepath.Join(b.root, "cardsrc", label+".md")
+			raw, err := os.ReadFile(cardPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cardPath, append(raw, []byte("PATHS: card.go\n")...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			b.job = filepath.Join(b.root, "1", "jobs", label)
+			realGit(t, "init", "-b", "dev", b.job)
+			realGit(t, "-C", b.job, "remote", "add", "origin", honestURL)
+			if err := os.WriteFile(filepath.Join(b.job, "card.go"), []byte("package card\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			realGit(t, "-C", b.job, "add", "card.go")
+			realGit(t, "-C", b.job, "commit", "-m", "current target")
+			realGit(t, "-C", b.job, "push", "origin", "HEAD:dev")
+			realGit(t, "-C", b.job, "checkout", "-b", branch)
+			if err := os.WriteFile(filepath.Join(b.job, "card.go"), []byte("package card\n\nfunc Fix() {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			realGit(t, "-C", b.job, "add", "card.go")
+			realGit(t, "-C", b.job, "commit", "-m", "the card")
+
+			out, errs := runHarvest(t, b.root)
+
+			if got := refs(t, b.honest); containsRef(got, "refs/heads/"+branch) {
+				t.Fatalf("invalid explicit BASE %q was treated as omitted and the branch was pushed:\n%s\n%s", base, out, errs)
+			}
+			if strings.Contains(out, "HARVEST PR") || strings.Contains(out, "prs=1") {
+				t.Fatalf("invalid explicit BASE %q opened a PR:\n%s\n%s", base, out, errs)
+			}
+			if !strings.Contains(errs, "HARVEST REFUSED") {
+				t.Fatalf("want HARVEST REFUSED for BASE %q, got:\n%s\n%s", base, out, errs)
+			}
+			if !strings.Contains(errs, "HEAD") && !strings.Contains(errs, base) && !strings.Contains(out, base) {
+				t.Fatalf("the refusal must name the invalid explicit target %q:\n%s\n%s", base, out, errs)
+			}
+		})
+	}
+}
+
+func TestHarvestTargetBranchRejectsAPresentInvalidTarget(t *testing.T) {
+	dev, err := harvestTargetBranch(HarvestInput{}, nil)
+	if err != nil || dev != DefaultBase {
+		t.Fatalf("omitted BASE = %q, %v, want %s", dev, err, DefaultBase)
+	}
+	if _, err := harvestTargetBranch(HarvestInput{}, []string{"BASE HEAD"}); err == nil {
+		t.Fatal("BASE HEAD must not fall through to default dev")
+	}
+	if _, err := harvestTargetBranch(HarvestInput{Base: "HEAD"}, nil); err == nil {
+		t.Fatal("--base HEAD must not fall through to default dev")
+	}
+	if _, err := harvestTargetBranch(HarvestInput{Base: "0123456789ab"}, nil); err == nil {
+		t.Fatal("hex --base must not fall through to default dev")
+	}
+	got, err := harvestTargetBranch(HarvestInput{}, []string{"BASE main"})
+	if err != nil || got != "main" {
+		t.Fatalf("BASE main = %q, %v, want main", got, err)
+	}
+}

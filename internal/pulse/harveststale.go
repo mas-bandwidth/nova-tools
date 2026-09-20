@@ -64,14 +64,20 @@ func pinAuthorizedTarget(dir, destURL, target string) (string, error) {
 	return oid, nil
 }
 
-func harvestTargetBranch(in HarvestInput, resultLines []string) string {
-	if b := harvestTargetName(resultField(resultLines, "BASE")); b != "" {
-		return b
+func harvestTargetBranch(in HarvestInput, resultLines []string) (string, error) {
+	if raw := strings.TrimSpace(resultField(resultLines, "BASE")); raw != "" {
+		if b := harvestTargetName(raw); b != "" {
+			return b, nil
+		}
+		return "", fmt.Errorf("stale-base: BASE %s is not a fetchable target branch", field(raw))
 	}
-	if b := harvestTargetName(in.Base); b != "" {
-		return b
+	if raw := strings.TrimSpace(in.Base); raw != "" {
+		if b := harvestTargetName(raw); b != "" {
+			return b, nil
+		}
+		return "", fmt.Errorf("stale-base: --base %s is not a fetchable target branch", field(raw))
 	}
-	return DefaultBase
+	return DefaultBase, nil
 }
 
 func harvestTargetName(s string) string {

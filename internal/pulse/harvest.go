@@ -290,7 +290,14 @@ func Harvest(in HarvestInput) int {
 			}
 			// Two-dot against the fetched authorized target, before any push (issue #2032; HOLD on #2117).
 			globs, declared := harvestDeclaredPaths(c.Card, resultLines)
-			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, harvestTargetBranch(in, resultLines), branch, globs, declared); err != nil {
+			target, terr := harvestTargetBranch(in, resultLines)
+			if terr != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(terr))
+				continue
+			}
+			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, target, branch, globs, declared); err != nil {
 				refused++
 				writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
