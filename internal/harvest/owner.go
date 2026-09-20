@@ -49,6 +49,7 @@ var (
 	ErrCard       = errors.New("harvest: card is not in the lifecycle projection")
 	ErrScope      = errors.New("harvest: action token scope is not fleet")
 	ErrMismatch   = errors.New("harvest: action token is bound to a different card or attempt")
+	ErrReplay     = errors.New("harvest: action token reused with a different payload")
 )
 
 // View is the coordinator-held control snapshot inside WithCoordinator.
@@ -68,15 +69,18 @@ type Control interface {
 type Owner struct {
 	cards Cards
 	ctrl  Control
+	done  map[string]Token
 }
 
 // New wires a read-only card projection to a control linearizer.
 func New(cards Cards, ctrl Control) *Owner {
-	return &Owner{cards: cards, ctrl: ctrl}
+	return &Owner{cards: cards, ctrl: ctrl, done: make(map[string]Token)}
 }
 
 // Commit verifies credential, token and the card's current fence epoch under
-// the coordinator lock, then runs effect. It does not append events.jsonl.
+// the coordinator lock, then runs effect. An identical retry of a consumed
+// token reconciles without running the effect again. It does not append
+// events.jsonl.
 func (o *Owner) Commit(ctx context.Context, now time.Time, cred Credential, action Action, token Token, effect func() error) error {
 	if o == nil || o.cards == nil || o.ctrl == nil {
 		return fmt.Errorf("harvest: owner is incomplete")
@@ -85,14 +89,31 @@ func (o *Owner) Commit(ctx context.Context, now time.Time, cred Credential, acti
 		return err
 	}
 	return o.ctrl.WithCoordinator(ctx, now, func(v View) error {
+		if prev, ok := o.done[token.ID]; ok && !sameToken(prev, token) {
+			return fmt.Errorf("%w: id %s", ErrReplay, token.ID)
+		}
 		if err := check(now, v, o.cards, cred, action, token); err != nil {
 			return err
 		}
-		if effect != nil {
-			return effect()
+		if _, ok := o.done[token.ID]; ok {
+			return nil
 		}
+		if effect != nil {
+			if err := effect(); err != nil {
+				return err
+			}
+		}
+		if o.done == nil {
+			o.done = make(map[string]Token)
+		}
+		o.done[token.ID] = token
 		return nil
 	})
+}
+
+func sameToken(a, b Token) bool {
+	return a.ID == b.ID && a.Card == b.Card && a.Attempt == b.Attempt && a.Action == b.Action &&
+		a.Generation == b.Generation && a.Scope == b.Scope && a.Expires.Equal(b.Expires)
 }
 
 func check(now time.Time, v View, cards Cards, cred Credential, action Action, token Token) error {
@@ -105,7 +126,7 @@ func check(now time.Time, v View, cards Cards, cred Credential, action Action, t
 	if token.Card != cred.Card || token.Attempt != cred.Attempt {
 		return fmt.Errorf("%w: token card=%s attempt=%s cred card=%s attempt=%s", ErrMismatch, token.Card, token.Attempt, cred.Card, cred.Attempt)
 	}
-	if token.Scope != "" && token.Scope != "fleet" {
+	if token.Scope != "fleet" {
 		return fmt.Errorf("%w: %s", ErrScope, token.Scope)
 	}
 	if v.Desired() != "RUN" {
@@ -126,6 +147,9 @@ func check(now time.Time, v View, cards Cards, cred Credential, action Action, t
 	}
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrCard, cred.Card)
+	}
+	if proj.Card != cred.Card {
+		return fmt.Errorf("%w: projection %q credential %q", ErrCard, proj.Card, cred.Card)
 	}
 	if cred.FenceEpoch != proj.FenceEpoch {
 		return fmt.Errorf("%w: presented %d card %d", ErrStaleFence, cred.FenceEpoch, proj.FenceEpoch)

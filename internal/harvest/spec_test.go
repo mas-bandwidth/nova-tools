@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -201,9 +202,93 @@ func TestEffectOwnerDoesNotWriteEventsJSONL(t *testing.T) {
 	}
 }
 
+func TestReview2153EmptyScopeMustRefuse(t *testing.T) {
+	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	owner, cred := reviewOwner(t, now, "card-scope", "att-scope", 1)
+	tok := tokenFor(cred, harvest.ActionPush, 1, now.Add(time.Hour))
+	tok.Scope = ""
+	ran := false
+	err := owner.Commit(context.Background(), now, cred, harvest.ActionPush, tok, func() error {
+		ran = true
+		return nil
+	})
+	if err == nil || ran {
+		t.Fatalf("empty scope authorized effect: err=%v ran=%v", err, ran)
+	}
+	if !errors.Is(err, harvest.ErrScope) {
+		t.Fatalf("empty scope: %v, want ErrScope", err)
+	}
+}
+
+func TestReview2153TokenReplayMustNotRepeatEffect(t *testing.T) {
+	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	owner, cred := reviewOwner(t, now, "card-replay", "att-replay", 1)
+	tok := tokenFor(cred, harvest.ActionPush, 1, now.Add(time.Hour))
+	n := 0
+	effect := func() error { n++; return nil }
+	if err := owner.Commit(context.Background(), now, cred, harvest.ActionPush, tok, effect); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	if err := owner.Commit(context.Background(), now, cred, harvest.ActionPush, tok, effect); err != nil {
+		t.Fatalf("identical retry must reconcile: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("same token ran effect %d times, want one plus reconciliation", n)
+	}
+	other := tok
+	other.Generation = 2
+	if err := owner.Commit(context.Background(), now, cred, harvest.ActionPush, other, effect); err == nil {
+		t.Fatal("same token id with a different payload must refuse")
+	}
+	if n != 1 {
+		t.Fatalf("different payload re-ran the effect: n=%d", n)
+	}
+}
+
+func TestReview2153DiskCardIdentityMustMatchRequestedCard(t *testing.T) {
+	root := t.TempDir()
+	life := filepath.Join(root, "lifecycle")
+	if err := os.MkdirAll(filepath.Join(life, "cards"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"card": "other", "attempt": "att-wanted", "fence_epoch": 1, "attempts": 1, "state": "STARTED",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(life, "cards", "wanted.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	cards, err := harvest.OpenCards(life)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := harvest.New(cards, harvest.NewFakeControl(1, now.Add(time.Hour)))
+	cred := harvest.Credential{Card: "wanted", Attempt: "att-wanted", FenceEpoch: 1}
+	tok := tokenFor(cred, harvest.ActionRESULT, 1, now.Add(time.Hour))
+	ran := false
+	err = owner.Commit(context.Background(), now, cred, harvest.ActionRESULT, tok, func() error {
+		ran = true
+		return nil
+	})
+	if err == nil || ran {
+		t.Fatalf("projection for other card authorized wanted: err=%v ran=%v", err, ran)
+	}
+}
+
+func reviewOwner(t *testing.T, now time.Time, card, attempt string, epoch int) (*harvest.Owner, harvest.Credential) {
+	t.Helper()
+	cards := harvest.NewMemory()
+	cred := harvest.Credential{Card: card, Attempt: attempt, FenceEpoch: epoch}
+	cards.Set(harvest.Projection{Card: card, Attempt: attempt, FenceEpoch: epoch, Attempts: 1, State: "STARTED"})
+	return harvest.New(cards, harvest.NewFakeControl(1, now.Add(time.Hour))), cred
+}
+
 func tokenFor(cred harvest.Credential, action harvest.Action, gen int, exp time.Time) harvest.Token {
 	return harvest.Token{
-		ID:         "tok-" + string(action) + "-" + cred.Attempt,
+		ID:         "tok-" + string(action) + "-" + cred.Attempt + "-" + strconv.Itoa(gen),
 		Card:       cred.Card,
 		Attempt:    cred.Attempt,
 		Action:     action,

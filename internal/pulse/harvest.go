@@ -90,12 +90,19 @@ type HarvestEffect struct {
 	Accept map[string]harvest.Token
 }
 
-func commitHarvestEffect(in HarvestInput, now time.Time, label string, action harvest.Action, effect func() error) error {
-	if in.Effect == nil || in.Effect.Owner == nil {
+func commitHarvestEffect(in HarvestInput, label string, action harvest.Action, effect func() error) error {
+	if in.Effect == nil {
 		if effect != nil {
 			return effect()
 		}
 		return nil
+	}
+	if in.Effect.Owner == nil {
+		return fmt.Errorf("harvest: effect owner is incomplete")
+	}
+	now := time.Time{}
+	if in.Now != nil {
+		now = in.Now()
 	}
 	cred, ok := in.Effect.Creds[label]
 	if !ok {
@@ -331,13 +338,13 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
 				continue
 			}
-			if err := commitHarvestEffect(in, started, c.Label, harvest.ActionRESULT, nil); err != nil {
+			if err := commitHarvestEffect(in, c.Label, harvest.ActionRESULT, nil); err != nil {
 				refused++
 				writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
-			if err := commitHarvestEffect(in, started, c.Label, harvest.ActionPush, func() error {
+			if err := commitHarvestEffect(in, c.Label, harvest.ActionPush, func() error {
 				return push(in, jobDir, c.Card, repo, branch, c.Label)
 			}); err != nil {
 				if in.Effect != nil {
@@ -351,7 +358,7 @@ func Harvest(in HarvestInput) int {
 			}
 			pushed++
 			var pr int
-			if err := commitHarvestEffect(in, started, c.Label, harvest.ActionAccept, func() error {
+			if err := commitHarvestEffect(in, c.Label, harvest.ActionAccept, func() error {
 				var prErr error
 				pr, prErr = openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
 				return prErr

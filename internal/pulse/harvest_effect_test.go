@@ -149,6 +149,89 @@ func TestHarvestPushesWhenCurrentFenceAndRUNTokenMatch(t *testing.T) {
 	}
 }
 
+func TestReview2153ConfiguredEffectNilOwnerMustRefuse(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/8\n")
+	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	contract := "RESULT card-nil sha=ddd"
+	addCard(t, root, "card-nil", "0", "flash", contract,
+		contract+"\nDONE\nBRANCH rowan/br-nil\nREPO owner/repo\n")
+	var out, errs bytes.Buffer
+	Harvest(HarvestInput{
+		ID: "p1", Root: root, Sources: filepath.Join(root, "sources.tsv"),
+		Templates: root, MaxBodyBytes: 4096, Max: 20,
+		Stdout: &out, Stderr: &errs,
+		Now: func() time.Time { return now },
+		Effect: &HarvestEffect{
+			Owner: nil,
+			Creds: map[string]harvest.Credential{
+				"card-nil": {Card: "card-nil", Attempt: "att-nil", FenceEpoch: 1},
+			},
+		},
+	})
+	if !strings.Contains(errs.String(), "HARVEST EFFECT REFUSED label=card-nil") {
+		t.Fatalf("configured Effect with nil Owner must refuse, stderr:\n%s\nstdout:\n%s", errs.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "pushed=0") {
+		t.Fatalf("nil Owner must not fall through to push:\n%s", out.String())
+	}
+	for _, line := range arglogLines(t, arglog) {
+		if strings.HasPrefix(line, "git push ") {
+			t.Fatalf("configured Effect with nil Owner pushed: %s", line)
+		}
+	}
+}
+
+func TestReview2153EachActionReadsCurrentTime(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/9\n")
+	base := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	ctrl := harvest.NewFakeControl(1, base.Add(time.Hour))
+	cards := harvest.NewMemory()
+	cards.Set(harvest.Projection{
+		Card: "card-time", Attempt: "att-time", FenceEpoch: 1, Attempts: 1, State: "STARTED",
+	})
+	contract := "RESULT card-time sha=eee"
+	addCard(t, root, "card-time", "0", "flash", contract,
+		contract+"\nDONE\nBRANCH rowan/br-time\nREPO owner/repo\n")
+	n := 0
+	var out, errs bytes.Buffer
+	Harvest(HarvestInput{
+		ID: "p1", Root: root, Sources: filepath.Join(root, "sources.tsv"),
+		Templates: root, MaxBodyBytes: 4096, Max: 20,
+		Stdout: &out, Stderr: &errs,
+		Now: func() time.Time {
+			n++
+			if n <= 2 {
+				return base
+			}
+			return base.Add(2 * time.Hour)
+		},
+		Effect: &HarvestEffect{
+			Owner: harvest.New(cards, ctrl),
+			Creds: map[string]harvest.Credential{
+				"card-time": {Card: "card-time", Attempt: "att-time", FenceEpoch: 1},
+			},
+			Result: map[string]harvest.Token{"card-time": effectToken("card-time", "att-time", harvest.ActionRESULT, 1, base)},
+			Push:   map[string]harvest.Token{"card-time": effectToken("card-time", "att-time", harvest.ActionPush, 1, base)},
+			Accept: map[string]harvest.Token{"card-time": effectToken("card-time", "att-time", harvest.ActionAccept, 1, base)},
+		},
+	})
+	if !strings.Contains(errs.String(), "HARVEST EFFECT REFUSED label=card-time") {
+		t.Fatalf("accept/push after expiry must refuse using current time, stderr:\n%s\nstdout:\n%s", errs.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "pushed=0") {
+		t.Fatalf("entry-time must not authorize a later expired push:\n%s", out.String())
+	}
+	for _, line := range arglogLines(t, arglog) {
+		if strings.HasPrefix(line, "git push ") {
+			t.Fatalf("push used harvest-entry time past expiry: %s", line)
+		}
+	}
+}
+
 func effectToken(card, attempt string, action harvest.Action, gen int, now time.Time) harvest.Token {
 	return harvest.Token{
 		ID: "tok-" + string(action) + "-" + attempt, Card: card, Attempt: attempt,

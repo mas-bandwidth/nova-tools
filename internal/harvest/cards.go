@@ -90,6 +90,9 @@ func (d *DiskCards) Lookup(card string) (Projection, bool, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return Projection{}, false, fmt.Errorf("harvest: card %s: %w", card, err)
 	}
+	if p.Card != card {
+		return Projection{}, false, fmt.Errorf("%w: %s.json names %q", ErrCard, card, p.Card)
+	}
 	return Projection{
 		Card:       p.Card,
 		Attempt:    decodeAttempt(p.Attempt),
