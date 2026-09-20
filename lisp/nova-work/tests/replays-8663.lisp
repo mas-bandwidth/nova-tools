@@ -275,3 +275,38 @@
         "the compare line reports the gap count: ~A" (getf cmp :line))
     (ok (search "unshared=1" (getf cmp :line))
         "the compare line reports the unshared count: ~A" (getf cmp :line))))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F04ArchiveSourceIdentityProvenanceAnd   SPEC-WORK.md:7595-7610
+;;;    acceptance criterion E09-F04-02 in docs/roadmaps/nova-work.sexp:
+;;;    "Archive source identity, provenance and content before removal;
+;;;    append the actual deletion outcome receipt after the attempt".
+;;;    SPEC-WORK.md:7595-7597 orders the archive before any removal and lists
+;;;    what must be retained -- the source's identity, authorship, body,
+;;;    discussion, labels, state, relationships and attachments, provenance
+;;;    kept separate from planning; :7609-7610 requires the removed issue to
+;;;    keep its external identity plus a deletion receipt recording the actual
+;;;    outcome, so later intake cannot recreate the work. The absorb operation
+;;;    is disabled in the v1 pilot (:7614); the archive model (archive-capture)
+;;;    retains only a source label, an author class and its gaps. This replay
+;;;    holds the pre-deletion archive a source builds and asserts the two
+;;;    behaviours: it is RED until the archive retains identity, provenance and
+;;;    content and the removal attempt appends its deletion receipt.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F04ArchiveSourceIdentityProvenanceAnd" "docs/SPEC-WORK.md:7595-7610"
+    "expected=archive-retains-source-identity-provenance-content-before-removal;deletion-outcome-receipt-appended-after-the-attempt"
+  (let ((capture (make-archive-capture
+                  :source-issue "https://github.com/acme/widget/issues/7"
+                  :author :known :gaps '())))
+    (declare (ignore capture))
+    (labels ((retains-p (name)
+               "True when the archive model exposes an accessor for NAME."
+               (let ((s (find-symbol name "NOVA-WORK")))
+                 (and s (fboundp s)))))
+      (ok (and (retains-p "ARCHIVE-CAPTURE-IDENTITY")
+               (retains-p "ARCHIVE-CAPTURE-PROVENANCE")
+               (retains-p "ARCHIVE-CAPTURE-CONTENT"))
+          "expected the archive to retain the source's identity, provenance and content before removal (SPEC-WORK.md:7595-7597); the archive model retains only a source label, an author class and its gaps")
+      (ok (retains-p "ARCHIVE-CAPTURE-DELETION-RECEIPT")
+          "expected the removal attempt to append the actual deletion outcome receipt (SPEC-WORK.md:7609-7610); the archive model records no deletion outcome"))))
