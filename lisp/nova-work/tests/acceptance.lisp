@@ -310,3 +310,87 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
     (ok (search "state=" line) "the stage/state is not attached: ~A" line)
     (ok (search "no such operation" line) "the stable reason is not attached: ~A" line)))
 
+;;; ------------------------------------------------------------------
+;;; E03-F03-01 "Support baseline, discovery, require, dependency add/remove
+;;; and prioritize" (ROADMAP.md:403, docs/roadmaps/nova-work.sexp E03-F03).
+;;;
+;;; docs/SPEC-WORK.md:2929 -- "scope and dependencies | baseline, discovery,
+;;; dependency add/remove, prioritise, ...". The verbs that move the required
+;;; set and the :deps edge were the missing piece: `:deps` and `:required`
+;;; were set at seed time only, so `node require` (:1147), `dep` (:987),
+;;; `baseline` and `discovery` (:1090-1100) had no runtime verb. This test
+;;; asserts the behaviour the spec states and fails red until those verbs
+;;; exist.
+;;; ------------------------------------------------------------------
+
+(defparameter *scope-seed*
+  '((:id "r"   :type :work-set :parent nil :state :unknown)
+    (:id "r/a" :type :task     :parent "r"  :state :todo)
+    (:id "r/b" :type :task     :parent "r"  :state :todo  :required nil)
+    (:id "r/c" :type :task     :parent "r"  :state :doing)
+    (:id "r/x" :type :task     :parent "r"  :state :todo))
+  "A container r with required children a, c, x and one optional child b
+(SPEC-WORK.md:1147 keeps an optional child in :children but out of the set).")
+
+(deftest "TestE03F03SupportBaselineDiscoveryRequireDependency" "docs/SPEC-WORK.md:2929"
+    "expected=node-require-and-dep-are-runtime-verbs;require-moves-the-required-set;dep-adds-and-removes-needs;baseline-records-the-set;discovery-adds-a-member"
+  (let ((k (make-kernel :state (make-seed-state *scope-seed*)
+                        :journal (make-ordering-journal) :rev-base 1)))
+    ;; The verbs must exist as runtime verbs, not seed-time-only fields.
+    (ok (fboundp 'node-require)
+        "expected a node require verb moving the required set (SPEC-WORK.md:1147); got none")
+    (ok (fboundp 'dep)
+        "expected a dep verb adding and removing needs (SPEC-WORK.md:987); got none")
+    (ok (fboundp 'baseline)
+        "expected a baseline verb recording the required set (SPEC-WORK.md:1141); got none")
+    (ok (fboundp 'discovery)
+        "expected a discovery verb adding a member to the set (SPEC-WORK.md:1142); got none")
+    ;; require --to false removes a; --to true restores it. Neither detaches it
+    ;; from the parent's :children.
+    (multiple-value-bind (okp line)
+        (node-require k "r/a" :to nil :request "req-require-off")
+      (ok okp "require --to false refused: ~A" line))
+    (ok (not (node-required-p (kernel-state k) "r/a"))
+        "require --to false did not remove r/a from the required set")
+    (check-equal 2 (node-required-count (kernel-state k) "r")
+                 "the required set shrank by one")
+    (ok (member "r/a" (node-children (kernel-state k) "r") :test #'string=)
+        "require --to false detached r/a from :children, which it must not")
+    (multiple-value-bind (okp line)
+        (node-require k "r/a" :to t :request "req-require-on")
+      (ok okp "require --to true refused: ~A" line))
+    (ok (node-required-p (kernel-state k) "r/a")
+        "require --to true did not restore r/a to the required set")
+    (check-equal 3 (node-required-count (kernel-state k) "r")
+                 "the required set grew back by one")
+    ;; baseline records the set as computed now, member by member.
+    (multiple-value-bind (okp line)
+        (baseline k "r" :request "req-baseline")
+      (ok okp "baseline refused: ~A" line))
+    (check-equal '("r/a" "r/c" "r/x")
+                 (node-baseline (kernel-state k) "r")
+                 "baseline did not record the members it computed")
+    ;; discovery adds the existing optional child to the set.
+    (multiple-value-bind (okp line)
+        (discovery k "r" :members '("r/b") :request "req-discovery")
+      (ok okp "discovery refused: ~A" line))
+    (ok (node-required-p (kernel-state k) "r/b")
+        "discovery did not add r/b to the required set")
+    (check-equal 4 (node-required-count (kernel-state k) "r")
+                 "the set grew to four after discovery")
+    ;; dep adds a need edge and its reverse index, then removes it.
+    (multiple-value-bind (okp line)
+        (dep k "r/a" :add '("r/x") :request "req-dep-add")
+      (ok okp "dep --add refused: ~A" line))
+    (check-equal '("r/x") (node-deps (kernel-state k) "r/a")
+                 "dep --add did not record the need edge")
+    (check-equal '("r/a") (node-dependents (kernel-state k) "r/x")
+                 "dep --add did not maintain the reverse index")
+    (multiple-value-bind (okp line)
+        (dep k "r/a" :remove '("r/x") :request "req-dep-remove")
+      (ok okp "dep --remove refused: ~A" line))
+    (check-equal '() (node-deps (kernel-state k) "r/a")
+                 "dep --remove did not drop the need edge")
+    (check-equal '() (node-dependents (kernel-state k) "r/x")
+                 "dep --remove did not update the reverse index")))
+

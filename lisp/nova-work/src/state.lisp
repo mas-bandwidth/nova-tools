@@ -27,6 +27,10 @@
   deps dependents
   ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
   needs-broken
+  ;; SPEC-WORK.md:1090-1100 -- the required-set membership the node's last
+  ;; `baseline` recorded, member by member, or NIL while none has been. It is
+  ;; the scope snapshot rule 11 compares the live set against.
+  baseline
   ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
   ;; They live on the node like every other value and move on write. :repo is
   ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
@@ -379,6 +383,13 @@ coordination tree's edge (SPEC-WORK.md:4256), independent of the containment
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-coordinator n)))
 
+(defun node-required-p (state id)
+  "True when ID is in its containment parent's required set (SPEC-WORK.md:1147).
+  This is the boolean `required` slot, distinct from the counts it feeds."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (and (wnode-required n) t)))
+
 (defun node-required-count (state id)
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
@@ -388,6 +399,13 @@ coordination tree's edge (SPEC-WORK.md:4256), independent of the containment
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-required-open n)))
+
+(defun node-baseline (state id)
+  "The required-set membership ID's last `baseline` recorded, member by member,
+  or NIL while none has been (SPEC-WORK.md:1090-1100, :1141)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-baseline n))))
 
 (defun node-deps (state id)
   "The ids this node needs, in the order the seed gave them. A reference edge:

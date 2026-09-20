@@ -318,6 +318,13 @@
     #:dep-edit
     #:%dep-submit
     #:node-structure-log
+    ;; scope and dependency verbs (E03-F03, SPEC-WORK.md:2929)
+    #:node-require
+    #:baseline
+    #:discovery
+    #:node-baseline
+    #:node-required-p
+    #:dep
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note

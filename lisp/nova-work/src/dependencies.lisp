@@ -39,6 +39,68 @@ blocks the dependent, and the refusal names the blocker."
     (and n (every (lambda (dep) (%need-terminal-p state dep))
                   (wnode-deps n)))))
 
+;;; ------------------------------------------------------------------
+;;; `dep` -- the runtime dependency add/remove verb (E03-F03,
+;;; SPEC-WORK.md:2929, :987).
+;;; ------------------------------------------------------------------
+
+(defun %dep-reachable-p (state from target)
+  "True when TARGET is reachable from FROM by following :deps edges. Bounded by
+the node count, so a cycle is detected rather than followed forever."
+  (let ((visited (make-hash-table :test #'equal)))
+    (labels ((walk (cur)
+               (when (gethash cur visited) (return-from walk nil))
+               (setf (gethash cur visited) t)
+               (when (equal cur target) (return-from walk t))
+               (let ((n (%node-quiet state cur)))
+                 (and n (some (lambda (d) (walk d)) (wnode-deps n))))))
+      (walk from))))
+
+(defun dep (kernel id &key add remove (reason "deps") request)
+  "`dep --add ... --remove ...` moves :deps reference edges (SPEC-WORK.md:987,
+:850-886). Each added need must exist and must not close a cycle, each removed
+need is dropped from the reverse index, and the whole change is validated before
+anything is written. It owns the required-set sibling of `node require`: the
+`:deps` field, which was set at seed time only. Answers (values OK-P LINE EXIT)."
+  (declare (ignore reason))
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state id)))
+    (unless node
+      (return-from dep (values nil (format nil "DEP FAIL node=~A: no such node" id) 1)))
+    (let ((add (remove-if-not #'stringp (or add '())))
+          (remove (remove-if-not #'stringp (or remove '()))))
+      (dolist (d add)
+        (unless (plusp (length d))
+          (return-from dep (values nil (format nil "DEP FAIL node=~A: bad dependency id" id) 1)))
+        (unless (%node-quiet state d)
+          (return-from dep
+            (values nil (format nil "DEP FAIL node=~A: no such dependency ~A" id d) 1)))
+        (when (equal d id)
+          (return-from dep (values nil (format nil "DEP FAIL node=~A: self-dependency" id) 1)))
+        (when (%dep-reachable-p state d id)
+          (return-from dep
+            (values nil (format nil "DEP FAIL node=~A: dependency cycle through ~A" id d) 1))))
+      (let* ((current (copy-list (wnode-deps node)))
+             (new (copy-list current)))
+        (dolist (d remove) (setf new (remove d new :test #'equal)))
+        (dolist (d add) (unless (member d new :test #'equal) (setf new (append new (list d)))))
+        ;; Maintain the reverse-dependency index for the edges that changed.
+        (dolist (d (set-difference current new :test #'equal))
+          (let ((tgt (%node-quiet state d)))
+            (when tgt
+              (setf (wnode-dependents tgt)
+                    (remove id (wnode-dependents tgt) :test #'equal)))))
+        (dolist (d (set-difference new current :test #'equal))
+          (let ((tgt (%node-quiet state d)))
+            (when (and tgt (not (member id (wnode-dependents tgt) :test #'equal)))
+              (setf (wnode-dependents tgt)
+                    (append (wnode-dependents tgt) (list id))))))
+        (setf (wnode-deps node) new)
+        (values t (format nil "DEP OK id=~A request=~A changed=~D deps=~D"
+                          id (or request "-")
+                          (if (equal current new) 0 1) (length new))
+                0)))))
+
 
 ;;; ------------------------------------------------------------------
 ;;; folded from replays-8650.lisp (nova-tools #1102)

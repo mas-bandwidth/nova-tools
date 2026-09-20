@@ -597,6 +597,99 @@ guesses an insertion point (:2865, :3063-3067, :5379)."
 
 
 ;;; ------------------------------------------------------------------
+;;; `node require`, `baseline` and `discovery`: the scope verbs that move
+;;; the required set (E03-F03, SPEC-WORK.md:2929, :1090-1100, :1141-1147).
+;;; ------------------------------------------------------------------
+;;;
+;;; `:deps` and `:required` were set at seed time only; these are the runtime
+;;; verbs that move them. `node require --to false` removes a node from its
+;;; parent's required set and `--to true` adds it back at the bottom of the
+;;; listing, each detaching nothing (the node stays in `:children`). A
+;;; `baseline` records the required set as the tool computed it, member by
+;;; member; a `discovery` adds an existing direct child to the set.
+
+(defun node-require (kernel id &key to (reason "require") request)
+  "`node require --to <true|false>` moves a node into or out of its containment
+parent's required set (SPEC-WORK.md:981, :1147). It detaches nothing: the node
+stays in its parent's :children either way. Answers (values OK-P LINE EXIT)."
+  (declare (ignore reason request))
+  (let* ((state (kernel-state kernel))
+         (node (%node-or-nil state id)))
+    (unless node
+      (return-from node-require
+        (values nil (format nil "NODE FAIL node=~A: no such node" id) 1)))
+    (unless (or (eq to t) (null to))
+      (return-from node-require
+        (values nil (format nil "NODE FAIL node=~A: --to must be true or false" id) 1)))
+    (let* ((parent (and (wnode-parent node)
+                        (%node-quiet state (wnode-parent node))))
+           (was (and (wnode-required node) t)))
+      (when (eq was to)
+        (return-from node-require
+          (values t (format nil "NODE OK id=~A request=~A change=require changed=0 to=~A"
+                            id (or request "-") (if to "true" "false"))
+                  0)))
+      (setf (wnode-required node) to)
+      (when parent
+        (let ((open (eq :o (wnode-branch node))))
+          (if to
+              (progn (incf (wnode-required-count parent))
+                     (when open (incf (wnode-required-open parent))))
+              (progn (decf (wnode-required-count parent))
+                     (when open (decf (wnode-required-open parent)))))))
+      (values t (format nil "NODE OK id=~A request=~A change=require changed=1 to=~A"
+                        id (or request "-") (if to "true" "false"))
+              0))))
+
+(defun baseline (kernel id &key (reason "baseline") request)
+  "`baseline` records ID's required set as the tool computed it now, member by
+member (SPEC-WORK.md:1090-1100, :1141). It is the snapshot rule 11 compares the
+live set against. Answers (values OK-P LINE EXIT)."
+  (declare (ignore reason request))
+  (let* ((state (kernel-state kernel))
+         (node (%node-or-nil state id)))
+    (unless node
+      (return-from baseline
+        (values nil (format nil "BASELINE FAIL node=~A: no such node" id) 1)))
+    (let ((members (%need-required-members state node)))
+      (setf (wnode-baseline node) (copy-list members))
+      (values t (format nil "BASELINE OK id=~A request=~A members=~D"
+                        id (or request "-") (length members))
+              0))))
+
+(defun discovery (kernel id &key members (reason "discovery") request)
+  "`discovery` adds each named direct child of ID to its required set at the
+bottom of the listing (SPEC-WORK.md:1090-1100, :1142, :1147). A named id that is
+not a direct child is refused and nothing is written. Answers (values OK-P LINE
+EXIT)."
+  (declare (ignore reason request))
+  (let* ((state (kernel-state kernel))
+         (node (%node-or-nil state id))
+         (members (or members '())))
+    (unless node
+      (return-from discovery
+        (values nil (format nil "DISCOVERY FAIL node=~A: no such node" id) 1)))
+    (dolist (m members)
+      (unless (and (stringp m) (plusp (length m)))
+        (return-from discovery
+          (values nil (format nil "DISCOVERY FAIL node=~A: bad member id" id) 1)))
+      (let ((mn (%node-quiet state m)))
+        (unless (and mn (equal (wnode-parent mn) id))
+          (return-from discovery
+            (values nil (format nil "DISCOVERY FAIL node=~A: ~A is not a direct child" id m) 1)))))
+    (let ((added 0))
+      (dolist (m members)
+        (let ((mn (%node-quiet state m)))
+          (unless (and (wnode-required mn) t)
+            (setf (wnode-required mn) t)
+            (incf (wnode-required-count node))
+            (when (eq :o (wnode-branch mn)) (incf (wnode-required-open node)))
+            (incf added))))
+      (values t (format nil "DISCOVERY OK id=~A request=~A members=~D added=~D"
+                        id (or request "-") (length members) added)
+              0))))
+
+;;; ------------------------------------------------------------------
 ;;; folded from replays-render-priority.lisp (nova-tools #1102)
 ;;; ------------------------------------------------------------------
 
