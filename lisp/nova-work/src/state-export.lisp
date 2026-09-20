@@ -415,13 +415,16 @@ Under --snapshot the reader's own three bounds govern the snapshot and the cache
       (if session (session-bounds session) (values nil nil nil))
     (let* ((mb (or max-bytes sess-mb))
            (md (or max-depth sess-md))
-           (mn (or max-nodes sess-mn))
-           (snap-path (%state-load-join directory "snapshot.sexp"))
-           (cache-path (or cache (%state-load-join directory "cache.sexp")))
-           (snapshot-bytes (read-bounded-file snap-path :max-bytes mb :max-depth md :max-nodes mn
-                                                        :require-all nil :signal-error t))
-           (cache-raw (read-bounded-file cache-path :max-bytes mb :max-depth md :max-nodes mn
-                                                    :require-all nil :signal-error t)))
+           (mn (or max-nodes sess-mn)))
+      (unless mb (error 'missing-read-bounds :bound "--max-bytes"))
+      (unless md (error 'missing-read-bounds :bound "--max-depth"))
+      (unless mn (error 'missing-read-bounds :bound "--max-nodes"))
+      (let* ((snap-path (%state-load-join directory "snapshot.sexp"))
+             (cache-path (or cache (%state-load-join directory "cache.sexp")))
+             (snapshot-bytes (read-bounded-file snap-path :max-bytes mb :max-depth md :max-nodes mn
+                                                          :require-all t :signal-error t))
+             (cache-raw (read-bounded-file cache-path :max-bytes mb :max-depth md :max-nodes mn
+                                                      :require-all t :signal-error t)))
       (let ((cache-form (read-restricted cache-raw)))
         (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
           (error 'unsupported-input :what "the cache does not match the snapshot"))
@@ -432,7 +435,7 @@ Under --snapshot the reader's own three bounds govern the snapshot and the cache
           (make-snapshot :state state :revision (state-revision state)
                          :directory (string-right-trim "/" (namestring directory))
                          :cache cache-path
-                         :manifest-hash nil))))))
+                         :manifest-hash nil)))))))
 
 (defun snapshot-query (snap)
   "The loaded snapshot answers `query --snapshot`; nothing is reloaded."

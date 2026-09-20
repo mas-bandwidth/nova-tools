@@ -225,9 +225,9 @@ rather than resumed."
   (journal "" :type string)
   (every "30s")
   (skew "5s")
-  (max-bytes *default-session-max-bytes* :type integer)
-  (max-depth *default-session-max-depth* :type integer)
-  (max-nodes *default-session-max-nodes* :type integer)
+  max-bytes
+  max-depth
+  max-nodes
   (index-cache 256 :type integer)
   (page-bytes 4096 :type integer)
   (page-records 128 :type integer)
@@ -341,9 +341,9 @@ Checks completion before until, tip == base, and OWNER generation/token."
               0))))
 
 (defmethod session-bounds ((sess session))
-  (values (or (session-max-bytes sess) *default-session-max-bytes*)
-          (or (session-max-depth sess) *default-session-max-depth*)
-          (or (session-max-nodes sess) *default-session-max-nodes*)))
+  (values (session-max-bytes sess)
+          (session-max-depth sess)
+          (session-max-nodes sess)))
 
 (defun session-start (&key path (owner "emma") (state-seed nil) (journal nil)
                            (base "tip") (every "30s") (skew "5s") (token nil)
@@ -351,9 +351,7 @@ Checks completion before until, tip == base, and OWNER generation/token."
                            (my-bench "") (lock-held t)
                            (socket-path nil) (serve nil) (foreground t)
                            (cache nil) (resolvers nil)
-                           (max-bytes *default-session-max-bytes*)
-                           (max-depth *default-session-max-depth*)
-                           (max-nodes *default-session-max-nodes*))
+                           max-bytes max-depth max-nodes)
   "Start or resume a session. With SERVE the session becomes the resident
 process: it binds the local listener at SOCKET-PATH and serves reads, and with
 FOREGROUND NIL the caller is the launcher, which gets the SESSION OK line and
@@ -371,9 +369,9 @@ max-nodes bounds (SPEC-WORK.md:839-845)."
                                 :lock-held lock-held)
     (if (eq action :fenced)
         (values nil line exit-code)
-        (let* ((actual-mb (or max-bytes *default-session-max-bytes*))
-               (actual-md (or max-depth *default-session-max-depth*))
-               (actual-mn (or max-nodes *default-session-max-nodes*))
+        (let* ((actual-mb max-bytes)
+               (actual-md max-depth)
+               (actual-mn max-nodes)
                (k (make-kernel :state (if (typep state-seed 'wstate)
                                           state-seed
                                           (make-seed-state state-seed))

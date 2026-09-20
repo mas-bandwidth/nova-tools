@@ -235,33 +235,61 @@ linearly in its own length, never quadratically.")
 
 (defun intake-scan (text &optional limits)
   "One linear pre-parse pass, counting peak nesting depth and atom nodes.
+Respects Common Lisp lexical rules: ignores parentheses and whitespace inside
+double-quoted strings (handling escaped quotes \") and line comments (;...\n).
+Recognizes all Common Lisp whitespace characters: space (#\Space), tab (#\Tab),
+newline (#\Newline), return (#\Return), and page (#\Page).
 It never calls EVAL or READ, so reader evaluation is disabled by construction."
   (declare (ignore limits))
-  (let ((depth 0) (peak 0) (nodes 0) (in-token nil))
+  (let ((depth 0)
+        (peak 0)
+        (nodes 0)
+        (in-token nil)
+        (in-string nil)
+        (escaped nil)
+        (in-comment nil))
     (loop for ch across text
           do (incf *intake-visits*)
-             (cond ((char= ch #\() (incf depth) (setf peak (max peak depth))
-                                  (setf in-token nil))
-                   ((char= ch #\)) (when (plusp depth) (decf depth))
-                                  (setf in-token nil))
-                   ((find ch " \t\r\n") (setf in-token nil))
-                   (t (unless in-token (incf nodes) (setf in-token t)))))
+             (cond
+               (in-comment
+                (when (or (char= ch #\Newline) (char= ch #\Return))
+                  (setf in-comment nil)))
+               (in-string
+                (cond
+                  (escaped
+                   (setf escaped nil))
+                  ((char= ch #\\)
+                   (setf escaped t))
+                  ((char= ch #\")
+                   (setf in-string nil))))
+               ((char= ch #\;)
+                (setf in-comment t
+                      in-token nil))
+               ((char= ch #\")
+                (setf in-string t
+                      escaped nil
+                      in-token nil)
+                (incf nodes))
+               ((char= ch #\()
+                (incf depth)
+                (setf peak (max peak depth)
+                      in-token nil))
+               ((char= ch #\))
+                (when (plusp depth) (decf depth))
+                (setf in-token nil))
+               ((reader-whitespace-p ch)
+                (setf in-token nil))
+               (t
+                (unless in-token
+                  (incf nodes)
+                  (setf in-token t)))))
     (values peak nodes)))
-
-(defparameter *default-session-max-bytes* 104857600
-  "Default max-bytes bound when omitted (100MB).")
-
-(defparameter *default-session-max-depth* 64
-  "Default max-depth bound when omitted.")
-
-(defparameter *default-session-max-nodes* 100000
-  "Default max-nodes bound when omitted.")
 
 (defgeneric session-bounds (sess)
   (:documentation "Return the bounds governing SESS as (values max-bytes max-depth max-nodes)."))
 
 (defmethod session-bounds ((sess t))
-  (values *default-session-max-bytes* *default-session-max-depth* *default-session-max-nodes*))
+  (values nil nil nil))
 
 (defun octets-to-utf8-string (bytes)
   "Convert a byte vector into a UTF-8 string."
@@ -325,22 +353,22 @@ If any bound is exceeded, refuses exit 2 naming which bound and which file, neve
 Reads incrementally in a single open descriptor, preventing check/read races."
   (multiple-value-bind (sess-mb sess-md sess-mn)
       (if session (session-bounds session) (values nil nil nil))
-    (let* ((mb (or max-bytes sess-mb (and (null require-all) *default-session-max-bytes*)))
-           (md (or max-depth sess-md (and (null require-all) *default-session-max-depth*)))
-           (mn (or max-nodes sess-mn (and (null require-all) *default-session-max-nodes*)))
+    (let* ((mb (or max-bytes sess-mb))
+           (md (or max-depth sess-md))
+           (mn (or max-nodes sess-mn))
            (file-str (cond ((stringp source) (namestring (merge-pathnames source)))
                            ((pathnamep source) (namestring (merge-pathnames source)))
                            (t "stream"))))
-      (when (and require-all (null session))
-        (unless max-bytes
+      (when require-all
+        (unless mb
           (if signal-error
               (error 'missing-read-bounds :bound "--max-bytes")
               (return-from read-bounded-file (values nil "missing --max-bytes: refusing to guess" 2))))
-        (unless max-depth
+        (unless md
           (if signal-error
               (error 'missing-read-bounds :bound "--max-depth")
               (return-from read-bounded-file (values nil "missing --max-depth: refusing to guess" 2))))
-        (unless max-nodes
+        (unless mn
           (if signal-error
               (error 'missing-read-bounds :bound "--max-nodes")
               (return-from read-bounded-file (values nil "missing --max-nodes: refusing to guess" 2)))))
@@ -372,16 +400,16 @@ When bounds are exceeded, refuse naming which bound and which file (SPEC-WORK.md
     (let ((mb (or max-bytes sess-mb))
           (md (or max-depth sess-md))
           (mn (or max-nodes sess-mn)))
-      (when (and require-all (null session))
-        (unless max-bytes
+      (when require-all
+        (unless mb
           (if signal-error
               (error 'missing-read-bounds :bound "--max-bytes")
               (return-from check-read-bounds (values nil "missing --max-bytes: refusing to guess" 2))))
-        (unless max-depth
+        (unless md
           (if signal-error
               (error 'missing-read-bounds :bound "--max-depth")
               (return-from check-read-bounds (values nil "missing --max-depth: refusing to guess" 2))))
-        (unless max-nodes
+        (unless mn
           (if signal-error
               (error 'missing-read-bounds :bound "--max-nodes")
               (return-from check-read-bounds (values nil "missing --max-nodes: refusing to guess" 2)))))

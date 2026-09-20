@@ -188,9 +188,6 @@
     #:session-submit
     #:session-check-admission
     #:session-reconfirm
-    #:*default-session-max-bytes*
-    #:*default-session-max-depth*
-    #:*default-session-max-nodes*
     #:session-bounds
     #:session-max-bytes
     #:session-max-depth

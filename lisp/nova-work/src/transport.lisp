@@ -1195,19 +1195,39 @@ Bounds from session or explicit arguments are enforced before parsing finishes (
           (error 'unsupported-input :what "a bundle request carries no :request id")))
       (make-request-bundle :base base :clipped-revision clipped :requests requests))))
 
-(defun read-request-bundle-file (path &key session max-bytes max-depth max-nodes (signal-error t))
+(defun read-request-bundle-file (path &key session max-bytes max-depth max-nodes (signal-error t) (require-bounds nil))
   "Read a request bundle from PATH governed by SESSION bounds or explicit bounds (SPEC-WORK.md:839-845)."
-  (let ((text (read-bounded-file path :session session
-                                      :max-bytes max-bytes
-                                      :max-depth max-depth
-                                      :max-nodes max-nodes
-                                      :require-all nil
-                                      :signal-error signal-error)))
-    (when text
-      (read-request-bundle text :session session
-                                :max-bytes max-bytes
-                                :max-depth max-depth
-                                :max-nodes max-nodes))))
+  (multiple-value-bind (sess-mb sess-md sess-mn)
+      (if session (session-bounds session) (values nil nil nil))
+    (let* ((mb (or max-bytes sess-mb))
+           (md (or max-depth sess-md))
+           (mn (or max-nodes sess-mn))
+           (has-bounds (or max-bytes max-depth max-nodes session))
+           (req (or require-bounds (not (null has-bounds)))))
+      (when req
+        (unless mb
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-bytes")
+              (return-from read-request-bundle-file (values nil "missing --max-bytes: refusing to guess" 2))))
+        (unless md
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-depth")
+              (return-from read-request-bundle-file (values nil "missing --max-depth: refusing to guess" 2))))
+        (unless mn
+          (if signal-error
+              (error 'missing-read-bounds :bound "--max-nodes")
+              (return-from read-request-bundle-file (values nil "missing --max-nodes: refusing to guess" 2)))))
+      (let ((text (read-bounded-file path :session session
+                                          :max-bytes mb
+                                          :max-depth md
+                                          :max-nodes mn
+                                          :require-all req
+                                          :signal-error signal-error)))
+        (when text
+          (read-request-bundle text :session session
+                                    :max-bytes mb
+                                    :max-depth md
+                                    :max-nodes mn))))))
 
 ;;; ------------------------------------------------------------------
 ;;; `session export`: read the accepted journal, write the bundle.
@@ -1376,7 +1396,7 @@ EXIT): one verdict line per request, exit 0 only when every one applied."
         (when (plusp code) (setf exit 1))))
     (values (zerop exit) (nreverse lines) exit)))
 
-(defun replay-request-bundle (source target-kernel &key session max-bytes max-depth max-nodes)
+(defun replay-request-bundle (source target-kernel &key session max-bytes max-depth max-nodes (require-bounds nil))
   "`session replay --from` against a bare TARGET-KERNEL: apply the bundle
 SOURCE's requests one at a time, validating each fresh. SOURCE may be bundle
 text or a pathname/filename to read under session bounds. The bundle is one ordered
@@ -1384,19 +1404,30 @@ sequence from one session and every request carries the same clipped revision,
 so the check is against the revision the target started at -- a target that
 moved independently refuses the request `stale` and applies nothing. Answers
 (values LINES APPLIED)."
-  (let* ((text (if (and (or (stringp source) (pathnamep source))
-                        (probe-file source))
-                   (read-bounded-file source :session session
-                                             :max-bytes max-bytes
-                                             :max-depth max-depth
-                                             :max-nodes max-nodes
-                                             :require-all nil
-                                             :signal-error t)
-                   source))
-         (bundle (read-request-bundle text :session session
-                                           :max-bytes max-bytes
-                                           :max-depth max-depth
-                                           :max-nodes max-nodes))
+  (multiple-value-bind (sess-mb sess-md sess-mn)
+      (if session (session-bounds session) (values nil nil nil))
+    (let* ((mb (or max-bytes sess-mb))
+           (md (or max-depth sess-md))
+           (mn (or max-nodes sess-mn))
+           (has-bounds (or max-bytes max-depth max-nodes session))
+           (req (or require-bounds (not (null has-bounds)))))
+      (when req
+        (unless mb (error 'missing-read-bounds :bound "--max-bytes"))
+        (unless md (error 'missing-read-bounds :bound "--max-depth"))
+        (unless mn (error 'missing-read-bounds :bound "--max-nodes")))
+      (let* ((text (if (and (or (stringp source) (pathnamep source))
+                            (probe-file source))
+                       (read-bounded-file source :session session
+                                                 :max-bytes mb
+                                                 :max-depth md
+                                                 :max-nodes mn
+                                                 :require-all req
+                                                 :signal-error t)
+                       source))
+             (bundle (read-request-bundle text :session session
+                                               :max-bytes mb
+                                               :max-depth md
+                                               :max-nodes mn))
          (clipped (request-bundle-clipped-revision bundle))
          (requests (request-bundle-requests bundle))
          (start (state-revision (kernel-state target-kernel)))
@@ -1430,7 +1461,7 @@ moved independently refuses the request `stale` and applies nothing. Answers
                             rid (state-revision (kernel-state target-kernel))
                             (length events))
                     lines)))))
-    (values (nreverse lines) applied)))
+    (values (nreverse lines) applied)))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; The framed wire handshake: `hello` protocol-version negotiation.

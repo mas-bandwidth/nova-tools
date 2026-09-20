@@ -287,17 +287,54 @@ linearly in its own length, never quadratically.")
 
 (defun intake-scan (text limits)
   "One linear pre-parse pass, counting peak nesting depth and atom nodes.
+Respects Common Lisp lexical rules: ignores parentheses and whitespace inside
+double-quoted strings (handling escaped quotes \") and line comments (;...\n).
+Recognizes all Common Lisp whitespace characters: space (#\Space), tab (#\Tab),
+newline (#\Newline), return (#\Return), and page (#\Page).
 It never calls EVAL or READ, so reader evaluation is disabled by construction."
   (declare (ignore limits))
-  (let ((depth 0) (peak 0) (nodes 0) (in-token nil))
+  (let ((depth 0)
+        (peak 0)
+        (nodes 0)
+        (in-token nil)
+        (in-string nil)
+        (escaped nil)
+        (in-comment nil))
     (loop for ch across text
           do (incf *intake-visits*)
-             (cond ((char= ch #\() (incf depth) (setf peak (max peak depth))
-                                  (setf in-token nil))
-                   ((char= ch #\)) (when (plusp depth) (decf depth))
-                                  (setf in-token nil))
-                   ((find ch " \t\r\n") (setf in-token nil))
-                   (t (unless in-token (incf nodes) (setf in-token t)))))
+             (cond
+               (in-comment
+                (when (or (char= ch #\Newline) (char= ch #\Return))
+                  (setf in-comment nil)))
+               (in-string
+                (cond
+                  (escaped
+                   (setf escaped nil))
+                  ((char= ch #\\)
+                   (setf escaped t))
+                  ((char= ch #\")
+                   (setf in-string nil))))
+               ((char= ch #\;)
+                (setf in-comment t
+                      in-token nil))
+               ((char= ch #\")
+                (setf in-string t
+                      escaped nil
+                      in-token nil)
+                (incf nodes))
+               ((char= ch #\()
+                (incf depth)
+                (setf peak (max peak depth)
+                      in-token nil))
+               ((char= ch #\))
+                (when (plusp depth) (decf depth))
+                (setf in-token nil))
+               ((reader-whitespace-p ch)
+                (setf in-token nil))
+               (t
+                (unless in-token
+                  (incf nodes)
+                  (setf in-token t)))))
     (values peak nodes)))
 
 (defun hostile-intake (text &key (limits (make-intake-limits)))

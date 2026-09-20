@@ -4,6 +4,7 @@
 ;;;;   TestE01F02RequireMaxBytesMaxDepth
 ;;;;   TestE01F02ApplySessionBoundsTo
 ;;;;   TestE01F02PreserveUnknownKeysAndRefuse
+;;;;   TestE01F02LexicalIntakeScanner
 
 (in-package #:nova-work/tests)
 
@@ -219,6 +220,7 @@
   (let* ((dir (test-bounds-temp-dir "e01-f02-session"))
          (sess (session-start :max-bytes 5000 :max-depth 12 :max-nodes 300))
          (tight-sess (session-start :max-bytes 15 :max-depth 10 :max-nodes 100))
+         (default-sess (session-start))
          (export-dir (format nil "~A/exp-snap/" dir))
          (snap-dir (format nil "~A/loaded-snap/" dir))
          ;; Five files representing the five session read surfaces:
@@ -238,21 +240,34 @@
     (check-equal 12 (session-max-depth sess) "session-max-depth stored")
     (check-equal 300 (session-max-nodes sess) "session-max-nodes stored")
 
-    (let ((default-sess (session-start)))
-      (check-equal *default-session-max-bytes* (session-max-bytes default-sess)
-                   "default session-max-bytes applied")
-      (check-equal *default-session-max-depth* (session-max-depth default-sess)
-                   "default session-max-depth applied")
-      (check-equal *default-session-max-nodes* (session-max-nodes default-sess)
-                   "default session-max-nodes applied")
-      (multiple-value-bind (mb md mn) (session-bounds default-sess)
-        (check-equal *default-session-max-bytes* mb "session-bounds default mb")
-        (check-equal *default-session-max-depth* md "session-bounds default md")
-        (check-equal *default-session-max-nodes* mn "session-bounds default mn"))
-      (multiple-value-bind (mb md mn) (session-bounds nil)
-        (check-equal *default-session-max-bytes* mb "session-bounds nil mb")
-        (check-equal *default-session-max-depth* md "session-bounds nil md")
-        (check-equal *default-session-max-nodes* mn "session-bounds nil mn")))
+    (check-equal nil (session-max-bytes default-sess)
+                 "default session-max-bytes is nil when omitted")
+    (check-equal nil (session-max-depth default-sess)
+                 "default session-max-depth is nil when omitted")
+    (check-equal nil (session-max-nodes default-sess)
+                 "default session-max-nodes is nil when omitted")
+    (multiple-value-bind (mb md mn) (session-bounds default-sess)
+      (check-equal nil mb "session-bounds default mb is nil")
+      (check-equal nil md "session-bounds default md is nil")
+      (check-equal nil mn "session-bounds default mn is nil"))
+    (multiple-value-bind (mb md mn) (session-bounds nil)
+      (check-equal nil mb "session-bounds nil mb is nil")
+      (check-equal nil md "session-bounds nil md is nil")
+      (check-equal nil mn "session-bounds nil mn is nil"))
+
+    ;; Missing bounds under default session refuse guessing with exit 2:
+    (multiple-value-bind (text line code) (session-read-file default-sess snap-file)
+      (ok (null text) "session-read-file under default session succeeded")
+      (check-equal 2 code "session-read-file did not exit 2")
+      (ok (search "missing --max-bytes: refusing to guess" line)
+          "session-read-file line: ~A" line))
+
+    (let ((signaled nil))
+      (handler-case (session-read-file default-sess snap-file :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "missing bound in session-read-file")))
+      (ok signaled "session-read-file did not signal missing-read-bounds"))
 
     ;; 2. Five session file types read cleanly under session bounds
     (multiple-value-bind (text line code) (session-read-snapshot sess snap-file)
@@ -324,7 +339,7 @@
       ;; Exceeded bounds on read-loaded-snapshot:
       (let ((signaled nil))
         (handler-case
-            (read-loaded-snapshot snap-dir :max-bytes 5)
+            (read-loaded-snapshot snap-dir :max-bytes 5 :max-depth 10 :max-nodes 100)
           (read-bounds-exceeded (c)
             (setf signaled t)
             (check-equal "--max-bytes" (read-bounds-exceeded-bound c) "snapshot mode bound")))
@@ -332,7 +347,7 @@
 
       (let ((signaled nil))
         (handler-case
-            (read-loaded-snapshot snap-dir :max-depth 1)
+            (read-loaded-snapshot snap-dir :max-bytes 100000 :max-depth 1 :max-nodes 100)
           (read-bounds-exceeded (c)
             (setf signaled t)
             (check-equal "--max-depth" (read-bounds-exceeded-bound c) "snapshot mode bound")))
@@ -340,11 +355,20 @@
 
       (let ((signaled nil))
         (handler-case
-            (read-loaded-snapshot snap-dir :max-nodes 1)
+            (read-loaded-snapshot snap-dir :max-bytes 100000 :max-depth 10 :max-nodes 1)
           (read-bounds-exceeded (c)
             (setf signaled t)
             (check-equal "--max-nodes" (read-bounds-exceeded-bound c) "snapshot mode bound")))
         (ok signaled "read-loaded-snapshot did not enforce max-nodes"))
+
+      ;; Missing bounds on read-loaded-snapshot refuse guessing:
+      (let ((signaled nil))
+        (handler-case
+            (read-loaded-snapshot snap-dir)
+          (missing-read-bounds (c)
+            (setf signaled t)
+            (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-loaded-snapshot missing bound")))
+        (ok signaled "read-loaded-snapshot did not signal missing-read-bounds when bounds omitted"))
 
       ;; Valid read of loaded snapshot within bounds succeeds:
       (let ((loaded (read-loaded-snapshot snap-dir :max-bytes 100000 :max-depth 10 :max-nodes 100)))
@@ -427,7 +451,88 @@
 
     (let ((loaded (read-loaded-snapshot snap-dir :session sess)))
       (ok loaded "read-loaded-snapshot failed under valid session bounds")
-      (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count"))))
+      (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count"))
+
+    ;; E. Missing bounds signaled across entrypoints when bounds omitted:
+    (let ((signaled nil))
+      (handler-case
+          (open-file-journal journal-file :session default-sess)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "open-file-journal missing bound")))
+      (ok signaled "open-file-journal did not signal missing-read-bounds under default-sess"))
+
+    (let ((signaled nil))
+      (handler-case
+          (open-file-journal journal-file :require-bounds t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "open-file-journal require-bounds")))
+      (ok signaled "open-file-journal did not signal missing-read-bounds with :require-bounds t"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh) :session default-sess)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-journal missing bound")))
+      (ok signaled "replay-journal did not signal missing-read-bounds under default-sess"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-journal journal-file (fresh) :require-bounds t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-journal require-bounds")))
+      (ok signaled "replay-journal did not signal missing-read-bounds with :require-bounds t"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-verification-cache cache-file :session default-sess)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-verification-cache missing bound")))
+      (ok signaled "read-verification-cache did not signal missing-read-bounds under default-sess"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-verification-cache cache-file :require-bounds t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-verification-cache require-bounds")))
+      (ok signaled "read-verification-cache did not signal missing-read-bounds with :require-bounds t"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-request-bundle-file bundle-file :session default-sess :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-request-bundle-file missing bound")))
+      (ok signaled "read-request-bundle-file did not signal missing-read-bounds under default-sess"))
+
+    (let ((signaled nil))
+      (handler-case
+          (read-request-bundle-file bundle-file :require-bounds t :signal-error t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "read-request-bundle-file require-bounds")))
+      (ok signaled "read-request-bundle-file did not signal missing-read-bounds with :require-bounds t"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-request-bundle bundle-file (fresh) :session default-sess)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-request-bundle missing bound")))
+      (ok signaled "replay-request-bundle did not signal missing-read-bounds under default-sess"))
+
+    (let ((signaled nil))
+      (handler-case
+          (replay-request-bundle bundle-file (fresh) :require-bounds t)
+        (missing-read-bounds (c)
+          (setf signaled t)
+          (check-equal "--max-bytes" (missing-read-bounds-bound c) "replay-request-bundle require-bounds")))
+      (ok signaled "replay-request-bundle did not signal missing-read-bounds with :require-bounds t"))))
 
 ;;; ------------------------------------------------------------------
 ;;; E01-F02-03: Preserve unknown keys and refuse unknown node types
@@ -524,3 +629,50 @@
     (check-equal "acme/work/f1" (node-parent (kernel-state k) node-id) "parent intact")
     (ok (member node-id (node-children (kernel-state k) "acme/work/f1") :test #'equal)
         "child containment intact")))
+
+;;; ------------------------------------------------------------------
+;;; E01-F02-04: Common Lisp lexical rules in intake scanner
+;;; (SPEC-WORK.md:837-845, :6248)
+;;; ------------------------------------------------------------------
+
+(deftest "TestE01F02LexicalIntakeScanner" "docs/SPEC-WORK.md:837-845,6248"
+    "expected=shallow-string-parens;depth-after-close-strings;tabs-and-whitespace;comments-ignored;escaped-quotes"
+  ;; 1. String of 5 '(' inside a shallow list: '(list "(((((" 1)' must report depth 1 (the list nesting), not 6!
+  (multiple-value-bind (depth nodes) (intake-scan "(list \"(((((\" 1)")
+    (check-equal 1 depth "string parens must not inflate peak depth")
+    (check-equal 3 nodes "node count for '(list \"(((((\" 1)'"))
+
+  ;; 2. Genuine nesting depth after close-paren strings: '("))" (((1))))' true nesting 4 must report 4, not 3!
+  (multiple-value-bind (depth nodes) (intake-scan "(\"))\" (((1))))")
+    (check-equal 4 depth "close parens inside string must not decrement depth")
+    (check-equal 2 nodes "node count for '(\"))\" (((1))))'"))
+
+  ;; 3. Whitespace tokenization: three tab-separated integers '1\t2\t3' reports depth 0, nodes 3 (not 1)
+  (let ((tab-text (format nil "1~C2~C3" #\Tab #\Tab)))
+    (multiple-value-bind (depth nodes) (intake-scan tab-text)
+      (check-equal 0 depth "tab-separated integers depth")
+      (check-equal 3 nodes "tab-separated integers nodes")))
+
+  ;; 4. Line comments: parens and tokens in line comments must be ignored
+  (let ((comment-text (format nil "(foo ; (bar baz) ~% 1)")))
+    (multiple-value-bind (depth nodes) (intake-scan comment-text)
+      (check-equal 1 depth "comment parens must not affect depth")
+      (check-equal 2 nodes "comment tokens must not be counted as nodes")))
+
+  ;; Line comment terminated by Return (#\Return):
+  (let ((comment-cr-text (format nil "(foo ; (bar baz) ~C 1)" #\Return)))
+    (multiple-value-bind (depth nodes) (intake-scan comment-cr-text)
+      (check-equal 1 depth "comment parens with CR must not affect depth")
+      (check-equal 2 nodes "comment tokens with CR must not be counted as nodes")))
+
+  ;; 5. Escaped quotes and backslashes in strings:
+  (let ((escaped-text "(list \"hello \\\" (world) \\\"\" 1)"))
+    (multiple-value-bind (depth nodes) (intake-scan escaped-text)
+      (check-equal 1 depth "escaped quotes in strings must not terminate string")
+      (check-equal 3 nodes "node count with escaped quotes in string")))
+
+  ;; 6. All Common Lisp whitespace characters: Space, Tab, Newline, Return, Page
+  (let ((ws-text (format nil "a~Cb~Cc~Cd~Ce" #\Space #\Tab #\Newline #\Return #\Page)))
+    (multiple-value-bind (depth nodes) (intake-scan ws-text)
+      (check-equal 0 depth "whitespace-separated depth")
+      (check-equal 5 nodes "all 5 CL whitespace characters correctly delimit tokens"))))

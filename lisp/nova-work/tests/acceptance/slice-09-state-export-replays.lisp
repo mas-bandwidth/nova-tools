@@ -212,7 +212,7 @@ slice file (the loader list names it once per fold) never collide."
             "an isolated load created ~A" name))
       ;; A fresh reader rebuilds the model from the stored bytes, and the loaded
       ;; snapshot answers `query --snapshot`.
-      (let ((fresh (read-loaded-snapshot snap-dir)))
+      (let ((fresh (read-loaded-snapshot snap-dir :max-bytes 1000000 :max-depth 10 :max-nodes 100)))
         (check-equal (state-open-count source) (snapshot-query fresh)
                      "the snapshot does not answer query --snapshot")
         (check-string= before-bytes
