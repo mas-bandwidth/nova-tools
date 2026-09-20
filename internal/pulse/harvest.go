@@ -148,8 +148,15 @@ func Harvest(in HarvestInput) int {
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
 	for _, c := range cards {
-		jobDir := jobDir(in.Root, c.Slot, c.Label)
 		contract := cardContract(c.Card)
+		jobDir, n := resolveJobDir(in.Root, c.Slot, c.Label, contract)
+		if n > 1 {
+			refused++
+			writeSeen(in.Root, c, "refused")
+			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: ambiguous RESULT.md under %s (same contract in more than one job directory; not folding)\n",
+				field(c.Label), field(in.Root))
+			continue
+		}
 		state, branch, repo, resultLines := classify(jobDir, c, contract)
 
 		// The pool layout beside the slot layout (SPEC-PULSE rule 12): launch
@@ -440,18 +447,28 @@ func discoverRootCards(root string) []CardRow {
 }
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.
-// Slot `-` (what launch writes before swarm allocates) is not that directory
-// after a --bench pull. The --then harvest then walks same-label job dirs and
-// takes the latest RESULT.md (or a newer live job dir with none), so a leftover
-// 0/ or older scratch does not hide the current pull (issue #1907).
 func jobDir(root, slot, label string) string {
+	return namedJobDir(root, slot, label)
+}
+
+// resolveJobDir is the --then harvest lookup (issue #1907). A named slot is
+// that path. Slot `-` (what launch writes) has no allocated identity, so a
+// RESULT.md whose line 1 matches the current card contract is used when it is
+// unique. Two matches are ambiguous: mtime is not identity.
+func resolveJobDir(root, slot, label, contract string) (dir string, matches int) {
 	named := namedJobDir(root, slot, label)
-	if slot == "" || slot == "-" {
-		if found := findLatestJobDir(root, label); found != "" {
-			return found
-		}
+	if slot != "" && slot != "-" {
+		return named, 0
 	}
-	return named
+	found := matchingJobDirs(root, label, contract)
+	switch len(found) {
+	case 0:
+		return named, 0
+	case 1:
+		return found[0], 1
+	default:
+		return "", len(found)
+	}
 }
 
 // namedJobDir is the path the slot column spells: `-` is the local `0` layout,
@@ -465,34 +482,36 @@ func namedJobDir(root, slot, label string) string {
 	return filepath.Join(root, slot, "jobs", label)
 }
 
-func findLatestJobDir(root, label string) string {
+func matchingJobDirs(root, label, contract string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return ""
+		return nil
 	}
-	var best string
-	var bestTime time.Time
-	found := false
+	var out []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		dir := filepath.Join(root, e.Name(), "jobs", label)
-		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		when := info.ModTime()
-		if ri, err := os.Stat(filepath.Join(dir, "RESULT.md")); err == nil {
-			when = ri.ModTime()
-		}
-		if !found || when.After(bestTime) {
-			best = dir
-			bestTime = when
-			found = true
+		if contractLineMatch(dir, contract) {
+			out = append(out, dir)
 		}
 	}
-	return best
+	return out
+}
+
+func contractLineMatch(job, contract string) bool {
+	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
+	if want == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	if err != nil {
+		return false
+	}
+	norm := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	line1 := strings.TrimSpace(firstNonEmpty(strings.Split(norm, "\n")))
+	return strings.HasPrefix(strings.TrimRight(line1, " \t"), want)
 }
 
 // cardContract is line 1 of a card's text file, the contract line its RESULT must equal.
