@@ -1,6 +1,7 @@
 package pulse
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -306,3 +307,150 @@ func TestRequeueJobProviderErrorDetection(t *testing.T) {
 		t.Fatalf("normal failure (NATIVE INCOMPLETE) must not be detected as provider error")
 	}
 }
+
+// TestRequeueFailClosedOnUnreadableOrDirectoryRetryMarker proves that:
+// 1. If .provider-retry is a directory, requeue fails closed with error.
+// 2. The count is never reset to 1 and the card is NOT moved.
+// 3. If .provider-retry is malformed, requeue fails closed with error and card is not moved.
+func TestRequeueFailClosedOnUnreadableOrDirectoryRetryMarker(t *testing.T) {
+	dir := t.TempDir()
+	readyDir := filepath.Join(dir, "ready")
+	launchedDir := filepath.Join(dir, "launched")
+	if err := os.MkdirAll(readyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(launchedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cardName := "card-failclosed.md"
+	cardPath := filepath.Join(launchedDir, cardName)
+	if err := os.WriteFile(cardPath, []byte("RESULT: CARD-FC\nMODEL: deepseek-direct\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. .provider-retry is a directory
+	retryDir := filepath.Join(launchedDir, cardName+".provider-retry")
+	if err := os.MkdirAll(retryDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	requeued, nextAttempt, err := RequeueProviderCard(readyDir, launchedDir, cardName, 3)
+	if err == nil {
+		t.Fatalf("expected error when .provider-retry is a directory, got nil")
+	}
+	if requeued {
+		t.Fatalf("requeued must be false on error")
+	}
+	if nextAttempt != 0 {
+		t.Fatalf("nextAttempt must be 0 on error, got %d", nextAttempt)
+	}
+
+	// Verify card was NOT moved to readyDir
+	if _, err := os.Stat(filepath.Join(readyDir, cardName)); !os.IsNotExist(err) {
+		t.Fatalf("card must NOT be moved to readyDir when .provider-retry is a directory")
+	}
+	// Verify card remains in launchedDir
+	if _, err := os.Stat(filepath.Join(launchedDir, cardName)); err != nil {
+		t.Fatalf("card must remain in launchedDir: %v", err)
+	}
+
+	// Clean up directory
+	if err := os.RemoveAll(retryDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. .provider-retry has malformed contents (missing attempts)
+	if err := os.WriteFile(retryDir, []byte("garbage content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	requeued, nextAttempt, err = RequeueProviderCard(readyDir, launchedDir, cardName, 3)
+	if err == nil {
+		t.Fatalf("expected error when .provider-retry is malformed, got nil")
+	}
+	if requeued {
+		t.Fatalf("requeued must be false on malformed retry state")
+	}
+	if nextAttempt != 0 {
+		t.Fatalf("nextAttempt must be 0 on malformed retry state, got %d", nextAttempt)
+	}
+
+	// Verify card still in launchedDir, not moved
+	if _, err := os.Stat(filepath.Join(readyDir, cardName)); !os.IsNotExist(err) {
+		t.Fatalf("card must NOT be moved to readyDir when retry state is malformed")
+	}
+	if _, err := os.Stat(filepath.Join(launchedDir, cardName)); err != nil {
+		t.Fatalf("card must remain in launchedDir: %v", err)
+	}
+}
+
+func TestDrainLaunchedProviderErrorAutoRequeue(t *testing.T) {
+	dir := t.TempDir()
+	queueDir := filepath.Join(dir, "queue")
+	launchedDir := filepath.Join(queueDir, "launched")
+	pendingDir := filepath.Join(queueDir, "pending")
+	failedDir := filepath.Join(queueDir, "failed")
+	doneDir := filepath.Join(queueDir, "done")
+	root := filepath.Join(dir, "root")
+	slotJobDir := filepath.Join(root, "0", "jobs", "card-789")
+
+	if err := os.MkdirAll(launchedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(pendingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(slotJobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cardName := "card-789.md"
+	if err := os.WriteFile(filepath.Join(launchedDir, cardName), []byte("RESULT: CARD-789\nMODEL: opencode/deepseek-v4-flash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write launched marker
+	if err := os.WriteFile(filepath.Join(launchedDir, cardName+".launched"), []byte("lane=1\nbench=studio\nlabel=card-789\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write usage.tsv in job directory indicating provider error
+	if err := os.WriteFile(filepath.Join(slotJobDir, "usage.tsv"), []byte("slot\tlabel\tturns\tusd\tend\n0\tcard-789\t1\t0.001\tprovider\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Verify localJobStates classifies it as "provider"
+	states := localJobStates(root)
+	if states["card-789"] != "provider" {
+		t.Fatalf("localJobStates = %q, want 'provider'", states["card-789"])
+	}
+
+	// 2. Run drainLaunched
+	var out bytes.Buffer
+	bl := bound(&out, 100)
+	in := HarvestInput{
+		Root:     root,
+		Launched: launchedDir,
+		Ready:    pendingDir,
+		Done:     doneDir,
+		Failed:   failedDir,
+	}
+	drained := drainLaunched(in, states, bl)
+	if drained != 1 {
+		t.Fatalf("drainLaunched drained = %d, want 1", drained)
+	}
+
+	// Card should be moved to pendingDir
+	if _, err := os.Stat(filepath.Join(pendingDir, cardName)); err != nil {
+		t.Fatalf("card not found in pendingDir: %v", err)
+	}
+	// .provider-retry should exist in pendingDir
+	if _, err := os.Stat(filepath.Join(pendingDir, cardName+".provider-retry")); err != nil {
+		t.Fatalf("retry marker not found in pendingDir: %v", err)
+	}
+	// Card should not be in launchedDir
+	if _, err := os.Stat(filepath.Join(launchedDir, cardName)); !os.IsNotExist(err) {
+		t.Fatalf("card should no longer be in launchedDir")
+	}
+}
+
+

@@ -593,7 +593,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 		attemptBytes := readSince(outLog, before)
 		pf, isProvider := swarm.ClassifyProviderFailure(attemptBytes)
-		if isProvider && !nativeLeftAResult(jobDir) {
+		hasResult := nativeLeftAResult(jobDir)
+		if isProvider && !hasResult {
 			res.providerFailure = pf
 			res.end = swarm.EndProvider
 		} else {
@@ -607,7 +608,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		if isProvider && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+		if isProvider && !hasResult && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}

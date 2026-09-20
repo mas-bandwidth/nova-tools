@@ -203,7 +203,20 @@ func reapLaunchedCards(in ReapInput, roots []string, now time.Time) (requeued, f
 		if err != nil || now.Sub(info.ModTime()) < in.Deadline {
 			continue // still inside the deadline: the batch owns it, not the reaper
 		}
-		if jobExists(roots, strings.TrimSuffix(name, ".md")) {
+		label := strings.TrimSuffix(name, ".md")
+		if isProviderFailure(roots, label) {
+			requeuedCard, _, rerr := RequeueProviderCard(filepath.Join(in.Queue, "pending"), launched, name, DefaultMaxProviderRetries)
+			if rerr == nil && requeuedCard {
+				requeued++
+				continue
+			}
+			failed++
+			if !in.DryRun {
+				moveCard(in, path, filepath.Join(in.Queue, "failed", name))
+			}
+			continue
+		}
+		if jobExists(roots, label) {
 			continue
 		}
 		attempt := filepath.Join(in.Queue, "attempts", name)
@@ -232,14 +245,28 @@ func reapLaunchedCards(in ReapInput, roots []string, now time.Time) (requeued, f
 	return requeued, failed
 }
 
-// jobExists says whether any bench still holds this card's job directory.
-func jobExists(roots []string, label string) bool {
+func findJobDirs(roots []string, label string) []string {
+	var out []string
 	for _, root := range roots {
 		if matches, _ := filepath.Glob(filepath.Join(root, "*", "jobs", label)); len(matches) > 0 {
+			out = append(out, matches...)
+		}
+	}
+	return out
+}
+
+func isProviderFailure(roots []string, label string) bool {
+	for _, dir := range findJobDirs(roots, label) {
+		if IsJobProviderError(dir) {
 			return true
 		}
 	}
 	return false
+}
+
+// jobExists says whether any bench still holds this card's job directory.
+func jobExists(roots []string, label string) bool {
+	return len(findJobDirs(roots, label)) > 0
 }
 
 func moveCard(in ReapInput, from, to string) {

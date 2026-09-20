@@ -41,6 +41,7 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse requeue --ready <dir> --launched <dir> --card <name> [--route <route>] [--max <n>]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>] [--diag-days <n>] [--diag-max-bytes <n>]
@@ -203,6 +204,9 @@ deadline, slot locks whose pid is dead, launched cards whose job directory is go
 example:
   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
 
+requeue moves a card that failed due to upstream provider infrastructure errors
+from launched back into ready, recording retry attempts in .provider-retry.
+
 hygiene is the bench's clean-as-we-work pass, the Go half of bin/bench-hygiene.sh:
 run reaps dead slots, deletes read jobs and drops the build cache when the disk is
 low, and prints one HYGIENE line; reap <slot>, delete-job <slot> <job>,
@@ -294,6 +298,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSweep(rest, stdout, stderr)
 	case "reap":
 		return cmdReap(rest, stdout, stderr)
+	case "requeue":
+		return cmdRequeue(rest, stdout, stderr)
 	case "hygiene":
 		return cmdHygiene(rest, stdout, stderr, now)
 	case "fleet":
@@ -465,6 +471,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	base := f.fs.String("base", "", "")
 	since := f.fs.String("since", "", "")
 	launched := f.fs.String("launched", "", "")
+	readyDir := f.fs.String("ready", "", "")
 	doneDir := f.fs.String("done", "", "")
 	failedDir := f.fs.String("failed", "", "")
 	var clones benchFlag
@@ -557,6 +564,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Base:         *base,
 		Since:        age,
 		Launched:     *launched,
+		Ready:        *readyDir,
 		Done:         *doneDir,
 		Failed:       *failedDir,
 	}

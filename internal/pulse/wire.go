@@ -248,8 +248,21 @@ func (w *Wiring) Harvest(tick int) (int, []Undecided, error) {
 				// the refusal line is the whole evidence of it.
 				ref := tokenOf(l, "label=")
 				refusal := l[strings.Index(l, ":")+1:]
+				cCase := kindOfRefusal(refusal)
+				if cCase == CaseProvider && w.in.Queue != "" {
+					readyDir := filepath.Join(w.in.Queue, "pending")
+					if _, err := os.Stat(readyDir); err != nil {
+						readyDir = filepath.Join(w.in.Queue, "ready")
+					}
+					launchedDir := filepath.Join(w.in.Queue, "launched")
+					requeued, attempt, rerr := RequeueProviderCard(readyDir, launchedDir, ref, DefaultMaxProviderRetries)
+					if rerr == nil && requeued {
+						w.log(fmt.Sprintf("HARVEST REQUEUE label=%s attempt=%d to=%s", ref, attempt, readyDir))
+						continue
+					}
+				}
 				undecided = append(undecided, Undecided{
-					Case: kindOfRefusal(refusal), Ref: ref, Result: []string{l}, Refusal: strings.TrimSpace(refusal),
+					Case: cCase, Ref: ref, Result: []string{l}, Refusal: strings.TrimSpace(refusal),
 				})
 			}
 		}

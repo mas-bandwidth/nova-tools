@@ -102,15 +102,25 @@ func TestNativeProviderVerdictOnRateLimit(t *testing.T) {
 }
 
 // TestNativePublishedResultIsNeverProviderDeath proves that a run that published
-// RESULT.md is NATIVE OK even if logs mention a provider error earlier.
+// RESULT.md is NATIVE OK even if logs mention a provider error earlier, and never retries.
 func TestNativePublishedResultIsNeverProviderDeath(t *testing.T) {
-	out, _, _, _ := nativeRunCapture(t, "green-pub", "FAKE-PUBLISH-FIRST\nFAKE-5XX\n")
+	out, _, _, slot := nativeRunCapture(t, "green-pub", "FAKE-LAUNCHES\nFAKE-PUBLISH-FIRST\nFAKE-5XX\n")
 
 	if !strings.Contains(out, "NATIVE OK ") {
 		t.Fatalf("a run with published result must be NATIVE OK:\n%s", out)
 	}
 	if strings.Contains(out, "NATIVE PROVIDER") {
 		t.Fatalf("a published result cannot be NATIVE PROVIDER:\n%s", out)
+	}
+
+	// Verify retry was suppressed: launches must be exactly 1
+	launchesRaw, err := os.ReadFile(filepath.Join(slot, "jobs", "green-pub", "launches"))
+	if err != nil {
+		t.Fatalf("launches record missing: %v", err)
+	}
+	launches := strings.Count(string(launchesRaw), "launch")
+	if launches != 1 {
+		t.Fatalf("a published result must never trigger retry, got %d launches, want 1", launches)
 	}
 }
 

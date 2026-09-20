@@ -85,6 +85,45 @@ func TestClassifyProviderFailure(t *testing.T) {
 			wantOK:  true,
 		},
 		{
+			name:    "structured marker rate limit with ref",
+			log:     "[PROVIDER_ERROR] rate-limit ref=err_struct_429\n",
+			wantWhy: "rate-limit",
+			wantRef: "err_struct_429",
+			wantOK:  true,
+		},
+		{
+			name:    "structured marker 503 server error",
+			log:     "[PROVIDER_ERROR] provider-503 ref=err_struct_503\n",
+			wantWhy: "provider-5xx",
+			wantRef: "err_struct_503",
+			wantOK:  true,
+		},
+		{
+			name:   "negative control: transcript prose reviewed lines 429 through 500",
+			log:    "reviewed lines 429 through 500 in internal/swarm/native.go\n",
+			wantOK: false,
+		},
+		{
+			name:   "negative control: transcript prose quoting HTTP 429 and 500 cases",
+			log:    "We verified test cases for handling HTTP 429 and HTTP 500 properly.\n",
+			wantOK: false,
+		},
+		{
+			name:   "negative control: transcript prose discussing UnknownError",
+			log:    "We considered whether an UnknownError could be returned by the upstream endpoint.\n",
+			wantOK: false,
+		},
+		{
+			name:   "negative control: transcript prose discussing rate-limit",
+			log:    "Implemented client-side rate-limit backoff.\n",
+			wantOK: false,
+		},
+		{
+			name:   "negative control: error prefix with prose lines 429 through 500",
+			log:    "Error: reviewed lines 429 through 500 without issues\n",
+			wantOK: false,
+		},
+		{
 			name:   "negative control: normal test failure",
 			log:    "=== RUN TestSomething\n--- FAIL: TestSomething (0.01s)\nFAIL\n",
 			wantOK: false,

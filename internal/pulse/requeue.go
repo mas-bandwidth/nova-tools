@@ -74,10 +74,18 @@ func RequeueProviderCardWithRoute(readyDir, launchedDir string, cardBase string,
 	}
 	base := filepath.Base(sourceCard)
 
-	// Read existing retry state if any
-	existing, _ := ReadProviderRetry(launchedDir, base)
-	if existing == nil || existing.Attempts == 0 {
-		existing, _ = ReadProviderRetry(readyDir, base)
+	// Read existing retry state if any.
+	// FAIL-CLOSED: if .provider-retry exists but cannot be read or is a directory,
+	// or has invalid contents, fail-closed immediately! Never reset attempts to 0 or move card.
+	existing, err := ReadProviderRetry(launchedDir, base)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, 0, fmt.Errorf("failed to read provider retry state in %s: %w", launchedDir, err)
+	}
+	if existing == nil {
+		existing, err = ReadProviderRetry(readyDir, base)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, 0, fmt.Errorf("failed to read provider retry state in %s: %w", readyDir, err)
+		}
 	}
 	attempts := 0
 	var failedRoutes []string
@@ -99,11 +107,13 @@ func RequeueProviderCardWithRoute(readyDir, launchedDir string, cardBase string,
 
 	// Check if retry limit exceeded
 	if nextAttempt > maxRetries {
-		// Retries exhausted: card stays in launchedDir with .provider-failed marker
+		// Retries exhausted: persist .provider-failed marker in launchedDir, card stays in launchedDir
 		failedMarker := filepath.Join(launchedDir, base+ProviderFailedSuffix)
 		body := fmt.Sprintf("failed_routes=%s attempts=%d reason=retries-exhausted\n",
 			strings.Join(failedRoutes, ","), attempts)
-		_ = os.WriteFile(failedMarker, []byte(body), 0o644)
+		if werr := os.WriteFile(failedMarker, []byte(body), 0o644); werr != nil {
+			return false, nextAttempt, fmt.Errorf("failed to write provider failed marker: %w", werr)
+		}
 		return false, nextAttempt, nil
 	}
 
@@ -112,43 +122,67 @@ func RequeueProviderCardWithRoute(readyDir, launchedDir string, cardBase string,
 		return false, 0, err
 	}
 
-	// Move card from launchedDir back to readyDir
-	destCard := filepath.Join(readyDir, base)
-	if err := os.Rename(sourceCard, destCard); err != nil {
-		return false, 0, err
-	}
-
-	// Remove launched marker in launchedDir so lane is released
-	_ = os.Remove(filepath.Join(launchedDir, base+".launched"))
-	_ = os.Remove(filepath.Join(launchedDir, base+ProviderRetrySuffix))
-
-	// Write updated .provider-retry marker in readyDir
-	retryMarker := filepath.Join(readyDir, base+ProviderRetrySuffix)
+	// FAIL-CLOSED DURABLE PERSISTENCE:
+	// Persist the updated retry state before moving the card!
 	markerContent := fmt.Sprintf("failed_routes=%s attempts=%d\n",
 		strings.Join(failedRoutes, ","), nextAttempt)
-	if err := os.WriteFile(retryMarker, []byte(markerContent), 0o644); err != nil {
-		return false, nextAttempt, err
+
+	// 1. Persist updated marker in launchedDir first so state is never lost even if crash occurs before move
+	launchedRetryMarker := filepath.Join(launchedDir, base+ProviderRetrySuffix)
+	if err := os.WriteFile(launchedRetryMarker, []byte(markerContent), 0o644); err != nil {
+		return false, 0, fmt.Errorf("failed to persist retry state before moving card: %w", err)
 	}
+
+	// 2. Persist updated marker in readyDir before moving the card
+	readyRetryMarker := filepath.Join(readyDir, base+ProviderRetrySuffix)
+	if err := os.WriteFile(readyRetryMarker, []byte(markerContent), 0o644); err != nil {
+		return false, 0, fmt.Errorf("failed to write retry marker in ready dir: %w", err)
+	}
+
+	// 3. Move card from launchedDir back to readyDir
+	destCard := filepath.Join(readyDir, base)
+	if err := os.Rename(sourceCard, destCard); err != nil {
+		// Clean up the ready marker if rename fails
+		_ = os.Remove(readyRetryMarker)
+		return false, 0, fmt.Errorf("failed to move card: %w", err)
+	}
+
+	// 4. Remove launched marker in launchedDir so lane is released
+	_ = os.Remove(filepath.Join(launchedDir, base+".launched"))
+	_ = os.Remove(launchedRetryMarker)
 
 	return true, nextAttempt, nil
 }
 
 // ReadProviderRetry reads a .provider-retry marker file beside a card in dir.
+// It fails closed if the marker cannot be read or is a directory.
 func ReadProviderRetry(dir, cardBase string) (*ProviderRetryState, error) {
 	markerPath := findMarkerPath(dir, cardBase, ProviderRetrySuffix)
 	if markerPath == "" {
 		return nil, os.ErrNotExist
 	}
+	st, err := os.Stat(markerPath)
+	if err != nil {
+		return nil, err
+	}
+	if st.IsDir() {
+		return nil, fmt.Errorf(".provider-retry is a directory: %s", markerPath)
+	}
 	raw, err := os.ReadFile(markerPath)
 	if err != nil {
 		return nil, err
 	}
-	return parseProviderRetry(raw), nil
+	return parseProviderRetry(raw)
 }
 
-func parseProviderRetry(raw []byte) *ProviderRetryState {
+func parseProviderRetry(raw []byte) (*ProviderRetryState, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if len(trimmed) == 0 {
+		return nil, errors.New(".provider-retry is empty")
+	}
 	st := &ProviderRetryState{}
-	tokens := strings.Fields(string(raw))
+	foundAttempts := false
+	tokens := strings.Fields(trimmed)
 	for _, tok := range tokens {
 		k, v, ok := strings.Cut(tok, "=")
 		if !ok {
@@ -158,8 +192,11 @@ func parseProviderRetry(raw []byte) *ProviderRetryState {
 		v = strings.TrimSpace(v)
 		switch k {
 		case "attempts":
-			if n, err := strconv.Atoi(v); err == nil {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				st.Attempts = n
+				foundAttempts = true
+			} else {
+				return nil, fmt.Errorf(".provider-retry has invalid attempts: %q", v)
 			}
 		case "failed_routes":
 			if v != "" && v != "-" {
@@ -172,7 +209,10 @@ func parseProviderRetry(raw []byte) *ProviderRetryState {
 			}
 		}
 	}
-	return st
+	if !foundAttempts {
+		return nil, errors.New(".provider-retry missing valid attempts field")
+	}
+	return st, nil
 }
 
 // SelectAlternateRoute selects the cheapest available route from reg that has not failed yet.

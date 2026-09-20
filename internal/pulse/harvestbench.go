@@ -551,7 +551,46 @@ func drainLaunched(in HarvestInput, state map[string]string, lines *boundedList)
 			continue
 		case "done":
 			st, why = "done", "result"
+		case "provider":
+			st, why = "provider", "provider-error"
 		}
+
+		readyDir := in.Ready
+		if readyDir == "" {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(in.Launched), "pending")); err == nil {
+				readyDir = filepath.Join(filepath.Dir(in.Launched), "pending")
+			} else {
+				readyDir = filepath.Join(filepath.Dir(in.Launched), "ready")
+			}
+		}
+
+		isProvErr := st == "provider" || (in.Root != "" && IsJobProviderError(filepath.Join(in.Root, label)))
+		if !isProvErr && in.Root != "" {
+			if matches, _ := filepath.Glob(filepath.Join(in.Root, "*", "jobs", label)); len(matches) > 0 {
+				for _, m := range matches {
+					if IsJobProviderError(m) {
+						isProvErr = true
+						break
+					}
+				}
+			}
+		}
+
+		if (st == "failed" || st == "provider") && isProvErr {
+			requeued, _, rerr := RequeueProviderCard(readyDir, in.Launched, base, DefaultMaxProviderRetries)
+			if rerr == nil && requeued {
+				_ = os.Remove(launchedMarker(in.Launched, base))
+				note := fmt.Sprintf("%s\tlane=%s\tbench=%s\tlabel=%s\twhy=%s\n", stamp, m["lane"], m["bench"], label, "provider-requeued")
+				_ = os.WriteFile(marker(readyDir, base, "requeued", stamp), []byte(note), 0o644)
+				drained++
+				lines.Line(fmt.Sprintf("HARVEST DRAIN card=%s lane=%s state=%s bench=%s why=%s",
+					field(base), field(m["lane"]), "requeued", field(m["bench"]), "provider-requeued"))
+				continue
+			}
+			st = "failed"
+			why = "provider-failed"
+		}
+
 		dir := doneDir
 		if st == "failed" {
 			dir = failedDir
@@ -595,8 +634,11 @@ func localJobStates(root string) map[string]string {
 				continue
 			}
 			st := "running"
-			if _, err := os.Stat(filepath.Join(root, s.Name(), "jobs", j.Name(), "RESULT.md")); err == nil {
+			jobDir := filepath.Join(root, s.Name(), "jobs", j.Name())
+			if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err == nil {
 				st = "done"
+			} else if IsJobProviderError(jobDir) {
+				st = "provider"
 			}
 			out[j.Name()] = st
 		}

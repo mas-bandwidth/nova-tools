@@ -61,6 +61,7 @@ type HarvestInput struct {
 	// named, harvest drains it: a card whose job has finished leaves it for Done
 	// or Failed, its launched marker goes with it, and its lane is free.
 	Launched string
+	Ready    string
 	Done     string
 	Failed   string
 	// The working layout (SPEC-PULSE, "Harvest on the working layout"): every
