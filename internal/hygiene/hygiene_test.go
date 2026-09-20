@@ -615,6 +615,72 @@ func TestValidatePathsRefusesAGlobThatBoundsNothing(t *testing.T) {
 	}
 }
 
+// #1853: a Windows drive letter is absolute on every bench. ValidatePaths used to
+// refuse a leading `/` and let `C:/Windows/...` through, so a card cut on darwin
+// could declare paths outside the repo. The rule is lexical (`^[A-Za-z]:`) and the
+// same on darwin, linux and windows; a leading `\` is the other spelling. Reverting
+// 6ad85012's glob.go left this package green: the existing ValidatePaths tests name
+// `/etc/passwd` and `**`, not a drive letter.
+func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.T) {
+	for _, bad := range []string{
+		`C:/Windows/system32/evil.go`,
+		`C:\Windows\system32\evil.go`,
+		`d:/x/y.go`,
+		`\Windows\system32\evil.go`,
+	} {
+		err := ValidatePaths([]string{bad})
+		if err == nil {
+			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: it is absolute", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "absolute") {
+			t.Errorf("ValidatePaths([%q]) = %v, want it to name absolute", bad, err)
+		}
+	}
+}
+
+// KindDeclared, Kinds and the embedded kinds.txt landed in a78f3ea9. The tests that
+// landed with them live in cmd/nova-check, so reverting this package's data.go and
+// kinds.txt left ./internal/hygiene green. The name set is data here; a stray
+// exception granted to a kind that does not exist is an exception granted to nobody.
+func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
+	raw, err := os.ReadFile("kinds.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		name := strings.TrimSpace(strings.SplitN(line, "\t", 2)[0])
+		if name != "" {
+			want = append(want, name)
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("kinds.txt names no kinds")
+	}
+	got := Kinds()
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Kinds() = %q, want the kinds.txt name set in order %q", got, want)
+	}
+	for _, name := range want {
+		if !KindDeclared(name) {
+			t.Errorf("KindDeclared(%q) = false, want true", name)
+		}
+	}
+	if KindDeclared("not-a-declared-kind") {
+		t.Fatal("an undeclared kind was accepted")
+	}
+	for _, kind := range StrayKinds() {
+		if !KindDeclared(kind) {
+			t.Errorf("the stray list excuses kind %q, which is not declared", kind)
+		}
+	}
+}
+
 // hygiene-reads-full-blob-ids: `--raw` abbreviates the blob id, and an abbreviation is
 // ambiguous sooner or later -- at which point `git cat-file -s` refuses and the WHOLE
 // Check returns an error over a range that was fine. The id is read in full.
