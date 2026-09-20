@@ -40,6 +40,8 @@ var workAudit = audit.Config{
 		// worklang is the bounded plan reader; it parses bytes into values and every
 		// field it yields is printed through oneline.
 		`"github.com/mas-bandwidth/nova-tools/internal/worklang"`,
+		// workreconcile is the E09 proving run and reconciliation engine (Issue #2082).
+		`"github.com/mas-bandwidth/nova-tools/internal/workreconcile"`,
 		// workclient is the S1 socket wire: it dials the session socket and writes the
 		// request line, and writes nothing to stdout or stderr, so every byte a caller
 		// reads is still printed by an escaped site in this package.
