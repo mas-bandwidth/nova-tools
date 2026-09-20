@@ -33,7 +33,10 @@ func writeTemplates(t *testing.T, dir string, kind map[string]string, benches st
 
 const readTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 8
+REASONING: low
 Do not run go build, go test or any toolchain; read and write only.
+Do not grep around. Each STEP names the exact file and line range; the numbered step count is the turn budget.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Read the named files and write notes.txt in the repo directory.
@@ -41,9 +44,10 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 
 const fixTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 20
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
-STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP 2. Make the fix; report the red line and then the green line, one row per item. Do not grep around. Each STEP names the exact file and line range, one test command, one commit, one RESULT write.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 
 func runCut(t *testing.T, templates map[string]string, pool string) (int, string, string, string, string) {
@@ -302,6 +306,7 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 		var b strings.Builder
 		b.WriteString("RESULT <label> sha=<sha12>\nYou are a worker. The deadline is the machinery's.\n")
 		if kind == "read" {
+			b.WriteString("REASONING: low\n")
 			b.WriteString("Do not run go build, go test or any toolchain; read and write only.\n")
 		}
 		b.WriteString("STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>\n")
@@ -345,6 +350,52 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
 		t.Fatal("21-step fix card: a card was written despite the refusal")
 	}
+}
+
+// cut-read-card-names-low-reasoning: a read-family template that names no
+// reasoning bound is CUT REFUSED, no card written. A card that says
+// REASONING: low (or an explicit default/omit for a route that cannot
+// lower it) cuts. #855: reasoning was 121% of visible output; a read does
+// not need chain-of-thought at full effort.
+func TestCutReadCardNamesLowReasoning(t *testing.T) {
+	unbounded := `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Read the named files and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
+	code, _, stderr, out, _ := runCut(t, map[string]string{"read": unbounded}, "s\t1\tread\tt\tread\n")
+	if code != 2 || !strings.Contains(stderr, "low reasoning") {
+		t.Fatalf("unbounded read: code=%d stderr=%q, want CUT REFUSED naming low reasoning", code, stderr)
+	}
+	if !strings.Contains(stderr, "CUT REFUSED template=read") {
+		t.Fatalf("unbounded read: stderr=%q, want CUT REFUSED template=read", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Fatal("unbounded read: a card was written despite the refusal")
+	}
+
+	bounded := insertReasoningLine(unbounded, "low")
+	if code, _, stderr, out, _ := runCut(t, map[string]string{"read": bounded}, "s\t1\tread\tt\tread\n"); code != 0 {
+		t.Fatalf("read card that names REASONING: low: cut = %d, want 0; stderr=%q", code, stderr)
+	} else if _, err := os.Stat(filepath.Join(out, "1.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// An explicit default is a bound, not a silent omit: Stella, #855 comment.
+	kept := insertReasoningLine(unbounded, "default")
+	if code, _, stderr, _, _ := runCut(t, map[string]string{"read": kept}, "s\t1\tread\tt\tread\n"); code != 0 {
+		t.Fatalf("read card that names REASONING: default: cut = %d, want 0; stderr=%q", code, stderr)
+	}
+}
+
+func insertReasoningLine(tmpl, value string) string {
+	i := strings.Index(tmpl, "\n")
+	if i < 0 {
+		return tmpl
+	}
+	return tmpl[:i+1] + "REASONING: " + value + "\n" + tmpl[i+1:]
 }
 
 // cut-holds-to-one-model: a models.tsv that names only flash is legal, and every card --

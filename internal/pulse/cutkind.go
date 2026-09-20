@@ -226,16 +226,21 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 func kindInstruction(in CutKindInput, body string) string {
 	switch in.Kind {
 	case "read":
-		return fmt.Sprintf(`Read pull request %d of %s at head %s. Quote the rule beside every line you hold.
+		return fmt.Sprintf(`TURNS: 8
+REASONING: low
 Do not run go build, go test or any toolchain; read and write only.
-Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then exactly one verdict line:
+Do not grep around. Each STEP names the exact file and line range; the numbered step count is the turn budget (OpenCode variant / DeepSeek reasoning_effort where the route supports it).
+STEP 1. Read pull request %d of %s at head %s. Quote the rule beside every line you hold. Open only the files the PR names.
+STEP 2. Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then exactly one verdict line:
 PR%d: APPROVE|HOLD head=%s repo=%s
 `, in.PR, in.Repo, in.Head, in.PR, in.Head, in.Repo)
 	case "fix":
 		if strings.TrimSpace(body) == "" {
 			return fixKindStepSkeleton(in)
 		}
-		return fmt.Sprintf(`Fix %s #%d with its reproducing test first: the red line, then the green line, one row per item.
+		return fmt.Sprintf(`TURNS: 20
+Fix %s #%d with its reproducing test first: the red line, then the green line, one row per item.
+Do not grep around. Each STEP names the exact file and line range, one test command, one commit, one RESULT write.
 A fix whose diff carries no test is not admitted.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
 `, in.Repo, in.Issue, in.Repo)
@@ -268,7 +273,9 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 // and enters the repo, STEP 2 names the red-then-green fix, STEP 3 is the gate verbatim with
 // its deadline, and STEP 4 writes RESULT.md last (#1852 item 4).
 func fixKindStepSkeleton(in CutKindInput) string {
-	return fmt.Sprintf("STEP 1. Clone the repo and enter it.\n\n"+
+	return fmt.Sprintf("TURNS: 20\n"+
+		"Do not grep around. Each STEP names the exact file and line range, one test command, one commit, one RESULT write.\n\n"+
+		"STEP 1. Clone the repo and enter it.\n\n"+
 		"    git clone -q https://github.com/mas-bandwidth/nova-tools.git repo\n"+
 		"    cd repo\n\n"+
 		"STEP 2. Fix %s #%d with its reproducing test first: the red test, then the "+

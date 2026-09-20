@@ -360,11 +360,16 @@ occupation beyond that offer.
 // dogfood probe 2026-09-16 the directory was copied out of cmd/nova-pulse/testdata by hand;
 // now every card is a constant here and `template --name <kind>` prints it, so a templates
 // dir can be built from the tool. A text-only card (read, text, tone) carries rule 6's
-// no-build line, and a writing card (fix, replay, drift) carries the red-then-green row.
+// no-build line, TURNS: 8 and REASONING: low (#855). A writing card (fix, replay, drift)
+// carries the red-then-green row and TURNS: 20. Both families name the exact file and
+// line range and do not grep around.
 
 const pulseRead = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 8
+REASONING: low
 Do not run go build, go test or any toolchain; read and write only.
+Do not grep around. Each STEP names the exact file and line range; the numbered step count is the turn budget.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Read the named files and write notes.txt in the repo directory.
@@ -373,15 +378,19 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseFix = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 20
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
-STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP 2. Make the fix; report the red line and then the green line, one row per item. Do not grep around. Each STEP names the exact file and line range, one test command, one commit, one RESULT write.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 `
 
 const pulseText = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 8
+REASONING: low
 Do not run go build, go test or any toolchain; read and write only.
+Do not grep around. Each STEP names the exact file and line range; the numbered step count is the turn budget.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Make the text change and write notes.txt in the repo directory.
@@ -390,23 +399,28 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseReplay = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 20
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
-STEP 2. Replay the rule; report the red line and then the green line, one row per item.
+STEP 2. Replay the rule; report the red line and then the green line, one row per item. Do not grep around. Each STEP names the exact file and line range, one test command, one commit, one RESULT write.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 `
 
 const pulseDrift = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 20
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
-STEP 2. Close the drift; report the red line and then the green line, one row per item.
+STEP 2. Close the drift; report the red line and then the green line, one row per item. Do not grep around. Each STEP names the exact file and line range, one test command, one commit, one RESULT write.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 `
 
 const pulseTone = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+TURNS: 8
+REASONING: low
 Do not run go build, go test or any toolchain; read and write only.
+Do not grep around. Each STEP names the exact file and line range; the numbered step count is the turn budget.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Fix the tone of the named page and write notes.txt in the repo directory.

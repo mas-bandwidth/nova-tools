@@ -497,6 +497,9 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
 			return "", "rule 6: the text template lacks the no-build line (read, text and tone cards must state `Do not run go build, go test or any toolchain`)"
 		}
+		if reasoningBound(rendered) == "" {
+			return "", "the read-family card names no low reasoning setting (#855; name REASONING: low, or an explicit default/omit where the route cannot lower it)"
+		}
 	} else {
 		if !strings.Contains(strings.ToLower(rendered), "red line") || !strings.Contains(strings.ToLower(rendered), "green line") {
 			return "", "rule 6: the writing template lacks the red-then-green row rule (fix, replay and drift cards must name the red line and the green line)"
@@ -538,6 +541,21 @@ func turnBudget(kind string) int {
 		return 8
 	}
 	return 20
+}
+
+// reasoningBound is the value of a card's `REASONING:` line, or "" when the card
+// names none. A missing line is unbounded chain-of-thought; `low` is the read
+// default, and `default` / `omit` are explicit bounds for a route that cannot
+// lower it (Stella on #855).
+func reasoningBound(card string) string {
+	for _, ln := range strings.Split(card, "\n") {
+		line := strings.TrimSpace(ln)
+		if len(line) < 11 || !strings.EqualFold(line[:10], "REASONING:") {
+			continue
+		}
+		return strings.TrimSpace(line[10:])
+	}
+	return ""
 }
 
 // branchOf is where a card's branch NAME comes from, and DefaultBranchPrefix is the one

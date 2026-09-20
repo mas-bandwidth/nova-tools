@@ -60,6 +60,63 @@ func TestCutKindReadWritesTheContractLine(t *testing.T) {
 	}
 }
 
+// cut-kind-read-bounds-turns-and-reasoning (#855): a green-lane read card carries
+// the documented turn budget and the low reasoning setting, numbered steps, and
+// no invitation to explore. The unbound paragraph ("quote every line you hold"
+// with no STEP and no REASONING line) was a 30-turn cache-read bill.
+func TestCutKindReadBoundsTurnsAndReasoning(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456",
+		Title: "reap kills the orphans", Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if !strings.Contains(card, "TURNS: 8") {
+		t.Errorf("the read card names no 8-turn budget:\n%s", card)
+	}
+	if !strings.Contains(card, "REASONING: low") {
+		t.Errorf("the read card names no low reasoning setting:\n%s", card)
+	}
+	if !strings.Contains(strings.ToLower(card), "reasoning_effort") && !strings.Contains(card, "REASONING: low") {
+		t.Errorf("the read card does not name the provider low-reasoning setting:\n%s", card)
+	}
+	if !strings.Contains(card, "Do not grep around") {
+		t.Errorf("the read card still invites exploration:\n%s", card)
+	}
+	if n := countSteps(strings.Split(card, "\n")); n < 1 || n > 8 {
+		t.Errorf("read card step count = %d, want 1..8 numbered steps (the turn budget)", n)
+	}
+	if !strings.Contains(card, "STEP 1.") {
+		t.Errorf("the read card has no numbered STEP 1; a paragraph is an unbounded turn:\n%s", card)
+	}
+}
+
+// The second cheapest cut (#855): a body-less fix card names the 20-turn budget
+// and forbids exploration. Reasoning stays the default.
+func TestCutKindFixBoundsTurns(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 601, Title: "sweep never revisits a queued check",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if !strings.Contains(card, "TURNS: 20") {
+		t.Errorf("the fix card names no 20-turn budget:\n%s", card)
+	}
+	if !strings.Contains(card, "Do not grep around") {
+		t.Errorf("the fix card still invites exploration:\n%s", card)
+	}
+	if strings.Contains(card, "REASONING: low") {
+		t.Errorf("a fix card lowered reasoning; only the read family does:\n%s", card)
+	}
+}
+
 // cut-kind-fix: the fix card's line 1 names the issue and the red test first, and a prior
 // attempt rides on the card so the worker never repeats it — "fix the prompt, not retry".
 func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
