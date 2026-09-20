@@ -360,3 +360,33 @@ a closed node D, under the coordinator scope \"coord\"."
       (release-journal-lock foreign-lock)
       (ignore-errors (delete-file path))
       (ignore-errors (delete-file lock-path)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE08F03IndexEveryKnownFriendAssignments      docs/SPEC-WORK.md:3326-3327
+;;;   acceptance criterion E08-F03-01 (docs/roadmaps/nova-work.sexp):
+;;;   "Index every known friend, assignments and working task references".
+;;;   SPEC-WORK.md:3322 names "a stable friend identity index and a reverse
+;;;   assignment index" in the resident model; :3326-3327 fixes it as a friends
+;;;   section that names every known friend -- idle, resting and unavailable ones
+;;;   included -- with the `working` task references and the pending and
+;;;   acknowledged assignments under each. This replay records one working friend
+;;;   beside one idle friend and asks whether the friends section names both.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE08F03IndexEveryKnownFriendAssignments" "docs/SPEC-WORK.md:3326-3327"
+    "expected=every-known-friend-indexed-idle-included;working-references-under-each"
+  (let ((k (make-kernel :state (make-seed-state *seed*) :friends '("alice" "bob"))))
+    ;; alice takes a working task (a live lease, |W| membership); bob stays
+    ;; idle: no lease, no offer, no assignment.
+    (ok (take-lease k "acme/work/f1/t1" "alice")
+        "alice took acme/work/f1/t1")
+    ;; SPEC-WORK.md:3326-3327 -- a `friends` section names every known friend,
+    ;; idle/resting/unavailable ones included, with the `working` task references
+    ;; and the pending and acknowledged assignments under each. The resident
+    ;; friends index must therefore name bob (bound to no working task) beside
+    ;; alice (bound to hers).
+    (let ((indexed (mapcar #'car (state-holder-index (kernel-state k)))))
+      (ok (and (member "alice" indexed :test #'equal)
+               (member "bob" indexed :test #'equal))
+          "every known friend is indexed, idle bob included; expected (ALICE BOB), the friends index named ~S"
+          (sort (copy-list indexed) #'string<)))))
