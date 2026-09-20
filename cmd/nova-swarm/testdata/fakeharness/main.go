@@ -346,6 +346,41 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: The user rejected permission to use this specific tool call.")
 		os.Exit(0)
 	}
+	// FAKE-EXEC-REFUSED is THE GATE THAT NEVER RAN (issue #1465), in the shell's own words.
+	// A Go card inside the wall ran `go test` and the wall refused to execute the toolchain:
+	// the shell printed one line, the card wrote an honest RESULT.md saying the gate could
+	// not be built or run, and the process exited 0. The run then read `NATIVE OK rc=0
+	// harness=ok` and a commit nobody had compiled was green. The directive takes the path
+	// the wall refused, and prints the step the card had reached beside it, so the fixture
+	// writes the real shape and nothing is inferred.
+	if path, ok := directive(prompt, "FAKE-EXEC-REFUSED"); ok {
+		if path == "" {
+			path = "/nowhere/bin/go"
+		}
+		fmt.Println("STEP 3 run the gate")
+		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
+	}
+	// FAKE-REWRITE-CAPTURE is issue #1892: a REAL shell denial, then unlink-and-replace of
+	// <job>/harness-output.log after RESULT.md is published. The job directory is a --write,
+	// so the child's own process can replace the name the parent will classify by after Wait.
+	// The parent's fd keeps the old inode (native.log and the in-memory tee); ReadFile of
+	// the name follows the new one. The directive takes the absolute path to exec.
+	rewriteCapture := false
+	if path, ok := directive(prompt, "FAKE-REWRITE-CAPTURE"); ok {
+		rewriteCapture = true
+		if path == "" {
+			path = "/nowhere/bin/go"
+		}
+		fmt.Println("STEP 3 run the gate")
+		shell := "/bin/bash"
+		if _, err := os.Stat("/usr/bin/bash"); err == nil {
+			shell = "/usr/bin/bash"
+		}
+		cmd := exec.Command(shell, "-c", path)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
@@ -368,6 +403,11 @@ func main() {
 		// note file while it works, and a fake that read it in its first instant made
 		// demanded test 10 a race against a note that had not been written yet.
 		publish(job, prompt, findings, notesRead(job, prompt))
+	}
+	if rewriteCapture && job != "" {
+		capture := filepath.Join(job, "harness-output.log")
+		_ = os.Remove(capture)
+		_ = os.WriteFile(capture, []byte("card rewrote the capture\nSTEP 3 run the gate\n"), 0o644)
 	}
 	if n, ok := number(prompt, "FAKE-RC"); ok {
 		os.Exit(n)
