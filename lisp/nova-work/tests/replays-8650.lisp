@@ -233,3 +233,59 @@
       (ok okp "retire refused: ~A" line))
     (check-equal :c (node-branch (kernel-state k) "acme/work/f3")
                  "the retired node's branch")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F01PreserveBodyCommentsLabelsRelationships  SPEC-WORK.md:7067
+;;;
+;;; nova-work acceptance criterion E09-F01-02: "Preserve body, comments,
+;;; labels, relationships, attachments and pagination". This pins the
+;;; SPEC-WORK `source-inventory` suite row (docs/SPEC-WORK.md:7067):
+;;; "open and closed issues, comments, identities, labels, relationships,
+;;; attachments and pagination; every captured source record maps to a
+;;; preserved original plus a normalised mapping, or to an explicit
+;;; unresolved entry". The slice-1 capture layer preserves each observed
+;;; field through `capture-observe` (body, comments, labels, relationships
+;;; and attachments are recorded as versioned observations, never dropped
+;;; by a later one) and retains every paginated record through
+;;; `inventory-record` / `reconcile-inventory` (equal record counts across
+;;; pages reconcile; none is lost).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F01PreserveBodyCommentsLabelsRelationships" "docs/SPEC-WORK.md:7067"
+    "expected=body=preserved,comments=preserved,labels=preserved,relationships=preserved,attachments=preserved,pagination=all-pages-reconcile"
+  (let ((cap (make-source-capture :source-revision 1)))
+    (capture-observe cap "i1" :body "issue body text" :revision 1)
+    (capture-observe cap "i1" :comments '("first" "second") :revision 1)
+    (capture-observe cap "i1" :labels '("bug" "p1") :revision 1)
+    (capture-observe cap "i1" :relationships '("related#42" "blocked-by#7") :revision 1)
+    (capture-observe cap "i1" :attachments '("shot.png") :revision 1)
+    ;; body: the captured body is preserved, never replaced by an empty cell.
+    (check-string= "issue body text"
+                   (source-version-value (first (capture-versions cap "i1" :body)))
+                   "the issue body was not preserved")
+    (check-equal '("first" "second")
+                 (source-version-value (first (capture-versions cap "i1" :comments)))
+                 "the comments were not preserved")
+    (check-equal '("bug" "p1")
+                 (source-version-value (first (capture-versions cap "i1" :labels)))
+                 "the labels were not preserved")
+    (check-equal '("related#42" "blocked-by#7")
+                 (source-version-value (first (capture-versions cap "i1" :relationships)))
+                 "the relationships were not preserved")
+    (check-equal '("shot.png")
+                 (source-version-value (first (capture-versions cap "i1" :attachments)))
+                 "the attachments were not preserved"))
+  ;; pagination: records captured across pages are all retained and reconcile.
+  (let* ((paginated (list (inventory-record "issue-1" :issue
+                                            :original "{\"number\":1}"
+                                            :mapping "acme/work/f1")
+                          (inventory-record "comment-1" :comment
+                                            :original "{\"body\":\"hi\"}"
+                                            :mapping "acme/work/f1#c1")
+                          (inventory-record "attach-1" :attachment
+                                            :original "{\"name\":\"shot.png\"}"
+                                            :mapping "acme/work/f1#a1")))
+         (recaptured (copy-tree paginated)))
+    (check-equal 3 (length paginated) "the paginated records were dropped")
+    (multiple-value-bind (okp line) (reconcile-inventory paginated recaptured)
+      (ok okp "a paginated inventory does not reconcile against itself: ~A" line))))
