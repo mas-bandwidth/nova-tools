@@ -77,7 +77,7 @@ func addGatedCard(t *testing.T, root, label, slot, kind, contract, result string
 	t.Helper()
 	addCard(t, root, label, slot, "flash", contract, result)
 	cardPath := filepath.Join(root, "cardsrc", label+".md")
-	body := contract + "\nKIND: " + kind + "\nPATHS: internal/**\nTEST: internal/pulse TestSomething\n\nSTEP 1. go\n"
+	body := contract + "\nKIND: " + kind + "\nPATHS: internal/**\nTEST: internal/pulse TestSomething\n\nREPO mas-bandwidth/nova-tools\n\nSTEP 1. go\n"
 	if err := os.WriteFile(cardPath, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +115,11 @@ func fakeGitWithBase(t *testing.T, specs, arglog, sha string) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 4, Equals: "HEAD^{commit}", Stdout: testHeadSHA},
 		{Arg: 1, Equals: "rev-parse", Stdout: sha},
+		// The job clone always has an origin, because a card that pushes is a card that
+		// cloned: dev's resolveDestination (#1809, Johnny's holds) compares the launch
+		// record against it and REFUSES when nothing but the worker's RESULT.md can name
+		// the destination. A fixture without it tests that refusal, not the gate.
+		originRule("mas-bandwidth/nova-tools"),
 	}})
 }
 
