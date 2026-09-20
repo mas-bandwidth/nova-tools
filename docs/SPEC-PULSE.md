@@ -1396,7 +1396,7 @@ not landed (#553).
 Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
 `manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
-`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`,
+`manager-abstain-uses-only-the-shared-remaining-attempt`, `manager-refuses-fix-pr-without-test`,
 `manager-hands-merge-to-lane`.
 
 ## Durable launch, attempts and fleet control (SPEC-AHEAD: #2045, #2040, #2022)
@@ -1418,25 +1418,35 @@ restarted reconciliation of the same try retains its attempt id. Labels and path
 fields, never identity. [SPEC-SWARM.md](SPEC-SWARM.md) must cross-reference this section as the
 one authoritative attempt lifecycle; it must not copy the state machine into a second contract.
 
-**Proposed version-one layout for friend review.** Under the explicitly named swarm root,
+**Version-one layout.** Under the explicitly named swarm root,
 `lifecycle/events.jsonl` is the authoritative append-only event log,
 `lifecycle/cards/<card>.json` is the rebuildable current projection, and
 `lifecycle/attempts/<attempt>/` holds bounded `stdout`, `stderr`, `exit` and receipts. Fleet
 control lives at the explicitly named control root as `control/state.json` and
-`control/acks/<owner>.json`. No command guesses either root. These names are a proposal needed
-to make the crash and ownership tests concrete, not an approved storage format.
+`control/acks/<owner>.json`. No command guesses either root. These paths and names are the pinned
+version-one storage contract and the crash, recovery and ownership tests use them exactly.
 
-An event carries `card`, `attempt`, prior and new state, monotonically
+Every version-one event requires `card`, `attempt`, prior and new state, monotonically
 increasing `rev`, control `generation`, bench, route, pinned source, job and lease identities,
-limits, UTC time and one idempotency key. Updating current state is a compare-and-swap on
-`card, attempt, rev`; exactly one claimant can linearize `READY -> CLAIMED`. A duplicate event
+limits, UTC time and one idempotency key; readers ignore additional fields so a later writer can
+extend the record without making an older reader reject otherwise valid history. A required field
+may be explicitly null until its identity exists: READY has no attempt, and CLAIM may not yet have
+a job or lease. State validation requires the attempt by CLAIMED, every invocation identity by
+STARTING, and the fully bound receipt identities by STARTED. CLAIM compares
+and swaps the card's current `rev` and, in that same linearized event, mints and records the new
+unguessable `attempt`; `READY` has no attempt to compare. Exactly one claimant can therefore
+linearize `READY -> CLAIMED`, even when racing dealer requests arrive. Later
+transitions compare `card`, its current `attempt`, and `rev`. A duplicate event
 with the same idempotency key and byte-identical payload is the same act; the same key with a
 different payload is a refusal. A different event against an old revision is a conflict and
 changes nothing. The authoritative event is appended and fsynced before the launcher is invoked;
-the projection is then atomically replaced. A crash may therefore leave the projection behind
+an append or fsync error prevents a success receipt and launcher invocation. The write may have
+reached storage, so recovery reconciles the log before any retry; it never assumes rollback. The projection is then
+atomically replaced. A projection-write failure reports degraded state and refuses further
+admission; it cannot undo the committed event. A crash may therefore leave the projection behind
 the event log. Restart validates and replays the log's complete valid prefix to rebuild the
-projection. A malformed event, revision gap, conflicting duplicate or projection that is not a
-prefix-derived state refuses new admission at exit 2. It never starts over from queue paths,
+projection, including its list of raised work. A malformed event, revision gap, conflicting
+duplicate or projection that is not a prefix-derived state refuses new admission at exit 2. It never starts over from queue paths,
 leases or job directories, and it does not claim an impossible atomic commit across two files.
 
 The states are:
@@ -1447,10 +1457,13 @@ READY -> CLAIMED -> STARTING -> STARTED -> RETURNED -> HARVESTED
                          +------ UNKNOWN -------+
 ```
 
-`PARKED` is a scheduling disposition on the card, not an execution state. Parking prevents new
-attempts and raises the card for inspection. It does not change an attempt's state, release its
-seat or budget, prove termination, or satisfy DRAIN/STOP. A parked UNKNOWN attempt remains
-UNKNOWN, owned and reserved until the conservative reconciliation below completes.
+`PARKED` is a scheduling disposition on the card, not an execution state. Its authoritative event
+carries `raised=true` and the required `class`; an UNKNOWN transition likewise carries
+`raised=true` and its required `reason`. The projection reconstructs the coordinator's list of
+raised work from those events. Parking prevents new attempts. It does not change an
+attempt's state, release its seat or budget, prove termination, or satisfy DRAIN/STOP. A parked
+UNKNOWN attempt remains UNKNOWN, owned and reserved until the conservative reconciliation below
+completes.
 
 `CLAIMED` is the durable prelaunch ownership record. `STARTING` durably authorizes the
 launcher invocation before it occurs; a crash around that invocation requires reconciliation. Only this typed acknowledgement, parsed from the bounded launcher channel and bound
@@ -1460,21 +1473,30 @@ to all named identities, establishes `STARTED`:
 LAUNCH STARTED card=<id> attempt=<id> job=<id> lease=<id> bench=<name> route=<name> generation=<n> worker=<opaque> at=<RFC3339>
 ```
 
-An SSH connection, a surviving timer, a process id observed by a different owner, a lease file,
+An SSH connection, a surviving timer, any pid, pgid or process start stamp, a lease file,
 a job directory, provider output, or an untyped worker line is not that acknowledgement. The
-launcher retains bounded stdout, stderr and exit separately under the attempt and prints their
+pid/pgid/start-stamp tuple may contribute to `never-admitted` or `terminated` reconciliation; it
+never establishes `STARTED`. The launcher retains bounded stdout, stderr and exit separately under the attempt and prints their
 paths; it never discards a stream. Missing, malformed or late acknowledgement at the launch
 deadline yields `UNKNOWN`, not failed or ready. A valid late `STARTED` reconciles that same
 attempt from `UNKNOWN`; it does not consume another attempt.
 
 **Execution proof and publication fencing both precede retry.** `UNKNOWN` retains the card claim
-and its seat reservation. The durable admission owner, which need not be the unreachable worker,
-is the authority that reconciles its attempt; a worker receipt is evidence that owner validates,
-not self-authenticating authority. A retry is legal only when the owner records either
-`never-admitted` or an authoritative executor receipt of `terminated` or `completed`, **and**
-durably revokes the old publication fence. Every accept, result publication and other externally
-visible effect presents the attempt's monotonically increasing fence token, whose current value
-the effect owner verifies at its own linearization point. Publication-fence revocation alone is
+and its seat reservation. The sole ledger and admission writer is coordinator-side
+`nova-swarm launch`; a worker-written receipt or file is evidence that this owner validates, not
+self-authenticating authority. `never-admitted` is a legal reconciliation only while the last
+durable event is `CLAIMED`, before `STARTING` authorized invocation. Once `STARTING` is durable,
+only an executor `terminated` or `completed` receipt authenticated by that launch's existing
+`exit_attest` and `nonce` pair proves execution ended. A retry is legal only when the owner
+records the applicable proof **and** durably advances the card's publication-fence epoch. Every
+attempt records that card-level epoch. A private attempt-local result or log capture presents the
+attempt ownership credential and records evidence only; it remains permitted during PAUSE and is
+not an accepted RESULT or publication. `RESULT` below means the authoritative
+accepted/publication record. Creating it, harvest-pushing it or accepting it additionally requires
+a separate bounded RUN action token. The effect owner atomically verifies the ownership
+credential, action token and the **card's current fence epoch** at its own
+linearization point. A monotonically increasing counter scoped only to an attempt is not a fence
+between two live workers for one card. Fence advancement alone is
 insufficient: it does not prove resource use, billing or remote execution stopped, so the attempt
 stays UNKNOWN and no retry begins. The contract does not claim exactly-once execution. It
 guarantees at most one current attempt can have its effects accepted. An unreachable bench, a
@@ -1499,7 +1521,7 @@ The machine receipts are:
 ```
 LAUNCH CLAIMED card=<id> attempt=<id> rev=<n> bench=<name> route=<name> generation=<n> attempts=<n>/2
 LAUNCH UNKNOWN card=<id> attempt=<id> bench=<name> route=<name> why=<no-start|lost-reply|timeout|malformed-start> stdout=<path|-> stderr=<path|-> exit=<n|->
-LAUNCH RECONCILED card=<id> attempt=<id> owner=<id> execution=<never-admitted|terminated|completed> fence=<n> publication=revoked
+LAUNCH RECONCILED card=<id> attempt=<id> owner=<id> execution=<never-admitted|terminated|completed> fence_epoch=<n> publication=revoked
 LAUNCH PARKED card=<id> attempt=<id> state=<CLAIMED|STARTING|STARTED|RETURNED|UNKNOWN> class=<LAUNCH|PROVIDER|CARD|SILENT|UNKNOWN> attempts=<n>/2 record=<path>
 LAUNCH OK card=<id> attempt=<id> state=<STARTED|RETURNED> bench=<name> route=<name> generation=<n> record=<path>
 ```
@@ -1507,96 +1529,136 @@ LAUNCH OK card=<id> attempt=<id> state=<STARTED|RETURNED> bench=<name> route=<na
 Exit 0 means a requested positive transition to CLAIMED, STARTING, STARTED, RETURNED, HARVESTED
 or RECONCILED was durably recorded. UNKNOWN and PARKED explicitly exit 1, as do exhausted budget
 and an unreconciled prior attempt. Exit 2 means the invocation or authoritative ledger could not
-be read safely. Raising and grouping parked work may notify the coordinator, but a
-notification failure cannot alter or retry the lifecycle.
+be read safely. Every UNKNOWN transition and PARKED disposition commits `raised=true` plus its
+reason or class in the authoritative event. `nova-pulse failed` lists the replayed projection. A
+projection-write failure reports degradation and refuses new admission without rolling back that
+committed event. A bus notification is best-effort only: its failure cannot alter or retry the
+lifecycle.
 
-**Fleet control is desired state plus acknowledgements, not one magic file.** Version one has
+**Fleet control is desired state plus acknowledgements, not one magic file.** Rowan's
+2026-09-20 decision `rowan-a76827b29f93` formally amends row 6 to make version-one `CONTROL`
+fleet-wide with no exceptions. Paid-card hold remains dealer policy under RUN; adoption,
+version reporting and read-only status are not card admission. Version one has
 one supported scope: the entire fleet named by the control root. A per-lane, per-bench or
-exception scope is refused before mutation. Before every launch, accept, publish, merge and land
+exception scope is refused before mutation, and version one has no `--except` surface. Before
+every launch, accept, publish, merge and land
 path is wired to the generation check, that path denies new admission; unsupported paths do not
 silently proceed.
 
 The control
 record is an atomically replaced, durable tuple
 `generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet by=<identity>
-at=<RFC3339> reason=<token>`. Its generation increases on every accepted change. RUN also grants
+at=<RFC3339> reason=<token>`. Its generation increases on every accepted change. `expires=` is
+required and a positive, bounded future time on every `CONTROL SET` to RUN. Renewal creates RUN
+generation `n+1`; it never extends an outstanding token in place. RUN grants
 a bounded admission authority carrying `generation`, `scope=fleet` and `expires=<RFC3339>`;
 there is no timeless cached RUN permission. A dealer checks it before claiming. The swarm
-admission owner checks it again while atomically changing `CLAIMED -> STARTING`; that transition
-records the generation as its linearization point. Route fallback and every new attempt repeat
+admission owner checks it with the coordinator while atomically consuming a bounded start token
+and changing `CLAIMED -> STARTING`; that transaction records the generation as its admission
+linearization point. The bench then persists its uniquely bound local acknowledgement before
+invocation. A crash after global consumption but before that acknowledgement leaves the attempt
+STARTING and outstanding; recovery reconciles that attempt rather than consuming another token.
+Route fallback and every new attempt repeat
 both checks. An unreadable, absent when configured, stale, expired or malformed control record
 fails closed for new admission. It has no exception lane or borrowed attempt budget. The bounded
 RUN duration is a required explicit configuration value reviewed for the deployment; this spec
 chooses no magical default.
 
-`PAUSE` stops issuing RUN authority and forbids new launch, accept, publish, merge and land
-admissions at every owner that has observed it. It permits read-only
-status, bounded capture of already-returned logs and results, harvest reconciliation that makes
-no publication, and cleanup of attempts the caller demonstrably owns. `DRAIN` has PAUSE's
+`PAUSE` stops issuing RUN authority and forbids new launch, accept, harvest push/PR, publish,
+merge and land admissions. It permits `adopt`, `nova-version`, read-only status, bounded capture
+of already-returned logs and results, harvest reconciliation that makes no publication, and
+cleanup of attempts the caller demonstrably owns. `DRAIN` has PAUSE's
 admission rule and waits for owned attempts to become returned, harvested or conservatively
 reconciled; scheduling disposition is irrelevant and any `UNKNOWN` keeps the drain pending.
 `STOP` additionally requests termination only for the
 attempt and lease identities owned in the ledger; it grants no host-wide process authority.
 `RUN` reopens admission only at its new generation and bounded expiry.
 
-An admission or action token linearizes globally before PAUSE and may start or finish within its
-bounded authority, or it linearizes after PAUSE and is refused. A partitioned owner may therefore
-hold an earlier unexpired token; PAUSE reports it as outstanding/pending rather than claiming
-instant revocation or rollback. Publication, merge and land need their own durable, bounded action
+An attempt whose bounded start token was globally consumed in the `CLAIMED -> STARTING`
+transaction may execute within that original authority after a partition or later PAUSE, whether
+or not its process is running yet; PAUSE reports it as outstanding rather than claiming instant
+revocation or rollback. A token merely issued but not globally consumed is not admission. A bench
+that is offline before admission, or whose current local acknowledgement is missing, stale or
+PAUSE, cannot complete the transaction and refuses resident or native start. Publication,
+merge and land need their own durable, bounded action
 token acquired after checking the current generation. The side-effect owner checks that token and
 generation where it commits the effect; a shell precheck is insufficient. Retrying such an action
 reconciles the same token rather than acquiring a new one. The result names whether the effect
 completed, failed or is unknown. Harvest may capture a result during PAUSE, but cannot turn that
 capture into a push, acceptance, publication or land without a current RUN action token.
 
-Each selected admission owner persists its observed generation. A control request receipt names
-the desired generation separately from per-owner acknowledgements:
+Every admission and effect owner persists its observed generation. Each acknowledgement owner
+identity is unique and binds exactly one bench, so two benches never write the same
+`control/acks/<owner>.json`; the file records that owner and bench pair before resident or native
+invocation. The coordinator aggregates every required owner-plus-bench identity rather than
+treating one coordinator acknowledgement as fleet observation. A control request receipt names
+the desired generation separately from those acknowledgements:
 
 ```
 CONTROL SET generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet expires=<RFC3339|-> owners=<n>
-CONTROL ACK generation=<n> owner=<name> desired=<state> observed=<RFC3339>
+CONTROL ACK generation=<n> owner=<name> bench=<name|coordinator> desired=<state> observed=<RFC3339>
 CONTROL STATUS generation=<n> desired=<state> acked=<n> pending=<n> unknown=<n> owned=<n> complete=<yes|no>
 ```
 
-Offline or late owners remain `pending`; the request never claims an instantaneous fleet-wide
-pause. Removing a pause creates RUN generation `n+1`; an old acknowledgement cannot satisfy it.
+Offline or late benches and owners remain `pending`; a bench with a missing or stale local
+acknowledgement refuses new resident and native admission. The request never claims an
+instantaneous fleet-wide pause. Removing a pause creates RUN generation `n+1`; an old
+acknowledgement cannot satisfy it.
 STOP completion requires conservative RECONCILED execution and publication receipts for every
 owned attempt. PARKED is irrelevant to completion, and UNKNOWN prevents it. Absence of a lease,
 job directory or reply cannot reduce `owned` or make `complete=yes`.
 
 **Required tests, all with local fakes and event coordination:**
 
-1. Two dealers race one card; exactly one durable claim exists and at most one STARTED attempt can
-   have effects accepted after restart. The loser receives a conflict without changing the
-   ledger; an invocation whose acknowledgement was lost may remain UNKNOWN.
+1. Two dealers race one READY card; the winning CLAIM mints its attempt in the card-revision CAS,
+   exactly one durable claim exists, and the loser
+   receives a conflict without changing the ledger.
 2. A launcher writes no acknowledgement and exits late: stdout, stderr and exit are retained,
    the attempt becomes UNKNOWN, its reservation remains, and no second invocation occurs.
 3. A correctly bound acknowledgement makes STARTED; wrong card, attempt, job, lease or
    generation is malformed and cannot start. A late correct acknowledgement reconciles the
    same attempt.
-4. Missing lease and job-directory controls leave UNKNOWN reserved. Publication-fence revocation
-   alone still forbids retry; only never-admitted or authoritative terminated/completed execution
-   evidence plus that revocation permits one, and the old attempt cannot publish with its token.
-5. One launcher plus its selected provider consumes one attempt, not two. Its provider fallback
+4. Missing lease and job-directory controls leave UNKNOWN reserved. Before STARTING,
+   coordinator `nova-swarm launch` may validate `never-admitted`; after STARTING, only a
+   terminated/completed executor receipt with matching `exit_attest` and `nonce` suffices. Fence
+   advancement alone still forbids retry.
+5. Two live workers for one card present different attempt ownership credentials. An
+   authoritative RESULT, harvest push and accept each require a separate RUN action token and
+   verify the card's current fence epoch; only the current worker
+   publishes, the stale worker is refused, and the refusal consumes no third attempt.
+6. One launcher plus its selected provider consumes one attempt, not two. Its provider fallback
    consumes the second; a third executable try is refused and parked without making UNKNOWN
    terminal or releasing its reservation. CARD is parked after its first failure. Permitted
    LAUNCH and PROVIDER retries change bench or route respectively.
-6. Crash after durable claim but before process invocation reconstructs CLAIMED and reconciles
-   it; crash after invocation but before STARTED reconstructs UNKNOWN. Neither returns READY.
-7. PAUSE racing launch has two legal histories: the bounded RUN token linearizes first and may
-   start within its authority while PAUSE reports it outstanding/pending, or PAUSE linearizes
-   first and the admission is refused. Expired authority cannot start, and no history claims
-   instantaneous revocation or rollback.
-8. During PAUSE, status/result capture and owned cleanup run, while new launch, accept, push,
-   publish, merge and land admissions refuse. Previously issued tokens follow test 7. A captured result cannot be published
-   with its read token.
-9. An offline owner's acknowledgement remains pending; DRAIN with UNKNOWN is incomplete; STOP
-   targets only ledger-owned attempt/lease pairs. RUN at the next generation rejects stale
-   acknowledgements from the pause.
-10. A restart with a fsynced valid event ahead of the projection replays that valid prefix. A
+7. Crash after CLAIM but before STARTING reconstructs CLAIMED and reconciles it. After durable
+   STARTING, a crash before or after invocation requires reconciliation and may become UNKNOWN;
+   neither path returns READY from absence alone.
+8. PAUSE racing launch has two legal histories: coordinator validation and global start-token
+   consumption linearize `STARTING` at the current RUN generation first, after which the admitted
+   start may execute within its bounded authority through a partition or later PAUSE while it is
+   reported outstanding; or PAUSE linearizes first and admission is refused. A merely issued but
+   unconsumed token, or an offline, stale, missing-ack or paused bench before admission, cannot
+   start. No history claims instantaneous revocation.
+9. During PAUSE, adopt, version, status/result capture and owned cleanup run, while new launch,
+   accept, push/PR, publish, merge and land admissions refuse. Previously issued tokens follow
+   test 8. A private attempt-local capture cannot become an authoritative RESULT without a
+   separate current RUN action token and card-epoch check.
+10. Each uniquely identified owner binds one bench and persists its own acknowledgement without
+    colliding with another bench's file; the coordinator aggregates every required owner/bench
+    pair. An offline bench remains pending and refuses resident/native admission. A crash after
+    global start-token consumption but before local acknowledgement leaves one STARTING attempt
+    to reconcile, not a second admission. DRAIN with UNKNOWN is incomplete; STOP targets only
+    ledger-owned attempt/lease pairs. RUN renewal creates generation n+1 and rejects stale
+    acknowledgements.
+11. UNKNOWN and PARKED events each carry `raised=true` plus reason/class and reconstruct a
+    listable projection after restart. Append/fsync failure yields no success or invocation and requires log reconciliation before
+    retry; projection failure after commit degrades and refuses admission without rollback. Bus failure causes no
+    retry or lifecycle transition.
+12. A restart with a fsynced valid event ahead of the projection replays that valid prefix. A
     malformed/non-prefix history refuses admission without invoking a launcher. A duplicate
     idempotency key and identical payload adds no event; the same key with different payload
-    refuses.
+    refuses. Version-one paths and required fields are exact; state validation accepts null only
+    before an identity is allocated and additional event fields are ignored.
 
 ## The loop as a tool (pit stop 3)
 
@@ -1688,8 +1750,9 @@ already did and no further: the law that does not move is rule 17, no verb calls
    **The rule:** a `reap` step every tick. Processes under a swarm root older than the batch
    deadline are reconciled by their owning attempt and logged; a launched card whose job
    directory is gone becomes UNKNOWN and retains its reservation until the durable admission
-   owner validates never-admitted or terminated/completed executor evidence and revokes the old
-   publication fence. Only then may the remaining attempt budget admit a retry; at the
+   coordinator-side `nova-swarm launch` validates never-admitted before STARTING or an
+   `exit_attest`/`nonce`-bound terminated/completed executor receipt after STARTING, and advances
+   the old card fence epoch. Only then may the remaining attempt budget admit a retry; at the
    two-total-attempt bound it is marked parked without becoming terminal. A batch lock whose
    pid is dead is removed only when it is not an attempt's ownership record. Cleanup is confined
    to processes and files carrying the current attempt's durable ownership inside the explicitly
@@ -1995,8 +2058,9 @@ handoff (rule **The manager tier**).
     hours of leaked supervisors and a 23-hour-old card (row 10).
 63. `missing-job-dir-is-unknown-until-conservative-reconciliation`: a card in `launched/` whose job directory
     has vanished stays claimed and reserved as UNKNOWN through repeated reaps. A holder-specific
-    publication fence alone changes nothing; validated never-admitted or terminated/completed
-    executor evidence plus fence revocation permits at most the second total attempt. Without
+    card fence advance alone changes nothing; coordinator-validated never-admitted evidence
+    before STARTING or `exit_attest`/`nonce`-bound terminated/completed executor evidence after
+    STARTING, plus the fence advance, permits at most the second total attempt. Without
     both, no retry occurs; parking at the cap does not release the UNKNOWN attempt or let
     DRAIN/STOP complete. A returned or harvested card does not block `refill` from cutting another
     item (row 7: 22 admitted issues sat uncut).

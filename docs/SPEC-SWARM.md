@@ -571,20 +571,34 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 [SPEC-PULSE's durable launch section](SPEC-PULSE.md#durable-launch-attempts-and-fleet-control-spec-ahead-2045-2040-2022)
 is the one authoritative card-attempt lifecycle. Rules 17 and 18 below remain its swarm-side
 ownership mechanism rather than a competing lease authority: the reserved placeholder is
-`CLAIMED`, spawn is `STARTING`, the supervisor's pid/pgid/start-stamp identity is evidence for
-the typed `STARTED` acknowledgement, and supervisor completion is executor evidence for
-`RETURNED` and conservative reconciliation. The slot and job ownership records grow stable
-`card`, `attempt`, control `generation` and publication `fence` fields; their existing nonce,
-pid, pgid and start-stamp checks remain intact.
+`CLAIMED`, spawn is `STARTING`, and only the lifecycle's typed, fully bound acknowledgement
+establishes `STARTED`. A pid, pgid or start stamp never establishes STARTED; those identities may
+support `never-admitted` or `terminated` reconciliation. Supervisor completion is executor
+evidence for `RETURNED` and conservative reconciliation. The slot and job ownership records grow
+stable `card`, `attempt`, control `generation` and card-level publication-fence epoch fields;
+their existing nonce, pid, pgid and start-stamp checks remain intact.
 
 For ledger-managed launches, any older text below that returns a task to pending, frees an
 `unknown` slot, retries a provider inside one job, or lets a person remove a slot as proof of
 absence is overridden narrowly: UNKNOWN retains ownership and capacity until the durable
-admission owner validates `never-admitted` or executor `terminated|completed` evidence and the
-old publication fence is revoked. The shared card ledger reserves each executable attempt before
-dispatch and enforces two total; a launcher and its selected provider are one attempt, while a
-fallback route is another. Existing unledgered verbs keep their current behavior until they are
-wired; once this path is implemented they must delegate or refuse, never bypass the ledger.
+coordinator-side `nova-swarm launch` validates `never-admitted` only before STARTING, or validates
+executor `terminated|completed` evidence against the launch's `exit_attest` and `nonce` after
+STARTING, and the old card fence epoch is advanced. The shared card ledger reserves each
+executable attempt before dispatch and enforces two total; a launcher and its selected provider
+are one attempt, while a fallback route is another. Existing unledgered verbs keep their current
+behavior until they are wired; once this path is implemented they must delegate or refuse, never
+bypass the ledger.
+
+Resident and native starts use the coordinator-owned admission point. The coordinator validates
+the current fleet-control generation and globally consumes the bounded start token atomically
+with `CLAIMED -> STARTING`; the uniquely identified bench owner then durably records its local
+acknowledgement before invocation. A crash between those steps leaves STARTING outstanding for
+reconciliation and never consumes another token. A bench offline before that transaction, or with a missing,
+stale, expired or PAUSE acknowledgement, refuses. Once the transaction commits, the admitted
+start may execute within its original bounded authority through a partition or later PAUSE and is
+reported as outstanding even if its process had not started when the partition occurred. A
+merely issued, unconsumed token grants nothing. `adopt`, version reporting and read-only status
+are not new card admissions.
 
 17. **A dispatcher that dies leaves durable ownership, and the next one
     recovers it or quarantines it.** A slot is a file, `<pool>/slots/<n>.json`,
