@@ -1703,6 +1703,61 @@
     #:journal-chain-covers-cut-p
     #:rotate-file-journal
     #:journal-rotation-locator
+    ;; Issue #2084 -- 128-bit generic UID
+    #:mint-uid
+    #:valid-uid-p
+    #:wnode
+    #:wnode-p
+    #:wnode-uid
+    #:wnode-id
+    #:wnode-title
+    #:wnode-state
+    #:wnode-branch
+    #:wnode-attributes
+    #:node-uid
+    #:node-attributes
+    #:node-by-uid
+    #:wstate-uid-index
+    ;; Issue #2081 -- captured issue mapping and back-pointers
+    #:captured-issue
+    #:make-captured-issue
+    #:captured-issue-p
+    #:captured-issue-provider
+    #:captured-issue-repo
+    #:captured-issue-number
+    #:captured-issue-revision
+    #:captured-issue-title
+    #:captured-issue-body
+    #:captured-issue-state
+    #:captured-issue-author
+    #:captured-issue-labels
+    #:captured-issue-comments
+    #:captured-issue-url
+    #:captured-comment
+    #:make-captured-comment
+    #:captured-comment-p
+    #:captured-comment-id
+    #:captured-comment-author
+    #:captured-comment-body
+    #:captured-comment-created-at
+    #:map-captured-issue-to-node
+    #:format-back-pointer
+    #:parse-back-pointer
+    #:issue-has-back-pointer-p
+    #:back-pointer-receipt
+    #:make-back-pointer-receipt
+    #:back-pointer-receipt-p
+    #:back-pointer-receipt-status
+    #:back-pointer-receipt-action
+    #:back-pointer-receipt-issue-ref
+    #:back-pointer-receipt-uid
+    #:back-pointer-receipt-back-pointer
+    #:back-pointer-receipt-applied
+    #:back-pointer-receipt-reason
+    #:generate-back-pointer-receipt
+    #:apply-back-pointer-receipt
+    #:import-issue-batch
+
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite

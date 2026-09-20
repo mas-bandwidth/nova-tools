@@ -91,6 +91,29 @@ well-formed digest. A source that falls short refuses."
              :what (format nil "the journal identity byte source did not answer exactly 32 bytes (~S); no journal identity can be minted" bytes)))
     (bytes-to-lowercase-hex bytes)))
 
+(defun mint-uid ()
+  "Mint a stable 128-bit generic UID from the same byte source as the journal identity
+(Issue #2084): 16 random bytes from *JOURNAL-IDENTITY-BYTE-SOURCE*, hex-encoded
+directly into 32 lowercase hex characters. Untyped, unhashed, never derived from
+content, time or host. A short or failing byte source refuses."
+  (let ((bytes (funcall *journal-identity-byte-source* 16)))
+    (unless (and (vectorp bytes)
+                 (= (length bytes) 16)
+                 (every (lambda (b) (and (integerp b) (<= 0 b 255))) bytes))
+      (error 'unsupported-input
+             :what (format nil "the UID byte source did not answer exactly 16 bytes (~S); no UID can be minted" bytes)))
+    (bytes-to-lowercase-hex bytes)))
+
+(defun valid-uid-p (str)
+  "True when STR is a 32-character lowercase hex string."
+  (and (stringp str)
+       (= (length str) 32)
+       (every (lambda (c)
+                (or (char<= #\0 c #\9)
+                    (char<= #\a c #\f)))
+              str)))
+
+
 (defun header-journal-identity (header-plist)
   "The optional logical identity a journal header carries, or NIL for a legacy
 header. HEADER-PLIST is the header's plist, or the whole (:journal-header ...)

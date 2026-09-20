@@ -45,7 +45,11 @@
   ;; SPEC-WORK.md:1674-1689 -- the live lease's holder, or NIL for
   ;; `holder=unowned`. W is the view of O nodes whose holder is live, never a
   ;; field of its own.
-  holder)
+  holder
+  ;; Issue #2084 -- 128-bit generic UID, minted at creation or assigned on import.
+  uid
+  ;; Generic node attributes (Issue #2081: title, body, state, labels, comments, author, etc.)
+  attributes)
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -60,7 +64,9 @@
   revision
   ;; SPEC-WORK.md:1674-1680 -- the lease log, newest first, "kept whole for
   ;; handoffs". A settle of a live lease appends a :release here.
-  lease-log)
+  lease-log
+  ;; Issue #2084 -- fast O(1) index from 128-bit generic UID to wnode
+  (uid-index (make-hash-table :test #'equal)))
 
 (defun %node (state id)
   "Every node access goes through here so *VISITS* is honest."
@@ -134,6 +140,18 @@ own ancestor walk, and serialization of the whole state."
 (defun node-links (state id) (node-metadata-reader #'wnode-links state id))
 (defun node-private (state id) (node-metadata-reader #'wnode-private state id))
 (defun node-version (state id) (node-metadata-reader #'wnode-version state id))
+(defun node-uid (state id)
+  "The 128-bit generic UID of node ID, or NIL (Issue #2084)."
+  (let ((n (%node-quiet state id)))
+    (and n (wnode-uid n))))
+(defun node-attributes (state id)
+  "The generic attributes plist of node ID, or NIL (Issue #2081)."
+  (let ((n (%node-quiet state id)))
+    (and n (wnode-attributes n))))
+(defun node-by-uid (state uid)
+  "Fast O(1) lookup of a node by its 128-bit generic UID (Issue #2084)."
+  (gethash uid (wstate-uid-index state)))
+
 
 (defun metadata-digest (state)
   "A digest of the five metadata fields of every node, in id order. A no-effect
@@ -197,7 +215,9 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :settles 0
                           :revived "-"
                           :estimate (getf spec :estimate +absent+)
-                          :holder (getf spec :holder)))))
+                          :holder (getf spec :holder)
+                          :uid (getf spec :uid)
+                          :attributes (getf spec :attributes)))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -281,7 +301,14 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
-                              :history '() :rows '() :revision 0 :lease-log '())))
+                              :history '() :rows '() :revision 0 :lease-log '()
+                              :uid-index (make-hash-table :test #'equal))))
+      ;; Index any pre-assigned UIDs (Issue #2084)
+      (dolist (id order)
+        (let* ((node (gethash id table))
+               (uid (wnode-uid node)))
+          (when uid
+            (setf (gethash uid (wstate-uid-index state)) node))))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
         (%adjust-counters state id 1))
@@ -567,8 +594,13 @@ rather than zero. A view: it never writes, and a closed node is not in it."
 ;;; installed only when the whole of it succeeded.
 
 (defun copy-state (state)
-  (let ((table (make-hash-table :test #'equal :size (hash-table-count (wstate-nodes state)))))
-    (maphash (lambda (id node) (setf (gethash id table) (copy-wnode node)))
+  (let ((table (make-hash-table :test #'equal :size (hash-table-count (wstate-nodes state))))
+        (uids (make-hash-table :test #'equal)))
+    (maphash (lambda (id node)
+               (let ((copied (copy-wnode node)))
+                 (setf (gethash id table) copied)
+                 (when (wnode-uid copied)
+                   (setf (gethash (wnode-uid copied) uids) copied))))
              (wstate-nodes state))
     (make-wstate :seed (wstate-seed state)
                  :nodes table
@@ -580,7 +612,8 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                  :history (wstate-history state)
                  :rows (wstate-rows state)
                  :revision (wstate-revision state)
-                 :lease-log (wstate-lease-log state))))
+                 :lease-log (wstate-lease-log state)
+                 :uid-index uids)))
 
 ;;; Applying one event. The live path and the replay path share it, which is
 ;;; what makes the reconstruction independent of the live counters.
