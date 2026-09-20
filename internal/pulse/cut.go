@@ -497,8 +497,10 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
 			return "", "rule 6: the text template lacks the no-build line (read, text and tone cards must state `Do not run go build, go test or any toolchain`)"
 		}
-		if reasoningBound(rendered) == "" {
+		if bound := reasoningBound(rendered); bound == "" {
 			return "", "the read-family card names no low reasoning setting (#855; name REASONING: low, or an explicit default/omit where the route cannot lower it)"
+		} else if !readReasoningAllowed(bound) {
+			return "", fmt.Sprintf("REASONING: %s is not a read-family bound (#855; name REASONING: low, default, or omit)", bound)
 		}
 	} else {
 		if !strings.Contains(strings.ToLower(rendered), "red line") || !strings.Contains(strings.ToLower(rendered), "green line") {
@@ -556,6 +558,20 @@ func reasoningBound(card string) string {
 		return strings.TrimSpace(line[10:])
 	}
 	return ""
+}
+
+// readReasoningAllowed is the read-family enum: low, default, or omit. `high`
+// is not a bound; it is the unbounded effort the cap exists to refuse.
+func readReasoningAllowed(value string) bool {
+	fields := strings.Fields(strings.ToLower(value))
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "low", "default", "omit":
+		return true
+	}
+	return false
 }
 
 // branchOf is where a card's branch NAME comes from, and DefaultBranchPrefix is the one

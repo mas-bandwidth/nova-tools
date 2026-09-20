@@ -48,20 +48,69 @@ func TestGreenCardCostByKindFromUsage(t *testing.T) {
 	if got[0].Kind != "read" || got[1].Kind != "fix" {
 		t.Fatalf("cheapest-first = %s then %s, want read then fix", got[0].Kind, got[1].Kind)
 	}
-	if got[0].Cards != 3 || got[0].MeanInput() != 44700 {
-		t.Fatalf("read cards=%d mean_in=%d, want 3 and 44700", got[0].Cards, got[0].MeanInput())
+	if got[0].Cards != 3 {
+		t.Fatalf("read cards=%d, want 3", got[0].Cards)
 	}
-	if got[1].Cards != 1 || got[1].MeanInput() != 66000 {
-		t.Fatalf("fix cards=%d mean_in=%d, want 1 and 66000", got[1].Cards, got[1].MeanInput())
+	if mean, ok := got[0].MeanInput(); !ok || mean != 44700 {
+		t.Fatalf("read mean_in=%d ok=%v, want 44700 known", mean, ok)
 	}
-	if g := got[0].CachePerInput(); g < 7.9 || g > 8.1 {
-		t.Fatalf("read cache/input = %v, want ~8 (the turn multiplier)", g)
+	if got[1].Cards != 1 {
+		t.Fatalf("fix cards=%d, want 1", got[1].Cards)
 	}
-	if g := got[1].CachePerInput(); g < 19.9 || g > 20.1 {
-		t.Fatalf("fix cache/input = %v, want ~20", g)
+	if mean, ok := got[1].MeanInput(); !ok || mean != 66000 {
+		t.Fatalf("fix mean_in=%d ok=%v, want 66000 known", mean, ok)
 	}
-	if g := got[1].ReasoningPerOutput(); g < 1.2 {
-		t.Fatalf("fix reasoning/output = %v, want > 1 (121%% on the 2026-09-16 day)", g)
+	if g, ok := got[0].CachePerInput(); !ok || g < 7.9 || g > 8.1 {
+		t.Fatalf("read cache/input = %v ok=%v, want ~8 (the turn multiplier)", g, ok)
+	}
+	if g, ok := got[1].CachePerInput(); !ok || g < 19.9 || g > 20.1 {
+		t.Fatalf("fix cache/input = %v ok=%v, want ~20", g, ok)
+	}
+	if g, ok := got[1].ReasoningPerOutput(); !ok || g < 1.2 {
+		t.Fatalf("fix reasoning/output = %v ok=%v, want > 1 (121%% on the 2026-09-16 day)", g, ok)
+	}
+}
+
+// HOLD on #2127: absent, dash and malformed tokens_in are unknown, not a
+// measured zero, and an unknown kind is not cheapest.
+func TestGreenCardCostUnknownInputIsNotZeroAndNotCheapest(t *testing.T) {
+	root := t.TempDir()
+	writeCostCard(t, root, "b1", "fix1", "fix", "0",
+		"66000", "7300", "2000", "1320000", "8800")
+	writeCostCard(t, root, "b1", "dash", "tone", "0",
+		"-", "100", "0", "100", "0")
+	writeCostCard(t, root, "b1", "bad", "text", "0",
+		"not-a-number", "100", "0", "100", "0")
+
+	job := filepath.Join(root, "b1", "jobs", "absent")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	absent := "job\trc\ttokens_out\tcache_read\nabsent\t0\t100\t100\n"
+	if err := os.WriteFile(filepath.Join(job, "usage.tsv"), []byte(absent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "PROMPT.md"), []byte("KIND: drift\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := GreenCardCostByKind(root)
+	if len(got) == 0 {
+		t.Fatal("no kinds folded")
+	}
+	if got[0].Kind != "fix" {
+		t.Fatalf("cheapest kind = %s, want fix; unknown input must not rank as cheapest: %+v", got[0].Kind, got)
+	}
+	if mean, ok := got[0].MeanInput(); !ok || mean != 66000 {
+		t.Fatalf("fix mean_in=%d ok=%v, want known 66000", mean, ok)
+	}
+	for _, k := range got[1:] {
+		if mean, ok := k.MeanInput(); ok {
+			t.Fatalf("kind %s reported a known mean_in=%d; dash/absent/malformed must stay unknown", k.Kind, mean)
+		}
+		if k.InputKnown != 0 {
+			t.Fatalf("kind %s InputKnown=%d, want 0 (unknown is not a measured zero)", k.Kind, k.InputKnown)
+		}
 	}
 }
 

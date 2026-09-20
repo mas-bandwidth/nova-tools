@@ -13,38 +13,46 @@ import (
 // line, else from RESULT.md / PROMPT.md line 1. Cache-read / input is the
 // context x turns bill (#855: 1,434.6M cache-read against 62.1M input).
 type KindCost struct {
-	Kind       string
-	Cards      int
-	Input      int64
-	Output     int64
-	CacheWrite int64
-	CacheRead  int64
-	Reasoning  int64
+	Kind            string
+	Cards           int
+	Input           int64
+	InputKnown      int
+	Output          int64
+	OutputKnown     int
+	CacheWrite      int64
+	CacheWriteKnown int
+	CacheRead       int64
+	CacheReadKnown  int
+	Reasoning       int64
+	ReasoningKnown  int
 }
 
-// MeanInput is tokens_in per green card of this kind, 0 when there are none.
-func (k KindCost) MeanInput() int64 {
-	if k.Cards == 0 {
-		return 0
+// MeanInput is tokens_in per green card that reported a number. ok is false
+// when every card of this kind left input unknown (dash, absent, malformed):
+// unknown is not a measured zero and is not cheapest.
+func (k KindCost) MeanInput() (int64, bool) {
+	if k.InputKnown == 0 {
+		return 0, false
 	}
-	return k.Input / int64(k.Cards)
+	return k.Input / int64(k.InputKnown), true
 }
 
-// CachePerInput is cache_read / tokens_in, the implied harness-turn
-// multiplier. 0 when input is absent.
-func (k KindCost) CachePerInput() float64 {
-	if k.Input == 0 {
-		return 0
+// CachePerInput is cache_read / tokens_in over the known cells of each
+// counter. ok is false when either counter is fully unknown.
+func (k KindCost) CachePerInput() (float64, bool) {
+	if k.InputKnown == 0 || k.CacheReadKnown == 0 || k.Input == 0 {
+		return 0, false
 	}
-	return float64(k.CacheRead) / float64(k.Input)
+	return float64(k.CacheRead) / float64(k.Input), true
 }
 
-// ReasoningPerOutput is reasoning / tokens_out. 0 when output is absent.
-func (k KindCost) ReasoningPerOutput() float64 {
-	if k.Output == 0 {
-		return 0
+// ReasoningPerOutput is reasoning / tokens_out over the known cells. ok is
+// false when either counter is fully unknown.
+func (k KindCost) ReasoningPerOutput() (float64, bool) {
+	if k.OutputKnown == 0 || k.ReasoningKnown == 0 || k.Output == 0 {
+		return 0, false
 	}
-	return float64(k.Reasoning) / float64(k.Output)
+	return float64(k.Reasoning) / float64(k.Output), true
 }
 
 // GreenCardCostByKind walks every usage.tsv under root, keeps rc=0 rows, and
@@ -68,11 +76,11 @@ func GreenCardCostByKind(root string) []KindCost {
 				by[kind] = k
 			}
 			k.Cards++
-			k.Input += row.in
-			k.Output += row.out
-			k.CacheWrite += row.cw
-			k.CacheRead += row.cr
-			k.Reasoning += row.rs
+			addKnown(&k.Input, &k.InputKnown, row.in, row.inOK)
+			addKnown(&k.Output, &k.OutputKnown, row.out, row.outOK)
+			addKnown(&k.CacheWrite, &k.CacheWriteKnown, row.cw, row.cwOK)
+			addKnown(&k.CacheRead, &k.CacheReadKnown, row.cr, row.crOK)
+			addKnown(&k.Reasoning, &k.ReasoningKnown, row.rs, row.rsOK)
 		}
 		return nil
 	})
@@ -81,7 +89,15 @@ func GreenCardCostByKind(root string) []KindCost {
 		out = append(out, *k)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if a, b := out[i].MeanInput(), out[j].MeanInput(); a != b {
+		a, aOK := out[i].MeanInput()
+		b, bOK := out[j].MeanInput()
+		if aOK != bOK {
+			return aOK
+		}
+		if !aOK {
+			return out[i].Kind < out[j].Kind
+		}
+		if a != b {
 			return a < b
 		}
 		return out[i].Kind < out[j].Kind
@@ -89,9 +105,18 @@ func GreenCardCostByKind(root string) []KindCost {
 	return out
 }
 
+func addKnown(sum *int64, n *int, v int64, ok bool) {
+	if !ok {
+		return
+	}
+	*sum += v
+	*n++
+}
+
 type usageTokenRow struct {
-	rc                  string
-	in, out, cw, cr, rs int64
+	rc                            string
+	in, out, cw, cr, rs           int64
+	inOK, outOK, cwOK, crOK, rsOK bool
 }
 
 func parseUsageTokenRows(path string) []usageTokenRow {
@@ -116,28 +141,33 @@ func parseUsageTokenRows(path string) []usageTokenRow {
 				cols[strings.TrimSpace(name)] = values[i]
 			}
 		}
+		in, inOK := parseTokenCell(cols["tokens_in"])
+		outv, outOK := parseTokenCell(cols["tokens_out"])
+		cw, cwOK := parseTokenCell(cols["cache_write"])
+		cr, crOK := parseTokenCell(cols["cache_read"])
+		rs, rsOK := parseTokenCell(cols["reasoning"])
 		out = append(out, usageTokenRow{
-			rc:  strings.TrimSpace(cols["rc"]),
-			in:  parseTokenCell(cols["tokens_in"]),
-			out: parseTokenCell(cols["tokens_out"]),
-			cw:  parseTokenCell(cols["cache_write"]),
-			cr:  parseTokenCell(cols["cache_read"]),
-			rs:  parseTokenCell(cols["reasoning"]),
+			rc: strings.TrimSpace(cols["rc"]),
+			in: in, inOK: inOK,
+			out: outv, outOK: outOK,
+			cw: cw, cwOK: cwOK,
+			cr: cr, crOK: crOK,
+			rs: rs, rsOK: rsOK,
 		})
 	}
 	return out
 }
 
-func parseTokenCell(s string) int64 {
+func parseTokenCell(s string) (int64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "-" {
-		return 0
+		return 0, false
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return n
+	return n, true
 }
 
 func cardDir(usagePath string) string {

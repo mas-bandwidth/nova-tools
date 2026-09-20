@@ -388,6 +388,24 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 	if code, _, stderr, _, _ := runCut(t, map[string]string{"read": kept}, "s\t1\tread\tt\tread\n"); code != 0 {
 		t.Fatalf("read card that names REASONING: default: cut = %d, want 0; stderr=%q", code, stderr)
 	}
+
+	omitted := insertReasoningLine(unbounded, "omit")
+	if code, _, stderr, _, _ := runCut(t, map[string]string{"read": omitted}, "s\t1\tread\tt\tread\n"); code != 0 {
+		t.Fatalf("read card that names REASONING: omit: cut = %d, want 0; stderr=%q", code, stderr)
+	}
+
+	// HOLD on #2127: high is not in the read-family enum (low/default/omit).
+	high := insertReasoningLine(unbounded, "high")
+	code, _, stderr, out, _ = runCut(t, map[string]string{"read": high}, "s\t1\tread\tt\tread\n")
+	if code != 2 || !strings.Contains(stderr, "CUT REFUSED template=read") {
+		t.Fatalf("REASONING: high: code=%d stderr=%q, want CUT REFUSED template=read", code, stderr)
+	}
+	if !strings.Contains(stderr, "high") || !strings.Contains(stderr, "low") {
+		t.Fatalf("REASONING: high: stderr=%q, want the value refused and the enum named", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Fatal("REASONING: high: a card was written despite the refusal")
+	}
 }
 
 func insertReasoningLine(tmpl, value string) string {
