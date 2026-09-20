@@ -209,6 +209,16 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	return res, nil
 }
 
+// CountEdits is countEdits for a caller outside this package: the accept gate's selftest
+// (SPEC-TOOLWORK §1 rule 7) applies whole-object seeds -- a commit re-authored, a file
+// added, a hunk dropped -- that the patch form cannot express, and still asserts the line
+// count of every patch seed by THIS definition and no second one. The arguments are the
+// two reads of what git applied, exactly as MutateSeed takes them: the `--numstat` is the
+// arithmetic and the `-U0` diff is where the changed lines are (an edit is a place and
+// not a sum, #1803). A unified diff in place of the numstat is not a numstat and counts
+// wrong.
+func CountEdits(numstat, placed string) int { return countEdits(numstat, placed) }
+
 // countEdits is the whole definition of "one edit", and it is the patch git applied
 // that is counted, never the patch file's header.
 //

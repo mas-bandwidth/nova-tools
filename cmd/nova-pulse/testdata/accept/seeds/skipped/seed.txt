@@ -1,0 +1,2 @@
+kind=patch
+want=test-weakened

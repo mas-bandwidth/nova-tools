@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	hyg "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
@@ -28,6 +29,13 @@ func TestAcceptUnderTheRealWallDarwin(t *testing.T) {
 	l := newAcceptLab(t)
 	l.goodFix(t)
 	card := l.card(t, fixRedHeader)
+	// §1 rule 8: no ACCEPT OK without a passing selftest on file for this control id.
+	// This run calls Accept directly rather than through the lab, so it puts the record
+	// there itself, exactly as the lab does and as a harvest that ran one would have
+	// left it. Without it every verdict below is ABSTAIN control-stale, which is what
+	// the studio CI leg saw once T04 (#1730) merged in -- the hulk gate is linux and
+	// never runs this file.
+	writeControlFile(t, l.root, ControlID(buildinfo.Version(""), "-", "hand"))
 	var out, errb strings.Builder
 	code := Accept(AcceptInput{
 		Job: l.job, Card: card, Base: acceptGit(t, l.job, nil, "rev-parse", "main"), Bench: "lab", Cert: l.cert,

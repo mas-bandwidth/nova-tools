@@ -59,6 +59,10 @@ func ValidatePaths(paths []string) error {
 	return nil
 }
 
+// Match answers whether a repo-relative path matches one PATHS:-style glob, for a caller
+// that bounds something else by the same grammar (the accept gate's own-sources list).
+func Match(glob, p string) bool { return matchGlob(glob, p) }
+
 // boundsNothing answers whether a glob holds any literal character at all. A segment
 // made only of `*` and `?` constrains nothing about that segment, and a glob whose
 // every segment is like that constrains nothing about anything.

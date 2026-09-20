@@ -1948,7 +1948,8 @@ bench lines themselves stay on stdout.
 ### accept
 
 ```
-nova-pulse accept --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity "<Name> <email>"[,...] [--sandbox <path>] [--timeout <s>] [--max <n>]
+nova-pulse accept --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity "<Name> <email>"[,...] [--root <dir>] [--fixtures <dir>] [--sandbox <path>] [--timeout <s>] [--max <n>]
+nova-pulse accept --selftest --root <dir> --bench <name> --cert <path> [--fixtures <dir>] [--sandbox <path>] [--timeout <s>] [--max <n>]
 ```
 
 The mechanical accept gate ([SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §1): it reads the
@@ -1962,7 +1963,20 @@ changed packages' tests, then `nova-review mutate` with the fix reverted. One li
 finding, never a rerun; a red the card neither changed nor named is run once at the
 base and is `base-red` when red there too. `--cert` is the bench's certification
 record: until `nova-pulse certify` exists, a hand-written `bench=<name> legs=<a,b>`
-line, printed as `cert=hand`. `control=-` until `--selftest` lands.
+line, printed as `cert=hand`. 
+
+**The gate's own negative control.** `--selftest` builds a repository from the fixture the
+binary ships (`cmd/nova-pulse/testdata/accept`, or `--fixtures <dir>`): one known-good fix,
+which must be `ACCEPT OK`, and twelve seeded defects, one per reject token, each of which
+must be `ACCEPT REJECT` with its token and no other; every seed is one edit and the count
+is asserted from what git applied. `ACCEPT SEED name= edits=1 want= got= ok|WRONG` per
+seed, then `ACCEPT SELFTEST control=<id> accepted=1/1 rejected=12/12 edits=1 build=
+fixtures= bench= PASS|FAIL`. `control=<id>` is sha12 of (build identity, fixture digest,
+cert id); a passing run is put on file under `<root>/accept/control/<id>`, and `accept`
+refuses to print `ACCEPT OK` unless one is there for the id it computed -- it runs the
+selftest itself when none is (`ABSTAIN control-red` if that fails, `control-stale` when it
+has no fixtures to run one). A card whose diff touches the gate's own sources has the
+base's seeds run against the head's gate: `REJECT gate-weakened`.
 
 ### hygiene
 
