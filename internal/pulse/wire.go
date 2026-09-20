@@ -79,9 +79,13 @@ type WiringInput struct {
 	Max      int
 	TempGlob string // the swarm test leftovers reap collects; empty is reap's own default
 	TempRoot string // the directory the temp glob must sit under; empty derives it from the glob's prefix
-	Now      func() time.Time
-	Config   func() Config // the tick's configuration, re-read by run.go each tick
-	Log      io.Writer     // where each verb's one line goes; nil is <queue>/pulse.log
+	// SlotsStore and SlotOwner are the bench slot lease the wired launch takes
+	// (nova-tools#1903). Empty is a launch without a lease, which Launch refuses.
+	SlotsStore string
+	SlotOwner  string
+	Now        func() time.Time
+	Config     func() Config // the tick's configuration, re-read by run.go each tick
+	Log        io.Writer     // where each verb's one line goes; nil is <queue>/pulse.log
 
 	// Decide turns on the triage decide pass after each harvest (card 8371):
 	// a finished task whose needs_human is at or above DecideFloor goes to
@@ -580,6 +584,7 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 		code := Launch(LaunchInput{
 			Cards: tsv, Root: root, Slots: slots, Deadline: strconv.Itoa(int(w.in.Deadline / time.Second)),
 			Files: cfg.Files, Tokens: cfg.Tokens,
+			SlotsStore: w.in.SlotsStore, SlotOwner: w.in.SlotOwner,
 			QueueDir: w.in.Queue, Stdout: &out, Stderr: &errs, Now: w.in.Now,
 		})
 		w.log(out.String())

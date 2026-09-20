@@ -95,10 +95,11 @@ type BatchInput struct {
 	PullWait time.Duration
 	PullPoll time.Duration
 	// SlotsStore and SlotOwner are the bench slot store a card's `nova-swarm native` takes
-	// its one lease from, and the owner whose share it counts against (nova-tools#1546).
-	// They are REQUIRED of any batch that launches native -- which is every batch without
-	// a --runner of its own -- and the refusal is NoSlotsStoreRefusal, said once before a
-	// card runs rather than once per card.
+	// its one lease from, and the owner whose share it counts against (nova-tools#1546,
+	// #1903). They are REQUIRED of any batch that launches native -- a runnerless batch,
+	// or a batch whose --runner is this project's nova-native-runner.sh -- and the
+	// refusal is NoSlotsStoreRefusal, said once before a card runs rather than once per
+	// card.
 	//
 	// THE PATH IS ON THE MACHINE THAT RUNS THE CARD. For a local card that is this
 	// machine; for a bench row it is the bench, reached over ssh, and the path must exist
@@ -263,16 +264,17 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 	}
-	// A LAUNCH WITHOUT A LEASE IS REFUSED (nova-tools#1546). Every path out of this
-	// function that starts a card starts it through `nova-swarm native` -- selfNative
-	// locally, remoteRun on a bench -- and native now refuses without a slot store. The
-	// batch says so ONCE, here, before a single card runs, rather than letting every card
-	// fail one at a time with the same sentence. The remedy is the one native prints, word
-	// for word: a caller who greps for it finds the same string wherever it came from.
+	// A LAUNCH WITHOUT A LEASE IS REFUSED (nova-tools#1546, #1903). Every path out of
+	// this function that starts a card through `nova-swarm native` -- selfNative locally,
+	// remoteRun on a bench, or this project's `nova-native-runner.sh` -- is native with
+	// extra argv, and native refuses without a slot store. The batch says so ONCE, here,
+	// before a single card runs, rather than letting every card fail one at a time with
+	// the same sentence. The remedy is the one native prints, word for word.
 	//
-	// A batch with its own --runner launches no native and is not held to this: the runner
-	// is somebody else's program and the bench cannot speak for what it takes.
-	if in.Runner == "" && (in.SlotsStore == "" || in.SlotOwner == "") {
+	// A batch with a --runner that is somebody else's program is not held to this: the
+	// bench cannot speak for what that runner takes. This project's native runner is
+	// not somebody else's program.
+	if launchesNative(in.Runner) && (in.SlotsStore == "" || in.SlotOwner == "") {
 		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
 		return 2
 	}
@@ -714,6 +716,12 @@ func Batch(in BatchInput) int {
 			// written before this rule is still correct about its first five.
 			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root, in.Tokens)
 			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
+			if in.SlotsStore != "" {
+				cmd.Env = append(cmd.Env, "NOVA_SWARM_SLOTS_STORE="+in.SlotsStore)
+			}
+			if in.SlotOwner != "" {
+				cmd.Env = append(cmd.Env, "NOVA_SWARM_SLOT_OWNER="+in.SlotOwner)
+			}
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
 		}
@@ -1898,6 +1906,21 @@ func localHarness(benchesPath string, auth *string) string {
 		return b.Harness
 	}
 	return ""
+}
+
+// nativeRunnerBase is the basename of this project's native runner. A batch that names it
+// as --runner is launching native with extra argv, not somebody else's program (#1903).
+const nativeRunnerBase = "nova-native-runner.sh"
+
+// launchesNative reports whether this batch will start `nova-swarm native` for each card:
+// no --runner of its own, or this project's native runner (basename, .exe stripped so a
+// windows fixture named the same way still counts).
+func launchesNative(runner string) bool {
+	r := strings.TrimSpace(runner)
+	if r == "" {
+		return true
+	}
+	return strings.TrimSuffix(filepath.Base(r), ".exe") == nativeRunnerBase
 }
 
 // swarmSelf resolves the nova-swarm binary a runnerless batch runs native from: the caller's

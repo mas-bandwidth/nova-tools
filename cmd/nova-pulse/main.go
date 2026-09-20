@@ -26,7 +26,7 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--depends-on <cards>] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --slots-store <dir> --owner <name> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--commit]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>] [--commit] [--batch [--store <host:port>] [--store-user <name>] [--password-env <NAME>]]
@@ -42,7 +42,7 @@ nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [--memfree-gb <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--max <n>]
+nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--slots-store <dir>] [--owner <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--dedupe --issues <file>] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
@@ -76,17 +76,18 @@ nova-pulse help
 launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>card, counts the free
 slots in <root>/pool, and hands the cards that fit -- the whole admitted set as
 one cards.tsv -- to nova-swarm batch's card form (--id --cards --deadline
---runner --root), queueing the rest only when --queue is set. --slots is the
-ceiling on the free slots it may use, and --deadline is the whole pulse's one
-deadline in whole seconds. It makes no model call itself: nova-swarm must be on
-your PATH. These examples run against a fixture in this repo; lay it down first
-from the repo root, so ./cards.tsv and ./bin/nova-swarm exist where the lines
-name them:
+--runner --root --slots-store --owner), queueing the rest only when --queue is
+set. --slots is the ceiling on the free slots it may use, --deadline is the
+whole pulse's one deadline in whole seconds, and --slots-store/--owner are the
+bench slot lease the launcher must take (a launch without a lease is refused).
+It makes no model call itself: nova-swarm must be on your PATH. These examples
+run against a fixture in this repo; lay it down first from the repo root, so
+./cards.tsv, ./slots-store and ./bin/nova-swarm exist where the lines name them:
   cp -R cmd/nova-pulse/testdata/example-pulse/. ./
 
 example:
-  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --slots-store ./slots-store --owner pulse --queue
+  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120 --slots-store ./slots-store --owner pulse
 
 ./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
 in this repo is a fixture the size of a first run, and every line above is run
@@ -515,6 +516,8 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	runner := f.fs.String("runner", "", "")
 	swarmBin := f.fs.String("swarm", "", "")
 	attempts := f.fs.Int("attempts", pulse.DefaultLaunchAttempts, "")
+	slotsStore := f.fs.String("slots-store", "", "")
+	slotOwner := f.fs.String("owner", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -544,6 +547,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Benches: *benches, Bench: *bench, Machines: *machines,
 		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Runner: *runner, Swarm: *swarmBin, Attempts: *attempts, Version: buildVersion(),
+		SlotsStore: *slotsStore, SlotOwner: *slotOwner,
 		Max:    *max,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,

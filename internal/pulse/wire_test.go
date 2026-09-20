@@ -89,9 +89,11 @@ func TestWiredOnceTickRunsEverySeam(t *testing.T) {
 	}
 	cfg := DefaultConfig()
 	in.Configured = func(c Config) { cfg = c }
+	store := aPulseSlotStore(t)
 	Wire(&in, NewWiring(WiringInput{
 		Queue: queue, Roots: root, Repo: "mas-bandwidth/nova-tools", Branch: "dev",
 		Now: func() time.Time { return now }, Config: func() Config { return cfg },
+		SlotsStore: store, SlotOwner: "fake-1",
 		TempGlob:  filepath.Join(t.TempDir(), "*swarmtest*"),
 		Runs:      &fakeRuns{runs: []CIRun{{ID: 77, Status: "completed", Conclusion: "success", HeadSHA: "0123456789abcdef", Workflow: "ci", Event: "push"}}},
 		PRs:       prs,

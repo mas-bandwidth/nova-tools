@@ -52,6 +52,14 @@ func writeCards(t *testing.T, root string, n int) (string, []string) {
 
 func runLaunch(t *testing.T, in LaunchInput) (int, string, string) {
 	t.Helper()
+	// Existing tests predate the required bench slot lease (#1903). A pulse
+	// without a store is now refused; these tests are about admission, argv
+	// shape, retry, routing — not the lease — so a missing store is filled
+	// here. Tests that pin the refusal call Launch themselves.
+	if in.SlotsStore == "" && in.SlotOwner == "" {
+		in.SlotsStore = aPulseSlotStore(t)
+		in.SlotOwner = "fake-1"
+	}
 	var out, errb bytes.Buffer
 	in.Stdout = &out
 	in.Stderr = &errb

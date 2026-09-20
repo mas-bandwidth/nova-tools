@@ -325,7 +325,14 @@ func TestLaunchPassesBenchesThrough(t *testing.T) {
 			"space\tspace\tlinux/x64\tbench\tswarm-space\t64\t-\n")
 
 	var out, errb bytes.Buffer
-	code := run([]string{"launch", "--cards", cards, "--root", root, "--slots", "6", "--deadline", "600", "--benches", benches, "--bench", "studio,space", "--machines", machines}, &out, &errb, time.Now().UTC())
+	store := filepath.Join(dir, "slots-store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "shares.tsv"), []byte("capacity\t8\nreserve\t0\nfake-1\t8\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := run([]string{"launch", "--cards", cards, "--root", root, "--slots", "6", "--deadline", "600", "--benches", benches, "--bench", "studio,space", "--machines", machines, "--slots-store", store, "--owner", "fake-1"}, &out, &errb, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("launch exit = %d, want 0; stderr=%q", code, errb.String())
 	}

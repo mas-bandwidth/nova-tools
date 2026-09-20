@@ -35,6 +35,8 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	floor := f.fs.Float64("floor", 0, "")
 	keyEnv := f.fs.String("key-env", "", "")
 	baseURL := f.fs.String("base-url", "", "")
+	slotsStore := f.fs.String("slots-store", "", "")
+	slotOwner := f.fs.String("owner", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -81,13 +83,14 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	in.Configured = func(c pulse.Config) { cfg = c }
 	pulse.Wire(&in, pulse.NewWiring(pulse.WiringInput{
 		Queue: *queue, Roots: *roots, Repo: *repo, Branch: *branch,
-		Deadline: time.Duration(*deadline) * time.Second,
-		Timeout:  time.Duration(*timeout) * time.Second,
-		Max:      *max,
-		TempGlob: *tempGlob,
-		TempRoot: *tempRoot,
-		Now:      func() time.Time { return time.Now().UTC() },
-		Config:   func() pulse.Config { return cfg },
+		Deadline:   time.Duration(*deadline) * time.Second,
+		Timeout:    time.Duration(*timeout) * time.Second,
+		Max:        *max,
+		TempGlob:   *tempGlob,
+		TempRoot:   *tempRoot,
+		SlotsStore: *slotsStore, SlotOwner: *slotOwner,
+		Now:    func() time.Time { return time.Now().UTC() },
+		Config: func() pulse.Config { return cfg },
 
 		Decide:        *decide,
 		DecideFloor:   *floor,

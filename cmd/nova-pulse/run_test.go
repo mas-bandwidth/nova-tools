@@ -41,9 +41,15 @@ func TestRunOnceIsOneWidthLineAndOneVerdict(t *testing.T) {
 	write(t, filepath.Join(queue, "pulse.toml"), "[slots]\nstudio = 2\nspace = 0\nlocal = 0\n")
 	write(t, filepath.Join(queue, "pending", "card-5.md"),
 		"RESULT: CARD-5 nova-tools #777 fixed with its red test first: a card waiting\nSTEP 1. do the thing\n")
+	store := filepath.Join(queue, "slots-store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(store, "shares.tsv"), "capacity\t8\nreserve\t0\nfake-1\t8\n")
 
 	exit, out, errs := invokePulse(t, "run", "--queue", queue, "--roots", root,
 		"--repo", "mas-bandwidth/nova-tools", "--branch", "dev", "--once",
+		"--slots-store", store, "--owner", "fake-1",
 		"--temp-glob", filepath.Join(t.TempDir(), "*swarmtest*"))
 	if exit != 0 {
 		t.Fatalf("exit %d: %s%s", exit, out, errs)
