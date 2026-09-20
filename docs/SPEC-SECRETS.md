@@ -530,8 +530,10 @@ ciphertext into place atomically. The value never touches argv, a plaintext file
 **What it does after.** It makes a branch `seal/<seat>-<NAME>-<stamp>`, commits, pushes, opens
 a `gh` pull request, waits up to two minutes for the seat-rule gate's `reviewDecision=APPROVED`,
 merges with `--squash`, pulls, and runs `check` on the seat. `--no-pr` stops after the commit
-and makes no `gh` call. The OK line is `merged`, or `open (gate not yet approved)` when the
-wait expired with the request still open.
+and makes no `gh` call, then returns the working copy to the branch it started on so `exec`
+still sees HEAD matching the remote-tracking ref. The seal commit remains on
+`seal/<seat>-<NAME>-<stamp>` and the OK line names it as `branch=...`. The OK line is
+`merged`, or `open (gate not yet approved)` when the wait expired with the request still open.
 
 ### `seat add`
 

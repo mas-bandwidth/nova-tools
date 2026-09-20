@@ -1,8 +1,10 @@
 package secrets
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -87,7 +89,9 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 		"echo \"ENC[marker]\"\n"
 	f.sopsPath = f.writeScript(t, "sops", sopsBody)
 
-	gitBody := "printf '%s\\n' \"$@\" >> \"" + f.gitArgs + "\"\n" + "exit 0\n"
+	gitBody := "printf '%s\\n' \"$@\" >> \"" + f.gitArgs + "\"\n" +
+		"if [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--abbrev-ref\" ]; then echo \"main\"; fi\n" +
+		"exit 0\n"
 	f.gitPath = f.writeScript(t, "git", gitBody)
 	ghBody := "printf '%s\\n' \"$@\" >> \"" + f.ghArgs + "\"\n" +
 		"if [ \"$1 $2\" = \"pr create\" ]; then echo \"https://github.com/mas-bandwidth/secrets/pull/42\"; fi\n" +
@@ -208,25 +212,139 @@ func TestSealReplacesExistingNameNotDuplicated(t *testing.T) {
 	}
 }
 
+// TestSealNoPRMakesNoGHCalls: --no-pr must not leave the store on the seal
+// branch (#2016). exec requires HEAD to match the remote-tracking ref, and a
+// leftover seal/* branch has no upstream, so every later card on that bench
+// is refused. After success or an injected git failure the store is back on
+// its starting branch with the starting worktree; a successful seal commit
+// remains retrievable on the named branch. No gh, no push, no pull. The
+// placeholder is a fixture, not a credential.
 func TestSealNoPRMakesNoGHCalls(t *testing.T) {
 	skipPOSIXFakesOnWindows(t)
-	f := newSealFixture(t, "TARGET: old\n")
-	line, err := RunSeal(f.options(t, "TARGET", "v\n", true))
-	if err != nil {
-		t.Fatalf("RunSeal: %v", err)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
 	}
-	if got := readMaybe(t, f.ghArgs); got != "" {
-		t.Errorf("--no-pr called gh:\n%s", got)
+
+	const placeholder = "placeholder-value"
+	wantBranch := "seal/rowan-TARGET-20260917-120000"
+	cases := []struct {
+		name       string
+		failGit    []string
+		wantErr    bool
+		wantCommit bool
+	}{
+		{name: "success", wantCommit: true},
+		{name: "checkout -b fails", failGit: []string{"checkout", "-b"}, wantErr: true},
+		{name: "add fails", failGit: []string{"add"}, wantErr: true},
+		{name: "commit fails", failGit: []string{"commit"}, wantErr: true},
 	}
-	git := readMaybe(t, f.gitArgs)
-	if !strings.Contains(git, "checkout") || !strings.Contains(git, "commit") {
-		t.Errorf("--no-pr did not checkout/commit:\n%s", git)
-	}
-	if strings.Contains(git, "push") {
-		t.Errorf("--no-pr pushed:\n%s", git)
-	}
-	if !strings.Contains(line, "committed") {
-		t.Errorf("--no-pr line should say committed: %s", line)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSealFixture(t, "TARGET: old\n")
+			initTrackedGitStore(t, f.storeDir)
+
+			gitBin, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			origBranch := gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD")
+			origHEAD := gitC(t, f.storeDir, "rev-parse", "HEAD")
+			origSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var gitLog []string
+			opts := f.options(t, "TARGET", placeholder+"\n", true)
+			opts.GitPath = gitBin
+			opts.Exec = func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
+				if name == gitBin || filepath.Base(name) == "git" {
+					gitLog = append(gitLog, strings.Join(args, " "))
+					if gitArgsHavePrefix(args, tc.failGit) {
+						return nil, fmt.Errorf("injected git failure")
+					}
+					return realExecCommand(stdin, env, dir, gitBin, args...)
+				}
+				return realExecCommand(stdin, env, dir, name, args...)
+			}
+
+			line, runErr := RunSeal(opts)
+			if strings.Contains(line, placeholder) {
+				t.Errorf("value leaked into the OK line: %s", line)
+			}
+			if runErr != nil && strings.Contains(runErr.Error(), placeholder) {
+				t.Errorf("value leaked into the error: %v", runErr)
+			}
+			if got := readMaybe(t, f.ghArgs); got != "" {
+				t.Errorf("--no-pr called gh:\n%s", got)
+			}
+			joined := strings.Join(gitLog, "\n")
+			if strings.Contains(joined, "push") {
+				t.Errorf("--no-pr pushed:\n%s", joined)
+			}
+			if strings.Contains(joined, "pull") {
+				t.Errorf("--no-pr pulled:\n%s", joined)
+			}
+
+			gotBranch := gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD")
+			gotHEAD := gitC(t, f.storeDir, "rev-parse", "HEAD")
+			gotSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotBranch != origBranch {
+				t.Errorf("final branch %s, want starting branch %s", gotBranch, origBranch)
+			}
+			if gotHEAD != origHEAD {
+				t.Errorf("final HEAD %s, want starting HEAD %s", gotHEAD, origHEAD)
+			}
+			if string(gotSeat) != string(origSeat) {
+				t.Errorf("final worktree seat file differs from the starting tree")
+			}
+			if st, err := CheckGitWorkingCopy(f.storeDir); err != nil || !st.Clean {
+				t.Errorf("exec would refuse this store after --no-pr: %v", err)
+			}
+
+			if tc.wantErr {
+				if runErr == nil {
+					t.Fatalf("RunSeal succeeded, want injected git failure")
+				}
+			} else if runErr != nil {
+				t.Fatalf("RunSeal: %v", runErr)
+			}
+
+			if !tc.wantErr {
+				if !strings.Contains(joined, "checkout") || !strings.Contains(joined, "commit") {
+					t.Errorf("--no-pr did not checkout/commit:\n%s", joined)
+				}
+				if !strings.Contains(line, "committed") {
+					t.Errorf("--no-pr line should say committed: %s", line)
+				}
+				if !strings.Contains(line, "branch="+wantBranch) {
+					t.Errorf("--no-pr line should name the seal branch: %s", line)
+				}
+			}
+
+			sealSHA, sealErr := gitCErr(t, f.storeDir, "rev-parse", wantBranch)
+			if tc.wantCommit {
+				if sealErr != nil {
+					t.Fatalf("seal commit is not retrievable on %s: %v", wantBranch, sealErr)
+				}
+				if sealSHA == origHEAD {
+					t.Errorf("seal branch %s still points at the starting commit", wantBranch)
+				}
+				blob := gitC(t, f.storeDir, "show", wantBranch+":rowan.yaml")
+				if !strings.Contains(blob, "ENC[marker]") {
+					t.Errorf("seal commit does not hold the new ciphertext")
+				}
+				if strings.Contains(blob, placeholder) {
+					t.Errorf("placeholder leaked into the committed seat file")
+				}
+			} else if sealErr == nil && sealSHA != origHEAD {
+				t.Errorf("injected failure still moved %s to %s", wantBranch, sealSHA)
+			}
+		})
 	}
 }
 
@@ -278,9 +396,9 @@ func TestSealSaysWhatItIsDoing(t *testing.T) {
 		}
 	}
 	git := strings.ReplaceAll(readMaybe(t, f.gitArgs), "\n", " ")
-	back, pull := strings.Index(git, "checkout - "), strings.LastIndex(git, "pull")
+	back, pull := strings.Index(git, "checkout -f"), strings.LastIndex(git, "pull")
 	if back < 0 || pull < 0 || back > pull {
-		t.Errorf("after the merge git must checkout - and then pull; got: %s", git)
+		t.Errorf("after the merge git must checkout -f the starting branch and then pull; got: %s", git)
 	}
 }
 
@@ -331,4 +449,48 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 	if !strings.Contains(string(out), "ENC[marker]") {
 		t.Errorf("encrypt stdout not returned: %q", out)
 	}
+}
+
+func initTrackedGitStore(t *testing.T, storeDir string) {
+	t.Helper()
+	remote := t.TempDir()
+	gitC(t, remote, "init", "--bare", "-b", "main")
+	gitC(t, storeDir, "init", "-b", "main")
+	gitC(t, storeDir, "config", "user.name", "seal-test")
+	gitC(t, storeDir, "config", "user.email", "seal-test@example.com")
+	gitC(t, storeDir, "config", "commit.gpgsign", "false")
+	gitC(t, storeDir, "remote", "add", "origin", remote)
+	gitC(t, storeDir, "add", "-A")
+	gitC(t, storeDir, "commit", "-m", "initial")
+	gitC(t, storeDir, "push", "-u", "origin", "main")
+}
+
+func gitC(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := gitCErr(t, dir, args...)
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return out
+}
+
+func gitCErr(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+func gitArgsHavePrefix(args, prefix []string) bool {
+	if len(prefix) == 0 || len(args) < len(prefix) {
+		return false
+	}
+	for i, p := range prefix {
+		if args[i] != p {
+			return false
+		}
+	}
+	return true
 }
