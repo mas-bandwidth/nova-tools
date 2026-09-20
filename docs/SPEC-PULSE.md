@@ -210,7 +210,14 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's
     label, `done/` before `failed/`, latest task first — and a task in `failed/` whose
     `RESULT.md` exists with a first line equal to the card's `RESULT` line is harvested as a
-    result, not a failure, because the contract decides, never the directory it sits in. When
+    result, not a failure, because the contract decides, never the directory it sits in. The
+    `--then` harvest launch chains is `harvest --id <id> --root <root>` with no `--bench`.
+    Launch writes the pulse table's slot column as `-` before swarm allocates; a remote card's
+    files come back at `<root>/<bench>-<n>/jobs/<label>/` (SPEC-SWARM, Three files come back).
+    Harvest opens a same-label job under the root whose `RESULT.md` line 1 matches the
+    current card contract, and only when that match is unique. Two matches are
+    `HARVEST REFUSED` ambiguous (a leftover and the current pull of the same card); mtime
+    is not identity. A unique match is not counted `elsewhere` (issue #1907). When
     `--root` names a bare swarm root with no `cards.tsv` — the caller handed cards straight to
     `nova-swarm batch` — `harvest` folds every `<root>/<slot>/jobs/<label>/RESULT.md` under it,
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
@@ -397,7 +404,7 @@ listener process descending from `nova-runner-<i>.service` (runner checks run
 only when `uname` is Linux), that each unit file carries `Environment=PATH`
 with `go/bin` and `.local/bin`, `KillMode=control-group` and
 `TimeoutStopSec=30s`, that `go version` equals `$NOVA_GO` (default
-`go1.26.5`) with `sbcl` on `PATH` and the harness at
+the tree's `go.mod` `go` line; `$NOVA_GO` is an explicit override) with `sbcl` on `PATH` and the harness at
 `$HOME/nova-bench/harness-<ver>/opencode`, that the 16 nova bins in
 `$HOME/.local/bin` each report `$NOVA_WANT`, that exactly one `*.key` sits
 under `$HOME/.config/nova-secrets` with `nova-secrets check` passing for it,
@@ -484,7 +491,7 @@ It prints one `STANDARD <bench> <check> OK got=<v>` or
 then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
 `FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
 operating system, so the standard is read rather than traced through a shell
-script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+script: the Linux list is the Go toolchain at `--go` (default the tree's `go.mod` `go` line),
 `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
 opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
 the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of

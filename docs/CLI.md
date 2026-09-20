@@ -1588,7 +1588,7 @@ the third call too.
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 ```
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
@@ -2060,7 +2060,11 @@ the table launch writes for that `--id`, falling back to `<root>/cards.tsv` for 
 `cut` wrote and to the job directories themselves for a bare swarm root. Reading only
 `<root>/cards.tsv` meant the `--then` harvest launch chains refused every successful
 pulse, with `run: nova-pulse cut` as the remedy — the wrong door, because launch had
-already written the table (issue #1818).
+already written the table (issue #1818). The table's slot column is `-` until swarm
+allocates; a `--bench` pull lands at `<root>/<bench>-<n>/jobs/<label>/`, and harvest
+`--id` folds a same-label `RESULT.md` only when its line 1 uniquely matches the
+current card contract. Two matches are refused as ambiguous; a copied leftover
+with a later mtime is not identity (issue #1907).
 
 A card is **this** card when its `RESULT.md` line 1 **begins with** the card's contract
 line, trailing spaces trimmed — the same rule `nova-swarm batch`'s gather applies
@@ -2106,6 +2110,14 @@ and nothing is pushed; nothing naming a repository at all is `HARVEST REFUSED re
 So `harvest --working` and a bare swarm root — neither of which carries a launch record —
 want `--clone <owner>/<name>=<dir>`, and on `--working` exactly one, because choosing between
 several would mean reading the worker's own report.
+
+**A returned branch whose base is stale never becomes a PR** (issue #2032). Before any
+push, harvest fetches the authorized destination's target branch, pins that OID, and takes
+`git diff --name-only <oid>..<branch>` (two-dot, not the merge-base and not the worker
+clone's cached `origin/dev`). It refuses when that diff contains a path the card did not
+declare on `PATHS:`, naming the offending files. An explicit target that cannot be fetched
+is a refusal, never a walk of local fallbacks. Opening the branch as it came off the bench
+would revert later landings.
 
 **`--machines` holds `--bench` against the machines registry before the first ssh.**
 A harvest opens a connection to the machine it names, and runner hosts are CI-only, so the
@@ -2232,7 +2244,7 @@ FLEET <bench> STANDARD DRIFT drift=<k>/<n>
 
 The checks are **data, one table per operating system** (`pulse.FleetStandardChecks`), so
 the standard is read rather than traced through a shell script. Linux: the Go toolchain at
-`--go` (default `go1.26.5`), `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one
+`--go` (default the tree's `go.mod` `go` line; `--go` is an explicit override), `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one
 seat key, and free space at `--min-free` (default 25 GB). darwin: the Go SDK and `sbcl`
 under `~/sdk`, real git ahead of the Xcode shim, and every runner's `.path` carrying it,
 with the stamp, seat and space checks shared. Left out, `--os` is asked of the bench with
@@ -2429,6 +2441,7 @@ never forms an opinion about code and never merges anything.
 nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
 nova-review mutate --repo <dir> --base <ref> --head <ref> [--test <name>] [--timeout <seconds>] [--max <n>]
 nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
+nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
 nova-review version
 nova-review help
 ```
@@ -2494,6 +2507,21 @@ still exit 2 (#1850).
 MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
 ```
 
+`guard` is the post-landing negative control (#2042). It reverts the commit's
+non-test files, keeps the tests, and runs the named packages. The verdict is
+computed from exit codes and test names, never judged: `GUARDED` when tests go
+red, `UNGUARDED` when they stay green, `COMPILER-HELD` when the revert does not
+compile, `NOT-APPLICABLE` when the file is excluded on this OS. `--tests` is the
+only judgement (which packages to run); omitted, the packages are the commit's
+changed `.go` files. Both test tails and `platform=<goos>/<goarch>` are recorded.
+The verdict is `status=`, never the last token. It writes nothing into the repo
+it is pointed at.
+
+```
+GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> status=<GUARDED|UNGUARDED|COMPILER-HELD>
+GUARD <head8> platform=<goos>/<goarch> status=NOT-APPLICABLE reason=build-tags
+```
+
 Reverting nothing runs the head's own suite, so the control cannot be PROVED,
 which is not the same as a run that broke and is not acceptance either: it is
 never a `PASS`, never a `REJECT` and never permission to push. Every
@@ -2503,7 +2531,7 @@ different condition and still refuses, `MUTATE <head8> no-tests-changed`: it can
 be an ordinary production fix missing the red test it was required to have, and
 calling that harmless is the inference this verb must not make.
 
-The other verbs are `packet`, `version` and `help`. `packet` is the one that works:
+The other verbs are `packet`, `version` and `help`. `guard` is above. `packet` is the one that works:
 it reads one entry on a lane at one head and writes one bounded file, capped at
 `--max-bytes` (default 131072), past which the packet holds the hunk list and
 the command that prints the rest; `--max` (default 20) caps the prior-verdicts

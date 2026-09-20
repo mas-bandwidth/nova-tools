@@ -280,6 +280,17 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 		fmt.Fprintln(r.in.Stderr, err)
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
+	globs, declared := harvestDeclaredPaths("", lines)
+	// working --base is the measure-past ref, not the destination branch.
+	target, terr := harvestTargetBranch(HarvestInput{}, lines)
+	if terr != nil {
+		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: %s\n", oneline.Field(j.label), oneline.Err(terr))
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
+	if err := staleBaseRefusal(clone, dest.url, target, "HEAD", globs, declared); err != nil {
+		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
+		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
+	}
 	url := dest.url
 
 	remote := ""
