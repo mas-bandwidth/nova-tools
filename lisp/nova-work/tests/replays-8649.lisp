@@ -269,3 +269,79 @@
               "savepoint list prints the attempt verdict=failed")
           (ok (search (format nil "stage=~(~A~)" stage) (savepoint-list s))
               "savepoint list names the failed stage"))))))
+
+;;; ------------------------------------------------------------------
+;;; E10-F04-03                                  SPEC-WORK.md:7228-7229
+;;; Run the authorized read-only real-repository pilot and disposable
+;;; import, then publish a reconciliation disposition. Stage (3) is a
+;;; read-only capture and dry-run plan reconciled against the captured
+;;; records; stage (4) is an import into a disposable destination with
+;;; the originals untouched.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F04RunTheAuthorizedReadOnly" "docs/SPEC-WORK.md:7228-7229"
+    "expected=read-only-pilot-mutates-nothing;disposable-import-leaves-originals-untouched;reconciliation-disposition-published"
+  (let* ((source (make-recording-adapter :inventory '(:issues 3 :comments 7)))
+         (before (adapter-inventory source)))
+    ;; The authorized real-repository pilot is read-only: a dry-run capture and
+    ;; a normal initial import perform reads only, call no mutation endpoint,
+    ;; and leave the remote inventory byte-identical.
+    (dry-run-capture source)
+    (initial-import source)
+    (check-equal 0 (length (adapter-mutation-calls source))
+                 "the read-only pilot called a source mutation endpoint")
+    (check-equal before (adapter-inventory source)
+                 "the read-only pilot changed the real repository")
+    (ok (plusp (length (adapter-read-calls source)))
+        "the read-only pilot made no reads at all")
+    ;; The disposable import writes only the throwaway destination, never the
+    ;; originals: applying a plan changes the destination and leaves the source
+    ;; untouched.
+    (let ((plan (dry-run-capture source))
+          (destination (list :applied 0)))
+      (apply-plan source destination plan)
+      (check-equal 0 (length (adapter-mutation-calls source))
+                   "the disposable import called a source mutation endpoint")
+      (check-equal before (adapter-inventory source)
+                   "the disposable import changed the originals")
+      (check-equal 3 (getf destination :applied)
+                   "the disposable import did not write the destination")
+      ;; A stale plan whose source has moved is refused and the destination is
+      ;; left as it was: revalidated before it is applied.
+      (let ((stale-destination (list :applied 1))
+            (moved-source (make-recording-adapter :inventory '(:issues 9 :comments 7))))
+        (multiple-value-bind (result line) (apply-plan moved-source stale-destination plan)
+          (declare (ignore result))
+          (ok (search "INTAKE FAIL" line) "a stale plan is not refused: ~A" line)
+          (check-equal 1 (getf stale-destination :applied)
+                       "a stale plan wrote the destination"))))
+    ;; The reconciliation disposition is published: the pilot's capture is
+    ;; reconciled against the authoritative repository, and a capture that does
+    ;; not match -- different id, different content, or different count -- is
+    ;; refused by name rather than accepted.
+    (let* ((authoritative (list (inventory-record "issues" :issues
+                                                  :original 3 :mapping "acme/issues")
+                                (inventory-record "comments" :comments
+                                                  :original 7 :mapping "acme/comments")))
+           (matching (copy-tree authoritative))
+           (different-id (list (inventory-record "pull-requests" :issues
+                                                 :original 3 :mapping "acme/issues")
+                               (inventory-record "comments" :comments
+                                                 :original 7 :mapping "acme/comments")))
+           (different-content (copy-tree authoritative))
+           (different-count (list (inventory-record "issues" :issues
+                                                    :original 3 :mapping "acme/issues"))))
+      (setf (getf (first different-content) :original) 4)
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative matching)
+        (ok okp "the pilot's capture failed to reconcile against the repository: ~A" line)
+        (ok (search "INVENTORY OK" line)
+            "the reconciliation disposition is not published: ~A" line))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative different-id)
+        (check-equal nil okp "a capture with a different id reconciled")
+        (ok (search "id mismatch" line) "an id mismatch is not named: ~A" line))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative different-content)
+        (check-equal nil okp "a capture with different content reconciled")
+        (ok (search "content mismatch" line) "a content mismatch is not named: ~A" line))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative different-count)
+        (check-equal nil okp "a capture with a different count reconciled")
+        (ok (search "count mismatch" line) "a count mismatch is not named: ~A" line)))))
