@@ -282,3 +282,62 @@
           "a fenced session does not answer status: ~A" after)
       (ok (search "state=fenced" after)
           "status does not read the fenced state after stop: ~A" after))))
+
+;;; ------------------------------------------------------------------
+;;; TestE06F04ComparePriorCheckpointToCurrent    SPEC-WORK.md:7085
+;;;    criterion E06-F04-02 in docs/roadmaps/nova-work.sexp:
+;;;    "Compare prior checkpoint to current state and report gaps".
+;;;    The recovery row fixes the reading: "compare an isolated old
+;;;    restore against current state; a missing tail or an unavailable
+;;;    remote backup reported as a recovery gap". `savepoint compare`
+;;;    puts the prior checkpoint's revision and the current state's
+;;;    revision side by side, and reports as gaps every revision the
+;;;    current state holds beyond the prior checkpoint.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE06F04ComparePriorCheckpointToCurrent" "docs/SPEC-WORK.md:7085"
+    "expected=prior-and-current-revisions-side-by-side;gap-revisions-named-one-each;unshared-not-shared;gap-count-not-a-fold"
+  (let* ((prior (make-savepoint
+                 :id "sp-prior" :schema "work-savepoint-v1" :local-revision 812
+                 :journal-id "abc" :replay-cut '(:sequence 420 :sha256 "h1")
+                 :boundary '(:sequence 390 :sha256 "h2") :manifest "sha-1"
+                 :image "state" :local-replies "replies" :age 3600
+                 :failed-backup nil))
+         (current (list :kind :session
+                        :revision 820
+                        :checkpoint 750
+                        :records (list (list :seq 1 :revision 700 :events '(1))
+                                       (list :seq 2 :revision 812 :events '(2))
+                                       (list :seq 3 :revision 819 :events '(3))
+                                       (list :seq 4 :revision 820 :events '(4)))))
+         (cmp (savepoint-compare prior :against current)))
+    ;; the prior checkpoint's revision and the current state's revision stand
+    ;; side by side; neither is folded into the other.
+    (check-equal 812 (getf cmp :local-revision)
+                 "the prior checkpoint's revision is named")
+    (check-equal 820 (getf cmp :against-revision)
+                 "the current state's revision is named beside it")
+    (check-equal 750 (getf cmp :shared-checkpoint)
+                 "the shared checkpoint stays a different field")
+    ;; the gaps are reported, one by one: every revision the current state holds
+    ;; beyond the prior checkpoint is named, never rounded into a count alone.
+    (check-equal '(819 820) (getf cmp :missing)
+                 "the work the current state holds beyond the prior checkpoint is reported as gaps")
+    ;; the work above the shared checkpoint still inside the prior checkpoint is
+    ;; reported as unshared, and the local savepoint is never the shared backup.
+    (check-equal '(812) (getf cmp :unshared)
+                 "the unshared work above the shared checkpoint is reported")
+    (check-equal nil (getf cmp :shared)
+                 "the local savepoint is not reported as the shared checkpoint")
+    ;; the comparison line names both revisions and reports each gap count.
+    (ok (search "rev=812" (getf cmp :line))
+        "the compare line names the prior revision: ~A" (getf cmp :line))
+    (ok (search "against=820" (getf cmp :line))
+        "the compare line names the current revision: ~A" (getf cmp :line))
+    (ok (search "checkpoint=750" (getf cmp :line))
+        "the compare line names the shared checkpoint separately: ~A" (getf cmp :line))
+    (ok (search "missing=2" (getf cmp :line))
+        "the compare line reports the gap count: ~A" (getf cmp :line))
+    (ok (search "unshared=1" (getf cmp :line))
+        "the compare line reports the unshared count: ~A" (getf cmp :line))))
+
