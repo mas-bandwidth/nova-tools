@@ -2,8 +2,11 @@ package pulse
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -73,9 +76,10 @@ func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr=%s", code, errs)
 	}
-	want := "RESULT: CARD-1 nova-tools #601 fixed with its red test first: sweep never revisits a queued check"
-	if got := strings.SplitN(card, "\n", 2)[0]; got != want {
-		t.Errorf("line 1 = %q\nwant      %q", got, want)
+	wantRE := regexp.MustCompile(`^RESULT: CARD-1 sha=[0-9a-f]{12} nova-tools #601 fixed with its red test first: sweep never revisits a queued check$`)
+	line1 := strings.SplitN(card, "\n", 2)[0]
+	if !wantRE.MatchString(line1) {
+		t.Errorf("line 1 = %q\nwant to match %s", line1, wantRE.String())
 	}
 	if !strings.Contains(card, "Prior attempts: card-590 abstained: reason=idle=300") {
 		t.Errorf("the fix card carries no Prior attempts line:\n%s", card)
@@ -91,6 +95,31 @@ func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
 	})
 	if strings.Contains(plain, "Prior attempts:") {
 		t.Errorf("a first attempt carries a Prior attempts line:\n%s", plain)
+	}
+}
+
+// cut-kind-fix-hash: a fix card's line 1 carries the sha-12 of every line below it, the
+// same binding renderValidated gives a validated card, so the contract line cannot drift
+// from the steps it names (#1852 item 1).
+func TestCutKindFixContractLineIsHashedOverEverythingBelowIt(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 601, Title: "sweep never revisits a queued check",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	m := regexp.MustCompile(`^RESULT: CARD-1 sha=([0-9a-f]{12}) `).FindStringSubmatch(card)
+	if m == nil {
+		t.Fatalf("line 1 carries no sha=<sha12> token, so the contract line is unhashed:\n%s", card)
+	}
+	lines := strings.Split(card, "\n")
+	sum := sha256.Sum256([]byte(strings.Join(lines[1:], "\n")))
+	want := hex.EncodeToString(sum[:])[:12]
+	if m[1] != want {
+		t.Errorf("sha=%s, want %s (the sha-12 of every line below line 1)", m[1], want)
 	}
 }
 
@@ -156,6 +185,7 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		{"no queue", CutKindInput{Kind: "read", Repo: "o/n", PR: 1, Head: "h", Out: dir}, "--queue"},
 		{"rebase without a branch", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Base: "dev", Title: "t", Out: dir, Queue: dir}, "--branch"},
 		{"rebase without a base", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Branch: "rowan/x", Title: "t", Out: dir, Queue: dir}, "--base"},
+		{"guard without a head", CutKindInput{Kind: "guard", Repo: "o/n", Out: dir, Queue: dir}, "--head"},
 	} {
 		var out, errs bytes.Buffer
 		in := c.in
@@ -166,5 +196,71 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		if !strings.Contains(errs.String(), "CUT REFUSED") || !strings.Contains(errs.String(), c.want) || !strings.Contains(errs.String(), "(") {
 			t.Errorf("%s: refusal = %q, want CUT REFUSED naming %s and a remedy", c.name, errs.String(), c.want)
 		}
+	}
+}
+
+func TestCutKindGuardCardForbidsJudgingTheVerdict(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "guard", Repo: "mas-bandwidth/nova-tools", Head: "ddce356eabcd",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if got := strings.SplitN(card, "\n", 2)[0]; got != "RESULT: CARD-1 guard of nova-tools at ddce356eabcd" {
+		t.Errorf("line 1 = %q", got)
+	}
+	if !strings.Contains(card, "nova-review guard --repo ./repo --head ddce356eabcd") {
+		t.Errorf("the card does not name the mechanical verb:\n%s", card)
+	}
+	if !strings.Contains(card, "COMPUTED, never judged") {
+		t.Errorf("the card does not forbid judging:\n%s", card)
+	}
+	if strings.Contains(card, "last token") {
+		t.Errorf("N/A and ABSTAIN end in reason/prose; the card must not copy the last token:\n%s", card)
+	}
+	if !strings.Contains(card, "status=") {
+		t.Errorf("the card must name the status= field to copy, not a last token:\n%s", card)
+	}
+	if !strings.Contains(line, "kind=guard") {
+		t.Errorf("the one line = %q", line)
+	}
+}
+
+// cut writes queue/lanes/{red,green,small,next}/ (docs/SPEC-JOBS.md section 5):
+// all four directories are visible, a fix lands in red and a small,
+// already-approved read lands in green.
+func TestCutKindWritesPriorityLanes(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+	code, _, errs, _ := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 601, Title: "the lanes exist",
+		Out: filepath.Join(dir, "a"), Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("fix exit = %d, stderr=%s", code, errs)
+	}
+	for _, lane := range []string{"red", "green", "small", "next"} {
+		if st, err := os.Stat(filepath.Join(queue, "lanes", lane)); err != nil || !st.IsDir() {
+			t.Fatalf("cut did not write queue/lanes/%s/: %v", lane, err)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "red", "*.card")); len(matches) != 1 {
+		t.Fatalf("a fix card is not in the red lane: %v", matches)
+	}
+	code, _, errs, _ = cutKind(t, CutKindInput{
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456", Title: "an approved read",
+		Out: filepath.Join(dir, "b"), Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("read exit = %d, stderr=%s", code, errs)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "green", "*.card")); len(matches) != 1 {
+		t.Fatalf("a read card is not in the green lane: %v", matches)
 	}
 }

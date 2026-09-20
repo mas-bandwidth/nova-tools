@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -108,8 +109,22 @@ func ReadFile(entry, who, head string, s Submission) string {
 // callers pass the record directory, never a raw pull request number or branch name.
 // Keeping the record's path and bytes here makes every writer use the same read format.
 func ReadItem(entry, who, head, verdict, note string, s Submission) (Item, error) {
+	return ReadItemScoped(entry, who, head, verdict, note, "", nil, s)
+}
+
+// ReadItemScoped constructs a read record with optional scope and releases.
+func ReadItemScoped(entry, who, head, verdict, note, scope string, releases []string, s Submission) (Item, error) {
 	file := ReadFile(entry, who, head, s)
-	rec := Read{Who: who, Verdict: verdict, Note: note, At: s.At, Head: head, File: file}
+	rec := Read{
+		Who:      who,
+		Verdict:  verdict,
+		Note:     note,
+		At:       s.At,
+		Head:     head,
+		File:     file,
+		Scope:    scope,
+		Releases: releases,
+	}
 	if err := ValidRead(rec); err != nil {
 		return Item{}, err
 	}
@@ -1034,3 +1049,60 @@ const GitIgnore = `# nova-merge: the tracked files are the records and nothing e
 *.lock
 *.log
 `
+
+// LoadLaneVerdicts reads all line-level read records for pr from <laneDir>/reads/<entry>/.
+func LoadLaneVerdicts(laneDir string, pr int) ([]Verdict, error) {
+	if laneDir == "" {
+		return nil, nil
+	}
+	if laneDir == "none" {
+		return nil, fmt.Errorf("lane directory %q is not permitted", laneDir)
+	}
+	if fi, err := os.Stat(laneDir); err != nil {
+
+		return nil, fmt.Errorf("lane directory %s: %w", laneDir, err)
+	} else if !fi.IsDir() {
+		return nil, fmt.Errorf("lane path %s is not a directory", laneDir)
+	}
+	entry := EntryDirName(strconv.Itoa(pr))
+	dir := filepath.Join(laneDir, ReadsDir, entry)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s: %w", dir, err)
+	}
+	var out []Verdict
+	for _, de := range entries {
+		if de.IsDir() || !strings.HasSuffix(de.Name(), ".json") {
+			continue
+		}
+		p := filepath.Join(dir, de.Name())
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		var rec Read
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		if err := ValidRead(rec); err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		out = append(out, Verdict{
+			ID:       fmt.Sprintf("record:%s", rec.At),
+			Who:      rec.Who,
+			Head:     rec.Head,
+			Word:     rec.Verdict,
+			Source:   "record",
+			Scope:    rec.Scope,
+			Releases: rec.Releases,
+			At:       rec.At,
+			RawID:    0,
+			Kind:     "line",
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At < out[j].At })
+	return out, nil
+}

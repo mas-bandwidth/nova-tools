@@ -28,6 +28,21 @@ func TestVersionStampAndUsage(t *testing.T) {
 	}
 }
 
+func TestRefusalNamesVersionNotUpdate(t *testing.T) {
+	for _, args := range [][]string{{}, {"--no-such-flag-zz"}} {
+		var out, errs bytes.Buffer
+		if code := update.Main("nova-version", args, "", &out, &errs); code != 2 {
+			t.Fatalf("args %v: exit %d, want 2 (stderr=%q)", args, code, errs.String())
+		}
+		if !strings.Contains(errs.String(), "VERSION REFUSED") {
+			t.Errorf("args %v: refusal does not name nova-version: %q", args, errs.String())
+		}
+		if strings.Contains(errs.String(), "UPDATE") {
+			t.Errorf("args %v: refusal names nova-update: %q", args, errs.String())
+		}
+	}
+}
+
 func TestVersionHelpDoesNotDemandAnApplyVerb(t *testing.T) {
 	var out, err bytes.Buffer
 	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {

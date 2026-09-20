@@ -128,8 +128,10 @@ func (h *GHSweep) HeadRun(branch string) (SweepRun, error) {
 
 // Enqueue admits a pull request to the merge queue THROUGH THE ONE DOOR. The mutation is
 // not repeated here: this method is the sweep's seam onto Enqueuer.Enqueue, which is where
-// the batch rule and the GraphQL both live. A sweep that enqueued by itself would be a
-// second entrance to the queue, which is the thing this session took away.
+// the batch rule and the GraphQL both live. It presents no receipt and runs no hold fold,
+// so the door must refuse a card-minted rowan/integration-* prefix (#1898). A sweep that
+// enqueued by itself would be a second entrance to the queue, which is the thing this
+// session took away.
 func (h *GHSweep) Enqueue(pr SweepPR) error {
 	return NewEnqueuer(NewGHEnqueue(h.Repo, h.Timeout, h.Runner)).Enqueue(
 		context.Background(), EnqueuePR{Number: pr.Number, HeadRef: pr.HeadRef}, false)

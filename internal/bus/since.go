@@ -565,11 +565,14 @@ func SortForListing(entries []OpenEntry) []OpenEntry {
 // noteCache parses each path at most once per run, so a note that is both in the change
 // set and in the open list costs one parse and the count in the test means what it says.
 type noteCache struct {
-	root string
-	by   map[string]*Note
+	root   string
+	by     map[string]*Note
+	counts *busCounters // the per-bus parse count, see instrument.go
 }
 
-func newNoteCache(root string) *noteCache { return &noteCache{root: root, by: map[string]*Note{}} }
+func newNoteCache(root string) *noteCache {
+	return &noteCache{root: root, by: map[string]*Note{}, counts: countersFor(root)}
+}
 
 func (nc *noteCache) get(path string) (*Note, error) {
 	if n, ok := nc.by[path]; ok {
@@ -584,6 +587,7 @@ func (nc *noteCache) get(path string) (*Note, error) {
 		return nil, err
 	}
 	n, perr := ParseNote(path, string(raw))
+	nc.counts.noteParses.Add(1)
 	if perr != nil {
 		n = Note{Path: path, Lane: laneOf(path), Parse: &ParseError{perr}}
 	}

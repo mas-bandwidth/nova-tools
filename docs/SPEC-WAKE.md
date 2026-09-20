@@ -621,7 +621,16 @@ every poll re-lists the same new notes, and on a recovery read under `--open`,
 and nowhere else. **This spec does not depend on `nova-bus` re-listing
 anything.** The bookkeeping tokens — `INBOX OPEN`, `INBOX OK`, `INBOX CURSOR`,
 `INBOX SCOPE`, `INBOX LEGACY` — are counted and not printed, because they say
-the same thing every poll. **Every other line this tool does not recognise is printed verbatim,
+the same thing every poll. The inner `nova-bus wait` a `--refresh` source runs
+adds three more on the same rule: its opening status line
+`WAIT as=<name> timeout=<d> interval=<d> cursor=<sha>`, its
+`WAIT TIMEOUT after=<d> polls=<n> cursor=<sha>`, and its
+`WAIT DONE reason=timeout rearm=required next=<cmd>`. All three say, in words,
+that NOTHING ARRIVED; they are the same every poll; and relaying one wakes the
+window at once and makes the verb unable to wait at all. A `WAIT DONE` with any
+other reason, and any other `WAIT` line — a refusal, or a shape from a future
+`nova-bus` this tool has not heard of — are not bookkeeping and still print.
+**Every other line this tool does not recognise is printed verbatim,
 under `WAKE BUS LINE`, and wakes the window.** That includes `INBOX REFUSED`,
 `INBOX FAIL`, `INBOX UNREADABLE`, `INBOX UNADDRESSED`, `INBOX SWITCH`, a `git`
 transcript, a line from a future version of `nova-bus` this tool has never heard
@@ -767,13 +776,14 @@ Therefore:
   <name>` with **no** `--advance`, where `<t>` is the time to the earliest due
   source, at most `--interval`: `wait` takes the checkout lock, fetches,
   fast-forwards, and returns the moment the inbox would list something new or
-  at `<t>` (SPEC.md, **wait**), and its lines are classified exactly as
-  `inbox`'s, because the two verbs share one listing. So new mail reaches a
-  non-advancing watcher within one poll, no cursor moves, nothing is consumed,
-  and the carried list is then read whole with `inbox --open --open-max
-  <carrying>` once per run on the first poll, so a cold watcher lists what it
-  is owed before what is new. `--refresh` and `--advance-cursor` together are
-  exit 2: one fetch per poll, never two.
+  at `<t>` (SPEC.md, **wait**);
+  its lines are classified exactly as `inbox`'s apart from the three `WAIT`
+  bookkeeping shapes named above, because the two verbs share one listing. So
+  new mail reaches a non-advancing watcher within one poll, no cursor moves,
+  nothing is consumed, and the carried list is then read whole with
+  `inbox --open --open-max <carrying>` once per run on the first poll, so a cold
+  watcher lists what it is owed before what is new. `--refresh` and
+  `--advance-cursor` together are exit 2: one fetch per poll, never two.
 - **`--advance-cursor` is specified here and was shipped under work list item 3a.**
   Advancement is an acknowledgement optimisation and not a prerequisite for delivery
   (Stella and Johnny, 2026-09-11), and a v1 that cannot move a cursor cannot lose a note.

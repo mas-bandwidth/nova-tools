@@ -39,6 +39,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
@@ -71,14 +72,53 @@ type BatchInput struct {
 	// slot column is optional in either case; a hand slot outside the range is that card's
 	// own admission refusal (issue #618).
 	Slots string
+	// Worker is the worker description whose class gates admission: when its
+	// class is public, a card cloning an unlisted repo is refused with
+	// `CARD REFUSED reason=private-source ...` and never starts. The zero
+	// Worker is paid and gates nothing, so callers without a description keep
+	// today's behaviour byte for byte.
+	Worker Worker
 	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
 	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
 	PullWait time.Duration
 	PullPoll time.Duration
-	Benches  string // path to the benches table; empty means no table is read
-	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
-	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// SlotsStore and SlotOwner are the bench slot store a card's `nova-swarm native` takes
+	// its one lease from, and the owner whose share it counts against (nova-tools#1546).
+	// They are REQUIRED of any batch that launches native -- which is every batch without
+	// a --runner of its own -- and the refusal is NoSlotsStoreRefusal, said once before a
+	// card runs rather than once per card.
+	//
+	// THE PATH IS ON THE MACHINE THAT RUNS THE CARD. For a local card that is this
+	// machine; for a bench row it is the bench, reached over ssh, and the path must exist
+	// THERE. One batch spanning local and remote benches therefore wants a store path that
+	// means the same thing on each, which today means naming the same absolute path on
+	// every bench. Said plainly here because it is the seam a reader will meet.
+	SlotsStore string
+	SlotOwner  string
+	Benches    string // path to the benches table; empty means no table is read
+	Bench      string // comma-separated bench names to allocate the cards across; empty means local only
+	Then       string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// MaxInflight is the per-route in-flight cap of nova-tools#917: at most this many of a
+	// batch's cards run against one provider/model/key at a time, and the rest WAIT --
+	// held, not refused, holding no process and no spend, with their deadlines not begun.
+	// Zero is no cap, which is today's behaviour byte for byte.
+	//
+	// Measured 2026-09-17: above roughly 30-40 concurrent requests on one Muse key the tail
+	// latency goes to infinity, and every card launched past that point burns its whole
+	// deadline for nothing -- and is paid for.
+	MaxInflight int
+	// StallAfter is the FIRST-TOKEN deadline of the same issue: a card that has been running
+	// this long and has produced nothing at all -- no byte of log, no turn in its harness
+	// store -- is ended `ABSTAIN reason=stalled`.
+	//
+	// IT IS NOT THE IDLE TIMEOUT. `--idle` is about a card that WAS working and stopped, and
+	// every signal it has needs a first sample to compare against; a card that never spoke
+	// once has no such sample and is invisible to it. On 2026-09-17 a fresh known-answer
+	// card hung for its entire 150 s deadline having produced no token at all, while
+	// deepseek-flash on the same bench in the same second answered in 11 s. Zero leaves a
+	// card to its deadline, which is today's behaviour.
+	StallAfter time.Duration
 	// THE ROUTE SEAM (Glenn 2026-09-19, SPEC-DECIDE "nova-decide route"). When
 	// it is set, the model a card is dispatched with is the ladder's answer --
 	// which MIND does this unit of work -- and not the string the fill script
@@ -87,9 +127,15 @@ type BatchInput struct {
 	// provider refused, where the confidence is under the floor and where the
 	// rung is a mind a card cannot be dispatched to. Every card carries one
 	// receipt line saying which happened. nil leaves the TSV's model alone.
-	Route  *RouteInput
-	Stdout io.Writer
-	Stderr io.Writer
+	Route *RouteInput
+	// RouteSkip is the reason a launcher was explicitly told not to route.
+	// When it is non-empty every admitted card gets a "source":"skipped" row in
+	// the route log, so a skipped route is a fact in the log and not an absence
+	// (SPEC-DECIDE housekeeping H4, #1625). Empty means the launcher routes; a
+	// launcher cannot skip without a reason.
+	RouteSkip string
+	Stdout    io.Writer
+	Stderr    io.Writer
 	// clock is the batch's time source. nil means the real clock; a test injects a
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
@@ -194,10 +240,33 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 	}
+	// A LAUNCH WITHOUT A LEASE IS REFUSED (nova-tools#1546). Every path out of this
+	// function that starts a card starts it through `nova-swarm native` -- selfNative
+	// locally, remoteRun on a bench -- and native now refuses without a slot store. The
+	// batch says so ONCE, here, before a single card runs, rather than letting every card
+	// fail one at a time with the same sentence. The remedy is the one native prints, word
+	// for word: a caller who greps for it finds the same string wherever it came from.
+	//
+	// A batch with its own --runner launches no native and is not held to this: the runner
+	// is somebody else's program and the bench cannot speak for what it takes.
+	if in.Runner == "" && (in.SlotsStore == "" || in.SlotOwner == "") {
+		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
+		return 2
+	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
+	// THE PUBLIC-CLASS GATE (CARD-8390) runs here too, after the shape and repo
+	// checks readCards already applied: a public-class worker's card cloning an
+	// unlisted repo carries a private-source refusal and is said as CARD REFUSED.
+	if in.Worker.IsPublic() {
+		applyPublicGate(cards, in.Worker, in.Root)
+	}
 	for _, c := range cards {
 		if c.admitWhy != "" {
+			if IsPublicRefusal(c.admitWhy) {
+				fmt.Fprintln(in.Stderr, "CARD REFUSED "+c.admitWhy)
+				continue
+			}
 			fmt.Fprintln(in.Stderr, admitRefusalLine(c.label, c.admitWhy))
 		}
 	}
@@ -244,24 +313,284 @@ func Batch(in BatchInput) int {
 		// scratch is the directory under the local root this card's files are read from:
 		// <bench>-<n> for a remote card, whose files the pull below brings back, and the
 		// bare <n> for a local one.
-		scratch    string
-		bench      string
-		label      string
-		idleLog    string // the file the idle monitor watched; set only on an idle kill
-		cpu        uint64 // the card's process tree's CPU time at the last sample; guarded by doneMu
-		haveCPU    bool   // whether cpu holds a sample to compare against; guarded by doneMu
-		done       bool   // guarded by doneMu
-		idleKilled bool   // guarded by doneMu
-		deadKilled bool   // killed at the batch deadline; guarded by doneMu
-		rc         int    // the child's exit code; guarded by doneMu
-		lastGrow   time.Time
+		scratch     string
+		bench       string
+		label       string
+		idleLog     string    // the file the idle monitor watched; set only on an idle kill
+		cpu         uint64    // the card's process tree's CPU time at the last sample; guarded by doneMu
+		haveCPU     bool      // whether cpu holds a sample to compare against; guarded by doneMu
+		done        bool      // guarded by doneMu
+		idleKilled  bool      // guarded by doneMu
+		deadKilled  bool      // killed at the batch deadline; guarded by doneMu
+		stallKilled bool      // killed for never producing a first token (#917); guarded by doneMu
+		launched    bool      // the child has been started; a card still held by the route cap has not
+		launchedAt  time.Time // when it was started, which is when its stall clock begins
+		moved       bool      // it has produced SOMETHING at least once; guarded by doneMu
+		route       string    // the provider/model/key queue it was launched against
+		rc          int       // the child's exit code; guarded by doneMu
+		lastGrow    time.Time
+		// pgid and started are the card's OWN process group and the identity retained for
+		// it at launch (issue #640). They are read at `cmd.Start()` and never again from
+		// the process, because a kill that asks a dying child for its group asks too late.
+		pgid    int
+		started string
+		// killed is how many processes the reap of this card's group ended. It is set once,
+		// after the reap, and it is what the ABSTAIN row prints; guarded by doneMu.
+		killed int
 	}
 	var doneMu sync.Mutex
+	// reapCardGroups ends the WHOLE PROCESS TREE of every card named and records how many
+	// processes each reap took with it (issue #640).
+	//
+	// THE OLD KILL WAS `cmd.Process.Kill()`, which is SIGKILL to ONE PROCESS. A card is not
+	// one process: it is the runner, the wall it opened, the harness inside it and whatever
+	// the harness started, and none of those are the pid the batch was holding. So the batch
+	// printed its line and left the tree running -- two nova-sandbox wrappers at 12:30
+	// elapsed and five test binaries burning CPU, five to twelve minutes after
+	// `BATCH TP1 n=6 done=0 abstain=6`, killed by hand.
+	//
+	// `Reap` is the house's own end-a-group: terminate, wait the grace, kill, and confirm.
+	// The TERMINATE FIRST is load-bearing rather than polite -- the child of a runnerless
+	// batch is `nova-swarm native`, which answers a TERM by reaping its own tree and folding
+	// its usage before it goes (cmd/nova-swarm/native.go, nativeTermCh). A SIGKILL alone
+	// would lose that fold.
+	//
+	// THE CARDS ARE REAPED CONCURRENTLY. Serially, the grace would be paid once per card and
+	// a six-card batch would sit through six of them after its deadline had already fired.
+	reapCardGroups := func(victims []*proc) {
+		if len(victims) == 0 {
+			return
+		}
+		var reapWG sync.WaitGroup
+		for _, p := range victims {
+			reapWG.Add(1)
+			go func(p *proc) {
+				defer reapWG.Done()
+				n := groupSize(p.pgid, p.started)
+				Reap(p.pgid, p.started, TerminateGrace)
+				doneMu.Lock()
+				p.killed = n
+				doneMu.Unlock()
+			}(p)
+		}
+		reapWG.Wait()
+	}
 	procs := make([]proc, len(cards))
+	// THE LAUNCH IS GATED PER ROUTE (nova-tools#917). Every card takes one of its route's
+	// slots before its process starts and gives it back when that process ends, so at most
+	// `MaxInflight` of this batch's cards are ever in flight against one provider/model/key.
+	// With no cap the gate admits everything at once and this is today's loop unchanged.
+	//
+	// THE WAITER IS STARTED HERE, at the launch, rather than in a second pass afterwards.
+	// It has to be: the loop below now BLOCKS on the gate, and the thing that unblocks it is
+	// a card ending -- which is what the waiter observes. A second pass after the loop would
+	// be a pass that never runs.
+	gate := newInflight(in.MaxInflight)
+	defer gate.close()
+	var wg sync.WaitGroup
+	// One count held for the whole launch loop, so `allDone` cannot close on the first card
+	// finishing while later cards are still held at the gate.
+	wg.Add(1)
+	launchDone := false
+	defer func() {
+		if !launchDone {
+			wg.Done()
+		}
+	}()
+	allDone := make(chan struct{})
+	stopMonitor := make(chan struct{})
+	var monitorWG sync.WaitGroup
+	startMonitor := func() {
+		if in.Idle <= 0 && in.StallAfter <= 0 {
+			return
+		}
+		monitorWG.Add(1)
+		go func() {
+			defer monitorWG.Done()
+			tickC, stopTicker := clk.NewTicker(idlePollInterval)
+			defer stopTicker()
+			lastSize := make([]int64, len(procs))
+			var lastSample time.Time
+			for {
+				select {
+				case <-stopMonitor:
+					return
+				case <-allDone:
+					return
+				case now := <-tickC:
+					// The process table is read once per activity poll, outside the lock, and
+					// every card is asked of that one snapshot (issue #593).
+					var toReap []*proc
+					var snap activitySnapshot
+					var sampleSpan time.Duration
+					if now.Sub(lastSample) >= activityInterval(in.Idle) {
+						if in.snapshot != nil {
+							snap = in.snapshot()
+						} else {
+							snap = newProcSnapshot()
+						}
+						sampleSpan = now.Sub(lastSample)
+						lastSample = now
+					}
+					doneMu.Lock()
+					for i := range procs {
+						// A CARD STILL HELD AT THE ROUTE GATE HAS NOT STARTED, and nothing
+						// about it can be idle or stalled: it has no process, its deadline
+						// has not begun, and its clocks do not run. This monitor now starts
+						// BEFORE the launch loop -- it has to, because the loop blocks on
+						// the gate and the thing that unblocks it is a card ending, which
+						// only this monitor can force -- so it sees cards that do not exist
+						// yet, and it leaves them alone.
+						if !procs[i].launched || procs[i].done || procs[i].idleKilled || procs[i].stallKilled {
+							continue
+						}
+						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
+						if size > 0 {
+							procs[i].moved = true
+						}
+						if size != lastSize[i] {
+							lastSize[i] = size
+							procs[i].moved = true
+							procs[i].lastGrow = now
+							continue
+						}
+						// A silent log is not a silent card: a harness inside a `go test` that
+						// prints nothing for minutes is working, and its work is CPU its process
+						// tree spent -- its children's as much as its own. A card is idle only
+						// when NEITHER its log NOR its tree moved for the whole --idle window.
+						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
+							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
+								prev := procs[i].cpu
+								grew := procs[i].haveCPU && cpu > prev
+								// A tree whose CPU fell LOST a process since the last
+								// sample: that process was alive and charged, and its
+								// departure is work done, not the still, silent card
+								// the idle timeout is for. It is also the card whose
+								// runner has exited but not yet been reaped, whose CPU
+								// can no longer be read (issue #916).
+								shrank := procs[i].haveCPU && cpu < prev
+								procs[i].cpu, procs[i].haveCPU = cpu, true
+								// CPU growth is activity only when the tree spent a real
+								// share of the sample interval working. Darwin counts
+								// CPU in nanoseconds, so a process that only slept
+								// still shows a few microseconds of runtime
+								// bookkeeping between two samples, and under the
+								// injected clock two polls can be a real microsecond
+								// apart while the virtual window says seconds:
+								// any-increment-at-all used to keep a silent card
+								// alive on darwin where linux's coarse ticks saw zero
+								// (issue #916). A tree that is working spends a large
+								// fraction of the interval; one percent separates the
+								// two by orders of magnitude on both platforms.
+								if grew && cpu-prev >= uint64(sampleSpan)/100 {
+									// A tree that is working has MOVED, so the
+									// first-token check below never fires for a
+									// card that is compiling in silence (#593).
+									procs[i].moved = true
+									procs[i].lastGrow = now
+									continue
+								}
+								if shrank {
+									procs[i].moved = true
+									procs[i].lastGrow = now
+									continue
+								}
+							}
+						}
+						// THE FIRST-TOKEN DEADLINE (nova-tools#917), and it is NOT the idle
+						// timeout above. Every signal the idle window has needs a first
+						// sample to compare against -- a log that grew, a tree whose CPU
+						// advanced -- and a card that has never spoken once provides none
+						// of them, so it is invisible to all of them and runs until the
+						// batch deadline. On 2026-09-17 a fresh known-answer card did
+						// exactly that for its whole 150 s while deepseek-flash on the same
+						// bench in the same second answered in 11 s: the tier had queued it
+						// and would never answer.
+						//
+						// So a card that has produced NOTHING AT ALL since it launched is
+						// ended at `StallAfter`, and its reason names what happened rather
+						// than borrowing the idle token: `ABSTAIN reason=stalled`. A card
+						// that produced one byte and then went quiet is the idle window's
+						// business, not this one's, and this check never fires for it.
+						if in.StallAfter > 0 && !procs[i].moved &&
+							now.Sub(procs[i].launchedAt) >= in.StallAfter {
+							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
+							if _, ok := FindCardResult(job); ok {
+								continue
+							}
+							procs[i].stallKilled = true
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
+							toReap = append(toReap, &procs[i])
+							continue
+						}
+						if in.Idle > 0 && now.Sub(procs[i].lastGrow) >= in.Idle {
+							// A card that already published a result is finishing, not
+							// idle: its file exists and gather will score it by that
+							// result, so the kill would only race the write and score
+							// a half-written RESULT (issue #916).
+							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
+							if _, ok := FindCardResult(job); ok {
+								continue
+							}
+							procs[i].idleKilled = true
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
+							toReap = append(toReap, &procs[i])
+						}
+					}
+					doneMu.Unlock()
+					// THE REAP IS OUTSIDE THE LOCK, and that is not a tidiness: a reap waits
+					// for the kernel to agree the group is gone, and the goroutine that
+					// would mark this card done takes doneMu to do it. Reaping under the
+					// lock would hold it for the whole grace and report every group as a
+					// survivor.
+					reapCardGroups(toReap)
+				}
+			}
+		}()
+	}
+	// THE MONITOR RUNS DURING LAUNCHING ONLY WHEN LAUNCHING CAN BLOCK. With a route cap the
+	// loop below waits at the gate, and the only thing that can free a slot is a card ending
+	// -- which for a hung card is this monitor's doing, so it must already be running or the
+	// batch deadlocks until its deadline. With NO cap the loop never waits, and the monitor
+	// starts after it exactly as it always has: starting it earlier would change when every
+	// existing card's first sample is taken, for no gain.
+	if in.MaxInflight > 0 {
+		startMonitor()
+	}
+
+	go func() { wg.Wait(); close(allDone) }()
+	// THE DEADLINE IS ARMED ONCE, HERE, AND TWO THINGS WAIT ON IT. The launch loop below
+	// blocks at the route gate, so the batch's own deadline has to be able to fire DURING
+	// launching: without this, a batch whose first card hangs and whose cap is one would sit
+	// in `acquire` with nothing watching the clock. When it fires, the gate is closed -- every
+	// held card is released without launching, and each is scored `deadline` -- and the
+	// select below, which waits on the same channel rather than arming a second timer, reaps
+	// whatever is still running.
+	deadline := make(chan struct{})
+	go func() {
+		select {
+		case <-clk.After(in.Deadline):
+			gate.close()
+			close(deadline)
+		case <-allDone:
+		}
+	}()
 	for i, c := range cards {
 		// A card refused at admission never starts: it is already its own ABSTAIN row.
 		if c.admitWhy != "" {
 			procs[i] = proc{slot: c.slot, label: c.label, done: true}
+			continue
+		}
+		// THE GATE. This blocks while the card's route is full, and a card held here holds
+		// nothing else: no process, no bench slot lease, no spend, and its deadline has not
+		// begun. It returns false only once the batch has given up -- its own deadline
+		// passed -- and then this card is never launched at all and is scored `deadline`.
+		route := RouteKey(c.model, in.Auth)
+		if !gate.acquire(route) {
+			doneMu.Lock()
+			procs[i] = proc{slot: c.slot, label: c.label, scratch: scratchName(c), bench: c.bench,
+				done: true, deadKilled: true, route: route}
+			doneMu.Unlock()
 			continue
 		}
 		// A remote card's job directory sits under <root>/<bench>-<n>/jobs/<label>; a local
@@ -295,7 +624,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -315,6 +644,13 @@ func Batch(in BatchInput) int {
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
 		}
+		// EVERY CARD'S CHILD IS A GROUP LEADER (issue #640), on all three launch shapes and
+		// not just the two that already asked for it. `selfNative` and `remoteRun` set this
+		// themselves; a `--runner <cmd>` child did not, so the batch had nothing to signal
+		// but one pid -- and one pid is not a card. It is set HERE, at the one place every
+		// shape passes through, so the kill below has one invariant to rely on rather than
+		// three constructors to trust.
+		ownGroup(cmd)
 		if err := cmd.Start(); err != nil {
 			_ = logFile.Close()
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: runner %s could not start for %s: %s\n",
@@ -322,25 +658,28 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
-	}
-
-	// wait: every card ends, or the deadline. The wait is one select over one "all done"
-	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
-	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
-	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
-	// time, and kills a card only when neither has moved for the idle window: a dead card is
-	// removed from the wait, so the batch returns on its slowest still-working card rather
-	// than burning the whole deadline, and a card whose harness is busy and silent -- a
-	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
-	var wg sync.WaitGroup
-	allDone := make(chan struct{})
-	for i := range procs {
-		if procs[i].cmd == nil {
-			continue
+		// The group and its identity are RETAINED at launch, the way the supervisor retains
+		// its harness's (`jobPgid := cmd.Process.Pid`, supervise.go:159) and `native` its
+		// child's (native.go:469). The group id is the CHILD'S OWN PID and is never read
+		// back with Getpgid: `ownGroup` makes the child the LEADER, so its group id is its
+		// pid by construction, and a Getpgid in the parent can win the race against the
+		// child's own setpgid and answer THIS PROCESS'S group -- which the reap below would
+		// then terminate. Reading it later would also mean asking a process that may already
+		// be a corpse, and on a platform that re-issues pids, signalling a stranger.
+		pgid, started := 0, ""
+		if cmd.Process != nil {
+			pgid, started = cmd.Process.Pid, StartStamp(cmd.Process.Pid)
 		}
+		doneMu.Lock()
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label,
+			lastGrow: clk.Now(), pgid: pgid, started: started,
+			launched: true, launchedAt: clk.Now(), route: route}
+		doneMu.Unlock()
+		// THE WAITER, started at the launch. It marks the card done, records its exit code,
+		// and GIVES THE ROUTE'S SLOT BACK -- exactly once per acquire, however the card
+		// ended. A release that does not happen is a route that never launches again.
 		wg.Add(1)
-		go func(p *proc) {
+		go func(p *proc, route string) {
 			defer wg.Done()
 			err := p.cmd.Wait()
 			doneMu.Lock()
@@ -353,125 +692,42 @@ func Batch(in BatchInput) int {
 				p.rc = -1
 			}
 			doneMu.Unlock()
-		}(&procs[i])
+			gate.release(route)
+		}(&procs[i], route)
 	}
-	go func() { wg.Wait(); close(allDone) }()
+	// The launch loop is over: drop the count that kept `allDone` open across it.
+	launchDone = true
+	wg.Done()
+	// The uncapped case, where the loop never waited and the monitor's first sample belongs
+	// here, after every card has started, exactly where it has always been taken.
+	if in.MaxInflight <= 0 {
+		startMonitor()
+	}
 
-	stopMonitor := make(chan struct{})
-	var monitorWG sync.WaitGroup
-	if in.Idle > 0 {
-		monitorWG.Add(1)
-		go func() {
-			defer monitorWG.Done()
-			tickC, stopTicker := clk.NewTicker(idlePollInterval)
-			defer stopTicker()
-			lastSize := make([]int64, len(procs))
-			var lastSample time.Time
-			for {
-				select {
-				case <-stopMonitor:
-					return
-				case <-allDone:
-					return
-				case now := <-tickC:
-					// The process table is read once per activity poll, outside the lock, and
-					// every card is asked of that one snapshot (issue #593).
-					var snap activitySnapshot
-					var sampleSpan time.Duration
-					if now.Sub(lastSample) >= activityInterval(in.Idle) {
-						if in.snapshot != nil {
-							snap = in.snapshot()
-						} else {
-							snap = newProcSnapshot()
-						}
-						sampleSpan = now.Sub(lastSample)
-						lastSample = now
-					}
-					doneMu.Lock()
-					for i := range procs {
-						if procs[i].done || procs[i].idleKilled {
-							continue
-						}
-						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
-						if size != lastSize[i] {
-							lastSize[i] = size
-							procs[i].lastGrow = now
-							continue
-						}
-						// A silent log is not a silent card: a harness inside a `go test` that
-						// prints nothing for minutes is working, and its work is CPU its process
-						// tree spent -- its children's as much as its own. A card is idle only
-						// when NEITHER its log NOR its tree moved for the whole --idle window.
-						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
-							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
-								prev := procs[i].cpu
-								grew := procs[i].haveCPU && cpu > prev
-								// A tree whose CPU fell LOST a process since the last
-								// sample: that process was alive and charged, and its
-								// departure is work done, not the still, silent card
-								// the idle timeout is for. It is also the card whose
-								// runner has exited but not yet been reaped, whose CPU
-								// can no longer be read (issue #916).
-								shrank := procs[i].haveCPU && cpu < prev
-								procs[i].cpu, procs[i].haveCPU = cpu, true
-								// CPU growth is activity only when the tree spent a real
-								// share of the sample interval working. Darwin counts
-								// CPU in nanoseconds, so a process that only slept
-								// still shows a few microseconds of runtime
-								// bookkeeping between two samples, and under the
-								// injected clock two polls can be a real microsecond
-								// apart while the virtual window says seconds:
-								// any-increment-at-all used to keep a silent card
-								// alive on darwin where linux's coarse ticks saw zero
-								// (issue #916). A tree that is working spends a large
-								// fraction of the interval; one percent separates the
-								// two by orders of magnitude on both platforms.
-								if grew && cpu-prev >= uint64(sampleSpan)/100 {
-									procs[i].lastGrow = now
-									continue
-								}
-								if shrank {
-									procs[i].lastGrow = now
-									continue
-								}
-							}
-						}
-						if now.Sub(procs[i].lastGrow) >= in.Idle {
-							// A card that already published a result is finishing, not
-							// idle: its file exists and gather will score it by that
-							// result, so the kill would only race the write and score
-							// a half-written RESULT (issue #916).
-							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
-							if _, ok := FindCardResult(job); ok {
-								continue
-							}
-							procs[i].idleKilled = true
-							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
-							if procs[i].cmd.Process != nil {
-								_ = procs[i].cmd.Process.Kill()
-							}
-						}
-					}
-					doneMu.Unlock()
-				}
-			}
-		}()
-	}
+	// wait: every card ends, or the deadline. The wait is one select over one "all done"
+	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
+	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
+	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
+	// time, and kills a card only when neither has moved for the idle window: a dead card is
+	// removed from the wait, so the batch returns on its slowest still-working card rather
+	// than burning the whole deadline, and a card whose harness is busy and silent -- a
+	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
 
 	select {
 	case <-allDone:
-	case <-clk.After(in.Deadline):
+	case <-deadline:
+		var toReap []*proc
 		doneMu.Lock()
 		for i := range procs {
 			if procs[i].done || procs[i].cmd == nil {
 				continue
 			}
 			procs[i].deadKilled = true
-			if procs[i].cmd.Process != nil {
-				_ = procs[i].cmd.Process.Kill()
-			}
+			toReap = append(toReap, &procs[i])
 		}
 		doneMu.Unlock()
+		// Outside the lock, for the reason given at the idle kill above.
+		reapCardGroups(toReap)
 	}
 	close(stopMonitor)
 	monitorWG.Wait()
@@ -492,13 +748,14 @@ func Batch(in BatchInput) int {
 		}
 		b := benches[c.bench]
 		err := pullFromBench(benchPull{
-			host:      b.Host,
-			remoteJob: b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
-			localJob:  filepath.Join(in.Root, scratchName(c), "jobs", c.label),
-			label:     c.label,
-			wait:      in.PullWait,
-			poll:      in.PullPoll,
-			notes:     in.Stderr,
+			host:       b.Host,
+			remoteSlot: b.Root + "/" + strconv.Itoa(c.slot),
+			remoteJob:  b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
+			localJob:   filepath.Join(in.Root, scratchName(c), "jobs", c.label),
+			label:      c.label,
+			wait:       in.PullWait,
+			poll:       in.PullPoll,
+			notes:      in.Stderr,
 		})
 		if err != nil {
 			unreachable[i] = isUnreachable(err)
@@ -512,10 +769,10 @@ func Batch(in BatchInput) int {
 	// row that names ONE reason token (issue #461), so the packet is the whole read.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain, idle, stalled int
-		holds                        []string
-		totalIn, totalOut            int
-		total                        float64
+		done, abstain, idle, stalled, partial int
+		holds                                 []string
+		totalIn, totalOut                     int
+		total                                 float64
 	)
 	type row struct {
 		label    string
@@ -529,11 +786,34 @@ func Batch(in BatchInput) int {
 		reason   string // the abstain's one reason token, with its own fields
 		tail     string // one bounded field after log=<n>: the file watched, or the job directory
 		logLines int
+		// killed is issue #640's field: how many processes the batch ended in this card's
+		// own group, and -1 for a card the batch never killed, whose row says nothing about
+		// a kill. A count of 0 is a real answer -- the group was already gone -- and is
+		// printed.
+		killed int
 	}
 	rows := make([]row, len(cards))
+	for i := range rows {
+		// A row says nothing about a kill until the batch has made one (issue #640).
+		rows[i].killed = -1
+	}
+	// THE STORE READS HAPPEN BEFORE THE GATHER WALK, AND IN PARALLEL (Fable's cold read of
+	// this change). Each one runs a `sqlite3` under the usage reader's own 20-second timeout
+	// plus its 2-second wait delay, and done inline, one card at a time, n reaped cards
+	// would add up to 22n seconds to a gather that is otherwise all file reads -- three
+	// minutes on an eight-slot batch that timed out. Running them together bounds the whole
+	// pass at roughly one card's timeout, and the concurrency is capped because these are
+	// processes, not goroutines, and a batch should not fork a sqlite3 per slot at once.
+	spends := storeSpends(in.Root, cards, func(i int) bool {
+		_, wrote := cardUsageRow(in.Root, scratchName(cards[i]), cards[i].label)
+		return !wrote && cards[i].admitWhy == ""
+	})
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
+		if procs[i].idleKilled || procs[i].deadKilled {
+			rows[i].killed = procs[i].killed
+		}
 		// A card refused at admission never ran: no slot to read, and its reason is the
 		// refusal itself.
 		if c.admitWhy != "" {
@@ -542,7 +822,37 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
-		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, scratchName(c), c.label))
+		// A CARD THE BATCH REAPED NEVER WROTE THAT FILE, AND IT IS NOT FREE. `usage.tsv` is
+		// composed by `native` at the END of a run, so a card killed for idleness or at the
+		// deadline leaves none, `readCardUsage` answers zeroes, and the BATCH line reports a
+		// card that ran for minutes as `in=0 out=0 usd=0.0000` (Studio, 2026-09-19 14:58Z).
+		// That is a NUMBER where there should be a measurement, and a shift that trusted it
+		// would under-report its spend.
+		//
+		// The provider's own numbers are in the harness's store, which is where `native`
+		// reads them from (#1712). When the card wrote no row, the batch reads the same
+		// store the same way. THE ROW WINS WHENEVER IT EXISTS: `native` composed it from
+		// this store with the run's own window, provider and model, and a second reader
+		// summing the same database over the top of it would double-count a card that
+		// already reported -- the same false ledger in the other direction.
+		if row, ok := cardUsageRow(in.Root, scratchName(c), c.label); ok {
+			rows[i].in, _ = row.Int("tokens_in")
+			rows[i].out, _ = row.Int("tokens_out")
+			rows[i].usd, _ = strconv.ParseFloat(strings.TrimSpace(row["usd"]), 64)
+		} else {
+			s := spends[i]
+			rows[i].in, rows[i].out, rows[i].usd = s.in, s.out, s.usd
+			if s.partial {
+				partial++
+			}
+			// A READER THAT STOPPED IS NAMED. A locked database, a query that did not
+			// answer, a missing sqlite3 -- each leaves this card at zero, and a zero nobody
+			// was told about is the very fault this fallback exists to close.
+			if s.reason != "" {
+				fmt.Fprintf(in.Stderr, "BATCH NOTE %s store unread: %s\n",
+					oneline.Field(c.label), oneline.Field(s.reason))
+			}
+		}
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
@@ -561,7 +871,7 @@ func Batch(in BatchInput) int {
 		// (issue #594): it is copied up to the job root before the card is scored, and the
 		// copy is said once on stderr so the packet's own bytes stay bounded by n.
 		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
-		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
+		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].stallKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		// THE REPORT LINE. A wall death is named once, with the path the wall refused, the
 		// step the card reached and -- when its clone holds commits past its base -- the
@@ -631,10 +941,26 @@ func Batch(in BatchInput) int {
 	// past n + 12 lines whatever the batch holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	// partial=<n> IS THE FLOOR SAYING IT IS A FLOOR. Every card whose numbers came from the
+	// harness store rather than from its own usage row was killed mid-turn, and the turn in
+	// flight carries no tokens object anywhere -- the provider charged for it and no
+	// database on this machine holds the figure. The totals above are therefore at LEAST
+	// what they say for those cards. The field is printed only when there is one, the way
+	// benches= and uniform-abstain= are, so an ordinary batch's line is unchanged.
+	if partial > 0 {
+		fmt.Fprintf(in.Stdout, " partial=%d", partial)
+	}
 	if uniform != "" {
 		fmt.Fprintf(in.Stdout, " uniform-abstain=%s", oneline.Field(uniform))
 	}
 	fmt.Fprintln(in.Stdout)
+	// WHAT THE CAP DID, one line per route, only when there was a cap (#917). `peak` is the
+	// most this launcher ever had in flight on that route and `held-back` is how many
+	// launches had to wait for a slot: together they say whether the cap bound anything at
+	// all, so a reader chasing a slow batch can rule it in or out without guessing.
+	for _, line := range gate.statusLines() {
+		fmt.Fprintln(in.Stdout, line)
+	}
 	for _, r := range rows {
 		if r.state == "done" {
 			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
@@ -645,6 +971,13 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		line := fmt.Sprintf("%s slot=%d: ABSTAIN reason=%s log=%d", oneline.Field(r.label), r.slot, r.reason, r.logLines)
+		// HOW MANY PROCESSES THE KILL ENDED (issue #640). It is on the rows of cards the
+		// batch killed and on no others, because a field that appears on every row is a
+		// field nobody reads -- and the fault this closes is precisely a coordinator
+		// believing a BATCH line that was not true of the machine.
+		if r.killed >= 0 {
+			line += " killed=" + strconv.Itoa(r.killed)
+		}
 		if r.tail != "" {
 			line += " " + r.tail
 		}
@@ -797,7 +1130,7 @@ func findResultBelow(dir string, depth int) (string, bool) {
 // a matching result means it finished late. The tail is one bounded field the remedy needs --
 // the log the idle monitor watched, or the job directory that holds no result -- printed
 // after log=<n>, never in place of the token.
-func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
+func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
@@ -808,6 +1141,16 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		// path and the kind rather than being folded into the missing-result class.
 		if errors.Is(err, errNotRegular) {
 			return "abstain", "refused", err.Error(), ""
+		}
+		// A card that never produced a first token is `stalled`, and it is said BEFORE
+		// the idle token because it is a different fact: `idle=<s>` is a card that was
+		// working and stopped, and this one never started answering at all (#917).
+		if stallKilled {
+			watched := idleLog
+			if watched == "" {
+				watched = logPath
+			}
+			return "abstain", "stalled", "watched=" + watched, ""
 		}
 		if idleKilled {
 			watched := idleLog
@@ -911,6 +1254,25 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	return "done", "", "", two
 }
 
+// applyPublicGate refuses every card a public-class worker must never see: a
+// card whose clone URLs are not all listed in <root>/public-repos.txt carries
+// a private-source refusal and never starts. Cards already refused keep their
+// first refusal; the gate never rewrites one.
+func applyPublicGate(cards []batchCard, w Worker, root string) {
+	for i := range cards {
+		if cards[i].admitWhy != "" {
+			continue
+		}
+		raw, err := os.ReadFile(cards[i].cardPath)
+		if err != nil {
+			continue
+		}
+		if repo, refused := CheckPublicCard(w, string(raw), root); refused {
+			cards[i].admitWhy = PublicRefusalWhy(repo, w.Name)
+		}
+	}
+}
+
 // readCards reads the TSV and admits every card or none: one line that does not parse
 // queues nothing at all, because a batch is all of its cards or none.
 func readCards(path string) ([]batchCard, error) {
@@ -945,6 +1307,16 @@ func readCards(path string) ([]batchCard, error) {
 				}
 				slot = n
 			}
+		}
+		// THE LABEL IS A NAME (issue #1923). Every consumer of this column joins it into a
+		// path: batch makes <root>/<scratch>/jobs/<label>, selfNative passes it to `native`
+		// as --label, and native joins it again into the job directory, the temp directory
+		// and the wall's write set. A TSV row spelling `../../../OUTSIDE` is a card naming
+		// a directory outside the swarm root, so the name is judged here, at the parse,
+		// where the line number can be named -- not per card at admission, because a label
+		// that is a path is a malformed table rather than a card that abstains.
+		if !safepath.NameOK(parts[0]) {
+			return nil, fmt.Errorf("--cards line %d wants a label that is a name: letters, digits, dot, dash or underscore, no path separator and no \"..\", got %q", i+1, parts[0])
 		}
 		cardPath := parts[3]
 		cardRaw, err := os.ReadFile(cardPath)
@@ -1048,7 +1420,7 @@ func cardHarnessSilent(job string) bool {
 		return false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(line, "NATIVE OK ") {
+		if !isNativeVerdictLine(line) {
 			continue
 		}
 		for _, tok := range strings.Fields(line) {
@@ -1073,7 +1445,7 @@ func cardFenceRejected(job string) (string, bool) {
 		return "", false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(line, "NATIVE OK ") {
+		if !isNativeVerdictLine(line) {
 			continue
 		}
 		fields := strings.Fields(line)
@@ -1088,6 +1460,16 @@ func cardFenceRejected(job string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// isNativeVerdictLine reports whether a line is `native`'s own verdict line, in either of
+// its two words. `NATIVE OK` used to be the only one; a run that produced nothing now says
+// `NATIVE INCOMPLETE` instead (nova-tools #1844), and the tokens this file reads off that
+// line -- harness=silent, fence=rejected -- are exactly as true on the incomplete one.
+// Reading only "NATIVE OK " would have silently stopped seeing them for failed runs, which
+// is the class of bug the rename exists to end.
+func isNativeVerdictLine(line string) bool {
+	return strings.HasPrefix(line, "NATIVE OK ") || strings.HasPrefix(line, "NATIVE INCOMPLETE ")
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
@@ -1379,6 +1761,12 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 	if err != nil {
 		return nil, err
 	}
+	// The bench slot lease travels with the launch (nova-tools#1546): native refuses
+	// without it, and Batch has already refused the whole batch if it is not here, so a
+	// missing store at THIS point would be a plumbing bug and not a caller error.
+	if in.SlotsStore == "" || in.SlotOwner == "" {
+		return nil, fmt.Errorf("%s", NoSlotsStoreRefusal)
+	}
 	argv := []string{"native",
 		"--harness", in.Harness,
 		"--model", c.model,
@@ -1387,6 +1775,8 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 		"--slot", filepath.Join(in.Root, strconv.Itoa(c.slot)),
 		"--root", in.Root,
 		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
+		"--slots-store", in.SlotsStore,
+		"--owner", in.SlotOwner,
 	}
 	if in.Auth != "" {
 		argv = append(argv, "--auth", in.Auth)
@@ -1716,6 +2106,25 @@ func mentionsLauncher(lines []string) bool {
 // A card the ladder cannot type -- one whose text names no kind it knows -- is
 // not routed at all, and its line says so rather than inventing evidence.
 func routeCards(in BatchInput, cards []batchCard) {
+	if in.RouteSkip != "" {
+		// The one way out of H4's default: an explicit skip whose reason is
+		// written down. Every admitted card leaves a "source":"skipped" row, so
+		// a skipped route is a fact in the log and not an absence.
+		now := func() time.Time { return time.Now().UTC() }
+		if in.Route != nil && in.Route.Now != nil {
+			now = in.Route.Now
+		}
+		for i := range cards {
+			c := &cards[i]
+			if c.admitWhy != "" {
+				continue
+			}
+			if in.Route != nil && strings.TrimSpace(in.Route.Log) != "" {
+				_ = decide.AppendEntry(in.Route.Log, decide.SkippedEntry(c.label, in.RouteSkip, now()))
+			}
+		}
+		return
+	}
 	if in.Route == nil {
 		return
 	}
@@ -1749,4 +2158,164 @@ func writeRouteReceipt(jobDir, receipt string) {
 		return
 	}
 	_ = os.WriteFile(filepath.Join(jobDir, "route.txt"), []byte(receipt+"\n"), 0o644)
+}
+
+// groupSize is how many processes are in a card's group at the instant BEFORE it is ended,
+// and it is the `killed=<n>` the ABSTAIN row prints (issue #640). It is read before the reap
+// because after one there is, by construction, nothing left to count.
+//
+// WHAT THE NUMBER IS ON EACH PLATFORM, said here rather than implied. On linux the group is
+// enumerated from /proc and the count is exact (proc_linux.go). On darwin and the BSDs it
+// cannot be enumerated at all, so a group that is alive counts as ONE -- the leader, which
+// is the only member this platform can prove -- and that is a FLOOR and never a guess at a
+// tree's size. A group that is already gone counts as none, which is the honest answer for a
+// deadline that fired on a card that had just finished.
+//
+// `self` is excluded by GroupMembers, and the batch is never in a card's group anyway: the
+// child is the leader of its own.
+func groupSize(pgid int, started string) int {
+	if pgid <= 0 {
+		return 0
+	}
+	if n, ok := GroupMembers(pgid, os.Getpid()); ok {
+		return n
+	}
+	if GroupAlive(pgid, started) {
+		return 1
+	}
+	return 0
+}
+
+// cardUsageRow is the row the card composed for itself, and whether there is one. It is the
+// ONE resolver for that question: `cardUsagePath` above answers "which path would I read",
+// and this answers "is there a row there, and is it THIS CARD'S". They were two spellings of
+// the same walk and one of them was wrong.
+//
+// THE SLOT FALLBACK IS CHECKED AGAINST THE LABEL (Fable's cold read of #1739). A slot
+// directory is reused across batches, so a `usage.tsv` left at the slot root by an EARLIER
+// card is a file that exists, says nothing about this one, and -- before this check -- both
+// answered "the card reported" and contributed a previous card's numbers. Every row carries a
+// `job` column naming the label that wrote it, so the question has a mechanical answer. The
+// job-directory row needs no such check: that directory is this card's.
+func cardUsageRow(root, scratch, label string) (UsageRow, bool) {
+	jobPath := filepath.Join(root, scratch, "jobs", label, "usage.tsv")
+	if row, err := readUsageFile(jobPath); err == nil {
+		return row, true
+	}
+	row, err := readUsageFile(filepath.Join(root, scratch, "usage.tsv"))
+	if err != nil {
+		return nil, false
+	}
+	if strings.TrimSpace(row["job"]) != label {
+		return nil, false
+	}
+	return row, true
+}
+
+// storeCardSpend is what the provider billed a card that never got to write its own row: the
+// same harness store `native` samples (#1712), under the card's own data home. It returns the
+// numbers, whether they are a LOWER BOUND, and the reason no number could be had.
+//
+// THE WINDOW IS THE CARD'S WHOLE LIFE, and that is not a widening. `native` brackets its read
+// with the run's own timestamps because one data home can hold more than one ATTEMPT of the
+// same job; this data home is `<root>/<scratch>/data`, made for this card in this batch, and
+// every turn in it is this card's. A window narrower than the card would drop turns it was
+// billed for, which is the very failure this reader exists to close.
+//
+// WHAT COMES BACK IS A LOWER BOUND, ALWAYS (Fable's cold read of #1739). The card was killed
+// mid-turn; the assistant row for the turn in flight carries no `tokens` object, so the
+// provider's charge for it is in nobody's database. A reaped card's spend is at least this,
+// and the BATCH line says so rather than presenting a floor as a total.
+//
+// A STORE THAT COULD NOT BE READ IS NAMED, NEVER SILENT. `ReadCardUsage` maps a locked
+// database, a timed-out query and a missing sqlite3 all onto a reason, and swallowing it
+// would put this change's own fault -- a silent zero for a card that spent -- straight back.
+// The reason is returned for the caller to print.
+func storeCardSpend(root, scratch string) (in, out int, usd float64, partial bool, reason string) {
+	usage, _, _, why := ReadCardUsage(filepath.Join(root, scratch, "data"),
+		time.UnixMilli(0), time.Now())
+	if why != "" {
+		// TWO OF THE FOUR REASONS ARE ABSENCES AND ARE SILENT. `no-store` is a harness that
+		// never wrote a database; `no-rows` is one that wrote the schema and was killed
+		// before its first answer -- a store READ PERFECTLY that holds nothing. Neither is
+		// a reader that stopped, and a note on either would fire on every card reaped early
+		// and teach its readers to scroll past the line. Then the note that matters -- a
+		// locked database, a query past its timeout -- goes unread with them.
+		//
+		// `no-sqlite3` and `query-failed` ARE readers that stopped, and those are said out
+		// loud. They were one token with `no-rows` until 2026-09-19.
+		if why == "no-store" || why == "no-rows" {
+			return 0, 0, 0, false, ""
+		}
+		return 0, 0, 0, false, why
+	}
+	in = usageInt(usage, "tokens_in")
+	out = usageInt(usage, "tokens_out")
+	if f, err := strconv.ParseFloat(strings.TrimSpace(usage.Values["usd"]), 64); err == nil {
+		usd = f
+	}
+	return in, out, usd, true, ""
+}
+
+// usageInt reads one token column of a store's fold. A dash is an absence and reads as zero:
+// the BATCH line's in= and out= are sums and have no spelling for "unreported".
+func usageInt(u ProviderUsage, column string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(u.Values[column]))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// cardSpend is one card's accounting as the harness store answered it.
+type cardSpend struct {
+	in, out int
+	usd     float64
+	partial bool   // the numbers are a LOWER BOUND: the turn in flight was never recorded
+	reason  string // the reader stopped, and this names why; empty when it did not
+}
+
+// storeSpendWorkers caps how many `sqlite3` processes a gather forks at once. These are
+// processes, not goroutines: a batch with sixteen reaped cards should not put sixteen
+// readers on the machine at the same instant, and four is enough to turn a serial 22n-second
+// pass into roughly one card's timeout.
+const storeSpendWorkers = 4
+
+// storeSpends reads the harness store for every card `want` selects, at most
+// storeSpendWorkers at a time, and returns one entry per card. A card `want` did not select
+// keeps its zero value and no reader ran for it.
+func storeSpends(root string, cards []batchCard, want func(i int) bool) []cardSpend {
+	out := make([]cardSpend, len(cards))
+	var todo []int
+	for i := range cards {
+		if want(i) {
+			todo = append(todo, i)
+		}
+	}
+	if len(todo) == 0 {
+		return out
+	}
+	work := make(chan int)
+	var wg sync.WaitGroup
+	workers := storeSpendWorkers
+	if len(todo) < workers {
+		workers = len(todo)
+	}
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				var s cardSpend
+				s.in, s.out, s.usd, s.partial, s.reason = storeCardSpend(root, scratchName(cards[i]))
+				out[i] = s
+			}
+		}()
+	}
+	for _, i := range todo {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	return out
 }

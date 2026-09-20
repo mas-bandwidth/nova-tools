@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -273,7 +272,9 @@ func jobBody(src, name string) string {
 // holding a reason, and the check reads the code before any comment on the
 // line, so prose about the rule cannot trip it.
 func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	sub10Re := regexp.MustCompile(`(^|[^0-9])([1-9])\s*[\*]\s*time[.]Second\b`)
 	anySecRe := regexp.MustCompile(`time[.]Second\b`)
 	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
@@ -291,20 +292,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	// reason (issue #916).
 	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
 	for _, dir := range []string{"internal", "cmd"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Errorf("cannot read %s: %v", path, err)
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
+		for _, f := range tree.GoFilesUnder(true, dir) {
+			raw := f.Src
+			rel := f.Rel
 			// The batch-deadline shape is scoped to the files that drive the batch:
 			// only there does a short deadline/idle literal reach a real process.
 			// A file drives the batch when it builds a BatchInput -- through the
@@ -334,10 +324,6 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				// A bare duration with no multiplier on the line is one second.
 				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -452,7 +438,28 @@ var clTierCeilings = map[string]int{
 	// hang detector for a leg measured, once the legs stopped oversubscribing
 	// their machines, at 12 to 126 s over a 233 s run (35025207396). The budget
 	// is the run's wall clock; hold the law there.
-	"test": 6,
+	//
+	// RAISED FROM SIX to twelve on 2026-09-19, because six had stopped being a
+	// hang detector and started cancelling honest work again. Two receipts the
+	// same hour: #1700's `test (2/4 studio)` on superman-nova-1 and #1714's
+	// `test (3/4 studio)` on superman-nova-2, both CANCELLED at 6:23 and 6:07
+	// with every test PASS on the console and `ok cmd/nova-merge 342.360s` in
+	// the log — the package that ran in 150 s the same morning. The number is
+	// twice the slowest GREEN shard in the last twenty green runs of this
+	// workflow: 348 s, `test (2/4 studio)` on superman-nova-7 in run
+	// 35457289611. 348 s is THREE SECONDS under the old cap, which is not a
+	// budget, it is a coin flip on the load of the minute.
+	//
+	// The cause is the group label, not the Studio. `studio` is a GROUP that
+	// spans four machines — air, batman, studio and superman — and their
+	// slowest green shards in the same twenty runs are 149 s, 308 s, 162 s and
+	// 348 s. superman is an Intel Xeon W-2191B at 2.30 GHz carrying ten
+	// runners; the Studio is an M3 Ultra. One ceiling over machines that differ
+	// by more than 2x censors the slower of them, which is the same mistake
+	// `test-hosted-merge` made with one number for linux and darwin. Splitting
+	// the label by machine class is the real repair and wants its own change;
+	// twelve is the honest ceiling until then.
+	"test": 12,
 }
 
 func jobNames(src string) []string {

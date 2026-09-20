@@ -27,7 +27,7 @@ func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
 	if state != "abstain" || reason != "fence" {
 		t.Fatalf("a card the fence stopped scores ABSTAIN reason=fence, got %s reason=%s", state, reason)
 	}
@@ -52,7 +52,7 @@ func TestFenceComesBeforeHarnessSilent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
 	if state != "abstain" || reason != "fence" {
 		t.Fatalf("a fenced card scores reason=fence even when the harness also left no words, got %s reason=%s", state, reason)
 	}

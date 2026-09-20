@@ -25,6 +25,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,6 +70,36 @@ type diskVolume struct {
 	Disk  string // disk3s7, the device the delete names
 	Mount string // /Volumes/nova-<n>, where the work happens
 }
+
+// sandboxedCallerRemedy is the cause and the two ways out, written once. A caller inside
+// an OS sandbox meets this verb's disposable place in more than one way — the mount that
+// never happens, and diskutil unable to reach the disk service at all — and a reader who
+// meets the second must not be told something different from the first.
+const sandboxedCallerRemedy = "A caller that is itself inside an OS sandbox cannot mount a volume or reach the disk service, which is the usual cause: run from a shell that is not sandboxed, or use the bare wall form, which needs no volume at all — nova-sandbox --read <dir> --write <dir> -- <command> <args...>"
+
+// diskServiceDeniedPhrase is the fragment diskutil's own failure carries when
+// DiskArbitration is out of reach. diskutil blames single-user mode, which is neither what
+// happened nor anywhere to look, so the phrase is matched and the truth appended.
+const diskServiceDeniedPhrase = "framework being unavailable"
+
+// sandboxedCallerCause is the sentence to add to a disk failure that the caller's own
+// sandbox produced, ready to follow a message, or "" when the failure is something else.
+func sandboxedCallerCause(err error) string {
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), diskServiceDeniedPhrase) {
+		return ""
+	}
+	// diskutil ends its own sentence with a period; the join adds one only where it is missing.
+	if strings.HasSuffix(strings.TrimSpace(err.Error()), ".") {
+		return " " + sandboxedCallerRemedy
+	}
+	return ". " + sandboxedCallerRemedy
+}
+
+// errVolumeNotMounted is the one create failure that is not a failure to create: the
+// volume was made and nothing mounted it. It is a sentinel because the refusal a caller
+// needs here shares no word with the others — what exists, what was denied and what to do
+// about it are all different — and an error's text is not something to branch on.
+var errVolumeNotMounted = errors.New("the volume was created and the mount was denied or never happened")
 
 // volumeManager is the whole of this verb's contact with the disk. The production body is
 // diskutil (volumes_darwin.go); run_test.go puts a fake here and asserts the ORDER of the
@@ -637,6 +668,12 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 	if container == "" {
 		got, err := step(stderr, "container", func() (string, error) { return runVolumes.Container() })
 		if err != nil {
+			// `--container` is the remedy for a container this tool could not find, and no
+			// remedy at all for a disk service it cannot reach: named by hand, the next
+			// call fails the same way. So that failure gets the cause instead of the flag.
+			if cause := sandboxedCallerCause(err); cause != "" {
+				return refuse("no_container", "the APFS container of the boot volume could not be read: %s%s", oneline.Err(err), cause)
+			}
 			return refuse("no_container", "the APFS container of the boot volume could not be read: %s; name it with --container disk3", oneline.Err(err))
 		}
 		container = got
@@ -648,7 +685,7 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 	name := volumePrefix + f.name
 	exists, err := step(stderr, "look", func() (bool, error) { return runVolumes.Exists(name) })
 	if err != nil {
-		return refuse("volume_failed", "the volumes on this machine could not be listed: %s", oneline.Err(err))
+		return refuse("volume_failed", "the volumes on this machine could not be listed: %s%s", oneline.Err(err), sandboxedCallerCause(err))
 	}
 	if exists {
 		return refuse("volume_exists", "a volume named %s is already on this machine; a run never joins a place it did not make. Pick another --name, or remove it: diskutil apfs deleteVolume %s", oneline.Escape(name), oneline.Escape(name))
@@ -656,7 +693,13 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 
 	vol, err := step(stderr, "create", func() (diskVolume, error) { return runVolumes.Create(container, name, f.size) })
 	if err != nil {
-		return refuse("volume_failed", "the disposable volume could not be created in %s: %s", oneline.Escape(container), oneline.Err(err))
+		// A volume that was made and not mounted is not a volume that could not be made,
+		// and this verb's own prefix would say the wrong one of the two. The manager is the
+		// half that knows which happened, so on that one its sentence stands alone.
+		if errors.Is(err, errVolumeNotMounted) {
+			return refuse("volume_failed", "%s", oneline.Err(err))
+		}
+		return refuse("volume_failed", "the disposable volume could not be created in %s: %s%s", oneline.Escape(container), oneline.Err(err), sandboxedCallerCause(err))
 	}
 
 	// ONE exit from here. Whatever the run does, the volume goes.

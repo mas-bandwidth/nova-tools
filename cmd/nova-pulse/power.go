@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // powerRepo is the repo whose self-hosted runners are the awake test. The reference script
@@ -220,6 +221,7 @@ func (r powerSSHRunner) Run(ctx context.Context, target, script string) (string,
 	if program == "" {
 		program = "ssh"
 	}
+	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
 	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
 	cmd.Stdin = strings.NewReader(script)
 	powerSetProcessGroup(cmd)

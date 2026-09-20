@@ -61,35 +61,44 @@ func refuse(reason, format string, a ...any) Refusal {
 // Input is the argv as the caller typed it, before any resolution. Everything here is a
 // claim about this job; Build turns it into a Policy or into refusals.
 type Input struct {
-	Reads     []string
-	Writes    []string
-	Cwd       string // empty: the first --write (rule 13)
-	Tmp       string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
-	Name      string // windows container name; accepted and ignored elsewhere
-	NetDeny   bool
-	NetListen bool
-	GPU       string   // --gpu none|metal; empty means none (issue #230)
-	Argv      []string // the command and its arguments, everything after --
-	Home      string   // the caller's HOME as the child will see it (rule 9)
-	LookAt    string   // PATH to resolve the command on; empty means the process's own
+	Reads []string
+	// ReadsNoExec is --read-noexec: readable, recursively, and NOT EXECUTABLE. It exists
+	// because a --read root carries EXECUTE on both bodies -- landlock's read subset is
+	// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally --
+	// so naming a directory the job's own user can write to (a GOPATH/bin, a
+	// node_modules/.bin, a pip --user bin) lets the job RUN whatever is in it. A cache or
+	// a data tree wants reading, and this is the form that says so (Johnny's security
+	// read of #1364, where the module cache was about to be granted exec).
+	ReadsNoExec []string
+	Writes      []string
+	Cwd         string // empty: the first --write (rule 13)
+	Tmp         string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
+	Name        string // windows container name; accepted and ignored elsewhere
+	NetDeny     bool
+	NetListen   bool
+	GPU         string   // --gpu none|metal; empty means none (issue #230)
+	Argv        []string // the command and its arguments, everything after --
+	Home        string   // the caller's HOME as the child will see it (rule 9)
+	LookAt      string   // PATH to resolve the command on; empty means the process's own
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
 // two named exceptions to "never guessed" are rule 4's, and both are recorded here as
 // the caller's own first --write.
 type Policy struct {
-	Reads     []string // resolved, read-only, recursive
-	Writes    []string // resolved, read+write, recursive; the first is load-bearing
-	OptRoots  []string // the platform's optional roots that EXIST on this machine
-	Cwd       string
-	Tmp       string
-	Home      string
-	Name      string
-	NetDeny   bool
-	NetListen bool
-	GPUMode   GPUMode
-	Command   string   // the resolved absolute path of the executable
-	Argv      []string // Command followed by its arguments, verbatim
+	Reads       []string // resolved, read-only, recursive; carries EXECUTE
+	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
+	Writes      []string // resolved, read+write, recursive; the first is load-bearing
+	OptRoots    []string // the platform's optional roots that EXIST on this machine
+	Cwd         string
+	Tmp         string
+	Home        string
+	Name        string
+	NetDeny     bool
+	NetListen   bool
+	GPUMode     GPUMode
+	Command     string   // the resolved absolute path of the executable
+	Argv        []string // Command followed by its arguments, verbatim
 
 	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
 	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
@@ -134,7 +143,8 @@ func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 // file-read-metadata, which is stat and not a listing: /opt does not become readable, only
 // traversable, which is exactly what resolving a path through it needs.
 func (p *Policy) ancestorPaths() []string {
-	paths := append(append([]string{}, p.Reads...), p.Writes...)
+	paths := append(append([]string{}, p.Reads...), p.ReadsNoExec...)
+	paths = append(paths, p.Writes...)
 	paths = append(paths, p.OptRoots...)
 	return append(paths, p.Cwd, p.Tmp)
 }
@@ -148,12 +158,21 @@ func (p *Policy) AncestorCount() int {
 
 // darwinOptRoots is the per-platform optional root table, as DATA and in one place
 // (spec: "they are data, not code"). The fixed darwin roots — /, /etc, /tmp, /var as
-// literals on the symlinks, /System, /usr, /bin, /sbin, /Library, /private/etc,
-// /private/var/select, /dev, and write on /dev/null and /dev/tty — are in
-// profiles/darwin.sb.tmpl verbatim, because two copies of a profile is one copy too
-// many. What varies per machine is here. A root is SKIPPED if it is absent; only a
-// caller's path is refused for absence (rule 5).
+// literals on the symlinks, the xcode_select_link literals (#1557), /System, /usr,
+// /bin, /sbin, /Library, /private/etc, /private/var/select, /dev, and write on
+// /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
+// copies of a profile is one copy too many. What varies per machine is here. A
+// root is SKIPPED if it is absent; only a caller's path is refused for absence
+// (rule 5). The directory /var/db/xcode_select_link points at is discovered
+// below, not listed here: CommandLineTools is already under /Library, and
+// Xcode.app/Contents is not (Contents, not Developer: the shims read
+// Info.plist and SharedFrameworks next to Developer).
 var darwinOptRoots = []string{"/opt/homebrew", "/opt/local"}
+
+// xcodeSelectLinks are the two spellings of the symlink the Xcode shims read.
+// OptionalRoots follows them outside the wall so the developer dir can be a
+// skip-if-absent root; the profile's own grant of the link is the template's.
+var xcodeSelectLinks = []string{"/var/db/xcode_select_link", "/private/var/db/xcode_select_link"}
 
 // fixedDarwinPrefixes are the roots the template already grants as subpaths. An optional
 // root under one of them is dropped rather than emitted twice.
@@ -161,11 +180,13 @@ var fixedDarwinPrefixes = []string{"/usr", "/bin", "/sbin", "/System", "/Library
 
 // OptionalRoots is the machine's answer to the table above plus the directory of the
 // resolved command, which is a root for exactly this run (the spec's roots table names
-// it on all three platforms).
+// it on all three platforms), plus the directory /var/db/xcode_select_link points at
+// when that directory is not already a fixed root (#1557).
 func OptionalRoots(command string) []string {
 	var out []string
 	seen := map[string]bool{}
 	candidates := append([]string{}, darwinOptRoots...)
+	candidates = append(candidates, xcodeSelectDeveloperDirs()...)
 	if command != "" {
 		candidates = append(candidates, filepath.Dir(command))
 	}
@@ -193,6 +214,43 @@ func underAny(path string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// xcodeSelectDeveloperDirs is the directory /var/db/xcode_select_link points at,
+// asked of the host the way --go asks go env and never guessed (#1557). Both
+// spellings of the link are read because /var is a symlink to /private/var.
+// An absent link is skip-if-absent, like /opt/local. The target is not yet
+// filtered against fixedDarwinPrefixes; OptionalRoots drops one that already
+// sits under /Library (CommandLineTools) so the profile does not grant it twice.
+//
+// xcode-select -p prints .../Contents/Developer. The shims also stat Info.plist
+// and load SharedFrameworks next to Developer, so the grant is Contents, not
+// Developer: measured, Developer alone is "couldn't stat Xcode's Info.plist"
+// and a dyld deny on DVTSystemPrerequisites.
+func xcodeSelectDeveloperDirs() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, link := range xcodeSelectLinks {
+		target, err := os.Readlink(link)
+		if err != nil || target == "" {
+			continue
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(link), target)
+		}
+		if got, err := filepath.EvalSymlinks(target); err == nil {
+			target = got
+		}
+		if strings.HasSuffix(target, filepath.FromSlash("/Contents/Developer")) {
+			target = filepath.Dir(target) // .../Contents, which holds Info.plist and SharedFrameworks
+		}
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		out = append(out, target)
+	}
+	return out
 }
 
 // callerHomes is every directory that is a HOME of the person running the tool: the
@@ -484,6 +542,14 @@ func Build(in Input) (*Policy, []Refusal) {
 		}
 		p.Reads = append(p.Reads, got)
 	}
+	for _, raw := range in.ReadsNoExec {
+		got, r := resolvePath("bad_read", "--read-noexec", raw)
+		if r != nil {
+			bad = append(bad, *r)
+			continue
+		}
+		p.ReadsNoExec = append(p.ReadsNoExec, got)
+	}
 	for _, raw := range in.Writes {
 		got, r := resolvePath("bad_write", "--write", raw)
 		if r != nil {
@@ -498,6 +564,23 @@ func Build(in Input) (*Policy, []Refusal) {
 		for _, w := range p.Writes {
 			if r == w {
 				bad = append(bad, refuse("bad_read", "%s is in both --read and --write; name it once, and --write already carries read", r))
+			}
+		}
+	}
+	// The same rule for the no-exec list, and for the two read lists against each other.
+	// A path in both --read and --read-noexec asks for execute and for no execute at
+	// once, and a tool that picked one would be deciding which the caller meant; a path in
+	// --read-noexec and --write is the same contradiction, because --write carries execute
+	// on both bodies.
+	for _, n := range p.ReadsNoExec {
+		for _, r := range p.Reads {
+			if n == r {
+				bad = append(bad, refuse("bad_read", "%s is in both --read and --read-noexec; one carries execute and the other takes it away, so name it once", n))
+			}
+		}
+		for _, w := range p.Writes {
+			if n == w {
+				bad = append(bad, refuse("bad_read", "%s is in both --read-noexec and --write; --write carries read AND execute, so the no-exec grant would buy nothing. Name it once", n))
 			}
 		}
 	}

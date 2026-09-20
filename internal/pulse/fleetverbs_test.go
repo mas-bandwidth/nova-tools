@@ -109,6 +109,12 @@ func fleetStandardHome(t *testing.T, stamp string) string {
 		"#!/bin/sh\necho 'go version go1.26.5 linux/amd64'\n")
 	writeFleetVerbsExe(t, filepath.Join(home, "sdk", "sbcl-2.5.9", "bin", "sbcl"),
 		"#!/bin/sh\necho 'SBCL 2.5.9'\n")
+	// The module cache: a toolchain root the wall grants read-without-execute, and one a
+	// linux bench is DRIFTED on when it is missing, because a Go card reads a dependency's
+	// sources out of it inside the wall.
+	if err := os.MkdirAll(filepath.Join(home, "go", "pkg", "mod"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeFleetVerbsExe(t, filepath.Join(home, ".local", "bin", "nova-swarm"),
 		"#!/bin/sh\necho 'nova-swarm "+stamp+"'\n")
 	if err := os.WriteFile(filepath.Join(home, ".local", "bin", "safe-rm.sh"), []byte("# helper\n"), 0o644); err != nil {
@@ -186,6 +192,40 @@ func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 		}
 		if ln[want] || dn[want] {
 			t.Errorf("%q is a Windows check and must not be in linux or darwin lists", want)
+		}
+	}
+	// THE TOOLCHAIN ROOTS the sandbox wall grants, which are this table's half of the one
+	// list in internal/swarm/toolchain.go (internal/ci's class test fails when the halves
+	// drift). Both benches carry the two home roots; the installed trees are the Mac's,
+	// because a Mac's toolchains are on PATH rather than unpacked into a home and each one
+	// finds its runtime beside the launcher that ran it -- without them the M2 Air got
+	// `'go' binary is trimmed`, `Unable to locate a Java Runtime` and `Failed to resolve
+	// full path of the current executable []` inside the bare wall (2026-09-18).
+	for _, want := range []string{"toolchain-sdk", "toolchain-modcache"} {
+		if !ln[want] || !dn[want] {
+			t.Errorf("toolchain root check %q must be in both lists (linux=%v darwin=%v)", want, ln[want], dn[want])
+		}
+	}
+	for _, want := range []string{"toolchain-brew-go", "toolchain-brew-sbcl", "toolchain-brew-openjdk", "toolchain-jvm", "toolchain-dotnet"} {
+		if !dn[want] {
+			t.Errorf("the Mac bench standard names the toolchain root check %q; the list is %v", want, dn)
+		}
+		if ln[want] {
+			t.Errorf("%q is an installed Mac toolchain and must not be in the Linux list", want)
+		}
+	}
+	// A LINUX ROOT IS DEMANDED AND A DARWIN ROOT IS REPORTED. The standard's own installer
+	// puts a linux root there, so a bench missing one is drift and every Go card on it dies;
+	// a Mac's trees are the machine's shape, and drifting on a Mac with no .NET would leave
+	// every Mac bench permanently red while the wall simply skips the root.
+	for _, c := range linux {
+		if c.Root != "" && c.Match != MatchEquals {
+			t.Errorf("the linux standard reports the toolchain root %s (match=%s) instead of demanding it", c.Root, c.Match)
+		}
+	}
+	for _, c := range darwin {
+		if c.Root != "" && c.Match != MatchNonempty {
+			t.Errorf("the darwin standard demands the toolchain root %s (match=%s); a Mac's roots are reported", c.Root, c.Match)
 		}
 	}
 }

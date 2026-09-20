@@ -64,8 +64,18 @@ func cardStoreLocations(dataHome string) []string {
 // home the native run chose is passed in explicitly, and the reader looks in its standard
 // locations in order rather than guessing one path. The window is the run's own timestamps,
 // widened five seconds each side, read against the store's `time_created` column in
-// milliseconds. The reason is one of the three the NATIVE OK line carries -- no-sqlite3,
-// no-rows, or no-store -- or the empty string when the store answered. A note names a
+// milliseconds. The reason is one of the four the NATIVE OK line carries -- no-sqlite3,
+// query-failed, no-rows, or no-store -- or the empty string when the store answered.
+//
+// TWO OF THOSE FOUR ARE ABSENCES AND TWO ARE FAILURES, and a caller must be able to tell
+// them apart. `no-store` (the harness wrote no database) and `no-rows` (it wrote one and has
+// reported nothing into this window yet) are absences: there was nothing to read. `no-sqlite3`
+// and `query-failed` are READERS THAT STOPPED -- a missing program, a locked or corrupt
+// database, a query past its timeout -- and a caller acting on the numbers is acting on
+// numbers nobody could see. These last two were one token until 2026-09-19, and a caller
+// that reported the pair as a fault cried wolf on every card killed before its first answer.
+//
+// A note names a
 // condition the caller should carry to the person reading it, most importantly sqlite3
 // missing from PATH, under which the token columns are dashes and the row still writes
 // rather than the run failing on a number nobody can see.
@@ -85,9 +95,18 @@ func ReadCardUsage(dataHome string, started, ended time.Time) (ProviderUsage, st
 		}
 		rows, err := queryCardMessages(dbPath, startedMs, endedMs)
 		if err != nil {
-			return ProviderUsage{Values: dashCardTokens()}, "", dbPath, "no-rows"
+			// A QUERY THAT FAILED IS NOT AN EMPTY TABLE. These two shared the `no-rows`
+			// token and they are not the same fact: this one is a database that is locked,
+			// corrupt, or did not answer inside the timeout -- a READER THAT STOPPED, and
+			// a caller that acts on the number is acting on a number nobody could see. The
+			// one below is a read that worked and found nothing. A caller that must tell
+			// them apart could not, and one that reported both as a fault cried wolf on
+			// every card killed before its first answer.
+			return ProviderUsage{Values: dashCardTokens()}, "", dbPath, "query-failed"
 		}
 		if len(rows) == 0 {
+			// The database exists, the query ran, and the window holds no message with
+			// tokens: the harness started and reported nothing yet. An ABSENCE.
 			return ProviderUsage{Values: dashCardTokens()}, "", dbPath, "no-rows"
 		}
 		usage, _ := foldCardMessages(rows)

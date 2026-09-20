@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
@@ -256,5 +258,176 @@ func TestFakeSQLite3FlushMarkerMatchesTheFake(t *testing.T) {
 	want := "const FlushMarker = " + strconv.Quote(fakeFlushMarker)
 	if !strings.Contains(string(src), want) {
 		t.Errorf("testdata/fakesqlite/main.go does not declare %s", want)
+	}
+}
+
+// THE SETTLE WINDOW IS HOW LONG THE READ WAITS, NEVER HOW LONG THE FIRST READ TOOK.
+//
+// `usageSettleWait` is documented as "how long a read waits for a write-ahead log to be
+// checkpointed", and the deadline used to be taken BEFORE the first attempt -- so the
+// first attempt's own runtime was charged to the budget that exists to outlast the
+// writer. On a loaded macOS bench the first `sqlite3` is a Mach-O the machine has never
+// seen and the kernel assesses it on that first exec: measured on this Studio, idle, a
+// first exec costs ~200ms against ~4ms for the second, and four CI shards contending for
+// the one assessment service stretch it into seconds. When it stretched past five, the
+// reader gave up on the very refusal that was supposed to START the waiting -- `database
+// is locked`, a dash, and the tokens the harness really spent lost. That is the CI red of
+// 2026-09-19 (run 35413886282, opencode_test.go:210, test elapsed 6.85s against a 5s
+// window).
+//
+// The clock here is the test's own, so nothing sleeps and nothing is timed: the failure is
+// deterministic, not a race this test hopes to catch.
+func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "opencode.db")
+	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A write-ahead log beside the database is the file a retry waits on.
+	if err := os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Unix(0, 0)
+	attempts := 0
+	w := walWait{
+		settle: 5 * time.Second,
+		pause:  50 * time.Millisecond,
+		now:    func() time.Time { return clock },
+		sleep:  func(d time.Duration) { clock = clock.Add(d) },
+		first:  20 * time.Second,
+		query: func(string, time.Duration) ([][]string, error) {
+			attempts++
+			if attempts == 1 {
+				// The first read takes longer, on its own, than the whole window.
+				clock = clock.Add(6 * time.Second)
+				return nil, errors.New("database is locked")
+			}
+			// The writer checkpointed while the reader waited.
+			if err := os.Remove(db + "-wal"); err != nil {
+				t.Error(err)
+			}
+			return [][]string{{"deepseek", "deepseek-chat", "100", "50", "", "", ""}}, nil
+		},
+	}
+
+	rows, err := w.read(db)
+	if err != nil {
+		t.Fatalf("a first read slower than the window still gets to wait out the flush: %v", err)
+	}
+	if attempts != 2 {
+		t.Errorf("the reader made %d attempts, want 2: the refusal that starts the waiting is not the end of it", attempts)
+	}
+	if len(rows) != 1 || rows[0][2] != "100" {
+		t.Errorf("the retry's rows are the reading: %v", rows)
+	}
+}
+
+// AND IT STILL GIVES UP. The window bounds the waiting, so a writer that never
+// checkpoints is the named refusal the caller can act on -- never a hang, and never an
+// unbounded number of attempts.
+func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "opencode.db")
+	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	locked := errors.New("database is locked")
+	clock := time.Unix(0, 0)
+	attempts := 0
+	w := walWait{
+		settle: 5 * time.Second,
+		pause:  50 * time.Millisecond,
+		now:    func() time.Time { return clock },
+		sleep:  func(d time.Duration) { clock = clock.Add(d) },
+		first:  20 * time.Second,
+		query:  func(string, time.Duration) ([][]string, error) { attempts++; return nil, locked },
+	}
+
+	rows, err := w.read(db)
+	if !errors.Is(err, locked) {
+		t.Fatalf("the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
+	}
+	// Five seconds of waiting in fifty-millisecond pauses: the first read plus at most one
+	// attempt per pause, and never an endless loop.
+	most := 1 + int(5*time.Second/(50*time.Millisecond))
+	if attempts < 2 || attempts > most {
+		t.Errorf("the reader made %d attempts, want at least 2 (it waited) and at most %d (it stopped)", attempts, most)
+	}
+}
+
+// EVERY RETRY IS BOUNDED BY WHAT IS LEFT OF THE WINDOW (Stella's HOLD on #1551).
+//
+// The window bounds the WAITING, but a retry is a `sqlite3` run and used to be started
+// with the tool's whole 20s query timeout however little of the window was left. Two slow
+// queries then stretched ONE sample to about forty seconds, and a retry begun near the end
+// of the window could add a whole query timeout beyond it. That is not free: `supervise`
+// calls ReadProviderUsage synchronously in its select loop (supervise.go:277), so while
+// this read blocks, the worker's own deadline and budget cases cannot run -- the swarm's
+// "never waits forever" becomes a wait nobody bounded.
+//
+// THE WORST CASE THIS READ ALLOWS, and the arithmetic the comment on read() states:
+//
+//	first read       w.first            (usageTimeout, 20s)
+//	+ the waiting    w.settle           (usageSettleWait, 5s)
+//	= 25s of clock inside this function, whatever any single query does.
+//
+// (In the live reader each killed query may also drain up to usageWaitDelay; only a retry
+// that exhausts the window can be killed at its deadline, so that adds one such drain and
+// not one per retry. The process side is not modelled here -- this test holds the clock
+// arithmetic, which is what regressed.)
+//
+// The clock is the test's own: every query advances it by exactly what it was allowed, so
+// a retry handed too much time shows up as an overrun and not as a flake.
+func TestEveryRetryIsBoundedByWhatIsLeftOfTheWindow(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "opencode.db")
+	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The writer never checkpoints, so the reader waits out the whole window and refuses.
+	if err := os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const first, settle = 20 * time.Second, 5 * time.Second
+	locked := errors.New("database is locked")
+	start := time.Unix(0, 0)
+	clock := start
+	var limits []time.Duration
+	w := walWait{
+		first:  first,
+		settle: settle,
+		pause:  50 * time.Millisecond,
+		now:    func() time.Time { return clock },
+		sleep:  func(d time.Duration) { clock = clock.Add(d) },
+		query: func(_ string, limit time.Duration) ([][]string, error) {
+			// A query that is given twenty seconds takes twenty seconds: this is the
+			// slow-read case, at the boundary, on every attempt.
+			limits = append(limits, limit)
+			clock = clock.Add(limit)
+			return nil, locked
+		},
+	}
+
+	rows, err := w.read(db)
+	if !errors.Is(err, locked) {
+		t.Fatalf("the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
+	}
+	if len(limits) < 2 {
+		t.Fatalf("the reader made %d attempts, want at least 2: a slow first read still gets its retry", len(limits))
+	}
+	if limits[0] != first {
+		t.Errorf("the first read was allowed %s, want the tool's whole query timeout %s", limits[0], first)
+	}
+	// Every retry after the first is allowed only what the window still has.
+	for i, got := range limits[1:] {
+		if got > settle {
+			t.Errorf("retry %d was allowed %s, want at most the settle window %s: a retry must not be started with the whole query timeout", i+1, got, settle)
+		}
+		if got <= 0 {
+			t.Errorf("retry %d was started with %s left: a retry that cannot finish inside the window is not started", i+1, got)
+		}
+	}
+	if spent := clock.Sub(start); spent > first+settle {
+		t.Errorf("one sample spent %s, want at most %s (first read %s + window %s); supervise calls this synchronously, so the overrun is the worker's deadline not running", spent, first+settle, first, settle)
 	}
 }

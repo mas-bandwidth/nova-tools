@@ -34,6 +34,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // fleetBench is one line of the benches file: name, ssh target, home, and the optional
@@ -69,6 +70,7 @@ func (r fleetSSHRunner) Run(ctx context.Context, target, script string) (string,
 	if program == "" {
 		program = "ssh"
 	}
+	testguard.RefuseHosts(program, target, "bash -s")
 	cmd := exec.CommandContext(ctx, program, target, "bash -s")
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
@@ -317,6 +319,11 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "FLEET REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	// Piped through `bash -s`, so $0 is not the checkout. Pin the tree's go
+	// line the same way fleet standard does when --go is empty (#1500).
+	if goWant := pulse.GoWantFromTree(); goWant != "" {
+		script = "NOVA_GO=" + goWant + "\n" + script
+	}
 	// The lock (Glenn 2026-09-18): a survey is an ssh and a script on the machine, which
 	// is load, so the benches file's names are held against the machines registry before a
 	// single child starts. A refused machine prints its line and is not surveyed; the rest
@@ -463,20 +470,59 @@ func readBenchStandard() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return readBenchStandardFrom(dir)
+	return readBenchStandardFrom(dir, benchStandardStop(dir))
 }
 
-// readBenchStandardFrom is the walk itself, taking its starting directory, so a test
-// can drive it without moving the process.
+// benchStandardStop is the walk's ceiling: $HOME when dir is inside it, otherwise empty.
+// An empty ceiling still refuses the volume root. A stray tools/bench-standard.sh above
+// $HOME, or at /, must not answer for a checkout that is not there (#2057).
+func benchStandardStop(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	if lookupUnder(home, dir) {
+		return home
+	}
+	return ""
+}
+
+// lookupUnder reports whether path is root or a descendant of root, by cleaned spelling.
+func lookupUnder(root, path string) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if root == path {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	return rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// readBenchStandardFrom is the walk itself, taking its starting directory and a stop
+// directory so a test can drive a closed tree without moving the process. stop empty
+// means "no $HOME ceiling": the walk still does not inspect the volume root, and it
+// still caps at 16 steps.
 //
 // IT SAYS WHERE IT LOOKED. The fourth release dogfood (2026-09-18) ran `fleet survey`
 // from a home directory and read `tools/bench-standard.sh not found above the working
 // directory` as "the script is missing", when what it means is that this verb wants a
 // nova-tools CHECKOUT as its working directory. A refusal naming the first directory it
 // tried and the last is one a person can act on without reading the source.
-func readBenchStandardFrom(dir string) (string, error) {
+func readBenchStandardFrom(dir, stop string) (string, error) {
 	started, last := dir, dir
+	dir = filepath.Clean(dir)
+	stop = filepath.Clean(stop)
+	if stop == "." {
+		stop = ""
+	}
 	for i := 0; i < 16; i++ {
+		if filepath.Dir(dir) == dir {
+			break
+		}
 		candidate := filepath.Join(dir, "tools", "bench-standard.sh")
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			raw, err := os.ReadFile(candidate)
@@ -486,8 +532,14 @@ func readBenchStandardFrom(dir string) (string, error) {
 			return string(raw), nil
 		}
 		last = dir
+		if stop != "" && dir == stop {
+			break
+		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
+			break
+		}
+		if stop != "" && !lookupUnder(stop, parent) {
 			break
 		}
 		dir = parent

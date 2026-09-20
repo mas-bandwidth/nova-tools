@@ -53,8 +53,7 @@ usage:
   nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
         [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
   nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
-  nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration>
-        (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+  nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
   nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
   nova-board quickstart (--issue ... | --dir ...) --stale <duration>
   nova-board version                 which build this is: <version> <goos>/<goarch> <go version>
@@ -113,6 +112,11 @@ live take is a thing the log should say out loud.
 
 There is no edit, no delete, no reopen and no release. A card closed in error is a new card
 whose text names the old id; a deadline that has to move is closed "superseded by <id>".
+
+These lines run against the fixture board in this repo, copied to the name they use; a first
+run has no board of its own yet, and list and check refuse one that is not there:
+
+  cp -R cmd/nova-board/testdata/example-board ./board
 
 example:
   nova-board quickstart --dir ./board --stale 10m

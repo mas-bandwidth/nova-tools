@@ -67,6 +67,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "the fake %s has no spec at %s: %v\n", name, path, err)
 		os.Exit(noSpec)
 	}
+	// A per-clone override, read from <cwd>/.fake/<name>.json, lets two jobs in
+	// one run answer differently through identical argv: the caller's Dir is the
+	// job's own clone, so the cwd is the only thing that differs per job.
+	if cwd, werr := os.Getwd(); werr == nil {
+		if over, rerr := os.ReadFile(filepath.Join(cwd, ".fake", name+".json")); rerr == nil {
+			raw = over
+		}
+	}
 	var s spec
 	if err := json.Unmarshal(raw, &s); err != nil {
 		fmt.Fprintf(os.Stderr, "the fake %s cannot read %s: %v\n", name, path, err)

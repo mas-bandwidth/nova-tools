@@ -57,10 +57,23 @@ type spec struct {
 // the whole process tree's CPU time, and a burner that is not in the tree proves nothing.
 const spinArg = "--spin-ms"
 
+// LINGER IS THE SHAPE OF ISSUE #640, and it is not the spin above: a `linger` step starts a
+// child and RETURNS, so the child is still running when the card is killed. It is an
+// ORDINARY child -- no setsid, no new process group -- which is exactly what the run that
+// wrote the issue left behind: nova-sandbox wrappers and go test binaries, every one of them
+// inside the card process's own group. The child carries its OWN bound so a red run of the
+// test that drives it leaves nothing behind whatever the batch does or fails to do.
+const lingerArg = "--linger-ms"
+
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == spinArg {
 		ms, _ := strconv.Atoi(os.Args[2])
 		burn(time.Duration(ms) * time.Millisecond)
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == lingerArg {
+		ms, _ := strconv.Atoi(os.Args[2])
+		sleep(ms)
 		return
 	}
 	var r *runner
@@ -91,7 +104,7 @@ func main() {
 // nativeRunner reads the arguments a runnerless batch hands the self when it runs the card
 // through its own native verb (issue #636):
 //
-//	native --harness <h> --model <m> --label <l> --card <c> --slot <slotdir> --root <r> --deadline <d> [--auth <a>]
+//	native --harness <h> --model <m> --label <l> --card <c> --slot <slotdir> --root <r> --deadline <d> --slots-store <s> --owner <o> [--auth <a>]
 //
 // `--slot` is the SLOT DIRECTORY, unlike a `--runner` invocation's slot number, so the job
 // sits directly under it. Parsing the flags, rather than running with empty fields, keeps a
@@ -107,6 +120,12 @@ func nativeRunner(args []string) (*runner, error) {
 	root := fs.String("root", "", "the batch root")
 	_ = fs.String("deadline", "", "the card's deadline")
 	_ = fs.String("auth", "", "the auth profile")
+	// The bench slot lease (nova-tools#1546) travels with every native launch, so the
+	// fixture standing in for nova-swarm must accept it or a runnerless batch cannot run
+	// here at all. The fixture takes no lease: it is not nova-swarm, and a test that let it
+	// pretend to would be testing the fixture.
+	_ = fs.String("slots-store", "", "the bench slot store")
+	_ = fs.String("owner", "", "whose share the lease counts against")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -213,8 +232,18 @@ func (r *runner) run(s spec) int {
 			}
 		case "sleep":
 			sleep(st.Ms)
+		case "waitfile":
+			// Block until the TEST creates Path, so a fixture can be driven by the test's
+			// own events instead of by a duration. A test that injects its clock has no
+			// real time to lean on: "the runner does A, the test looks, the runner does B"
+			// is otherwise a race between a sleep and a tick. N is the give-up in
+			// milliseconds, and giving up is not an error here -- the step after it runs,
+			// and the test's own assertion is what fails.
+			r.waitFile(r.expand(st.Path), st.N)
 		case "spin":
 			r.spin(st.N, st.Ms)
+		case "linger":
+			r.linger(st.Path, st.N, st.Ms)
 		case "exit":
 			return st.N
 		default:
@@ -356,5 +385,40 @@ func must(err error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fakerunner: %v\n", err)
 		os.Exit(2)
+	}
+}
+
+// linger starts an ordinary child, records its pid at Path so the test can ask the kernel
+// about it afterwards, and then sleeps Ms -- so when the batch's deadline fires, the card is
+// a running process with a running child beneath it. N is the child's OWN bound in
+// milliseconds: it ends on its own whatever happens to its parent, so a RED run of the test
+// that drives this leaves no process behind.
+//
+// It is deliberately NOT `setsid`. A card that puts itself in a new session leaves its
+// parent's process group by construction and no group kill can reach it; that is rule 11's
+// background-subtask violation, which the supervisor reports, and it is not what this step
+// stands for. This is the ordinary tree of issue #640.
+func (r *runner) linger(pidPath string, childMs, ms int) {
+	exe, err := os.Executable()
+	must(err)
+	cmd := exec.Command(exe, lingerArg, strconv.Itoa(childMs))
+	must(cmd.Start())
+	// Published atomically (temp + rename, writeFile), so a test that waits for the file to
+	// EXIST can never catch it created and still empty.
+	r.writeFile(r.expand(pidPath), strconv.Itoa(cmd.Process.Pid), false)
+	sleep(ms)
+}
+
+// waitFile blocks until path exists or the give-up elapses. A give-up of zero or less is
+// thirty seconds, which is longer than any batch these fixtures drive.
+func (r *runner) waitFile(path string, giveUpMs int) {
+	if giveUpMs <= 0 {
+		giveUpMs = 30000
+	}
+	for waited := 0; waited < giveUpMs; waited += 5 {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		sleep(5)
 	}
 }

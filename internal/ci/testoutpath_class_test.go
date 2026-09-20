@@ -83,51 +83,30 @@ func (f outPathFinding) String() string {
 // refuses a relative output path that is not allowlisted, and an allowlist entry
 // that no longer names one.
 func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	allow := readTestOutPathAllowlist(t)
 	seen := map[string]bool{}
 	var violations []string
 
 	for _, dir := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
+		for _, src := range tree.GoFilesUnder(true, dir) {
+			// testdata holds the fixtures this very test reads, so reading it
+			// would find the offenders it is meant to find.
+			if src.HasDirNamed("testdata") {
+				continue
 			}
-			if d.IsDir() {
-				// testdata holds the fixtures this very test reads, so walking it
-				// would find the offenders it is meant to find.
-				if d.Name() == "testdata" {
-					return filepath.SkipDir
-				}
-				return nil
+			if src.ParseErr != nil {
+				t.Fatal(src.ParseErr)
 			}
-			if !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			found, err := relativeOutputPaths(rel, raw)
-			if err != nil {
-				return err
-			}
-			for _, f := range found {
+			for _, f := range relativeOutputPathsIn(src.Rel, tree.FSet, src.AST) {
 				key := f.File + ":" + f.Func
 				seen[key] = true
 				if !allow[key] {
 					violations = append(violations, f.String()+"\n  (or add "+key+" to internal/ci/"+testOutPathAllowlistPath+" with a reason)")
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 	for key := range allow {
@@ -188,6 +167,14 @@ func relativeOutputPaths(rel string, src []byte) ([]outPathFinding, error) {
 	if err != nil {
 		return nil, err
 	}
+	return relativeOutputPathsIn(rel, fset, file), nil
+}
+
+// relativeOutputPathsIn is the same rule over a file that is already parsed,
+// which is how the class test reads it out of the shared tree.
+// relativeOutputPaths above is the same rule over bytes, for the fixtures that
+// state it.
+func relativeOutputPathsIn(rel string, fset *token.FileSet, file *ast.File) []outPathFinding {
 	var found []outPathFinding
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -214,7 +201,7 @@ func relativeOutputPaths(rel string, src []byte) ([]outPathFinding, error) {
 			return true
 		})
 	}
-	return found, nil
+	return found
 }
 
 // runsATool reports whether call runs a tool: os/exec, or one of this

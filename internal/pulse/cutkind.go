@@ -9,13 +9,14 @@ package pulse
 // number comes only from the state file under the lock (number.go), and there is no
 // `--number` flag to pass one in.
 //
-// Five kinds, five line-1 shapes, and line 1 is the contract the harvest matches:
+// Six kinds, six line-1 shapes, and line 1 is the contract the harvest matches:
 //
 //	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
-//	fix     RESULT: CARD-<n> <repo> #<issue> fixed with its red test first: <title>
+//	fix     RESULT: CARD-<n> sha=<sha12> <repo> #<issue> fixed with its red test first: <title>
 //	replay  RESULT: CARD-<n> <repo> replays <names> named at spec lines <lines>, red first
 //	spec    RESULT: CARD-<n> <repo> spec: <title>
 //	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
+//	guard   RESULT: CARD-<n> guard of <repo> at <head>
 //
 // `cut` without `--kind` is the pool-driven cutter in cut.go and is untouched by any of this.
 
@@ -26,11 +27,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec", "rebase"}
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
@@ -73,7 +75,7 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (the number comes only from the state file under %s)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
 	}
-	card := renderKindCard(in, n, body)
+	card := contractSHA12(renderKindCard(in, n, body))
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -83,15 +85,44 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s (pass a writable --out directory)\n", oneline.Field(name), oneline.Err(err))
 		return 2
 	}
+	// cut writes queue/lanes/{red,green,small,next}/ as well as --out: the lane is
+	// a directory, so it is visible and editable, and nova-swarm pull drains it.
+	if _, err := lanes.Write(in.Queue, []lanes.Card{cutKindLane(in.Kind, n, card)}); err != nil {
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: lanes under %s: %s (pass a writable --queue)\n", oneline.Field(in.Queue), oneline.Err(err))
+		return 2
+	}
 	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s\n", oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out))
 	return 0
+}
+
+// cutKindLane places the one typed card in its lane: a fix repairs a red bench
+// or a red PR and is red; a read is a small, already-approved PR and is green;
+// a replay or a spec is next. The step budget is the kind's own.
+func cutKindLane(kind string, n int, body string) lanes.Card {
+	c := lanes.Card{ID: fmt.Sprintf("card-%d", n), Kind: kind, Steps: cutKindSteps(kind), Body: body}
+	switch kind {
+	case "fix":
+		c.Red = true
+	case "read":
+		c.Approved = true
+	}
+	return c
+}
+
+// cutKindSteps is the step budget each kind may spend, the number the lane
+// ordering compares.
+func cutKindSteps(kind string) int {
+	if kind == "read" {
+		return 8
+	}
+	return 20
 }
 
 // cutKindProblem is every refusal this cutter has, each naming its remedy.
 func cutKindProblem(in CutKindInput) string {
 	switch {
 	case !cutKindKnown(in.Kind):
-		return fmt.Sprintf("--kind %s is not one of %s (pass one of the four kinds)", oneline.Field(in.Kind), strings.Join(CutKinds, "|"))
+		return fmt.Sprintf("--kind %s is not one of %s (pass one of those kinds)", oneline.Field(in.Kind), strings.Join(CutKinds, "|"))
 	case strings.TrimSpace(in.Repo) == "":
 		return "--repo is required; line 1 of every card names the repo (pass --repo <owner>/<name>)"
 	case strings.TrimSpace(in.Queue) == "":
@@ -136,6 +167,10 @@ func cutKindProblem(in CutKindInput) string {
 		case strings.TrimSpace(in.Title) == "":
 			return "--title is required for a rebase card (pass the pull request's own title)"
 		}
+	case "guard":
+		if strings.TrimSpace(in.Head) == "" {
+			return "--head is required for a guard card; the control is asked of one sha (pass --head <sha>)"
+		}
 	}
 	return ""
 }
@@ -157,10 +192,10 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	switch in.Kind {
 	case "read":
 		fmt.Fprintf(&b, "RESULT: CARD-%d read of %s PR%d at %s (%s)\n", n, repo, in.PR, oneline.Field(in.Head), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.PR)
+		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
 	case "fix":
-		fmt.Fprintf(&b, "RESULT: CARD-%d %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.Issue)
+		fmt.Fprintf(&b, "RESULT: CARD-%d sha=<sha12> %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
+		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.Issue)
 	case "replay":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s replays %s named at spec lines %s, red first\n", n, repo, oneline.Field(in.Names), oneline.Field(in.SpecLines))
 		fmt.Fprintf(&b, "SOURCE: %s %s\n", in.Repo, oneline.Field(in.Names))
@@ -170,20 +205,25 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "rebase":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s PR #%d rebased onto %s with its conflicts resolved and its tests green: %s\n",
 			n, repo, in.PR, oneline.Field(in.Base), oneline.Escape(in.Title))
-		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.PR)
+		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
+	case "guard":
+		fmt.Fprintf(&b, "RESULT: CARD-%d guard of %s at %s\n", n, repo, oneline.Field(in.Head))
+		fmt.Fprintf(&b, "SOURCE: %s@%s\n", in.Repo, oneline.Field(in.Head))
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
 	}
-	b.WriteString(kindInstruction(in))
+	b.WriteString(kindInstruction(in, body))
 	if body != "" {
 		b.WriteString(body + "\n")
 	}
 	return b.String()
 }
 
-// kindInstruction is the one paragraph a kind always carries, whatever its body says.
-func kindInstruction(in CutKindInput) string {
+// kindInstruction is the one paragraph a kind always carries, whatever its body says. A fix
+// card cut without --body-file carries the practice-17 STEP skeleton instead of the one
+// paragraph, because a bodyless card has to number its own steps.
+func kindInstruction(in CutKindInput, body string) string {
 	switch in.Kind {
 	case "read":
 		return fmt.Sprintf(`Read pull request %d of %s at head %s. Quote the rule beside every line you hold.
@@ -192,6 +232,9 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then exact
 PR%d: APPROVE|HOLD head=%s repo=%s
 `, in.PR, in.Repo, in.Head, in.PR, in.Head, in.Repo)
 	case "fix":
+		if strings.TrimSpace(body) == "" {
+			return fixKindStepSkeleton(in)
+		}
 		return fmt.Sprintf(`Fix %s #%d with its reproducing test first: the red line, then the green line, one row per item.
 A fix whose diff carries no test is not admitted.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
@@ -205,11 +248,36 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 		return fmt.Sprintf(rebaseSteps,
 			rebasePreamble, in.Base, in.Branch, in.Branch, in.Branch, in.Base,
 			in.Base, in.Base, in.Base, in.Base, in.Branch, in.Base)
+	case "guard":
+		return fmt.Sprintf(`The guard verdict is COMPUTED, never judged. Do not write GUARDED or UNGUARDED from reading the code.
+The model only picks which packages to run. Then:
+
+    nova-review guard --repo ./repo --head %s [--tests <package>[,<package>...]]
+
+Copy the GUARD line's status= field onto RESULT.md line 2 (GUARDED, UNGUARDED, COMPILER-HELD, NOT-APPLICABLE, or ABSTAIN — never the reason= tail). A verdict the command did not print is a lie.
+Write RESULT.md: line 1 exactly the line 1 of this card, line 2 the status= value, then REPO %s.
+`, oneline.Field(in.Head), in.Repo)
 	default:
 		return fmt.Sprintf(`Amend the spec: numbered rules, each with the test that makes it red, and no rule softened to match code.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
 `, in.Repo)
 	}
+}
+
+// fixKindStepSkeleton is the practice-17 skeleton a body-less fix card carries: STEP 1 clones
+// and enters the repo, STEP 2 names the red-then-green fix, STEP 3 is the gate verbatim with
+// its deadline, and STEP 4 writes RESULT.md last (#1852 item 4).
+func fixKindStepSkeleton(in CutKindInput) string {
+	return fmt.Sprintf("STEP 1. Clone the repo and enter it.\n\n"+
+		"    git clone -q https://github.com/mas-bandwidth/nova-tools.git repo\n"+
+		"    cd repo\n\n"+
+		"STEP 2. Fix %s #%d with its reproducing test first: the red test, then the "+
+		"green test, one row per item. A fix whose diff carries no test is not admitted.\n\n"+
+		"STEP 3. THE GATES. Run once: go test ./... , then go vet ./... . "+
+		"Finish within 30 minutes.\n\n"+
+		"STEP 4. Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE "+
+		"or ABSTAIN <why>, then BRANCH <name> and REPO %s.\n",
+		in.Repo, in.Issue, in.Repo)
 }
 
 // repoShort is owner/name as line 1 says it: the name alone.

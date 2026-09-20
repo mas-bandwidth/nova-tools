@@ -146,7 +146,7 @@ func TestNativeReportsAFenceRejection(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-FENCE-REJECT /Users/glenn/rowan-working/swarm-root/1/jobs/*\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"}
 	var stdout, stderr bytes.Buffer

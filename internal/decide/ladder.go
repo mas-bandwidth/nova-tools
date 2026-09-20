@@ -42,12 +42,15 @@ const (
 	KindStack           = "stack"
 	KindFixtureRetarget = "fixture-retarget"
 	KindFleetChore      = "fleet-chore"
+	KindDogfood         = "dogfood"
+	KindRowTest         = "row-test"
 	KindFixWithRedTest  = "fix-with-red-test"
 	KindNewVerb         = "new-verb"
 	KindSpec            = "spec"
 	KindDesign          = "design"
 	KindGuard           = "guard"
 	KindCauseToFind     = "cause-to-find"
+	KindTranscriptTest  = "transcript-test"
 )
 
 // The outcome of one attempt.
@@ -57,6 +60,13 @@ const (
 	OutcomeTimeout   = "timeout"
 	OutcomeAbandoned = "abandoned"
 )
+
+// OutcomeSkipped is the fourth ROUTE-OUTCOME word, and it is deliberately not
+// one of the four above: an attempt has an outcome because it RAN, and a unit
+// skipped for an unmet precondition was never asked to run. It is an outcome
+// row all the same -- coverage counts it -- but it is no rung's success and no
+// rung's failure, so it moves no floor in either direction (SPEC-DECIDE H2).
+const OutcomeSkipped = "skipped"
 
 // Where a route answer came from.
 const (
@@ -74,12 +84,18 @@ var errNoRungQuestion = errors.New("decide: the rung decision carries no rung qu
 // startHeights is the starting rung per kind, the table the log regenerates.
 // The mechanical kinds start at the bottom; everything else starts at the child
 // rungs, because friends come first and DeepSeek takes mechanical work only; a
-// spec or a design starts at the top pair, where the writing lives.
+// spec or a design starts at the top pair, where the writing lives. A row test
+// is the exception that measurement bought: its shape is a proven card and its
+// size is one file, so the cheapest rung looks right and is not -- it starts at
+// pro (2026-09-18, the schema campaign's row cards).
 var startHeights = map[string]int{
 	KindRebase:          0,
 	KindStack:           0,
 	KindFixtureRetarget: 0,
 	KindFleetChore:      0,
+	KindDogfood:         0,
+	KindTranscriptTest:  0,
+	KindRowTest:         1,
 	KindFixWithRedTest:  2,
 	KindNewVerb:         2,
 	KindCauseToFind:     2,
@@ -88,6 +104,11 @@ var startHeights = map[string]int{
 	KindDesign:          4,
 }
 
+// LineageDeepSeek is the lineage of the two card rungs. It is named here
+// because two rules turn on it: friends first, and a mechanical kind that
+// failed on one of them is not mechanical after all.
+const LineageDeepSeek = "deepseek"
+
 // mechanicalKinds are the kinds a DeepSeek rung may take: the ones whose answer
 // is a procedure, not a judgment.
 var mechanicalKinds = map[string]bool{
@@ -95,6 +116,9 @@ var mechanicalKinds = map[string]bool{
 	KindStack:           true,
 	KindFixtureRetarget: true,
 	KindFleetChore:      true,
+	KindDogfood:         true,
+	KindTranscriptTest:  true,
+	KindRowTest:         true,
 }
 
 // ordinaryPlatforms are the platforms the benches run all day. A need outside
@@ -116,8 +140,30 @@ var ordinaryPlatforms = map[string]bool{
 
 // Kinds is every kind a unit may name, in the order the spec names them.
 var Kinds = []string{
-	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindFixWithRedTest,
-	KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
+	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindTranscriptTest, KindRowTest,
+	KindFixWithRedTest, KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
+}
+
+// kindAliases are the names a caller may use for a kind the table already
+// holds. `chore` is the one the manager lanes actually typed on 2026-09-19 and
+// it cost them `ROUTE REFUSED reason=no-rung ... want one of rebase, stack,
+// fixture-retarget, fleet-chore, ...` (schema-issues HANDOFF D1). A chore of
+// the fleet is a fleet-chore under a shorter name, with the same start height
+// and the same mechanical eligibility; it is an alias, not a new kind, so it
+// adds no row to Kinds and no rung to the ladder.
+var kindAliases = map[string]string{
+	"chore": KindFleetChore,
+}
+
+// CanonicalKind resolves an alias to the kind the table holds and returns
+// anything else unchanged. It is applied ONCE, where the evidence is read, so
+// the kind the ladder decides on and the kind the route log records are the
+// same name -- an alias that reached the log would split every per-kind floor.
+func CanonicalKind(kind string) string {
+	if canon, ok := kindAliases[kind]; ok {
+		return canon
+	}
+	return kind
 }
 
 // KnownKind reports whether the kind is one of the ten.
@@ -224,6 +270,8 @@ func ParseUnit(data []byte) (Unit, error) {
 	if err := unmarshalStrict(data, &u); err != nil {
 		return Unit{}, fmt.Errorf("decide: bad unit: %w", err)
 	}
+	// An alias is resolved here, once, before any validation or logging.
+	u.Kind = CanonicalKind(u.Kind)
 	return u, nil
 }
 
@@ -334,6 +382,12 @@ type RouteUsage struct {
 	HasInput     bool
 	HasOutput    bool
 	Failed       bool
+	// Ms is the provider round trip in milliseconds, measured by the caller
+	// on a monotonic clock around the call alone. HasMs reports whether a
+	// call was made at all: with no call there is no measurement, and no
+	// measurement is an absence, never a zero (SPEC-TOKENS rule 14).
+	Ms    int
+	HasMs bool
 }
 
 // Known reports whether any counter was measured.
@@ -373,6 +427,12 @@ type RouteResult struct {
 	// Steps is how many decisions this answer took: 1 for an ordinary route,
 	// and one more for each re-ask --step-up made.
 	Steps int
+	// WallMs is the verb's start to its line in milliseconds, stamped by the
+	// verb that printed it. HasWallMs reports whether the verb measured it:
+	// where no verb stamped one there is no measurement, and no measurement
+	// is an absence, never a zero.
+	WallMs    int
+	HasWallMs bool
 }
 
 // refuse populates the result with the refusal that ended it and returns both.
@@ -413,9 +473,16 @@ func (r RouteResult) Line() string {
 	if steps < 1 {
 		steps = 1
 	}
-	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s next=%s steps=%d reason=%s ask=%s",
+	// ms is the provider round trip around the call alone, and a dash where
+	// no call was made: a latency never measured is unknown, never zero. It
+	// is appended last, so every field before it keeps its position.
+	ms := "-"
+	if r.Usage.HasMs {
+		ms = fmt.Sprintf("%d", r.Usage.Ms)
+	}
+	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s next=%s steps=%d reason=%s ask=%s ms=%s",
 		oneline.Field(r.Unit), oneline.Field(r.Rung.Name), r.Confidence, r.Floor,
-		oneline.Field(wait), next, steps, oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
+		oneline.Field(wait), next, steps, oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask), ms)
 }
 
 // The rule confidences. They are the machinery's own numbers, stated here so a
@@ -523,6 +590,14 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 		conf = confEscalated
 	case u.thin():
 		conf = confThin
+		// Say it on the line. Thin evidence is below every usable floor, so it
+		// steps the answer up BEFORE the provider is offered anything -- and
+		// the rung the evidence would have supported is then not in the offer
+		// set at all, so no provider answer can recover it. A caller who simply
+		// forgot --files reads "below the floor" and looks for a floor problem;
+		// what they have is a unit with no size on it (2026-09-18: a manager's
+		// fix-with-red-test units answered astra for exactly this reason).
+		reasons = append(reasons, "the unit carries no size evidence (no files, packages, lanes or attempts), which no floor can support for a first attempt")
 	}
 	res.Rung, res.Confidence = m, conf
 	if conf < floor {
@@ -720,19 +795,41 @@ func supportedHeight(reg *Registry, u Unit, burned int) (int, []string) {
 
 // eligible reports whether a mind may take this unit at all: it must be on the
 // ladder, it must not be a DeepSeek rung on a kind that is not mechanical
-// (friends first), it must not have been tried, and its lineage must not be one
-// that already failed at this height (sideways means ANOTHER lineage).
+// (friends first), it must not be a DeepSeek rung on a unit a DeepSeek rung has
+// already CONFIRMED-failed, it must not have been tried, and its lineage must
+// not be one that already failed at this height (sideways means ANOTHER
+// lineage).
+//
+// The second of those is the one the failures taught. A mechanical kind is one
+// whose answer is a procedure rather than a judgement; an attempt that failed is
+// the evidence that the procedure was not given after all, so the work is not
+// mechanical and the other card rung is not a retry, it is the same mistake one
+// height up. The per-height rule above cannot catch it, because flash and pro
+// are the only two minds of one lineage sitting at two DIFFERENT heights: every
+// other lineage puts its two minds far enough apart that this never arose.
 func eligible(m Mind, u Unit, tried map[string]bool, failedAt map[int]map[string]bool) bool {
 	if !m.Usable() || tried[m.Name] {
 		return false
 	}
-	if m.Lineage == "deepseek" && !Mechanical(u.Kind) {
+	if m.Lineage == LineageDeepSeek && (!Mechanical(u.Kind) || lineageFailed(failedAt, LineageDeepSeek)) {
 		return false
 	}
 	if failed := failedAt[m.Height]; failed != nil && failed[m.Lineage] {
 		return false
 	}
 	return true
+}
+
+// lineageFailed reports whether any CONFIRMED failure on this unit was a mind
+// of this lineage, at any height. burnedHeight has already keyed the failures by
+// height and lineage, so this reads them rather than walking the attempts again.
+func lineageFailed(failedAt map[int]map[string]bool, lineage string) bool {
+	for _, at := range failedAt {
+		if at[lineage] {
+			return true
+		}
+	}
+	return false
 }
 
 // pick takes the lowest rung at or above height that holds an eligible mind,
@@ -877,10 +974,14 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		rules.Reason += fmt.Sprintf("; the public projection refused (%s), so nothing was sent and the rules answer stands", oneline.Err(err))
 		return rules, nil
 	}
+	callStart := time.Now()
 	answers, usage, err := d.Decide(ctx, state, map[string]Question{RungQuestion: rungQuestion(offered, u)})
 	// A call was made, and what it spent is part of the record whether it
 	// answered or not: a failed call's cost is UNKNOWN, never zero.
-	rules.Usage = RouteUsage{Calls: 1, Failed: err != nil}
+	// The round trip is timed around the call alone, on the monotonic clock:
+	// it is the provider's latency, not the verb's, and it is present
+	// whenever a call was made, answered or not.
+	rules.Usage = RouteUsage{Calls: 1, Failed: err != nil, Ms: int(time.Since(callStart).Milliseconds()), HasMs: true}
 	if err == nil {
 		// Presence travels per counter: a 200 that named no usage has told us
 		// nothing about what it cost, and nothing is not zero.

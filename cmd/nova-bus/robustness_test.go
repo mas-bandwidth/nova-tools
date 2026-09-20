@@ -366,7 +366,7 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 // reads. Run beside the dozen other git tests this package now runs at once, it would cut
 // their budget to five seconds under them -- a timeout they would report as the tool
 // hanging, on whichever test happened to be slowest on a loaded runner, and never here.
-// It is the same class as the NoteParses and checkoutLockWait tests: process-global state,
+// It is the same class as the checkoutLockWait tests: process-global state,
 // so it runs alone.
 func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
 	t.Parallel()

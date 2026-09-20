@@ -393,8 +393,8 @@ func TestWorktreePruneLeavesTheHandMadeWorktree(t *testing.T) {
 	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{}})
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	if code != 1 {
-		t.Fatalf("a prune that removed nothing must exit 1, got %d; stderr %q", code, errb)
+	if code != 0 {
+		t.Fatalf("a prune that removed nothing is the verb doing its job and must exit 0, got %d; stderr %q", code, errb)
 	}
 	if !strings.Contains(out, "WORKTREE OK removed=0 kept=1\n") {
 		t.Fatalf("stdout %q, want a removed=0 kept=1 summary", out)
@@ -448,6 +448,42 @@ func TestWorktreeRefusals(t *testing.T) {
 	}
 	if _, err := os.Stat(absent); !os.IsNotExist(err) {
 		t.Fatalf("a refusal created the scratch dir %s", absent)
+	}
+}
+
+// 9. --prune over a scratch holding one open-PR worktree and nothing prunable
+// is the verb doing its job: it prints WORKTREE OK removed=0 kept=1 and exits 0.
+func TestWorktreePruneKeptOpenExitsZero(t *testing.T) {
+	j := newWJob(t)
+	g := newFakeGit(j.repo)
+	useFakeGit(t, g)
+	sha := strings.Repeat("9", 40)
+	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
+	createTree(t, j, sha, "7")
+
+	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
+	if code != 0 {
+		t.Fatalf("a prune that kept an open PR must exit 0, got %d; stderr %q", code, errb)
+	}
+	if !strings.Contains(out, "WORKTREE OK removed=0 kept=1\n") {
+		t.Fatalf("stdout %q, want a removed=0 kept=1 summary", out)
+	}
+}
+
+// 10. --prune over an empty scratch is the verb doing its job: it prints
+// WORKTREE OK removed=0 kept=0 and exits 0.
+func TestWorktreePruneEmptyScratchExitsZero(t *testing.T) {
+	j := newWJob(t)
+	g := newFakeGit(j.repo)
+	useFakeGit(t, g)
+	useFakeForge(t, &fakeForge{byID: map[int]worktreePR{}})
+
+	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
+	if code != 0 {
+		t.Fatalf("a prune of an empty scratch must exit 0, got %d; stderr %q", code, errb)
+	}
+	if !strings.Contains(out, "WORKTREE OK removed=0 kept=0\n") {
+		t.Fatalf("stdout %q, want a removed=0 kept=0 summary", out)
 	}
 }
 

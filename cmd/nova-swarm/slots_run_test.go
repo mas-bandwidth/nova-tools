@@ -163,3 +163,13 @@ func TestRunWaitsWhenTheSlotLeaseIsRefusedAndNamesTheHolder(t *testing.T) {
 		t.Errorf("a task that never got a slot in time is not a green run, got exit 0:\n%s%s", stdout, stderr)
 	}
 }
+
+// nativeStore is the one-seat bench slot store a `native` launch now needs: since
+// nova-tools#1546 a launch without a lease is REFUSED, so every test in this package that
+// runs native passes `--slots-store nativeStore(t) --owner fake-1`. It is a function
+// rather than a fixture so that each test gets a store of its own under its own
+// t.TempDir(), and two tests running in parallel never contend for the same seat.
+func nativeStore(t *testing.T) string {
+	t.Helper()
+	return slotShares(t, "capacity\t1\nreserve\t0\nfake-1\t1\n")
+}
