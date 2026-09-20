@@ -440,6 +440,44 @@ on. Registration goes through the real `machine` verb, never a back door."
       (ok (search "capacity" fline) "the refusal names capacity, not cores: ~A" fline))
     ;; every live allocation is listed once.
     (let ((rows (fleet-list reg :machine "m-a1" :now 50)))
-      (check-equal 2 (length rows) "each live allocation lists once")
-      (ok (every (lambda (r) (search "ALLOC ROW" r)) rows)
-          "every row is an ALLOC ROW"))))
+       (check-equal 2 (length rows) "each live allocation lists once")
+       (ok (every (lambda (r) (search "ALLOC ROW" r)) rows)
+           "every row is an ALLOC ROW"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F04SeparateAbsorbFromDefaultLink   docs/SPEC-WORK.md:7590-7592
+;;; ------------------------------------------------------------------
+
+;;; Criterion E09-F04-01 (docs/roadmaps/nova-work.sexp:1120, subfeature
+;;; "Separate absorb from default link and require selected scope/authority"),
+;;; whose source section is "Link versus absorb", docs/SPEC-WORK.md:7586-7617.
+;;; The controlling sentence, at :7590-7592, reads:
+;;;   `absorb` ... is distinct from `link`, the default for outside
+;;;   contributors. Author identity alone does not make an issue selected for
+;;;   absorption; scope and intake mode must be explicit, with team
+;;;   configuration identifying participating authors and applicable
+;;;   repositories.
+;;; So the criterion has two halves: (1) the default intake is `link`, with
+;;; `absorb` a distinct second mode; and (2) absorption must require an
+;;; explicitly selected scope and authority -- a participating author's
+;;; identity, by itself, does not select an issue for absorption.
+
+(deftest "TestE09F04SeparateAbsorbFromDefaultLink" "docs/SPEC-WORK.md:7590"
+    "expected=outside-contributor-defaults-to-link;absorb-requires-explicit-selected-scope-and-authority"
+  ;; (1) Outside contributors default to `link`: an :external, :mixed or
+  ;; :unknown author's issue is retained (kept linked), never absorbed.
+  (dolist (author '(:mixed :external :unknown))
+    (let ((c (make-archive-capture :source-issue "acme/widget#7"
+                                   :author author :gaps '())))
+      (check-equal t (author-retains-source-p c)
+                   "an outside contributor defaults to link (source retained)")))
+  ;; (2) Absorb is separated from that default and requires a selected
+  ;; scope/authority, not mere author identity. A participating (:known) author's
+  ;; complete capture is NOT by itself selected for absorption: scope and intake
+  ;; mode must be explicit before the issue may be absorbed. No explicit
+  ;; selection is recorded on a bare capture, so absorbtion must not follow from
+  ;; identity and completeness alone.
+  (let ((c (make-archive-capture :source-issue "acme/widget#7"
+                                 :author :known :gaps '())))
+    (check-equal nil (archive-absorbable-p c)
+                 "author identity alone must not select absorption; scope and intake mode must be explicit")))
