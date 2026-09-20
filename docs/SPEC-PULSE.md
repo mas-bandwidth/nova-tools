@@ -150,12 +150,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    refuses for being wider than the bench; the remainder queues, always.
  10. **Every card goes through `batch`'s card form, never a single `add`.** `launch` runs
      exactly one `nova-swarm batch --id <pulse> --cards <admitted.tsv> --deadline <s>
-     --runner <cmd> --root <root> --files <n> --then "nova-pulse harvest --id <id> --root
+     --runner <cmd> --root <root> --files <n> --slots-store <dir> --owner <name>
+     --then "nova-pulse harvest --id <id> --root
      <root>"`, with `<admitted.tsv>` the admitted cards written under
      `<root>/cards/<id>/cards.tsv` (the cards that fit the free slots, never the queued
      remainder), `<cmd>` the deployment's native runner on PATH,
      `nova-native-runner.sh`, and `<n>` the `[launch] files` file budget (default 40,
-     the shim's own number). `nova-swarm batch` refuses an admission that names no budget
+     the shim's own number). `--slots-store` and `--owner` are required: they are the
+     bench slot lease the launcher takes (SPEC-SWARM **Bench slot leases** rule 2;
+     issue #1903). A launch without them prints native's one `NATIVE REFUSED
+     reason=no_slots_store` line and starts no card. `nova-swarm batch` refuses an admission that names no budget
      ("--files is required and is at least 1, got 0"), so the launch always carries one
      (issue #869). The card form is the only form that runs a card: the swarm's pool form
      (`--pool --tasks --label`) wants `--tokens` as well, which no launch flag can supply
@@ -807,7 +811,7 @@ runner name and the run id on the line.
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --slots-store <dir> --owner <name> [--queue] [--benches <file>] [--bench <names>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]

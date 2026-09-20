@@ -95,11 +95,13 @@
    refuses for being wider than the bench; the remainder queues, always.
  10. **Every card goes through `batch`'s card form, never a single `add`.** `launch` runs
      exactly one `nova-swarm batch --id <pulse> --cards <admitted.tsv> --deadline <s>
-     --runner <cmd> --root <root> --then "nova-pulse harvest --id <id> --root <root>"`, with
+     --runner <cmd> --root <root> --slots-store <dir> --owner <name>
+     --then "nova-pulse harvest --id <id> --root <root>"`, with
      `<admitted.tsv>` the admitted cards written under `<root>/cards/<id>/cards.tsv` (the
      cards that fit the free slots, never the queued remainder) and `<cmd>` the deployment's
-     native runner on PATH, `nova-native-runner.sh`. The card form is the only form that runs
-     a card: the swarm's pool form (`--pool --tasks --label`) wants `--files` and `--tokens`,
+     native runner on PATH, `nova-native-runner.sh`. `--slots-store` and `--owner` are
+     required: a launch without a lease is refused (SPEC-SWARM **Bench slot leases** rule 2;
+     issue #1903). The card form is the only form that runs a card: the swarm's pool form (`--pool --tasks --label`) wants `--files` and `--tokens`,
      which no launch flag can supply (issue #630), so `launch` never calls it. The one
      admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
      is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card

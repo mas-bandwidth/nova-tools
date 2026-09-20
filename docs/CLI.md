@@ -1803,7 +1803,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --slots-store <dir> --owner <name> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1815,8 +1815,20 @@ written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
 `nova-swarm batch` in its **card form** — the only form that runs a card:
 
 ```
-nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner <runner> --root <root> --files <n> --then "nova-pulse harvest --id <id> --root <root>"
+nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner <runner> --root <root> --files <n> --slots-store <dir> --owner <name> --then "nova-pulse harvest --id <id> --root <root>"
 ```
+
+**`--slots-store <dir>` and `--owner <name>` are required.** They are the bench
+slot lease the launcher takes (SPEC-SWARM, **Bench slot leases** rule 2;
+issue #1903). Pulse always starts this project's native runner, which is
+`native` with extra argv, so a launch without a lease is refused with native's
+one line:
+
+```
+NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
+```
+
+There is no default store. Both flags are handed through to `nova-swarm batch`.
 
 `--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
 unchanged, and only when they are given: one pulse fills every bench the caller names

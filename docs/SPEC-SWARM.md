@@ -2697,9 +2697,12 @@ is one the bench cannot see, cannot count and cannot refuse. That is a hole, not
 The same rule reaches every caller that launches `native`. `nova-swarm batch` without a
 `--runner` of its own launches `native` for every card — locally and on a bench — so it
 takes the two flags and **refuses the whole batch with the same line, before any card
-runs**, rather than letting each card fail with it in turn. A batch that names its own
-`--runner` launches no `native` and is not held to this: the runner is somebody else's
-program and the bench cannot speak for what it takes. **The store path is resolved on the
+runs**, rather than letting each card fail with it in turn. A batch that names this
+project's `nova-native-runner.sh` is the same launch: that runner is `native` with extra
+argv, not somebody else's program, and `nova-pulse launch` always starts it. Both
+require `--slots-store` and `--owner` and refuse with the same line (nova-tools#1903).
+A `--runner` that is somebody else's program is not held to this: the bench cannot
+speak for what that runner takes. **The store path is resolved on the
 machine that runs the card**, which for a bench row is the bench.
 
 **The store is the authority.** A launcher reads it before it runs and releases
