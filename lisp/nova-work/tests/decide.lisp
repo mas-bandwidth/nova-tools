@@ -74,3 +74,39 @@
         "the below-floor answer is a suggestion")
     (check-equal 500 (decision-confidence decision) "the provider confidence is carried")
     (check-equal 900 (decision-floor decision) "the floor is carried")))
+
+;;;; Criteria E01-F03-02 -- "Keep containment as a forest and references as a
+;;;; separate graph" (docs/roadmaps/nova-work.sexp E01-F03 subfeature 2).
+;;;; The contract is docs/SPEC-WORK.md:876-881: `:children` is canonical
+;;;; containment, every node has at most one containment parent and the edges
+;;;; form a forest (:878); `:deps` and other pointers are references, a graph
+;;;; that carries no count (:880). A heavily-referenced shared node is still
+;;;; owned once, under its one containment parent, wherever else it is pointed at.
+
+(deftest "TestE01F03KeepContainmentAsAForest"
+    "docs/SPEC-WORK.md:876-881"
+    "expected=containment-edges-are-a-forest-one-parent-per-node-and-counted-once;references-are-a-separate-graph-that-carries-no-count"
+  (let* ((nodes '((:id "root"   :type :work-set :parent nil)
+                  (:id "shared" :type :task     :parent "root")
+                  (:id "user/a" :type :task     :parent "root" :deps ("shared"))
+                  (:id "user/b" :type :task     :parent "root" :deps ("shared"))
+                  (:id "user/c" :type :task     :parent "root" :deps ("shared"))))
+         (state (make-seed-state nodes)))
+    ;; Containment is a forest: the shared node is owned once under one parent,
+    ;; however many other nodes reference it (SPEC-WORK.md:878).
+    (check-equal "root" (node-parent state "shared")
+                 "the referenced node keeps its one containment parent")
+    (check-equal '() (node-children state "shared")
+                 "a reference gains the referenced node no containment children")
+    (check-equal 1 (node-open-count state "shared")
+                 "the shared node is counted once under its parent, not once per reference")
+    (check-equal '("shared" "user/a" "user/b" "user/c")
+                 (sort (node-children state "root") #'string<)
+                 "the containment forest lists exactly the four direct children of root")
+    ;; References are a separate graph: three dependents point at the one shared
+    ;; node over the reverse edge, and that edge carries no count (SPEC-WORK.md:880).
+    (check-equal '("user/a" "user/b" "user/c")
+                 (sort (node-dependents state "shared") #'string<)
+                 "the referencing nodes form the reverse reference edge")
+    (check-equal 5 (state-open-count state)
+                 "|O| counts each node once: references contribute no count")))
