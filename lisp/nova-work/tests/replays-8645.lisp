@@ -324,3 +324,67 @@ a closed node D, under the coordinator scope \"coord\"."
       (ok (<= *intake-visits* (* 4 (length wide)))
           "the high-fan-out input is scanned linearly (~D visits for ~D bytes)"
           *intake-visits* (length wide)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F04ValidateAcceptanceKindSubjectPredicate  docs/SPEC-WORK.md:930-943
+;;;
+;;; E01-F04 (ROADMAP.md:236): "Validate acceptance kind, subject, predicate and
+;;; required flag". The `:task` `:acceptance` schema is one form
+;;; `(:id "c1" :kind :test :subject "test:…@<rev>" :predicate :passes)` where
+;;; `:kind` is one of `:test :job :merged :attested`, `:subject` names the exact
+;;; thing the evidence must be about, `:predicate` is what must be true of it
+;;; (`:passes :succeeds :merged-at :attested-by`, held at the named revision),
+;;; and `:required` defaults true. The kernel realizes the four in
+;;; src/verifier.lisp (`verify-qualifies-p`, the (pointer subject resolver)
+;;; cache key) and src/state.lisp (`%seed-required`); this replay asserts the
+;;; behaviour, not the implementation.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE01F04ValidateAcceptanceKindSubjectPredicate" "docs/SPEC-WORK.md:930-943"
+    "expected=kind-must-match-scheme;subject-binds-the-fact;predicate-holds-at-the-named-revision;required-defaults-true"
+  ;; KIND -- a pointer qualifies a criterion only when its scheme matches the
+  ;; criterion's kind (SPEC-WORK.md:931-932). A test: pointer qualifies a :test
+  ;; criterion and never a :merged one.
+  (let ((merged (make-verify-evidence "ev-m" :pointer "test:pkg/x@sha-1"
+                                      :criterion :merged :subject "7" :against "sha-1"))
+        (test   (make-verify-evidence "ev-t" :pointer "test:pkg/x@sha-1"
+                                      :criterion :test :subject "pkg/x" :against "sha-1")))
+    (ok (verify-qualifies-p test) "a test: pointer qualifies a :test criterion")
+    (check-equal nil (verify-qualifies-p merged)
+                 "a test: pointer never qualifies a :merged criterion")
+    (check-equal "test" (pointer-scheme (verify-evidence-pointer test))
+                 "the kind is matched against the pointer's scheme, not its subject"))
+
+  ;; SUBJECT -- the raw fact is bound to the subject the resolver was asked for:
+  ;; the cache key is (pointer subject resolver), so a fact resolved for one
+  ;; subject answers nothing under another (SPEC-WORK.md:938-940, :1294-1301).
+  (let ((cache (make-verification-cache)))
+    (verification-cache-store cache "test:pkg/x@sha-1" "pkg/x" "resolver-cmd" :holds
+                              "2026-09-14T12:00:00Z")
+    (ok (verification-cache-lookup cache "test:pkg/x@sha-1" "pkg/x" "resolver-cmd")
+        "the fact is bound to the subject it was asked for")
+    (check-equal nil (verification-cache-lookup cache "test:pkg/x@sha-1" "pkg/y" "resolver-cmd")
+                 "the same pointer under another subject reads nothing"))
+
+  ;; PREDICATE -- what must be true (`:passes`, `:succeeds`, `:merged-at`) holds
+  ;; at the named revision (SPEC-WORK.md:941): a :job criterion is met only
+  ;; where the run's `@<sha>` is the revision the evidence was written against.
+  (let ((job-of-rev (make-verify-evidence "ev-j1" :pointer "run:acme/work#j1@sha-1"
+                                          :criterion :job :subject "j1" :against "sha-1"))
+        (job-of-other (make-verify-evidence "ev-j2" :pointer "run:acme/work#j1@sha-1"
+                                            :criterion :job :subject "j1" :against "sha-9")))
+    (ok (verify-qualifies-p job-of-rev) "a :job criterion qualifies at the revision it names")
+    (check-equal nil (verify-qualifies-p job-of-other)
+                 "the same run at another revision does not qualify"))
+
+  ;; REQUIRED FLAG -- absent defaults true; an explicit boolean is admitted; a
+  ;; truthy lookalike is refused, never guessed (SPEC-WORK.md:943, src/state.lisp).
+  (check-equal t (nova-work::%seed-required '(:id "x"))
+               "the required flag defaults to true")
+  (check-equal t (nova-work::%seed-required '(:required t))
+               "an explicit true is admitted")
+  (check-equal nil (nova-work::%seed-required '(:required nil))
+               "an explicit nil is admitted")
+  (ok (handler-case (progn (nova-work::%seed-required '(:required :yes)) nil)
+        (error () t))
+      "a truthy non-boolean required flag is refused, never guessed"))
