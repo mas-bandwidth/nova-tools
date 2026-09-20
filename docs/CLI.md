@@ -555,7 +555,7 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
 
 ### Reading a backlog with a typed decision
 
-`--decide` is opt-in and asks TypeSafe Jev (`internal/decide`) one typed decision per `INBOX NOTE` line: the note's subject and the first 600 characters of its body, with any `sk-` key redacted, are sent with a `kind` choice (`start`, `done`, `question`, `edge`, `refusal`, `receipt`) and `needs_reply` and `blocked` noul questions. Each `INBOX NOTE` line then carries ` kind=<k> needs_reply=<p> blocked=<p> conf=<c>`, and the run ends with `INBOX DECIDED n=<n> needs_reply=<m> below_floor=<b>` where `n` is the notes judged, `needs_reply` how many of them at or above 0.5, and `below_floor` how many kinds the provider was less sure of than `--floor` (default 0.9). A decision below the floor is a suggestion: the listing still prints it and the caller keeps today's behaviour. `--key-env` names the environment variable holding the key (default `JEV_API_KEY`) and `--base-url` names the endpoint. The key is never printed and never a file or an argument. A subject starting `STOP:` or `HOLD:` is a structured signal and is never sent: it is always marked `kind=edge needs_reply=1.00` (Stella's rule — structured signals bypass semantic filtering). `--decide` refuses a clone with no `.public` marker, by name, because the provider may train on what it receives; `--allow-private` is the one explicit way to mean it anyway. The pass is lazy, so an empty inbox makes zero provider calls.
+`--decide` is opt-in and asks TypeSafe Jev (`internal/decide`) one typed decision per `INBOX NOTE` line: the note's subject and the first 600 characters of its body, with any `sk-` key redacted, are sent with a `kind` choice (`start`, `done`, `question`, `edge`, `refusal`, `receipt`), `needs_reply` and `blocked` noul questions, and a `wake` choice (`ack`, `info`, `needs-action`) that says whether the note wakes its reader: `ack` only confirms receipt or completion and asks nothing, `info` reports a fact and asks nothing of this reader, and `needs-action` asks this reader to do, decide, review, answer or stop something. Each `INBOX NOTE` line then carries ` kind=<k> needs_reply=<p> blocked=<p> conf=<c> wake=<w> owner=<lane> ref=<refs>`, where `owner` is the note's `To:` header and `ref` is every `#<digits>` and `<owner>/<repo>#<digits>` in the subject and body (at most four, then `+<n>`), both read mechanically and never asked of the provider. The run ends with `INBOX DECIDED n=<n> needs_reply=<m> below_floor=<b> wake=<w>` where `n` is the notes judged, `needs_reply` how many of them at or above 0.5, `below_floor` how many kinds the provider was less sure of than `--floor` (default 0.9), and `wake` how many notes read `needs-action` or `unknown` and so must wake a window. A decision below the floor is a suggestion: the listing still prints it and the caller keeps today's behaviour. `--key-env` names the environment variable holding the key (default `JEV_API_KEY`) and `--base-url` names the endpoint. The key is never printed and never a file or an argument. A subject starting `STOP:` or `HOLD:` is a structured signal and is never sent: it is always marked `kind=edge needs_reply=1.00 wake=needs-action` by rule, because a structured signal asks for action and is never something a model filters (Stella's rule — structured signals bypass semantic filtering). `--decide` refuses a clone with no `.public` marker, by name, because the provider may train on what it receives; `--allow-private` is the one explicit way to mean it anyway. The pass is lazy, so an empty inbox makes zero provider calls.
 
 ### The rule this tool does not enforce
 
@@ -748,6 +748,129 @@ $ nova-decide log --log ./decide.jsonl --summary
 LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
 LOG OK rows=1 kinds=1 escalations=0 coverage=0/1
 ```
+
+`nova-decide tune` is the other half of rule 8: it reads a decisions log back and reports, per
+confidence floor, what that floor decided, what it agreed with, and what it escalated.
+
+```
+nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
+                 [--label label] [--choice decision] [--conf confidence]
+                 [--max-escalation 0.7] [--default <answer>]
+nova-decide tune --kind <kind> [--dsn <dsn>] [--decisions <tsv>]
+```
+
+**`--default` names what a below-floor row actually gets.** Escalation is not one thing. Where the
+escalation is a step UP a rung — the `route` question — the row gets a different, more careful
+answer, and a cap on the escalation rate is the right shape: escalating costs money, and the verb
+should not spend it on more rows than the cap allows. Where the escalation is a fallback to ONE
+configured default, the interesting number is how often that default **disagreed** with the row's
+label, and no field held it. With a default named each floor also reports `defaulted=`,
+`default_agree=` and `missed=`, and the best floor is the one that misses fewest; a tie is broken
+by the agree rate and then by the higher floor. A default no labeled row ever answered is a
+refusal, not a zero.
+
+**It is a calculation, and what it says about a log is a statement about that log.** A floor for a
+reading is set from that reading's own adjudicated evidence — truth labelled separately from the
+observation, bound to the question version, the decider and the model — and this flag does not
+manufacture any of that. The example below runs over
+`internal/decide/testdata/reader-observations-2026-09-19.jsonl`, whose own README says it tunes
+nothing: 47 answers from one day, labelled by later HOLDs, asked with a previous question version,
+sparse in every stopping class but one.
+
+**That boundary is executable, not advice.** Every labeled row is read for an `adjudicated`
+marker, and there are three answers, not two:
+
+| the row says | what it is | what `tune` does |
+| --- | --- | --- |
+| nothing at all | a log from before the field existed | reads it exactly as it always did |
+| `"adjudicated": true` | adjudicated truth | tunes, and prints a floor |
+| `"adjudicated": false` | an observation, joined afterwards | `TUNE REFUSED reason=not-adjudicated` unless `--observations` |
+| anything else — `null`, `"maybe"`, `1`, `{}` | a status nobody can read | `TUNE REFUSED reason=adjudicated-malformed`, naming the line; **no flag admits it** |
+
+An absent marker and an unreadable one are different faults: the first is a log that never
+claimed a status, the second is a row that claims one illegibly, and reading the second as the
+first is how an observation log tunes by accident. `--observations` admits a log that SAYS it is
+observations; it does not admit one that says nothing legible.
+
+```
+$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
+    --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7 --default opus-child
+TUNE REFUSED reason=not-adjudicated … 47 of 47 labeled rows carry adjudicated:false … Re-run with --observations …
+
+$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
+    --floors 0.5,0.65,0.8,0.9 --max-escalation 0.7 --default opus-child --observations
+TUNE floor=0.5 decided=40 agree=27 agree_rate=0.68 escalated=7 escalation_rate=0.15 defaulted=7 default_agree=7 missed=0
+TUNE floor=0.65 decided=35 agree=24 agree_rate=0.69 escalated=12 escalation_rate=0.26 defaulted=12 default_agree=11 missed=1
+TUNE floor=0.8 decided=29 agree=23 agree_rate=0.79 escalated=18 escalation_rate=0.38 defaulted=18 default_agree=15 missed=3
+TUNE floor=0.9 decided=22 agree=19 agree_rate=0.86 escalated=25 escalation_rate=0.53 defaulted=25 default_agree=21 missed=4
+TUNE OBSERVATIONS lines=47 labeled=47 observations=47 best_floor=none reason="…"
+```
+
+The closing line is `TUNE OBSERVATIONS … best_floor=none`, never the `TUNE OK` line and never a
+number. **Neither reading is a tuned floor for the who-reads question** — that reading is untuned
+until its own adjudicated evidence exists. What the arithmetic shows is that the miss count is
+expressible at all, and that escalation alone is silent about the cost the fallback carries.
+
+### the question and its criteria are one pair
+
+`nova-decide --questions <file>` loads the question file AND the criteria file it names. A
+question file may carry `criteria_version`, `criteria_file`, typed `state_fields` and `machinery`
+beside its `questions`; any other key beside them is a refusal that names it.
+
+```json
+{
+  "criteria_version": "2026-09-19.3",
+  "criteria_file": "criteria-reader.md",
+  "machinery": "who-reads",
+  "state_fields": [
+    {"name": "security_shaped_package", "type": "bool"},
+    {"name": "design_defaults_taken", "type": "int"},
+    {"name": "notes", "type": "string", "optional": true}
+  ],
+  "questions": { "reader": { "type": "choice", "instructions": "…", "criteria": { "…": "…" } } }
+}
+```
+
+The criteria file sits **beside** its question file — the name carries no path — and its own
+`version:` line must match. What goes to the provider is the criteria first and the state second.
+Before the call, the state's `key: value` lines are checked against the declared fields: a
+required field the state does not carry, or carries with the wrong type, is
+`DECIDE REFUSED reason=bad-state` at exit 2, naming the field, with **no request made**. An
+absolute `criteria_file`, a parent escape, a symlink resolving out of the question's directory, or
+a file over 64 KiB is `bad-questions`: a question file is not a way to read an unrelated local
+file and post it to a provider.
+
+The pairs this repository ships are in `docs/decide/`. They name configured ROLES and no roster;
+one house's role binding and its trial rows are in `docs/decide/examples/`.
+
+`"machinery": "who-reads"` says the question is answered UNDER the rules in
+`internal/decide/readers.go` rather than by the provider alone, and the verb enforces them at the
+call boundary. A settled security designation is taken **before a client is built** — no key is
+wanted, **no call is made**, at any confidence — and every other rule constrains the answer before
+it is recorded or printed. The line carries the whole decision:
+
+```
+DECIDE reader=security-designate conf=- floor=0.65 below=- source=machinery \
+       required=design-authority,security-designate holder=design-authority hold=open \
+       lifts_hold=false receipt=recorded reason="…"
+```
+
+`conf=-` is not a missing number: a decision the machinery settled had no provider answer, so
+there is no confidence to print and none is invented — a display constant here becomes, one copy
+later, calibration evidence about a call nobody made. `source=` says which of the two decided, and
+`receipt=` says where the durable row went: `recorded` when the configured `--dsn` took it,
+`not-configured` when no table was configured. A configured table that REFUSES the row is
+`DECIDE REFUSED reason=decisions-write-failed` at exit 2, on the settled path and the answered one
+alike: a caller told the decision succeeded while nothing was written has no receipt at all.
+
+The decisions table carries both facts. Its TSV fallback gained a seventh column, `source`, after
+the other six; a file written before it exists is six columns wide and is still read, with its
+source unknown rather than guessed. `provider_confidence` is a dash — NULL in Postgres — for a row
+no provider answered.
+
+`tune --kind <kind>` reads the decisions TABLE rather than a JSONL log and prints the rows behind
+one kind; a kind with no rows is a refusal, because a floor with no rows behind it is untuned. It
+lists rows and reports no floor — the floors come from `--decisions`.
 
 ## Build
 
@@ -1442,7 +1565,7 @@ the third call too.
 ### cut
 
 ```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 ```
@@ -1479,6 +1602,20 @@ on success:
 
 ```
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+```
+
+**`--validate-contract`** preflights the pool form before any card file is
+written. `cut` already refuses a template whose rendered card violates the
+practice-17 contract (line 1 `RESULT <label> sha=<sha12>`, `STEP 1` carrying
+`mkdir -p scratch`, an `https://` clone and `checkout -b`, no `TMPDIR` of its
+own, no `../scratch`), but it only learns that while writing, and a locator that
+does not resolve is not checked at all. With the flag, every distinct candidate
+locator is confirmed once through `gh repo view <owner/repo>` before the first
+card exists, so a dead repo never spends an admission and a scaffold before it
+abstains:
+
+```
+CUT REFUSED locator=<owner/repo>: does not resolve (check gh auth and the repo name)
 ```
 
 **`--issue`, `--rows` and `--branch-from`** are the **validated-template** form, and

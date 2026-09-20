@@ -74,6 +74,14 @@ type Entry struct {
 	TokensIn    *int `json:"tokens_in,omitempty"`
 	TokensOut   *int `json:"tokens_out,omitempty"`
 	UsageFailed bool `json:"usage_failed,omitempty"`
+
+	// Ms is the provider round trip in milliseconds, measured by the caller
+	// on a monotonic clock around the call alone; WallMs is the verb's start
+	// to its line. Each is ABSENT, never zero, where there was no call or no
+	// measurement, by the per-counter presence rule: a zero is a measurement
+	// and an absence is not (SPEC-TOKENS rule 14).
+	Ms     *int `json:"ms,omitempty"`
+	WallMs *int `json:"wall_ms,omitempty"`
 }
 
 // EntryFor is the row one route decision writes. The outcome and the rung that
@@ -103,6 +111,8 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 		TokensIn:            tokens(res.Usage.HasInput, res.Usage.InputTokens),
 		TokensOut:           tokens(res.Usage.HasOutput, res.Usage.OutputTokens),
 		UsageFailed:         res.Usage.Failed,
+		Ms:                  millis(res.Usage.HasMs, res.Usage.Ms),
+		WallMs:              millis(res.HasWallMs, res.WallMs),
 	}
 }
 
@@ -119,6 +129,18 @@ func waitOrDash(wait string) string {
 // unmeasured cost is an absence in the row, never a zero; a reported zero is a
 // measurement and is written as one.
 func tokens(has bool, n int) *int {
+	if !has {
+		return nil
+	}
+	v := n
+	return &v
+}
+
+// millis reports a latency only where it was measured: the provider round
+// trip where a call was made, the wall clock where the verb stamped one. An
+// unmeasured latency is an absence in the row, never a zero; a measured zero
+// is written as one.
+func millis(has bool, n int) *int {
 	if !has {
 		return nil
 	}
@@ -243,6 +265,65 @@ type Summary struct {
 	// tuned on the rows somebody remembered (SPEC-DECIDE, housekeeping H2).
 	Decisions int
 	Outcomes  int
+
+	// LatencyByKind and LatencyByDecider are the ms distribution over the
+	// MEASURED rows of each group: the median and the 95th percentile
+	// (SPEC-DECIDE, housekeeping H3). A kind is the route log's question and
+	// a source its decider; outcome rows are not decisions and carry no
+	// measurement, so neither group counts them.
+	LatencyByKind    []LatencySummary
+	LatencyByDecider []LatencySummary
+}
+
+// LatencySummary is the ms distribution over the measured rows of one group.
+// N counts measured rows only; Median and P95 are the nearest-rank 50th and
+// 95th percentiles, and Has reports whether anything was measured at all: a
+// latency never measured is unknown, never zero, so a group with no measured
+// row prints dashes.
+type LatencySummary struct {
+	// Kind names the group for per-kind rows; Decider for per-decider rows.
+	// Exactly one of the two is set.
+	Kind    string
+	Decider string
+	N       int
+	Median  int
+	P95     int
+	Has     bool
+}
+
+// percentile returns the nearest-rank value of rank r (1-100) over sorted
+// values: the smallest value with at least r percent of the values at or
+// below it. Rank 50 is the median. No values is no measurement, never zero.
+func percentile(sorted []int, r int) (int, bool) {
+	if len(sorted) == 0 {
+		return 0, false
+	}
+	k := (r*len(sorted) + 99) / 100
+	if k < 1 {
+		k = 1
+	}
+	if k > len(sorted) {
+		k = len(sorted)
+	}
+	return sorted[k-1], true
+}
+
+// summarizeLatency folds measured ms values into one summary per group name.
+func summarizeLatency(names []string, values map[string][]int) []LatencySummary {
+	out := make([]LatencySummary, 0, len(names))
+	for _, name := range names {
+		vs := append([]int(nil), values[name]...)
+		sort.Ints(vs)
+		row := LatencySummary{N: len(vs)}
+		if median, ok := percentile(vs, 50); ok {
+			row.Median, row.Has = median, true
+		}
+		if p95, ok := percentile(vs, 95); ok {
+			row.P95 = p95
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // Summarize counts the escalations per kind and regenerates the starting rung
@@ -259,6 +340,9 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 		failure     map[int]int
 	}
 	byKind := map[string]*counts{}
+	kindMs := map[string][]int{}
+	deciderMs := map[string][]int{}
+	decidersSeen := map[string]bool{}
 	for i, e := range entries {
 		kind := strings.TrimSpace(e.Kind)
 		if kind == "" {
@@ -271,6 +355,21 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 		if c == nil {
 			c = &counts{success: map[int]int{}, failure: map[int]int{}}
 			byKind[kind] = c
+		}
+		// Latency is decision rows only, and measured rows only: an outcome
+		// row made no call, and an unmeasured row is unknown, never zero. A
+		// decider seen with no measured row still holds its group, with
+		// nothing measured in it.
+		if e.Source != SourceOutcome {
+			if decider := strings.TrimSpace(e.Source); decider != "" {
+				decidersSeen[decider] = true
+				if e.Ms != nil {
+					deciderMs[decider] = append(deciderMs[decider], *e.Ms)
+				}
+			}
+			if e.Ms != nil {
+				kindMs[kind] = append(kindMs[kind], *e.Ms)
+			}
 		}
 		// An outcome row is a fact about a decision already counted, never a
 		// decision of its own: counting it again would report twice the
@@ -335,20 +434,56 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 		}
 		sum.Kinds = append(sum.Kinds, row)
 	}
+	sum.LatencyByKind = summarizeLatency(kinds, kindMs)
+	for i := range sum.LatencyByKind {
+		sum.LatencyByKind[i].Kind = kinds[i]
+	}
+	deciders := make([]string, 0, len(decidersSeen))
+	for decider := range decidersSeen {
+		deciders = append(deciders, decider)
+	}
+	sort.Strings(deciders)
+	sum.LatencyByDecider = summarizeLatency(deciders, deciderMs)
+	for i := range sum.LatencyByDecider {
+		sum.LatencyByDecider[i].Decider = deciders[i]
+	}
 	return sum, nil
 }
 
-// Render is the summary, one line per kind then the finish.
+// msOrDash renders a measured latency, or the dash for one never measured:
+// unknown, never zero.
+func msOrDash(has bool, n int) string {
+	if !has {
+		return "-"
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+// Render is the summary, one line per kind then the finish. The latency
+// tokens are appended last on the lines they belong to, so every field
+// before them keeps its name, position and spelling: per-kind median and p95
+// on the kind's own line, per-decider median and p95 on the finish.
 func (s Summary) Render() string {
 	var b strings.Builder
 	escalations := 0
+	latByKind := map[string]LatencySummary{}
+	for _, l := range s.LatencyByKind {
+		latByKind[l.Kind] = l
+	}
 	for _, k := range s.Kinds {
 		escalations += k.Escalations
-		fmt.Fprintf(&b, "LOG kind=%s decisions=%d escalations=%d successes=%d failures=%d start_rung=%s start_height=%d default_rung=%s regenerated=%v\n",
+		l := latByKind[k.Kind]
+		fmt.Fprintf(&b, "LOG kind=%s decisions=%d escalations=%d successes=%d failures=%d start_rung=%s start_height=%d default_rung=%s regenerated=%v lat_n=%d median_ms=%s p95_ms=%s\n",
 			oneline.Field(k.Kind), k.Decisions, k.Escalations, k.Successes, k.Failures,
-			oneline.Field(k.StartRung), k.StartHeight, oneline.Field(k.DefaultRung), k.Regenerated)
+			oneline.Field(k.StartRung), k.StartHeight, oneline.Field(k.DefaultRung), k.Regenerated,
+			l.N, msOrDash(l.Has, l.Median), msOrDash(l.Has, l.P95))
 	}
-	fmt.Fprintf(&b, "LOG OK rows=%d kinds=%d escalations=%d coverage=%d/%d\n",
+	fmt.Fprintf(&b, "LOG OK rows=%d kinds=%d escalations=%d coverage=%d/%d",
 		s.Entries, len(s.Kinds), escalations, s.Outcomes, s.Decisions)
+	for _, l := range s.LatencyByDecider {
+		fmt.Fprintf(&b, " lat_%s=%d,%s,%s",
+			oneline.Field(l.Decider), l.N, msOrDash(l.Has, l.Median), msOrDash(l.Has, l.P95))
+	}
+	b.WriteString("\n")
 	return b.String()
 }
