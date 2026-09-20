@@ -397,6 +397,43 @@ func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 	}
 }
 
+// hygiene-recognises-the-xai-provider-key: the harvest backstop (internal/keyshape)
+// carries an xai-api-key row and a shorter sk- bound for the seat key this fleet
+// holds (#1814); the hygiene gate must agree, or a card dumping an xai- key into a
+// committed file reads HYGIENE OK.
+func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	// Built by parts so no key-shaped string lands in the tree.
+	xai := "xa" + "i-" + strings.Repeat("B", 30)
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+xai+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("an xai- provider key drew no secret finding: %v", tokens(fs))
+	}
+	if f.At != "sign/sign.go:3" {
+		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
+	}
+	all := f.Token + " " + f.At + " " + f.Why + " " + f.String()
+	if strings.Contains(all, xai) {
+		t.Fatalf("the matched text reached the finding: %q", all)
+	}
+	// A truncated sk- copy (below the old {32,} bound, at the seat key's measured
+	// length in #1814) is still a finding.
+	dir2 := lab(t)
+	git(t, dir2, "checkout", "-q", "-b", "card")
+	short := "sk-" + strings.Repeat("C", 20)
+	write(t, dir2, "sign/sign.go", "package sign\n\nconst token = \""+short+"\"\n")
+	git(t, dir2, "add", "-A")
+	git(t, dir2, "commit", "-q", "-m", "oops")
+	if has(check(t, dir2, Options{}), "secret") == nil {
+		t.Fatalf("a truncated sk- provider key drew no secret finding: %v", tokens(check(t, dir2, Options{})))
+	}
+}
+
 // A key shape that was ALREADY in the base is not this card's finding: the check reads
 // added lines, because a range is judged by what it added.
 func TestHygieneReadsAddedLinesOnly(t *testing.T) {

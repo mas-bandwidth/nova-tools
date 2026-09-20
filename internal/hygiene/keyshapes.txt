@@ -22,9 +22,15 @@ age-secret-key	AGE-SECRET-KEY-1[0-9A-Za-z]{10,}
 forge-token	gh[pousr]_[A-Za-z0-9]{20,}
 forge-fine-grained-token	github_pat_[A-Za-z0-9_]{20,}
 
-# Provider API keys, by their published prefixes.
+# Provider API keys, by their published prefixes. The bare `sk-` shape is {20,}
+# rather than {32,}: the key this fleet's seats actually hold is `sk-` and 32 more
+# (measured length 35, issue #1814), and a shorter bound catches a truncated copy of
+# it without reaching prose, which does not carry twenty unbroken alphanumerics
+# after `sk-`. Kept in step with internal/keyshape/keyshapes.txt where the two
+# overlap, so the gate and the harvest cannot disagree.
 anthropic-api-key	sk-ant-[A-Za-z0-9_-]{20,}
-openai-api-key	sk-[A-Za-z0-9]{32,}
+openai-api-key	sk-[A-Za-z0-9]{20,}
+xai-api-key	xai-[A-Za-z0-9-]{20,}
 google-api-key	AIza[0-9A-Za-z_-]{30,}
 slack-token	xox[abprs]-[0-9A-Za-z-]{10,}
 aws-access-key-id	(A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}
