@@ -363,6 +363,118 @@ of burning the afternoon); `fleet wake` wakes by magic packet to the bench's
 `mac`; `fleet standard` is the standard itself, run locally or over ssh,
 whose checks are the contract below.
 
+### Fleet state is measured (SPEC-AHEAD: #2046)
+
+`nova-pulse fleet state|probe|hold|release` owns the fleet's measured state and
+administrative holds, beside `fleet pause|stop|run|status`, which owns the
+fleet-wide control signal.  The readers and predicates are shared internal
+machinery used by swarm admission; there is no second public fleet-state verb,
+machine list, capacity store or adoption record.  Every verb reads the complete
+`--machines` registry first and pins its digest and selected bench names.  A
+duplicate registry or state name, a state name absent from that registry, a
+conflicting returned identity, or the same event id with different content is
+a whole-operation refusal before remote work or mutation.
+
+Reachability is exactly `UNKNOWN`, `UP` or `DOWN`.  `HOLD` is an independent
+administrative bit, not a fourth reachability state.  Required-service health
+is also separate: ssh may prove a bench `UP` while a missing or bad required
+tool makes `service=unhealthy` and prevents admission.  The contract exposes no
+intermediate probe-phase states.  Initial and stale reachability is `UNKNOWN`;
+explicit positive `--down-after`, `--up-after` and `--stale-after` values say
+when consecutive observations change it.  A successful version command records
+only `build_observed`; it does not prove which artifact was installed or
+validated.
+
+The append-only event journal is authoritative.  An event carries its id,
+bench, expected and new revision, cohort digest, observation instant,
+reachability and service observation with closed reason tokens, consecutive
+success and failure counts, observed build, and HOLD change.  Writers append
+and sync the event before publishing an atomic replay-derived projection.
+Probes run outside the writer lock, then acquire it and commit only if the
+cohort digest and expected revision still match; a late probe cannot erase a
+new HOLD.  The same id and same content is idempotent; the same id with other
+content refuses.
+
+A torn or malformed journal tail is not silently discarded: it may contain a
+meaningful HOLD or observation.  `fleet state` may replay the valid prefix, but
+prints the selected cohort as `UNKNOWN` with `journal=torn`; mutation,
+`is-ready`, and admission refuse until the fleet-state owner performs the
+defined recovery.  They do not truncate or repair the journal as a side effect.
+A stale or partial projection is never authority: readers replay the journal,
+and a later successful writer may republish the projection.
+
+```
+nova-pulse fleet state   --machines <file> --events <file> [--state <projection>] [--slots <bench>=<store>]... [--adoption <file>] [--bench <name>]... [--stale-after <duration>] [--now <RFC3339>] [--max <n>]
+nova-pulse fleet probe   --machines <file> --events <file> --state <projection> [--bench <name>]... [--ssh <path>] [--timeout <duration>] [--max-parallel <n>] --down-after <n> --up-after <n> --stale-after <duration>
+nova-pulse fleet hold    --machines <file> --events <file> --state <projection> --bench <name> --reason <token>
+nova-pulse fleet release --machines <file> --events <file> --state <projection> --bench <name>
+nova-pulse fleet is-up   --machines <file> --events <file> --bench <name> --stale-after <duration>
+nova-pulse fleet is-ready --machines <file> --events <file> --bench <name> --stale-after <duration> --control <file> --slots <store> --adoption <file>
+```
+
+`fleet state` is read-only.  It does not probe, update an age, publish a
+projection, change a HOLD or control signal, move a card, or change a slot or
+job lease.  `--now` is available only to this display path and fake-clock tests;
+live mutation and admission use the real clock and accept no caller-supplied
+time.  It prints one bounded row per selected registry bench, in registry order,
+then one summary:
+
+```
+FLEET <name> state=<UNKNOWN|UP|DOWN> service=<healthy|unhealthy|unknown> hold=<NONE|HOLD> observed=<instant|-> age=<duration|-> reason=<token> build_observed=<sha|-> installed=<sha|-> ready=<sha|-> in_use=<build@epoch|mixed|unknown|-> capacity=<n|-> reserve=<n|-> held=<n|-> free=<n|-> eligible=<yes|no> cohort=<digest>
+FLEET STATE cohort=<digest> selected=<n> excluded=<n> up=<n> unknown=<n> down=<n> held=<n> eligible=<n> journal=<ok|torn>
+```
+
+Those columns remain separate facts.  Slot capacity, reserve, held and free
+come from the authoritative swarm slot store; an absent or unreadable store is
+`-`, never zero.  Installed and ready evidence comes from its adoption owner.
+`in_use` is an active worker build and process epoch, `mixed` or `unknown`; it
+may be `-` on an idle bench that is otherwise ready to launch.  Adoption
+complete is not itself admission.  The admission owner defines the required
+installed, ready and verified-launch-path evidence without circularly requiring
+an already-running worker.  Eligibility is derived, never stored: fresh UP,
+healthy required services, no HOLD, RUN control, the required adoption and
+launch-path evidence, readable positive free capacity, and all ordinary
+registry, route and admission rules must agree.
+
+`fleet is-up` answers reachability only: exit 0 for fresh raw UP, 1 for
+UNKNOWN or DOWN, and 2 for invalid or corrupt input.  It is never sufficient
+for admission.  `fleet is-ready` answers the complete eligibility conjunction: exit 0 when all
+required facts permit admission, 1 when they do not, and 2 for invalid or corrupt
+input. It cannot turn an unknown field into permission.  `fleet state` exits 0 after a
+complete valid report even when a row is DOWN or HELD, and 2 on invalid input.
+It still prints the conservative UNKNOWN rows for a torn journal, then exits 2;
+the readable prefix is evidence for repair, not permission to proceed.
+`fleet probe` bounds every child by time and stdout/stderr bytes, reaps it, and
+runs no more than `--max-parallel`; it exits 3 when any selected reachability or
+required-service probe fails, is unknown, times out or exceeds a bound, and 2
+for invalid input.
+
+`fleet hold` changes only HOLD.  `fleet release` means release the
+administrative HOLD only: it does not release a slot or job lease, move work,
+set UP, or start a loop.  Release makes reachability UNKNOWN and requires a new
+successful probe before eligibility.  Becoming UP never restarts a script or
+bypasses RUN/PAUSE/STOP or ordinary admission.
+
+DOWN and stale have no ownership meaning.  A launched card on such a bench is
+UNKNOWN or STRANDED and neither its work nor its leases are released or retried.
+Even a lifecycle fence is insufficient by itself: the lifecycle owner must
+also prove the compute terminal, or prove the card was never admitted, before
+release or retry.  Only a lifecycle-owner-confirmed WAITING and unclaimed card
+may return through that owner's stable state-and-revision compare-and-swap;
+the existing filesystem rename alone is not that proof.
+
+Acceptance replays pin the boundaries: a stale UP displays UNKNOWN without
+changing any file or mtime; HOLD then release stays UNKNOWN until a new probe;
+ssh-up with a bad required tool is UP but unhealthy, `is-up` says yes and
+`is-ready` says no; missing capacity is `-` and refuses readiness; an idle ready
+bench may carry `in_use=-`, while mixed active build epochs stay explicit; a
+torn journal tail displays UNKNOWN and blocks mutation/admission without
+truncation; same event id with different content refuses; a probe racing HOLD
+loses its stale expected-revision commit; a hung or over-output probe is killed
+and reaped while other bounded probes finish; DOWN leaves launched work and
+leases untouched; two WAITING recoveries cannot both win the lifecycle CAS;
+and no transition to UP invokes a launcher or changes fleet control.
+
 `fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]` reads
 the benches file, copies `tools/bench-standard.sh` over each bench's
 `ssh <target> bash -s` stdin in parallel under `--timeout` (default 120), and
