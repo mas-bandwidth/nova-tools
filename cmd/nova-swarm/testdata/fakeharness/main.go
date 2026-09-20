@@ -422,6 +422,13 @@ func main() {
 	if n, ok := number(prompt, "FAKE-RC"); ok {
 		os.Exit(n)
 	}
+	// THE SUPERMAN FSEVENTS SHAPE (nova-tools #2058): OpenCode logs this after the card
+	// has already published RESULT.md, then exits 255. 255 is ssh's own "could not
+	// start"; native passing it through made a fill loop retry a finished card.
+	if _, ok := directive(prompt, "FAKE-FSEVENTS"); ok {
+		fmt.Fprintln(os.Stderr, "error: Error starting FSEvents stream")
+		os.Exit(255)
+	}
 }
 
 // awaitNote holds this worker until a note has been delivered to its job directory, or

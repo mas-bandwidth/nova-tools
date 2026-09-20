@@ -1926,13 +1926,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
-	if res.rc != 0 {
-		if res.rc > 0 {
-			return res.rc
-		}
-		return 1
-	}
-	return 0
+	return nativeProcessExit(res.rc)
 }
 
 // ------------------------------------------------------------------------------- helpers
@@ -1992,6 +1986,21 @@ func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("--task %s is empty; it wants the task text", path)
 	}
 	return raw, nil
+}
+
+// nativeProcessExit is the process exit after a launch that started. The child's
+// code is already on the verdict line as rc=<n>. 255 is ssh's own "could not
+// start the remote command"; passing it through made a fill loop treat a
+// finished card as never started (nova-tools #2058). A negative rc is a kill
+// (deadline or TERM) and is already exit 1.
+func nativeProcessExit(childRC int) int {
+	if childRC == 0 {
+		return 0
+	}
+	if childRC < 0 || childRC == 255 {
+		return 1
+	}
+	return childRC
 }
 
 // nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
