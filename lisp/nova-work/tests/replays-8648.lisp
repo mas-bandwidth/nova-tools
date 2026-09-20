@@ -353,3 +353,56 @@
                  "the mapped external issue survives the child's refusal open")
     (check-equal '("acme/repo#42") (node-links (kernel-state k) "p")
                  "the issue mapping itself survives the child's refusal unchanged")))
+
+;;; ------------------------------------------------------------------
+;;; ordinary-delivered-capabilities-beside-versioning  SPEC-WORK.md:7782
+;;; ------------------------------------------------------------------
+;;;
+;;; E07-F04-02 (ROADMAP.md:757). docs/SPEC-WORK.md:7782 -- "For Schema,
+;;; ordinary scalar and container support must be visible beside version
+;;; evolution, refusal behavior and interoperability." The imported baseline
+;;; once held only the versioning (audit-family) rows and dropped the ordinary
+;;; delivered capability rows; the renderer must keep an ordinary delivered
+;;; capability row beside a versioning row in the one table, in its declared
+;;; order, dropping or segregating neither class.
+
+(deftest "TestE07F04IncludeOrdinaryDeliveredCapabilitiesBeside" "docs/SPEC-WORK.md:7782"
+    "expected=ordinary-capability-rows-rendered-beside-versioning-rows;none-dropped;order-preserved"
+  (let* ((rows (list (make-roadmap-row :id "schema/fixed-tables/versioning/cpp"
+                                       :axis :versioning :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/scalar/int-key"
+                                       :axis :scalar :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/fixed-tables/versioning/struct"
+                                       :axis :versioning :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/container/vector"
+                                       :axis :container :kind :required
+                                       :state :open :evidence :full :status :current)))
+         (rm (make-roadmap :id "schema" :axes '(:versioning :scalar :container)
+                           :rows rows :shared-prerequisites '()
+                           :discovered '() :closed '()))
+         (text (roadmap-render rm :chat)))
+    ;; every row -- versioning and ordinary delivered capability alike -- is
+    ;; present in the one rendered table.
+    (ok (search "schema/fixed-tables/versioning/cpp" text)
+        "the cpp versioning row is missing from the render")
+    (ok (search "schema/fixed-tables/versioning/struct" text)
+        "the struct versioning row is missing from the render")
+    (ok (search "schema/scalar/int-key" text)
+        "the ordinary scalar capability row is missing from the render")
+    (ok (search "schema/container/vector" text)
+        "the ordinary container capability row is missing from the render")
+    ;; Rendered beside one another in their declared interleaved order: a
+    ;; versioning row, an ordinary row, a versioning row, an ordinary row.
+    (flet ((pos (id) (search id text)))
+      (ok (< (pos "schema/fixed-tables/versioning/cpp")
+             (pos "schema/scalar/int-key"))
+          "an ordinary capability row is not rendered beside the first versioning row")
+      (ok (< (pos "schema/scalar/int-key")
+             (pos "schema/fixed-tables/versioning/struct"))
+          "the ordinary capability row is not rendered between the versioning rows")
+      (ok (< (pos "schema/fixed-tables/versioning/struct")
+             (pos "schema/container/vector"))
+          "the second ordinary capability row is not rendered beside the second versioning row"))))
