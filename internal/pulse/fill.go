@@ -40,6 +40,13 @@ package pulse
 // launch goes through a wrapper that asks the registry again -- so a bench name that arrives
 // by some other road later still cannot reach a runner host.
 //
+// THE SEAT COMES FROM THE ROW (#2014). The launcher's second argument is the bench's
+// nova-secrets seat from the machines registry, not `swarm-<bench>`. The Studio's seat is
+// `studio` and the Air's is `air`; inventing `swarm-studio` killed every card on the
+// strongest bench (SECRETS EXEC FAIL, exit 125) and bounced them back. A bench whose row
+// names no seat, or a seat that is not one plain name, is refused once by name at the loop
+// and dropped from the pool; a fill left with no seated bench refuses with exit 2.
+//
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
 // tick against a fake ready directory, a fake clock and a fake launcher. No test opens an
@@ -55,6 +62,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -70,8 +78,12 @@ const FillInterval = 300 * time.Second
 // CardLauncher launches one card that Fill has already moved into --launched. It is the
 // per-card seam of the launch verb (internal/pulse/launch.go): one call, in order, one
 // card. The real one shells flash-native-bench.sh on the bench; tests inject a recorder.
+//
+// seat is the bench's nova-secrets seat, read from the machines registry's seat column
+// (#2014). It is passed rather than derived: `swarm-`+bench was right for six benches out of
+// nine and wrong for the two that mattered most.
 type CardLauncher interface {
-	Launch(bench, card string) error
+	Launch(bench, seat, card string) error
 }
 
 // Capacity answers how many cards the named bench can take this tick -- card 9316's
@@ -150,11 +162,60 @@ type guardedLauncher struct {
 	next CardLauncher
 }
 
-func (g guardedLauncher) Launch(bench, card string) error {
+func (g guardedLauncher) Launch(bench, seat, card string) error {
 	if err := g.reg.RequireBench(bench); err != nil {
 		return err
 	}
-	return g.next.Launch(bench, card)
+	return g.next.Launch(bench, seat, card)
+}
+
+// benchSeats resolves every named bench's seat from the registry ONCE, before the first card
+// is dealt (#2014). A bench whose row names no seat is refused by name and dropped from the
+// pool: its neighbours keep working, because one incomplete row is not a reason to stop a
+// fleet, and the refusal is printed here -- once -- rather than once per card.
+func benchSeats(stderr io.Writer, reg *fleet.Registry, benches []string) (map[string]string, []string) {
+	seats := make(map[string]string, len(benches))
+	kept := make([]string, 0, len(benches))
+	for _, bench := range benches {
+		seat := ""
+		if m, ok := reg.Lookup(bench); ok {
+			seat = strings.TrimSpace(m.Seat)
+		}
+		if seat == "" {
+			fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=no-seat remedy=%q\n",
+				field(bench), fmt.Sprintf(
+					"write the machine's nova-secrets seat into the seat column of %s; a card runs under a seat and fill will not invent one (swarm-<bench> is a guess, and it is the guess that killed every card on the Studio)",
+					reg.Path()))
+			continue
+		}
+		// The registry validates every other column and not this one, and the seat becomes
+		// a filename in the secrets store (<seat>.yaml, <seat>.key) and an argument to the
+		// launcher. A row that names something else is refused here rather than passed on.
+		if !plainSeat(seat) {
+			fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=seat-not-a-name seat=%s remedy=%q\n",
+				field(bench), field(seat), fmt.Sprintf(
+					"a seat is one plain name -- no space, no path separator, not `.` or `..` -- because it names a file in the secrets store; fix the seat column of %s",
+					reg.Path()))
+			continue
+		}
+		seats[bench] = seat
+		kept = append(kept, bench)
+	}
+	return seats, kept
+}
+
+// plainSeat says whether a seat is one plain name: the stem of a file in the secrets store,
+// and nothing that could reach out of it or split into two arguments.
+func plainSeat(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if strings.ContainsAny(s, `/\`) {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	})
 }
 
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
@@ -244,6 +305,14 @@ func Fill(in FillInput) int {
 			"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
 			in.Machines))
 	}
+	// THE SEAT COMES FROM THE ROW (#2014), resolved once, here, before a card moves.
+	seats, seated := benchSeats(in.Stderr, reg, in.Benches)
+	if len(seated) == 0 {
+		return refusal(in.Stderr, "FILL", fmt.Errorf(
+			"no named bench carries a seat in %s, so there is nothing to fill; every bench a card may run on needs its nova-secrets seat in the registry's seat column",
+			oneline.Field(in.Machines)))
+	}
+	in.Benches = seated
 	// Belt and braces: even a bench that passed the list check is asked again at the
 	// moment the card, or the capacity probe, would reach the machine.
 	in.Capacity = guardedCapacity{reg: reg, next: in.Capacity}
@@ -266,7 +335,7 @@ func Fill(in FillInput) int {
 			return 0
 		}
 		printDisabledLock(in.Stderr, reg)
-		lines, res := fillTick(in, tick)
+		lines, res := fillTick(in, seats, tick)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
 		}
@@ -307,7 +376,7 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // launched twice; a launcher that fails moves its card back and releases its lane. It
 // returns the FILL line first, then one FILL HELD line per held card, then the FILL REAPED
 // line when the tick took stale markers away.
-func fillTick(in FillInput, tick int) ([]string, tickResult) {
+func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
@@ -389,7 +458,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				live[lane] = base
 			}
 			want[i]--
-			if err := in.Launcher.Launch(bench, moved); err != nil {
+			if err := in.Launcher.Launch(bench, seats[bench], moved); err != nil {
 				failed[i]++
 				failLaunch(in, moved, base, lane, live, err)
 				if res.err == nil {
