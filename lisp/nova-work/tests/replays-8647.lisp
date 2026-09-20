@@ -314,3 +314,47 @@
                                        :role-limits '(:coordinator 1 :worker 2))))
     (check-equal nil (fallback-eligible-p approved-wide trial)
                  "a fallback exceeding the role limit was called eligible")))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F04AdmitEachRequestAgainstUntil (roadmap nova-work.sexp
+;;; E02-F04-02: "Admit each request against until and fence on expiry or
+;;; divergence"). SPEC-WORK.md:250-252 states admission is checked per
+;;; request, "a request that arrives after `until` is refused `fenced`";
+;;; SPEC-WORK.md:419-421 states a session whose clip is refused by
+;;; divergence is fenced (here the reconfirm RACED path).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F04AdmitEachRequestAgainstUntil" "docs/SPEC-WORK.md:250-252,419-421"
+    "expected=live-session-admits-up-to-until;post-until-write-refused-fenced-exit-1;diverged-tip-reconfirm-fences-session-raced"
+  ;; Expiry: a live session admits every request right up to `until`; the
+  ;; first request to arrive after `until` is refused `fenced` at exit 1 and
+  ;; the session self-fences.
+  (let ((sess (make-session :owner "emma" :generation 3 :token "tok-3"
+                            :until "2026-09-14T12:01:00Z" :base "abc123"
+                            :state :live :every "30s")))
+    (multiple-value-bind (admitted reason code)
+        (session-check-admission sess :state-to-doing :now "2026-09-14T12:00:59Z")
+      (declare (ignore reason))
+      (ok admitted "a request before `until` was refused")
+      (check-equal 0 code "a pre-`until` request did not exit 0")
+      (check-equal :live (session-state sess)
+                   "a pre-`until` request fenced the session"))
+    (multiple-value-bind (admitted reason code)
+        (session-check-admission sess :state-to-doing :now "2026-09-14T12:01:01Z")
+      (check-equal nil admitted "a request after `until` was admitted")
+      (check-equal 1 code "the post-`until` refusal is not exit 1")
+      (ok (search "fenced" reason) "the refusal does not name the fence: ~A" reason)
+      (check-equal :fenced (session-state sess)
+                   "a post-`until` request did not fence the session")))
+  ;; Divergence: a reconfirm whose tip moved off the session's base fences the
+  ;; session and reports the race.
+  (let ((sess (make-session :owner "emma" :generation 4 :token "tok-4"
+                            :until "2026-09-14T12:02:00Z" :base "abc123"
+                            :state :live :every "30s")))
+    (multiple-value-bind (okp line code)
+        (session-reconfirm sess "def456" :now "2026-09-14T12:01:00Z")
+      (check-equal nil okp "a diverged tip reconfirmed")
+      (check-equal 1 code "the divergence refusal is not exit 1")
+      (ok (search "SESSION RACED" line) "the divergence does not say RACED: ~A" line)
+      (check-equal :fenced (session-state sess)
+                   "the divergence did not fence the session"))))
