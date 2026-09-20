@@ -67,6 +67,11 @@ func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
 	}{
 		{"absent", "", []string{"--tokens"}},
 		{"zero", "0", []string{"--tokens"}},
+		// FULL STRING, not a numeric prefix (Stella HOLD on PR #2131): parseInt's
+		// Sscanf("%d") accepted "50oops" as 50, made the job tree, and printed
+		// budget=-/50. The word is a positive integer in full or the exact word
+		// unmetered.
+		{"malformed", "50oops", []string{"--tokens", "50oops"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, slot := aSlot(t)
