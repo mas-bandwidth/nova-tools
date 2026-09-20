@@ -128,8 +128,10 @@
     `--then` harvest launch chains is `harvest --id <id> --root <root>` with no `--bench`.
     Launch writes the pulse table's slot column as `-` before swarm allocates; a remote card's
     files come back at `<root>/<bench>-<n>/jobs/<label>/` (SPEC-SWARM, Three files come back).
-    Harvest opens that pulled directory when the named slot has no `RESULT.md`, so a card
-    whose files are already under the root is not counted `elsewhere` (issue #1907). When
+    Harvest opens the latest same-label job under the root (`RESULT.md` mtime, or a newer
+    live job directory with none), so a leftover `<root>/0/` or older scratch does not hide
+    the current pull, and a card whose files are already under the root is not counted
+    `elsewhere` (issue #1907). When
     `--root` names a bare swarm root with no `cards.tsv` — the caller handed cards straight to
     `nova-swarm batch` — `harvest` folds every `<root>/<slot>/jobs/<label>/RESULT.md` under it,
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to

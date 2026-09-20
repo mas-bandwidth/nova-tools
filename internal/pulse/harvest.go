@@ -441,15 +441,13 @@ func discoverRootCards(root string) []CardRow {
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.
 // Slot `-` (what launch writes before swarm allocates) is not that directory
-// after a --bench pull; when it has no RESULT.md, the pulled <bench>-<n> path
-// is used so the --then harvest can fold it (issue #1907).
+// after a --bench pull. The --then harvest then walks same-label job dirs and
+// takes the latest RESULT.md (or a newer live job dir with none), so a leftover
+// 0/ or older scratch does not hide the current pull (issue #1907).
 func jobDir(root, slot, label string) string {
 	named := namedJobDir(root, slot, label)
-	if resultAt(named) {
-		return named
-	}
 	if slot == "" || slot == "-" {
-		if found := findJobDir(root, label); found != "" {
+		if found := findLatestJobDir(root, label); found != "" {
 			return found
 		}
 	}
@@ -467,26 +465,34 @@ func namedJobDir(root, slot, label string) string {
 	return filepath.Join(root, slot, "jobs", label)
 }
 
-func resultAt(job string) bool {
-	_, err := os.Stat(filepath.Join(job, "RESULT.md"))
-	return err == nil
-}
-
-func findJobDir(root, label string) string {
+func findLatestJobDir(root, label string) string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return ""
 	}
+	var best string
+	var bestTime time.Time
+	found := false
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		dir := filepath.Join(root, e.Name(), "jobs", label)
-		if resultAt(dir) {
-			return dir
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		when := info.ModTime()
+		if ri, err := os.Stat(filepath.Join(dir, "RESULT.md")); err == nil {
+			when = ri.ModTime()
+		}
+		if !found || when.After(bestTime) {
+			best = dir
+			bestTime = when
+			found = true
 		}
 	}
-	return ""
+	return best
 }
 
 // cardContract is line 1 of a card's text file, the contract line its RESULT must equal.
