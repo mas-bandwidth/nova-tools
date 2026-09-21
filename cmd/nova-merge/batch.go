@@ -915,7 +915,9 @@ func parsePRList(raw string) ([]int, error) {
 // ciTestEnv is the environment every step runs in: a temp directory inside the batch's
 // own working directory, and CI's fair share of the machine when the caller named one.
 // GOMAXPROCS is what ci.yml's fair-share step sets and the only environment variable that
-// step sets; a zero share is this process's own, which is every core.
+// step sets; a zero share is this process's own, which is every core. SHLVL=1 is the
+// floor a child bash -u needs so it is not a top-level shell under SSH_CLIENT (#2499
+// item 4); checkChildEnv applies the same floor on the simulate path.
 func ciTestEnv(tmp string, gomaxprocs int) []string {
 	// goenv.Clean FIRST: every step below is a go command whose output this verb
 	// parses into packages and test names, and a caller's GOFLAGS=-json -- which CI's
@@ -926,7 +928,7 @@ func ciTestEnv(tmp string, gomaxprocs int) []string {
 	if gomaxprocs > 0 {
 		env = append(env, "GOMAXPROCS="+strconv.Itoa(gomaxprocs))
 	}
-	return env
+	return withSaneSHLVL(env)
 }
 
 // stepFailure is what a red step says: the failing packages, the failing tests, and the
