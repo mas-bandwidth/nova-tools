@@ -52,6 +52,18 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	specLines := f.fs.String("spec-lines", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
+
+	// v2 flags
+	v2 := f.fs.Bool("v2", false, "")
+	testCmd := f.fs.String("test-cmd", "", "")
+	priorDiff := f.fs.String("prior-diff", "", "")
+	reviewerLine := f.fs.String("reviewer-line", "", "")
+	failingOutput := f.fs.String("failing-output", "", "")
+	preflightCmd := f.fs.String("preflight-cmd", "", "")
+	location := f.fs.String("location", "", "")
+	testPkg := f.fs.String("test-pkg", "", "")
+	testFunc := f.fs.String("test-func", "", "")
+
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -70,5 +82,8 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 		Paths: *paths, TestName: *test,
 		Prior: *prior, Names: *names, SpecLines: *specLines,
 		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
+		V2: *v2, Location: *location, TestPackage: *testPkg, TestFunction: *testFunc,
+		TestCommand: *testCmd, ReviewerLine: *reviewerLine,
+		PriorDiff: *priorDiff, FailingOutput: *failingOutput, PreflightCmd: *preflightCmd,
 	})
 }

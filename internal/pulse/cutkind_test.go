@@ -296,3 +296,68 @@ func TestCutKindWritesPriorityLanes(t *testing.T) {
 		t.Fatalf("a read card is not in the green lane: %v", matches)
 	}
 }
+
+func TestCutKindV2Templates(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+
+	// 1. Recut kind generates Card Template v2
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind:          "recut",
+		Repo:          "mas-bandwidth/nova-tools",
+		Title:         "re-cut boundary failure",
+		Location:      "internal/pulse/cut.go:42",
+		TestPackage:   "./internal/pulse",
+		TestFunction:  "TestBoundary",
+		TestCommand:   "go test ./internal/pulse -run TestBoundary",
+		Paths:         "internal/pulse/cut.go",
+		ReviewerLine:  "DISPOSITION who=Rowan verdict=HOLD reason=test",
+		PriorDiff:     "--- a/old\n+++ b/new\n",
+		FailingOutput: "panic: nil pointer",
+		PreflightCmd:  "make preflight",
+		Out:           filepath.Join(dir, "recut"),
+		Queue:         queue,
+	})
+	if code != 0 {
+		t.Fatalf("recut failed (code %d): %s", code, errs)
+	}
+	if !strings.Contains(line, "kind=recut") {
+		t.Errorf("line = %q, want kind=recut", line)
+	}
+	if !strings.Contains(card, "COMMAND: go test ./internal/pulse -run TestBoundary") {
+		t.Errorf("card missing COMMAND:\n%s", card)
+	}
+	if !strings.Contains(card, "make preflight") {
+		t.Errorf("card missing preflight:\n%s", card)
+	}
+	if !strings.Contains(card, "## Inlined Evidence") {
+		t.Errorf("card missing inlined evidence:\n%s", card)
+	}
+	if !strings.Contains(card, "## Exemplar (recut)") {
+		t.Errorf("card missing exemplar:\n%s", card)
+	}
+
+	// 2. Fix with V2=true generates Card Template v2
+	code, _, errs, fixCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        123,
+		Title:        "v2 fix card",
+		Location:     "internal/pulse/queue.go:10",
+		TestCommand:  "go test ./internal/pulse -run TestQueue",
+		Paths:        "internal/pulse/queue.go",
+		PreflightCmd: "make preflight",
+		Out:          filepath.Join(dir, "fix-v2"),
+		Queue:        queue,
+	})
+	if code != 0 {
+		t.Fatalf("fix v2 failed (code %d): %s", code, errs)
+	}
+	if !strings.Contains(fixCard, "COMMAND: go test ./internal/pulse -run TestQueue") {
+		t.Errorf("fix v2 missing COMMAND:\n%s", fixCard)
+	}
+	if !strings.Contains(fixCard, "## Exemplar (fix)") {
+		t.Errorf("fix v2 missing exemplar:\n%s", fixCard)
+	}
+}

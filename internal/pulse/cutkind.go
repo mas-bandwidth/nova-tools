@@ -34,7 +34,7 @@ import (
 )
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "report", "recut"}
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "recut", "port", "docs-guard", "report"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
@@ -63,6 +63,17 @@ type CutKindInput struct {
 	Queue     string // the queue directory holding the state file and its lock
 	Stdout    io.Writer
 	Stderr    io.Writer
+
+	// V2 card template fields (Card Template v2, Items A1-A7)
+	V2            bool   // use Card Template v2
+	Location      string // file:line or spec location (A2)
+	TestPackage   string // test package (A2)
+	TestFunction  string // test function (A2)
+	TestCommand   string // one test command (A2)
+	ReviewerLine  string // inlined reviewer disposition line (A1)
+	PriorDiff     string // inlined prior diff (A1)
+	FailingOutput string // inlined failing test output (A1)
+	PreflightCmd  string // preflight command line (A3)
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -140,7 +151,7 @@ func cutKindLane(kind string, n int, body string) lanes.Card {
 	switch kind {
 	case "fix", "recut":
 		c.Red = true
-	case "read":
+	case "read", "docs-guard":
 		c.Approved = true
 	}
 	return c
@@ -149,10 +160,7 @@ func cutKindLane(kind string, n int, body string) lanes.Card {
 // cutKindSteps is the step budget each kind may spend, the number the lane
 // ordering compares.
 func cutKindSteps(kind string) int {
-	if textKinds[kind] {
-		return 8
-	}
-	return 20
+	return TurnBudgetV2(kind)
 }
 
 // cutKindProblem is every refusal this cutter has, each naming its remedy.
@@ -210,7 +218,9 @@ func cutKindProblem(in CutKindInput) string {
 		}
 	case "recut":
 		if strings.TrimSpace(in.DiffFile) == "" && strings.TrimSpace(in.HoldFile) == "" {
-			return "--diff-file or --hold-file is required for a recut card; a recut is cut from a prior diff or a typed HOLD (pass --diff-file <path> of the prior diff or --hold-file <path> of the typed HOLD)"
+			if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.ReviewerLine) == "" {
+				return "--diff-file or --hold-file is required for a recut card; a recut is cut from a prior diff or a typed HOLD (pass --diff-file <path> of the prior diff or --hold-file <path> of the typed HOLD)"
+			}
 		}
 		if in.DiffFile != "" {
 			if _, err := os.Stat(in.DiffFile); err != nil {
@@ -227,6 +237,16 @@ func cutKindProblem(in CutKindInput) string {
 			if err := cmd.Run(); err != nil {
 				return fmt.Sprintf("--dir %s is not a git repository (pass a git repository directory where git apply --3way can be tested)", oneline.Field(repoDir))
 			}
+		}
+	case "port":
+		if strings.TrimSpace(in.Title) == "" {
+			return "--title is required for a port card (pass the port contract)"
+		}
+	case "docs-guard":
+		// repo is checked above
+	case "report":
+		if strings.TrimSpace(in.Title) == "" {
+			return "--title is required for a report card (pass the measurement objective)"
 		}
 	}
 	return ""
@@ -257,6 +277,45 @@ func cutKindKnown(kind string) bool {
 // renderKindCard writes line 1, the source line, the prior attempt if there is one, the
 // kind's own instruction and the body.
 func renderKindCard(in CutKindInput, n int, body string, diffContent string) string {
+	if in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard" || in.Kind == "report" {
+		priorDiff := in.PriorDiff
+		if priorDiff != "" {
+			if raw, err := os.ReadFile(priorDiff); err == nil {
+				priorDiff = string(raw)
+			}
+		} else if diffContent != "" {
+			priorDiff = diffContent
+		}
+		failingOut := in.FailingOutput
+		if failingOut != "" {
+			if raw, err := os.ReadFile(failingOut); err == nil {
+				failingOut = string(raw)
+			}
+		}
+		card, err := RenderCardV2(CardV2Input{
+			Kind:          in.Kind,
+			Number:        n,
+			Repo:          in.Repo,
+			Title:         in.Title,
+			Branch:        in.Branch,
+			Base:          in.Base,
+			Location:      in.Location,
+			TestPackage:   in.TestPackage,
+			TestFunction:  in.TestFunction,
+			TestCommand:   in.TestCommand,
+			Paths:         in.Paths,
+			ReviewerLine:  in.ReviewerLine,
+			PriorDiff:     priorDiff,
+			FailingOutput: failingOut,
+			PreflightCmd:  in.PreflightCmd,
+			PR:            in.PR,
+			Issue:         in.Issue,
+			Head:          in.Head,
+		})
+		if err == nil {
+			return card
+		}
+	}
 	repo := repoShort(in.Repo)
 	var b strings.Builder
 	switch in.Kind {
