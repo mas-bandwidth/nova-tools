@@ -159,6 +159,12 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	owner := f.fs.String("owner", "", "")
 	label := f.fs.String("label", "", "")
 	all := f.fs.Bool("all", false, "")
+	// --force is the loud way to free a seat whose holder is still running (#1902). It
+	// exists because a person can know something the store cannot -- a holder on another
+	// host, a pid the kernel has since handed to somebody else -- and it is a flag rather
+	// than the default because freeing a live seat without stopping its holder is how two
+	// cards end up on a one-seat bench.
+	force := f.fs.Bool("force", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -173,13 +179,18 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	released, held, err := swarm.ReleaseSlotLeases(*store, *owner, *label, *all)
+	released, held, live, err := swarm.ReleaseSlotLeasesForcing(*store, *owner, *label, *all, *force)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm slots release: %s\n", oneline.Err(err))
 		return 2
 	}
-	fmt.Fprintf(stdout, "SLOTS RELEASED owner=%s released=%d held=%d\n",
-		oneline.Field(*owner), released, held)
+	fmt.Fprintf(stdout, "SLOTS RELEASED owner=%s released=%d held=%d live=%d\n",
+		oneline.Field(*owner), released, held, live)
+	if live > 0 {
+		fmt.Fprintf(stderr, "SLOTS KEPT owner=%s live=%d: a lease whose holder is still running is not freed, because freeing it does not stop the holder -- it only lets a second run take the same seat; stop the holder (slots list names its pid) or pass --force\n",
+			oneline.Field(*owner), live)
+		return 2
+	}
 	return 0
 }
 
