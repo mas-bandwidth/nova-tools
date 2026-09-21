@@ -53,14 +53,62 @@ func TestReadRegistryReadsEveryColumn(t *testing.T) {
 
 func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *testing.T) {
 	path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", "eight runners beside the cards"))
-	_, err := ReadRegistry(path)
-	if err == nil {
-		t.Fatal("a shared runner+bench with no allow-shared note was accepted")
+	reg, err := ReadRegistry(path)
+	if err != nil {
+		t.Fatalf("a shared row without the note refused the whole registry: %v", err)
 	}
-	for _, want := range []string{"hulk", "line 1", "allow-shared"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal %q does not name %q", err, want)
+	if _, ok := reg.Lookup("hulk"); ok {
+		t.Fatal("the poisoned row was in the bench set")
+	}
+	err = reg.RequireBench("hulk")
+	var refusal *Refusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("RequireBench returned %v, want *Refusal", err)
+	}
+	if refusal.Reason != ReasonSharedWithoutNote {
+		t.Errorf("reason is %q, want %q", refusal.Reason, ReasonSharedWithoutNote)
+	}
+	if got := reg.LockFailed(); len(got) != 1 || got[0].Name != "hulk" {
+		t.Errorf("LockFailed = %v, want hulk", got)
+	}
+	for _, want := range []string{"hulk", "allow-shared"} {
+		if !strings.Contains(refusal.Remedy, want) {
+			t.Errorf("remedy %q does not name %q", refusal.Remedy, want)
 		}
+	}
+}
+
+// TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow is the registry half of
+// #2031: one bench,runner row without allow-shared= must not make ReadRegistry fail the
+// whole file. The four neighbours still load; the poisoned name is not a bench.
+func TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow(t *testing.T) {
+	var body strings.Builder
+	for _, name := range []string{"b1", "b2", "b3", "b4"} {
+		body.WriteString(row(name, name, "linux/x64", "bench", "swarm-"+name, "64", "-"))
+	}
+	body.WriteString(row("hetzner", "hetzner", "linux/x64", "bench,runner", "swarm-hetzner", "64", "added with no allow-shared note"))
+	reg, err := ReadRegistry(write(t, body.String()))
+	if err != nil {
+		t.Fatalf("one poisoned row among five refused the whole registry: %v", err)
+	}
+	for _, name := range []string{"b1", "b2", "b3", "b4"} {
+		if _, ok := reg.Lookup(name); !ok {
+			t.Errorf("neighbour %s is missing", name)
+		}
+		if err := reg.RequireBench(name); err != nil {
+			t.Errorf("neighbour %s was refused as a bench: %v", name, err)
+		}
+	}
+	err = reg.RequireBench("hetzner")
+	var refusal *Refusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("RequireBench(hetzner) returned %v, want *Refusal", err)
+	}
+	if refusal.Reason != ReasonSharedWithoutNote {
+		t.Errorf("reason is %q, want %q", refusal.Reason, ReasonSharedWithoutNote)
+	}
+	if got := reg.LockFailed(); len(got) != 1 || got[0].Name != "hetzner" {
+		t.Errorf("LockFailed = %v, want hetzner", got)
 	}
 }
 
@@ -88,8 +136,13 @@ func TestReadRegistryRefusesASharedNoteWithNoDateAndOneWithNoReason(t *testing.T
 		"bad date":  "allow-shared=18-09-2026 the pull worker does not containerise cards yet",
 	} {
 		path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", note))
-		if _, err := ReadRegistry(path); err == nil {
-			t.Errorf("%s: %q was accepted", name, note)
+		reg, err := ReadRegistry(path)
+		if err != nil {
+			t.Errorf("%s: the whole registry was refused: %v", name, err)
+			continue
+		}
+		if err := reg.RequireBench("hulk"); err == nil {
+			t.Errorf("%s: %q was accepted as a bench", name, note)
 		}
 	}
 }

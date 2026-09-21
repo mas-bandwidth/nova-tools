@@ -513,3 +513,28 @@ func newLeaseNonce() string {
 	}
 	return hex.EncodeToString(b[:])
 }
+
+// THE SLOT LEASE (issue #1901). The bench store's lease is a COUNT: it says an owner is
+// holding n seats, and it does not say WHICH slot directory a seat is. So two `native`
+// runs with the same --slot and DIFFERENT --label each took a seat, each took its own
+// job lease -- #1585's refusal is about one job directory, and these are two -- and both
+// started against one `<slot>/data`, which is one HOME, one cache and one opencode.db.
+// SPEC-SWARM under **Slots** says a worker has "its own data home" and "a slot is held by
+// exactly one worker"; under **the races, taken out**, two workers on one data home IS the
+// 2026-09-10 `database is locked` failure, closed on purpose.
+//
+// The slot lease is the job lease pointed at the slot directory, and it is the same file
+// format, the same four rules and the same pid-and-nonce fence -- published whole, an
+// unparseable record held rather than assumed dead, a failure to establish ownership a
+// refusal, and a release that only removes a record that is still this run's. There is no
+// second spelling of ownership on this bench.
+//
+// It is taken AFTER the job lease so that two runs sharing one job directory keep saying
+// exactly what #1585 made them say. The label it carries is this run's, so the refusal can
+// name the card that is holding the slot.
+func StartSlotLease(slotDir, label string) (release func(), err error) {
+	return StartJobLease(slotDir, label)
+}
+
+// SlotLeaseName is where the slot lease lives: <slot>/.lease, beside jobs/ and data/.
+const SlotLeaseName = JobLeaseName

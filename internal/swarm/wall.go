@@ -149,10 +149,15 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 			// The sandbox's refusal names the path it would not open in its own text; a
 			// refusal that names none is still this class, and its path is the dash.
 			return WallRefusal{Path: wallPathToken(line), Step: WallStep(log)}, true
-		case strings.Contains(line, OperationNotPermittedMark):
+		case strings.Contains(line, OperationNotPermittedMark), strings.Contains(line, PermissionDeniedMark):
 			// ON A PATH. A bare `Operation not permitted` is a permission failure about
 			// something that is not a path -- a signal, a socket -- and is not the wall
-			// refusing a read or a write outside the write set.
+			// refusing a read or a write outside the write set. The same guard carries the
+			// LINUX spelling: landlock refuses with EACCES and the C library says
+			// `Permission denied`, measured inside the swarm's own wall on hulk, so before
+			// this mark existed no linux refusal was classified at all -- and `Permission
+			// denied` is a sentence a card's own test output is full of, which is exactly
+			// why it counts only when the line names a path.
 			if p := wallPathToken(line); p != "" {
 				return WallRefusal{Path: p, Step: WallStep(log)}, true
 			}

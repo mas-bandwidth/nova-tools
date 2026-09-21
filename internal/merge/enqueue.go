@@ -29,12 +29,12 @@ import (
 //     lane cannot reason about. (The tool's own guard has refused --auto since #922;
 //     internal/ci's class test now refuses the whole `pr merge` spelling in the tools.)
 //
-//   - IT REFUSES ANYTHING THAT IS NOT A BATCH. A pull request may be admitted when its
-//     head branch is a batch's own -- rowan/integration-* , the shape `nova-merge batch`
-//     builds and nothing else does -- or when the caller presents THAT HEAD'S BATCH OK
-//     receipt, the line the landing gate printed after it built, vetted, tested and ran
-//     the lisp suite over the merged tree. No receipt, no entry. A green card's branch is
-//     not an entry: it is a member of a batch somebody has yet to build.
+//   - IT REFUSES ANYTHING THAT IS NOT A BATCH. A pull request is admitted only when the
+//     caller presents THAT HEAD'S BATCH OK receipt, the line the landing gate printed
+//     after it built, vetted, tested and ran the lisp suite over the merged tree. No
+//     receipt, no entry. A head under rowan/integration-* is a branch a card can also
+//     write (#1898), not evidence the gate ran, and it is not a key. A green card's
+//     branch is not an entry: it is a member of a batch somebody has yet to build.
 //
 // The forge is an interface for the usual two reasons: the tests must be able to say what
 // the forge answered, and the one implementation that shells to gh is then a thing a
@@ -42,8 +42,8 @@ import (
 
 // BatchBranchPrefix is the shape of a batch's own branch in this repository: `nova-merge
 // batch --name integration-6` builds rowan/integration-6 and pushes nothing, and the
-// caller opens the pull request from it. A head under this prefix needs no receipt because
-// the branch is one.
+// caller opens the pull request from it. A head under this prefix is not a receipt: a
+// card writes the same string (#1898).
 const BatchBranchPrefix = "rowan/integration-"
 
 // batchOKPrefix is the gate's verdict line, from cmd/nova-merge/batch.go:
@@ -147,14 +147,10 @@ func admissible(pr EnqueuePR) error {
 	if pr.Number < 1 {
 		return &EnqueueRefusal{PR: pr.Number, Why: fmt.Sprintf("%d is not a pull request's number", pr.Number)}
 	}
-	batch := IsBatchBranch(pr.HeadRef)
 	receipt := strings.TrimSpace(pr.Receipt)
 	if receipt == "" {
-		if batch {
-			return nil
-		}
 		return &EnqueueRefusal{PR: pr.Number, Why: fmt.Sprintf(
-			"its head branch is %q, and the queue takes a batch: a head under %s*, or a --batch receipt (the BATCH OK line) for this very head. Build one: nova-merge batch --name integration-<n> --pr <list> --repo <owner>/<name> --root <dir>",
+			"its head branch is %q, and the queue takes a batch: a --batch receipt (the BATCH OK line) for this very head. A head under %s* is a branch a card can also write, not evidence the gate ran. Build one: nova-merge batch --name integration-<n> --pr <list> --repo <owner>/<name> --root <dir>",
 			oneline.Field(pr.HeadRef), BatchBranchPrefix)}
 	}
 	rec, err := ParseBatchReceipt(receipt)

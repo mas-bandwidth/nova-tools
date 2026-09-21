@@ -1,8 +1,6 @@
 package pulse
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -412,14 +410,9 @@ func resultIsOneLine(tmpl string, c validatedCard) bool {
 }
 
 // renderValidated fills the slots, then binds line 1 by replacing <sha12> with the sha-12 of
-// everything below line 1.
+// everything below line 1 (contractSHA12).
 func renderValidated(tmpl string, c validatedCard) string {
-	rendered := substituteSlots(tmpl, c)
-	lines := strings.Split(rendered, "\n")
-	body := strings.Join(lines[1:], "\n")
-	sum := sha256.Sum256([]byte(body))
-	lines[0] = strings.ReplaceAll(lines[0], "<sha12>", hex.EncodeToString(sum[:])[:12])
-	return strings.Join(lines, "\n")
+	return contractSHA12(substituteSlots(tmpl, c))
 }
 
 // substituteSlots fills the named slots and the built-in <label>.
