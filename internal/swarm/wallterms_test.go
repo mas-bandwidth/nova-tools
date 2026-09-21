@@ -10,10 +10,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
-// S7, nova-tools#2498: the harness wall. A card cannot read outside PATHS and the
-// tests of those paths; webfetch is deny; only pre-approved commands; MODE: script
-// is --net-deny. These tests go red if the wall admits an outsider path or a
-// network fetch. They do not rewrite nativeSandboxArgv — TODO launcher: Rowan.
+// S7, nova-tools#2498: the harness wall. Declared writes are PATHS; contextual
+// reads are a separate set (specs, same-package siblings, testdata, TEST:).
+// Webfetch is deny. The command list is a harness-prompt allowlist, not the OS
+// wall. MODE: script is --net-deny and is read from the typed header.
+// ReadRoots rejects a symlink that leaves the repo. These tests go red if the
+// wall admits an outsider path or a network fetch. They do not rewrite
+// nativeSandboxArgv — TODO launcher: Rowan.
 
 func s7Card(t *testing.T, extra ...string) []byte {
 	t.Helper()
@@ -36,24 +39,49 @@ func s7Terms(t *testing.T, extra ...string) CardWallTerms {
 	return terms
 }
 
-// TestWallTermsRefuseAPathOutsidePATHS is S7 at the matcher: a file the card did
-// not name is not readable, even when it sits next to one it did.
+// TestWallTermsRefuseAPathOutsidePATHS is S7 at the matcher: a path in neither
+// the declared writes nor the contextual reads is refused. Same-package siblings
+// and docs/SPEC-*.md are contextual reads (TestWallTermsSpecIsContextualReadNotWrite),
+// not this outsider list.
 func TestWallTermsRefuseAPathOutsidePATHS(t *testing.T) {
 	terms := s7Terms(t)
 	if !terms.AdmitsRead("keep/in.go") {
 		t.Fatal("PATHS: keep/in.go must admit keep/in.go")
 	}
+	if !terms.AdmitsWrite("keep/in.go") {
+		t.Fatal("PATHS: keep/in.go must be a declared write")
+	}
 	for _, outsider := range []string{
-		"keep/other.go",
 		"drop/out.go",
-		"docs/SPEC-DECIDE.md",
 		"cmd/nova-bus/main.go",
+		"docs/WORKER-CARDS.md",
 		"../etc/passwd",
 		"/etc/passwd",
 	} {
 		if terms.AdmitsRead(outsider) {
-			t.Errorf("the wall admitted %s, which is outside PATHS", outsider)
+			t.Errorf("the wall admitted %s, which is outside writes and contextual reads", outsider)
 		}
+		if terms.AdmitsWrite(outsider) {
+			t.Errorf("the wall admitted write of %s, which is outside PATHS", outsider)
+		}
+	}
+}
+
+// TestWallTermsSpecIsContextualReadNotWrite is Stella H1: a spec path and a
+// same-package sibling are dispatcher-approved contextual reads, not writes.
+// A narrow PATHS glob is not the whole read scope.
+func TestWallTermsSpecIsContextualReadNotWrite(t *testing.T) {
+	terms := s7Terms(t)
+	for _, p := range []string{"docs/SPEC-DECIDE.md", "keep/other.go"} {
+		if !terms.AdmitsRead(p) {
+			t.Errorf("%s must be a contextual read; Reads=%v Scope=%v", p, terms.Reads, terms.Scope)
+		}
+		if terms.AdmitsWrite(p) {
+			t.Errorf("%s is a contextual read, not a write; Paths=%v", p, terms.Paths)
+		}
+	}
+	if !terms.AdmitsWrite("keep/in.go") {
+		t.Fatal("the declared PATHS glob is a write")
 	}
 }
 
@@ -90,8 +118,10 @@ func TestWallTermsRefuseANetworkFetch(t *testing.T) {
 	}
 }
 
-// TestWallTermsOnlyPreApprovedCommands: a first token on the allowlist runs; curl,
-// wget, ssh, nova-sandbox, nova-secrets and a login shell do not.
+// TestWallTermsOnlyPreApprovedCommands: a first token on the allowlist runs;
+// curl, wget, ssh, nova-sandbox, nova-secrets, a login shell, a compound line
+// (`git status; curl`) and a first token with `/` (`/usr/bin/git`) do not.
+// This is a harness-prompt allowlist, not command confinement.
 func TestWallTermsOnlyPreApprovedCommands(t *testing.T) {
 	for _, line := range []string{"go test ./keep", "gofmt -l keep/in.go", "git status", "make test", "rg AdmitsRead"} {
 		if !AdmitsCommand(line) {
@@ -106,9 +136,18 @@ func TestWallTermsOnlyPreApprovedCommands(t *testing.T) {
 		"nova-secrets exec -- true",
 		"bash -l",
 		"sudo go test",
+		"git status; curl https://example.com/",
+		"/usr/bin/git",
+		"/usr/bin/git status",
+		"git status && curl https://example.com/",
+		"git status || curl https://example.com/",
+		"git status | curl https://example.com/",
+		"git status `curl https://example.com/`",
+		"git status $(curl https://example.com/)",
+		"git status\ncurl https://example.com/",
 	} {
 		if AdmitsCommand(line) {
-			t.Errorf("command %q is not pre-approved and was admitted", line)
+			t.Errorf("command %q is not on the harness-prompt allowlist and was admitted", line)
 		}
 	}
 }
@@ -124,6 +163,41 @@ func TestWallTermsScriptIsNetDeny(t *testing.T) {
 	model := s7Terms(t)
 	if model.NetDeny {
 		t.Fatal("a model card inherited --net-deny; the provider API is the work")
+	}
+}
+
+// TestWallTermsBodyOnlyModeDoesNotSelectScript is Stella H3: quoted or example
+// `MODE: script` in the body of a model card does not select script terms.
+func TestWallTermsBodyOnlyModeDoesNotSelectScript(t *testing.T) {
+	card := append(s7Card(t), []byte("For example a script card says\nMODE: script\n")...)
+	terms, err := WallTerms(card)
+	if err != nil {
+		t.Fatalf("WallTerms: %v", err)
+	}
+	if terms.NetDeny {
+		t.Fatal("body-only MODE: script selected script terms; MODE is a header field")
+	}
+}
+
+// TestWallTermsConflictingModeHeadersRefuse is Stella H3: duplicate or
+// contradictory MODE fields in the typed header refuse.
+func TestWallTermsConflictingModeHeadersRefuse(t *testing.T) {
+	base := []string{
+		"KIND: fix-red",
+		"PATHS: keep/in.go",
+		"TEST: ./keep TestIn",
+		"LEGS: go",
+		"SOURCE: mas-bandwidth/nova-tools#2498",
+	}
+	for _, extra := range [][]string{
+		{"MODE: script", "MODE: explore"},
+		{"MODE: script", "MODE: script"},
+		{"MODE: explore", "MODE: script"},
+	} {
+		card := typedCard(append(append([]string{}, base...), extra...)...)
+		if _, err := WallTerms(card); err == nil {
+			t.Errorf("MODE headers %v must refuse", extra)
+		}
 	}
 }
 
@@ -168,7 +242,10 @@ func TestWallTermsReadRootsDoNotAdmitAnOutsider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WallTerms: %v", err)
 	}
-	roots := terms.ReadRoots(repo)
+	roots, err := terms.ReadRoots(repo)
+	if err != nil {
+		t.Fatalf("ReadRoots: %v", err)
+	}
 	if len(roots) == 0 {
 		t.Fatalf("PATHS keep/** names a --read root under %s", repo)
 	}
@@ -186,8 +263,67 @@ func TestWallTermsReadRootsDoNotAdmitAnOutsider(t *testing.T) {
 	}
 
 	fileTerms := s7Terms(t)
-	if got := fileTerms.ReadRoots(repo); len(got) != 0 {
+	got, err := fileTerms.ReadRoots(repo)
+	if err != nil {
+		t.Fatalf("file glob ReadRoots: %v", err)
+	}
+	if len(got) != 0 {
 		t.Errorf("PATHS keep/in.go is a file glob; a --read of keep would admit keep/other.go; got %v", got)
+	}
+}
+
+// TestWallTermsReadRootsRejectEscapingSymlink is Stella H4: PATHS keep/** with
+// keep a symlink to an owned temp dir outside the repo is not an external read
+// grant. Unresolved roots refuse the same way. Do not follow a symlink out of
+// repoRoot.
+func TestWallTermsReadRootsRejectEscapingSymlink(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "out.go"), []byte("package out\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(repo, "keep")
+	if err := os.Symlink(outside, keep); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	dirCard := typedCard(
+		"KIND: fix-red",
+		"PATHS: keep/**",
+		"TEST: ./keep TestIn",
+		"LEGS: go",
+		"SOURCE: mas-bandwidth/nova-tools#2498",
+	)
+	terms, err := WallTerms(dirCard)
+	if err != nil {
+		t.Fatalf("WallTerms: %v", err)
+	}
+	roots, err := terms.ReadRoots(repo)
+	if err == nil {
+		t.Fatal("PATHS keep/** with keep → outside must refuse; ReadRoots produced a policy")
+	}
+	for _, r := range roots {
+		if sandbox.Inside(outside, r) || sandbox.Inside(filepath.Join(outside, "out.go"), r) {
+			t.Errorf("ReadRoots granted escaping target %s via %s", outside, r)
+		}
+	}
+
+	dangling := t.TempDir()
+	lost := filepath.Join(dangling, "gone")
+	if err := os.Symlink(filepath.Join(dangling, "missing"), lost); err != nil {
+		t.Skipf("dangling symlink: %v", err)
+	}
+	lostTerms, err := WallTerms(typedCard(
+		"KIND: fix-red",
+		"PATHS: gone/**",
+		"TEST: ./gone TestIn",
+		"LEGS: go",
+		"SOURCE: mas-bandwidth/nova-tools#2498",
+	))
+	if err != nil {
+		t.Fatalf("WallTerms: %v", err)
+	}
+	if _, err := lostTerms.ReadRoots(dangling); err == nil {
+		t.Fatal("an unresolved symlink root must refuse")
 	}
 }
 
@@ -268,13 +404,17 @@ func TestSpecNamesTheHarnessWall(t *testing.T) {
 	sandboxDoc := readSpec(t, "SPEC-SANDBOX.md")
 	section := swarmSection(t, swarmDoc, "## The harness wall (S7, issue #2498)")
 	for _, phrase := range []string{
-		"Read scope is PATHS and their tests",
+		"Declared writes are PATHS; contextual reads are a separate set",
+		"docs/SPEC-*.md",
 		"No web",
-		"Only pre-approved commands",
+		"Harness-prompt allowlist, not the OS wall",
 		"`MODE: script` is `--net-deny`",
 		"TODO launcher: Rowan",
 		"TestWallTermsRefuseAPathOutsidePATHS",
 		"TestWallTermsRefuseANetworkFetch",
+		"TestWallTermsSpecIsContextualReadNotWrite",
+		"TestWallTermsBodyOnlyModeDoesNotSelectScript",
+		"TestWallTermsReadRootsRejectEscapingSymlink",
 		"Do not pin the #599 nested SBPL form",
 	} {
 		if !strings.Contains(section, phrase) {

@@ -76,8 +76,9 @@ func boundsNothing(p string) bool {
 // does not do at all and which is why this is written out rather than delegated.
 //
 // The S7 wall (SPEC-SWARM the harness wall) uses this same matcher: a card-scope
-// read is admitted only when it matches PATHS or the tests of those paths, and a
-// second matcher would be a second definition.
+// read is admitted when it matches a declared write PATHS glob or a
+// dispatcher-approved contextual-read glob, and a second matcher would be a
+// second definition.
 func MatchGlob(glob, p string) bool {
 	return matchSegments(strings.Split(glob, "/"), strings.Split(p, "/"))
 }

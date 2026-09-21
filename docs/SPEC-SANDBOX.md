@@ -2021,11 +2021,14 @@ form Apple will load. Do not pin the #599 nested SBPL form
 `(local ip (host ..) (port ..))`. `sandbox-exec` is exit 65, unbound
 variable: host. `--net-allow` is not on origin/dev.
 
-The card-scope read set is still PATHS and their tests (SPEC-SWARM the harness
-wall). A directory glob may be a `--read` today; a file glob may not, because
-`--read` of its parent admits siblings. Tests:
-`TestWallTermsScriptIsNetDeny`, `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`,
-`TestWallTermsRefuseANetworkFetch`.
+The card-scope read set is declared writes (PATHS) plus dispatcher-approved
+contextual reads (SPEC-SWARM the harness wall). A directory glob may be a
+`--read` today; a file glob may not, because `--read` of its parent admits
+siblings. A `--read` root that follows a symlink out of the repository is
+refused. Tests: `TestWallTermsScriptIsNetDeny`,
+`TestWallTermsBodyOnlyModeDoesNotSelectScript`,
+`TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`,
+`TestWallTermsRefuseANetworkFetch`, `TestWallTermsReadRootsRejectEscapingSymlink`.
 
 **A solo line's launcher.** A line started by hand gets no swarm, and it gets
 the wall only through its launcher. Its launcher calls `nova-sandbox` with lists **per line** — its home,
@@ -2686,11 +2689,14 @@ And one for each thing the rules above assert but no test yet reached:
     inside a `--write` by construction — the guard refused the tool's own
     `probe` before that second exemption existed.
 30. **MODE: script is `--net-deny` (S7, issue #2498).** A policy built with
-    `NetDeny` from `WallTerms` of a `MODE: script` card prints `net=denied`.
+    `NetDeny` from `WallTerms` of a header `MODE: script` card prints
+    `net=denied`. Body-only `MODE: script` does not select script terms.
     `--read` of a PATHS directory glob does not admit a path outside PATHS
-    (`sandbox.Inside`). A dest grant, if named, is `(remote ip "localhost:PORT")`.
+    (`sandbox.Inside`), and a symlink root that leaves the repository is
+    refused. A dest grant, if named, is `(remote ip "localhost:PORT")`.
     Do not pin the #599 nested SBPL form. **TODO launcher: Rowan** wires the
-    flag onto the argv; the terms are `TestWallTermsScriptIsNetDeny` and
+    flag onto the argv; the terms are `TestWallTermsScriptIsNetDeny`,
+    `TestWallTermsBodyOnlyModeDoesNotSelectScript` and
     `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`.
 
 ## The work list
