@@ -26,7 +26,7 @@ reads the counts in the morning; the tool has no clock of its own — no daemon,
 no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
-`nova-version snapshot --file <manifest>` reads the adopted rule-2 manifest and reports its entry count on a single `SNAPSHOT OK known=<n> file=<path>` line. A directory scan would count every `nova-*` executable found there — 32 where the person adopted 16 — so the verb reports the manifest, never a scan.
+`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the single `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, exit 1 when any adopted tool is unknown — the adopted 16, never how many `nova-*` executables sit on a bin dir or PATH (Stella, #622). A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4). The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
 
 ## The rules, numbered
 
@@ -409,9 +409,11 @@ in the binary, so the spec and the help cannot drift apart; the five `release` l
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>` reports
-the adopted manifest, not every executable on PATH (the opening paragraph);
-its `help` prints those three lines the same way.
+name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>`
+counts the adopted tools the manifest names (the opening paragraph), while snapshot's
+`--bin/--out` shape inventories a directory and `diff` compares two inventories: its
+`help` prints those lines the same way, snapshot's `--file` reading the adopted manifest
+where report's `--snapshot <path>` option is the recovery state file.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
 
