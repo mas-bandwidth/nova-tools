@@ -1,0 +1,129 @@
+package swarm
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+)
+
+func TestSpecNamesSparseCheckoutOfPATHSPackages(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	if err != nil {
+		t.Fatalf("SPEC-SWARM.md is missing: %s", err)
+	}
+	doc := strings.Join(strings.Fields(string(raw)), " ")
+	for _, phrase := range []string{
+		"## Sparse checkout of PATHS packages (#2498 S10)",
+		"minimal tree",
+		"those packages and their in-module dependencies only",
+		"A package the card did not name is not materialized",
+		"The named package's tests still run",
+		"TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage",
+		"TestPrepareStagesASparseJobClone",
+	} {
+		if !strings.Contains(doc, phrase) {
+			t.Errorf("SPEC-SWARM.md does not name the sparse-checkout rule keyed by %q", phrase)
+		}
+	}
+}
+
+// #2498 S10: staging for a card with PATHS checks out the declared packages and
+// their in-module dependencies only. A fixture PATHS list must not materialize
+// an unrelated package; the named package's tests still run.
+func TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeSparseFixture(t, src)
+
+	dest := filepath.Join(root, "job", "repo")
+	card := []byte("" +
+		"RESULT: s10-sparse sha=000000000000\n" +
+		"KIND: fix-red\n" +
+		"PATHS: pkg/named/**\n" +
+		"TEST: ./pkg/named TestHello\n" +
+		"LEGS: go\n" +
+		"SOURCE: mas-bandwidth/nova-tools#2498\n")
+	if err := StageJobTree(src, dest, card); err != nil {
+		t.Fatalf("StageJobTree: %v", err)
+	}
+
+	named := filepath.Join(dest, "pkg", "named", "named.go")
+	if _, err := os.Stat(named); err != nil {
+		t.Fatalf("the named package was not checked out: %v", err)
+	}
+	dep := filepath.Join(dest, "pkg", "dep", "dep.go")
+	if _, err := os.Stat(dep); err != nil {
+		t.Fatalf("the named package's dependency was not checked out: %v", err)
+	}
+	unrelated := filepath.Join(dest, "pkg", "unrelated", "unrelated.go")
+	if _, err := os.Stat(unrelated); !os.IsNotExist(err) {
+		t.Fatalf("PATHS named pkg/named/** but the unrelated package was materialized at %s (err=%v)", unrelated, err)
+	}
+
+	cmd := exec.Command("go", "test", "./pkg/named")
+	cmd.Dir = dest
+	cmd.Env = append(goenv.Clean(os.Environ()), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.Contains(string(out), "FAIL") {
+		t.Fatalf("the named package's tests still have to run in the sparse clone: %v\n%s", err, out)
+	}
+}
+
+func writeSparseFixture(t *testing.T, src string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(src, "go.mod"), "module example.com/s10sparse\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(src, "pkg", "named", "named.go"), ""+
+		"package named\n\n"+
+		"import \"example.com/s10sparse/pkg/dep\"\n\n"+
+		"func Hello() string { return dep.Word() }\n")
+	mustWrite(t, filepath.Join(src, "pkg", "named", "named_test.go"), ""+
+		"package named\n\n"+
+		"import \"testing\"\n\n"+
+		"func TestHello(t *testing.T) {\n"+
+		"	if Hello() != \"ok\" {\n"+
+		"		t.Fatalf(\"Hello() = %q\", Hello())\n"+
+		"	}\n"+
+		"}\n")
+	mustWrite(t, filepath.Join(src, "pkg", "dep", "dep.go"), ""+
+		"package dep\n\n"+
+		"func Word() string { return \"ok\" }\n")
+	mustWrite(t, filepath.Join(src, "pkg", "unrelated", "unrelated.go"), ""+
+		"package unrelated\n\n"+
+		"func Noise() string { return \"no\" }\n")
+	gitT(t, "", "init", "-q", "-b", "main", src)
+	gitT(t, src, "add", "-A")
+	gitT(t, src, "commit", "-q", "-m", "fixture")
+}
+
+// prepare is the staging path: given a reference checkout, it stages <job>/repo
+// as the sparse clone before the worker starts.
+func TestPrepareStagesASparseJobClone(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeSparseFixture(t, src)
+	workerDir := filepath.Join(root, "home")
+	if err := os.MkdirAll(workerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := Worker{WorkerDir: workerDir, Provider: "opencode", Model: "x", EnvVar: "X_API_KEY"}
+	jobDir := w.JobDir(1, "s10")
+	run := RunInput{Worker: w, CloneFrom: src}
+	card := []byte("PATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
+	if err := run.prepare(Sidecar{ID: "s10"}, card, 1, jobDir); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	repo := filepath.Join(jobDir, JobRepo)
+	if _, err := os.Stat(filepath.Join(repo, "pkg", "named", "named.go")); err != nil {
+		t.Fatalf("prepare did not stage the named package: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "pkg", "dep", "dep.go")); err != nil {
+		t.Fatalf("prepare did not stage the named package's dependency: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "pkg", "unrelated", "unrelated.go")); !os.IsNotExist(err) {
+		t.Fatalf("prepare materialized an unrelated package at %s (err=%v)", filepath.Join(repo, "pkg", "unrelated", "unrelated.go"), err)
+	}
+}
