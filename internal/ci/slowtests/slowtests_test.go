@@ -142,3 +142,21 @@ func TestSlowTestsOverPackagesAreOrderedWorstFirst(t *testing.T) {
 		t.Errorf("second over line = %q, want the smaller offender second", lines[1])
 	}
 }
+
+// TestEvents tests the slowtests engine: Parse and Sum take events and budget
+// from the caller, feed TestEvent lines through them, and assert the verdict.
+func TestEvents(t *testing.T) {
+	fixture := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
+`
+	report := Sum(slowEvents(t, fixture), slowBudget)
+	if got, want := report.ExitCode(), 0; got != want {
+		t.Errorf("ExitCode = %d, want %d", got, want)
+	}
+	if got, want := report.Packages, 1; got != want {
+		t.Errorf("Packages = %d, want %d", got, want)
+	}
+	if got, want := report.OKLine(), "CI-SLOW OK packages=1 slowest=example.com/pkg:3.2s"; got != want {
+		t.Errorf("OKLine = %q, want %q", got, want)
+	}
+}
