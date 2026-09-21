@@ -2347,7 +2347,19 @@ root, or a `Runner.Worker`, is `FLEET <bench> BUSY <what>`, exit 2, and is never
 
 Each verb narrates on stderr while it waits on a machine (`STANDARD WALK bench=… checks=…`,
 `STANDARD DONE … elapsed=…`), so a step over a tenth of a second says what it is doing; the
-bench lines themselves stay on stdout.
+### fleet keeper
+
+```
+nova-pulse fleet keeper [--install-launchd] [--inspect] [--status] [--unload] [--generate] [--unit dealer|backpressure|harvest|sprint|all] [--dir <dir>] [--work-dir <dir>] [--bin-dir <dir>] [--log-dir <dir>]
+```
+
+`fleet keeper` manages Darwin launchd units with `KeepAlive: true` for persistent loops on the Mac Studio (Essential 10 of #2458, #2459). It supports the four coordinator engines:
+- `dealer`: deals cards from ready/front queues into per-bench queues in proportion to free slots
+- `backpressure`: monitors reading debt and writes `queue/control/BACKPRESSURE`
+- `harvest`: folds finished cards into pushed branches and PRs
+- `sprint`: monitors fleet capacity, throughput and sprint tables
+
+Units are installed to `~/Library/LaunchAgents` by default (or `--dir <path>`) with `RunAtLoad: true`, `KeepAlive: true`, and standard environment variables.
 
 ### hygiene
 

@@ -58,6 +58,7 @@ nova-pulse fleet   standard --benches <file> --bench <name> [--machines <file>] 
 nova-pulse fleet   mirror --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse fleet   keeper [--install-launchd] [--inspect] [--status] [--unload] [--generate] [--unit dealer|backpressure|harvest|sprint|all] [--dir <dir>] [--work-dir <dir>] [--bin-dir <dir>] [--log-dir <dir>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
