@@ -392,6 +392,46 @@ func TestCutHoldsToOneModel(t *testing.T) {
 	}
 }
 
+// cut-validate-contract-refuses-a-locator-that-does-not-resolve: with
+// --validate-contract, a candidate whose locator does not resolve is refused at cut
+// with the reason, and no card file is written -- the preflight refuses a dead repo
+// before admission and the scaffold ever spend a token (issue #675).
+func TestCutValidateContractRefusesALocatorThatDoesNotResolve(t *testing.T) {
+	specs := fakePATH(t)
+	ghLog := filepath.Join(t.TempDir(), "gh-argv.log")
+	fakeTool(t, specs, "gh", fakeSpec{Log: ghLog, Default: fakeRule{Exit: 1}})
+
+	td := t.TempDir()
+	tmpl := filepath.Join(td, "templates")
+	out := filepath.Join(td, "out")
+	root := filepath.Join(td, "root")
+	writeTemplates(t, tmpl, map[string]string{"read": readTemplate}, defaultBenches)
+	poolPath := filepath.Join(td, "pool.tsv")
+	if err := os.WriteFile(poolPath, []byte("no/such-repo\t1\tread\tTitle\tread\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	code := Cut(CutInput{
+		Pool: poolPath, Templates: tmpl, Out: out, Root: root, Max: 20,
+		ValidateContract: true,
+		Stdout:           &stdout, Stderr: &stderr,
+	})
+	if code != 2 {
+		t.Fatalf("cut = %d, want 2; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if want := "CUT REFUSED locator=no/such-repo: does not resolve (check gh auth and the repo name)"; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr=%q, want %q", stderr.String(), want)
+	}
+	// The fake answered, never the network: the preflight ran gh repo view on the locator.
+	calls, err := os.ReadFile(ghLog)
+	if err != nil || !strings.Contains(string(calls), "gh repo view no/such-repo") {
+		t.Fatalf("the fake gh recorded %q (err=%v); want one `gh repo view no/such-repo`", calls, err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Fatal("a card file was written despite the unresolved locator")
+	}
+}
+
 // cut-picks-cheapest-capable-route (SPEC-PULSE replay 24): a benches table with a
 // zero-cost local, a flat Go and a metered Zen, and one card per capability class, yields
 // route=<model> reason=<class> on CUT ROUTE for the cheapest capable model -- the mutation

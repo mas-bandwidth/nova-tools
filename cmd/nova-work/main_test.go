@@ -178,11 +178,19 @@ func TestMissingSocketExitsTwoWithTheSpecsRemedy(t *testing.T) {
 	}
 }
 
-func TestHelpListsEveryVerbTheSwitchAccepts(t *testing.T) {
-	verbs := switchVerbs(t)
-	want := []string{"help", "query", "session start", "session status", "session stop", "version"}
-	if got := strings.Join(verbs, ","); got != strings.Join(want, ",") {
-		t.Fatalf("the switch accepts %q, want exactly %q", got, strings.Join(want, ","))
+func TestHelpListsEveryVerbTheClientAccepts(t *testing.T) {
+	// The switch is now two verbs and a table: help and version answer
+	// without a session, query has constraints of its own, and every other
+	// socket verb is a row of socketVerbs (see socketverbs.go). So the thing
+	// worth pinning is not the shape of the switch but the promise the switch
+	// used to carry: that a caller can find in help every verb the client
+	// will accept.
+	if got, want := strings.Join(switchVerbs(t), ","), "help,query,version"; got != want {
+		t.Fatalf("the switch accepts %q, want exactly %q -- every other socket verb belongs in socketVerbs", got, want)
+	}
+	verbs := allSocketVerbs()
+	if len(verbs) < 60 {
+		t.Fatalf("the client accepts %d socket verbs; the spec's verbs block holds far more", len(verbs))
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"help"}, &stdout, &stderr, ""); code != 0 {

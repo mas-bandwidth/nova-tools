@@ -4,7 +4,7 @@
 # Checks a bench against the standard and prints one DRIFT line per finding:
 #
 #   tools/bench-standard.sh
-#   NOVA_GO=go1.26.5 NOVA_WANT=v1.2.3 tools/bench-standard.sh
+#   NOVA_GO=go1.26.5 NOVA_WANT=v1.2.3 tools/bench-standard.sh  # NOVA_GO overrides go.mod
 #   tools/bench-standard.sh --apply   # kills stray runner listeners, nothing else
 #
 # Exit 0 prints "STANDARD OK ..."; exit 1 prints "STANDARD DRIFT (see lines
@@ -20,7 +20,22 @@ for arg in "$@"; do
   esac
 done
 
-NOVA_GO="${NOVA_GO:-go1.26.5}"
+# The wanted Go is the tree's go.mod `go` line, not a patch copied here.
+# $NOVA_GO stays an explicit override (a person gating an older tree on purpose).
+if [ -z "${NOVA_GO:-}" ]; then
+  _dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || _dir=""
+  _mod=""
+  if [ -n "$_dir" ] && [ -f "$_dir/../go.mod" ]; then
+    _mod="$_dir/../go.mod"
+  fi
+  if [ -n "$_mod" ]; then
+    _ver=$(awk '/^go / { print $2; exit }' "$_mod")
+    if [ -n "$_ver" ]; then
+      NOVA_GO="go${_ver}"
+    fi
+  fi
+fi
+NOVA_GO="${NOVA_GO:-}"
 NOVA_WANT="${NOVA_WANT:-}"
 NOVA_HARNESS="${NOVA_HARNESS:-}"
 HOME_DIR="${HOME:-}"
@@ -141,7 +156,9 @@ for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
 done
 
 # (3) go version, sbcl, harness.
-if command -v go >/dev/null 2>&1; then
+if [ -z "$NOVA_GO" ]; then
+  drift "go.mod go directive unread; set NOVA_GO or run from a nova-tools checkout"
+elif command -v go >/dev/null 2>&1; then
   goout="$(go version 2>&1 || true)"
   case "$goout" in
     *"$NOVA_GO"*) ;;

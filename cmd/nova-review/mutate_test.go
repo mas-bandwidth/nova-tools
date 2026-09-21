@@ -861,3 +861,151 @@ func TestMutateSelectedTestIsNotAnsweredByItsFileNeighbour(t *testing.T) {
 		t.Fatalf("stderr = %q, want the selected FAIL naming the unit", errb.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Emma's bench dogfood of `mutate --seed`, 2026-09-19 (issue #1803).
+//
+// The count was `max(total added, total removed)` over the WHOLE applied patch, so
+// two edits in two PLACES cancelled into one: a line added here and a line removed
+// there is added=1, removed=1, and the larger of the two is 1. Both receipts below
+// are hers, and both printed `edits=1 red=1 green=0 PASS` before this was fixed --
+// a control that proved a suite against two defects at once and named neither.
+//
+// SPEC-TOOLWORK.md §1 rule 7: "refused unless it changes exactly one line -- one `-`
+// and one `+`, or one added line, or one removed line, or one line moved".
+
+// #1803 receipt 1: one line ADDED in one file and one line REMOVED in another.
+func TestMutateSeedRefusesTwoFiles(t *testing.T) {
+	dir := seedLab(t)
+	twoFiles := `--- a/sign/sign_test.go
++++ b/sign/sign_test.go
+@@ -4,2 +4,3 @@ package sign
+ 
++// an added line, in the first file
+ func TestSignZero(t *testing.T) {
+--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -4,3 +4,2 @@ func Sign(n int) int {
+ 	if n > 0 {
+-		return 1
+ 	}
+`
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, twoFiles), "--tests", "sign"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if errb.String() != "MUTATE REFUSED: seed makes 2 edits, want exactly 1\n" {
+		t.Fatalf("stderr = %q, want the two-edit refusal for a two-FILE seed", errb.String())
+	}
+}
+
+// #1803 receipt 2: one line ADDED in one function and one line REMOVED in another,
+// in the SAME file -- two hunks, two places, and not a moved line.
+func TestMutateSeedRefusesTwoHunksInOneFile(t *testing.T) {
+	dir := seedLab(t)
+	twoHunks := `--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -4,3 +4,2 @@ func Sign(n int) int {
+ 	if n > 0 {
+-		return 1
+ 	}
+@@ -9,2 +8,3 @@ func Sign(n int) int {
+ 	}
++	// a second edit, somewhere else entirely
+ 	return -1
+`
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, twoHunks), "--tests", "sign"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if errb.String() != "MUTATE REFUSED: seed makes 2 edits, want exactly 1\n" {
+		t.Fatalf("stderr = %q, want the two-edit refusal for a two-HUNK seed", errb.String())
+	}
+}
+
+// The moved-line exception is rule 7's own and it stops at the file. The same text
+// out of one file and into another is the one shape where the per-PLACE count and
+// the "one line moved" exception disagree, and two files is two places: a gate that
+// went red under it has caught something about `a.go` or something about `b.go`.
+func TestMutateSeedRefusesALineMovedBetweenFiles(t *testing.T) {
+	dir := seedLab(t)
+	movedAcross := `--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -4,3 +4,2 @@ func Sign(n int) int {
+ 	if n > 0 {
+-		return 1
+ 	}
+--- a/sign/sign_test.go
++++ b/sign/sign_test.go
+@@ -4,2 +4,3 @@ package sign
+ 
++		return 1
+ func TestSignZero(t *testing.T) {
+`
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, movedAcross), "--tests", "sign"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if errb.String() != "MUTATE REFUSED: seed makes 2 edits, want exactly 1\n" {
+		t.Fatalf("stderr = %q, want the two-edit refusal for a line moved BETWEEN files", errb.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The Opus readers' dogfood of `mutate --seed` over seventeen PRs, 2026-09-19
+// (issue #1847), and it is the #1807 class: a red that came from a BUILD FAILURE
+// scored as a kill.
+//
+// runPackage scores a package that does not build as red, deliberately -- for a real
+// mutant that is the strongest red there is. For a seed it is the opposite: a control
+// that is red because nothing compiled proves nothing at all about the suite, and it
+// is SPEC-TOOLWORK §1 rule 6's `broken` seed, whose want is the token `build` and not
+// a kill. The reader's receipt was `MUTATE 04b3c236 seed=1d072599 edits=1 red=1
+// green=0 PASS` over a tree that answered `fill.go:367:6: syntax error`.
+func TestMutateSeedRefusesASeedThatDoesNotBuild(t *testing.T) {
+	dir := seedLab(t)
+	broken := `--- a/sign/sign.go
++++ b/sign/sign.go
+@@ -6,6 +6,6 @@ func Sign(n int) int {
+ 	}
+ 	if n == 0 {
+-		return 0
++		return 0 +
+ 	}
+ 	return -1
+ }
+`
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, broken), "--tests", "sign"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2: a seed that does not compile is a control that never ran, never a PASS\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if !strings.HasPrefix(errb.String(), "MUTATE REFUSED: seed does not build") {
+		t.Fatalf("stderr = %q, want the does-not-build refusal", errb.String())
+	}
+	// The refusal names what the compiler said, because the seed's author is the only
+	// person who can fix it and the line number is the whole answer.
+	if !strings.Contains(errb.String(), "sign.go") {
+		t.Fatalf("stderr = %q, want the compiler's own error named", errb.String())
+	}
+	if strings.Contains(out.String()+errb.String(), " PASS") {
+		t.Fatalf("a verdict was printed for a seed that never ran: %q %q", out.String(), errb.String())
+	}
+}
+
+// The negative control for the control: a seed that DOES build is judged as before.
+// A build step that refused everything would pass the test above and break the verb.
+func TestMutateSeedStillRunsASeedThatBuilds(t *testing.T) {
+	dir := seedLab(t)
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if !strings.HasSuffix(out.String(), " edits=1 red=1 green=0 PASS\n") {
+		t.Fatalf("stdout = %q, want the seed verdict line", out.String())
+	}
+}

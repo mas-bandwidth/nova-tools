@@ -13,7 +13,8 @@ import (
 // calls made on pull requests that were not green -- the enqueue happened hours later,
 // from the forge, with nobody in the room. So: one function admits a pull request to the
 // queue, it is a queue mutation and never a merge call, and it REFUSES a head that is not
-// a batch's unless the caller presents that head's own BATCH OK receipt.
+// a batch's unless the caller presents that head's own BATCH OK receipt. A head under
+// rowan/integration-* is not that receipt (#1898): a card writes the same prefix.
 //
 // Everything here drives a fake host. No test in this package reaches the network.
 
@@ -58,17 +59,40 @@ func newFakeEnqueueHost() *fakeEnqueueHost {
 	return &fakeEnqueueHost{ids: map[int]string{}}
 }
 
-// A batch's own branch needs no receipt: the shape IS the receipt, and it is the shape
-// `nova-merge batch` builds and nothing else does.
+// A batch's own branch still needs that head's BATCH OK: the prefix is a name a card
+// can also write (harvest publishes any rowan/* BRANCH), not evidence the gate ran.
 func TestEnqueueTakesABatchBranch(t *testing.T) {
 	h := newFakeEnqueueHost()
 	h.ids[1341] = "PR_integration6"
+	head := strings.Repeat("a", 40)
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
 	if err := NewEnqueuer(h).Enqueue(context.Background(),
-		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-6", HeadSHA: strings.Repeat("a", 40)}, true); err != nil {
-		t.Fatalf("a batch branch is the one shape this door takes: %v", err)
+		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-6", HeadSHA: head, Receipt: receipt}, true); err != nil {
+		t.Fatalf("a batch branch with that head's BATCH OK is the one shape this door takes: %v", err)
 	}
 	if len(h.enqueued) != 1 || h.enqueued[0].ID != "PR_integration6" || !h.enqueued[0].Jump {
 		t.Fatalf("want one enqueue of PR_integration6 with jump, got %v", h.enqueued)
+	}
+}
+
+// #1898: a card writes BRANCH rowan/integration-card-bypass. Empty receipt + that
+// prefix used to admit at every enqueue door, and none of those doors ran the hold
+// fold. The prefix is not a receipt.
+func TestEnqueueRefusesACardMintedBatchPrefixWithoutAReceipt(t *testing.T) {
+	h := newFakeEnqueueHost()
+	err := NewEnqueuer(h).Enqueue(context.Background(),
+		EnqueuePR{Number: 1898, HeadRef: "rowan/integration-card-bypass", HeadSHA: strings.Repeat("a", 40)}, false)
+	if err == nil {
+		t.Fatal("a card-minted rowan/integration-* head enqueued itself with no BATCH OK; the prefix is not a receipt")
+	}
+	if _, ok := AsEnqueueRefusal(err); !ok {
+		t.Fatalf("the refusal is this package's own, so a caller can tell it from a forge error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "BATCH OK") && !strings.Contains(err.Error(), "receipt") {
+		t.Errorf("the refusal never names the receipt it wanted: %v", err)
+	}
+	if len(h.asked) != 0 || len(h.enqueued) != 0 {
+		t.Fatalf("the forge was reached on a refused enqueue: asked=%v enqueued=%v", h.asked, h.enqueued)
 	}
 }
 
@@ -201,8 +225,10 @@ func TestGHEnqueueSpeaksTheQueueMutationAndNeverAMerge(t *testing.T) {
 	r := &recordRunner{}
 	h := NewGHEnqueue("mas-bandwidth/nova-tools", 0, r)
 	r.out = "PR_kwDO\n"
+	head := strings.Repeat("a", 40)
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
 	if err := NewEnqueuer(h).Enqueue(context.Background(),
-		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-6", HeadSHA: strings.Repeat("a", 40)}, true); err != nil {
+		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-6", HeadSHA: head, Receipt: receipt}, true); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if len(r.calls) != 2 {
@@ -229,8 +255,10 @@ func TestGHEnqueueSpeaksTheQueueMutationAndNeverAMerge(t *testing.T) {
 func TestGHEnqueueWithoutJumpSendsNoJump(t *testing.T) {
 	r := &recordRunner{out: "PR_kwDO\n"}
 	h := NewGHEnqueue("mas-bandwidth/nova-tools", 0, r)
+	head := strings.Repeat("a", 40)
+	receipt := "BATCH OK name=integration-9 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
 	if err := NewEnqueuer(h).Enqueue(context.Background(),
-		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-9"}, false); err != nil {
+		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-9", HeadSHA: head, Receipt: receipt}, false); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if mutation := strings.Join(r.calls[1], " "); strings.Contains(mutation, "jump") {
@@ -268,13 +296,28 @@ func TestGHSweepEnqueueGoesThroughTheOneDoor(t *testing.T) {
 		t.Fatalf("a refused sweep enqueue still ran gh: %v", r.calls)
 	}
 
-	if err := h.Enqueue(SweepPR{Number: 1341, HeadRef: "rowan/integration-6", MergeState: "CLEAN"}); err != nil {
-		t.Fatalf("the sweep's host refused a batch: %v", err)
+	if err := h.Enqueue(SweepPR{Number: 1341, HeadRef: "rowan/integration-6", MergeState: "CLEAN"}); err == nil {
+		t.Fatal("the sweep's host enqueued a batch prefix with no receipt; the prefix is not evidence the gate ran")
+	} else if _, ok := AsEnqueueRefusal(err); !ok {
+		t.Errorf("the sweep's refusal is not the door's: %v", err)
 	}
-	if len(r.calls) != 2 {
-		t.Fatalf("want a node-id read and one mutation, got %v", r.calls)
+	if len(r.calls) != 0 {
+		t.Fatalf("a refused sweep enqueue still ran gh: %v", r.calls)
 	}
-	if !strings.Contains(strings.Join(r.calls[1], " "), "enqueuePullRequest") {
-		t.Errorf("the sweep's admission is not the queue mutation: %v", r.calls[1])
+}
+
+// #1898: nova-merge sweep's production host offers a green head to the one door with
+// no receipt and no hold fold. A card BRANCH rowan/integration-* is therefore a batch
+// at this extra door. Close it: refuse, and start no subprocess.
+func TestGHSweepRefusesACardMintedBatchPrefixWithoutAReceipt(t *testing.T) {
+	r := &recordRunner{out: "PR_kwDO\n"}
+	h := NewGHSweep("mas-bandwidth/nova-tools", "dev", 0, r)
+	if err := h.Enqueue(SweepPR{Number: 1898, HeadRef: "rowan/integration-card-bypass", MergeState: "CLEAN"}); err == nil {
+		t.Fatal("sweep enqueued a card-minted rowan/integration-* head with no BATCH OK; this extra door does not run the hold fold")
+	} else if _, ok := AsEnqueueRefusal(err); !ok {
+		t.Errorf("the sweep's refusal is not the door's: %v", err)
+	}
+	if len(r.calls) != 0 {
+		t.Fatalf("a refused sweep enqueue still ran gh: %v", r.calls)
 	}
 }

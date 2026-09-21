@@ -37,6 +37,11 @@ const (
 	// `requeue` added and never removed, pending went 2 to 4, and the only way out of the
 	// refusal's own remedy was `rm`).
 	Aborted = "aborted"
+	// RoutedOut is where a task goes when the ladder rules it judgment work owed to a
+	// child or a friend (issue #1486): a card the dispatcher routes to ask-child or
+	// ask-bus is NOT dispatched to a model, it is parked here with its ROUTE line, and
+	// the coordinator (or a friend, over the bus) takes it from here.
+	RoutedOut = "routed-out"
 )
 
 // The pool's other directories. reports/ holds the pages and one directory per finalized
@@ -74,7 +79,7 @@ func OpenPool(dir string) (*Pool, error) {
 		return nil, fmt.Errorf("--pool wants a directory, and %s is a file", dir)
 	}
 	p := &Pool{Dir: dir}
-	for _, d := range []string{Pending, Running, Done, Failed, Aborted, Reports, Scratch, Slots, Usage} {
+	for _, d := range []string{Pending, Running, Done, Failed, Aborted, RoutedOut, Reports, Scratch, Slots, Usage} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			return nil, err
 		}
@@ -247,7 +252,7 @@ func (p *Pool) List(state string) ([]Sidecar, error) {
 
 // Where finds the state a task's files are in.
 func (p *Pool) Where(id string) (string, bool) {
-	for _, state := range []string{Running, Pending, Done, Failed} {
+	for _, state := range []string{Running, Pending, Done, Failed, RoutedOut} {
 		if _, err := os.Stat(p.taskFile(state, id)); err == nil {
 			return state, true
 		}
