@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/landingindex"
 	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -463,6 +464,9 @@ func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diff
 	b.WriteString(kindInstruction(in, body, chosenDiff))
 	if body != "" {
 		b.WriteString(body + "\n")
+	}
+	if inlined := landingindex.FormatContextFor(".", in.Title, body, in.Prior, in.Names, in.SpecLines); inlined != "" {
+		b.WriteString("\n" + inlined + "\n")
 	}
 	return b.String(), nil
 }

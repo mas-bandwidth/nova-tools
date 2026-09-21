@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/landingindex"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -456,6 +457,11 @@ func routeFor(kind string, retry bool, table []costModel) costModel {
 // <id>, <kind>, <title> and <branch>. cut computes the sha-12 over the rendered body below
 // line 1 and rewrites line 1, so the contract always binds the card it heads.
 func renderCard(tmpl string, row PoolRow) (string, string) {
+	inlined := landingindex.FormatContextFor(".", row.Title)
+	specVal := inlined
+	if specVal == "" {
+		specVal = "(none)"
+	}
 	rendered := strings.NewReplacer(
 		"<label>", row.ID,
 		"<source>", row.Source,
@@ -463,7 +469,11 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 		"<kind>", row.Kind,
 		"<title>", row.Title,
 		"<branch>", branchOf(row),
+		"<spec>", specVal,
 	).Replace(tmpl)
+	if inlined != "" && !strings.Contains(tmpl, "<spec>") {
+		rendered = rendered + "\n\n" + inlined
+	}
 	lines := strings.Split(rendered, "\n")
 	line1 := strings.TrimSpace(lines[0])
 	if !strings.HasPrefix(line1, "RESULT ") || !strings.Contains(line1, "sha=") {

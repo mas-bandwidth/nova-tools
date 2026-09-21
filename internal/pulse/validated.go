@@ -13,13 +13,14 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/mas-bandwidth/nova-tools/internal/landingindex"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // namedSlots are the slots a validated template may declare (SPEC-PULSE, "Cut, from a
 // validated template"). cut fills every one it finds from the source it read; a declared
 // slot with no value is CUT REFUSED check=slot.
-var namedSlots = []string{"issue", "title", "body", "branch", "base", "row", "replay", "lane"}
+var namedSlots = []string{"issue", "title", "body", "branch", "base", "row", "replay", "lane", "spec"}
 
 // CutValidatedInput is everything the validated-template cut needs, held apart from flag
 // parsing so a test can drive it with a fixture gh and a fixture git.
@@ -192,26 +193,26 @@ func validateCards(in CutValidatedInput, cards []validatedCard, templates map[st
 func validatedCards(in CutValidatedInput) ([]validatedCard, int, error) {
 	switch in.Source {
 	case "issue":
-		c, err := issueCard(in.Issue, in.Base)
+		c, err := issueCard(in.Repo, in.Issue, in.Base)
 		if err != nil {
 			return nil, 0, err
 		}
 		return []validatedCard{c}, 0, nil
 	case "branch-from":
-		c, err := branchFromCard(in.BranchFrom, in.Base)
+		c, err := branchFromCard(in.Repo, in.BranchFrom, in.Base)
 		if err != nil {
 			return nil, 0, err
 		}
 		return []validatedCard{c}, 0, nil
 	case "rows":
-		return rowsCards(in.Rows, in.Base)
+		return rowsCards(in.Repo, in.Rows, in.Base)
 	}
 	return nil, 0, fmt.Errorf("cut reads one of --pool, --issue, --rows or --branch-from, got source %q", in.Source)
 }
 
 // issueCard reads the issue's title and body verbatim through gh and derives the branch from
 // the issue number and the title slug.
-func issueCard(spec, base string) (validatedCard, error) {
+func issueCard(repoDir, spec, base string) (validatedCard, error) {
 	repo, number, err := parseRepoRef("--issue", spec)
 	if err != nil {
 		return validatedCard{}, err
@@ -228,6 +229,15 @@ func issueCard(spec, base string) (validatedCard, error) {
 		return validatedCard{}, fmt.Errorf("--issue %s: gh answered something that is not title,body: %s", spec, oneline.Err(err))
 	}
 	branch := fmt.Sprintf("rowan/issue-%d-%s", number, slug(v.Title))
+	body := v.Body
+	inlined := landingindex.FormatContextFor(repoDir, v.Title, v.Body)
+	if inlined != "" {
+		body = body + "\n\n" + inlined
+	}
+	specVal := inlined
+	if specVal == "" {
+		specVal = "(none)"
+	}
 	return validatedCard{
 		label:  strconv.Itoa(number),
 		branch: branch,
@@ -235,15 +245,16 @@ func issueCard(spec, base string) (validatedCard, error) {
 		slots: map[string]string{
 			"issue":  fmt.Sprintf("%s#%d", repo, number),
 			"title":  v.Title,
-			"body":   v.Body,
+			"body":   body,
 			"branch": branch,
 			"base":   base,
+			"spec":   specVal,
 		},
 	}, nil
 }
 
 // branchFromCard reads the PR's exact head ref through gh and carries it as the branch.
-func branchFromCard(spec, base string) (validatedCard, error) {
+func branchFromCard(repoDir, spec, base string) (validatedCard, error) {
 	repo, number, err := parseRepoRef("--branch-from", spec)
 	if err != nil {
 		return validatedCard{}, err
@@ -262,6 +273,11 @@ func branchFromCard(spec, base string) (validatedCard, error) {
 	if v.HeadRefName == "" {
 		return validatedCard{}, fmt.Errorf("--branch-from %s: the PR names no head ref", spec)
 	}
+	inlined := landingindex.FormatContextFor(repoDir, v.HeadRefName)
+	specVal := inlined
+	if specVal == "" {
+		specVal = "(none)"
+	}
 	return validatedCard{
 		label:  slug(v.HeadRefName),
 		branch: v.HeadRefName,
@@ -270,6 +286,7 @@ func branchFromCard(spec, base string) (validatedCard, error) {
 			"issue":  fmt.Sprintf("%s#%d", repo, number),
 			"branch": v.HeadRefName,
 			"base":   base,
+			"spec":   specVal,
 		},
 	}, nil
 }
@@ -277,7 +294,7 @@ func branchFromCard(spec, base string) (validatedCard, error) {
 // rowsCards reads a tab-separated table, one card per data group: label, base, row, replay,
 // branch. A separator row (|---|) and a header row naming the columns are not cards, and are
 // counted as skipped.
-func rowsCards(path, defaultBase string) ([]validatedCard, int, error) {
+func rowsCards(repoDir, path, defaultBase string) ([]validatedCard, int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("--rows wants a readable table: %s", oneline.Err(err))
@@ -316,6 +333,11 @@ func rowsCards(path, defaultBase string) ([]validatedCard, int, error) {
 		if replay != "" {
 			paths = append(paths, replay)
 		}
+		inlined := landingindex.FormatContextFor(repoDir, row, replay)
+		specVal := inlined
+		if specVal == "" {
+			specVal = "(none)"
+		}
 		cards = append(cards, validatedCard{
 			label:    label,
 			branch:   branch,
@@ -327,6 +349,7 @@ func rowsCards(path, defaultBase string) ([]validatedCard, int, error) {
 				"branch": branch,
 				"base":   base,
 				"lane":   lane,
+				"spec":   specVal,
 			},
 			paths: paths,
 		})
@@ -427,6 +450,7 @@ func substituteSlots(s string, c validatedCard) string {
 		"<row>", c.slots["row"],
 		"<replay>", c.slots["replay"],
 		"<lane>", c.slots["lane"],
+		"<spec>", c.slots["spec"],
 	).Replace(s)
 }
 
