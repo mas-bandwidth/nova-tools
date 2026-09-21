@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -72,6 +73,19 @@ type HarvestInput struct {
 	Roots      string
 	SinceStamp string
 	Timer      string
+
+	// EffectOwner, if non-nil, verifies fence epoch and RUN action token at linearization
+	// before committing push and PR side effects. Does NOT write events.jsonl.
+	EffectOwner *harvest.EffectOwner
+
+	// EffectCreds provides attempt credentials per card label.
+	EffectCreds map[string]harvest.AttemptCredentials
+
+	// PushTokens provides RUN action tokens for ActionPush per card label.
+	PushTokens map[string]harvest.ActionToken
+
+	// AcceptTokens provides RUN action tokens for ActionAccept per card label.
+	AcceptTokens map[string]harvest.ActionToken
 }
 
 func field(s string) string {
@@ -310,15 +324,50 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
-			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
-				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
-				continue
+			if in.EffectOwner != nil {
+				creds, hasCreds := in.EffectCreds[c.Label]
+				pushToken, hasPushToken := in.PushTokens[c.Label]
+				if !hasCreds || !hasPushToken {
+					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: missing effect credentials or push token\n", field(c.Label))
+					continue
+				}
+				if err := in.EffectOwner.CommitEffect(context.Background(), started, creds, harvest.ActionPush, pushToken, func() error {
+					return push(in, jobDir, c.Card, repo, branch, c.Label)
+				}); err != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+					continue
+				}
+			} else {
+				if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+					continue
+				}
 			}
 			pushed++
-			pr, err := openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
-			if err != nil {
-				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
-				continue
+
+			var pr int
+			if in.EffectOwner != nil {
+				creds := in.EffectCreds[c.Label]
+				acceptToken, hasAcceptToken := in.AcceptTokens[c.Label]
+				if !hasAcceptToken {
+					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: missing accept token\n", field(c.Label))
+					continue
+				}
+				err = in.EffectOwner.CommitEffect(context.Background(), started, creds, harvest.ActionAccept, acceptToken, func() error {
+					var prErr error
+					pr, prErr = openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
+					return prErr
+				})
+				if err != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+					continue
+				}
+			} else {
+				pr, err = openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
+				if err != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+					continue
+				}
 			}
 			prs++
 			// The line and the next-card record name the RESOLVED repository, never
