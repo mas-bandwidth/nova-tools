@@ -1,0 +1,9 @@
+# AGENTS.md — generated map of tools/
+
+Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). Rules: [CONTRIBUTING.md](../docs/CONTRIBUTING.md).
+
+| dir | purpose | guard | command |
+| --- | --- | --- | --- |
+| `agentsmap/` | AGENTS.md map generator CLI | `go test ./internal/docs` | `make map` |
+| `ci/` | CI helper and build scripts | `go test ./internal/ci` | `make test` |
+| `testdur/` | test duration analyzer and budget checker | `go test ./tools/testdur` | `go test ./tools/testdur` |
