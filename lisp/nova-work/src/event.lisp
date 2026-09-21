@@ -55,6 +55,11 @@
     (:receipt      :change :offer :attempt :reply :stage :provenance
                    :provenance-sha256 :reason)
     (:receipt-seal :offer :reply :sender :receipt-digest :effect)
+    ;; `take` and `release` on a node: the lease, as an EVENT, so the mutation
+    ;; is one journaled command in the single writer's total order and comes
+    ;; back with `replay-journal` (nova-tools #1612 lane; src/take-verb.lisp).
+    ;; :CHANGE is :TAKE or :RELEASE and :HOLDER is the name that claimed it.
+    (:lease      :change :holder)
     ;; The structure verbs (SPEC-WORK.md:2362): `dep` is the first, and v1's own
     ;; body fixes its field order at :987 -- `dep` -- `:verb`, `:add`, `:remove`,
     ;; `:reason`. It is an EVENT so a `dep --add`/`--remove` is journaled,

@@ -461,9 +461,13 @@ file may only shrink — it is empty, because every site was fixed when the rule
 landed. Like the fixed-waits and net lists it is matched by **file and kind,
 never by line**.
 
-**What `goenv.Clean` drops.** `GOFLAGS`, every `GOTEST*` variable, and any other
-`GO`-prefixed variable whose value carries a `-json` or `--json` flag.
-`GOTMPDIR` is deliberately kept: it names a location, not an output shape, and a
+**What `goenv.Clean` drops.** `GOFLAGS`, every `GOTEST*` variable, any other
+`GO`-prefixed variable whose value carries a `-json` or `--json` flag, and every
+variable whose NAME carries `KEY`, `TOKEN` or `SECRET` — a forge token
+(`GH_TOKEN`, `GITHUB_TOKEN`), a provider key, a secret — because `simulate`,
+`batch` and `review mutate` run checks whose code came from a pull request in a
+child built from `Clean` (#1836). The credential drop is by NAME and never by
+value. `GOTMPDIR` is deliberately kept: it names a location, not an output shape, and a
 tool that wants its own scratch appends `GOTMPDIR=` after `Clean`, where the
 last value wins.
 

@@ -22,9 +22,9 @@ func TestHarvestRefusesToPushAKeyShape(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 
 	addCard(t, root, "clean", "1", "flash", "RESULT clean sha=aaa",
-		"RESULT clean sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+		"RESULT clean sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\n")
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
-		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
+		"RESULT leaky sha=bbb\nDONE\nBRANCH rowan/br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
 
 	out, errs := runHarvest(t, root)
 	if !strings.Contains(out, "pushed=1") || !strings.Contains(out, "prs=1") {
@@ -57,7 +57,7 @@ func TestASecretQuarantinesAndNeverDeletes(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
-		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
+		"RESULT leaky sha=bbb\nDONE\nBRANCH rowan/br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
 	job := filepath.Join(root, "1", "jobs", "leaky")
 	if err := os.WriteFile(filepath.Join(job, "harness-output.log"), []byte("evidence\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestASecretWritesOneHumanLine(t *testing.T) {
 	fakeGit(t, specs, arglog)
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
-		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
+		"RESULT leaky sha=bbb\nDONE\nBRANCH rowan/br2\nREPO owner/repo\nout: "+secretFixture()+"\n")
 
 	runHarvest(t, root)
 
@@ -120,7 +120,7 @@ func TestTheSeatsOwnKeyIsCaughtWithoutAShape(t *testing.T) {
 	fakeGit(t, specs, arglog)
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 	addCard(t, root, "leaky", "1", "flash", "RESULT leaky sha=bbb",
-		"RESULT leaky sha=bbb\nDONE\nBRANCH br2\nREPO owner/repo\nout: "+value+"\n")
+		"RESULT leaky sha=bbb\nDONE\nBRANCH rowan/br2\nREPO owner/repo\nout: "+value+"\n")
 
 	out, errs := runHarvest(t, root)
 	if !strings.Contains(errs, "shape=env-value") || !strings.Contains(errs, "name=SEAT_PROVIDER_KEY") {
@@ -323,7 +323,7 @@ func TestHarvestRefusesAnUnreadDiff(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 3, Equals: "diff", Exit: 128, Stderr: "fatal: bad revision"}}})
 	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/42")
 	addCard(t, root, "clean", "1", "flash", "RESULT clean sha=aaa",
-		"RESULT clean sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+		"RESULT clean sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\n")
 
 	out, errs := runHarvest(t, root)
 	assertDiffUnread(t, "harvest", out, errs, arglog)
