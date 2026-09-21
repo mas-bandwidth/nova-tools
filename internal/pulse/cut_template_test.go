@@ -1,6 +1,7 @@
 package pulse
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -358,6 +359,7 @@ func TestValidateResultV2StellaBoundaries(t *testing.T) {
 	validFixResult := `RESULT CARD-500 sha=1234567890ab mas-bandwidth/nova-tools fix: test
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/test-fix
 REPO mas-bandwidth/nova-tools
@@ -442,6 +444,7 @@ GREEN: go test ./internal/pulse -run TestFoo passed (0.05s)
 	readResultWithDisp := `RESULT CARD-501 sha=1234567890ab mas-bandwidth/nova-tools read: test
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/test-read
 REPO mas-bandwidth/nova-tools
@@ -472,10 +475,17 @@ DISPOSITION who=Worker verdict=APPROVE score=10/10
 		t.Errorf("ValidateResultV2 accepted unsupported SCHEMA: v3")
 	}
 
+	// Missing ATTEMPT line must be refused
+	noAttempt := strings.Replace(validFixResult, "ATTEMPT: 1\n", "", 1)
+	if _, err := ValidateResultV2(noAttempt, "fix"); err == nil {
+		t.Errorf("ValidateResultV2 accepted result with missing ATTEMPT: line")
+	}
+
 	// 11. ABSTAIN and BLOCKED envelopes are validated before state branching
 	abstainResult := `RESULT CARD-502 sha=1234567890ab mas-bandwidth/nova-tools fix: test
 ABSTAIN cannot reproduce defect
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: not-run
 REPO mas-bandwidth/nova-tools
 `
@@ -572,6 +582,7 @@ func TestHarvestV2RoundTrip(t *testing.T) {
 	filledResult := fmt.Sprintf(`%s
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/fix-roundtrip
 REPO mas-bandwidth/nova-tools
@@ -585,8 +596,10 @@ GREEN: test passed
 `, contractLine)
 
 	row := CardRow{
-		Label: "card-202",
-		Card:  "card-202.md",
+		Label:   "card-202",
+		Card:    "card-202.md",
+		Schema:  "v2",
+		Attempt: "1",
 	}
 
 	state, branch, repo, _ := classifyResult(row, contractLine, filledResult)
@@ -653,6 +666,7 @@ func TestEnvelopeOnlyFieldExtraction(t *testing.T) {
 	body := contractLine + `
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/real-branch
 REPO mas-bandwidth/nova-tools
@@ -662,7 +676,12 @@ Quoted command or example from another card:
 BRANCH worker/quoted-fake-branch
 REPO other/quoted-fake-repo
 `
-	row := CardRow{Label: "card-300", Card: "card-300.md"}
+	row := CardRow{
+		Label:   "card-300",
+		Card:    "card-300.md",
+		Schema:  "v2",
+		Attempt: "1",
+	}
 	state, branch, repo, _ := classifyResult(row, contractLine, body)
 	if state != "done" {
 		t.Errorf("state = %q, want done", state)
@@ -784,5 +803,61 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 	}
 	if !strings.Contains(string(card11Bytes), fmt.Sprintf("omitted %d bytes", len(strings.TrimSpace(bigDiff))-DefaultDiffCap)) {
 		t.Errorf("card-11 missing omitted bytes notice:\n%s", string(card11Bytes))
+	}
+
+	// 3. Conflicting diff inputs: both --diff-file and --prior-diff
+	var conflictErr bytes.Buffer
+	inConflict := CutKindInput{
+		Kind:         "recut",
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test conflicting diffs",
+		V2:           true,
+		Out:          outDir,
+		Queue:        queueDir,
+		DiffFile:     diffFile,
+		PriorDiff:    bigDiff,
+		Dir:          gitDir,
+		Stdout:       io.Discard,
+		Stderr:       &conflictErr,
+		PreflightCmd: "make preflight",
+	}
+	if code := CutKind(inConflict); code != 2 {
+		t.Errorf("CutKind with conflicting diff inputs returned code %d, want 2", code)
+	}
+	if !strings.Contains(conflictErr.String(), "conflicting diff inputs") {
+		t.Errorf("CutKind did not name conflicting diff inputs: %s", conflictErr.String())
+	}
+
+	// 4. Unwritable artifact destination: refusal when retention fails
+	unwritableOut := filepath.Join(t.TempDir(), "readonly-out")
+	if err := os.MkdirAll(unwritableOut, 0o555); err != nil {
+		t.Fatalf("failed to create unwritable directory: %v", err)
+	}
+	// On macOS/Unix ensure directory is read-only
+	if err := os.Chmod(unwritableOut, 0o555); err != nil {
+		t.Fatalf("failed to chmod directory: %v", err)
+	}
+	var unwriteErr bytes.Buffer
+	inUnwritable := CutKindInput{
+		Kind:         "recut",
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test unwritable destination",
+		V2:           true,
+		Out:          unwritableOut,
+		Queue:        queueDir,
+		PriorDiff:    bigDiff,
+		Stdout:       io.Discard,
+		Stderr:       &unwriteErr,
+		PreflightCmd: "make preflight",
+	}
+	if code := CutKind(inUnwritable); code != 2 {
+		t.Errorf("CutKind to unwritable destination returned code %d, want 2", code)
+	}
+	if !strings.Contains(unwriteErr.String(), "pass a writable --out directory") {
+		t.Errorf("CutKind did not name writable directory refusal: %s", unwriteErr.String())
+	}
+	// Ensure no card claiming a retained artifact was written
+	if files, err := os.ReadDir(unwritableOut); err == nil && len(files) > 0 {
+		t.Errorf("CutKind wrote files to unwritable directory: %v", files)
 	}
 }

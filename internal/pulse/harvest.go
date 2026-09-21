@@ -540,10 +540,17 @@ func readCards(path string) ([]CardRow, error) {
 			continue
 		}
 		p := strings.Split(line, "\t")
-		if len(p) != 4 {
+		if len(p) < 4 {
 			return nil, fmt.Errorf("%s wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", path, len(p))
 		}
-		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]})
+		row := CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]}
+		if len(p) > 4 {
+			row.Schema = p[4]
+		}
+		if len(p) > 5 {
+			row.Attempt = p[5]
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -677,21 +684,42 @@ func kindFromContract(contract string) string {
 	return ""
 }
 
-// isV2Result reports whether an envelope declares schema v2 or contains a typed CHECK line.
-func isV2Result(lines []string) bool {
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "## ") {
-			break
+// cardExpected binds expected schema version and attempt identity from the trusted card record.
+func cardExpected(c CardRow) (schema, attempt string) {
+	schema = c.Schema
+	attempt = c.Attempt
+	if c.Card != "" {
+		if raw, err := os.ReadFile(c.Card); err == nil {
+			content := string(raw)
+			if schema == "" {
+				if isV2CardContent(content) {
+					schema = "v2"
+				} else {
+					schema = "legacy"
+				}
+			}
+			if attempt == "" {
+				if att := attemptOf(content); att > 0 {
+					attempt = strconv.Itoa(att)
+				} else if schema == "v2" {
+					attempt = "1"
+				}
+			}
+			return schema, attempt
 		}
+	}
+	return schema, attempt
+}
+
+// isV2CardContent reports whether a card declares schema v2 in its headers or template.
+func isV2CardContent(content string) bool {
+	for _, l := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(l)
 		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
 			v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
 			if v == "v2" {
 				return true
 			}
-		}
-		if strings.HasPrefix(t, "CHECK:") || strings.HasPrefix(t, "CHECK ") {
-			return true
 		}
 	}
 	return false
@@ -712,6 +740,8 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 
 // classifyResult folds one RESULT.md body by the card's own contract and verdict lines,
 // dispatching via an explicit versioned adapter to either schema v2 or legacy handling.
+// It binds expected schema version and attempt identity from the trusted card/job record
+// and refuses version downgrade attempts.
 func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
 	norm := strings.ReplaceAll(body, "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
@@ -727,8 +757,51 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 		return "mismatch", "", "", lines
 	}
 
-	if isV2Result(lines) {
-		return classifyV2Result(c, contract, body, lines)
+	var rawSchema, rawCheck, rawAttempt string
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "## ") {
+			break
+		}
+		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
+			rawSchema = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
+		}
+		if strings.HasPrefix(t, "CHECK:") || strings.HasPrefix(t, "CHECK ") {
+			rawCheck = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "CHECK:"), "CHECK "))
+		}
+		if strings.HasPrefix(t, "ATTEMPT:") || strings.HasPrefix(t, "ATTEMPT ") {
+			rawAttempt = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "ATTEMPT:"), "ATTEMPT "))
+		}
+	}
+
+	// Unknown schema is refused before any dispatch
+	if rawSchema != "" && rawSchema != "v2" {
+		return "mismatch", "", "", lines
+	}
+
+	expectedSchema, expectedAttempt := cardExpected(c)
+	if expectedSchema == "" {
+		if rawSchema == "v2" {
+			expectedSchema = "v2"
+		} else {
+			expectedSchema = "legacy"
+		}
+	}
+
+	if expectedSchema == "v2" {
+		// Version downgrade prevention: a v2 card cannot omit SCHEMA: v2 or CHECK
+		if rawSchema != "v2" || rawCheck == "" {
+			return "mismatch", "", "", lines
+		}
+		if rawAttempt != "" && expectedAttempt != "" && rawAttempt != expectedAttempt {
+			return "mismatch", "", "", lines
+		}
+		return classifyV2Result(c, contract, body, lines, expectedAttempt)
+	}
+
+	// Explicit legacy adapter
+	if rawSchema != "" && rawSchema != "legacy" {
+		return "mismatch", "", "", lines
 	}
 	return classifyLegacyResult(c, contract, body, lines)
 }
@@ -737,14 +810,23 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 // It extracts BRANCH and REPO strictly from header lines before markdown sections,
 // ensuring evidence body text cannot override envelope fields.
 func classifyLegacyResult(c CardRow, contract, body string, lines []string) (state, branch, repo string, resultLines []string) {
-	line2 := ""
-	if len(lines) > 1 {
-		line2 = strings.TrimSpace(lines[1])
+	if len(lines) < 2 {
+		return "mismatch", "", "", lines
+	}
+	line2 := strings.TrimSpace(lines[1])
+	if line2 == "" {
+		return "mismatch", "", "", lines
 	}
 	if strings.HasPrefix(line2, "ABSTAIN") {
 		return "abstain", "", "", lines
 	}
 	if strings.HasPrefix(line2, "BLOCKED") {
+		return "mismatch", "", "", lines
+	}
+	if !strings.HasPrefix(line2, "DONE") {
+		return "mismatch", "", "", lines
+	}
+	if len(lines) <= 2 {
 		return "mismatch", "", "", lines
 	}
 
@@ -780,7 +862,7 @@ func classifyLegacyResult(c CardRow, contract, body string, lines []string) (sta
 // All versioned envelopes (including ABSTAIN and BLOCKED) are strictly validated before state branching.
 // Effective fields are extracted strictly from the parsed envelope, never raw document lines.
 // DONE with a failed check is retained as "returned" (withholding push/landing eligibility).
-func classifyV2Result(c CardRow, contract, body string, lines []string) (state, branch, repo string, resultLines []string) {
+func classifyV2Result(c CardRow, contract, body string, lines []string, expectedAttempt string) (state, branch, repo string, resultLines []string) {
 	kind := kindFromContract(contract)
 	if kind == "" {
 		for _, l := range lines {
@@ -805,6 +887,10 @@ func classifyV2Result(c CardRow, contract, body string, lines []string) (state, 
 	}
 
 	repo = strings.TrimPrefix(env.Repo, "github.com/")
+
+	if expectedAttempt != "" && env.Attempt != expectedAttempt {
+		return "mismatch", "", repo, lines
+	}
 
 	switch env.Status {
 	case "ABSTAIN":

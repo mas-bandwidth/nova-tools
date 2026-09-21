@@ -160,6 +160,7 @@ type CardV2Input struct {
 	HoldFile      string // hold file path
 	Remains       string // named remains for recut
 	Applied       string // applied patch status
+	Attempt       int    // attempt number (default: 1)
 }
 
 // cleanTitle strips multi-line PR bodies, trailers, and noisy footers (A5).
@@ -201,6 +202,12 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	// Target & Scope (A2)
 	b.WriteString("## Target & Scope\n")
 	fmt.Fprintf(&b, "REPO: %s\n", in.Repo)
+	fmt.Fprintf(&b, "SCHEMA: v2\n")
+	attempt := in.Attempt
+	if attempt <= 0 {
+		attempt = 1
+	}
+	fmt.Fprintf(&b, "ATTEMPT: %d\n", attempt)
 	if in.PR > 0 {
 		fmt.Fprintf(&b, "PR: %d\n", in.PR)
 	}
@@ -321,6 +328,7 @@ func ResultTemplateV2(kind string) string {
 	b.WriteString("<line 1 of this card verbatim>\n")
 	b.WriteString("<DONE | ABSTAIN <why> | BLOCKED <why>>\n")
 	b.WriteString("SCHEMA: v2\n")
+	b.WriteString("ATTEMPT: 1\n")
 	b.WriteString("CHECK: <pass | fail | not-run>\n")
 	b.WriteString("BRANCH <working branch>\n")
 	b.WriteString("REPO <owner>/<name>\n")
@@ -379,6 +387,7 @@ func ResultExemplarV2(kind string) string {
 		return `RESULT CARD-100 sha=a1b2c3d4e5f6 nova-tools read: read PR 812 at abc123def456
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH worker/read-812
 REPO mas-bandwidth/nova-tools
@@ -396,6 +405,7 @@ PR812: HOLD head=abc123def456 repo=mas-bandwidth/nova-tools
 		return `RESULT CARD-101 sha=b2c3d4e5f6a1 nova-tools recut: fix boundary handling in cut
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/fix-boundary-recut
 REPO mas-bandwidth/nova-tools
@@ -414,6 +424,7 @@ GREEN: go test ./internal/pulse -run TestBoundary passed in 0.04s
 		return `RESULT CARD-102 sha=c3d4e5f6a1b2 serialize port: port varint encoder to rust
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/port-varint-rs
 REPO mas-bandwidth/serialize
@@ -432,6 +443,7 @@ GREEN: cargo test test_varint_parity passed: 48/48 test vectors identical to C++
 		return `RESULT CARD-103 sha=d4e5f6a1b2c3 nova-tools docs-guard: verify spec-swarm CLI flags
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/docs-guard-swarm
 REPO mas-bandwidth/nova-tools
@@ -451,6 +463,7 @@ PATHS docs/SPEC-SWARM.md
 		return `RESULT CARD-104 sha=e5f6a1b2c3d4 nova-tools report: measure harvest throughput
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH worker/report-throughput
 REPO mas-bandwidth/nova-tools
@@ -467,6 +480,7 @@ Harvest latency stays under 150ms across 100 iterations with zero heap growth.`
 		return `RESULT CARD-105 sha=f6a1b2c3d4e5 nova-tools fix: null pointer on empty queue
 DONE
 SCHEMA: v2
+ATTEMPT: 1
 CHECK: pass
 BRANCH emma/fix-nil-queue
 REPO mas-bandwidth/nova-tools
@@ -641,6 +655,9 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 	}
 	if env.Schema != "v2" {
 		return env, fmt.Errorf("unsupported SCHEMA %q (wants v2)", env.Schema)
+	}
+	if env.Attempt == "" {
+		return env, fmt.Errorf("RESULT.md v2 requires a typed `ATTEMPT: <n>` line")
 	}
 	if env.Check == "" {
 		return env, fmt.Errorf("RESULT.md v2 requires a typed `CHECK: <pass|fail|not-run>` line")

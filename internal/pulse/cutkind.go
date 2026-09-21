@@ -76,6 +76,7 @@ type CutKindInput struct {
 	PriorDiff     string // inlined prior diff (A1)
 	FailingOutput string // inlined failing test output (A1)
 	PreflightCmd  string // preflight command line (A3)
+	Attempt       int    // attempt number (default: 1)
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -94,7 +95,6 @@ func CutKind(in CutKindInput) int {
 		}
 		body = strings.TrimRight(string(raw), "\n")
 	}
-	diffContent := ""
 	if in.Kind == "recut" {
 		if in.HoldFile != "" {
 			raw, err := os.ReadFile(in.HoldFile)
@@ -109,15 +109,24 @@ func CutKind(in CutKindInput) int {
 			}
 			in = applyHold(in, hold)
 		}
-		if in.DiffFile != "" {
-			rawDiff, err := os.ReadFile(in.DiffFile)
-			if err != nil {
-				fmt.Fprintf(in.Stderr, "CUT REFUSED: --diff-file %s: %s (pass a readable unified diff file)\n", oneline.Field(in.DiffFile), oneline.Err(err))
-				return 2
-			}
-			diffContent = string(rawDiff)
+	}
+	var chosenDiff string
+	if in.DiffFile != "" {
+		rawDiff, err := os.ReadFile(in.DiffFile)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --diff-file %s: %s (pass a readable unified diff file)\n", oneline.Field(in.DiffFile), oneline.Err(err))
+			return 2
+		}
+		chosenDiff = string(rawDiff)
+		if in.Kind == "recut" {
 			repoDir := resolveRepoDir(in)
 			in.Applied = Attempt3WayApply(repoDir, in.DiffFile)
+		}
+	} else if in.PriorDiff != "" {
+		if raw, err := os.ReadFile(in.PriorDiff); err == nil {
+			chosenDiff = string(raw)
+		} else {
+			chosenDiff = in.PriorDiff
 		}
 	}
 	n, err := NextCardNumber(in.Queue)
@@ -128,35 +137,26 @@ func CutKind(in CutKindInput) int {
 
 	// Retain immutable diff artifact under the owned card lifecycle
 	diffArtifact := ""
-	effectiveDiff := diffContent
-	if effectiveDiff == "" && in.PriorDiff != "" {
-		if raw, err := os.ReadFile(in.PriorDiff); err == nil {
-			effectiveDiff = string(raw)
-		} else {
-			effectiveDiff = in.PriorDiff
-		}
-	}
-	if effectiveDiff != "" {
-		sum := sha256.Sum256([]byte(effectiveDiff))
+	if chosenDiff != "" {
+		sum := sha256.Sum256([]byte(chosenDiff))
 		digest := "sha256:" + hex.EncodeToString(sum[:])
-		if in.Out != "" {
-			if err := os.MkdirAll(in.Out, 0o755); err == nil {
-				diffPath := filepath.Join(in.Out, fmt.Sprintf("card-%d.diff", n))
-				if err := os.WriteFile(diffPath, []byte(effectiveDiff), 0o644); err == nil {
-					diffArtifact = fmt.Sprintf("%s (%s)", diffPath, digest)
-				}
-			}
+		if in.Out == "" {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --out is required to retain diff artifact\n")
+			return 2
 		}
-		if diffArtifact == "" {
-			if in.DiffFile != "" {
-				diffArtifact = fmt.Sprintf("%s (%s)", in.DiffFile, digest)
-			} else {
-				diffArtifact = digest
-			}
+		if err := os.MkdirAll(in.Out, 0o755); err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
+			return 2
 		}
+		diffPath := filepath.Join(in.Out, fmt.Sprintf("card-%d.diff", n))
+		if err := os.WriteFile(diffPath, []byte(chosenDiff), 0o644); err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: retained diff %s: %s (pass a writable --out directory)\n", oneline.Field(diffPath), oneline.Err(err))
+			return 2
+		}
+		diffArtifact = fmt.Sprintf("%s (%s)", diffPath, digest)
 	}
 
-	card := contractSHA12(renderKindCard(in, n, body, diffContent, diffArtifact))
+	card := contractSHA12(renderKindCard(in, n, body, chosenDiff, diffArtifact))
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -207,6 +207,8 @@ func cutKindProblem(in CutKindInput) string {
 		return "--queue is required; the card number comes only from its state file (pass --queue <dir>)"
 	case strings.TrimSpace(in.Out) == "":
 		return "--out is required (pass the directory the card is written into, usually <queue>/pending)"
+	case strings.TrimSpace(in.DiffFile) != "" && strings.TrimSpace(in.PriorDiff) != "":
+		return "conflicting diff inputs: --diff-file and --prior-diff cannot both be specified"
 	}
 	switch in.Kind {
 	case "read":
@@ -309,16 +311,8 @@ func cutKindKnown(kind string) bool {
 
 // renderKindCard writes line 1, the source line, the prior attempt if there is one, the
 // kind's own instruction and the body.
-func renderKindCard(in CutKindInput, n int, body string, diffContent string, diffArtifact ...string) string {
+func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diffArtifact ...string) string {
 	if in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard" || in.Kind == "report" {
-		priorDiff := in.PriorDiff
-		if priorDiff != "" {
-			if raw, err := os.ReadFile(priorDiff); err == nil {
-				priorDiff = string(raw)
-			}
-		} else if diffContent != "" {
-			priorDiff = diffContent
-		}
 		failingOut := in.FailingOutput
 		if failingOut != "" {
 			if raw, err := os.ReadFile(failingOut); err == nil {
@@ -334,20 +328,6 @@ func renderKindCard(in CutKindInput, n int, body string, diffContent string, dif
 		artifactLocator := ""
 		if len(diffArtifact) > 0 && strings.TrimSpace(diffArtifact[0]) != "" {
 			artifactLocator = strings.TrimSpace(diffArtifact[0])
-		} else if priorDiff != "" {
-			sum := sha256.Sum256([]byte(priorDiff))
-			digest := "sha256:" + hex.EncodeToString(sum[:])
-			if in.DiffFile != "" {
-				artifactLocator = fmt.Sprintf("%s (%s)", in.DiffFile, digest)
-			} else if in.PriorDiff != "" {
-				if _, err := os.Stat(in.PriorDiff); err == nil {
-					artifactLocator = fmt.Sprintf("%s (%s)", in.PriorDiff, digest)
-				} else {
-					artifactLocator = digest
-				}
-			} else {
-				artifactLocator = digest
-			}
 		}
 
 		card, err := RenderCardV2(CardV2Input{
@@ -364,7 +344,7 @@ func renderKindCard(in CutKindInput, n int, body string, diffContent string, dif
 			TestCommand:   in.TestCommand,
 			Paths:         in.Paths,
 			ReviewerLine:  in.ReviewerLine,
-			PriorDiff:     priorDiff,
+			PriorDiff:     chosenDiff,
 			DiffArtifact:  artifactLocator,
 			FailingOutput: failingOut,
 			PreflightCmd:  in.PreflightCmd,
@@ -376,6 +356,7 @@ func renderKindCard(in CutKindInput, n int, body string, diffContent string, dif
 			HoldFile:      in.HoldFile,
 			Remains:       in.Remains,
 			Applied:       in.Applied,
+			Attempt:       in.Attempt,
 		})
 		if err == nil {
 			return card
@@ -452,7 +433,7 @@ func renderKindCard(in CutKindInput, n int, body string, diffContent string, dif
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
 	}
-	b.WriteString(kindInstruction(in, body, diffContent))
+	b.WriteString(kindInstruction(in, body, chosenDiff))
 	if body != "" {
 		b.WriteString(body + "\n")
 	}
