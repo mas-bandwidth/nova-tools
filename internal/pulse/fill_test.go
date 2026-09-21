@@ -531,3 +531,172 @@ func TestSelectedCardsMatchesThreeSpellings(t *testing.T) {
 		t.Errorf("no --only selected %d cards, want every one", got)
 	}
 }
+
+// TestFillFairShareLaneAllocation proves Issue #2029: when multiple lanes have ready cards,
+// capacity is distributed fairly across active lanes so no single lane consumes all slots.
+func TestFillFairShareLaneAllocation(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	// Lane alpha has 5 cards
+	for i := 1; i <= 5; i++ {
+		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "LANE: alpha\n")
+	}
+	// Lane beta has 2 cards
+	for i := 6; i <= 7; i++ {
+		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "LANE: beta\n")
+	}
+	// Lane gamma has 2 cards
+	for i := 8; i <= 9; i++ {
+		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "LANE: gamma\n")
+	}
+	lanes := laneFile(t, dir, "alpha\talpha/", "beta\tbeta/", "gamma\tgamma/")
+	l := &laneLauncher{}
+	var out, errb bytes.Buffer
+	benches := []string{"bench-a", "bench-b", "bench-c"}
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, benches, nil),
+		Benches:  benches,
+		Once:     true,
+		Stdout:   &out,
+		Stderr:   &errb,
+		Capacity: laneCap{"bench-a": 1, "bench-b": 1, "bench-c": 1},
+		Launcher: l,
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if len(l.calls) != 3 {
+		t.Fatalf("launcher calls = %d, want 3 (one per active lane): %q", len(l.calls), l.calls)
+	}
+	// Each active lane must have received exactly one launch
+	launchedLanes := map[string]string{}
+	for _, call := range l.calls {
+		parts := strings.SplitN(call, " ", 2)
+		cardFile := parts[1]
+		base := filepath.Base(cardFile)
+		lane := cardLane(cardFile)
+		launchedLanes[lane] = base
+	}
+	for _, expectedLane := range []string{"alpha", "beta", "gamma"} {
+		if _, ok := launchedLanes[expectedLane]; !ok {
+			t.Errorf("lane %q received no launch; launched: %v", expectedLane, launchedLanes)
+		}
+	}
+	// Verify FIFO order within lanes: the launched cards must be card-001, card-006, card-008
+	if launchedLanes["alpha"] != "card-001.md" {
+		t.Errorf("alpha launched %s, want card-001.md", launchedLanes["alpha"])
+	}
+	if launchedLanes["beta"] != "card-006.md" {
+		t.Errorf("beta launched %s, want card-006.md", launchedLanes["beta"])
+	}
+	if launchedLanes["gamma"] != "card-008.md" {
+		t.Errorf("gamma launched %s, want card-008.md", launchedLanes["gamma"])
+	}
+}
+
+// TestFillLaneStarvationPrevention proves that a late-alphabetical lane (zebra) with
+// a late-numbered card is not starved by many cards from an early-alphabetical lane (alpha)
+// and unlaned cards.
+func TestFillLaneStarvationPrevention(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	// 10 cards on alpha
+	for i := 1; i <= 10; i++ {
+		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "LANE: alpha\n")
+	}
+	// 10 unlaned cards
+	for i := 11; i <= 20; i++ {
+		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "unlaned card\n")
+	}
+	// 1 card on zebra (last in filename order and last lane alphabetically)
+	writeCard(t, ready, "card-099.md", "LANE: zebra\n")
+
+	lanes := laneFile(t, dir, "alpha\talpha/", "zebra\tzebra/")
+	l := &laneLauncher{}
+	var out, errb bytes.Buffer
+	benches := []string{"bench-a", "bench-b", "bench-c"}
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, benches, nil),
+		Benches:  benches,
+		Once:     true,
+		Stdout:   &out,
+		Stderr:   &errb,
+		Capacity: laneCap{"bench-a": 1, "bench-b": 1, "bench-c": 1},
+		Launcher: l,
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if len(l.calls) != 3 {
+		t.Fatalf("launcher calls = %d, want 3: %q", len(l.calls), l.calls)
+	}
+	// Zebra must be launched despite sorting last
+	zebraLaunched := false
+	alphaLaunched := false
+	unlanedLaunched := false
+	for _, call := range l.calls {
+		parts := strings.SplitN(call, " ", 2)
+		base := filepath.Base(parts[1])
+		if base == "card-099.md" {
+			zebraLaunched = true
+		} else if base == "card-001.md" {
+			alphaLaunched = true
+		} else if base == "card-011.md" {
+			unlanedLaunched = true
+		}
+	}
+	if !zebraLaunched {
+		t.Errorf("lane zebra was starved; calls=%v", l.calls)
+	}
+	if !alphaLaunched {
+		t.Errorf("lane alpha was not launched; calls=%v", l.calls)
+	}
+	if !unlanedLaunched {
+		t.Errorf("unlaned card was not launched; calls=%v", l.calls)
+	}
+}
+
+// TestFairShareLaneCardsDeterministic verifies round-robin max-min fairness,
+// FIFO preservation per lane, and deterministic output ordering across calls.
+func TestFairShareLaneCardsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	c1 := writeCard(t, dir, "card-01.md", "LANE: z\n")
+	c2 := writeCard(t, dir, "card-02.md", "LANE: a\n")
+	c3 := writeCard(t, dir, "card-03.md", "LANE: z\n")
+	c4 := writeCard(t, dir, "card-04.md", "LANE: b\n")
+	c5 := writeCard(t, dir, "card-05.md", "LANE: a\n")
+	c6 := writeCard(t, dir, "card-06.md", "no lane\n")
+	c7 := writeCard(t, dir, "card-07.md", "LANE: b\n")
+
+	in := []string{c1, c2, c3, c4, c5, c6, c7}
+	// Expected round-robin:
+	// Lanes sorted: "" (c6), "a" (c2, c5), "b" (c4, c7), "z" (c1, c3)
+	// Round 1: c6, c2, c4, c1
+	// Round 2: c5, c7, c3
+	want := []string{c6, c2, c4, c1, c5, c7, c3}
+
+	for trial := 0; trial < 10; trial++ {
+		got := fairShareLaneCards(in)
+		if len(got) != len(want) {
+			t.Fatalf("trial %d: len(got) = %d, want %d", trial, len(got), len(want))
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("trial %d: got[%d] = %s, want %s; full got=%v", trial, i, filepath.Base(got[i]), filepath.Base(want[i]), got)
+			}
+		}
+	}
+
+	// Single lane returns identical slice
+	single := []string{c1, c3}
+	if got := fairShareLaneCards(single); len(got) != 2 || got[0] != c1 || got[1] != c3 {
+		t.Errorf("single lane modified: %v", got)
+	}
+
+	// Empty slice returns identical slice
+	if got := fairShareLaneCards(nil); len(got) != 0 {
+		t.Errorf("nil slice modified: %v", got)
+	}
+}

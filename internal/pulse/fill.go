@@ -309,7 +309,7 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // line when the tick took stale markers away.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
-	cards := selectedCards(readyCards(in.Ready), in.Only)
+	cards := fairShareLaneCards(selectedCards(readyCards(in.Ready), in.Only))
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
 	idx := 0
@@ -780,5 +780,45 @@ func strayCards(dir string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// fairShareLaneCards interleaves pending cards across active lanes round-robin,
+// preventing one lane from starving others when multiple lanes are ready.
+// Within each lane, the original card order (FIFO) is preserved.
+// Active lanes are sorted deterministically so allocation is reproducible.
+func fairShareLaneCards(cards []string) []string {
+	if len(cards) <= 1 {
+		return cards
+	}
+	laneCards := make(map[string][]string)
+	var laneNames []string
+	for _, card := range cards {
+		lane := cardLane(card)
+		if len(laneCards[lane]) == 0 {
+			laneNames = append(laneNames, lane)
+		}
+		laneCards[lane] = append(laneCards[lane], card)
+	}
+	if len(laneNames) <= 1 {
+		return cards
+	}
+	sort.Strings(laneNames)
+
+	out := make([]string, 0, len(cards))
+	for {
+		progressed := false
+		for _, lane := range laneNames {
+			q := laneCards[lane]
+			if len(q) > 0 {
+				out = append(out, q[0])
+				laneCards[lane] = q[1:]
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
 	return out
 }
