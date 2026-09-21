@@ -38,6 +38,7 @@ nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [-
 nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
+nova-pulse status  --pass [--repo <repo>] [--pr <n>] [--head <sha>] [--base <branch>] [--dir <dir>] [--checks <list>] [--script-card <file>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [--memfree-gb <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
@@ -700,6 +701,19 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	self := f.fs.String("self", "", "")
 	var loops repeatable
 	f.fs.Var(&loops, "loop", "")
+
+	// Status pass flags (Essential 1 of #2449)
+	pass := f.fs.Bool("pass", false, "")
+	repo := f.fs.String("repo", "", "")
+	pr := f.fs.Int("pr", 0, "")
+	head := f.fs.String("head", "", "")
+	base := f.fs.String("base", "dev", "")
+	dir := f.fs.String("dir", "", "")
+	checks := f.fs.String("checks", "", "")
+	scriptCard := f.fs.String("script-card", "", "")
+	execScript := f.fs.Bool("exec", false, "")
+	sandbox := f.fs.String("sandbox", "", "")
+
 	// --timeout takes a bare number of seconds or a duration. It was seconds only while the
 	// verb's own progress line printed a duration, so a reader who copied what the tool said
 	// got a flag parse error: a flag that will not accept what the tool prints is a trap.
@@ -709,6 +723,63 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+
+	if *scriptCard != "" {
+		raw, err := os.ReadFile(*scriptCard)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-pulse status: --script-card %s: %v\n", *scriptCard, err)
+			return 2
+		}
+		card, err := pulse.AdmitScriptCard(string(raw))
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-pulse status: %v\n", err)
+			return 2
+		}
+		if *sandbox != "" {
+			card.Sandbox = *sandbox
+		}
+		if *execScript {
+			code, out, execErr := card.Execute(*dir, nil)
+			if out != "" {
+				fmt.Fprint(stdout, out)
+			}
+			if execErr != nil {
+				fmt.Fprintf(stderr, "nova-pulse status: script execution failed: %v\n", execErr)
+				if code == 0 {
+					code = 1
+				}
+			}
+			return code
+		}
+		fmt.Fprintf(stdout, "SCRIPT ADMITTED mode=%s spend=%s argv=%v\n", card.Mode, card.Spend, card.Argv)
+		return 0
+	}
+
+	if *pass || *dir != "" || *pr != 0 || (*repo != "" && strings.TrimSpace(*roots) == "") {
+		var checkList []string
+		if strings.TrimSpace(*checks) != "" {
+			for _, c := range strings.Split(*checks, ",") {
+				if t := strings.TrimSpace(c); t != "" {
+					checkList = append(checkList, t)
+				}
+			}
+		}
+		res := pulse.StatusPass(pulse.StatusPassInput{
+			Repo:    *repo,
+			Dir:     *dir,
+			PR:      *pr,
+			Head:    *head,
+			Base:    *base,
+			Checks:  checkList,
+			Sandbox: *sandbox,
+			Stdout:  stdout,
+			Stderr:  stderr,
+		})
+		if !res.OK {
+			return 2
+		}
+		return 0
 	}
 	timeout, terr := pulse.ParseTimeout(*timeoutRaw)
 	if terr != nil {

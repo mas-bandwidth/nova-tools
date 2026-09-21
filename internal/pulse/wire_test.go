@@ -92,14 +92,15 @@ func TestWiredOnceTickRunsEverySeam(t *testing.T) {
 	Wire(&in, NewWiring(WiringInput{
 		Queue: queue, Roots: root, Repo: "mas-bandwidth/nova-tools", Branch: "dev",
 		Now: func() time.Time { return now }, Config: func() Config { return cfg },
-		TempGlob:  filepath.Join(t.TempDir(), "*swarmtest*"),
-		Runs:      &fakeRuns{runs: []CIRun{{ID: 77, Status: "completed", Conclusion: "success", HeadSHA: "0123456789abcdef", Workflow: "ci", Event: "push"}}},
-		PRs:       prs,
-		Enqueuer:  &fakeEnqueuer{},
-		Procs:     &fakeProcs{live: map[int]bool{}},
-		Runners:   table,
-		Restarter: restarter,
-		Work:      work,
+		TempGlob:   filepath.Join(t.TempDir(), "*swarmtest*"),
+		Runs:       &fakeRuns{runs: []CIRun{{ID: 77, Status: "completed", Conclusion: "success", HeadSHA: "0123456789abcdef", Workflow: "ci", Event: "push"}}},
+		PRs:        prs,
+		Enqueuer:   &fakeEnqueuer{},
+		Procs:      &fakeProcs{live: map[int]bool{}},
+		Runners:    table,
+		Restarter:  restarter,
+		Work:       work,
+		StatusPass: func(repo string, pr int, head string) bool { return true },
 	}))
 	if exit := Run(in); exit != 0 {
 		t.Fatalf("exit %d:\n%s%s", exit, out.String(), errs.String())

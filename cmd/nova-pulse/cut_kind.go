@@ -42,12 +42,13 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	specLines := f.fs.String("spec-lines", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
+	requireStatusPass := f.fs.Bool("require-status-pass", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
 		BodyFile: *bodyFile, Prior: *prior, Names: *names, SpecLines: *specLines,
-		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
+		Out: *out, Queue: *queue, RequireStatusPass: *requireStatusPass, Stdout: stdout, Stderr: stderr,
 	})
 }

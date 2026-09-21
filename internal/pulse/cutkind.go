@@ -36,22 +36,24 @@ var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
-	Kind      string
-	Repo      string // owner/name; line 1 names the repo for every kind
-	PR        int    // read, rebase
-	Head      string // read
-	Issue     int    // fix
-	Title     string // fix, spec, rebase, and the parenthesised title of a read
-	Branch    string // rebase: the branch rebased onto the base
-	Base      string // rebase: the branch it is rebased onto
-	BodyFile  string // fix, spec: the numbered steps this card carries
-	Prior     string // fix: what a prior attempt did, so the worker never repeats it
-	Names     string // replay: the replay names, comma separated
-	SpecLines string // replay: the spec lines the replays are named at
-	Out       string // the directory the card is written into
-	Queue     string // the queue directory holding the state file and its lock
-	Stdout    io.Writer
-	Stderr    io.Writer
+	Kind              string
+	Repo              string // owner/name; line 1 names the repo for every kind
+	PR                int    // read, rebase
+	Head              string // read
+	Issue             int    // fix
+	Title             string // fix, spec, rebase, and the parenthesised title of a read
+	Branch            string // rebase: the branch rebased onto the base
+	Base              string // rebase: the branch it is rebased onto
+	BodyFile          string // fix, spec: the numbered steps this card carries
+	Prior             string // fix: what a prior attempt did, so the worker never repeats it
+	Names             string // replay: the replay names, comma separated
+	SpecLines         string // replay: the spec lines the replays are named at
+	Out               string // the directory the card is written into
+	Queue             string // the queue directory holding the state file and its lock
+	RequireStatusPass bool   // enforce status pass before cutting read card
+	StatusPassRunner  func(in CutKindInput) (bool, string)
+	Stdout            io.Writer
+	Stderr            io.Writer
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -60,6 +62,29 @@ func CutKind(in CutKindInput) int {
 	if problem := cutKindProblem(in); problem != "" {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
 		return 2
+	}
+	if in.Kind == "read" {
+		if in.StatusPassRunner != nil {
+			ok, reason := in.StatusPassRunner(in)
+			if !ok {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED: status pass failed for %s PR%d at %s: %s (read cards require green status pass)\n",
+					in.Repo, in.PR, oneline.Field(in.Head), reason)
+				return 2
+			}
+		} else if in.RequireStatusPass {
+			res := StatusPass(StatusPassInput{
+				Repo:   in.Repo,
+				PR:     in.PR,
+				Head:   in.Head,
+				Stdout: in.Stdout,
+				Stderr: in.Stderr,
+			})
+			if !res.OK {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED: status pass failed for %s PR%d at %s: %s (check=%s)\n",
+					in.Repo, in.PR, oneline.Field(in.Head), res.FailureReason, res.FailedCheck)
+				return 2
+			}
+		}
 	}
 	body := ""
 	if in.BodyFile != "" {

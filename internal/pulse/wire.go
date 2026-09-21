@@ -94,13 +94,14 @@ type WiringInput struct {
 	DecideBaseURL string
 	DecideDo      swarm.DecideFunc
 
-	Runs      RunSource
-	PRs       PRSource
-	Enqueuer  Enqueuer
-	Procs     ProcessTable
-	Runners   RunnerTable
-	Restarter RunnerRestarter
-	Work      WorkSource
+	Runs       RunSource
+	PRs        PRSource
+	Enqueuer   Enqueuer
+	Procs      ProcessTable
+	Runners    RunnerTable
+	Restarter  RunnerRestarter
+	Work       WorkSource
+	StatusPass func(repo string, pr int, head string) bool
 }
 
 // Wiring is the six seams of RunInput at once: it satisfies Gater, Harvester, Sweeper,
@@ -145,6 +146,16 @@ func NewWiring(in WiringInput) *Wiring {
 	if in.Work == nil {
 		in.Work = GHWork{Timeout: in.Timeout}
 	}
+	if in.StatusPass == nil {
+		in.StatusPass = func(repo string, pr int, head string) bool {
+			res := StatusPass(StatusPassInput{
+				Repo: repo,
+				PR:   pr,
+				Head: head,
+			})
+			return res.OK
+		}
+	}
 	return &Wiring{in: in, roots: splitList(in.Roots)}
 }
 
@@ -183,15 +194,19 @@ func defaultConfig() Config {
 // log writes one verb's one line where a person reads it. A line with no line is nothing:
 // a verb that printed nothing had nothing to say.
 func (w *Wiring) log(lines string) {
+	now := time.Now().UTC()
+	if w.in.Now != nil {
+		now = w.in.Now().UTC()
+	}
 	for _, l := range strings.Split(strings.TrimRight(lines, "\n"), "\n") {
 		if strings.TrimSpace(l) == "" {
 			continue
 		}
 		if w.in.Log != nil {
-			fmt.Fprintf(w.in.Log, "%s %s\n", w.in.Now().UTC().Format("15:04:05Z"), l)
+			fmt.Fprintf(w.in.Log, "%s %s\n", now.Format("15:04:05Z"), l)
 			continue
 		}
-		appendLine(filepath.Join(w.in.Queue, "pulse.log"), w.in.Now().UTC().Format("15:04:05Z")+" "+l)
+		appendLine(filepath.Join(w.in.Queue, "pulse.log"), now.Format("15:04:05Z")+" "+l)
 	}
 }
 
@@ -394,9 +409,29 @@ func (w *Wiring) refillReads(workset map[int]bool) int {
 		if w.cardExists(fmt.Sprintf("PR%d at %s", pr.Number, head), "pending", "launched", "done") {
 			continue
 		}
+		if w.in.StatusPass != nil {
+			if !w.in.StatusPass(w.in.Repo, pr.Number, head) {
+				w.log(fmt.Sprintf("REFILL NOTE status pass failed for PR%d at %s; read card not cut", pr.Number, head))
+				continue
+			}
+		} else {
+			w.log(fmt.Sprintf("REFILL NOTE status pass unavailable for PR%d at %s; read card not cut", pr.Number, head))
+			continue
+		}
+		statusRunner := func(in CutKindInput) (bool, string) {
+			if w.in.StatusPass != nil {
+				if !w.in.StatusPass(in.Repo, in.PR, in.Head) {
+					return false, "status pass rejected"
+				}
+				return true, ""
+			}
+			return false, "status pass unavailable"
+		}
 		if w.cutKind(CutKindInput{
 			Kind: "read", Repo: w.in.Repo, PR: pr.Number, Head: head, Title: pr.Title,
 			Out: filepath.Join(w.in.Queue, "pending"), Queue: w.in.Queue,
+			RequireStatusPass: true,
+			StatusPassRunner:  statusRunner,
 		}) {
 			cut++
 		}
