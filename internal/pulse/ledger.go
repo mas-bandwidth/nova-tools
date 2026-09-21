@@ -42,10 +42,10 @@ import (
 // ledgerFileName is the one file this ledger lives in, under the queue directory.
 const ledgerFileName = "ledger.tsv"
 
-// ledgerHeader names the seven fields, so the file reads without this source beside it.
-const ledgerHeader = "# pr\thead\tcard\tverdict\tat\tenqueued_at\tclosed_at\n"
+// ledgerHeader names the eight fields, so the file reads without this source beside it.
+const ledgerHeader = "# pr\thead\tcard\tverdict\tat\tenqueued_at\tclosed_at\tkey\n"
 
-// ledgerDash is an empty field: every row has seven fields, and a missing one is never a blank.
+// ledgerDash is an empty field: every row has eight fields (seven in legacy), and a missing one is never a blank.
 const ledgerDash = "-"
 
 // redTestTitle is the title prefix a red-test PR carries; the policy holds those PRs, so
@@ -64,6 +64,7 @@ type LedgerRow struct {
 	At         string // when the verdict was recorded, RFC3339 UTC
 	EnqueuedAt string // when the merge was enqueued, or "-"
 	ClosedAt   string // when the row was closed, or "-"
+	Key        string // card content key, or "-"
 }
 
 // PRCheck is one check on a PR, normalised to one state token.
@@ -267,7 +268,7 @@ func seedFromApproved(queue, repo, stamp string) (int, error) {
 		if seen[key] {
 			continue
 		}
-		fresh = append(fresh, LedgerRow{PR: pr, Head: f[2], Card: ledgerDash, Verdict: "APPROVE", At: stamp})
+		fresh = append(fresh, LedgerRow{PR: pr, Head: f[2], Card: ledgerDash, Verdict: "APPROVE", At: stamp, Key: ledgerDash})
 		seen[key] = true
 	}
 	if err := AppendLedger(queue, fresh...); err != nil {
@@ -301,9 +302,10 @@ func AppendLedger(queue string, rows ...LedgerRow) error {
 	}
 	var b strings.Builder
 	for _, row := range rows {
-		fmt.Fprintf(&b, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", row.PR,
+		fmt.Fprintf(&b, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.PR,
 			oneline.Field(orDash(row.Head)), oneline.Field(orDash(row.Card)), oneline.Field(orDash(row.Verdict)),
-			oneline.Field(orDash(row.At)), oneline.Field(orDash(row.EnqueuedAt)), oneline.Field(orDash(row.ClosedAt)))
+			oneline.Field(orDash(row.At)), oneline.Field(orDash(row.EnqueuedAt)), oneline.Field(orDash(row.ClosedAt)),
+			oneline.Field(orDash(row.Key)))
 	}
 	if _, err := io.WriteString(f, b.String()); err != nil {
 		return fmt.Errorf("the ledger row cannot be written: %w", err)
@@ -326,14 +328,27 @@ func ReadLedger(queue string) ([]LedgerRow, error) {
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) != 7 {
-			return nil, fmt.Errorf("ledger.tsv line %d wants pr, head, card, verdict, at, enqueued_at, closed_at, got %d fields", n+1, len(f))
+		if len(f) != 7 && len(f) != 8 {
+			return nil, fmt.Errorf("ledger.tsv line %d wants pr, head, card, verdict, at, enqueued_at, closed_at[, key], got %d fields", n+1, len(f))
 		}
 		pr, err := strconv.Atoi(strings.TrimSpace(f[0]))
 		if err != nil {
 			return nil, fmt.Errorf("ledger.tsv line %d: %q is not a PR number", n+1, f[0])
 		}
-		rows = append(rows, LedgerRow{PR: pr, Head: f[1], Card: f[2], Verdict: f[3], At: f[4], EnqueuedAt: f[5], ClosedAt: f[6]})
+		key := ledgerDash
+		if len(f) >= 8 && f[7] != "" {
+			key = f[7]
+		}
+		rows = append(rows, LedgerRow{
+			PR:         pr,
+			Head:       f[1],
+			Card:       f[2],
+			Verdict:    f[3],
+			At:         f[4],
+			EnqueuedAt: f[5],
+			ClosedAt:   f[6],
+			Key:        key,
+		})
 	}
 	return rows, nil
 }

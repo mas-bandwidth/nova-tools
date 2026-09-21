@@ -328,3 +328,71 @@ func TestLaunchPassesTheDeadlineFlag(t *testing.T) {
 		t.Fatalf("the launcher was given the hardcoded deadline: %q", raw)
 	}
 }
+
+// TestFillCLI_KeysAndForceAndDoneFlags tests that --keys, --done, --force, and --base-sha
+// are accepted by the fill CLI and correctly handle content key caching.
+func TestFillCLI_KeysAndForceAndDoneFlags(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched, done := filepath.Join(dir, "ready"), filepath.Join(dir, "launched"), filepath.Join(dir, "done")
+	keysFile := filepath.Join(dir, "keys.tsv")
+	_ = os.MkdirAll(ready, 0o755)
+
+	cardContent := "RESULT card-001 sha=60df906d1234\nCLI test card.\n"
+	writeMainFile(t, ready, "card-001.md", cardContent)
+
+	// Pre-record DONE in keysFile
+	ks := pulse.NewKeyStoreFromFile(keysFile)
+	ck := pulse.ComputeCardKey(cardContent, "60df906d1234", "")
+	if err := ks.RecordDone(ck, "card-001.md", 2507, "deadbeef1234", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	specs := fakePATH(t)
+	log := filepath.Join(dir, "launcher.log")
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: log, Default: fakeRule{Exit: 0}})
+
+	// First run without --force: card must be cached, moved to --done, not launched
+	var out, errb bytes.Buffer
+	code := run([]string{"fill", "--ready", ready, "--launched", launched, "--done", done,
+		"--keys", keysFile, "--base-sha", "60df906d1234",
+		"--machines", fillMachines(t, dir, "bench-a"),
+		"--bench", "bench-a", "--capacity", "1", "--once",
+		"--launch-grace", "0",
+		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
+	}, &out, &errb, time.Now().UTC())
+
+	if code != 0 {
+		t.Fatalf("fill exit = %d, stderr: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "FILL CACHED") || !strings.Contains(out.String(), "pr=2507") {
+		t.Fatalf("expected FILL CACHED with pr=2507 in stdout, got:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(done, "card-001.md")); err != nil {
+		t.Fatalf("card-001.md was not moved to done/: %v", err)
+	}
+
+	// Move back to ready, and run with --force
+	if err := os.Rename(filepath.Join(done, "card-001.md"), filepath.Join(ready, "card-001.md")); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+
+	codeForce := run([]string{"fill", "--ready", ready, "--launched", launched, "--done", done,
+		"--keys", keysFile, "--base-sha", "60df906d1234", "--force",
+		"--machines", fillMachines(t, dir, "bench-a"),
+		"--bench", "bench-a", "--capacity", "1", "--once",
+		"--launch-grace", "0",
+		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
+	}, &out, &errb, time.Now().UTC())
+
+	if codeForce != 0 {
+		t.Fatalf("fill with --force exit = %d, stderr: %s", codeForce, errb.String())
+	}
+	if strings.Contains(out.String(), "FILL CACHED") {
+		t.Fatalf("did not expect FILL CACHED under --force, got:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(launched, "card-001.md")); err != nil {
+		t.Fatalf("card-001.md was not moved to launched/ under --force: %v", err)
+	}
+}
