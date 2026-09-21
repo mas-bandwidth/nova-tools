@@ -12,4 +12,5 @@ internal/pulse/fleetverbs.go:SSHRunner.Run  # the FleetRunner seam's real implem
 internal/pulse/statushtml.go:readFleetOverSSH  # fans out to readOneBench, which reaches the bench through the guarded fleetSSH
 internal/pulse/statushtmlrows.go:publishOverSSH  # builds the script and hands it to the guarded fleetSSH
 internal/release/edges.go:ExecSSH.sshArgs  # builds the option list and starts nothing; Run, Send and Fetch each guard the child they start
+internal/release/certify.go:sshRemote.Run  # adapts the fleet.Remote seam to release.SSH; the real one, ExecSSH.Run, is guarded
 internal/swarm/benchpull.go:sshError.Error  # an error type's message, named for the ssh exit code it carries; no child process
