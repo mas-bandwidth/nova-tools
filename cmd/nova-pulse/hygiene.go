@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
@@ -18,7 +19,18 @@ import (
 var (
 	hygieneProcs pulse.HygieneProcs = pulse.OSProcs{}
 	hygieneDisk                     = func(home string) pulse.HygieneDisk { return pulse.OSDisk{Home: home} }
+
+	// The two doors of --lane-dirs: the git reads over a checkout and the forge
+	// read over a branch. Tests replace both, so no test of the lane sweep runs
+	// git or reaches the network.
+	hygieneGit pulse.LaneGit      = pulse.OSLaneGit{Timeout: hygieneLaneTimeout}
+	hygienePRs pulse.LanePRSource = pulse.GHLanePRs{Timeout: hygieneLaneTimeout}
 )
+
+// hygieneLaneTimeout bounds every git and gh read the lane sweep makes. Glenn's
+// two-minute rule: anything we call out to that costs real time answers well
+// inside a minute or is not waited on.
+const hygieneLaneTimeout = 30 * time.Second
 
 // The runner `_diag` prune's defaults under the names their flags carry, so a
 // change to either is a change to one line and the test that pins it.
@@ -33,7 +45,29 @@ nova-pulse hygiene reap <slot>            --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot>     --home <dir>
 nova-pulse hygiene drop-cache             --home <dir>
-nova-pulse hygiene log [n]                --home <dir>`
+nova-pulse hygiene log [n]                --home <dir>
+nova-pulse hygiene --lane-dirs <root>     [--dry-run] [--older-than <n>d] [--max <n>]`
+
+// hygieneOlderThanDays reads --older-than, which has ONE spelling: a whole
+// number of days with a `d` suffix, at least 1. An empty value is no window at
+// all and is legal. Hours, weeks and a bare number are refused rather than
+// guessed at, because a sweep that removes directories may not have to be read
+// twice to know what it did.
+func hygieneOlderThanDays(v string) (int, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, true
+	}
+	digits, ok := strings.CutSuffix(v, "d")
+	if !ok || digits == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
 
 // hygieneFlagValue reads a flag's value in either spelling, --name <v> or
 // --name=<v>, advancing i past a separate value. It answers false when a
@@ -58,9 +92,10 @@ func hygieneRefuse(stderr io.Writer, what string) int {
 // cmdHygiene parses the subcommand and the flags that follow it. Every path
 // hangs under --home: the two roots, the action log and the build cache.
 func cmdHygiene(args []string, stdout, stderr io.Writer, now time.Time) int {
-	var home, hostname, roots, logPath, cache string
+	var home, hostname, roots, logPath, cache, laneDirs, olderThan string
 	dry := false
 	diagDays, diagMaxBytes := diagDaysDefault, diagMaxBytesDefault
+	laneMax, laneMaxSet := bounded.Default, false
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -70,6 +105,28 @@ func cmdHygiene(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 0
 		case a == "--dry-run":
 			dry = true
+		case a == "--lane-dirs" || strings.HasPrefix(a, "--lane-dirs="):
+			v, ok := hygieneFlagValue(args, &i, "--lane-dirs")
+			if !ok {
+				return hygieneRefuse(stderr, "--lane-dirs wants a value")
+			}
+			laneDirs = v
+		case a == "--older-than" || strings.HasPrefix(a, "--older-than="):
+			v, ok := hygieneFlagValue(args, &i, "--older-than")
+			if !ok {
+				return hygieneRefuse(stderr, "--older-than wants a value")
+			}
+			olderThan = v
+		case a == "--max" || strings.HasPrefix(a, "--max="):
+			v, ok := hygieneFlagValue(args, &i, "--max")
+			if !ok {
+				return hygieneRefuse(stderr, "--max wants a value")
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return hygieneRefuse(stderr, "--max wants a line ceiling of zero or more, got "+oneline.Field(v))
+			}
+			laneMax, laneMaxSet = n, true
 		case a == "--diag-days" || strings.HasPrefix(a, "--diag-days="):
 			v, ok := hygieneFlagValue(args, &i, "--diag-days")
 			if !ok {
@@ -122,6 +179,29 @@ func cmdHygiene(args []string, stdout, stderr io.Writer, now time.Time) int {
 		default:
 			rest = append(rest, a)
 		}
+	}
+	// --lane-dirs is the one flag-form mode: it takes no subcommand, and the
+	// two flags that belong to it mean nothing without it. A bare
+	// `nova-pulse hygiene` still prints the usage and exits 2, as it always has.
+	if olderThan != "" && laneDirs == "" {
+		return hygieneRefuse(stderr, "--older-than only applies to --lane-dirs (pass: nova-pulse hygiene --lane-dirs <root> --older-than <n>d)")
+	}
+	if laneMaxSet && laneDirs == "" {
+		return hygieneRefuse(stderr, "--max only applies to --lane-dirs (pass: nova-pulse hygiene --lane-dirs <root> --max <n>)")
+	}
+	if laneDirs != "" {
+		if len(rest) > 0 {
+			return hygieneRefuse(stderr, "--lane-dirs takes no subcommand, got "+oneline.Quote(rest[0])+" (pass: nova-pulse hygiene --lane-dirs <root> [--dry-run] [--older-than <n>d] [--max <n>])")
+		}
+		days, ok := hygieneOlderThanDays(olderThan)
+		if !ok {
+			return hygieneRefuse(stderr, "--older-than wants a whole number of days with a d suffix, at least 1, got "+oneline.Field(olderThan)+" (pass --older-than 2d; days are this flag's only spelling)")
+		}
+		return pulse.HygieneLanes(pulse.HygieneLanesInput{
+			Root: laneDirs, DryRun: dry, OlderThanDays: days, Max: laneMax,
+			Now: func() time.Time { return now }, Git: hygieneGit, PRs: hygienePRs,
+			Stdout: stdout, Stderr: stderr,
+		})
 	}
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, hygieneUsage)
