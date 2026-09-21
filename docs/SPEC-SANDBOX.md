@@ -1972,12 +1972,13 @@ git credential and needs no network for the repo at all**; the network it has
 is the provider's API. The fetch is one network round per distinct sha in the
 batch, not one per worker: 64 workers at one sha do not do 64 clones.
 
-*The rest of the seam:* `--net-deny` is not passed, because the provider's API
-is the work (`net=nopromise`); the provider key is read from its file before
-the wrap and passed by environment (`nova-swarm` rule 6); `run` runs
-`nova-sandbox probe` once before the first worker and refuses the pass with
+*The rest of the seam:* `--net-deny` is not passed **for a model job**, because
+the provider's API is the work (`net=nopromise`); the provider key is read from
+its file before the wrap and passed by environment (`nova-swarm` rule 6); `run`
+runs `nova-sandbox probe` once before the first worker and refuses the pass with
 `RUN REFUSED reason=sandbox_probe` on a failure, and a machine with no backend
-is `RUN REFUSED reason=no_sandbox`. The consequences follow from the wall, and each names the mechanism that
+is `RUN REFUSED reason=no_sandbox`. A `MODE: script` card is the exception in
+the next section. The consequences follow from the wall, and each names the mechanism that
 produces it rather than asserting it:
 
 - **No SSH agent socket is reachable.** Rule 7: the darwin grant is
@@ -2004,6 +2005,27 @@ produces it rather than asserting it:
   because it is the only directory outside the job that is in the worker's
   write set — every other way out is one of the four above. A line's own self is in no task's write set, so a task's
 shell cannot delete it (#69's worked specimen).
+
+### MODE: script is --net-deny (S7, issue #2498)
+
+A `MODE: script` card does not call a provider. Reusing the model job's wall
+argv (`net=nopromise`) would hand the script IP outbound and DNS, and a
+contract-matching `RESULT.md` written after a fetch would look mechanical.
+The default for that card is `--net-deny` (`net=denied`). Johnny's pin; the
+launcher that puts the flag on the argv is Rowan's.
+
+**TODO launcher: Rowan** — pass `--net-deny` on the `nova-sandbox` argv of a
+`MODE: script` card. Do not reuse `nativeSandboxArgv` as it stands. A dest
+grant, if one is ever named, is `(remote ip "localhost:PORT")` on darwin, the
+form Apple will load. Do not pin the #599 nested SBPL form
+`(local ip (host ..) (port ..))`. `sandbox-exec` is exit 65, unbound
+variable: host. `--net-allow` is not on origin/dev.
+
+The card-scope read set is still PATHS and their tests (SPEC-SWARM the harness
+wall). A directory glob may be a `--read` today; a file glob may not, because
+`--read` of its parent admits siblings. Tests:
+`TestWallTermsScriptIsNetDeny`, `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`,
+`TestWallTermsRefuseANetworkFetch`.
 
 **A solo line's launcher.** A line started by hand gets no swarm, and it gets
 the wall only through its launcher. Its launcher calls `nova-sandbox` with lists **per line** — its home,
@@ -2663,6 +2685,13 @@ And one for each thing the rules above assert but no test yet reached:
     is accepted, and so is one under the job's data home of rule 9, which lies
     inside a `--write` by construction — the guard refused the tool's own
     `probe` before that second exemption existed.
+30. **MODE: script is `--net-deny` (S7, issue #2498).** A policy built with
+    `NetDeny` from `WallTerms` of a `MODE: script` card prints `net=denied`.
+    `--read` of a PATHS directory glob does not admit a path outside PATHS
+    (`sandbox.Inside`). A dest grant, if named, is `(remote ip "localhost:PORT")`.
+    Do not pin the #599 nested SBPL form. **TODO launcher: Rowan** wires the
+    flag onto the argv; the terms are `TestWallTermsScriptIsNetDeny` and
+    `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`.
 
 ## The work list
 

@@ -877,6 +877,67 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 This is the same shape as the pulse child (created, one job, exit) and the
 meaning of "pull the intelligence up, push down to machinery."
 
+## The harness wall (S7, issue #2498)
+
+Glenn, 2026-09-21: set the model up to succeed once, benefit forever. A card
+that wanders the tree, fetches the web, or spends a turn on a permission
+refusal is paying exploration for work the card already named. Johnny owns
+these terms; Rowan owns the launcher that applies them.
+
+The OS wall still grants the job directory as `--write` (the dispatcher
+caller below). File-level scope is the matcher in `internal/swarm/wallterms.go`,
+not a recursive `--read` of a PATHS parent directory: that grant would admit
+every sibling of a named file. A directory glob (`keep/**`) can be a `--read`
+root today; a file glob cannot.
+
+**TODO launcher: Rowan** — wire these terms into the native/supervise argv and
+the harness permission block. This section is the terms. Do not ship a half
+launcher. The dispatcher of a **model** job still omits `--net-deny` (the
+provider's API is the work). Sparse checkout of the same PATHS is S10.
+
+H1. **Read scope is PATHS and their tests.** The files a card may read from the
+    repository are the files matching its `PATHS:` globs, and the tests of
+    those paths: the `_test.go` sibling of a named `.go` file, `testdata/`
+    under the same directory, and the package the `TEST:` line names
+    (`<package>/*_test.go`). Nothing else in the repository is in the
+    card-scope read set. The dispatcher's own reads (the slot, the toolchain,
+    `read_roots`) are unchanged and are not this scope. `PATHS: none` is the
+    empty set.
+
+H2. **No web.** `webfetch` is deny. A card does not fetch. The provider API of
+    a model job is not webfetch: it is the harness's own call, outside this
+    fence.
+
+H3. **Only pre-approved commands.** The harness command allowlist is a closed
+    set: `go`, `gofmt`, `git`, `make`, `rg`, `grep`, `cat`, `ls`, `head`,
+    `wc`, `diff`. A first-token not in the set is denied without prompting.
+    `curl`, `wget`, `ssh`, `nova-sandbox`, `nova-secrets` and a login shell
+    (`bash -l`) are not in the set.
+
+H4. **`MODE: script` is `--net-deny`.** A script card does not talk to a
+    provider; its default network is an enforced denial (`net=denied`), not
+    `nopromise`. Native omits `--net-deny` because the provider API is the
+    work; reusing that argv for a script card hands it IP outbound and DNS.
+    A dest grant, if a launcher ever names one, is a loopback
+    `(remote ip "localhost:PORT")` that Apple will load. Do not pin the #599 nested SBPL form
+    `(local ip (host ..) (port ..))` — `sandbox-exec` is exit 65, unbound
+    variable: host.
+
+**Red tests for this section.** One line per rule, seen red first:
+
+- H1: `TestWallTermsRefuseAPathOutsidePATHS` — a path matching none of PATHS
+  is not admitted, including a sibling of a named file. `TestWallTermsAdmitTheTestsOfPATHS`
+  — the `_test.go` sibling, `testdata/`, and the `TEST:` package's tests are
+  admitted. `TestWallTermsReadRootsDoNotAdmitAnOutsider` /
+  `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider` — a directory glob wired as
+  `--read` does not admit a path outside PATHS through `sandbox.Inside`.
+- H2: `TestWallTermsRefuseANetworkFetch` — webfetch of `https://example.com/`
+  is not admitted, and the fence's `webfetch` key is deny.
+- H3: `TestWallTermsOnlyPreApprovedCommands` — `go test` is admitted; `curl`,
+  `wget`, `ssh`, `nova-sandbox`, `nova-secrets` and `bash -l` are not.
+- H4: `TestWallTermsScriptIsNetDeny` — `MODE: script` sets `NetDeny`; a model
+  card does not.
+
 ## The verbs
 
 ```
@@ -3899,6 +3960,20 @@ be seen red before it is trusted.
     `--read`, the job directory as the FIRST `--write` with the data home
     beside it, the job directory as `--cwd`, no `--net-deny`, and a directory
     planted in the task text that appears in no flag of it.
+20. **The harness wall (S7, issue #2498)**, five tests, each seen red first.
+    `TestWallTermsRefuseAPathOutsidePATHS`: a path matching none of the card's
+    `PATHS:` is not admitted, including a sibling of a named file.
+    `TestWallTermsAdmitTheTestsOfPATHS`: the `_test.go` sibling, `testdata/`,
+    and the `TEST:` package's tests are admitted.
+    `TestWallTermsRefuseANetworkFetch`: webfetch is deny; a fetch of
+    `https://example.com/` is not admitted.
+    `TestWallTermsOnlyPreApprovedCommands`: `go test` is admitted; `curl`,
+    `ssh`, `nova-sandbox` and `bash -l` are not.
+    `TestWallTermsScriptIsNetDeny`: `MODE: script` is `--net-deny`; a model
+    card is not. `TestWallTermsReadRootsDoNotAdmitAnOutsider` and
+    `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`: a directory glob wired as
+    `--read` does not admit a path outside PATHS through `sandbox.Inside`.
+    The launcher argv is **TODO launcher: Rowan**; these tests are the terms.
 
 ## The work list
 
