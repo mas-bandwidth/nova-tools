@@ -896,14 +896,17 @@ launcher. The dispatcher of a **model** job still omits `--net-deny` (the
 provider's API is the work). Sparse checkout of the same PATHS is S10.
 
 H1. **Declared writes are PATHS; contextual reads are a separate set.** The
-    files a card may write are its `PATHS:` globs. The files it may read from
-    the repository are those writes plus dispatcher-approved contextual reads:
-    `docs/SPEC-*.md`, same-package siblings of a PATHS glob, `testdata/` under
-    the same directory, and the package the `TEST:` line names
-    (`<package>/*_test.go`). A narrow write does not imply the worker reasons
-    from that file alone. A spec path is a contextual read, not a write. A
-    path matching neither set is refused. The dispatcher's own reads (the
-    slot, the toolchain, `read_roots`) are unchanged and are not this scope.
+    files a card may write are its `PATHS:` globs. Specs (`docs/SPEC-*.md`),
+    same-package siblings, and testdata are **defaults rather than an exhaustive set**. The dispatcher
+    may authorize bounded caller/callee, build-input, and reverse-dependent
+    reads outside those defaults without widening PATHS. A denied required read
+    blocks and requests that adjustment instead of guessing. The helpers in
+    this slice list only the defaults; a path matching neither the writes nor
+    those defaults is refused here, and the launcher (Rowan) is the adjustment
+    route. A narrow write does not imply the worker reasons from that file
+    alone. A spec path is a contextual read, not a write. The dispatcher's own
+    reads (the slot, the toolchain, `read_roots`) are unchanged and are not
+    this scope.
     `PATHS: none` is the empty write set. `ReadRoots` names `--read`
     directories for a directory-covering PATHS glob only, skip-if-absent; a
     file glob names none. A root that is unresolved, or that follows a
@@ -919,7 +922,8 @@ H3. **Harness-prompt allowlist, not the OS wall.** The harness may run without
     command confinement and not the OS wall: `git` can still invoke other
     programs. Compound lines (`;`, `&&`, `||`, `|`, backtick, `$()`, newline)
     are refused. A first token containing `/` is refused (`/usr/bin/git` is
-    not the allowlist word `git`). `curl`, `wget`, `ssh`, `nova-sandbox`,
+    not the allowlist word `git`). Background `&` and process substitutions
+    further show this is not a shell parser; the hint is explicitly non-authoritative. `curl`, `wget`, `ssh`, `nova-sandbox`,
     `nova-secrets` and a login shell (`bash -l`) are not in the set. No new
     permissions.
 

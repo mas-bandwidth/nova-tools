@@ -36,7 +36,7 @@ var ApprovedCommands = []string{
 // the command allowlist, webfetch deny, and --net-deny when the header is MODE: script.
 type CardWallTerms struct {
 	Paths    []string // the card's PATHS: globs; empty when PATHS: none or absent
-	Reads    []string // contextual-read globs: specs, same-package siblings, testdata, TEST:
+	Reads    []string // default contextual-read globs (not exhaustive): specs, siblings, testdata, TEST:
 	Scope    []string // Paths union Reads; what AdmitsRead matches
 	NetDeny  bool     // true for header MODE: script; a model job stays nopromise
 	Webfetch string   // always FenceDeny
@@ -111,8 +111,12 @@ func admitsGlob(globs []string, repoRel string) bool {
 	return false
 }
 
-// AdmitsRead reports whether a repo-relative path is in the card-scope read set:
-// declared writes or dispatcher-approved contextual reads. Dispatcher reads
+// AdmitsRead reports whether a repo-relative path matches the declared writes
+// or the default contextual reads (specs, siblings, testdata, TEST:). Those
+// defaults are not exhaustive: the dispatcher may authorize bounded
+// caller/callee, build-input, and reverse-dependent reads without widening
+// PATHS. A denied required read blocks and requests that adjustment; this
+// helper does not guess. Dispatcher reads
 // (slot, toolchain, read_roots) are not this question.
 func (t CardWallTerms) AdmitsRead(repoRel string) bool {
 	return admitsGlob(t.Scope, repoRel)
@@ -128,7 +132,8 @@ func (t CardWallTerms) AdmitsWrite(repoRel string) bool {
 // allowlist. It is not command confinement and not the OS wall: compound lines
 // (`;`, `&&`, `||`, `|`, backtick, `$()`, newline) are refused, and a first
 // token containing `/` is refused, so `git status; curl` and `/usr/bin/git`
-// do not pass as `git`. The allowlist is the command name, not a shell grammar.
+// do not pass as `git`. Background `&` and process substitutions further show
+// this is not a shell parser; the hint is explicitly non-authoritative.
 func AdmitsCommand(line string) bool {
 	if commandLineIsCompound(line) {
 		return false

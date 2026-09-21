@@ -405,6 +405,10 @@ func TestSpecNamesTheHarnessWall(t *testing.T) {
 	section := swarmSection(t, swarmDoc, "## The harness wall (S7, issue #2498)")
 	for _, phrase := range []string{
 		"Declared writes are PATHS; contextual reads are a separate set",
+		"defaults rather than an exhaustive set",
+		"caller/callee, build-input, and reverse-dependent",
+		"blocks and requests that adjustment instead of guessing",
+		"explicitly non-authoritative",
 		"docs/SPEC-*.md",
 		"No web",
 		"Harness-prompt allowlist, not the OS wall",
