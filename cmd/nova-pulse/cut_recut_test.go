@@ -29,6 +29,7 @@ func setupCLIGitRepo(t *testing.T) string {
 	_ = os.WriteFile(filepath.Join(repo, "doc.txt"), []byte("v1\nv2\nv3\n"), 0o644)
 	exec.Command("git", "-C", repo, "add", "doc.txt").Run()
 	exec.Command("git", "-C", repo, "commit", "-m", "base doc").Run()
+	exec.Command("git", "-C", repo, "branch", "-M", "main").Run()
 	return repo
 }
 
@@ -48,7 +49,7 @@ func TestCmdCutKindRecutAppliesClean(t *testing.T) {
 	diffFile := filepath.Join(dir, "doc.diff")
 	_ = os.WriteFile(diffFile, diffBytes, 0o644)
 
-	exec.Command("git", "-C", repo, "checkout", "master").Run()
+	exec.Command("git", "-C", repo, "checkout", "main").Run()
 	_ = os.WriteFile(filepath.Join(repo, "other.txt"), []byte("unrelated\n"), 0o644)
 	exec.Command("git", "-C", repo, "add", "other.txt").Run()
 	exec.Command("git", "-C", repo, "commit", "-m", "unrelated commit").Run()

@@ -27,6 +27,7 @@ func setupGitRepo(t *testing.T) string {
 	}
 	runGit(t, repo, "add", "alpha.txt")
 	runGit(t, repo, "commit", "-m", "initial alpha")
+	runGit(t, repo, "branch", "-M", "main")
 	return repo
 }
 
@@ -65,7 +66,7 @@ func TestCutKindRecutMechanicalApplyClean(t *testing.T) {
 	}
 
 	// Go back to the base branch, add a non-conflicting change (new file or line 0).
-	runGit(t, repo, "checkout", "master")
+	runGit(t, repo, "checkout", "main")
 	if err := os.WriteFile(filepath.Join(repo, "beta.txt"), []byte("beta line 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,11 +145,11 @@ func TestCutKindRecutMechanicalApplyConflict(t *testing.T) {
 	}
 
 	// Base branch also modifies line 2 differently (creating conflict).
-	runGit(t, repo, "checkout", "master")
+	runGit(t, repo, "checkout", "main")
 	if err := os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("line 1\nline 2 conflict\nline 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repo, "commit", "-am", "conflicting change on master")
+	runGit(t, repo, "commit", "-am", "conflicting change on main")
 	tipSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
 
 	code, line, errs, card := cutKind(t, CutKindInput{
