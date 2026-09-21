@@ -784,12 +784,18 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	if in.UsageInterval > 0 {
 		supervisorArgs = append(supervisorArgs, "--usage-interval", in.UsageInterval.String())
 	}
+	id, err := LoadPoolIdentity(p.Dir)
+	if err != nil {
+		_ = p.Free(slot)
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), launchBroken
+	}
 	cmd := exec.Command(in.Supervisor, supervisorArgs...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	// The bench's own git config stops at the job boundary: the supervisor and
 	// everything it spawns read the staged clone's local config, never the
-	// bench's (SPEC-TOOLWORK §3 rule 1, #1665).
-	cmd.Env = append(os.Environ(), StagingGitEnv()...)
+	// bench's (SPEC-TOOLWORK §3 rule 1, #1665), and export the pool's identity
+	// so a worker cloning after launch commits under the pool's name.
+	cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
 	if log, err := os.OpenFile(filepath.Join(jobDir, "supervisor.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
 		cmd.Stdout, cmd.Stderr = log, log
 		defer log.Close()

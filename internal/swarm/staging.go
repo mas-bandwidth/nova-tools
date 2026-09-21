@@ -70,9 +70,25 @@ func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 
 // StagingGitEnv is the environment the launcher exports with every job: the
 // bench's own git config cannot leak into what the worker commits or what the
-// machinery reads.
-func StagingGitEnv() []string {
-	return []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+// machinery reads, and the pool's identity row is exported as author and
+// committer so a worker cloning after launch commits under the pool's name
+// (SPEC-TOOLWORK §3 rule 1, #1665).
+func StagingGitEnv(id StagingIdentity) []string {
+	var env []string
+	if id.Name != "" {
+		env = append(env, "GIT_AUTHOR_NAME="+id.Name)
+	}
+	if id.Email != "" {
+		env = append(env, "GIT_AUTHOR_EMAIL="+id.Email)
+	}
+	if id.Name != "" {
+		env = append(env, "GIT_COMMITTER_NAME="+id.Name)
+	}
+	if id.Email != "" {
+		env = append(env, "GIT_COMMITTER_EMAIL="+id.Email)
+	}
+	env = append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	return env
 }
 
 // StageCloneIdentity writes the pool's identity into the job clone's LOCAL
@@ -88,7 +104,7 @@ func StageCloneIdentity(repoDir string, id StagingIdentity) error {
 	} {
 		cmd := exec.Command("git", "config", "--local", kv[0], kv[1])
 		cmd.Dir = repoDir
-		cmd.Env = append(os.Environ(), StagingGitEnv()...)
+		cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("staging %s local %s: %v: %s", repoDir, kv[0], err, strings.TrimSpace(string(out)))
 		}
@@ -106,7 +122,7 @@ func CheckStagedTree(jobRoot string) error {
 	}
 	rootResolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		rootResolved = root
+		return fmt.Errorf("staged tree %s: cannot resolve root symlink: %w", jobRoot, err)
 	}
 	var refused error
 	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

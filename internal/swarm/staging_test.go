@@ -124,13 +124,84 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 		}
 	}
 
-	// The launcher exports the bench config away: the exact two assignments.
-	env = StagingGitEnv()
+	// The launcher exports the bench config away: the exact two assignments, and
+	// exports the pool identity as author and committer.
+	env = StagingGitEnv(id)
 	joined := strings.Join(env, "\n")
-	for _, want := range []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"} {
+	for _, want := range []string{
+		"GIT_AUTHOR_NAME=Rowan Friend",
+		"GIT_AUTHOR_EMAIL=rowan@example.com",
+		"GIT_COMMITTER_NAME=Rowan Friend",
+		"GIT_COMMITTER_EMAIL=rowan@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("staging env holds no %q, got %q", want, joined)
 		}
+	}
+}
+
+// TestWorkerClonesAfterLaunchCarriesPoolIdentity tests that when a worker
+// clones or initializes a git repository *after* launch (when .git did not
+// exist during staging), the commit carries the pool identity from StagingGitEnv
+// with zero leakage from any hostile bench gitconfig.
+func TestWorkerClonesAfterLaunchCarriesPoolIdentity(t *testing.T) {
+	pool := t.TempDir()
+	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
+	id, err := LoadPoolIdentity(pool)
+	if err != nil {
+		t.Fatalf("LoadPoolIdentity: %v", err)
+	}
+
+	job := t.TempDir()
+	// Stage a fresh job with NO .git directory yet (worker clones after launch).
+	if err := StageJob(pool, job, filepath.Join(job, "repo")); err != nil {
+		t.Fatalf("StageJob: %v", err)
+	}
+
+	// Hostile bench git config with a ghost user.
+	benchHome := t.TempDir()
+	benchConfig := filepath.Join(benchHome, ".gitconfig")
+	if err := os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Worker process env carries hostile bench config plus the exported StagingGitEnv.
+	workerEnv := append(os.Environ(),
+		"HOME="+benchHome,
+		"GIT_CONFIG_GLOBAL="+benchConfig,
+	)
+	workerEnv = append(workerEnv, StagingGitEnv(id)...)
+
+	// Worker initializes a repository inside the job and makes a commit.
+	workerRepo := filepath.Join(job, "repo")
+	if err := os.MkdirAll(workerRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workerRepo
+		cmd.Env = workerEnv
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, strings.TrimSpace(string(out)))
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	runGit("init")
+	if err := os.WriteFile(filepath.Join(workerRepo, "file.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "worker commit after launch")
+
+	// Verify author and committer match pool identity exactly, with zero leakage.
+	got := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>")
+	want := "Rowan Friend <rowan@example.com> Rowan Friend <rowan@example.com>"
+	if got != want {
+		t.Errorf("worker commit after launch = %q, want %q", got, want)
 	}
 }
 
