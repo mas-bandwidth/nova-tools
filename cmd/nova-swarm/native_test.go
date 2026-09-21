@@ -304,6 +304,8 @@ func aSlot(t *testing.T) (root, slot string) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	return root, slot
 }
 
@@ -1015,6 +1017,8 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	label := "space-cwd"
 
 	var errOut bytes.Buffer
@@ -1616,6 +1620,8 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -2237,6 +2243,8 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	cardPath := filepath.Join(root, "card.md")
 	if err := os.WriteFile(cardPath, []byte("FAKE-PWD\n"), 0o644); err != nil {
 		t.Fatal(err)

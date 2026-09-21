@@ -224,3 +224,181 @@ func TestRunRefusesPoolWithNoIdentity(t *testing.T) {
 		t.Fatalf("stdout does not contain refusal message:\n%s", stdout)
 	}
 }
+
+func restoreEnv(key, val string) {
+	if val != "" {
+		os.Setenv(key, val)
+	} else {
+		os.Unsetenv(key)
+	}
+}
+
+func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a native execution")
+	}
+
+	root, slot := aSlot(t)
+	// Remove identity.tsv so the pool root has no identity file.
+	if err := os.Remove(filepath.Join(root, "identity.tsv")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	if err := buildShared(); err != nil {
+		t.Fatal(err)
+	}
+	bin := builtHarness
+	cardPath := filepath.Join(root, "card.md")
+	write(t, cardPath, "native missing identity card\nFAKE-GIT-COMMIT\nFAKE-FINDINGS 0\n")
+
+	// Hostile bench git config and identity in the parent environment.
+	benchHome := t.TempDir()
+	benchConfig := filepath.Join(benchHome, ".gitconfig")
+	write(t, benchConfig, "[user]\n\tname = Hostile Ghost\n\temail = ghost@example.com\n")
+
+	origHome := os.Getenv("HOME")
+	origGitConfig := os.Getenv("GIT_CONFIG_GLOBAL")
+	origAuthorName := os.Getenv("GIT_AUTHOR_NAME")
+	origAuthorEmail := os.Getenv("GIT_AUTHOR_EMAIL")
+	origCommitterName := os.Getenv("GIT_COMMITTER_NAME")
+	origCommitterEmail := os.Getenv("GIT_COMMITTER_EMAIL")
+	defer func() {
+		os.Setenv("HOME", origHome)
+		restoreEnv("GIT_CONFIG_GLOBAL", origGitConfig)
+		restoreEnv("GIT_AUTHOR_NAME", origAuthorName)
+		restoreEnv("GIT_AUTHOR_EMAIL", origAuthorEmail)
+		restoreEnv("GIT_COMMITTER_NAME", origCommitterName)
+		restoreEnv("GIT_COMMITTER_EMAIL", origCommitterEmail)
+	}()
+	os.Setenv("HOME", benchHome)
+	os.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
+	os.Setenv("GIT_AUTHOR_NAME", "Hostile Ghost")
+	os.Setenv("GIT_AUTHOR_EMAIL", "ghost@example.com")
+	os.Setenv("GIT_COMMITTER_NAME", "Hostile Ghost")
+	os.Setenv("GIT_COMMITTER_EMAIL", "ghost@example.com")
+
+	label := "missing-id-task-1"
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{
+		"native",
+		"--slots-store", nativeStore(t),
+		"--owner", "fake-1",
+		"--harness", bin,
+		"--model", "fake/fake-model",
+		"--label", label,
+		"--card", cardPath,
+		"--slot", slot,
+		"--root", root,
+		"--deadline", "30s",
+		"--no-wall",
+	}, strings.NewReader(""), &stdout, &stderr, time.Now())
+
+	if rc != 2 {
+		t.Fatalf("native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "NATIVE REFUSED") {
+		t.Fatalf("stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "refusing to launch under nobody's name") {
+		t.Fatalf("stderr does not contain expected refusal message:\n%s", stderr.String())
+	}
+
+	// Verify harness was never started: neither native.log nor harness-output.log was created.
+	nativeLog := filepath.Join(slot, "native.log")
+	if _, err := os.Stat(nativeLog); !os.IsNotExist(err) {
+		t.Errorf("native.log exists at %s, want harness never started", nativeLog)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	harnessOut := filepath.Join(jobDir, "harness-output.log")
+	if _, err := os.Stat(harnessOut); !os.IsNotExist(err) {
+		t.Errorf("harness-output.log exists at %s, want harness never started", harnessOut)
+	}
+	commitIdentity := filepath.Join(jobDir, "commit-identity")
+	if _, err := os.Stat(commitIdentity); !os.IsNotExist(err) {
+		t.Errorf("commit-identity exists at %s, harness should not have run", commitIdentity)
+	}
+}
+
+func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a native execution")
+	}
+
+	root, slot := aSlot(t)
+	// Overwrite identity.tsv with malformed contents (header only, no rows).
+	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\n")
+
+	if err := buildShared(); err != nil {
+		t.Fatal(err)
+	}
+	bin := builtHarness
+	cardPath := filepath.Join(root, "card.md")
+	write(t, cardPath, "native malformed identity card\nFAKE-GIT-COMMIT\nFAKE-FINDINGS 0\n")
+
+	// Hostile bench git config and identity in the parent environment.
+	benchHome := t.TempDir()
+	benchConfig := filepath.Join(benchHome, ".gitconfig")
+	write(t, benchConfig, "[user]\n\tname = Hostile Ghost\n\temail = ghost@example.com\n")
+
+	origHome := os.Getenv("HOME")
+	origGitConfig := os.Getenv("GIT_CONFIG_GLOBAL")
+	origAuthorName := os.Getenv("GIT_AUTHOR_NAME")
+	origAuthorEmail := os.Getenv("GIT_AUTHOR_EMAIL")
+	origCommitterName := os.Getenv("GIT_COMMITTER_NAME")
+	origCommitterEmail := os.Getenv("GIT_COMMITTER_EMAIL")
+	defer func() {
+		os.Setenv("HOME", origHome)
+		restoreEnv("GIT_CONFIG_GLOBAL", origGitConfig)
+		restoreEnv("GIT_AUTHOR_NAME", origAuthorName)
+		restoreEnv("GIT_AUTHOR_EMAIL", origAuthorEmail)
+		restoreEnv("GIT_COMMITTER_NAME", origCommitterName)
+		restoreEnv("GIT_COMMITTER_EMAIL", origCommitterEmail)
+	}()
+	os.Setenv("HOME", benchHome)
+	os.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
+	os.Setenv("GIT_AUTHOR_NAME", "Hostile Ghost")
+	os.Setenv("GIT_AUTHOR_EMAIL", "ghost@example.com")
+	os.Setenv("GIT_COMMITTER_NAME", "Hostile Ghost")
+	os.Setenv("GIT_COMMITTER_EMAIL", "ghost@example.com")
+
+	label := "malformed-id-task-1"
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{
+		"native",
+		"--slots-store", nativeStore(t),
+		"--owner", "fake-1",
+		"--harness", bin,
+		"--model", "fake/fake-model",
+		"--label", label,
+		"--card", cardPath,
+		"--slot", slot,
+		"--root", root,
+		"--deadline", "30s",
+		"--no-wall",
+	}, strings.NewReader(""), &stdout, &stderr, time.Now())
+
+	if rc != 2 {
+		t.Fatalf("native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "NATIVE REFUSED") {
+		t.Fatalf("stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "refusing to launch under nobody's name") {
+		t.Fatalf("stderr does not contain expected refusal message:\n%s", stderr.String())
+	}
+
+	// Verify harness was never started: neither native.log nor harness-output.log was created.
+	nativeLog := filepath.Join(slot, "native.log")
+	if _, err := os.Stat(nativeLog); !os.IsNotExist(err) {
+		t.Errorf("native.log exists at %s, want harness never started", nativeLog)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	harnessOut := filepath.Join(jobDir, "harness-output.log")
+	if _, err := os.Stat(harnessOut); !os.IsNotExist(err) {
+		t.Errorf("harness-output.log exists at %s, want harness never started", harnessOut)
+	}
+	commitIdentity := filepath.Join(jobDir, "commit-identity")
+	if _, err := os.Stat(commitIdentity); !os.IsNotExist(err) {
+		t.Errorf("commit-identity exists at %s, harness should not have run", commitIdentity)
+	}
+}

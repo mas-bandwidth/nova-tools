@@ -490,12 +490,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
-		if id, err := swarm.LoadPoolIdentity(cfg.root); err == nil {
-			for _, kv := range swarm.StagingGitEnv(id) {
-				name, _, _ := strings.Cut(kv, "=")
-				childEnv = append(environWithoutName(childEnv, name), kv)
-			}
+		id, err := swarm.LoadPoolIdentity(cfg.root)
+		if err != nil {
+			refuseNative(errOut, err.Error())
+			return nativeRunResult{}, 2
 		}
+		for _, kv := range swarm.StagingGitEnv(id) {
+			name, _, _ := strings.Cut(kv, "=")
+			childEnv = append(environWithoutName(childEnv, name), kv)
+		}
+	} else {
+		refuseNative(errOut, "missing configured root for pool identity; refusing to launch under nobody's name")
+		return nativeRunResult{}, 2
 	}
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	devNull, err := os.Open(os.DevNull)
@@ -1040,7 +1046,10 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 			kept = append(kept, kv)
 		}
 	}
-	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"}
+	remove := []string{
+		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR",
+		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+	}
 	if shimShell != "" {
 		remove = append(remove, "SHELL")
 	}
@@ -1050,35 +1059,9 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	for _, name := range remove {
 		kept = environWithoutName(kept, name)
 	}
-	// If a Git identity was kept from the environment, ensure git config isolation
-	// is present so the bench's own config cannot leak into what the worker commits.
-	hasAuthor := false
-	for _, kv := range kept {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "GIT_AUTHOR_NAME" || name == "GIT_COMMITTER_NAME" {
-			hasAuthor = true
-			break
-		}
-	}
-	if hasAuthor {
-		hasGlobal := false
-		hasNoSystem := false
-		for _, kv := range kept {
-			name, _, _ := strings.Cut(kv, "=")
-			if name == "GIT_CONFIG_GLOBAL" {
-				hasGlobal = true
-			}
-			if name == "GIT_CONFIG_NOSYSTEM" {
-				hasNoSystem = true
-			}
-		}
-		if !hasGlobal {
-			kept = append(kept, "GIT_CONFIG_GLOBAL=/dev/null")
-		}
-		if !hasNoSystem {
-			kept = append(kept, "GIT_CONFIG_NOSYSTEM=1")
-		}
-	}
+	// Git config isolation is unconditionally enforced so the bench's own config
+	// cannot leak into what the worker commits.
+	kept = append(kept, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out := append(kept,
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
@@ -1132,16 +1115,15 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 }
 
 // keepNativeEnv says whether one inherited name survives into the native child: the names a
-// program needs (PATH, LANG, TERM), explicit Git pool identity and config isolation variables
-// (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL,
-// GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM), the XDG_ and NOVA_SWARM_ families, and any provider
-// credential whose name carries KEY, TOKEN or SECRET. Everything else is the caller's own
-// noise and is dropped, so no path the caller happened to export reaches the child.
+// program needs (PATH, LANG, TERM), explicit Git pool identity variables (GIT_AUTHOR_NAME,
+// GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL), the XDG_ and NOVA_SWARM_ families,
+// and any provider credential whose name carries KEY, TOKEN or SECRET. Everything else is the
+// caller's own noise and is dropped, so no path the caller happened to export reaches the child.
 func keepNativeEnv(name string) bool {
 	switch name {
 	case "PATH", "LANG", "TERM":
 		return true
-	case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM":
+	case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL":
 		return true
 	}
 	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") {
