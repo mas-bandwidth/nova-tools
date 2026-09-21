@@ -26,6 +26,8 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse queue   --queue <dir> [--ready <dir>]
+nova-pulse lint    --card <file> | --ready <dir> | --queue <dir>
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
@@ -291,6 +293,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return cmdCutKind(rest, stdout, stderr)
 		}
 		return cmdCut(rest, stdout, stderr)
+	case "queue":
+		return cmdQueue(rest, stdout, stderr)
+	case "lint":
+		return cmdLint(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":

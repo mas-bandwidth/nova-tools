@@ -268,6 +268,19 @@ func Fill(in FillInput) int {
 		defer lock.Release()
 	}
 
+	// ADMISSION: Check for dependency cycles in Ready directory (issue #2437).
+	// Any cycle in dependencies is REFUSED at load / admission with exit code 2
+	// and an explicit diagnostic: CYCLE REFUSED: card-a -> card-b -> card-a
+	// No card in a cycle is ever launched or written.
+	if err := CheckDirCycles(in.Ready); err != nil {
+		var cycleErr *CycleError
+		if errors.As(err, &cycleErr) {
+			fmt.Fprintln(in.Stderr, cycleErr.Error())
+			return 2
+		}
+		return refusal(in.Stderr, "FILL", err)
+	}
+
 	for tick := 1; ; tick++ {
 		// THE STOP FILE, checked before a card is claimed and never in the middle of a
 		// tick: the tick in flight finishes, no further card is claimed, and every card
@@ -285,6 +298,9 @@ func Fill(in FillInput) int {
 			fmt.Fprintln(in.Stdout, line)
 		}
 		if res.err != nil {
+			if errors.Is(res.err, ErrDependencyCycle) {
+				return 2
+			}
 			fmt.Fprintf(in.Stderr, "FILL NOTE tick=%d: %s\n", tick, oneline.Err(res.err))
 		}
 		if in.Once {
@@ -329,6 +345,19 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
+
+	// ADMISSION: Verify dependency acyclicity over selected cards (issue #2437).
+	// No card in a cycle is ever launched or written.
+	if err := CheckCardCycles(cards); err != nil {
+		var cycleErr *CycleError
+		if errors.As(err, &cycleErr) {
+			fmt.Fprintln(in.Stderr, cycleErr.Error())
+		} else {
+			fmt.Fprintf(in.Stderr, "CYCLE REFUSED: %s\n", err)
+		}
+		res.err = err
+		return nil, res
+	}
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
 		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
