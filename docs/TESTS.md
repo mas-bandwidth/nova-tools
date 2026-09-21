@@ -36,6 +36,33 @@ section carries it, read an unmarked line as *not yet checked* rather than as
 mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
 the tool writes to standard error.
 
+**Preconditions: what a step needs that the machine may not have.** Some steps
+cannot run everywhere, and a reader is owed that before the fence rather than by
+a failure. A section states each one in a single line of its own prose,
+beginning with a keyword, exactly as `Platform:` already does:
+
+- `Platform:` — the machine the block was recorded on, and what a different
+  machine prints instead. Already in use under [`## nova-sandbox`](#nova-sandbox)
+  and [`## nova-swarm`](#nova-swarm), and checked by
+  `internal/ci/firstrun_platform_test.go`.
+- `Requires:` — something a step needs that the machine running it may not have,
+  and in a sandboxed test bench must sometimes *not* have: a key, a forge
+  credential, a posting credential, or another tool's binary. The line names the
+  thing and the verbs it gates.
+
+A harness that cannot meet a stated precondition reports
+`SKIP-PRECONDITION <verb> why=<the stated line>` and that step is not a defect.
+A section counts as clean when every step it could run is clean and every step
+it skipped names a precondition stated here. **A step skipped for a reason this
+file does not state is a defect in this file, not a pass** — being able to tell
+those two apart is the whole value of writing the line down.
+
+Four `Requires:` lines are owed today, one per section, from the same dogfood
+run: `## nova-decide` (the ladder block routes through JEV and wants
+`JEV_API_KEY`), `## nova-merge` (`init` pushes, and wants a forge credential),
+`## nova-post` (`send` wants a posting credential) and `## nova-secrets` (two
+steps invoke `nova-check`, which is a different tool's binary).
+
 ## nova-bus
 
 Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
