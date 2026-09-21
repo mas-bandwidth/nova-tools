@@ -9,7 +9,7 @@ package pulse
 // number comes only from the state file under the lock (number.go), and there is no
 // `--number` flag to pass one in.
 //
-// Six kinds, six line-1 shapes, and line 1 is the contract the harvest matches:
+// Seven kinds, seven line-1 shapes, and line 1 is the contract the harvest matches:
 //
 //	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
 //	fix     RESULT: CARD-<n> sha=<sha12> <repo> #<issue> fixed with its red test first: <title>
@@ -17,6 +17,10 @@ package pulse
 //	spec    RESULT: CARD-<n> <repo> spec: <title>
 //	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
 //	guard   RESULT: CARD-<n> guard of <repo> at <head>
+//	recut   RESULT: CARD-<n> sha=<sha12> recut of <repo> at <head> from HOLD
+//
+// A recut is cut from a typed HOLD (--hold-file): PATHS and the failing test
+// come from that HOLD. Mechanical apply of a prior diff is a different cutter.
 //
 // `cut` without `--kind` is the pool-driven cutter in cut.go and is untouched by any of this.
 
@@ -32,22 +36,28 @@ import (
 )
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard"}
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "recut"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
 	Kind      string
 	Repo      string // owner/name; line 1 names the repo for every kind
 	PR        int    // read, rebase
-	Head      string // read
+	Head      string // read, recut (from the HOLD when --hold-file is set)
 	Issue     int    // fix
 	Title     string // fix, spec, rebase, and the parenthesised title of a read
 	Branch    string // rebase: the branch rebased onto the base
-	Base      string // rebase: the branch it is rebased onto
+	Base      string // rebase: the branch it is rebased onto; recut: BASE header
+	BaseSHA   string // recut: base-sha header
 	BodyFile  string // fix, spec: the numbered steps this card carries
+	HoldFile  string // recut: a typed DISPOSITION HOLD plus named remains
 	Prior     string // fix: what a prior attempt did, so the worker never repeats it
 	Names     string // replay: the replay names, comma separated
 	SpecLines string // replay: the spec lines the replays are named at
+	Paths     string // recut: PATHS copied from the HOLD when present
+	TestName  string // recut: the failing test copied from the HOLD when present
+	HoldLine  string // recut: the HOLD DISPOSITION line, carried as evidence
+	Remains   string // recut: REMAINS: brief from the HOLD when present
 	Out       string // the directory the card is written into
 	Queue     string // the queue directory holding the state file and its lock
 	Stdout    io.Writer
@@ -69,6 +79,19 @@ func CutKind(in CutKindInput) int {
 			return 2
 		}
 		body = strings.TrimRight(string(raw), "\n")
+	}
+	if in.Kind == "recut" {
+		raw, err := os.ReadFile(in.HoldFile)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --hold-file %s: %s (pass a readable file of the typed HOLD)\n", oneline.Field(in.HoldFile), oneline.Err(err))
+			return 2
+		}
+		hold, problem := parseHoldFile(string(raw))
+		if problem != "" {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
+			return 2
+		}
+		in = applyHold(in, hold)
 	}
 	n, err := NextCardNumber(in.Queue)
 	if err != nil {
@@ -101,7 +124,7 @@ func CutKind(in CutKindInput) int {
 func cutKindLane(kind string, n int, body string) lanes.Card {
 	c := lanes.Card{ID: fmt.Sprintf("card-%d", n), Kind: kind, Steps: cutKindSteps(kind), Body: body}
 	switch kind {
-	case "fix":
+	case "fix", "recut":
 		c.Red = true
 	case "read":
 		c.Approved = true
@@ -171,6 +194,10 @@ func cutKindProblem(in CutKindInput) string {
 		if strings.TrimSpace(in.Head) == "" {
 			return "--head is required for a guard card; the control is asked of one sha (pass --head <sha>)"
 		}
+	case "recut":
+		if strings.TrimSpace(in.HoldFile) == "" {
+			return "--hold-file is required for a recut card; a recut is cut from a typed HOLD (pass --hold-file <path>)"
+		}
 	}
 	return ""
 }
@@ -209,6 +236,28 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "guard":
 		fmt.Fprintf(&b, "RESULT: CARD-%d guard of %s at %s\n", n, repo, oneline.Field(in.Head))
 		fmt.Fprintf(&b, "SOURCE: %s@%s\n", in.Repo, oneline.Field(in.Head))
+	case "recut":
+		fmt.Fprintf(&b, "RESULT: CARD-%d sha=<sha12> recut of %s at %s from HOLD\n", n, repo, oneline.Field(in.Head))
+		fmt.Fprintf(&b, "KIND: recut\n")
+		if strings.TrimSpace(in.Base) != "" {
+			fmt.Fprintf(&b, "BASE: %s\n", oneline.Field(in.Base))
+		}
+		if strings.TrimSpace(in.BaseSHA) != "" {
+			fmt.Fprintf(&b, "base-sha: %s\n", oneline.Field(in.BaseSHA))
+		}
+		if p := strings.TrimSpace(in.Paths); p != "" {
+			fmt.Fprintf(&b, "PATHS: %s\n", p)
+		}
+		if t := strings.TrimSpace(in.TestName); t != "" {
+			fmt.Fprintf(&b, "TEST: %s\n", t)
+		}
+		if in.HoldLine != "" {
+			fmt.Fprintf(&b, "HOLD: %s\n", in.HoldLine)
+		}
+		fmt.Fprintf(&b, "SOURCE: %s HOLD %s\n", in.Repo, oneline.Field(in.Head))
+		if r := strings.TrimSpace(in.Remains); r != "" {
+			fmt.Fprintf(&b, "REMAINS: %s\n", r)
+		}
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
@@ -257,6 +306,8 @@ The model only picks which packages to run. Then:
 Copy the GUARD line's status= field onto RESULT.md line 2 (GUARDED, UNGUARDED, COMPILER-HELD, NOT-APPLICABLE, or ABSTAIN — never the reason= tail). A verdict the command did not print is a lie.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 the status= value, then REPO %s.
 `, oneline.Field(in.Head), in.Repo)
+	case "recut":
+		return recutInstruction(in)
 	default:
 		return fmt.Sprintf(`Amend the spec: numbered rules, each with the test that makes it red, and no rule softened to match code.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.

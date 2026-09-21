@@ -1690,7 +1690,7 @@ the third call too.
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--hold-file <path>]
 ```
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
@@ -1706,6 +1706,11 @@ runs:
 ```
 CUT REFUSED: --repo <path> is not a directory (name the clone every git call runs in; cut never reads the working directory)
 ```
+
+`cut --kind recut --hold-file <path>` writes one recut card from a typed
+`DISPOSITION who=… head=<sha> verdict=HOLD` plus named remains (`PATHS:` and
+`TEST:` on that HOLD). A HOLD without named remains is refused. The card header
+carries `BASE`, `base-sha`, `PATHS` if present, and the HOLD line as evidence.
 
 `cut` reads **one** source and refuses none and refuses two: naming no source is
 `cut wants one source; it wants --pool, --issue, --rows or --branch-from`, and
