@@ -223,7 +223,10 @@ position is refused at exit 2 naming its byte offset, string and comment text is
 and an unknown :kind is refused naming the field. :needs is the reference edge and
 :blocks its inverse, so the kernel derives whichever a node did not give; an absent
 need is refused naming the field and the id, and a :needs cycle is refused by validator
-rule 3, both at load before the graph is published.
+rule 3, both at load before the graph is published. A hand-written :node owes :kind,
+:output and :budget before it can expand: :output must name a :branch, and :budget must
+name :minutes, :tokens and :model-floor; a node owing several is refused naming every
+field it owes in one run, never one round trip per field.
 
 set check reads the OTHER top form of the same language: not ` + "`(:plan ...)`" + `, the
 expander's, but ` + "`(work-set \"id\" ... :units ((unit ...)))`" + `, the one a coordinator
