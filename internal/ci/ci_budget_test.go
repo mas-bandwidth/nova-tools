@@ -438,7 +438,28 @@ var clTierCeilings = map[string]int{
 	// hang detector for a leg measured, once the legs stopped oversubscribing
 	// their machines, at 12 to 126 s over a 233 s run (35025207396). The budget
 	// is the run's wall clock; hold the law there.
-	"test": 6,
+	//
+	// RAISED FROM SIX to twelve on 2026-09-19, because six had stopped being a
+	// hang detector and started cancelling honest work again. Two receipts the
+	// same hour: #1700's `test (2/4 studio)` on superman-nova-1 and #1714's
+	// `test (3/4 studio)` on superman-nova-2, both CANCELLED at 6:23 and 6:07
+	// with every test PASS on the console and `ok cmd/nova-merge 342.360s` in
+	// the log — the package that ran in 150 s the same morning. The number is
+	// twice the slowest GREEN shard in the last twenty green runs of this
+	// workflow: 348 s, `test (2/4 studio)` on superman-nova-7 in run
+	// 35457289611. 348 s is THREE SECONDS under the old cap, which is not a
+	// budget, it is a coin flip on the load of the minute.
+	//
+	// The cause is the group label, not the Studio. `studio` is a GROUP that
+	// spans four machines — air, batman, studio and superman — and their
+	// slowest green shards in the same twenty runs are 149 s, 308 s, 162 s and
+	// 348 s. superman is an Intel Xeon W-2191B at 2.30 GHz carrying ten
+	// runners; the Studio is an M3 Ultra. One ceiling over machines that differ
+	// by more than 2x censors the slower of them, which is the same mistake
+	// `test-hosted-merge` made with one number for linux and darwin. Splitting
+	// the label by machine class is the real repair and wants its own change;
+	// twelve is the honest ceiling until then.
+	"test": 12,
 }
 
 func jobNames(src string) []string {

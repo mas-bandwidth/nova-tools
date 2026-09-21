@@ -18,10 +18,15 @@ const (
 	resultGreen   = "green"
 	resultRed     = "red"
 	resultBlocked = "blocked"
+	// resultSkipped is H2's fourth word: a unit harvest did not run because a
+	// precondition was not met. It is not a failure of a rung that was never
+	// asked, and it is not a success either; it is a row so that coverage can
+	// see it (SPEC-DECIDE, housekeeping H2, #1623).
+	resultSkipped = "skipped"
 )
 
 // results is the closed set, in the order the help line names them.
-var results = []string{resultGreen, resultRed, resultBlocked}
+var results = []string{resultGreen, resultRed, resultBlocked, resultSkipped}
 
 // outcomeFor maps a manager's word to the ladder's outcome.
 func outcomeFor(result string) (string, bool) {
@@ -32,6 +37,8 @@ func outcomeFor(result string) (string, bool) {
 		return decide.OutcomeFailed, true
 	case resultBlocked:
 		return decide.OutcomeAbandoned, true
+	case resultSkipped:
+		return decide.OutcomeSkipped, true
 	default:
 		return "", false
 	}
@@ -68,7 +75,7 @@ func runOutcome(args []string, stdout, stderr io.Writer) int {
 	outcome, ok := outcomeFor(strings.TrimSpace(*result))
 	if !ok {
 		return refuse(stderr, "OUTCOME", "bad-result", fmt.Sprintf(
-			"--result %s is not one of %s; pass --result green for a landed unit, --result red for one that came back failing, --result blocked for one nobody could finish",
+			"--result %s is not one of %s; pass --result green for a landed unit, --result red for one that came back failing, --result blocked for one nobody could finish, --result skipped for one a precondition stopped before it ran",
 			oneline.Field(*result), strings.Join(results, ", ")))
 	}
 	entries, err := decide.ReadEntries(*logPath)

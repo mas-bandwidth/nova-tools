@@ -20,8 +20,8 @@ import (
 // Two tokens are read today:
 //
 //   - `backend=sandbox-exec` and `abi=` — the sandbox tool's transcript was
-//     recorded on macOS; a Linux bench prints `backend=landlock`, an `abi=`
-//     value and `hosts=`, `gpu=`, `used=` and `ancestors=` fields instead.
+//     recorded on macOS, and `backend=` and `abi=` carry that machine's values;
+//     a wall clamped below the ABI the kernel reports adds a `used=` field.
 //   - `sandbox_probe` — a wall probe that failed; the nova-swarm section
 //     documents a machine whose containment is broken, the last machine a friend
 //     should be reading a quickstart on.

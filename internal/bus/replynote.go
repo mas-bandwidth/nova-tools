@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -13,6 +15,13 @@ import (
 // else, so there is no header line to get wrong.
 func PrepareReply(t *Bus, me Participant, original *Note, body string, now time.Time) (Prepared, error) {
 	var p Prepared
+	normBody := strings.TrimSpace(NormalizeBody(body))
+	if normBody == "" {
+		return p, errors.New("the note has no body")
+	}
+	if normBody == PlaceholderBody || ContainsPlaceholderBody(body) {
+		return p, fmt.Errorf("the body is the unedited template placeholder (%s)", PlaceholderBody)
+	}
 	if me.Lane == "" {
 		return p, fmt.Errorf("%q has no lane on this bus, so has nowhere to send from", me.Name)
 	}

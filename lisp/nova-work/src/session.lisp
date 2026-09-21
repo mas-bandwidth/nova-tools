@@ -245,7 +245,9 @@ rather than resumed."
   (findings 0 :type integer)
   (parses 0 :type integer)
   (replays 0 :type integer)
-  (emitted 0 :type integer))
+  (emitted 0 :type integer)
+  (cache "" :type string)
+  (verification nil))
 
 (defun session-check-admission (sess verb &key now)
   "Check admission for a request on SESS with VERB at timestamp NOW.
@@ -342,7 +344,8 @@ Checks completion before until, tip == base, and OWNER generation/token."
                            (base "tip") (every "30s") (skew "5s") (token nil)
                            (journal-token nil) (owner-record nil) (now nil)
                            (my-bench "") (lock-held t)
-                           (socket-path nil) (serve nil) (foreground t))
+                           (socket-path nil) (serve nil) (foreground t)
+                           (cache nil) (resolvers nil))
   "Start or resume a session. With SERVE the session becomes the resident
 process: it binds the local listener at SOCKET-PATH and serves reads, and with
 FOREGROUND NIL the caller is the launcher, which gets the SESSION OK line and
@@ -362,6 +365,8 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                           state-seed
                                           (make-seed-state state-seed))
                                :journal (or journal (make-ordering-journal))))
+               (cache-path (or cache ""))
+               (verification (session-verification-from-cache cache-path resolvers))
                (sess (make-session :path (or path "")
                                    :owner (owner-owner record)
                                    :generation (owner-generation record)
@@ -371,7 +376,9 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                    :kernel k
                                    :base base
                                    :every every
-                                   :skew skew)))
+                                   :skew skew
+                                   :cache cache-path
+                                   :verification verification)))
           (if serve
               (start-session-server sess
                                     :socket-path (or socket-path path)

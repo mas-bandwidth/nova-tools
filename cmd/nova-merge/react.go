@@ -63,6 +63,19 @@ func (q laneQueue) Held() (bool, string, error) {
 	return present, h.Reason, nil
 }
 
+// PRHeld reports whether this pull request carries an unreleased hold in the lane.
+func (q laneQueue) PRHeld(pr int, head string) (bool, string, error) {
+	vs, err := merge.LoadLaneVerdicts(q.lane, pr)
+	if err != nil {
+		return false, "", err
+	}
+	holds := merge.UnliftedHolds(vs, head, "", nil)
+	if len(holds) > 0 {
+		return true, fmt.Sprintf("head %s carries an unreleased HOLD", oneline.Field(merge.Short(head))), nil
+	}
+	return false, "", nil
+}
+
 // Enqueue appends the pull request to the lane's order, once, under the state lock --
 // the same read-modify-write `queue skip`, `queue unskip` and `queue front` make. An
 // entry already queued is left where it is: a repeated event must not reorder the queue.

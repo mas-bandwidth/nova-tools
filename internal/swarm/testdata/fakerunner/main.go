@@ -232,6 +232,14 @@ func (r *runner) run(s spec) int {
 			}
 		case "sleep":
 			sleep(st.Ms)
+		case "waitfile":
+			// Block until the TEST creates Path, so a fixture can be driven by the test's
+			// own events instead of by a duration. A test that injects its clock has no
+			// real time to lean on: "the runner does A, the test looks, the runner does B"
+			// is otherwise a race between a sleep and a tick. N is the give-up in
+			// milliseconds, and giving up is not an error here -- the step after it runs,
+			// and the test's own assertion is what fails.
+			r.waitFile(r.expand(st.Path), st.N)
 		case "spin":
 			r.spin(st.N, st.Ms)
 		case "linger":
@@ -399,4 +407,18 @@ func (r *runner) linger(pidPath string, childMs, ms int) {
 	// EXIST can never catch it created and still empty.
 	r.writeFile(r.expand(pidPath), strconv.Itoa(cmd.Process.Pid), false)
 	sleep(ms)
+}
+
+// waitFile blocks until path exists or the give-up elapses. A give-up of zero or less is
+// thirty seconds, which is longer than any batch these fixtures drive.
+func (r *runner) waitFile(path string, giveUpMs int) {
+	if giveUpMs <= 0 {
+		giveUpMs = 30000
+	}
+	for waited := 0; waited < giveUpMs; waited += 5 {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		sleep(5)
+	}
 }

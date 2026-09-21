@@ -249,7 +249,7 @@ func (r *refusals) required(name, value, wants string) {
 // print writes one line per problem, in the order they were found, and returns exit 2.
 func (r *refusals) print(stderr io.Writer) int {
 	for _, problem := range r.list {
-		fmt.Fprintf(stderr, "%s REFUSED: %s\n", oneline.Field(r.token), oneline.Escape(problem))
+		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-tokens help\n", oneline.Field(r.token), oneline.Escape(problem))
 	}
 	return 2
 }

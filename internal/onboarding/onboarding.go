@@ -91,6 +91,12 @@ func FirstRun(md, tool string) ([]string, error) {
 // document rather than becoming a fixture. A line that is not an event line
 // (no upper-case first token) reduces to "".
 func Shape(line string) string {
+	// A documented line may carry StderrMarker, which says which STREAM it is
+	// on and nothing about its shape. Stripping it here is what #1570 names as
+	// owed by the first swept section: without it Shape returns "" for a marked
+	// line -- `!` is not an event token -- so marking a line would silently
+	// reduce its coverage to nothing in every caller that compares shapes.
+	line = strings.TrimPrefix(line, StderrMarker)
 	head := line
 	if i := strings.Index(line, ": "); i >= 0 {
 		head = line[:i]
