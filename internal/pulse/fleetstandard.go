@@ -180,11 +180,11 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		},
 		{
 			Name: "toolchain-brew-go", OS: "darwin", Root: "/opt/homebrew/Cellar/go", Match: MatchNonempty,
-			Probe: `case "$(readlink -f "$(command -v go 2>/dev/null)" 2>/dev/null)" in /opt/homebrew/Cellar/go/*) echo present;; *) echo absent;; esac`,
+			Probe: `p="$(readlink -f "$(command -v go 2>/dev/null)" 2>/dev/null)"; printf '%s' "$p" | grep -Eq '^/opt/homebrew/Cellar/go/' && echo present || echo absent`,
 		},
 		{
 			Name: "toolchain-brew-sbcl", OS: "darwin", Root: "/opt/homebrew/Cellar/sbcl", Match: MatchNonempty,
-			Probe: `case "$(readlink -f "$(command -v sbcl 2>/dev/null)" 2>/dev/null)" in /opt/homebrew/Cellar/sbcl/*) echo present;; *) echo absent;; esac`,
+			Probe: `p="$(readlink -f "$(command -v sbcl 2>/dev/null)" 2>/dev/null)"; printf '%s' "$p" | grep -Eq '^/opt/homebrew/Cellar/sbcl/' && echo present || echo absent`,
 		},
 		{
 			Name: "toolchain-brew-openjdk", OS: "darwin", Root: "/opt/homebrew/opt/openjdk", Match: MatchNonempty,
