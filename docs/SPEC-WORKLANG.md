@@ -571,3 +571,51 @@ at load are still red.
 one states its rule and names at least one red test, and the grammar block of each new key is
 present. A rule may be added only at the end, and a rule may not be renumbered — the numbers are
 referred to from cards, from `nova-work ask`, and from SPEC-JOBS section 9.
+
+## Tests this spec demands
+
+The parser/reader tests run against fixtures cut from the real work set under `testdata/` (never network, never a model call); the expander tests render cards into a `t.TempDir()` and assert byte-identical re-expansion; the kernel admission tests are in-memory and single-writer with no clock, file or network. Every test below was named in the spec as seen red first.
+
+1. `worklang-reader-refuses-a-dispatch-macro` — a `#.` anywhere is refused at exit 2 naming the byte offset.
+2. `worklang-reader-enforces-the-three-bounds` — input past `--max-bytes`, `--max-depth` or `--max-nodes` is refused naming the bound and the file, never truncated.
+3. `worklang-unknown-kind-is-a-refusal` — `:kind bogus` is refused naming the field; an unknown key beside it is preserved and ignored.
+4. `worklang-needs-absent-node-is-a-refusal` — a `:needs` naming an absent id is refused naming the field and the id.
+5. `worklang-needs-cycle-refuses-at-load` — a two-node cycle is refused by rule 3 before publication.
+6. `worklang-blocks-and-needs-are-one-edge` — `A :needs (B)` and `B :blocks (A)` expand to the same ready order.
+7. `worklang-derive-expands-to-one-node-per-issue` — the (a) sweep over 25 open no-PR issues yields exactly 25 nodes; a 26th issue with a PR yields none.
+8. `worklang-fold-expands-to-one-pr-node-over-n-branches` — (c) over N green siblings yields one fold node of the N branch artifacts; a non-green sibling is excluded.
+9. `worklang-duplicate-branch-name-refuses` — two nodes deriving the same `:branch` string is refused naming both, before any card is written.
+10. `worklang-expansion-is-deterministic-and-replayable` — the same plan and pinned facts expand twice to byte-identical cards; a re-expansion appends only the new card, minting no id.
+11. `worklang-ready-excludes-a-node-whose-need-is-open` — a node is printed but not pullable while a need is open, pullable once settled, and flagged `needs-broken` on revert.
+12. `worklang-card-carries-its-budget-and-floor` — a card carries minutes, tokens and model floor; a route below the floor is refused, never downgraded.
+13. `worklang-reads-the-real-work-set` — the `(work-set ... :units ...)` form a coordinator writes is a plan this reader reads.
+14. `worklang-node-accepts-the-amendment-keys` — the amendment keys are additive on a `:node` too, one grammar for both forms.
+15. `worklang-unit-id-is-stable-and-required` — no id, an empty id, or a duplicate id is refused naming the id.
+16. `worklang-attempt-without-a-termination-proof-is-uncertain` — an attempt whose non-`uncertain` outcome lacks a termination proof is refused naming `uncertain`.
+17. `worklang-uncertain-is-a-state` — `uncertain` is a state of its own, not a spelling of open or failed.
+18. `worklang-resources-are-a-vector-not-a-slot` — cpu/memory/disk/network/gpu/named classes are one vector; a non-list entry is refused.
+19. `worklang-lane-is-a-resource-of-capacity-one` — a lane is one vector entry of capacity 1; two lane entries is a refusal.
+20. `worklang-writes-are-paths-under-the-repo` — `:writes` is the closed list of repo-relative paths; absolute/escaping paths are refused.
+21. `worklang-tools-name-a-verb-and-a-version` — `:tools` names a verb at a version, with an optional semantic `:key`; a tool with no `:at` is refused.
+22. `worklang-a-collection-names-its-members-after-the-run` — `:collects` members are `:unknown-before-run`; a collection with no `:name` or `:under` is refused.
+23. `worklang-warm-state-is-retained-apart-from-active` — `:warm` splits retained from active; one half alone is refused.
+24. `worklang-owner-is-a-mind` — an `:owner` is one spelling for friend/child-rung/swarm/`all`; a non-string owner is refused.
+25. `worklang-acceptance-is-read-and-the-real-set-has-none` — `:acceptance` on a unit is the goal schema; the reader reports the units naming none.
+26. `jobs-admission-is-atomic-no-partial-grant` — a vector short on one dimension takes nothing, never a partial grant.
+27. `jobs-a-nested-grant-draws-from-its-parent` — a child's grant comes out of its parent's reservation and returns to it.
+28. `jobs-double-reservation-is-a-refusal-not-a-wait` — reserving the same capacity twice is a refusal, not a wait.
+29. `jobs-a-download-asks-for-network-and-no-cpu` — a unit asking for network and no cpu is not held by a full cpu.
+30. `jobs-one-live-unit-per-lane` — within a lane units are serial; capacity is always 1.
+31. `jobs-unrelated-lanes-scatter` — across lanes units scatter and gather.
+32. `jobs-intersecting-writes-serialize-across-lanes` — units whose `:writes` intersect serialize even when their lanes differ.
+33. `jobs-a-ready-unit-goes-with-no-global-barrier` — a unit goes when its own needs are closed and its own vector is free, no phase/round/wave.
+34. `jobs-done-when-is-a-report-not-a-gate` — a set's `:done-when` reports its finish line, never gates its members.
+35. `jobs-an-uncertain-attempt-is-never-re-granted-on-expiry` — expiry alone may never re-grant capacity until termination is proved.
+36. `jobs-uncertain-keeps-its-resources` — a unit in `uncertain` keeps its lane/vector/warm state until termination is proved or a fence is written.
+37. `jobs-a-tool-key-move-invalidates-the-unit` — a semantic tool key that moves invalidates the unit even when the version string did not.
+38. `jobs-a-unit-refuses-on-a-tool-below-its-version` — a unit refuses when a tool it names is below the pinned version.
+39. `jobs-a-collection-binds-its-members-at-harvest` — the harvester binds a collection's members to the unit's revision when the run ends.
+40. `jobs-retained-warm-state-is-not-charged-as-active` — retained warmth is never charged as running capacity, and running capacity is never freed as merely warm.
+41. `work-ask-reads-the-same-set-as-the-pull-worker` — `nova-work ask` and the pull worker read the same work-set form, one form two readers.
+42. `jobs-a-unit-without-acceptance-is-refused-at-load` — the kernel refuses a unit without acceptance at load once the set has been filled in.
+43. `TestWorklangAmendmentRuleNumbering` — rules A1–A14 are in order, never renumbered, each naming its red test and grammar block.
