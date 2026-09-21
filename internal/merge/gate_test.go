@@ -246,29 +246,83 @@ func TestExplicitReleasesDoesNotReleaseAllHolds(t *testing.T) {
 	}
 }
 
-// 7. Typed or explicit first-line APPROVE stops HOLD heading/bold fall-through (#2454).
-func TestTypedOrExplicitApproveStopsHoldFallthrough(t *testing.T) {
+// 7. Pure typed or explicit first-line APPROVE comments are inert: they do not
+// grant approval (v.Source == "record" required) and do not fall through to comment-pending (#2454).
+// Quoted holds or holds in code blocks within approval comments are stripped and do not falsely hold.
+func TestPureApproveCommentsAreInert(t *testing.T) {
 	t.Parallel()
 	rs := sampleReviewers()
 	head := strings.Repeat("a", 40)
 	author := "rowan"
 
-	// Case A: Typed DISPOSITION verdict=APPROVE with a # HOLD heading lower down
-	bodyTypedApprove := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM\n### HOLD notes from yesterday\nSome notes."
+	// Case A: Pure typed DISPOSITION verdict=APPROVE
+	bodyTypedApprove := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM\nEverything looks great."
 	vTyped, okTyped := ParseComment(201, "stella-astra", bodyTypedApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
 	if okTyped {
 		t.Fatalf("typed APPROVE must be inert and not produce a hold or pending verdict, got: %+v", vTyped)
 	}
 
-	// Case B: Explicit first-line APPROVE with a # HOLD heading lower down
-	bodyExplicitApprove := "APPROVE at " + head + "\nLGTM\n### HOLD notes\nSome history."
+	// Case B: Pure explicit first-line APPROVE with ignoreUntyped=true
+	bodyExplicitApprove := "APPROVE at " + head + "\nLGTM\nAll checks green."
 	vExplicit, okExplicit := ParseComment(202, "stella-astra", bodyExplicitApprove, "2026-09-19T10:00:00Z", rs, author, head, true)
 	if okExplicit {
-		t.Fatalf("explicit first-line APPROVE with ignoreUntyped=true must be ignored and not produce a hold, got: %+v", vExplicit)
+		t.Fatalf("explicit first-line APPROVE must be inert, got: %+v", vExplicit)
+	}
+
+	// Case C: Pure explicit first-line APPROVE with ignoreUntyped=false (must not fall through to pending)
+	vExplicitNotIgnored, okExplicitNotIgnored := ParseComment(203, "stella-astra", bodyExplicitApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okExplicitNotIgnored {
+		t.Fatalf("explicit first-line APPROVE must not fall through to pending, got: %+v", vExplicitNotIgnored)
+	}
+
+	// Case D: APPROVE quoting a past hold (stripped mechanically -> no false hold)
+	bodyQuotedHold := "APPROVE at " + head + "\nLGTM\n> ### HOLD previous issue from yesterday\nResolved in latest commit."
+	vQuoted, okQuoted := ParseComment(204, "stella-astra", bodyQuotedHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okQuoted {
+		t.Fatalf("quoted hold inside APPROVE comment must be stripped and inert, got: %+v", vQuoted)
+	}
+
+	// Case E: APPROVE with fenced code block containing hold (stripped mechanically -> no false hold)
+	bodyCodeHold := "APPROVE at " + head + "\n```\n# HOLD in code block\n```\nLGTM."
+	vCode, okCode := ParseComment(205, "stella-astra", bodyCodeHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okCode {
+		t.Fatalf("fenced hold inside APPROVE comment must be stripped and inert, got: %+v", vCode)
 	}
 }
 
-// 8. TestACommentNeverReleasesAnything driven from ParseComment output.
+// 8. Mixed-message comments preserve independently recognized HOLD evidence:
+// A typed or explicit APPROVE never suppresses a first-line plain HOLD, unquoted HOLD heading,
+// or bold HOLD.
+func TestMixedMessageCommentsPreserveHold(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	staleHead := strings.Repeat("b", 40)
+	author := "rowan"
+
+	// Case A: First-line plain HOLD followed by typed DISPOSITION APPROVE at stale head
+	bodyFirstLineHoldStaleApprove := "HOLD unresolved capture boundary\nDISPOSITION who=stella head=" + staleHead + " verdict=APPROVE\nDetails on capture boundary."
+	vA, okA := ParseComment(401, "stella-astra", bodyFirstLineHoldStaleApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okA || vA.Word != "hold" || vA.Source != "comment-rule" {
+		t.Fatalf("first-line HOLD must be preserved even if typed APPROVE follows; got ok=%v, verdict=%+v", okA, vA)
+	}
+
+	// Case B: First-line plain APPROVE followed by unquoted HOLD heading
+	bodyApproveWithHoldHeading := "APPROVE scope=\"docs\"\nLGTM on documentation.\n\n### HOLD unresolved capture boundary\nNeed teeth in negative control."
+	vB, okB := ParseComment(402, "stella-astra", bodyApproveWithHoldHeading, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okB || vB.Word != "hold" || vB.Source != "comment-rule" {
+		t.Fatalf("unquoted HOLD heading must be preserved when preceded by first-line APPROVE; got ok=%v, verdict=%+v", okB, vB)
+	}
+
+	// Case C: Typed DISPOSITION APPROVE followed by bold HOLD
+	bodyTypedApproveWithBoldHold := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM on diff, but **HOLD** on this edge case until tested."
+	vC, okC := ParseComment(403, "stella-astra", bodyTypedApproveWithBoldHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okC || vC.Word != "hold" || vC.Source != "comment-rule" {
+		t.Fatalf("bold HOLD must be preserved when accompanied by typed APPROVE; got ok=%v, verdict=%+v", okC, vC)
+	}
+}
+
+// 9. TestACommentNeverReleasesAnything driven from ParseComment output.
 func TestACommentNeverReleasesAnything_DrivenFromParseComment(t *testing.T) {
 	t.Parallel()
 	rs := sampleReviewers()

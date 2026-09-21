@@ -261,12 +261,6 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			}
 		}
 	}
-	if hasTypedApprove {
-		// Strictly no comment promotion to APPROVE: keep typed APPROVE inert and
-		// stop HOLD-heading or untyped pending fall-through (#2454).
-		return Verdict{}, false
-	}
-
 	// A typed APPROVE (nova-tools #2550), read BEFORE the untyped hold-shape check below
 	// (nova-tools #2631): the typed line wins when a comment carries both a typed verdict
 	// and prose that happens to be hold-shaped. Before this reordering, an APPROVE comment
@@ -318,6 +312,20 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			Kind:   "line",
 		}
 		return v, true
+	}
+
+	// If no HOLD was recognized, handle approvals:
+	// Strictly no comment promotion to APPROVE: keep typed and explicit APPROVE inert.
+	// They do not grant approval, and they do not fall through to comment-pending (#2454).
+	firstWord := ""
+	for _, l := range lines {
+		if t := strings.TrimSpace(l); t != "" {
+			firstWord = firstToken(t)
+			break
+		}
+	}
+	if hasTypedApprove || strings.EqualFold(firstWord, "APPROVE") {
+		return Verdict{}, false
 	}
 
 	// Untyped comment without hold
