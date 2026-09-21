@@ -69,6 +69,12 @@ nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--
 nova-pulse sprint  funnel --queue <dir> [--oneline] [--json] [--record --event <e> --card <c>] [--void --card <c>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
+nova-pulse sprint start  --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>]
+nova-pulse sprint status --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse sprint set    --queue <dir> <bench> <key> <value>
+nova-pulse sprint table  --plan <file> --queue <dir> --bus <clone> [--bench <name>] [--once]
+nova-pulse sprint funnel --plan <file> --queue <dir> [--wave <id>] [--max <n>]
+nova-pulse sprint stop   --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -406,6 +412,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdWake(rest, stdout, stderr)
 	case "sleep":
 		return cmdSleep(rest, stdout, stderr)
+	case "sprint":
+		return cmdSprint(rest, stdout, stderr, now)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
