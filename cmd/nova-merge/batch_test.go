@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The landing gate's own tests. They drive cmdBatch through run(), against a REAL git
@@ -125,6 +126,32 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 		t.Errorf("the remote received %d new pushes; the batch pushes nothing", got-before)
 	}
 	absent(t, remoteRefs(l), "rowan/integration-1")
+}
+
+// #2499 item 3 / #2508. A member that does not compile turns the batch red at
+// `go build`, and the verdict must quote the compiler line, not only `# package`.
+func TestBatchFailKeepsTheBuildStderr(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	dev := l.git(l.work, "rev-parse", "dev")
+	l.git(l.work, "checkout", "-q", "-B", "pr4", dev)
+	l.write("pkg/d/d.go", "package d\n\nfunc D() int { return Foo }\n")
+	sha := l.commit("pr 4 does not compile")
+	l.git(l.work, "push", "-q", "origin", sha+":refs/pull/4/head")
+	l.git(l.work, "checkout", "-q", "main")
+	l.heads[4] = sha
+	l.host.PRs[4] = merge.PR{Number: 4, HeadOID: sha, Base: "dev"}
+	l.host.SetCheckRuns(sha, merge.CheckDetail{Name: "ci-ok", Conclusion: "success", SHA: sha})
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-build-stderr", "--pr", "4",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+	if exit != 1 {
+		t.Fatalf("a red build is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "BATCH FAIL")
+	contains(t, stdout, "step=build")
+	contains(t, stdout, "undefined: Foo")
+	absent(t, stdout, "BATCH OK")
 }
 
 // THE GREEN RUN, and the exact shape of the line a caller parses. #2 still conflicts and
@@ -383,6 +410,39 @@ func TestTestFailuresReadsTheJSONStream(t *testing.T) {
 	// text reader, and a gate that read it as empty would print no failing package at all.
 	if _, _, ok := testFailures("# example.com/batch/pkg/c\nc.go:3: undefined: X\nFAIL\texample.com/batch/pkg/c [build failed]\n"); ok {
 		t.Error("a build failure's plain text read as a JSON stream; it must fall back to the text reader")
+	}
+}
+
+// #2499 item 3 / #2508. go build writes `# package` then the compiler lines.
+// firstLine kept only the header, so a gate that failed in
+// bench/tools/realpacket-gen named the package and not `undefined: Foo`.
+func TestStepFailureKeepsTheBuildCompilerLine(t *testing.T) {
+	t.Parallel()
+	out := "# example.com/batch/bench/tools/realpacket-gen\n./main.go:3: undefined: Foo\n"
+	_, _, reason := stepFailure(batchStep{name: "build", command: "go build ./..."}, out, fmt.Errorf("exit status 1"))
+	if !strings.Contains(reason, "undefined: Foo") {
+		t.Errorf("reason = %q; a failing go build's compiler line must appear on the verdict, not only the # package header", reason)
+	}
+	if !strings.Contains(reason, "realpacket-gen") {
+		t.Errorf("reason = %q; the package header is still part of the captured stderr", reason)
+	}
+}
+
+// The BATCH FAIL reason is capped at oneline.TailBytes (500). A pathological
+// compiler dump cannot be the whole of a reader's context; the mark ...+<n>B
+// says when more was dropped.
+func TestStepFailureCapsTheBuildStderr(t *testing.T) {
+	t.Parallel()
+	if stepReasonBytes != oneline.TailBytes {
+		t.Errorf("stepReasonBytes = %d, want oneline.TailBytes=%d; the receipt names that cap", stepReasonBytes, oneline.TailBytes)
+	}
+	out := "# example.com/batch/pkg/d\n" + strings.Repeat("x", 2000) + "undefined: Foo\n"
+	_, _, got := stepFailure(batchStep{name: "build", command: "go build ./..."}, out, nil)
+	if len(got) > stepReasonBytes {
+		t.Errorf("reason is %d bytes, want at most stepReasonBytes=%d (oneline.TailBytes)", len(got), stepReasonBytes)
+	}
+	if !strings.Contains(got, "...+") || !strings.HasSuffix(got, "B") {
+		t.Errorf("a stderr longer than stepReasonBytes=%d must carry the cap mark ...+<n>B, got %q", stepReasonBytes, got)
 	}
 }
 

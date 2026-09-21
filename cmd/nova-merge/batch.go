@@ -468,7 +468,7 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		pkgs, tests, reason := stepFailure(step, out, err)
 		fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=%s tests=%s reason=%q\n",
 			line, oneline.Field(step.name), oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests)),
-			oneline.Cap(reason, oneline.TailBytes))
+			oneline.Cap(reason, stepReasonBytes))
 		return 1
 	}
 	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
@@ -1040,8 +1040,14 @@ func ciTestEnv(tmp string, gomaxprocs int) []string {
 	return withSaneSHLVL(env)
 }
 
+// stepReasonBytes is how much of a red step's captured stdout+stderr the BATCH FAIL
+// reason keeps. It is oneline.TailBytes: 500 bytes is a go build's `# package` header
+// and the compiler lines under it, and the mark ...+<n>B says when more was dropped.
+// Named so a reader of the receipt can find the cap (#2499 item 3 / #2508).
+const stepReasonBytes = oneline.TailBytes
+
 // stepFailure is what a red step says: the failing packages, the failing tests, and the
-// one line a reader is pointed at.
+// diagnostic a reader is pointed at.
 //
 // A step whose output is a `go test -json` stream is read as one; a step whose output is
 // text is read as text. The fallback is not a nicety: a build failure writes plain text on
@@ -1054,20 +1060,37 @@ func stepFailure(step batchStep, out string, err error) (pkgs, tests []string, r
 		}
 	}
 	pkgs, tests = failuresIn(out)
-	return pkgs, tests, firstLine(dropGoNotices(out), err)
+	return pkgs, tests, stepReason(out, err)
+}
+
+// stepReason is the diagnostic a red non-stream step quotes on BATCH FAIL.
+//
+// firstLine kept only `# package` from a go build, so a gate that failed in
+// bench/tools/realpacket-gen named the package and not `undefined: Foo`
+// (#2499 item 3 / #2508). The child's captured output stays, go notices
+// stripped, capped at stepReasonBytes.
+func stepReason(out string, err error) string {
+	body := strings.TrimSpace(dropGoNotices(out))
+	if body != "" {
+		return oneline.Cap(body, stepReasonBytes)
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "(no output)"
 }
 
 // goNotice matches the lines the go command writes about ITSELF rather than about the
 // tree: `go: downloading go1.26 (linux/amd64)`, `go: downloading golang.org/x/...`.
 var goNotice = regexp.MustCompile(`^go: (downloading|finding|extracting|upgraded|added|toolchain)\b`)
 
-// dropGoNotices takes those lines off the front of a step's output, so the one line the
+// dropGoNotices takes those lines off the front of a step's output, so the stderr the
 // verdict quotes is THE ERROR and not the progress note in front of it.
 //
 // EDGE 1: a build that failed because the toolchain was too old reported
 // `reason="go: downloading go1.26 (linux/amd64)"`. That line is not a failure, it names
-// nothing to fix, and it was chosen for the verdict only because firstLine takes the
-// first line that says anything. A notice is not the news.
+// nothing to fix, and it was chosen for the verdict only because the first line that
+// said anything was a notice. A notice is not the news.
 func dropGoNotices(out string) string {
 	lines := strings.Split(out, "\n")
 	for i, line := range lines {
