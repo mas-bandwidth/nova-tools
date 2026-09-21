@@ -15,16 +15,11 @@
 
 (in-package #:nova-work/tests)
 
-(defvar *render-test-counter* 0)
-
 (defun test-render-root (name)
-  "A fresh empty directory to serve as one permitted root's bench directory."
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames (format nil "nova-work-test-renders/~A-~D-~D/"
-                                       name (get-universal-time)
-                                       (incf *render-test-counter*))
-                               base)))
-    (ensure-directories-exist dir)
+  "A fresh empty directory to serve as one permitted root's bench directory.
+Under this run's own root (tests/harness.lisp), so two suites sharing a host
+cannot build the same path (nova-tools#1699)."
+  (let ((dir (test-temp-dir name)))
     ;; The canonical spelling: on Darwin the temporary directory is itself
     ;; reached through a symlink, and a root that is not resolved would make
     ;; every containment check a false escape.

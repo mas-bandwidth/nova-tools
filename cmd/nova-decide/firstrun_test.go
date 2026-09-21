@@ -1,7 +1,10 @@
-// firstrun_test.go EXECUTES this binary's two docs/TESTS.md transcripts --
-// `### First run` and `### The ladder of minds` -- through internal/onboarding's
-// harness: every documented command is run and its whole output is compared with
-// the block under it, same number of lines, same lines, same order.
+// firstrun_test.go EXECUTES this binary's `### First run` docs/TESTS.md
+// transcript -- command lines and the ladder of minds under one heading --
+// through internal/onboarding's harness: every documented command is run and
+// its whole output is compared with the block under it, same number of lines,
+// same lines, same order. A second test counts the event lines, so the ladder
+// moving back behind a heading of its own is red rather than silent
+// (nova-tools #1425).
 //
 // nova-decide was one of the eight transcripts no test ran, and the 2026-09-19
 // dogfood rerun found its ROUTE lines short of `next=` and `steps=` on all three
@@ -15,7 +18,7 @@
 // run that by reaching a model from `go test`, which this repository does not
 // do, or by skipping it -- and the skipped form could never have passed anyway,
 // because no questions file and no state file were ever written for it. A
-// precondition may not hide an unrunnable step. Everything in both blocks runs
+// precondition may not hide an unrunnable step. Everything in the block runs
 // with `--no-jev` and reaches no network.
 package main
 
@@ -24,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
@@ -40,8 +44,32 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	executeTranscript(t, "First run")
 }
 
-func TestTESTSLadderOfMindsIsWhatTheToolPrints(t *testing.T) {
-	executeTranscript(t, "The ladder of minds")
+// TestFirstRunHoldsTheWholeLadder counts the event lines a stranger walks
+// through first, so the ladder cannot drift back behind a heading of its own:
+// onboarding.FirstRun stops at the next `### `, and a ladder under `### The
+// ladder of minds` is seven lines no first run reaches and no cage keeps
+// (nova-tools #1425). The count is the cage: route, help and log must be here,
+// not anywhere else the section might grow.
+func TestFirstRunHoldsTheWholeLadder(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-decide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, line := range lines {
+		if s := onboarding.Shape(line); s != "" {
+			seen[strings.Fields(s)[0]]++
+		}
+	}
+	for prefix, want := range map[string]int{"DECIDE": 1, "ROUTE": 3, "HELP": 1, "LOG": 2} {
+		if seen[prefix] != want {
+			t.Errorf("`### First run` under `## nova-decide` shows %d %s lines, want %d", seen[prefix], prefix, want)
+		}
+	}
 }
 
 // executeTranscript runs one named block of this tool's section as a sitting.

@@ -77,8 +77,8 @@ $ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
 DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
-DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=-
-DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
+DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -90,12 +90,29 @@ DOGFOOD GATE FAIL verbs=106 findings=105 shown=20 unmatched=0
 never elides one: a ledger that capped its rows would hide exactly the verbs
 nobody has run. The summary is the bounded read — `dogfooded=` counts verbs
 with any receipt, `by-nonauthor=` counts the ones a non-author ran and said ok,
-`open-edges=` counts the edges no later run has cleared, `unfiled=` how many
+`open-edges=` counts the findings nobody has answered, `unfiled=` how many
 of those nobody has filed an issue for, and `unmatched=` how many receipts named
-a verb the list does not declare. `gate` is the same read with an exit
-code: 1 on an open edge always, 1 on any **unmatched not-ok receipt**, and with
-`--require-all` on every verb no
-non-author has passed. A receipt the tool cannot parse is exit 1 and a named
+a verb the list does not declare. Each row also carries `open=<n>`, the findings
+open on that verb, printed whether it is zero or not. `gate` is the same read
+with an exit code: 1 on an open edge always, 1 on any **unmatched not-ok
+receipt**, and with `--require-all` on every verb no non-author has passed.
+
+**An edge is answered, not outlived.** It used to be cleared by anybody running
+the verb again later and finding nothing — so where two people dogfood the same
+verb, the second one's pass silently closed the first one's finding, unread and
+unfiled, and the row printed that second person's `ok=yes` over it. A finding is
+closed by a receipt that **names** it — `dogfood record --closes <id>`, which
+anybody may write — or by **the person who found it** running the verb again and
+finding nothing. The id is the eight hex characters the gate prints beside the
+finding and the same eight that end the receipt's filename, so a reader with an
+id can find the file:
+
+```
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
+```
+
+A `--closes` naming an id nothing carries closes nothing and leaves the edge
+open: a typo must never read as a close. A receipt the tool cannot parse is exit 1 and a named
 `DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
 the list does not declare is named one by one — its file, what it claimed and
 the nearest declared verb — by `ledger` AND by `gate`, because a release lane
@@ -176,7 +193,7 @@ now refused by name, listing the kinds there are (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone; run: nova-check help
 ```
 
 ```
@@ -453,6 +470,14 @@ nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --br
 
 A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
 
+**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the Studio and the bud on the Air both post as `Rowan` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
+
+```
+nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remote origin --branch main
+```
+
+A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one space-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
+
 Four things a first draft gets wrong, and what `send` does about each, one `SEND NOTE` line per fix so nothing is rewritten silently: a markdown heading at the top becomes the `Subject:` when the draft has none; a pasted `Date:` is replaced from the clock; a missing `From:` is written from `--as`; bold asterisks around a key come off and blank lines above the header are skipped. The refusals that remain are the ones that would be a guess about what you meant.
 
 **`inbox`** lists what is addressed to you and not yet answered:
@@ -603,7 +628,7 @@ nova-decide route ... [--paste]
 
 Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, how it is `ask`ed, and — for a rung that is a model rather than a person — the `model` id a unit dispatched to it runs with) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
 
-The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
+The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt "opus:failed:missed the cause"`, quoted, because the reason may hold spaces and an unquoted one arrives as three arguments — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
 
 Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `row-test`, `dogfood`, `fleet-chore`).
 
@@ -1435,13 +1460,23 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
 ```
 
 `batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
 `--root`, merges each `--pr` head onto `--base` in the order given on a branch
 `rowan/<name>`, drops a head that will not merge and says so, then runs the suite —
 `build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
+
+**Exactly one of `--reviewers <file>` and `--no-require-holds --reason <text>` is
+required**, and neither or both is exit 2: a gate that cannot say whose reads it
+honoured is not a gate. `--reviewers` names the reviewers file, and under it
+`--lane <dir>` is required too -- the lane directory the typed read records are
+read from, which may not be the literal `none`. `--no-require-holds` lands over
+an unlifted hold and says so on the verdict line, which is why it demands a
+`--reason`. `--untyped-comments ignore` sets aside untyped comments on the same
+terms and demands the same `--reason` (SPEC-DECIDE reading 3, *No flag ignores a
+hold*; nova-tools #1748).
 
 ```
 BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
@@ -3271,6 +3306,32 @@ boot volume to clean. It needs no `sudo`. A delete that fails prints
 `SANDBOX LEAK` with the one `diskutil` command that removes it and exits 3,
 never silently.
 
+**A commit leaves as a bundle, through `--out`.** Everything on the volume is
+deleted, so a card that committed something needs one writable path out.
+`--out <dir>` opens it: after the command exits and before the volume is deleted,
+the named artifacts are copied to `<dir>/<name>/` and one line says what left.
+
+```
+$ nova-sandbox run --name j1 --size 8g --out ./handoff \
+               -- /bin/sh -c 'cd repo && git bundle create ../repo.bundle HEAD && echo DONE > ../RESULT.md'
+SANDBOX STEP name=out state=start
+SANDBOX STEP name=out state=done ms=3
+SANDBOX OUT name=j1 files=2 bytes=21174
+SANDBOX DONE name=j1 exit=0 wall=11.220 freed=1048576
+```
+
+The default set is `RESULT.md`, `usage.tsv` and `repo.bundle`, each taken **if
+present**; `--artifact <relpath>` names another set, repeatable, relative to the
+card's working directory, and an artifact you name and did not write is a
+refusal. Every path is resolved inside the volume — an absolute path, a `..` or
+a symlink is refused — and the whole set is measured before a byte is written
+and refused over `--out-max-bytes` (default `64m`). `git bundle create
+repo.bundle <branch>` as the card's last step is the documented way a commit
+leaves; the other side reads it with `git fetch ./repo.bundle <branch>`. A
+handoff that fails after a command that exited 0 makes the run
+`SANDBOX REFUSED reason=out_failed`, exit 125, because a zero would say the
+artifacts are there.
+
 On linux `run` refuses with one remedy line: a card is already disposable there
 — it runs inside its image — so name the image root as `--write` on the bare
 form instead.
@@ -3448,6 +3509,17 @@ REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
 
 **When the source changes.** Edit the source file between sessions and the next `read` says `ANCHOR STALE`, naming both the stored hash and the current hash. A new annotation is refused until the operator decides whether to migrate notes, discard them, or revert the source.
 
+### Companion view
+
+`view` renders an explicitly selected sample of Markdown records into a static timeline, one card per record linked back to its source. It is read-only: viewing never edits, seals, rolls up or deletes a record, and an excluded record is never even opened.
+
+```sh
+nova-play view --max 20 moment-one.md moment-two.md
+nova-play view --exclude draft* --max 0 ./moments/*.md
+```
+
+Every record is named on the command line — there is no default file and no directory walk. `--exclude` takes a glob matched against each path as given and its base name, repeatable; `--max` caps the cards printed (default 20, `0` prints every card), and the summary line always carries the totals. A card shows the record's date, author, kind (human, ai, summary, or whatever word the record carries — echoed, never inferred) and source; a missing or unparseable date or author prints as `unknown` rather than a guess. Two layouts are read: a leading `---` fence holding lowercase `author:`, `date:`, `kind:` and `supersedes:` lines, and `Author:`, `Date:`, `Kind:` and `Supersedes:` lines anywhere else in the file. Cards sort chronologically with undated records last; a `supersedes:` value stays on the card so corrections remain discoverable, and a summary is listed beside the record, never in place of it.
+
 ### The sidecar file, and older ones
 
 Notes for `story.txt` live in `story.txt.notes` beside it. It is a plain text file you can read, and it is **versioned**: this build writes version 2, which puts `VERSION 2` on the second line, stores each `PASSAGE`, `BODY` and `REPLY_BODY` as one physical line escaped with `\\`, `\n` and `\r`, and frames an author that is empty or contains a space, a quote, a backslash or an unprintable rune as a Go-quoted string (`author="Ada \"The Reader\" Lovelace"`). That is what lets a note keep a trailing space, a `"`, a `\`, or a line of prose beginning with `NOTE` without the reader mistaking it for the next record.
@@ -3507,6 +3579,19 @@ classifies the range since the previous tag against the sensitive path list and 
 past it: classify from a complete local list instead, with `--local-diff <checkout>` to produce one
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
 `--dry-run` decides and prints and writes nothing.
+
+**Before any of that, `cut` and `build` run the dogfood gate.** It is `nova-check dogfood gate --cli
+<reference> --receipts <dir>` in process: a verb somebody ran that did not do what they needed, and
+that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
+`RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
+--reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
+(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood`
+when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
+quietly. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
+line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
+Every release line carries `dogfood=ok|waived|skipped`. Glenn, 2026-09-18: a tool is done when it is
+tested, dogfooded by a non-author on real work, and the feedback is applied — see
+[SPEC-RELEASE.md](SPEC-RELEASE.md) lesson 12.
 
 ```sh
 nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
@@ -3583,8 +3668,11 @@ answer a bare invocation with a usage refusal, are read rather than reported
 UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
-needs no bus. Updates require an explicit `nova-update apply --file ... name`;
-models are listed for the owner to evaluate and pull themselves. No timer is installed.
+needs no bus. `nova-version snapshot --file <manifest>` counts the adopted tools the
+manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line —
+the adopted 16, never how many `nova-*` executables sit on PATH. Updates require an explicit
+`nova-update apply --file ... name`; models are listed for the owner to evaluate and
+pull themselves. No timer is installed.
 
 ### Capture and compare installed binaries
 
@@ -3615,8 +3703,16 @@ refused healthy binaries and named a build repair that would have found nothing
 executing the binaries.
 
 This four-column inventory is **not** the six-column manifest accepted by
-`report --file`; `snapshot` has no `--owner` flag. The report's `--snapshot` option
-below is a separate delivery-recovery file.
+`report --file`; the `--bin/--out` shape has no `--owner` flag. The report's
+`--snapshot` option below is a separate delivery-recovery file.
+
+`snapshot`'s `--file` shape instead reads the six-column manifest the caller has
+already adopted and counts how many of its tools answer, printing one
+`SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line — the
+adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
+It writes no file and mirrors `report`'s read, so a recorded version is known
+without running a process; it exits 1 when any adopted tool does not answer
+([#622](https://github.com/mas-bandwidth/nova-tools/issues/622)).
 
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it, so a tool's named `key=value` extras — `nova-merge`'s `build=<12 hex>`,

@@ -528,7 +528,8 @@ nova-sandbox").
 ## The run verb — a disposable place, on darwin
 
 ```
-nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>]
+                 [--out <dir> [--artifact <relpath>]... [--out-max-bytes <64m>]] -- <command> <args...>
 nova-sandbox run --help
 ```
 
@@ -813,6 +814,69 @@ not need a number.
    SANDBOX TIMEOUT after=<d> name=<n>
    ```
 
+### The handoff — what leaves the disposable place
+
+**The hurt.** 2026-09-18, dogfooding `run` on a real card: the card cloned the
+repo, made the fix, committed it, and the commit died with the volume. The verb
+had no writable path out. "Nothing survives" is exactly right for scratch and
+exactly wrong for the one thing the card was for, and a card that cannot hand
+back its commit has to be re-done outside the sandbox — which is the same as not
+having one.
+
+**`--out <dir>`** is the door. After the command exits and **before** the volume
+is deleted — there is exactly one place in the verb where both are true — the
+named artifacts are copied to `<out>/<name>/`, and one line says what left:
+
+```
+SANDBOX OUT name=<n> files=<k> bytes=<b>
+```
+
+It is printed before `SANDBOX DONE`, because it happens before the delete.
+
+**What leaves.** `RESULT.md`, `usage.tsv` and `repo.bundle`, each taken **if
+present** — a read card writes no bundle and that is not a failure.
+`--artifact <relpath>` replaces that set, repeatable, each path relative to the
+card's working directory. An artifact the **caller named** and did not write is
+a refusal, the same way rule 5 refuses a `--read` the caller named that is not
+there; a default that is absent is skipped. A directory is taken whole, one row
+per regular file, with its shape kept.
+
+**Nothing escapes the volume.** Every source resolves through
+`safepath.ResolvedUnder` against the card's working directory: an absolute path,
+a `..` element, a symlink and anything that is not a file or a directory are all
+refused, and the shape checks run as text before any filesystem call so the
+refusal names the flag rather than an errno.
+
+**`--out-max-bytes`**, default `64m`. The whole set is **measured before a byte
+is written** and refused over the cap. A handoff is a door, not a backup: a
+truncated artifact is worse than none, and a card that wants to move gigabytes
+wants a bundle or a different tool.
+
+**A commit leaves as a bundle.** The documented way, and the card's own last
+step:
+
+```
+git bundle create repo.bundle <branch>
+```
+
+One file, the complete history of that branch, and `git fetch ./repo.bundle
+<branch>` on the other side. `cmd/nova-pulse/testdata/templates/fix.md` ends
+with it.
+
+**The status.** A handoff that fails after a command that **succeeded** turns the
+run into `SANDBOX REFUSED reason=out_failed`, exit 125: a zero exit would tell
+the caller the artifacts are in `--out` when they are not. A handoff that fails
+after a command that already failed leaves that status alone — the command's own
+failure is the more important truth, and it is almost always why there was
+nothing to hand back. The volume is deleted either way.
+
+**Checked before anything is made.** `--artifact` or `--out-max-bytes` without
+`--out` is `reason=no_out`; a `--artifact` that is absolute, empty, `.` or
+carries `..` is `reason=bad_artifact`; a `--out-max-bytes` that is not a positive
+quantity is `reason=bad_out_max`. `--out` on **windows** is `reason=no_out`: the
+windows half keeps its per-run scratch under `--scratch` and there is nothing to
+copy off. A typo found after the card has run is worth nothing.
+
 ### `run --help`
 
 `nova-sandbox run --help`, `-h` or `help` prints the verb's own usage on stdout
@@ -980,14 +1044,23 @@ Every refusal is exit 2 with **one remedy line** and creates nothing. A missing,
 non-numeric or zero `--pr`, or `--pr` together with `--prune`, is `WORKTREE
 REFUSED reason=bad_pr: --pr wants one pull-request number and one mode`; a
 `--repo` that is missing, relative, or not a git work tree is `reason=bad_repo:
---repo wants an existing repository`; a `--scratch` that is missing or not a
-directory is `reason=bad_scratch: --scratch wants an existing directory and is
-not created`; each of the three carries the remedy `run: nova-sandbox worktree
---repo <dir> --scratch <dir> --pr <id>`. A pull request the forge does not know
-is `reason=no_pr` and an unreachable forge is `reason=no_forge`, each with the
-one remedy naming the flag and saying to retry once the forge answers. The
-mistake it removes is abandoned scratch worktrees and git lock collisions across
-review passes.
+--repo wants an existing repository named by an absolute path`; a `--scratch`
+that is missing or not a directory is `reason=bad_scratch: --scratch wants an
+existing directory and is not created`; a repository whose `origin` remote names
+no owner and name is `reason=bad_origin: --repo wants an origin remote whose path
+names <owner>/<name>`, and the line names the origin it read; each of the four
+carries the remedy `run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr
+<id>`. The owner and name are read out of the remote's PATH and the host is read
+by nobody, so an ssh `Host` alias standing where the forge's own name would is
+one of the shapes that works; `gh` is what resolves the forge. A remote naming a
+place on this machine — a `file://` URL, an absolute path, one beginning with `.`
+or `..`, a windows drive letter — names no owner and name and is `bad_origin`,
+because a bare push target's directories are not an owner and a repository. A pull request the
+forge does not know is `reason=no_pr` and an unreachable forge is
+`reason=no_forge`, each with the one remedy naming the flag and saying to retry
+once the forge answers — `no_forge` is the forge's own silence and never an input
+the forge was not asked about. The mistake it removes is abandoned scratch
+worktrees and git lock collisions across review passes.
 
 **Tests a card writes first.** Each runs in `t.TempDir()` with a fake in place
 of every network, bench and clock, and no real forge or network is touched.
@@ -1007,12 +1080,25 @@ of every network, bench and clock, and no real forge or network is touched.
    stale tree the fake process probe reports in use is kept with no line.
 6. `--prune` over a fake `git worktree list` holding a hand-made worktree no
    record names leaves it byte-identical and prints `removed=0 kept=<n>`.
-7. No `--repo`, no `--scratch`, `--repo <tmp>/not-a-repo`, `--scratch
-   <tmp>/absent`, `--pr 0`, `--pr abc` and `--pr --prune` are each exit 2 with
-   one remedy line, and the test asserts the absent scratch dir still does not
-   exist.
+7. No `--repo`, no `--scratch`, `--repo <tmp>/not-a-repo`, the relative `--repo
+   .`, `--scratch <tmp>/absent`, `--pr 0`, `--pr abc` and `--pr --prune` are each
+   exit 2 with one remedy line, the relative one in words that say an absolute
+   path is what `--repo` wants, and the test asserts the absent scratch dir still
+   does not exist.
 8. A fake forge token in the environment appears on no line, scanned over every
    byte the verb wrote.
+9. Owner and name are read out of `https://<host>/o/n.git`, the same without
+   `.git`, the scp-like `git@<host>:o/n.git`, `ssh://git@<host>/o/n.git`, the same
+   with a port, an ssh `Host` alias in place of the host, and `o/n` alone; a
+   remote whose path names no owner and name yields nothing, and so does every
+   local-path shape — `file:///tmp/x/o/n.git`, `../o/n.git`, `./o/n`,
+   `/abs/path/o/n.git`, `C:/repos/o/n` and `C:\repos\o\n`.
+10. A pathless `origin`, and a repository with no `origin` at all, are the bad
+    origin failure and not the unreachable one, and the error names the origin
+    read.
+11. The forge seam's three failures refuse in their own words: `bad_origin`
+    carries the plain remedy and says what it wants and what it read, while
+    `no_pr` and `no_forge` carry the retry line.
 
 ## Exit codes
 
@@ -1028,7 +1114,7 @@ range, and this is a deliberate, recorded departure from the conventions
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`) and a volume that could not be made, or that was made and not mounted (`reason=volume_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
