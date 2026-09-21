@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -100,6 +101,19 @@ func Tools(source string) ([]string, error) {
 }
 
 func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
+	// THE DEFINITION OF DONE, FIRST -- before a single tool is compiled. A dev
+	// build has no tag and no changelog, which is exactly why it needs the
+	// gate rather than exactly why it escapes one: the fourth dogfood's
+	// releases reached four benches as dev builds, and `adopt` never asks what
+	// a release was gated on. Twenty-one binaries compiled and then refused is
+	// also twenty-one compiles nobody needed.
+	gate, err := dogfoodCheck("BUILD", o, deps, filepath.Join(o.source, "docs", "CLI.md"), out, errs)
+	if err != nil {
+		if errors.Is(err, errDogfood) {
+			return 2
+		}
+		return refusal(errs, "BUILD", err)
+	}
 	// EVERY PLATFORM IS RESOLVED BEFORE THE FIRST COMPILE. A list whose fourth
 	// entry is a typo must not be found out after three platforms have been
 	// built: that is a half-built release root somebody then has to reason
@@ -224,8 +238,8 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// the LAST flag and print one green receipt, which is how a release ends
 	// up half a platform short with nobody the wiser. `platforms=` and `sums=`
 	// are the same list in the same order, one token each.
-	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s out=%s\n",
-		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), field(o.out))
+	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s dogfood=%s out=%s\n",
+		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), gate, field(o.out))
 	return 0
 }
 
