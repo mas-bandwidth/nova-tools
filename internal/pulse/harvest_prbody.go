@@ -317,7 +317,7 @@ func parseUsageLines(lines []string) (model, provider, usd string) {
 }
 
 // extractJobProvenance resolves the Provenance for a job.
-func extractJobProvenance(dir, bench string, resultLines []string, usageRaw string) Provenance {
+func extractJobProvenance(dir, benchName string, resultLines []string, usageRaw string) Provenance {
 	var prov Provenance
 	prov.Model = tokenFromLines(resultLines, "model:", "MODEL:")
 	prov.Route = tokenFromLines(resultLines, "route:", "ROUTE:")
@@ -346,8 +346,8 @@ func extractJobProvenance(dir, bench string, resultLines []string, usageRaw stri
 		}
 	}
 	if prov.Bench == "" {
-		if strings.TrimSpace(bench) != "" {
-			prov.Bench = strings.TrimSpace(bench)
+		if strings.TrimSpace(benchName) != "" {
+			prov.Bench = strings.TrimSpace(benchName)
 		} else {
 			prov.Bench = localBenchName()
 		}
@@ -395,8 +395,8 @@ func extractProvenanceFromDir(dir, cardPath, inBench string, resultLines []strin
 }
 
 // extractHarvestProvenance extracts provenance for Harvest using CardRow and jobDir.
-func extractHarvestProvenance(jobDir string, c CardRow, bench string, resultLines []string) Provenance {
-	prov := extractJobProvenance(jobDir, bench, resultLines, "")
+func extractHarvestProvenance(jobDir string, c CardRow, benchName string, resultLines []string) Provenance {
+	prov := extractJobProvenance(jobDir, benchName, resultLines, "")
 	if prov.Model == "-" && c.Model != "" && c.Model != "-" {
 		prov.Model = c.Model
 	}
