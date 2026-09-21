@@ -114,6 +114,8 @@ UNAVAILABLE, UNRECONCILED or RESTING, and only 2 means the call could not run.
 It says NO to an assignment, never to the line, and it never writes a cause:
 it has measured a silence and nothing else.
 
+  cp -R cmd/nova-wake/testdata/example-reports ./reports
+
 example:
   nova-wake quickstart --state ./wake.state --reports ./reports
   nova-wake probe --here

@@ -59,7 +59,7 @@ usage:
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--max <n>] | --rules
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
@@ -67,7 +67,7 @@ usage:
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --slots-store <dir> --owner <name> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -535,6 +535,11 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// --route-usage are REQUIRED with it: accounting is not optional, and a
 	// call nobody can account for is not made (SPEC-DECIDE).
 	route := f.fs.Bool("route", false, "")
+	// H4 (#1625): routing is the launcher's default, so --route is kept only
+	// for callers that spell it out, and --no-route --reason is the one way
+	// out. Neither flag is required.
+	noRoute := f.fs.Bool("no-route", false, "")
+	routeReason := f.fs.String("reason", "", "")
 	routeRegistry := f.fs.String("route-registry", "", "")
 	routeFloor := f.fs.Float64("route-floor", swarm.DefaultRouteFloor, "")
 	routeLog := f.fs.String("route-log", "", "")
@@ -545,9 +550,16 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	// H4 (#1625): routing is the launcher's default; the only way out is an
+	// explicit --no-route carrying the --reason that opens it, so a launch
+	// cannot forget the route the way a sentence in a brief can.
+	routeOn := *route || !*noRoute
+	if *noRoute && strings.TrimSpace(*routeReason) == "" {
+		f.add("--no-route needs --reason <text>: a skipped route is a fact in the log, so the reason that opens the skip is not optional")
+	}
 	if *cards != "" {
 		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile,
-			routeFlags{on: *route, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
+			routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
 				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
@@ -654,7 +666,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // routeFlags is the --route family, held together so the batch verb's own
 // signature stays readable.
 type routeFlags struct {
-	on       bool
+	on bool
+	// reason is the --reason that opens an explicit --no-route. It is empty
+	// whenever the launcher routes.
+	reason   string
 	registry string
 	floor    float64
 	log      string
@@ -672,18 +687,22 @@ type routeFlags struct {
 // model, so the loop runs on a bench with no API at all.
 func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	if !r.on {
-		return nil
+		if strings.TrimSpace(r.reason) == "" {
+			return nil
+		}
+		// An explicit --no-route --reason still needs the log home for its
+		// skipped row, so the reason is a fact in the log and not an absence.
+		return &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
 	}
 	if err := decide.ValidFloor(r.floor); err != nil {
 		f.add(fmt.Sprintf("--route-floor %s is not a confidence; it wants a number between 0 and 1, such as --route-floor 0.9",
 			oneline.Field(strconv.FormatFloat(r.floor, 'g', -1, 64))))
 		return nil
 	}
+	// H4 (#1625): a missing accounting home is not a refusal. The rules answer,
+	// no call is made, and the receipt says why=no-accounting; the one way out
+	// of the route is --no-route --reason.
 	in := &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
-	if ok, why := in.Accountable(); !ok {
-		f.add(why + "; pass --route-log ./decide.jsonl --route-usage ./usage.tsv, or drop --route")
-		return nil
-	}
 	reg, err := decide.LoadRegistry(r.registry)
 	if err != nil {
 		f.add(fmt.Sprintf("--route-registry: %s", oneline.Err(err)))
@@ -750,9 +769,10 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 		Benches: benches, Bench: bench, Then: then,
 		Harness: harness, Auth: auth, Slots: slots,
 		SlotsStore: slotsStore, SlotOwner: slotOwner,
-		Route:  routed,
-		Worker: w,
-		Stdout: stdout, Stderr: stderr,
+		Route:     routed,
+		RouteSkip: route.reason,
+		Worker:    w,
+		Stdout:    stdout, Stderr: stderr,
 	})
 }
 
@@ -1649,6 +1669,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	slot := f.fs.String("slot", "", "")
 	root := f.fs.String("root", "", "")
 	deadline := f.fs.String("deadline", "", "")
+	// --idle is the bound on STILLNESS, which is not the bound on LENGTH. A card is idle
+	// only when NEITHER its own output NOR its process tree has moved for this long, so a
+	// `go test` printing nothing for minutes is not a dead card (issue #593). The default is
+	// `batch --idle`'s own 300s, and 0 turns the watch off.
+	idle := f.fs.String("idle", swarm.DefaultNativeIdle.String(), "")
 	label := f.fs.String("label", "", "")
 	auth := f.fs.String("auth", "", "")
 	config := f.fs.String("config", "", "")
@@ -1742,6 +1767,18 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
 		return 2
 	}
+	idleDur := swarm.DefaultNativeIdle
+	if *idle != "" {
+		v, ierr := time.ParseDuration(*idle)
+		if ierr != nil || v < 0 {
+			fmt.Fprintf(stderr, "nova-swarm native: --idle wants a duration such as 5m, or 0 for no watch: %s\n", oneline.Field(*idle))
+			return 2
+		}
+		idleDur = v
+	}
+	if idleDur > d {
+		idleDur = d
+	}
 	cardRaw, err := os.ReadFile(*cardPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
@@ -1769,6 +1806,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		authFile:       *auth,
 		configFile:     *config,
 		deadline:       d,
+		idle:           idleDur,
 		repos:          repos,
 		recipients:     recipients,
 		sandbox:        *sandbox,
@@ -1853,6 +1891,20 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if (res.wallRefusal != swarm.WallRefusal{}) {
 		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
 		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
+	}
+	// THE END THE WATCH GAVE THE CARD, in the words of what it actually saw. A card the
+	// wall stopped says so; a card that simply went still says THAT, on a line that is
+	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
+	// reported as a wall death at a path it had already worked past sixteen steps earlier.
+	if res.idled {
+		if res.idleEnd.Refused {
+			fmt.Fprintln(stdout, swarm.WallRefusedLine(cfg.label, res.idleEnd.Kind, res.idleEnd.Path, res.idleEnd.Step))
+		} else {
+			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
+		}
+		if res.blockedPath != "" {
+			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
+		}
 	}
 	if res.rc != 0 {
 		if res.rc > 0 {

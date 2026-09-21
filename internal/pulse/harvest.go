@@ -143,13 +143,20 @@ func Harvest(in HarvestInput) int {
 	}
 	_ = cardsPath
 
-	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
+	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
 	for _, c := range cards {
-		jobDir := jobDir(in.Root, c.Slot, c.Label)
 		contract := cardContract(c.Card)
+		jobDir, n := resolveJobDir(in.Root, c.Slot, c.Label, contract)
+		if n > 1 {
+			refused++
+			writeSeen(in.Root, c, "refused")
+			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: ambiguous RESULT.md under %s (same contract in more than one job directory; not folding)\n",
+				field(c.Label), field(in.Root))
+			continue
+		}
 		state, branch, repo, resultLines := classify(jobDir, c, contract)
 
 		// The pool layout beside the slot layout (SPEC-PULSE rule 12): launch
@@ -221,8 +228,11 @@ func Harvest(in HarvestInput) int {
 			// and anything below the floor leaves today's path exactly as it was.
 			classTail := ""
 			if in.Decide {
-				class := in.decideClass(jobDir, branch, resultLines)
-				classTail = " " + classFields(class, in.Floor)
+				class, res := in.decideHarvest(jobDir, branch, resultLines)
+				classTail = " " + classFields(class, in.Floor) + " " + resultFields(res)
+				if res.result == "unknown" {
+					unread++
+				}
 				switch class.kind {
 				case "no-change", "already-fixed":
 					writeSeen(in.Root, c, "done")
@@ -236,6 +246,19 @@ func Harvest(in HarvestInput) int {
 					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s remedy=%s",
 						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
 					continue
+				}
+				// The result reading advises beside the class: a skip-precondition
+				// never started, so it is marked harvested and re-queued nothing;
+				// a defect is a candidate for a person or a stronger reader, one
+				// line, filed nowhere. Anything else harvests as today.
+				if res.result == "skip-precondition" {
+					writeSeen(in.Root, c, "done")
+					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail))
+					continue
+				}
+				if res.result == "defect" {
+					lines = append(lines, fmt.Sprintf("HARVEST FINDING-CANDIDATE job=%s pointer=%s",
+						field(c.Label), field(jobDir)))
 				}
 			}
 			// A RESULT.md is a report, never an instruction (SPEC-SWARM:40-44). The
@@ -272,6 +295,21 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
 				continue
 			}
+			// Two-dot against the fetched authorized target, before any push (issue #2032; HOLD on #2117).
+			globs, declared := harvestDeclaredPaths(c.Card, resultLines)
+			target, terr := harvestTargetBranch(in, resultLines)
+			if terr != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(terr))
+				continue
+			}
+			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, target, branch, globs, declared); err != nil {
+				refused++
+				writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
+			}
 			if err := push(in, jobDir, c.Card, repo, branch, c.Label); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
@@ -298,28 +336,49 @@ func Harvest(in HarvestInput) int {
 	appendStatusIndex(in.Root, indexDirs)
 
 	usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
+	// A launched pulse has no saved swarm packet: launch records pulses/<id>.tsv,
+	// never a .packet. The spend the run just wrote into each job's usage.tsv is
+	// already on disk, so sum it rather than printing a dash.
+	if usd == "-" {
+		usd = sumUsageSpend(indexDirs)
+	}
 
 	grouped := bound(in.Stdout, in.Max)
 	for _, l := range lines {
 		grouped.Line(l)
 	}
 	// A local harvest drains --launched too when it is named: the lane of a card whose
-	// job under this root has finished is released here, not only by `manager`.
-	drained := drainLaunched(in, localJobStates(in.Root), grouped)
+	// job under this root has finished is released here, not only by `manager`. The
+	// local root is walked with os.ReadDir, which reports the error a glob swallows, so
+	// a root read whole is a complete traversal and an unreadable one is not (#1950).
+	localState, localComplete := localJobStates(in.Root)
+	drained, leftLaunched, drainFailed := drainLaunched(in, drainFacts{
+		state: localState, complete: localComplete,
+		// The same per-label probe the bench form runs, against this root (Johnny's
+		// HOLD on #1984): a card is dead only when ITS OWN job directory was looked
+		// for by name and was not there.
+		probe: func(labels []string) map[string]string { return localProbe(in.Root, labels) },
+	}, grouped)
 	grouped.More()
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || drainFailed > 0 {
 		code = 1
 	}
 	tail := ""
 	if strings.TrimSpace(in.Launched) != "" {
-		tail = fmt.Sprintf(" drained=%d", drained)
+		tail = fmt.Sprintf(" drained=%d left=%d", drained, leftLaunched)
 	}
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,
 		in.Now().Sub(started).Round(time.Millisecond), tail)
+
+	// Below the floor the pair is unknown and today's path ran: the job is
+	// listed once here for whoever ran the verb to read themselves.
+	if in.Decide && unread > 0 {
+		fmt.Fprintf(in.Stdout, "HARVEST UNREAD n=%d escalate=caller\n", unread)
+	}
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.
@@ -413,10 +472,70 @@ func discoverRootCards(root string) []CardRow {
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.
 func jobDir(root, slot, label string) string {
+	return namedJobDir(root, slot, label)
+}
+
+// resolveJobDir is the --then harvest lookup (issue #1907). A named slot is
+// that path. Slot `-` (what launch writes) has no allocated identity, so a
+// RESULT.md whose line 1 matches the current card contract is used when it is
+// unique. Two matches are ambiguous: mtime is not identity.
+func resolveJobDir(root, slot, label, contract string) (dir string, matches int) {
+	named := namedJobDir(root, slot, label)
+	if slot != "" && slot != "-" {
+		return named, 0
+	}
+	found := matchingJobDirs(root, label, contract)
+	switch len(found) {
+	case 0:
+		return named, 0
+	case 1:
+		return found[0], 1
+	default:
+		return "", len(found)
+	}
+}
+
+// namedJobDir is the path the slot column spells: `-` is the local `0` layout,
+// `bench:<n>` is the pulled <bench>-<n> directory.
+func namedJobDir(root, slot, label string) string {
 	if slot == "" || slot == "-" {
 		slot = "0"
+	} else if bench, n, ok := strings.Cut(slot, ":"); ok && bench != "" && n != "" {
+		slot = bench + "-" + n
 	}
 	return filepath.Join(root, slot, "jobs", label)
+}
+
+func matchingJobDirs(root, label, contract string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name(), "jobs", label)
+		if contractLineMatch(dir, contract) {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+func contractLineMatch(job, contract string) bool {
+	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
+	if want == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	if err != nil {
+		return false
+	}
+	norm := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	line1 := strings.TrimSpace(firstNonEmpty(strings.Split(norm, "\n")))
+	return strings.HasPrefix(strings.TrimRight(line1, " \t"), want)
 }
 
 // cardContract is line 1 of a card's text file, the contract line its RESULT must equal.
@@ -729,6 +848,69 @@ func parsePRNumber(s string) int {
 		}
 	}
 	return 0
+}
+
+// sumUsageSpend sums the usd column of the folded jobs' usage.tsv files. Columns
+// are read by header name so column order never matters; a row whose usd cell is
+// a dash or unparseable is not a zero and is skipped. It returns "-" when no
+// measured row is found, so an unmeasured spend stays unknown, never a wrong zero.
+func sumUsageSpend(jobDirs []string) string {
+	seen := map[string]bool{}
+	var total float64
+	var found bool
+	for _, dir := range jobDirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		for _, v := range usageSpendValues(filepath.Join(dir, "usage.tsv")) {
+			total += v
+			found = true
+		}
+	}
+	if !found {
+		return "-"
+	}
+	return strconv.FormatFloat(total, 'f', 4, 64)
+}
+
+// usageSpendValues returns the parseable usd cells of one job's usage.tsv.
+func usageSpendValues(path string) []float64 {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	head := strings.Split(lines[0], "\t")
+	usdIdx := -1
+	for i, name := range head {
+		if strings.TrimSpace(name) == "usd" {
+			usdIdx = i
+			break
+		}
+	}
+	if usdIdx < 0 {
+		return nil
+	}
+	var out []float64
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		values := strings.Split(line, "\t")
+		if usdIdx >= len(values) {
+			continue
+		}
+		if v := strings.TrimSpace(values[usdIdx]); v != "" && v != "-" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
 }
 
 // readUSD parses the usd token from a saved swarm packet's BATCH line, else "-".

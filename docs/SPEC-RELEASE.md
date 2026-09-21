@@ -282,16 +282,19 @@ that stops the work it exists to protect.
 `nova-pulse fleet survey` refused with `tools/bench-standard.sh not found above the working
 directory`, which reads as *the script is missing* and means *this verb wants a nova-tools checkout
 as its working directory*. It now names the first directory it tried, the last, and what it wanted to
-find there. `fleet survey` also takes `--machines <file>` — the machines registry, which is a
-different file from its `--benches` fleet file — and an unnamed registry surveys every bench, exactly
-as before the registry existed.
+find there. The walk stops at `$HOME` when the start is inside it, never inspects the volume root,
+and a test drives it with a stop directory it owns: a stray `tools/bench-standard.sh` above the
+temp dir (hulk, 16aq) must not answer. `fleet survey` also takes `--machines <file>` — the machines
+registry, which is a different file from its `--benches` fleet file — and an unnamed registry
+surveys every bench, exactly as before the registry existed.
 
 `nova-version snapshot` requires both `--bin` and `--out` and does not default either: SPEC-UPDATE
 rule 1 is that no path is guessed from the cwd or `$HOME`. The pair is written out in
 [CLI.md](CLI.md#nova-version).
 
 *Tests: `TestTheStandardScriptLookupSaysWhereItLooked`,
-`TestTheStandardScriptLookupWalksUpToTheCheckout`.*
+`TestTheStandardScriptLookupWalksUpToTheCheckout`,
+`TestTheStandardScriptLookupStopsAtHome`.*
 
 ## 10. The release verbs are in the command reference
 

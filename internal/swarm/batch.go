@@ -127,9 +127,15 @@ type BatchInput struct {
 	// provider refused, where the confidence is under the floor and where the
 	// rung is a mind a card cannot be dispatched to. Every card carries one
 	// receipt line saying which happened. nil leaves the TSV's model alone.
-	Route  *RouteInput
-	Stdout io.Writer
-	Stderr io.Writer
+	Route *RouteInput
+	// RouteSkip is the reason a launcher was explicitly told not to route.
+	// When it is non-empty every admitted card gets a "source":"skipped" row in
+	// the route log, so a skipped route is a fact in the log and not an absence
+	// (SPEC-DECIDE housekeeping H4, #1625). Empty means the launcher routes; a
+	// launcher cannot skip without a reason.
+	RouteSkip string
+	Stdout    io.Writer
+	Stderr    io.Writer
 	// clock is the batch's time source. nil means the real clock; a test injects a
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
@@ -2100,6 +2106,25 @@ func mentionsLauncher(lines []string) bool {
 // A card the ladder cannot type -- one whose text names no kind it knows -- is
 // not routed at all, and its line says so rather than inventing evidence.
 func routeCards(in BatchInput, cards []batchCard) {
+	if in.RouteSkip != "" {
+		// The one way out of H4's default: an explicit skip whose reason is
+		// written down. Every admitted card leaves a "source":"skipped" row, so
+		// a skipped route is a fact in the log and not an absence.
+		now := func() time.Time { return time.Now().UTC() }
+		if in.Route != nil && in.Route.Now != nil {
+			now = in.Route.Now
+		}
+		for i := range cards {
+			c := &cards[i]
+			if c.admitWhy != "" {
+				continue
+			}
+			if in.Route != nil && strings.TrimSpace(in.Route.Log) != "" {
+				_ = decide.AppendEntry(in.Route.Log, decide.SkippedEntry(c.label, in.RouteSkip, now()))
+			}
+		}
+		return
+	}
 	if in.Route == nil {
 		return
 	}

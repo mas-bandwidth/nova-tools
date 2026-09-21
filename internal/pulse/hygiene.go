@@ -135,8 +135,8 @@ func newHygiene(in HygieneInput) (*hygiene, int) {
 	if in.Stderr == nil {
 		in.Stderr = io.Discard
 	}
-	if strings.TrimSpace(in.Home) == "" || !filepath.IsAbs(in.Home) {
-		fmt.Fprintf(in.Stderr, "HYGIENE REFUSED: --home is required and is an absolute path, got %q (pass the bench home; every root hangs under it)\n", oneline.Field(in.Home))
+	if strings.TrimSpace(in.Home) == "" || !filepath.IsAbs(in.Home) || !homeHasTwoComponents(in.Home) {
+		fmt.Fprintf(in.Stderr, "HYGIENE REFUSED: --home is required and must be an absolute path with at least two components, got %q (pass the bench home; every root hangs under it)\n", oneline.Field(in.Home))
 		return nil, 2
 	}
 	now := in.Now
@@ -172,6 +172,18 @@ func newHygiene(in HygieneInput) (*hygiene, int) {
 		diagMax = HygieneDiagMaxBytesDefault
 	}
 	return &hygiene{in: in, now: now().UTC(), roots: roots, log: logPath, cache: cache, host: host, disk: disk, diagDays: diagDays, diagMax: diagMax}, 0
+}
+
+// homeHasTwoComponents reports whether an absolute path has at least two
+// non-empty components: /a/b and /a/ yes, / and /onlyone no. #1282: every root,
+// the log and the cache hang under --home, so a one-component home (or the whole
+// disk) is refused before a path exists that this verb could remove.
+func homeHasTwoComponents(p string) bool {
+	p = filepath.Clean(p)
+	p = strings.TrimPrefix(p, filepath.VolumeName(p))
+	p = strings.TrimPrefix(p, string(filepath.Separator))
+	p = strings.TrimRight(p, string(filepath.Separator))
+	return strings.Contains(p, string(filepath.Separator))
 }
 
 func shortHost() string {

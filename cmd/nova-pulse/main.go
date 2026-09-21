@@ -20,11 +20,11 @@ import (
 const usage = `nova-pulse: bounded open work, cut into cards and folded back, no model call (see docs/SPEC-PULSE.md)
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
@@ -70,7 +70,10 @@ one cards.tsv -- to nova-swarm batch's card form (--id --cards --deadline
 --runner --root), queueing the rest only when --queue is set. --slots is the
 ceiling on the free slots it may use, and --deadline is the whole pulse's one
 deadline in whole seconds. It makes no model call itself: nova-swarm must be on
-your PATH.
+your PATH. These examples run against a fixture in this repo; lay it down first
+from the repo root, so ./cards.tsv and ./bin/nova-swarm exist where the lines
+name them:
+  cp -R cmd/nova-pulse/testdata/example-pulse/. ./
 
 example:
   nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
@@ -815,6 +818,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	probe := f.fs.Bool("probe", false, "")
 	history := f.fs.String("history", "", "")
 	probeBudget := f.fs.Int("probe-budget", 0, "")
+	validateContract := f.fs.Bool("validate-contract", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -873,7 +877,10 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		Probe:     *probe,
 		History:   *history,
 		Budget:    *probeBudget,
-		Stdout:    stdout,
-		Stderr:    stderr,
+		// ValidateContract preflights the candidate locators before any card file is
+		// written, so a dead repo is refused at cut rather than after admission.
+		ValidateContract: *validateContract,
+		Stdout:           stdout,
+		Stderr:           stderr,
 	})
 }

@@ -115,13 +115,24 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not make the worktree directory under %s: %v", tempRoot, err)
 	}
-	defer func() {
-		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "remove", "--force", wt)
-		_ = safepath.RemoveUnder(tempRoot, wt)
-		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "prune")
-	}()
-	if _, err := gitLine(ctx, repo, "worktree", "add", "--detach", wt, head); err != nil {
-		return nil, fmt.Errorf("could not add a worktree at %s: %v", Short(head), err)
+	// The tree the seed runs in is a PRIVATE clone of the head's objects, never a
+	// linked worktree of the job clone. A worktree shares the job clone's `.git`,
+	// and the job clone is the worker's: its local config names the filter scripts,
+	// its `info/attributes` selects them, its hooks run on the gate's commands and
+	// its `refs/replace` rewrites what a sha names (#1895). So `git apply` and
+	// the tests would all be programs of the card's choosing, run as the gate
+	// user, reading the gate's environment (#1897). A fresh clone has none of
+	// that -- no config, no info/attributes, no hooks, no replace refs -- and
+	// `--shared` keeps the objects in the clone the gate was pointed at, so
+	// only the checkout is per run. The git and go children also drop GIT_DIR
+	// and secret-named variables, so a parent still pointed at the job clone
+	// cannot pull those programs back onto the gate's tree.
+	defer func() { _ = safepath.RemoveUnder(tempRoot, wt) }()
+	if _, err := gitLine(ctx, repo, "clone", "--quiet", "--shared", "--no-checkout", repo, wt); err != nil {
+		return nil, fmt.Errorf("could not clone %s: %v", Short(head), err)
+	}
+	if _, err := gitLine(ctx, wt, "checkout", "--quiet", "--detach", head); err != nil {
+		return nil, fmt.Errorf("could not check out %s: %v", Short(head), err)
 	}
 
 	pkgs := append([]string(nil), opts.Tests...)
@@ -160,10 +171,11 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 		return res, fmt.Errorf("%w: %v", ErrSeedDoesNotApply, err)
 	}
 
-	// Stage first so an added or removed FILE is in the diff too: `git diff` alone
-	// sees neither, and a seed that adds a file would otherwise count zero and be
-	// refused for the wrong reason.
-	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
+	// Stage through `git apply --cached`, never `git add -A`. Add runs the
+	// worktree's clean filters; a committed `.gitattributes` plus a filter the
+	// parent still names is a program the card chose, run as the gate (#1897).
+	// `--cached` hashes the patch text into the index and does not.
+	if _, err := gitOut(ctx, wt, "apply", "--cached", "--whitespace=nowarn", seedPath); err != nil {
 		return res, fmt.Errorf("could not stage the seeded worktree: %v", err)
 	}
 	applied, err := gitOut(ctx, wt, "diff", "--cached", "--no-ext-diff", "--no-renames", "--numstat")
@@ -339,7 +351,14 @@ func listPackage(ctx context.Context, wt, pkg string) error {
 		cmd = exec.CommandContext(ctx, "go", "list", "./")
 	}
 	cmd.Dir = wt
-	cmd.Env = goenv.Clean(os.Environ())
+	// Clean keeps the go output a shape this verb can read; WithoutSecrets keeps
+	// the card's own Test from reading the seat's credentials out of the child it
+	// is handed (#1897). dropGitIdentity is the third half: GIT_DIR in the gate
+	// process would make the Test's own git calls, and this `go list`, operate
+	// on the job clone. Clean is not a secrets tool and WithoutSecrets is not an
+	// output-shape one; the assignment carries Clean so the goenv class test
+	// still sees it beside the call.
+	cmd.Env = dropGitIdentity(goenv.WithoutSecrets(goenv.Clean(os.Environ())))
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return deadlineErr(pkg)
@@ -375,8 +394,11 @@ func runPackage(ctx context.Context, wt, pkg string) (red, green int, err error)
 	cmd.Dir = wt
 	// The verdict is a property of the seed, never of the environment the verb was
 	// started in: CI's `make test` exports GOFLAGS=-json, and under it no
-	// `--- PASS:` line is printed at all.
-	cmd.Env = goenv.Clean(os.Environ())
+	// `--- PASS:` line is printed at all. WithoutSecrets is the other half: the
+	// suite is a program the card wrote, so it does not get to read the seat's
+	// provider key out of the child's environment either. dropGitIdentity is
+	// why that program also does not inherit the gate's GIT_DIR (#1897).
+	cmd.Env = dropGitIdentity(goenv.WithoutSecrets(goenv.Clean(os.Environ())))
 	out, runErr := cmd.CombinedOutput()
 	// The deadline is the caller's, never the seed's: the run was killed mid-flight
 	// and nothing at all was proved about the mutant.

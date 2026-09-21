@@ -9,13 +9,14 @@ package pulse
 // number comes only from the state file under the lock (number.go), and there is no
 // `--number` flag to pass one in.
 //
-// Five kinds, five line-1 shapes, and line 1 is the contract the harvest matches:
+// Six kinds, six line-1 shapes, and line 1 is the contract the harvest matches:
 //
 //	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
 //	fix     RESULT: CARD-<n> sha=<sha12> <repo> #<issue> fixed with its red test first: <title>
 //	replay  RESULT: CARD-<n> <repo> replays <names> named at spec lines <lines>, red first
 //	spec    RESULT: CARD-<n> <repo> spec: <title>
 //	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
+//	guard   RESULT: CARD-<n> guard of <repo> at <head>
 //
 // `cut` without `--kind` is the pool-driven cutter in cut.go and is untouched by any of this.
 
@@ -31,7 +32,7 @@ import (
 )
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec", "rebase"}
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
@@ -121,7 +122,7 @@ func cutKindSteps(kind string) int {
 func cutKindProblem(in CutKindInput) string {
 	switch {
 	case !cutKindKnown(in.Kind):
-		return fmt.Sprintf("--kind %s is not one of %s (pass one of the four kinds)", oneline.Field(in.Kind), strings.Join(CutKinds, "|"))
+		return fmt.Sprintf("--kind %s is not one of %s (pass one of those kinds)", oneline.Field(in.Kind), strings.Join(CutKinds, "|"))
 	case strings.TrimSpace(in.Repo) == "":
 		return "--repo is required; line 1 of every card names the repo (pass --repo <owner>/<name>)"
 	case strings.TrimSpace(in.Queue) == "":
@@ -166,6 +167,10 @@ func cutKindProblem(in CutKindInput) string {
 		case strings.TrimSpace(in.Title) == "":
 			return "--title is required for a rebase card (pass the pull request's own title)"
 		}
+	case "guard":
+		if strings.TrimSpace(in.Head) == "" {
+			return "--head is required for a guard card; the control is asked of one sha (pass --head <sha>)"
+		}
 	}
 	return ""
 }
@@ -201,6 +206,9 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s PR #%d rebased onto %s with its conflicts resolved and its tests green: %s\n",
 			n, repo, in.PR, oneline.Field(in.Base), oneline.Escape(in.Title))
 		fmt.Fprintf(&b, "SOURCE: %s#%d\n", in.Repo, in.PR)
+	case "guard":
+		fmt.Fprintf(&b, "RESULT: CARD-%d guard of %s at %s\n", n, repo, oneline.Field(in.Head))
+		fmt.Fprintf(&b, "SOURCE: %s@%s\n", in.Repo, oneline.Field(in.Head))
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
@@ -240,6 +248,15 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 		return fmt.Sprintf(rebaseSteps,
 			rebasePreamble, in.Base, in.Branch, in.Branch, in.Branch, in.Base,
 			in.Base, in.Base, in.Base, in.Base, in.Branch, in.Base)
+	case "guard":
+		return fmt.Sprintf(`The guard verdict is COMPUTED, never judged. Do not write GUARDED or UNGUARDED from reading the code.
+The model only picks which packages to run. Then:
+
+    nova-review guard --repo ./repo --head %s [--tests <package>[,<package>...]]
+
+Copy the GUARD line's status= field onto RESULT.md line 2 (GUARDED, UNGUARDED, COMPILER-HELD, NOT-APPLICABLE, or ABSTAIN — never the reason= tail). A verdict the command did not print is a lie.
+Write RESULT.md: line 1 exactly the line 1 of this card, line 2 the status= value, then REPO %s.
+`, oneline.Field(in.Head), in.Repo)
 	default:
 		return fmt.Sprintf(`Amend the spec: numbered rules, each with the test that makes it red, and no rule softened to match code.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.

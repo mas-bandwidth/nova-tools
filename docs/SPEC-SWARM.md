@@ -565,6 +565,41 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     never read, and the job's `RUN` line carries `unpublished=true`; the
     published revision is what is counted. (Stella, 2026-09-11: a copy taken
     during an append is a prefix, and two revisions can share an mtime.)
+
+### Mapping durable slots to the card-attempt lifecycle (SPEC-AHEAD: #2045, #2040)
+
+[SPEC-PULSE's durable launch section](SPEC-PULSE.md#durable-launch-attempts-and-fleet-control-spec-ahead-2045-2040-2022)
+is the one authoritative card-attempt lifecycle. Rules 17 and 18 below remain its swarm-side
+ownership mechanism rather than a competing lease authority: the reserved placeholder is
+`CLAIMED`, spawn is `STARTING`, and only the lifecycle's typed, fully bound acknowledgement
+establishes `STARTED`. A pid, pgid or start stamp never establishes STARTED; those identities may
+support `never-admitted` or `terminated` reconciliation. Supervisor completion is executor
+evidence for `RETURNED` and conservative reconciliation. The slot and job ownership records grow
+stable `card`, `attempt`, control `generation` and card-level publication-fence epoch fields;
+their existing nonce, pid, pgid and start-stamp checks remain intact.
+
+For ledger-managed launches, any older text below that returns a task to pending, frees an
+`unknown` slot, retries a provider inside one job, or lets a person remove a slot as proof of
+absence is overridden narrowly: UNKNOWN retains ownership and capacity until the durable
+coordinator-side `nova-swarm launch` validates `never-admitted` only before STARTING, or validates
+executor `terminated|completed` evidence against the launch's `exit_attest` and `nonce` after
+STARTING, and the old card fence epoch is advanced. The shared card ledger reserves each
+executable attempt before dispatch and enforces two total; a launcher and its selected provider
+are one attempt, while a fallback route is another. Existing unledgered verbs keep their current
+behavior until they are wired; once this path is implemented they must delegate or refuse, never
+bypass the ledger.
+
+Resident and native starts use the coordinator-owned admission point. The coordinator validates
+the current fleet-control generation and globally consumes the bounded start token atomically
+with `CLAIMED -> STARTING`; the uniquely identified bench owner then durably records its local
+acknowledgement before invocation. A crash between those steps leaves STARTING outstanding for
+reconciliation and never consumes another token. A bench offline before that transaction, or with a missing,
+stale, expired or PAUSE acknowledgement, refuses. Once the transaction commits, the admitted
+start may execute within its original bounded authority through a partition or later PAUSE and is
+reported as outstanding even if its process had not started when the partition occurred. A
+merely issued, unconsumed token grants nothing. `adopt`, version reporting and read-only status
+are not new card admissions.
+
 17. **A dispatcher that dies leaves durable ownership, and the next one
     recovers it or quarantines it.** A slot is a file, `<pool>/slots/<n>.json`,
     written by the launch transaction of rule 18 and holding, once launched,
@@ -860,7 +895,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity|read|fix|text|replay|drift|tone|models.tsv>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -2051,6 +2086,7 @@ RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
 RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN WAIT slots owner=<owner> holders=<owner:count,...>
+RUN ROUTED-OUT id=<id> dest=<routed-out> rung=<name> why=<rung-is-asked-not-run>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -2787,6 +2823,27 @@ file instead — the tool has no list of blessed task shapes.
 **kind** is a template plus a gate and a negative control declared in the tool, chosen by the
 card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
 card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
+
+### The pulse card templates
+
+`nova-pulse cut` reads a templates directory holding `read.md`, `fix.md`,
+`text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv` (SPEC-PULSE rule 4).
+The same files are shipped in this binary, so the directory is built from the tool
+rather than copied out of `cmd/nova-pulse/testdata`:
+
+```
+nova-swarm template --name read       > read.md
+nova-swarm template --name fix        > fix.md
+nova-swarm template --name text       > text.md
+nova-swarm template --name replay     > replay.md
+nova-swarm template --name drift      > drift.md
+nova-swarm template --name tone       > tone.md
+nova-swarm template --name models.tsv > models.tsv
+```
+
+`read`, `text` and `tone` are text-only cards and carry rule 6's no-build line;
+`fix`, `replay` and `drift` carry the red-then-green row. These are cards, not task
+templates: `add --template` and `batch --template` refuse them, as they refuse `result`.
 
 ## The `RESULT.md` template
 

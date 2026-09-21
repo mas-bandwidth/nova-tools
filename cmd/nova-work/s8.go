@@ -184,10 +184,18 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 	// Constraint: fleet --for with --node on a member that excludes the kind is refused.
 	// The client cannot know member exclusions, so it passes both to the session.
 
-	socket := session
-	if socket == "" {
-		socket = snapshot
+	// --snapshot names a published snapshot FILE the offline reader opens under
+	// its own three bounds and its own --cache; it is not a session and there is
+	// no socket to dial. This client does not carry that reader yet, so it
+	// refuses here rather than handing the file to the socket dialler -- which
+	// sent a reader after a session that was never there, as
+	// `cannot reach <file>: ... connect: socket operation on non-socket`
+	// (nova-tools#1787).
+	if snapshot != "" {
+		return refused(stderr, "query --snapshot reads a published snapshot file with the offline reader, which this client does not carry yet; use --session <path> for the resident session")
 	}
+
+	socket := session
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", "query")

@@ -62,7 +62,7 @@ usage:
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
-  nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+  nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
@@ -113,9 +113,13 @@ auto-merge -- after three refusals: a pull request that is not open, a pull requ
 own checks are not green, and a head that is not a batch's. A head is a batch's when its
 branch is rowan/integration-*, the shape batch builds, or when --receipt carries that
 head's own BATCH OK line; --receipt-file reads it from a file, taking the LAST line, so a
-caller may hand it the gate's whole output. Everything else -- a card's branch, a green
-swarm result, a revert -- is a member of a batch somebody has yet to build, and this verb
-says so and stops.
+caller may hand it the gate's whole output. THE RECEIPT IS WHAT NAMES THE MEMBERS: before
+it enqueues, land folds every members= number again from the wire, so a HOLD posted on a
+member after BATCH OK refuses the whole landing. A head under rowan/integration-* is a
+branch's name and not that list, so a land that carries no members= to fold is refused
+(no-receipt) rather than enqueued with the fold skipped. Everything else -- a card's
+branch, a green swarm result, a revert -- is a member of a batch somebody has yet to
+build, and this verb says so and stops.
 
 queue audit is the other half of that lock: it lists every open pull request carrying
 GitHub's auto-merge and TAKES IT OFF, because auto-merge is not an enqueue -- it is a

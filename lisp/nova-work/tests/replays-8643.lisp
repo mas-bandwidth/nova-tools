@@ -214,3 +214,55 @@
                    :implementation-cost 50))))
     (check-equal nil (getf joined :comparable)
                  "the token-saving hypothesis is comparable only after adoption")))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F04RunTheAuthorizedReadOnly   SPEC-WORK.md:7228-7229
+;;; E10-F04 — run the authorized read-only real-repository pilot and
+;;; disposable import, then publish a reconciliation disposition.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F04RunTheAuthorizedReadOnly" "docs/SPEC-WORK.md:7228-7229"
+    "expected=read-only-pilot-mutates-nothing;disposable-import-leaves-originals-untouched;reconciliation-disposition-published"
+  (let* ((source (make-recording-adapter :inventory '(:issues 3 :comments 7)))
+         (before (adapter-inventory source)))
+    ;; The authorized real-repository pilot is read-only: a dry-run capture and
+    ;; a normal initial import call no mutation endpoint and leave the source
+    ;; inventory byte-identical.
+    (dry-run-capture source)
+    (initial-import source)
+    (check-equal 0 (length (adapter-mutation-calls source))
+                 "the read-only pilot called a source mutation endpoint")
+    (check-equal before (adapter-inventory source)
+                 "the read-only pilot changed the real repository")
+    (ok (plusp (length (adapter-read-calls source)))
+        "the read-only pilot made no reads at all")
+    ;; The disposable import writes only the throwaway destination, never the
+    ;; originals: applying a plan changes the destination and leaves the source
+    ;; untouched.
+    (let ((plan (dry-run-capture source))
+          (destination (list :applied 0)))
+      (apply-plan source destination plan)
+      (check-equal 0 (length (adapter-mutation-calls source))
+                   "the disposable import called a source mutation endpoint")
+      (check-equal before (adapter-inventory source)
+                   "the disposable import changed the originals")
+      (check-equal 3 (getf destination :applied)
+                   "the disposable import did not write the destination"))
+    ;; The reconciliation disposition is published: the pilot's capture
+    ;; reconciles against the authoritative repository, and a divergent capture
+    ;; is refused by name rather than accepted.
+    (let* ((authoritative (list (inventory-record "issues" :issues
+                                                  :original 3 :mapping "acme/issues")
+                                (inventory-record "comments" :comments
+                                                  :original 7 :mapping "acme/comments")))
+           (matching (copy-tree authoritative))
+           (divergent (list (inventory-record "issues" :issues
+                                              :original 4 :mapping "acme/issues")
+                            (inventory-record "comments" :comments
+                                              :original 7 :mapping "acme/comments"))))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative matching)
+        (ok okp "the pilot's capture failed to reconcile against the repository: ~A" line)
+        (ok (search "INVENTORY OK" line) "the reconciliation disposition is not published: ~A" line))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative divergent)
+        (check-equal nil okp "a divergent capture reconciled against the repository")
+        (ok (search "content" line) "a content mismatch is not named: ~A" line)))))
