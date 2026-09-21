@@ -50,6 +50,7 @@ const (
 	KindDesign          = "design"
 	KindGuard           = "guard"
 	KindCauseToFind     = "cause-to-find"
+	KindTranscriptTest  = "transcript-test"
 )
 
 // The outcome of one attempt.
@@ -93,6 +94,7 @@ var startHeights = map[string]int{
 	KindFixtureRetarget: 0,
 	KindFleetChore:      0,
 	KindDogfood:         0,
+	KindTranscriptTest:  0,
 	KindRowTest:         1,
 	KindFixWithRedTest:  2,
 	KindNewVerb:         2,
@@ -115,6 +117,7 @@ var mechanicalKinds = map[string]bool{
 	KindFixtureRetarget: true,
 	KindFleetChore:      true,
 	KindDogfood:         true,
+	KindTranscriptTest:  true,
 	KindRowTest:         true,
 }
 
@@ -137,8 +140,30 @@ var ordinaryPlatforms = map[string]bool{
 
 // Kinds is every kind a unit may name, in the order the spec names them.
 var Kinds = []string{
-	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindRowTest,
+	KindRebase, KindStack, KindFixtureRetarget, KindFleetChore, KindDogfood, KindTranscriptTest, KindRowTest,
 	KindFixWithRedTest, KindNewVerb, KindSpec, KindDesign, KindGuard, KindCauseToFind,
+}
+
+// kindAliases are the names a caller may use for a kind the table already
+// holds. `chore` is the one the manager lanes actually typed on 2026-09-19 and
+// it cost them `ROUTE REFUSED reason=no-rung ... want one of rebase, stack,
+// fixture-retarget, fleet-chore, ...` (schema-issues HANDOFF D1). A chore of
+// the fleet is a fleet-chore under a shorter name, with the same start height
+// and the same mechanical eligibility; it is an alias, not a new kind, so it
+// adds no row to Kinds and no rung to the ladder.
+var kindAliases = map[string]string{
+	"chore": KindFleetChore,
+}
+
+// CanonicalKind resolves an alias to the kind the table holds and returns
+// anything else unchanged. It is applied ONCE, where the evidence is read, so
+// the kind the ladder decides on and the kind the route log records are the
+// same name -- an alias that reached the log would split every per-kind floor.
+func CanonicalKind(kind string) string {
+	if canon, ok := kindAliases[kind]; ok {
+		return canon
+	}
+	return kind
 }
 
 // KnownKind reports whether the kind is one of the ten.
@@ -245,6 +270,8 @@ func ParseUnit(data []byte) (Unit, error) {
 	if err := unmarshalStrict(data, &u); err != nil {
 		return Unit{}, fmt.Errorf("decide: bad unit: %w", err)
 	}
+	// An alias is resolved here, once, before any validation or logging.
+	u.Kind = CanonicalKind(u.Kind)
 	return u, nil
 }
 
@@ -355,6 +382,12 @@ type RouteUsage struct {
 	HasInput     bool
 	HasOutput    bool
 	Failed       bool
+	// Ms is the provider round trip in milliseconds, measured by the caller
+	// on a monotonic clock around the call alone. HasMs reports whether a
+	// call was made at all: with no call there is no measurement, and no
+	// measurement is an absence, never a zero (SPEC-TOKENS rule 14).
+	Ms    int
+	HasMs bool
 }
 
 // Known reports whether any counter was measured.
@@ -394,6 +427,12 @@ type RouteResult struct {
 	// Steps is how many decisions this answer took: 1 for an ordinary route,
 	// and one more for each re-ask --step-up made.
 	Steps int
+	// WallMs is the verb's start to its line in milliseconds, stamped by the
+	// verb that printed it. HasWallMs reports whether the verb measured it:
+	// where no verb stamped one there is no measurement, and no measurement
+	// is an absence, never a zero.
+	WallMs    int
+	HasWallMs bool
 }
 
 // refuse populates the result with the refusal that ended it and returns both.
@@ -434,9 +473,16 @@ func (r RouteResult) Line() string {
 	if steps < 1 {
 		steps = 1
 	}
-	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s next=%s steps=%d reason=%s ask=%s",
+	// ms is the provider round trip around the call alone, and a dash where
+	// no call was made: a latency never measured is unknown, never zero. It
+	// is appended last, so every field before it keeps its position.
+	ms := "-"
+	if r.Usage.HasMs {
+		ms = fmt.Sprintf("%d", r.Usage.Ms)
+	}
+	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s next=%s steps=%d reason=%s ask=%s ms=%s",
 		oneline.Field(r.Unit), oneline.Field(r.Rung.Name), r.Confidence, r.Floor,
-		oneline.Field(wait), next, steps, oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
+		oneline.Field(wait), next, steps, oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask), ms)
 }
 
 // The rule confidences. They are the machinery's own numbers, stated here so a
@@ -928,10 +974,14 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		rules.Reason += fmt.Sprintf("; the public projection refused (%s), so nothing was sent and the rules answer stands", oneline.Err(err))
 		return rules, nil
 	}
+	callStart := time.Now()
 	answers, usage, err := d.Decide(ctx, state, map[string]Question{RungQuestion: rungQuestion(offered, u)})
 	// A call was made, and what it spent is part of the record whether it
 	// answered or not: a failed call's cost is UNKNOWN, never zero.
-	rules.Usage = RouteUsage{Calls: 1, Failed: err != nil}
+	// The round trip is timed around the call alone, on the monotonic clock:
+	// it is the provider's latency, not the verb's, and it is present
+	// whenever a call was made, answered or not.
+	rules.Usage = RouteUsage{Calls: 1, Failed: err != nil, Ms: int(time.Since(callStart).Milliseconds()), HasMs: true}
 	if err == nil {
 		// Presence travels per counter: a 200 that named no usage has told us
 		// nothing about what it cost, and nothing is not zero.
