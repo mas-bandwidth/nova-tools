@@ -309,7 +309,8 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // line when the tick took stale markers away.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
-	cards := selectedCards(readyCards(in.Ready), in.Only)
+	lastServed, hasCursor := readLaneCursor(in)
+	cards := fairShareLaneCards(selectedCards(readyCards(in.Ready), in.Only), lastServed, hasCursor)
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
 	idx := 0
@@ -400,6 +401,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			launched[i]++
 			// The card ran: whatever it failed at before is history, not queue depth (#2013).
 			reapCardMarkers(in, base)
+			writeLaneCursor(in, lane)
 		}
 		if !progressed {
 			break
@@ -780,5 +782,96 @@ func strayCards(dir string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// laneCursorPath is where the multi-tick lane round-robin cursor is persisted.
+// Persisting in in.Launched as a hidden file (.lane-cursor) ensures fair-share progress survives
+// process restarts and single-tick invocations (--once) on constrained fleets,
+// without polluting the markers directory or queue card globs.
+func laneCursorPath(in FillInput) string {
+	return filepath.Join(in.Launched, ".lane-cursor")
+}
+
+// writeLaneCursor records the last successfully launched lane.
+func writeLaneCursor(in FillInput, lane string) {
+	if strings.TrimSpace(in.Launched) == "" {
+		return
+	}
+	_ = os.MkdirAll(in.Launched, 0o755)
+	_ = os.WriteFile(laneCursorPath(in), []byte(lane+"\n"), 0o644)
+}
+
+// readLaneCursor returns the last successfully launched lane, or false if unset.
+func readLaneCursor(in FillInput) (string, bool) {
+	if strings.TrimSpace(in.Launched) == "" {
+		return "", false
+	}
+	raw, err := os.ReadFile(laneCursorPath(in))
+	if err != nil {
+		return "", false
+	}
+	line := strings.TrimSuffix(string(raw), "\n")
+	return line, true
+}
+
+// rotateLanes orders active lanes so that lanes after the last-served lane
+// in round-robin sequence come first. This guarantees multi-tick fair progress
+// under constrained capacity (e.g. 1 slot per tick) so late-alphabetical lanes
+// (e.g. "zebra") are never starved by arriving unlaned cards or earlier lanes.
+func rotateLanes(laneNames []string, lastServed string, hasCursor bool) []string {
+	if len(laneNames) <= 1 || !hasCursor {
+		return laneNames
+	}
+	var after, before []string
+	for _, lane := range laneNames {
+		if lane > lastServed {
+			after = append(after, lane)
+		} else {
+			before = append(before, lane)
+		}
+	}
+	return append(after, before...)
+}
+
+// fairShareLaneCards interleaves pending cards across active lanes round-robin,
+// starting after the last-served lane when hasCursor is true.
+// Within each lane, the original FIFO card order is preserved.
+// This prevents lane starvation both within a single tick and across successive
+// capacity-constrained ticks.
+func fairShareLaneCards(cards []string, lastServed string, hasCursor bool) []string {
+	if len(cards) <= 1 {
+		return cards
+	}
+	laneCards := make(map[string][]string)
+	var laneNames []string
+	for _, card := range cards {
+		lane := cardLane(card)
+		if len(laneCards[lane]) == 0 {
+			laneNames = append(laneNames, lane)
+		}
+		laneCards[lane] = append(laneCards[lane], card)
+	}
+	if len(laneNames) <= 1 {
+		return cards
+	}
+	sort.Strings(laneNames)
+	laneNames = rotateLanes(laneNames, lastServed, hasCursor)
+
+	out := make([]string, 0, len(cards))
+	for {
+		progressed := false
+		for _, lane := range laneNames {
+			q := laneCards[lane]
+			if len(q) > 0 {
+				out = append(out, q[0])
+				laneCards[lane] = q[1:]
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
 	return out
 }
