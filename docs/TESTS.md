@@ -578,20 +578,20 @@ before it runs the block.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.65 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card ms=-
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.65 floor_from=built-in read=- wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card ms=-
 
 $ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
-ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.65 wait=- next=- steps=1 reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus ms=-
+ROUTE unit=card-9 rung=flash confidence=0.90 floor=0.70 floor_from=kind read=johnny wait=- next=- steps=1 reason="security is a kind and not a height: guard, so a security READ by johnny is attached to this unit at any height, at any floor and after any attempt -- johnny is reserved for reads and for the STOP a read can call, and the WORK goes to the rung the evidence supports; kind fleet-chore starts at rung flash" ask=card ms=-
 
 $ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
-ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.65 wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus ms=-
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.65 floor_from=built-in read=johnny wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard, so a security READ by johnny is attached to this unit at any height, at any floor and after any attempt -- johnny is reserved for reads and for the STOP a read can call, and the WORK goes to the rung the evidence supports; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus ms=-
 
 $ nova-decide help --hours 6 --asked-all-friends
 HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
 
 $ nova-decide log --log ./decide.jsonl --summary
-LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false lat_n=0 median_ms=- p95_ms=-
-LOG OK rows=1 kinds=1 escalations=0 coverage=0/1 lat_rules=0,-,-
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false floor=0.65 floor_from=built-in provider_rows=0 conf_min=- conf_max=- conf_p25=- below_floor=0 defeated=false hist=0.0-0.5:0,0.5-0.6:0,0.6-0.7:0,0.7-0.8:0,0.8-0.9:0,0.9-1.0:0 lat_n=0 median_ms=- p95_ms=-
+LOG OK rows=1 kinds=1 escalations=0 defeated=0 coverage=0/1 lat_rules=0,-,-
 ```
 
 ## nova-pulse
