@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -208,9 +209,14 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// to judge for the first time IN COMBINATION, which is the one thing a batch cannot
 	// do: it would report the batch red for a fault that is one member's alone.
 	noRequireChecks := f.fs.Bool("no-require-checks", false, "")
+	// --check-name is the GitHub check a member's own head must be green on when
+	// checks=required (nova-tools #2499). Default is ci-ok, this repository's rollup; a
+	// repo whose required check is named something else -- schema's tests -- passes the
+	// name here, or writes it in .nova-merge as required-check=<name>.
+	checkName := f.fs.String("check-name", "", "")
 	// --receipt-file carries the BATCH OK lines of batches ALREADY BUILT, so a member that
 	// is itself a gated tree is admitted on the gate's own evidence rather than on a
-	// `ci-ok` the forge has not finished running. It is the same receipt `nova-merge land`
+	// required check the forge has not finished running. It is the same receipt `nova-merge land`
 	// reads and the same parser (internal/merge.ParseBatchReceipt): one receipt, one
 	// meaning, wherever it is presented.
 	receiptFile := f.fs.String("receipt-file", "", "")
@@ -280,6 +286,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *gomaxprocs < 0 {
 		f.problem(fmt.Sprintf("--gomaxprocs is the share of the machine this batch takes, the way CI divides its cores by the runners on it; 0 is all of them, and a negative one is a typo, got %d", *gomaxprocs))
 	}
+	resolvedCheck := strings.TrimSpace(*checkName)
+	if strings.TrimSpace(*checkName) != *checkName && resolvedCheck == "" {
+		f.problem("--check-name is the GitHub check a member's own head must be green on, like ci-ok or tests; a value of only whitespace is a name nobody can look up")
+	} else if err := validCheckName(resolvedCheck); err != nil && resolvedCheck != "" {
+		f.problem(fmt.Sprintf("--check-name: %s", oneline.Escape(err.Error())))
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -295,6 +307,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		gomaxprocs:      *gomaxprocs,
 		requireLisp:     *requireLisp,
 		requireCheck:    !*noRequireChecks,
+		checkName:       resolvedCheck,
 		receiptFile:     strings.TrimSpace(*receiptFile),
 		reviewersFile:   strings.TrimSpace(*reviewersFile),
 		noRequireHolds:  *noRequireHolds,
@@ -321,6 +334,7 @@ type batchRun struct {
 	gomaxprocs      int
 	requireLisp     bool
 	requireCheck    bool
+	checkName       string
 	receiptFile     string
 	reviewersFile   string
 	noRequireHolds  bool
@@ -388,6 +402,14 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	// can be known at all: the base is checked out and nothing has been merged yet.
 	if code := checkToolchain(clone, stderr); code != 0 {
 		return code
+	}
+
+	if in.requireCheck {
+		name, err := resolveRequiredCheck(in.checkName, clone)
+		if err != nil {
+			return batchRefused(stderr, err)
+		}
+		in.checkName = name
 	}
 
 	prs, prechecked, code := admissible(&in, stdout, stderr, deps, start)
@@ -459,6 +481,9 @@ func batchLine(in batchRun, baseSHA, headSHA string, members, dropped []int, ski
 		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
 		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)),
 		oneline.Field(numberOrNone(skipped)), oneline.Field(checksWord(in)))
+	if in.requireCheck {
+		line += " check=" + oneline.Field(in.checkName)
+	}
 
 	if in.noRequireHolds {
 		line += fmt.Sprintf(" holds=waived reason=%q", in.reason)
@@ -482,9 +507,92 @@ func checksWord(in batchRun) string {
 	return "waived"
 }
 
-// batchRequiredCheck is the check a member's own head must have gone green on before the
-// gate will merge it. It is CI's one rollup job, the same name the merge condition reads.
-const batchRequiredCheck = "ci-ok"
+// batchRequiredCheckDefault is the check a member's own head must have gone green on
+// before the gate will merge it, when the caller names none and the cloned tree holds no
+// .nova-merge. It is this repository's rollup job, the same name the merge condition
+// reads. A repo whose required check is named something else -- schema's tests -- sets
+// --check-name or writes required-check= in .nova-merge (#2499).
+const batchRequiredCheckDefault = "ci-ok"
+
+// novaMergeFile is the repo-root file that names nova-merge settings for that tree. The
+// one key this verb reads today is required-check=<GitHub check name>.
+const novaMergeFile = ".nova-merge"
+
+// resolveRequiredCheck is the name the gate looks for on each member's own head:
+// --check-name if the caller set it, else .nova-merge required-check= in the cloned
+// tree, else ci-ok. A missing file is the default, not a refusal; a file that names
+// the key and then fails to is a refusal, so a typo is not a silent ci-ok.
+func resolveRequiredCheck(flagName, clone string) (string, error) {
+	if name := strings.TrimSpace(flagName); name != "" {
+		if err := validCheckName(name); err != nil {
+			return "", fmt.Errorf("--check-name: %w", err)
+		}
+		return name, nil
+	}
+	raw, err := os.ReadFile(filepath.Join(clone, novaMergeFile))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return batchRequiredCheckDefault, nil
+		}
+		return "", fmt.Errorf("%s could not be read: %w", novaMergeFile, err)
+	}
+	name, err := requiredCheckFromNovaMerge(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", novaMergeFile, err)
+	}
+	if name == "" {
+		return batchRequiredCheckDefault, nil
+	}
+	if err := validCheckName(name); err != nil {
+		return "", fmt.Errorf("%s required-check: %w", novaMergeFile, err)
+	}
+	return name, nil
+}
+
+// requiredCheckFromNovaMerge reads required-check= from a .nova-merge body. Unknown
+// keys are ignored so a later sibling list or verify target can land in the same file
+// (#2499 items 2 and 5) without this verb having to know them. A line that is not
+// key=value, a duplicate required-check, or an empty value is a refusal.
+func requiredCheckFromNovaMerge(raw []byte) (string, error) {
+	var found string
+	saw := false
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return "", fmt.Errorf("line %d is not key=value", i+1)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "required-check" {
+			continue
+		}
+		if saw {
+			return "", errors.New("required-check is set more than once")
+		}
+		saw = true
+		found = value
+	}
+	if saw && found == "" {
+		return "", errors.New("required-check is empty; give a GitHub check name like ci-ok or tests")
+	}
+	return found, nil
+}
+
+// validCheckName refuses a name that cannot be a GitHub check: empty, or holding a
+// newline that would break the receipt.
+func validCheckName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("the required check's name is empty; give a GitHub check name like ci-ok or tests")
+	}
+	if strings.ContainsAny(name, "\n\r") {
+		return errors.New("the required check's name is one line")
+	}
+	return nil
+}
 
 func getReviewersSHA(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
@@ -515,7 +623,7 @@ func getReviewersSHA(path string) (string, error) {
 }
 
 // admissible is edge 25's gate in front of the gate: every member whose OWN head has no
-// green ci-ok is dropped BEFORE the merge, by name and with the state it was in.
+// green required check is dropped BEFORE the merge, by name and with the state it was in.
 // In addition (#1572 / SPEC-DECIDE reading 3), it collects every hold on the member
 // and drops one carrying an unreleased HOLD or a pending comment.
 func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
@@ -619,7 +727,7 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
 				"pull request %d could not be read, and --require-checks is on, so this gate cannot tell whether its head has been green on its own: %w; pass --no-require-checks to merge it anyway and own that", n, err))
 		}
-		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO ci-ok. A batch's own branch --
+		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO REQUIRED CHECK. A batch's own branch --
 		// rowan/integration-*, the shape this verb builds and nothing else does -- and a
 		// head named by a BATCH OK receipt the caller presented are both evidence the
 		// gate produced; requiring the forge's rollup on top of them would refuse a batch
@@ -643,14 +751,15 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
 				"pull request %d's checks could not be read, and --require-checks is on: %w; pass --no-require-checks to merge it anyway and own that", n, err))
 		}
-		state := checkState(checks.ForSHA(pr.HeadOID), batchRequiredCheck)
+		state := checkState(checks.ForSHA(pr.HeadOID), in.checkName)
 		if state == "green" {
 			keep = append(keep, n)
 			continue
 		}
 		dropped = append(dropped, n)
-		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n,
-			fmt.Sprintf("head %s has no green %s (state=%s)", oneline.Field(pr.HeadOID), batchRequiredCheck, oneline.Field(state)), since(start))
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q check=%s t=%.1fs\n", n,
+			fmt.Sprintf("head %s has no green %s (state=%s)", oneline.Field(pr.HeadOID), oneline.Field(in.checkName), oneline.Field(state)),
+			oneline.Field(in.checkName), since(start))
 	}
 	return keep, dropped, 0
 }

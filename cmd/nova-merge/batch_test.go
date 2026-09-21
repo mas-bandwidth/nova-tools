@@ -144,7 +144,7 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	clone := filepath.Join(root, "integration-2", "repo")
 	base := l.git(l.work, "rev-parse", "dev")
 	head := l.git(clone, "rev-parse", "refs/heads/rowan/integration-2")
-	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required", base, head)
+	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required check=ci-ok", base, head)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("want the one-line shape\n\t%s\ngot:\n%s", want, stdout)
 	}
@@ -539,5 +539,77 @@ func TestTheFixtureStartsNoGitItDoesNotWaitFor(t *testing.T) {
 	if len(background) > 0 {
 		t.Errorf("the fixture started %d background git(s) nothing waits for:\n\t%s\nthey are still writing into this test's own t.TempDir when it is removed (#1607); the fixture runs git through merge.NoBackgroundGit",
 			len(background), strings.Join(background, "\n\t"))
+	}
+}
+
+// The required check's name is a flag, else .nova-merge required-check=, else ci-ok
+// (nova-tools #2499). These tests are the file's own grammar, with no clone and no forge.
+func TestRequiredCheckFromNovaMerge(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		raw     string
+		want    string
+		errPart string
+	}{
+		{name: "empty file is unset", raw: "", want: ""},
+		{name: "comments only", raw: "# schema\n\n", want: ""},
+		{name: "schema tests", raw: "required-check=tests\n", want: "tests"},
+		{name: "spaces around the equals", raw: " required-check = tests \n", want: "tests"},
+		{name: "unknown keys ignored", raw: "siblings=foo\nrequired-check=tests\n", want: "tests"},
+		{name: "CRLF", raw: "required-check=tests\r\n", want: "tests"},
+		{name: "empty value", raw: "required-check=\n", errPart: "empty"},
+		{name: "duplicate", raw: "required-check=tests\nrequired-check=ci-ok\n", errPart: "more than once"},
+		{name: "not key=value", raw: "required-check tests\n", errPart: "key=value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := requiredCheckFromNovaMerge([]byte(tc.raw))
+			if tc.errPart != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.errPart) {
+					t.Fatalf("want an error naming %q, got %q / %v", tc.errPart, got, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveRequiredCheckPrefersTheFlagThenTheFileThenCiOk(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	got, err := resolveRequiredCheck("", dir)
+	if err != nil {
+		t.Fatalf("no file, no flag: %v", err)
+	}
+	if got != batchRequiredCheckDefault {
+		t.Fatalf("default is %q, got %q", batchRequiredCheckDefault, got)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, novaMergeFile), []byte("required-check=tests\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = resolveRequiredCheck("", dir)
+	if err != nil {
+		t.Fatalf("file: %v", err)
+	}
+	if got != "tests" {
+		t.Fatalf("file names tests, got %q", got)
+	}
+
+	got, err = resolveRequiredCheck("ci-ok", dir)
+	if err != nil {
+		t.Fatalf("flag: %v", err)
+	}
+	if got != "ci-ok" {
+		t.Fatalf("the flag wins over the file, got %q", got)
 	}
 }
