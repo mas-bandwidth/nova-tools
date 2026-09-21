@@ -7,10 +7,12 @@ package pulse
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 )
@@ -114,12 +116,89 @@ func TestFillRefusesWithoutTheMachinesRegistry(t *testing.T) {
 	}
 }
 
+// TestFillDisablesOnePoisonedRegistryRowAmongFive is the red test for #2031: adding hetzner
+// as bench,runner with no allow-shared= note used to make fill REFUSE ON EVERY BENCH, not
+// just hetzner. The lock is per row. The poisoned bench is disabled with a named line each
+// tick; the other four deal normally.
+func TestFillDisablesOnePoisonedRegistryRowAmongFive(t *testing.T) {
+	dir := t.TempDir()
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	for i := 1; i <= 8; i++ {
+		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "a card\n")
+	}
+	var body strings.Builder
+	body.WriteString("# name\tssh\tos/arch\troles\tseat\tcores\tnotes\n")
+	for _, name := range []string{"b1", "b2", "b3", "b4"} {
+		body.WriteString(name + "\t" + name + "\tlinux/x64\tbench\tswarm-" + name + "\t64\t-\n")
+	}
+	body.WriteString("hetzner\thetzner\tlinux/x64\tbench,runner\tswarm-hetzner\t64\tadded with no allow-shared note\n")
+	machines := filepath.Join(dir, "machines.tsv")
+	if err := os.WriteFile(machines, []byte(body.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := filepath.Join(dir, "STOP")
+	ticks := 0
+	l := &laneLauncher{}
+	var out, errb bytes.Buffer
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched,
+		Machines: machines,
+		Benches:  []string{"b1", "b2", "b3", "b4", "hetzner"},
+		Stop:     stop,
+		Stdout:   &out,
+		Stderr:   &errb,
+		Capacity: laneCap{"b1": 1, "b2": 1, "b3": 1, "b4": 1, "hetzner": 10},
+		Launcher: l,
+		Sleep: func(time.Duration) {
+			ticks++
+			if ticks >= 2 {
+				if err := os.WriteFile(stop, nil, 0o644); err != nil {
+					t.Error(err)
+				}
+			}
+		},
+	})
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0 (one poisoned row must not stop the fleet); stderr=%q", code, errb.String())
+	}
+	if ticks != 2 {
+		t.Fatalf("resident ticks before stop = %d, want 2", ticks)
+	}
+	disabled := strings.Count(errb.String(), "FILL DISABLED bench=hetzner")
+	if disabled != 2 {
+		t.Fatalf("FILL DISABLED bench=hetzner appeared %d times, want once per tick; stderr=%q", disabled, errb.String())
+	}
+	if !strings.Contains(errb.String(), "reason=shared-without-note") {
+		t.Fatalf("the disable line does not name reason=shared-without-note: %q", errb.String())
+	}
+	if !strings.Contains(errb.String(), "allow-shared") {
+		t.Fatalf("the disable line does not name the missing allow-shared note: %q", errb.String())
+	}
+	if strings.Contains(out.String(), "hetzner:") {
+		t.Fatalf("the FILL line still deals to the poisoned bench: %q", out.String())
+	}
+	for _, name := range []string{"b1", "b2", "b3", "b4"} {
+		if !strings.Contains(out.String(), name+":launched=") {
+			t.Errorf("FILL line does not deal to neighbour %s: %q", name, out.String())
+		}
+	}
+	if len(l.calls) != 8 {
+		t.Fatalf("launcher calls = %d, want 8 (four neighbours × two ticks); calls=%q", len(l.calls), l.calls)
+	}
+	for _, call := range l.calls {
+		if strings.HasPrefix(call, "hetzner ") {
+			t.Fatalf("a card landed on the poisoned bench: %q", call)
+		}
+	}
+}
+
 // TestFillRefusesAnUnreadableRegistry: the registry is read whole or not at all, and a file
 // that does not parse stops the fill rather than filling the machines it managed to read.
 func TestFillRefusesAnUnreadableRegistry(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "machines.tsv")
-	if err := os.WriteFile(bad, []byte("hulk\thulk\tlinux/x64\tbench,runner\t-\t64\tshared\n"), 0o644); err != nil {
+	if err := os.WriteFile(bad, []byte("hulk\thulk\tlinux/x64\tbench\t-\t64\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
@@ -132,8 +211,8 @@ func TestFillRefusesAnUnreadableRegistry(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("fill exit = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), "allow-shared") {
-		t.Fatalf("stderr = %q, want the shared-machine refusal", errb.String())
+	if !strings.Contains(errb.String(), "tab-separated") {
+		t.Fatalf("stderr = %q, want the unreadable-row refusal", errb.String())
 	}
 }
 

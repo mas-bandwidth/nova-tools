@@ -79,8 +79,9 @@ type NoTest struct {
 
 // FailedReport is everything one run's failing jobs said.
 type FailedReport struct {
-	Jobs      int // failing jobs this report looked at, read or not
-	Cancelled int // of those jobs, the ones cancelled rather than red of their own
+	Jobs      int      // failing jobs this report looked at, read or not
+	Cancelled int      // of those jobs, the ones cancelled rather than red of their own
+	RedJobs   []RedJob // of those jobs, name, forge conclusion and failed step: the CI-red reading's mechanical facts
 	Failures  []TestFailure
 	NoTests   []NoTest
 	Cancels   []Cancellation

@@ -220,15 +220,36 @@ func TestFleetSurveySendsTheStandardScriptToEveryBench(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The script is piped through `bash -s`, so $0 is not the checkout and it
+	// cannot read go.mod itself. The coordinator has the tree: pin NOVA_GO from
+	// that go line so a piped survey is held to the same directive (#1500).
+	goWant := surveyTreeGoWant(t)
+	sent := "NOVA_GO=" + goWant + "\n" + string(want)
 	calls := runner.seen()
 	if len(calls) != 2 {
 		t.Fatalf("the survey made %d remote steps, want one per bench", len(calls))
 	}
 	for _, call := range calls {
-		if call.script != string(want) {
-			t.Fatalf("bench %s was sent %d bytes, want tools/bench-standard.sh whole", call.target, len(call.script))
+		if call.script != sent {
+			t.Fatalf("bench %s was sent a script that does not pin NOVA_GO=%s from go.mod; got %d bytes, want %d", call.target, goWant, len(call.script), len(sent))
 		}
 	}
+}
+
+func surveyTreeGoWant(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "go" {
+			return "go" + fields[1]
+		}
+	}
+	t.Fatal("go.mod carries no go directive")
+	return ""
 }
 
 // --timeout is the budget each bench gets, measured from the survey's clock. The clock is

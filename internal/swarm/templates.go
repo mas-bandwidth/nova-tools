@@ -354,6 +354,82 @@ friend chooses offers, reserves, and rest, not a scheduler that maximises
 occupation beyond that offer.
 `
 
+// THE PULSE CARD TEMPLATES (docs/SPEC-PULSE.md rule 4). nova-pulse `cut` reads a templates
+// directory holding read.md, fix.md, text.md, replay.md, drift.md, tone.md and models.tsv,
+// and renders one card per pool candidate from the template the candidate names. Until the
+// dogfood probe 2026-09-16 the directory was copied out of cmd/nova-pulse/testdata by hand;
+// now every card is a constant here and `template --name <kind>` prints it, so a templates
+// dir can be built from the tool. A text-only card (read, text, tone) carries rule 6's
+// no-build line, and a writing card (fix, replay, drift) carries the red-then-green row.
+
+const pulseRead = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Read the named files and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseFix = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseText = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the text change and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseReplay = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Replay the rule; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseDrift = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Close the drift; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseTone = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Fix the tone of the named page and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+// pulseModels is the cost table nova-pulse rule 7 reads beside the .md templates when no
+// benches.tsv or routes.tsv sits there: one line `flash <id>` and/or one line `pro <id>`.
+const pulseModels = `flash opencode/deepseek-v4-flash
+pro opencode/deepseek-v4-pro
+`
+
+// IsPulseTemplate reports whether name is one of the pulse card templates or the cost table
+// nova-pulse `cut` reads (SPEC-PULSE rule 4). They are cards cut renders, never task
+// templates to wrap.
+func IsPulseTemplate(name string) bool {
+	switch name {
+	case "read", "fix", "text", "replay", "drift", "tone", "models.tsv":
+		return true
+	}
+	return false
+}
+
 // Template returns one template by name.
 func Template(name string) (string, error) {
 	switch name {
@@ -371,21 +447,38 @@ func Template(name string) (string, error) {
 		return templateSetup, nil
 	case "capacity":
 		return templateCapacity, nil
+	case "read":
+		return pulseRead, nil
+	case "fix":
+		return pulseFix, nil
+	case "text":
+		return pulseText, nil
+	case "replay":
+		return pulseReplay, nil
+	case "drift":
+		return pulseDrift, nil
+	case "tone":
+		return pulseTone, nil
+	case "models.tsv":
+		return pulseModels, nil
 	}
 	return "", fmt.Errorf("--name wants one of %s, got %q", strings.Join(TemplateNames(), ", "), name)
 }
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity"}
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity",
+		"read", "fix", "text", "replay", "drift", "tone", "models.tsv"}
 	sort.Strings(names)
 	return names
 }
 
 // IsCardTemplate reports whether name is one of the task templates a card is built from
 // (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
-// setup, capacity -- are not cards: result is the report's shape, worker is a JSON worker
-// description, and setup and capacity are forms, all printed verbatim for their own purpose.
+// setup, capacity, and the pulse card templates of SPEC-PULSE rule 4 -- are not cards:
+// result is the report's shape, worker is a JSON worker description, setup and capacity
+// are forms, and the pulse names are the cards nova-pulse `cut` renders, all printed
+// verbatim for their own purpose.
 func IsCardTemplate(name string) bool {
 	switch name {
 	case "read-pr", "probe-row", "fix-card":
@@ -410,6 +503,9 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "capacity" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `capacity` is the per-friend offer and routing-log form of issue #176, printed by `template --name capacity`")
+	}
+	if IsPulseTemplate(name) {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template of SPEC-PULSE rule 4, printed by `template --name %s`, not a task template", name, name)
 	}
 	body = strings.ReplaceAll(body, "<n> files", fmt.Sprintf("%d files", files))
 	var b strings.Builder

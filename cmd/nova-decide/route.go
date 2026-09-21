@@ -56,6 +56,10 @@ func (s *stringList) Set(v string) error {
 // runRoute is the route verb: it builds the evidence, asks for a rung, applies
 // the floor, prints one line and appends one log row.
 func runRoute(args []string, stdout, stderr io.Writer) int {
+	// wall_ms is the verb's start to its line: the clock starts here, on the
+	// first line of the verb, and every decision this run prints or persists
+	// is stamped with the milliseconds to it.
+	verbStart := now()
 	fs := flag.NewFlagSet("nova-decide route", flag.ContinueOnError)
 	unitPath := fs.String("unit", "", "a JSON file (or inline JSON) holding the unit of work's evidence")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
@@ -173,6 +177,17 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	}
 	if ask {
 		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
+	}
+	// Stamp the wall clock on every decision the verb prints or persists,
+	// answer and refusal alike: wall_ms is the verb's start to its line, and
+	// a row with no stamp carries no measurement, never a zero.
+	stampWall := func(r *decide.RouteResult) {
+		r.WallMs = int(now().Sub(verbStart).Milliseconds())
+		r.HasWallMs = true
+	}
+	stampWall(&res)
+	for i := range steps {
+		stampWall(&steps[i])
 	}
 	// The record is written BEFORE the refusal is returned. A call that has
 	// already been made has already been paid for, and a decision that could
@@ -357,6 +372,8 @@ func buildUnit(path string, set map[string]bool, stderr io.Writer, fromFlags dec
 		}
 		return unit, 0
 	}
+	// ...and here for the flag path, the one the manager lanes use.
+	fromFlags.Kind = decide.CanonicalKind(fromFlags.Kind)
 	if len(given) == 0 {
 		return decide.Unit{}, refuse(stderr, "ROUTE", "bad-unit", "--unit (or --unit-id and --kind) is required; the evidence is not guessed")
 	}
