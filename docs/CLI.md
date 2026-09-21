@@ -1586,6 +1586,39 @@ build-level half of the same class on the bench, in seconds, with no second mach
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
 
+### land
+
+```
+nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>]
+```
+
+`land` is the ONE caller of the one door that admits anything to a merge queue. `batch`
+builds the integration branch, tests it the way CI tests, prints `BATCH OK` and **pushes
+nothing**; a person pushes that branch and opens the pull request, because that is the step
+that needs somebody who knows this is the batch they wanted. `land` is everything after: it
+reads the pull request back from the forge, refuses it unless its head is a batch's — or
+unless a `BATCH OK` receipt given with `--receipt` or `--receipt-file` says this very commit
+is one — refuses it unless the pull request's **own** checks are green, and enqueues it at
+the front unless `--no-jump`.
+
+**Two green-nesses are two questions and both are asked.** The gate's green is a bench's:
+this tree builds, vets, tests and runs the lisp suite. CI's green is the forge's, on the
+commit the queue will take. `integration-4` went green on a bench under a plain
+`go test ./...` and three CI legs then failed; a lander that trusted the receipt alone
+would have queued it.
+
+The hold flags are `batch`'s, with the same meanings and the same refusals: exactly one of
+`--reviewers <file>` and `--no-require-holds --reason <text>` is required, `--lane <dir>` is
+required under `--reviewers` and may not be the literal `none`, and
+`--untyped-comments ignore` demands its own `--reason`. `--receipt` and `--receipt-file` are
+two spellings of one receipt and giving both is exit 2.
+
+```
+LAND OK      pr=<n> head=<sha> branch=<ref> checks=<required|waived> members=<list> jump=<true|false>
+LAND REFUSED reason=held member=#<n> who=<name> hold=<id> source=<source> held_at=<stamp> carried=<yes|no> at=<stamp> conf=<n>
+LAND REFUSED: <what was wrong>
+```
+
 ## nova-pulse
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
@@ -1618,7 +1651,7 @@ refuses, exit 2, when given any.
 ### launch
 
 ```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 ```
 
 `launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
@@ -1636,8 +1669,17 @@ nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s>
 `--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
 unchanged, and only when they are given: one pulse fills every bench the caller names
 — the Studio and the Space in one tick, as SPEC-SWARM's **Benches** section allows —
-instead of a pulse being one bench (issue #637). Neither flag is read by `launch`
-itself, so whatever `nova-swarm batch` refuses, it refuses with its own line.
+instead of a pulse being one bench (issue #637). Whatever `nova-swarm batch` refuses,
+it refuses with its own line.
+
+**`--machines` holds every `--bench` name against the machines registry before the
+batch is admitted.** A launch reaches every bench it names over `ssh`, and runner
+hosts are CI-only, so the NAMES are resolved at the verb's edge: an unknown machine,
+a runner host, the coordination bench or a services host is refused with
+`PULSE REFUSED bench=... reason=... remedy="..."` and no batch is admitted. Naming a
+bench without the registry is refused outright — without it the verb cannot tell a
+bench from a CI runner host, and the one thing it must never do is guess that; a
+launch with no `--bench` names nothing and runs on this machine exactly as before.
 
 The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
 no launch flag supplies, so launch never calls it (issue #630). The one batch is
@@ -2431,6 +2473,7 @@ nova-pulse hygiene delete-job <slot> <job>  --home <dir>
 nova-pulse hygiene delete-slot <slot>       --home <dir>
 nova-pulse hygiene drop-cache               --home <dir>
 nova-pulse hygiene log [n]                  --home <dir>
+nova-pulse hygiene --lane-dirs <root>       [--dry-run] [--older-than <n>d] [--max <n>]
 ```
 
 `run` is the timer's verb — the ten-minute `nova-hygiene.timer` on every bench — and prints
@@ -2474,6 +2517,55 @@ ceiling that is never reached is the point of a ceiling.
 
 Both flags refuse a value that is not a whole number of at least 1 — exit 2, naming the flag.
 A prune never runs on a guess.
+
+**The lane-clone sweep** (`--lane-dirs <root>`) is the one flag-form mode: no subcommand, and
+`--home` means nothing to it. It walks the **immediate children** of `<root>` — one level, never
+recursively — and removes the lane clones whose work is finished and elsewhere. A child is a
+candidate when it holds a `.git` entry, or when exactly one directory inside it does
+(`<root>/lane-foo/repo`, which is the shape today's lane workers write); a child holding **more
+than one** checkout is kept, because two checkouts are two branches and it would have to remove
+both to remove either. A `.git` file counts as much as a `.git` directory, so a worktree is a
+candidate too.
+
+A clone goes only when **all four** questions answer yes, asked in this order:
+
+| # | question | how |
+| --- | --- | --- |
+| 1 | does the path stay inside the root? | `internal/safepath`: strictly below the resolved `<root>`, never a symlink |
+| 2 | is the checkout clean? | `git status --porcelain` says nothing |
+| 3 | is every commit somewhere else? | `git rev-list --branches --not --remotes` says nothing |
+| 4 | is the pull request settled? | the PR whose head is the checked-out branch is `MERGED` or `CLOSED` |
+
+Anything else is one `HYGIENE KEEP dir=<d> reason=<token>` line, and **a read that failed is a
+keep**: this verb never removes on a guess, and the git reads come before the forge read so a
+merged pull request cannot talk it past an uncommitted file. The reasons are
+`unsafe` (left the root), `many-checkouts`, `fresh` (inside the `--older-than` window), `dirty`,
+`unpushed`, `detached` (no branch, so no PR to ask about), `git` and `forge` (a read failed),
+`no-pr`, `open`, and `unknown-state`.
+
+Each clone it acts on is one line, and then one summary:
+
+```
+HYGIENE LANE dir=<d> pr=<n> state=<MERGED|CLOSED> removed=<yes|no>
+HYGIENE LANES root=<r> candidates=<n> remove=<n> removed=<n> kept=<n> dry-run=<yes|no>
+```
+
+`remove` is what it decided to take and `removed` is what actually went, so a `--dry-run` — which
+prints the **same** lines with `removed=no` and touches nothing — reads `remove=3 removed=0`.
+Dry run is **off** by default: a plain invocation really removes. `--older-than` has one
+spelling, a whole number of days with a `d` suffix (`--older-than 2d`), and refuses anything else
+— hours, weeks, a bare number — exit 2, naming the flag; the age read is the candidate's own
+mtime, the directory the verb would remove. `--max` caps the per-candidate lines at 20 by
+default and `0` prints them all; `--older-than` and `--max` outside `--lane-dirs` are refused
+rather than ignored. The sweep writes **no** action log — it has no `--home` — so its record is
+the lines above.
+
+The mistake it removes, measured on the Studio on 2026-09-18: **92** `lane-*` and `dogfood-*`
+clone directories under `~/rowan-working/tmp`, one per lane worker of the day, and nothing in the
+fleet that ever took one away. `hygiene run` does not: those are swarm slots, with a jobs
+directory and a liveness rule, and a lane clone is neither. Nor can a lane clone be swept the way
+scratch is swept, by age or by name — it holds a branch, and a branch may be the only copy of
+somebody's work. That is why the rule is the narrowest one still worth having.
 
 ### status
 

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +26,7 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--hold-file <path>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
@@ -36,9 +39,10 @@ nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [--memfree-gb <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--max <n>]
-nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--dedupe --issues <file>] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
@@ -49,6 +53,7 @@ nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot> --home <dir>
 nova-pulse hygiene drop-cache --home <dir>
 nova-pulse hygiene log [n] --home <dir>
+nova-pulse hygiene --lane-dirs <root> [--dry-run] [--older-than <n>d] [--max <n>]
 nova-pulse fleet survey --benches <file> [--machines <file>] [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -213,8 +218,22 @@ resolved and checked to sit strictly below its root, and a target that is not â€
 outside the roots, holding "..", or a symlink escape â€” is refused, exit 2, one
 line. Each deletion is one <utc> <verb> <path> line in <home>/hygiene.log.
 
+hygiene --lane-dirs <root> is the seventh mode and the one that takes no
+subcommand: it walks the immediate children of <root>, one level, and removes
+the lane clones whose work is finished AND elsewhere. Four questions, cheapest
+first, and the first no keeps the directory: the path resolves strictly below
+<root> and is not a symlink; git status --porcelain says nothing; no commit on a
+local branch is missing from every remote; and the forge says the PR whose head
+is the checked-out branch is MERGED or CLOSED. Everything else is one
+HYGIENE KEEP dir=<d> reason=<token> line, and a read that FAILED is a keep --
+this verb never removes on a guess. --older-than takes a whole number of days
+with a d suffix and nothing else; --dry-run prints the same lines with
+removed=no and is OFF by default; --max caps the per-candidate lines at 20 and 0
+prints them all.
+
 example:
   nova-pulse hygiene run --home "$HOME"
+  nova-pulse hygiene --lane-dirs "$HOME/rowan-working/tmp" --older-than 2d --dry-run
 
 fleet survey runs tools/bench-standard.sh on every bench named in --benches
 (name, ssh target and home per tab-separated line) over the ssh command
@@ -284,6 +303,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdStatus(rest, stdout, stderr, now)
 	case "progress":
 		return cmdProgress(rest, stdout, stderr)
+	case "capacity":
+		return cmdCapacity(rest, stdout, stderr)
 	case "gate":
 		return cmdGate(rest, stdout, stderr)
 	case "run":
@@ -402,6 +423,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	queue := f.fs.Bool("queue", false, "")
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
+	machines := f.fs.String("machines", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	routes := f.fs.String("routes", "", "")
 	floor := f.fs.Float64("floor", 0.9, "")
@@ -436,7 +458,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
-		Benches: *benches, Bench: *bench,
+		Benches: *benches, Bench: *bench, Machines: *machines,
 		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Runner: *runner, Swarm: *swarmBin, Attempts: *attempts, Version: buildVersion(),
 		Max:    *max,
@@ -786,6 +808,135 @@ func cmdProgress(args []string, stdout, stderr io.Writer) int {
 		Stdout: stdout,
 		Stderr: stderr,
 	})
+}
+
+// cmdCapacity is the allowed-cards formula as one verb: for --bench <name> it prints the
+// one CAPACITY line every launcher reads, and with no numbers given it reads this host's own
+// cores, load, free disk and free memory, so a bench can ask itself instead of shelling a
+// remote script. A number passed on the command line wins over the local read; that is what
+// lets a test fix all four and touch neither /proc nor df.
+//
+// THE LOCAL READ IS LINUX. /proc/loadavg, /proc/meminfo and `df -BG` are what cap() reads
+// and they are a linux bench's facts; darwin has no /proc and its df has no -BG. On such a
+// host the verb REFUSES and names the flag that was not given, rather than standing a
+// number up out of nothing: every launcher in the fleet acts on this one line, and a guess
+// here is a guess about how much work a machine can take. The fleet's own capacity still
+// comes from the remote script in fill.go, which runs on the linux benches.
+func cmdCapacity(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("capacity")
+	bench := f.fs.String("bench", "", "")
+	cores := f.fs.Int("cores", -1, "")
+	load1 := f.fs.Int("load1", -1, "")
+	freeGB := f.fs.Int("free-gb", -1, "")
+	memFreeGB := f.fs.Int("memfree-gb", -1, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	c := *cores
+	if c < 0 {
+		c = runtime.NumCPU()
+	}
+	l := *load1
+	if l < 0 {
+		v, err := hostLoad1()
+		if err != nil {
+			f.add(fmt.Sprintf("--load1 was not given and /proc/loadavg could not be read: %s", oneline.Err(err)))
+		}
+		l = v
+	}
+	fg := *freeGB
+	if fg < 0 {
+		v, err := hostFreeGB()
+		if err != nil {
+			f.add(fmt.Sprintf("--free-gb was not given and df on the home filesystem failed: %s", oneline.Err(err)))
+		}
+		fg = v
+	}
+	mg := *memFreeGB
+	if mg < 0 {
+		v, err := hostMemFreeGB()
+		if err != nil {
+			f.add(fmt.Sprintf("--memfree-gb was not given and /proc/meminfo could not be read: %s", oneline.Err(err)))
+		}
+		mg = v
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	allowed := pulse.AllowedCards(c, l, fg, mg)
+	fmt.Fprintf(stdout, "CAPACITY bench=%s cores=%d load=%d free=%dG memfree=%dG allowed=%d\n",
+		oneline.Field(*bench), c, l, fg, mg, allowed)
+	return 0
+}
+
+// hostLoad1 reads the whole part of the one-minute load average, the way cap()'s
+// `cut -d. -f1 /proc/loadavg` does.
+func hostLoad1() (int, error) {
+	raw, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("empty /proc/loadavg")
+	}
+	whole := strings.SplitN(fields[0], ".", 2)[0]
+	n, err := strconv.Atoi(whole)
+	if err != nil {
+		return 0, fmt.Errorf("load %q is not a number", fields[0])
+	}
+	return n, nil
+}
+
+// hostMemFreeGB reads MemAvailable from /proc/meminfo as whole GB, the way cap()'s
+// `$2/1048576` does.
+func hostMemFreeGB() (int, error) {
+	raw, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(line, "MemAvailable:")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return 0, fmt.Errorf("MemAvailable has no value")
+		}
+		kb, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return 0, fmt.Errorf("MemAvailable %q is not a number", fields[0])
+		}
+		return kb / 1048576, nil
+	}
+	return 0, fmt.Errorf("no MemAvailable line")
+}
+
+// hostFreeGB reads the free space on the home filesystem as whole GB, the way cap()'s
+// `df -BG "$HOME" | awk 'NR==2{gsub("G","",$4); print $4}'` does.
+func hostFreeGB() (int, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	out, err := exec.Command("df", "-BG", home).Output()
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) < 2 {
+		return 0, fmt.Errorf("df printed no filesystem line")
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return 0, fmt.Errorf("df line has %d fields", len(fields))
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(fields[3], "G"))
+	if err != nil {
+		return 0, fmt.Errorf("df available %q is not a number", fields[3])
+	}
+	return n, nil
 }
 
 func isDeadlineSeconds(s string) bool {
