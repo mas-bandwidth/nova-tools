@@ -1560,7 +1560,7 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>]
 ```
 
 `batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
@@ -1579,10 +1579,10 @@ terms and demands the same `--reason` (SPEC-DECIDE reading 3, *No flag ignores a
 hold*; nova-tools #1748).
 
 ```
-BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
+BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]
 BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<the first line that is not a notice>"
 BATCH DROP #<n> reason="the merge conflicts with the members ahead"
-BATCH DROP #<n> reason="head <sha> has no green ci-ok (state=<pending|failure|none>)"
+BATCH DROP #<n> reason="head <sha> has no green <check> (state=<pending|failure|none>)" check=<name>
 BATCH SKIP <step> reason="<why it could not run>"
 BATCH STEP <step> command="<what it runs>"
 BATCH NOTE checks=waived reason="<what the caller took on>"
@@ -1604,7 +1604,13 @@ notice naming nothing to fix. It is now one `BATCH REFUSED` with the remedy, and
 `go: downloading …` line is never what a `reason=` quotes.
 
 **`checks=required` is the default (edge 25).** A member whose own head has no green
-`ci-ok` is **dropped before the merge**, by name and with the state it was in. The gate
+required check is **dropped before the merge**, by name and with the state it was in.
+The check's name is `ci-ok` in this repository — CI's one rollup — and a repo whose
+rollup is named something else (schema's `tests`) passes **`--check-name <name>`** or
+writes `required-check=<name>` in **`.nova-merge`** at the clone's root (#2499). The
+flag wins over the file; a missing file is the default, not a refusal. The name is
+printed as `check=<name>` on `BATCH OK` and on the check `BATCH DROP` so a lane script
+can parse it (#2508). `checks=waived` omits `check=`. The gate
 runs on one operating system and CI runs on three: three members went green under the
 gate on linux and red on CI's windows legs, and the batch pull request went red after
 the gate had said OK. A member that has not been green on its own is a member nobody

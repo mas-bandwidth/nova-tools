@@ -767,8 +767,8 @@ not the entry's current `oid` is kept, counted `stale` and authorizes nothing
 (`docs/SPEC-MERGE.md:286-304`); an approve from the author is not a read, and `who` is
 *"a line at a keyboard"*, never a host login (`docs/SPEC-MERGE.md:828-837`); nothing
 reaches the merge queue but a batch, and `land` re-reads the PR from the forge
-(`docs/SPEC-MERGE.md:1540-1561`); `batch` drops a member with no green `ci-ok` before
-the merge (`docs/CLI.md:1213-1258`).
+(`docs/SPEC-MERGE.md:1540-1561`); `batch` drops a member with no green required check before
+the merge (`docs/CLI.md` batch, `checks=required`; the name is `ci-ok` here, `--check-name` or `.nova-merge` `required-check=` elsewhere).
 
 **What those rules do not hold — #1572.** The read condition is held by `run`, over the
 lane's **records**. `batch` and `land` — the only road to `dev` since 2026-09-18 — read

@@ -877,6 +877,90 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 This is the same shape as the pulse child (created, one job, exit) and the
 meaning of "pull the intelligence up, push down to machinery."
 
+## The harness wall (S7, issue #2498)
+
+Glenn, 2026-09-21: set the model up to succeed once, benefit forever. A card
+that wanders the tree, fetches the web, or spends a turn on a permission
+refusal is paying exploration for work the card already named. Johnny owns
+these terms; Rowan owns the launcher that applies them.
+
+The OS wall still grants the job directory as `--write` (the dispatcher
+caller below). File-level scope is the matcher in `internal/swarm/wallterms.go`,
+not a recursive `--read` of a PATHS parent directory: that grant would admit
+every sibling of a named file. A directory glob (`keep/**`) can be a `--read`
+root today; a file glob cannot.
+
+**TODO launcher: Rowan** — wire these terms into the native/supervise argv and
+the harness permission block. This section is the terms. Do not ship a half
+launcher. The dispatcher of a **model** job still omits `--net-deny` (the
+provider's API is the work). Sparse checkout of the same PATHS is S10.
+
+H1. **Declared writes are PATHS; contextual reads are a separate set.** The
+    files a card may write are its `PATHS:` globs. Specs (`docs/SPEC-*.md`),
+    same-package siblings, and testdata are **defaults rather than an exhaustive set**. The dispatcher
+    may authorize bounded caller/callee, build-input, and reverse-dependent
+    reads outside those defaults without widening PATHS. A denied required read
+    blocks and requests that adjustment instead of guessing. The helpers in
+    this slice list only the defaults; a path matching neither the writes nor
+    those defaults is refused here, and the launcher (Rowan) is the adjustment
+    route. A narrow write does not imply the worker reasons from that file
+    alone. A spec path is a contextual read, not a write. The dispatcher's own
+    reads (the slot, the toolchain, `read_roots`) are unchanged and are not
+    this scope.
+    `PATHS: none` is the empty write set. `ReadRoots` names `--read`
+    directories for a directory-covering PATHS glob only, skip-if-absent; a
+    file glob names none. A root that is unresolved, or that follows a
+    symlink out of the repository, is refused before a policy is produced.
+
+H2. **No web.** `webfetch` is deny. A card does not fetch. The provider API of
+    a model job is not webfetch: it is the harness's own call, outside this
+    fence.
+
+H3. **Harness-prompt allowlist, not the OS wall.** The harness may run without
+    prompting a closed set: `go`, `gofmt`, `git`, `make`, `rg`, `grep`,
+    `cat`, `ls`, `head`, `wc`, `diff`. This is a prompt allowlist, not
+    command confinement and not the OS wall: `git` can still invoke other
+    programs. Compound lines (`;`, `&&`, `||`, `|`, backtick, `$()`, newline)
+    are refused. A first token containing `/` is refused (`/usr/bin/git` is
+    not the allowlist word `git`). Background `&` and process substitutions
+    further show this is not a shell parser; the hint is explicitly non-authoritative. `curl`, `wget`, `ssh`, `nova-sandbox`,
+    `nova-secrets` and a login shell (`bash -l`) are not in the set. No new
+    permissions.
+
+H4. **`MODE: script` is `--net-deny`.** MODE is read from the typed header
+    (`cardHeaderBlock`), not from body text. A quoted or example `MODE: script`
+    in the body of a model card does not select script terms. Duplicate or
+    contradictory MODE fields refuse. A script card does not talk to a
+    provider; its default network is an enforced denial (`net=denied`), not
+    `nopromise`. Native omits `--net-deny` because the provider API is the
+    work; reusing that argv for a script card hands it IP outbound and DNS.
+    A dest grant, if a launcher ever names one, is a loopback
+    `(remote ip "localhost:PORT")` that Apple will load. Do not pin the #599 nested SBPL form
+    `(local ip (host ..) (port ..))` — `sandbox-exec` is exit 65, unbound
+    variable: host.
+
+**Red tests for this section.** One line per rule, seen red first:
+
+- H1: `TestWallTermsRefuseAPathOutsidePATHS` — a path matching neither the
+  declared writes nor the contextual reads is refused. `TestWallTermsSpecIsContextualReadNotWrite`
+  — a spec path and a same-package sibling are contextual reads, not writes.
+  `TestWallTermsAdmitTheTestsOfPATHS` — the `_test.go` sibling, `testdata/`,
+  and the `TEST:` package's tests are admitted. `TestWallTermsReadRootsDoNotAdmitAnOutsider`
+  / `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider` — a directory glob wired as
+  `--read` does not admit a path outside PATHS through `sandbox.Inside`.
+  `TestWallTermsReadRootsRejectEscapingSymlink` — `PATHS: keep/**` with `keep`
+  a symlink to an owned temp dir outside the repo is refused, not an external
+  read grant; an unresolved root is refused the same way.
+- H2: `TestWallTermsRefuseANetworkFetch` — webfetch of `https://example.com/`
+  is not admitted, and the fence's `webfetch` key is deny.
+- H3: `TestWallTermsOnlyPreApprovedCommands` — `go test` is admitted; `curl`,
+  `wget`, `ssh`, `nova-sandbox`, `nova-secrets`, `bash -l`, `git status; curl`
+  and `/usr/bin/git` are not.
+- H4: `TestWallTermsScriptIsNetDeny` — header `MODE: script` sets `NetDeny`; a
+  model card does not. `TestWallTermsBodyOnlyModeDoesNotSelectScript` — body
+  `MODE: script` does not. `TestWallTermsConflictingModeHeadersRefuse` —
+  duplicate or contradictory MODE fields refuse.
+
 ## The verbs
 
 ```
@@ -3926,6 +4010,28 @@ be seen red before it is trusted.
     `--read`, the job directory as the FIRST `--write` with the data home
     beside it, the job directory as `--cwd`, no `--net-deny`, and a directory
     planted in the task text that appears in no flag of it.
+20. **The harness wall (S7, issue #2498)**, each seen red first.
+    `TestWallTermsRefuseAPathOutsidePATHS`: a path matching neither the
+    declared writes nor the contextual reads is refused.
+    `TestWallTermsSpecIsContextualReadNotWrite`: a spec path and a same-package
+    sibling are contextual reads, not writes.
+    `TestWallTermsAdmitTheTestsOfPATHS`: the `_test.go` sibling, `testdata/`,
+    and the `TEST:` package's tests are admitted.
+    `TestWallTermsRefuseANetworkFetch`: webfetch is deny; a fetch of
+    `https://example.com/` is not admitted.
+    `TestWallTermsOnlyPreApprovedCommands`: `go test` is admitted; `curl`,
+    `ssh`, `nova-sandbox`, `bash -l`, `git status; curl` and `/usr/bin/git`
+    are not. The list is a harness-prompt allowlist, not the OS wall.
+    `TestWallTermsScriptIsNetDeny`: header `MODE: script` is `--net-deny`; a
+    model card is not. `TestWallTermsBodyOnlyModeDoesNotSelectScript`: body
+    `MODE: script` is not. `TestWallTermsConflictingModeHeadersRefuse`:
+    duplicate or contradictory MODE fields refuse.
+    `TestWallTermsReadRootsDoNotAdmitAnOutsider` and
+    `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`: a directory glob wired as
+    `--read` does not admit a path outside PATHS through `sandbox.Inside`.
+    `TestWallTermsReadRootsRejectEscapingSymlink`: a PATHS directory that is a
+    symlink out of the repo is refused, not granted.
+    The launcher argv is **TODO launcher: Rowan**; these tests are the terms.
 
 ## The work list
 

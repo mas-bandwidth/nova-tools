@@ -61,7 +61,7 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>]
   nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
@@ -78,7 +78,7 @@ batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, 
 each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
 will not merge and says so, and then builds, vets, tests and runs the lisp suite over
 what is left, one progress line per step on stderr with the elapsed time. Green is
-"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list>"
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]"
 at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages and
 the failing tests at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
 never claims a suite it only ran part of; --require-lisp turns a skipped lisp step into a
@@ -86,9 +86,11 @@ FAIL for a caller who needs it run, and a program that is not on PATH is also lo
 under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
 the tree's go.mod BEFORE the first merge, so an old go on PATH is one refusal with the
 remedy rather than a red build step quoting a download notice. checks=required is the
-default: a member whose own head has no green ci-ok is DROPPED BEFORE THE MERGE, because
+default: a member whose own head has no green required check is DROPPED BEFORE THE MERGE, because
 the gate runs on one operating system and CI runs on three and a member nobody has judged
-on its own would turn the whole batch red for its own fault. A member whose head is a
+on its own would turn the whole batch red for its own fault. The check's name is ci-ok
+here, --check-name or .nova-merge required-check= elsewhere, and it is printed as check=
+on BATCH OK and BATCH DROP so a lane script can parse it. A member whose head is a
 batch's own branch (rowan/integration-*) or is named by a BATCH OK line in --receipt-file
 is admitted on the gate's own evidence instead -- the same receipt nova-merge land takes.
 --no-require-checks waives the whole check and says so on the verdict line. Pushing that
