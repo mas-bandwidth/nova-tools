@@ -120,6 +120,15 @@ func TestCutKindRecutMechanicalApplyClean(t *testing.T) {
 	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "red", "*.card")); len(matches) != 1 {
 		t.Errorf("recut card is not in lanes/red: %v", matches)
 	}
+
+	// Verify the job starts from an applied tree: alpha.txt has the patch applied.
+	alphaContent, err := os.ReadFile(filepath.Join(repo, "alpha.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(alphaContent), "line 2 feat") {
+		t.Errorf("repo alpha.txt was not applied cleanly; got %q", string(alphaContent))
+	}
 }
 
 // cut-kind-recut-apply-conflict: When the previous card's diff conflicts with the tip,
@@ -177,6 +186,15 @@ func TestCutKindRecutMechanicalApplyConflict(t *testing.T) {
 	}
 	if strings.Contains(card, "applied: clean\n") {
 		t.Errorf("conflicting patch recorded applied: clean:\n%s", card)
+	}
+
+	// Verify the job starts from an applied tree: alpha.txt has 3-way conflict markers applied.
+	alphaContent, err := os.ReadFile(filepath.Join(repo, "alpha.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(alphaContent), "<<<<<<<") || !strings.Contains(string(alphaContent), "feat2") {
+		t.Errorf("repo alpha.txt does not carry 3-way conflict markers; got %q", string(alphaContent))
 	}
 }
 
@@ -248,6 +266,25 @@ func TestCutKindRecutRefusals(t *testing.T) {
 	if !strings.Contains(bufErr.String(), "CUT REFUSED") || !strings.Contains(bufErr.String(), "--dir") {
 		t.Errorf("stderr = %q, want CUT REFUSED naming --dir", bufErr.String())
 	}
+
+	// 4. Missing --dir when --diff-file is passed.
+	bufOut.Reset()
+	bufErr.Reset()
+	code = CutKind(CutKindInput{
+		Kind:     "recut",
+		Repo:     "mas-bandwidth/nova-tools",
+		DiffFile: dummyDiff,
+		Out:      out,
+		Queue:    queue,
+		Stdout:   &bufOut,
+		Stderr:   &bufErr,
+	})
+	if code != 2 {
+		t.Errorf("missing dir exit = %d, want 2", code)
+	}
+	if !strings.Contains(bufErr.String(), "CUT REFUSED") || !strings.Contains(bufErr.String(), "--dir is required") {
+		t.Errorf("stderr = %q, want CUT REFUSED naming --dir is required", bufErr.String())
+	}
 }
 
 // cut-kind-recut-with-hold-and-diff: When both --hold-file and --diff-file are given,
@@ -276,7 +313,8 @@ func TestCutKindRecutWithHoldAndDiff(t *testing.T) {
 		"PATHS: alpha.txt\n" +
 		"TEST: ./internal/pulse TestSample\n" +
 		"BASE: dev\n" +
-		"base-sha: c7104413f20c2897e6a9c4c19cc7158b0f4ea15c\n"
+		"base-sha: c7104413f20c2897e6a9c4c19cc7158b0f4ea15c\n" +
+		"REMAINS: repair line 2 cleanly\n"
 	if err := os.WriteFile(holdFile, []byte(holdContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -308,5 +346,73 @@ func TestCutKindRecutWithHoldAndDiff(t *testing.T) {
 	}
 	if !strings.Contains(card, "HOLD: DISPOSITION who=Johnny") {
 		t.Errorf("card missing HOLD evidence:\n%s", card)
+	}
+	if !strings.Contains(card, "REMAINS: repair line 2 cleanly\n") {
+		t.Errorf("card missing REMAINS header:\n%s", card)
+	}
+	if !strings.Contains(card, "Recut the remaining work named in the HOLD onto BASE dev at base-sha c7104413f20c2897e6a9c4c19cc7158b0f4ea15c.") {
+		t.Errorf("card missing HOLD instruction paragraph:\n%s", card)
+	}
+	if !strings.Contains(card, "Remains: repair line 2 cleanly\n") {
+		t.Errorf("card missing Remains line in instruction:\n%s", card)
+	}
+	if !strings.Contains(card, "PATHS and the failing test come from that HOLD") {
+		t.Errorf("card missing PATHS and failing test in instruction:\n%s", card)
+	}
+
+	// Verify the job starts from an applied tree: alpha.txt has the patch applied.
+	alphaContent, err := os.ReadFile(filepath.Join(repo, "alpha.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(alphaContent), "line 2 feat3") {
+		t.Errorf("repo alpha.txt was not applied cleanly; got %q", string(alphaContent))
+	}
+}
+
+// cut-kind-recut-apply-direct: Attempt3WayApply directly tests clean vs conflict behavior.
+func TestAttempt3WayApplyDirect(t *testing.T) {
+	repo := setupGitRepo(t)
+	dir := t.TempDir()
+
+	// Clean apply
+	runGit(t, repo, "checkout", "-b", "b-clean")
+	_ = os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("line 1\nline 2 direct\nline 3\n"), 0o644)
+	runGit(t, repo, "commit", "-am", "direct change")
+	diffClean := filepath.Join(dir, "clean.diff")
+	_ = os.WriteFile(diffClean, []byte(runGit(t, repo, "diff", "HEAD~1")), 0o644)
+
+	runGit(t, repo, "checkout", "main")
+	_ = os.WriteFile(filepath.Join(repo, "gamma.txt"), []byte("gamma\n"), 0o644)
+	runGit(t, repo, "add", "gamma.txt")
+	runGit(t, repo, "commit", "-m", "add gamma")
+
+	res := Attempt3WayApply(repo, diffClean)
+	if res != "clean" {
+		t.Errorf("Attempt3WayApply clean diff got %q, want clean", res)
+	}
+	alpha, _ := os.ReadFile(filepath.Join(repo, "alpha.txt"))
+	if !strings.Contains(string(alpha), "line 2 direct") {
+		t.Errorf("alpha.txt not applied cleanly; got %q", string(alpha))
+	}
+
+	// Conflicting apply
+	runGit(t, repo, "checkout", "-b", "b-conflict")
+	_ = os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("line 1\nline 2 conflict1\nline 3\n"), 0o644)
+	runGit(t, repo, "commit", "-am", "conflict branch")
+	diffConflict := filepath.Join(dir, "conflict.diff")
+	_ = os.WriteFile(diffConflict, []byte(runGit(t, repo, "diff", "HEAD~1")), 0o644)
+
+	runGit(t, repo, "checkout", "main")
+	_ = os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("line 1\nline 2 conflict2\nline 3\n"), 0o644)
+	runGit(t, repo, "commit", "-am", "conflict main")
+
+	resConf := Attempt3WayApply(repo, diffConflict)
+	if resConf != "conflict" {
+		t.Errorf("Attempt3WayApply conflicting diff got %q, want conflict", resConf)
+	}
+	alphaConf, _ := os.ReadFile(filepath.Join(repo, "alpha.txt"))
+	if !strings.Contains(string(alphaConf), "<<<<<<<") {
+		t.Errorf("alpha.txt missing conflict markers; got %q", string(alphaConf))
 	}
 }

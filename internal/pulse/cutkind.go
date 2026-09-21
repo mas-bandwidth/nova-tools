@@ -121,8 +121,7 @@ func CutKind(in CutKindInput) int {
 		}
 		chosenDiff = string(rawDiff)
 		if in.Kind == "recut" {
-			repoDir := resolveRepoDir(in)
-			in.Applied = Attempt3WayApply(repoDir, in.DiffFile)
+			in.Applied = Attempt3WayApply(in.Dir, in.DiffFile)
 		}
 	} else if in.PriorDiff != "" {
 		if raw, err := os.ReadFile(in.PriorDiff); err == nil {
@@ -276,16 +275,15 @@ func cutKindProblem(in CutKindInput) string {
 			if _, err := os.Stat(in.DiffFile); err != nil {
 				return fmt.Sprintf("--diff-file %s: %s (pass a readable unified diff file)", oneline.Field(in.DiffFile), oneline.Err(err))
 			}
-			repoDir := resolveRepoDir(in)
-			if repoDir == "" {
+			if strings.TrimSpace(in.Dir) == "" {
 				return "--dir is required when --diff-file is passed (pass a git repository directory where git apply --3way can be tested)"
 			}
-			if st, err := os.Stat(repoDir); err != nil || !st.IsDir() {
-				return fmt.Sprintf("--dir %s is not a directory (pass a git repository directory where git apply --3way can be tested)", oneline.Field(repoDir))
+			if st, err := os.Stat(in.Dir); err != nil || !st.IsDir() {
+				return fmt.Sprintf("--dir %s is not a directory (pass a git repository directory where git apply --3way can be tested)", oneline.Field(in.Dir))
 			}
-			cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--git-dir")
+			cmd := exec.Command("git", "-C", in.Dir, "rev-parse", "--git-dir")
 			if err := cmd.Run(); err != nil {
-				return fmt.Sprintf("--dir %s is not a git repository (pass a git repository directory where git apply --3way can be tested)", oneline.Field(repoDir))
+				return fmt.Sprintf("--dir %s is not a git repository (pass a git repository directory where git apply --3way can be tested)", oneline.Field(in.Dir))
 			}
 		}
 	case "port":
@@ -300,19 +298,6 @@ func cutKindProblem(in CutKindInput) string {
 		}
 	}
 	return ""
-}
-
-func resolveRepoDir(in CutKindInput) string {
-	if in.Dir != "" {
-		return in.Dir
-	}
-	if st, err := os.Stat(in.Repo); err == nil && st.IsDir() {
-		return in.Repo
-	}
-	if _, err := os.Stat(".git"); err == nil {
-		return "."
-	}
-	return in.Dir
 }
 
 func cutKindKnown(kind string) bool {

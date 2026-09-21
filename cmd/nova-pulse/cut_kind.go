@@ -45,6 +45,9 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	dir := f.fs.String("dir", "", "")
 	clone := f.fs.String("clone", "", "")
 	holdFile := f.fs.String("hold-file", "", "")
+	hold := f.fs.String("hold", "", "")
+	holdLine := f.fs.String("hold-line", "", "")
+	remains := f.fs.String("remains", "", "")
 	paths := f.fs.String("paths", "", "")
 	test := f.fs.String("test", "", "")
 	prior := f.fs.String("prior", "", "")
@@ -78,10 +81,15 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	if effectiveDir == "" {
 		effectiveDir = *clone
 	}
+	effectiveHoldFile := *holdFile
+	if effectiveHoldFile == "" {
+		effectiveHoldFile = *hold
+	}
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
 		Branch: *branch, Base: *base, BaseSHA: *baseSHA,
-		BodyFile: *bodyFile, DiffFile: effectiveDiffFile, Dir: effectiveDir, HoldFile: *holdFile,
+		BodyFile: *bodyFile, DiffFile: effectiveDiffFile, Dir: effectiveDir,
+		HoldFile: effectiveHoldFile, HoldLine: *holdLine, Remains: *remains,
 		Paths: *paths, TestName: *test,
 		Prior: *prior, Names: *names, SpecLines: *specLines,
 		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,

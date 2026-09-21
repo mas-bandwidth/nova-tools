@@ -13,8 +13,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Attempt3WayApply attempts `git apply --3way --check` of diffPath in repoDir.
-// It returns "clean" if the patch applies without conflict, or "conflict" otherwise.
+// Attempt3WayApply attempts `git apply --3way` of diffPath in repoDir,
+// applying the patch to repoDir so the job starts from an applied tree.
+// It checks output and repo state for conflict markers/messages rather than relying
+// solely on exit code. It returns "clean" if the patch applies without conflict,
+// or "conflict" otherwise.
 func Attempt3WayApply(repoDir, diffPath string) string {
 	absDiff, err := filepath.Abs(diffPath)
 	if err != nil {
@@ -23,10 +26,33 @@ func Attempt3WayApply(repoDir, diffPath string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "apply", "--3way", "--check", absDiff)
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "apply", "--3way", absDiff)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.ToLower(string(out))
-	if err == nil && !strings.Contains(outStr, "conflict") {
+
+	hasConflict := strings.Contains(outStr, "conflict") ||
+		strings.Contains(outStr, "<<<<<<<") ||
+		strings.Contains(outStr, "=======") ||
+		strings.Contains(outStr, ">>>>>>>") ||
+		strings.Contains(outStr, "leftover conflict marker")
+
+	if !hasConflict && err == nil {
+		chkCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "diff", "--check")
+		chkOut, chkErr := chkCmd.CombinedOutput()
+		if chkErr != nil || strings.Contains(strings.ToLower(string(chkOut)), "conflict marker") {
+			hasConflict = true
+		}
+		statusCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "status", "--porcelain")
+		statusOut, _ := statusCmd.CombinedOutput()
+		for _, line := range strings.Split(string(statusOut), "\n") {
+			if strings.HasPrefix(line, "UU ") || strings.HasPrefix(line, "AA ") || strings.HasPrefix(line, "UD ") || strings.HasPrefix(line, "DU ") {
+				hasConflict = true
+				break
+			}
+		}
+	}
+
+	if err == nil && !hasConflict {
 		return "clean"
 	}
 	return "conflict"
@@ -166,11 +192,13 @@ func recutInstruction(in CutKindInput, diffContent string) string {
 	var b strings.Builder
 	if in.Applied == "clean" {
 		b.WriteString("The prior diff applied cleanly onto the tip (applied: clean).\n")
-		b.WriteString("Apply the prior diff (`git apply --3way`), run the tests, and fix only what is red.\n")
+		b.WriteString("Run the tests, and fix only what is red.\n")
 	} else if in.Applied == "conflict" {
 		b.WriteString("The prior diff had conflicts when applied onto the tip (applied: conflict).\n")
 		b.WriteString("Resolve every conflict keeping both sides, and make the tests green.\n")
-	} else {
+	}
+
+	if in.HoldLine != "" || in.Base != "" || in.BaseSHA != "" || in.Paths != "" || in.TestName != "" || in.Remains != "" {
 		testLine := "Write the remaining work red first: the named test must fail on the base, then the fix, then green."
 		if t := strings.TrimSpace(in.TestName); t != "" {
 			pkg, name, ok := strings.Cut(t, " ")
@@ -180,10 +208,17 @@ func recutInstruction(in CutKindInput, diffContent string) string {
 				testLine = fmt.Sprintf("Write the named test red first: %s — it must fail on the base, then the fix, then green.", t)
 			}
 		}
+		if in.Applied != "" {
+			b.WriteString("\n")
+		}
+		remainsLine := ""
+		if r := strings.TrimSpace(in.Remains); r != "" {
+			remainsLine = fmt.Sprintf("Remains: %s\n", r)
+		}
 		fmt.Fprintf(&b, `Recut the remaining work named in the HOLD onto BASE %s at base-sha %s.
 PATHS and the failing test come from that HOLD; they are the declared scope.
-%s
-`, oneline.Field(in.Base), oneline.Field(in.BaseSHA), testLine)
+%s%s
+`, oneline.Field(in.Base), oneline.Field(in.BaseSHA), remainsLine, testLine)
 	}
 
 	dbytes := len(diffContent)

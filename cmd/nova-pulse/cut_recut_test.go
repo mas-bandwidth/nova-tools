@@ -78,4 +78,39 @@ func TestCmdCutKindRecutAppliesClean(t *testing.T) {
 	if !strings.Contains(card, "applied: clean\n") {
 		t.Errorf("card missing applied: clean:\n%s", card)
 	}
+
+	docBytes, err := os.ReadFile(filepath.Join(repo, "doc.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(docBytes), "v2 patched") {
+		t.Errorf("repo doc.txt was not applied; got %q", string(docBytes))
+	}
+}
+
+// TestCmdCutKindRecutMissingDirRefused verifies that omitting --dir when --diff-file is passed
+// is refused cleanly and does not guess cwd.
+func TestCmdCutKindRecutMissingDirRefused(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dummyDiff := filepath.Join(dir, "doc.diff")
+	_ = os.WriteFile(dummyDiff, []byte("diff\n"), 0o644)
+
+	code, _, stderr := runCut(t,
+		"--kind", "recut",
+		"--repo", "mas-bandwidth/nova-tools",
+		"--diff-file", dummyDiff,
+		"--title", "missing dir recut",
+		"--out", out,
+		"--queue", queue,
+	)
+	if code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "CUT REFUSED") || !strings.Contains(stderr, "--dir is required") {
+		t.Errorf("stderr = %q, want CUT REFUSED naming --dir is required", stderr)
+	}
 }
