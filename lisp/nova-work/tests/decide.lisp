@@ -74,3 +74,61 @@
         "the below-floor answer is a suggestion")
     (check-equal 500 (decision-confidence decision) "the provider confidence is carried")
     (check-equal 900 (decision-floor decision) "the floor is carried")))
+
+;;; ------------------------------------------------------------------
+;;; E10-F01 "Structured refusal and operation diagnostics" (ROADMAP.md:976):
+;;; Provide bounded inspect/diagnose drill-down without secrets or private
+;;; bodies.
+;;;
+;;; The two halves of the criterion, each by its own SPEC-WORK line:
+;;;   docs/SPEC-WORK.md:2737    -- `operation status|list|wait|cancel` are
+;;;                               "each bounded and capped like every other
+;;;                               listing" (the bounded drill-down).
+;;;   docs/SPEC-WORK.md:3027-3029 -- the privacy floor: a private node "leaves
+;;;                               every public render and `private=<n>` is all
+;;;                               that is printed of them; a refusal names the
+;;;                               field and never prints a private value."
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F01ProvideBoundedInspectDiagnoseDrill"
+    "docs/SPEC-WORK.md:2737;3027-3029"
+    "expected=bounded-drill-down-summary-not-body;listing-capped;private-node-prints-marker-never-its-body"
+  ;; Part 1: the inspect/diagnose drill-down is bounded. `operation status`
+  ;; answers with the named operation's own summary (kind and state) and never
+  ;; a whole-queue or whole-body dump; the listing is capped by --max.
+  (let* ((events '((:id "ev-1" :kind :state-to-done :request "req-1")))
+         (session (make-work-session :events events))
+         (session (session-add-operation
+                   session (make-operation :id "op-a" :op :capture
+                                           :request "req-a" :state :running
+                                           :staged-bytes 256)))
+         (session (session-add-operation
+                   session (make-operation :id "op-b" :op :export
+                                           :request "req-b" :state :queued)) )
+         (session (session-add-operation
+                   session (make-operation :id "op-c" :op :clip
+                                           :request "req-c" :state :queued))))
+    (let ((status (operation-status session "op-b")))
+      (check-equal :export (getf status :op) "the drill-down names the operation kind")
+      (check-equal :queued (getf status :state) "the drill-down reads the operation state")
+      (ok (null (getf status :operations)) "no whole-queue dump in the drill-down")
+      (ok (null (getf status :events)) "no event-body dump in the drill-down")
+      (ok (null (getf status :spec)) "no internal spec/body in the drill-down"))
+    (let ((rows (session-operation-list session :max 2)))
+      (check-equal 2 (length rows) "the operation listing is capped by --max")
+      (dolist (r rows)
+        (ok (and (getf r :id) (getf r :op) (getf r :state))
+            "a listing row is a summary of id/kind/state, not a body")))
+    (ok (session-bounded-p session) "the queues, staged bytes and results stay bounded"))
+  ;; Part 2: the drill-down discloses no private body. A private node's render
+  ;; prints `private=1` and never its title or links (which would otherwise be
+  ;; its whole public body).
+  (let* ((k (make-kernel :state (make-seed-state
+                                 '((:id "root" :type :work-set :parent nil :state :unknown)
+                                   (:id "root/p" :type :task :parent "root" :state :doing
+                                         :title "secret body" :links ("acct-token-123")
+                                         :private t)))))
+         (rendered (render-node k "root/p")))
+    (check-string= "private=1" rendered "a private node's drill-down prints the marker only")
+    (ok (null (search "secret body" rendered)) "the private body is not disclosed: ~A" rendered)
+    (ok (null (search "acct-token-123" rendered)) "no link/token value is disclosed: ~A" rendered)))

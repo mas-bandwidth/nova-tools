@@ -41,8 +41,17 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 	if elapsed > 5*time.Second { // wall-ok: the bound is the assertion -- with the fix the deadline cuts the tree at 3s, and without it the run blocks on the surviving grandchild; a generous bound would be blind to the regression
 		t.Fatalf("the deadline cut the run at 3s, but it took %v:\n%s", elapsed, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Fatalf("a run killed at the deadline still prints the NATIVE OK line:\n%s", stdout.String())
+	// The verdict line is still printed -- that is what this assertion has always been
+	// about -- but a run killed at its deadline with a silent harness and no RESULT.md
+	// did not succeed, and no longer says it did (nova-tools #1844).
+	if !strings.Contains(stdout.String(), "NATIVE INCOMPLETE ") {
+		t.Fatalf("a run killed at the deadline still prints its verdict line:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "why=harness-silent") {
+		t.Fatalf("the verdict must name why it is incomplete:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "NATIVE OK") {
+		t.Fatalf("a run that produced nothing must not say OK:\n%s", stdout.String())
 	}
 	// no live child after: the grandchild the harness left behind is gone too.
 	bgRaw, err := os.ReadFile(filepath.Join(slot, "jobs", "deadline", "background.pid"))

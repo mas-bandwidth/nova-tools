@@ -456,7 +456,10 @@ func (l *lab) run(args ...string) (int, string, string) {
 		if !hasReviewers && !hasNoRequire {
 			effective = append(effective, "--no-require-holds", "--reason", "test")
 		}
-		if hasReviewers && !hasLane && l.lane != "" {
+		// --lane is required whatever the mode (#1896): the hold fold reads the lane's
+		// own read records even under the forge waiver. A test that wants the missing-lane
+		// refusal drives runBare instead.
+		if !hasLane && l.lane != "" {
 			_ = os.MkdirAll(l.lane, 0755)
 			effective = append(effective, "--lane", l.lane)
 		}
