@@ -80,6 +80,9 @@ func wkRun(t *testing.T, in HarvestInput) (out, errs string, code int) {
 	if in.Clones == nil {
 		in.Clones = []string{"o/r=" + filepath.Join(t.TempDir(), "coordinator-clone")}
 	}
+	if in.ResultsDir == "" && in.Working != "" {
+		in.ResultsDir = filepath.Join(in.Working, "results")
+	}
 	code = HarvestWorking(in)
 	return o.String(), e.String(), code
 }
@@ -270,6 +273,7 @@ func TestHarvestWorkingMarksHarvested(t *testing.T) {
 	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 1, Equals: "log", Stdout: "ffff000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "ffff000000000000000000000000000000000000\trefs/heads/rowan/h"},
+		{Arg: 3, Equals: "rev-parse", Stdout: "ffff000000000000000000000000000000000000"},
 		originRule("o/r"),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
@@ -282,8 +286,13 @@ func TestHarvestWorkingMarksHarvested(t *testing.T) {
 	if !strings.Contains(first, "HARVEST JOB label=h") {
 		t.Fatalf("first run printed no job line:\n%s", first)
 	}
-	if _, err := os.Stat(filepath.Join(job, ".harvested")); err != nil {
-		t.Fatalf("no .harvested marker: %v", err)
+	if _, err := os.Stat(filepath.Join(working, "results", "h", ".harvested")); err != nil {
+		if _, err := os.Stat(filepath.Join(job, ".harvested")); err != nil {
+			t.Fatalf("no .harvested marker: %v", err)
+		}
+	}
+	if _, err := os.Stat(job); !os.IsNotExist(err) {
+		t.Fatalf("job directory %s should be deleted after harvest: %v", job, err)
 	}
 	second, _, _ := wkRun(t, HarvestInput{Working: working, Base: "0123456789ab", Max: 20})
 	if strings.Contains(second, "HARVEST JOB label=h") {

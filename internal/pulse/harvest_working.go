@@ -136,7 +136,14 @@ func HarvestWorking(in HarvestInput) int {
 		if out.line != "" {
 			list.Line(out.line)
 		}
-		markHarvestedLocal(j.dir)
+		if out.class == classFixed || out.class == classAlreadyFixed || out.class == classNoChange {
+			if err := relocateHarvestedWorking(j, r.in); err != nil {
+				fmt.Fprintf(r.in.Stderr, "HARVEST NOTE relocate failed label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
+				markHarvestedLocal(j.dir)
+			}
+		} else {
+			markHarvestedLocal(j.dir)
+		}
 	}
 	list.More()
 

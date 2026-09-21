@@ -259,7 +259,7 @@ func harvestBench(in HarvestInput) int {
 		}
 		if count == 0 {
 			noCommit++
-			markHarvested(shell, in.Bench, j.Dir)
+			_ = relocateHarvestedBench(shell, in.Bench, j.Dir, label, branch, in.ResultsDir)
 			state[label] = jobDone
 			lines.Line(fmt.Sprintf("HARVEST NO-COMMIT bench=%s label=%s branch=%s base=%s (nothing was committed; not pushed)",
 				field(in.Bench), field(label), field(branch), field(base)))
@@ -357,7 +357,7 @@ func harvestBench(in HarvestInput) int {
 			}
 		}
 		prs++
-		markHarvested(shell, in.Bench, j.Dir)
+		_ = relocateHarvestedBench(shell, in.Bench, j.Dir, label, branch, in.ResultsDir)
 		state[label] = jobDone
 		lines.Line(fmt.Sprintf("HARVEST JOB bench=%s label=%s branch=%s sha=%s base=%s pr=%s#%d",
 			field(in.Bench), field(label), field(branch), field(sha), field(base), field(dest.repo), pr))

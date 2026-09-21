@@ -43,6 +43,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	working := f.fs.String("working", "", "")
 	roots := f.fs.String("roots", "", "")
 	timer := f.fs.String("timer", "", "")
+	resultsDir := f.fs.String("results", "", "")
 	commitFlag := f.fs.Bool("commit", false, "")
 
 	if !f.parse(args, stderr) {
@@ -87,6 +88,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Clones:       []string(clones),
 			BranchPrefix: *branchPrefix,
 			Commit:       commitVal,
+			ResultsDir:   *resultsDir,
 			Stdout:       stdout,
 			Stderr:       stderr,
 			Now:          func() time.Time { return now },
@@ -149,6 +151,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Commit:       commitVal,
 		Batch:        *batch,
 		Store:        pulse.StoreOptions{Addr: *store, User: *storeUser, PasswordEnv: *passwordEnv},
+		ResultsDir:   *resultsDir,
 	}
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)
