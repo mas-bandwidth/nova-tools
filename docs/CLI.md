@@ -2976,6 +2976,17 @@ ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
 cost per USEFUL card, so a dearer model that lands beats a cheap one that does
 not.
 
+### sprint funnel
+
+```
+nova-pulse sprint funnel --queue <dir> [--oneline] [--json] [--record --event <e> --card <c>] [--void --card <c>]
+```
+
+`sprint funnel` maintains an append-only accounting log under `<queue>/funnel/events.tsv` tracking card lifecycle events: `ADMIT`, `LAUNCH`, `HARVEST`, `GATE`, `LAND`, `VOID` (Essential 9, #2380).
+- `VOID` records mark abandoned or retried attempts without rewriting history.
+- Unmeasured spend is recorded strictly as `-`, never manufactured zeros.
+- Calculates conversion rates across stages, measured spend, and cost per landed card.
+
 ## nova-review
 
 One bounded, exact-revision **review packet** at the review layer, specified in

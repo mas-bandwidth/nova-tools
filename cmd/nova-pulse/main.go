@@ -66,6 +66,7 @@ nova-pulse fleet   standard --benches <file> --bench <name> [--machines <file>] 
 nova-pulse fleet   mirror --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse sprint  funnel --queue <dir> [--oneline] [--json] [--record --event <e> --card <c>] [--void --card <c>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
@@ -397,6 +398,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdHygiene(rest, stdout, stderr, now)
 	case "fleet":
 		return cmdFleet(rest, stdout, stderr)
+	case "sprint":
+		return cmdSprint(rest, stdout, stderr, now)
 	case "wake":
 		return cmdWake(rest, stdout, stderr)
 	case "sleep":
