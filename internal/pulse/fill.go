@@ -364,6 +364,18 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		}
 	}
 
+	qDir := fillQueue(in)
+	bpFile := filepath.Join(qDir, "control", "BACKPRESSURE")
+	if bpData, err := os.ReadFile(bpFile); err == nil {
+		bpLine := strings.TrimSpace(string(bpData))
+		fmt.Fprintf(in.Stderr, "FILL BACKPRESSURE %s\n", bpLine)
+		for i := range want {
+			if want[i] > 1 {
+				want[i] = 1
+			}
+		}
+	}
+
 	// Round-robin: one card per bench in turn, passes repeat until every bench is at its
 	// capacity or the pool is empty. A card skipped as unknown or held consumes the card
 	// but not the bench's want, so the bench is offered the next pass rather than dropped

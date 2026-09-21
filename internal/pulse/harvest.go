@@ -401,6 +401,30 @@ func Harvest(in HarvestInput) int {
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
 				field(dest.repo), pr, field(c.Label), field(branch), classTail))
 			appendNext(in.Root, dest.repo, pr, c.Label)
+
+			// Pipeline the second phase per card (#2509):
+			// Report card, gate facts, and friend read posted immediately.
+			qDir := in.Root
+			if isDir(filepath.Join(in.Root, "queue")) {
+				qDir = filepath.Join(in.Root, "queue")
+			}
+			touched := harvestExtractTouchedFiles(jobDir, target, resultLines)
+			pipeRes, pipeErr := PipelineOnPROpen(PipelinePROpenInput{
+				QueueDir:     qDir,
+				Repo:         dest.repo,
+				PR:           pr,
+				Head:         harvestJobHead(jobDir, resultLines),
+				Base:         target,
+				Title:        c.Label,
+				TouchedFiles: touched,
+				ResultLines:  resultLines,
+				Checks:       "pass",
+				Holds:        0,
+				Now:          in.Now,
+			})
+			if pipeErr == nil && pipeRes != nil {
+				lines = append(lines, pipeRes.Line)
+			}
 		}
 	}
 
@@ -1040,3 +1064,60 @@ func appendNext(root, repo string, pr int, title string) {
 }
 
 const childTimeout = 120 * time.Second
+
+func harvestExtractTouchedFiles(jobDir, base string, resultLines []string) []string {
+	var files []string
+	if rf := resultFiles(resultLines); rf != "" && rf != "-" {
+		for _, f := range strings.Fields(rf) {
+			clean := strings.Trim(f, " ,;")
+			if clean != "" {
+				files = append(files, clean)
+			}
+		}
+	}
+	cDir := cloneDir(jobDir)
+	if isDir(filepath.Join(cDir, ".git")) {
+		ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", base+"..HEAD")
+		cmd.Dir = cDir
+		if out, err := cmd.Output(); err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					files = append(files, line)
+				}
+			}
+		}
+	}
+	return files
+}
+
+func harvestJobHead(jobDir string, resultLines []string) string {
+	cDir := cloneDir(jobDir)
+	if isDir(filepath.Join(cDir, ".git")) {
+		ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+		cmd.Dir = cDir
+		if out, err := cmd.Output(); err == nil {
+			sha := strings.TrimSpace(string(out))
+			if len(sha) == 40 {
+				return sha
+			}
+		}
+	}
+	for _, l := range resultLines {
+		t := strings.TrimSpace(l)
+		for _, prefix := range []string{"sha=", "SHA=", "commit="} {
+			if strings.Contains(t, prefix) {
+				idx := strings.Index(t, prefix)
+				fields := strings.Fields(t[idx+len(prefix):])
+				if len(fields) > 0 {
+					return fields[0]
+				}
+			}
+		}
+	}
+	return "0000000000000000000000000000000000000000"
+}
