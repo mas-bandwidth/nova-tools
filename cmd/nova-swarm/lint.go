@@ -75,7 +75,7 @@ var cardLintRemedies = map[string]string{
 	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule (practices 17, 25)",
 	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift (practice 17)",
 	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words (practice 23)",
-	"test-command":     "write the gate verbatim, exactly as the card is to run it (`go test ./internal/x/ -run TestY -count=1`), or say in words that there are no tests (practice 5)",
+	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>` (the most common polyglot gate and the one `ci-fast.yml` runs), `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests (practice 5; #1994)",
 	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes` (practice 17)",
 	"files-named":      "name the file or the package the work lives in, so the change has a home to start from (practice 3)",
 	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one (practice 25)",
@@ -127,11 +127,26 @@ type cardFinding struct {
 }
 
 var (
-	cardStepRE    = regexp.MustCompile(`^STEP[ \t]+([0-9]+)[.)]?`)
-	cardCloneRE   = regexp.MustCompile(`(?i)(clone|(^|[ \t&|(])cd[ \t])`)
-	cardTestRE    = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)
-	cardReadRE    = regexp.MustCompile(`(?i)\b(probe|read)\b`)
-	cardCommandRE = regexp.MustCompile(`(?i)(go[ \t]+test|go[ \t]+vet|pytest|cargo[ \t]+test|npm[ \t]+test|no[ \t]+tests)`)
+	cardStepRE  = regexp.MustCompile(`^STEP[ \t]+([0-9]+)[.)]?`)
+	cardCloneRE = regexp.MustCompile(`(?i)(clone|(^|[ \t&|(])cd[ \t])`)
+	cardTestRE  = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)
+	cardReadRE  = regexp.MustCompile(`(?i)\b(probe|read)\b`)
+	// THE TEST-COMMAND CHECK ACCEPTS MORE THAN ONE VOCABULARY (issue #1994).
+	//
+	// The four-line whitelist (`go test`/`go vet`/`pytest`/`cargo test`/`npm test`) was
+	// written when every gate in ci-fast.yml was `go test ./...`. Then ci-fast.yml moved
+	// to `make <leg>` (the Makefile is the one entry per AGENTS.md rule 6), and 155 of 176
+	// polyglot cards in the `mas-bandwidth/schema` lane tripped on a verbatim `make`
+	// gate that the repository would actually run. The accepted set widens to the verbs a
+	// card writer might honestly name -- the four it already took, the rest of the common
+	// runners, the script-and-runner shapes, and the words `no tests` -- so a card that
+	// names the gate `ci-fast.yml` runs is not refused by the linter.
+	//
+	// The leading context is start-of-string or a non-word character; the trailing context
+	// is end-of-string or a non-word character. Word characters here are `A-Za-z0-9_./-`,
+	// the set a path component can hold. `npmtest` does not match `npm test`, and
+	// `cargo run` does not match `cargo test`.
+	cardCommandRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./-])(?:go[ \t]+(?:test|vet)|pytest|cargo[ \t]+test|npm[ \t]+test|dotnet[ \t]+test|ctest|mvn[ \t]+test|gradle[ \t]+test|(?:g)?make[ \t]+[A-Za-z0-9_./-]+|bash[ \t]+\S+|\./[A-Za-z0-9_][A-Za-z0-9_./-]*|no[ \t]+tests)(?:[^A-Za-z0-9_./-]|$)`)
 	cardDeadRE    = regexp.MustCompile(`(?i)(deadline|finish within)`)
 	cardFileRE    = regexp.MustCompile(`[A-Za-z0-9_][A-Za-z0-9_.-]*\.(go|py|rs|js|ts|md|lisp|sh|json|toml|txt)\b|\./[A-Za-z0-9_./-]+`)
 	cardScratchRE = regexp.MustCompile(`(/[A-Za-z0-9_./<>$-]*scratch\b)|(\$\{?[A-Za-z_]+\}?/scratch\b)|(<[^>]+>/scratch\b)`)
