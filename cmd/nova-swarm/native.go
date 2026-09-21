@@ -79,6 +79,10 @@ type nativeRunConfig struct {
 	// onProxy receives the proxy once it is listening, before the child starts.
 	// Nil in production.
 	onProxy func(*swarm.ProviderProxy)
+	// resultsDir is the optional results store directory where durable outputs are moved.
+	resultsDir string
+	// cleanJobs enables atomic job storage cleanup at card completion.
+	cleanJobs bool
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -104,6 +108,10 @@ type nativeRunResult struct {
 	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled        bool              // the idle watch ended the run, not the deadline and not the child
 	blockedPath  string            // the report the run wrote FOR a card that published none, "" when it wrote none
+	resultsDir   string            // the results store directory durable outputs were moved to, if moved
+	cleanedJob   bool              // true if job directory and sandbox tmp were cleaned up at completion
+	wallBranch   string            // the branch of the clone before cleanup, if any
+	wallCommits  int               // commits on the branch before cleanup, if any
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -866,6 +874,46 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if res.unrecorded {
 		return res, 2
 	}
+
+	if (res.wallRefusal != swarm.WallRefusal{}) {
+		res.wallBranch, res.wallCommits, _ = swarm.WallCommits(filepath.Join(jobDir, "repo"))
+	}
+
+	// ATOMIC JOB STORAGE CLEANUP AT CARD COMPLETION (issue #2379, Essential 7).
+	// When enabled (via --clean / --clean-jobs or cfg.cleanJobs), when a card finishes
+	// (or is idle-reaped / wall-refused), if results have moved or for harness-written
+	// failures (idle-reaped, wall-refused) where nothing is kept beyond RESULT.md and
+	// harness log, remove the job directory including clone and sandbox tmp.
+	// Shared caches (tmp/cache/{go-mod,go-build,npm}) and mirrors (~/nova-bench/mirror) are
+	// verified to never be in the removal set.
+	if cfg.cleanJobs {
+		isHarnessFailure := res.idled || (res.wallRefusal != swarm.WallRefusal{}) || res.wallReport != "" || res.end == swarm.EndWall
+		resultsMoved := swarm.HasResultsMoved(jobDir, cfg.resultsDir)
+		targetResultsDir := cfg.resultsDir
+		if targetResultsDir == "" && (isHarnessFailure || resultsMoved) {
+			targetResultsDir = swarm.DefaultResultsDir(benchHome(cfg), cfg.slotDir, cfg.label)
+		}
+
+		cleanRes, cleanErr := swarm.CleanupJobStorageAtCompletion(swarm.JobStorageCleanupOpts{
+			JobDir:           jobDir,
+			TmpDir:           tmpDir,
+			SlotDir:          cfg.slotDir,
+			Root:             cfg.root,
+			BenchHome:        benchHome(cfg),
+			ResultsDir:       targetResultsDir,
+			Label:            cfg.label,
+			IsHarnessFailure: isHarnessFailure,
+			ResultsMoved:     resultsMoved,
+			ReleaseLease:     releaseLease,
+		})
+		if cleanErr != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the job storage cleanup failed: %s\n", oneline.Escape(cleanErr.Error()))
+		} else {
+			res.cleanedJob = cleanRes.Cleaned
+			res.resultsDir = cleanRes.ResultsDir
+		}
+	}
+
 	return res, 0
 }
 
