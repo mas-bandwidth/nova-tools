@@ -52,23 +52,27 @@ func StripQuotedAndCode(body string) string {
 	return strings.Join(out, "\n")
 }
 
+func parseDispositionFields(line string) (fields map[string]string, ok bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "DISPOSITION") {
+		return nil, false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "DISPOSITION"))
+	fields = parseKeyValueFields(rest)
+	if fields["verdict"] != "" {
+		return fields, true
+	}
+	return nil, false
+}
+
 // ParseDispositionLine parses a typed DISPOSITION line:
 // DISPOSITION who=<name> head=<sha40> verdict=HOLD [scope="<text>"]
 func ParseDispositionLine(line string) (who, head, verdict, scope string, ok bool) {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "DISPOSITION") {
+	fields, ok := parseDispositionFields(line)
+	if !ok {
 		return "", "", "", "", false
 	}
-	rest := strings.TrimSpace(strings.TrimPrefix(line, "DISPOSITION"))
-	fields := parseKeyValueFields(rest)
-	who = fields["who"]
-	head = strings.ToLower(fields["head"])
-	verdict = strings.ToUpper(fields["verdict"])
-	scope = fields["scope"]
-	if verdict != "" {
-		return who, head, verdict, scope, true
-	}
-	return "", "", "", "", false
+	return fields["who"], strings.ToLower(fields["head"]), strings.ToUpper(fields["verdict"]), fields["scope"], true
 }
 
 func parseKeyValueFields(s string) map[string]string {
@@ -148,10 +152,14 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 
 	lines := strings.Split(clean, "\n")
 	for _, l := range lines {
-		typedWho, typedHead, verdict, scope, ok := ParseDispositionLine(l)
-		if ok && strings.EqualFold(verdict, "HOLD") {
-			resolvedWho, _ := rs.ResolveWho(login, typedWho)
-			h := typedHead
+		fields, ok := parseDispositionFields(l)
+		if !ok {
+			continue
+		}
+		verdict := strings.ToUpper(fields["verdict"])
+		if verdict == "HOLD" {
+			resolvedWho, _ := rs.ResolveWho(login, fields["who"])
+			h := strings.ToLower(fields["head"])
 			if h == "" {
 				h = currentHead
 			}
@@ -162,10 +170,40 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 				Head:   h,
 				At:     at,
 				Source: "comment-rule",
-				Scope:  scope,
+				Scope:  fields["scope"],
 				RawID:  id,
 				Conf:   "-",
 				Kind:   "line",
+			}
+			return v, true
+		}
+		if verdict == "APPROVE" {
+			resolvedWho, _ := rs.ResolveWho(login, fields["who"])
+			h := strings.ToLower(fields["head"])
+			if h == "" {
+				h = currentHead
+			}
+			var relList []string
+			if relStr := fields["releases"]; relStr != "" {
+				for _, r := range strings.Split(relStr, ",") {
+					r = strings.TrimSpace(r)
+					if r != "" {
+						relList = append(relList, r)
+					}
+				}
+			}
+			v := Verdict{
+				ID:       fmt.Sprintf("comment:%d", id),
+				Who:      resolvedWho,
+				Word:     "approve",
+				Head:     h,
+				At:       at,
+				Source:   "comment-rule",
+				Scope:    fields["scope"],
+				Releases: relList,
+				RawID:    id,
+				Conf:     "-",
+				Kind:     "line",
 			}
 			return v, true
 		}
@@ -220,7 +258,7 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 }
 
 // ParseReview converts a GitHub pull request review into a Verdict.
-func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string) (Verdict, bool) {
+func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string, ignoreUntyped bool) (Verdict, bool) {
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
 	}
@@ -230,10 +268,10 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 	var scope string
 	lines := strings.Split(clean, "\n")
 	for _, l := range lines {
-		typedWho, _, _, s, ok := ParseDispositionLine(l)
+		fields, ok := parseDispositionFields(l)
 		if ok {
-			resolvedWho, _ = rs.ResolveWho(login, typedWho)
-			scope = s
+			resolvedWho, _ = rs.ResolveWho(login, fields["who"])
+			scope = fields["scope"]
 			break
 		}
 	}
@@ -265,10 +303,26 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 		return v, true
 	case "APPROVED":
 		// Forge approved reviews release nothing and hold nothing
+		// unless the body states a typed APPROVE
+		v, ok := ParseComment(id, login, rawBody, submittedAt, rs, author, currentHead, true)
+		if ok && v.Word == "approve" {
+			v.ID = fmt.Sprintf("review:%d", id)
+			v.Source = "review"
+			return v, true
+		}
 		return Verdict{}, false
 	default:
 		// COMMENTED review: inspect body like comment
-		return ParseComment(id, login, rawBody, submittedAt, rs, author, currentHead, false)
+		v, ok := ParseComment(id, login, rawBody, submittedAt, rs, author, currentHead, ignoreUntyped)
+		if ok {
+			v.ID = fmt.Sprintf("review:%d", id)
+			if v.Word == "hold" && v.Source == "comment-rule" {
+				v.Source = "review"
+			} else if v.Word == "approve" && v.Source == "comment-rule" {
+				v.Source = "review"
+			}
+		}
+		return v, ok
 	}
 }
 
@@ -431,12 +485,31 @@ func headMatch(candidate, target string) bool {
 
 func releasesContains(releases []string, id string) bool {
 	id = strings.TrimSpace(id)
+	p1, n1 := normalizeID(id)
 	for _, r := range releases {
-		if strings.EqualFold(strings.TrimSpace(r), id) {
+		rTrim := strings.TrimSpace(r)
+		if strings.EqualFold(rTrim, id) {
 			return true
+		}
+		p2, n2 := normalizeID(rTrim)
+		if n1 != "" && n1 == n2 {
+			if p1 == "" || p2 == "" {
+				return true
+			}
+			if (p1 == "comment" || p1 == "review") && (p2 == "comment" || p2 == "review") {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func normalizeID(s string) (prefix, num string) {
+	s = strings.TrimSpace(s)
+	if p, n, ok := strings.Cut(s, ":"); ok {
+		return strings.ToLower(p), n
+	}
+	return "", s
 }
 
 func firstNonEmptyLine(body string) string {
@@ -555,7 +628,7 @@ func ParseForgeVerdicts(comments, reviews string, n int, rs *ReviewerSet, author
 		return nil, fmt.Errorf("pull request %d's reviews did not answer JSON this tool can read: %w", n, err)
 	}
 	for _, r := range rawReviews {
-		if v, ok := ParseReview(r.ID, r.User.Login, r.Body, r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead); ok {
+		if v, ok := ParseReview(r.ID, r.User.Login, r.Body, r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead, ignoreUntyped); ok {
 			out = append(out, v)
 		}
 	}

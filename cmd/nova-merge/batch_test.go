@@ -168,6 +168,31 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	absent(t, remoteRefs(l), "rowan/integration-2")
 }
 
+// Essential 6: When reading comments/reviews fails for one member (e.g. exceeded
+// output capture cap), drop that single member rather than refusing the entire batch.
+func TestBatchDropsUnreadableCommentMemberInsteadOfRefusingBatch(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
+
+	l.host.SetVerdictErr(1, fmt.Errorf("gh: command failed: output exceeded the 65536-byte output capture cap"))
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-cap-drop", "--pr", "1 2",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--reviewers", revFile)
+
+	if exit != 0 {
+		t.Fatalf("a batch with one unreadable member dropped and remaining member merged should exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+
+	contains(t, stderr, "BATCH DROP #1 reason=\"comments could not be read: gh: command failed: output exceeded the 65536-byte output capture cap\"")
+	contains(t, stderr, "BATCH MERGED #2")
+	contains(t, stdout, "BATCH OK name=integration-cap-drop")
+	contains(t, stdout, "members=2")
+	contains(t, stdout, "dropped=1")
+}
+
 // THE STEP THE TESTS DO NOT RUN IS STILL THE STEP THE GATE RUNS, and this is what says so.
 //
 // It reads the two lists rather than starting anything: the product's gate must carry the

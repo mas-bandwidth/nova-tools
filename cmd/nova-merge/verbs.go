@@ -418,8 +418,8 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *verdict != "approve" && *verdict != "hold" {
 		f.problem(fmt.Sprintf("--verdict is approve or hold, got %q; refusing to guess", *verdict))
 	}
-	if *releases != "" && *scope == "" {
-		f.problem("--releases requires --scope <text>")
+	if *releases != "" && *verdict != "approve" {
+		f.problem("--releases requires --verdict approve")
 	}
 	var releaseIDs []string
 	if *releases != "" {

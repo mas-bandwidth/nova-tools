@@ -263,7 +263,7 @@ func TestParseReviewDismissalReleasesNothing(t *testing.T) {
 	t.Parallel()
 	rs := parseRevTSV(t, "rowan\trowan-login\tyes\n")
 	head := strings.Repeat("a", 40)
-	v, ok := ParseReview(201, "rowan-login", "", "DISMISSED", head, "2026-09-19T10:00:00Z", rs, "author", head)
+	v, ok := ParseReview(201, "rowan-login", "", "DISMISSED", head, "2026-09-19T10:00:00Z", rs, "author", head, false)
 	if !ok {
 		t.Fatalf("ParseReview must not drop a DISMISSED review")
 	}
@@ -302,5 +302,19 @@ func TestAuthorLoginExcusesNothingOnSharedLoginNote(t *testing.T) {
 	}
 	if v.Word != "hold" {
 		t.Fatalf("comment with bold HOLD must hold, got %+v", v)
+	}
+}
+
+func TestTypedApproveInCommentIsParsedAndReleasesHold(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	body := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM"
+	v, ok := ParseComment(501, "stella-astra", body, "2026-09-19T10:00:00Z", rs, "author", head, false)
+	if !ok {
+		t.Fatalf("ParseComment failed to parse typed APPROVE")
+	}
+	if v.Word != "approve" || v.Who != "stella" {
+		t.Fatalf("expected approve by stella, got word=%q who=%q", v.Word, v.Who)
 	}
 }

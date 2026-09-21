@@ -393,11 +393,13 @@ func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 // Verdicts reads this pull request's comments and its reviews, in two calls, and folds
 // each into the words the gate acts on. It is READ-ONLY and it mutates nothing.
 func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
-	comments, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	comments, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n),
+		"--jq", "[.[] | {id, body, created_at, user: {login: .user.login}}]")
 	if err != nil {
 		return nil, err
 	}
-	reviews, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	reviews, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n),
+		"--jq", "[.[] | {id, body, state, submitted_at, commit_id, user: {login: .user.login}}]")
 	if err != nil {
 		return nil, err
 	}

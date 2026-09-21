@@ -1167,19 +1167,28 @@ func TestEmptyOrMalformedReviewersFileRefuses(t *testing.T) {
 
 // 36. TestReadReleasesRequiresScopeAndValidID (SPEC-DECIDE reading 3, row 12):
 // --releases without --scope or with malformed ID must refuse exit 2.
-func TestReadReleasesRequiresScopeAndValidID(t *testing.T) {
+func TestReadReleasesAllowsUnscopedAndValidID(t *testing.T) {
 	t.Parallel()
 	l := newLab(t)
 	l.init("dev")
 
-	// Case A: --releases without --scope
-	exit, _, stderr := l.run("read", "--lane", l.lane, "--pr", "1", "--who", "rowan",
+	// Case A: --releases without --scope succeeds for approve
+	exit, stdout, stderr := l.run("read", "--lane", l.lane, "--pr", "1", "--who", "rowan",
 		"--verdict", "approve", "--head", strings.Repeat("a", 40),
 		"--releases", "comment:101")
-	if exit != 2 {
-		t.Fatalf("read --releases without --scope must refuse exit 2, got %d", exit)
+	if exit != 0 {
+		t.Fatalf("read --releases without --scope must succeed, got %d: %s", exit, stderr)
 	}
-	contains(t, stderr, "--releases requires --scope")
+	contains(t, stdout, "READ OK")
+
+	// Case A2: --releases with --verdict hold must refuse
+	exit, _, stderr = l.run("read", "--lane", l.lane, "--pr", "1", "--who", "rowan",
+		"--verdict", "hold", "--head", strings.Repeat("a", 40),
+		"--releases", "comment:101")
+	if exit != 2 {
+		t.Fatalf("read --releases with --verdict hold must refuse exit 2, got %d", exit)
+	}
+	contains(t, stderr, "--releases requires --verdict approve")
 
 	// Case B: --releases with malformed hold ID
 	exit, _, stderr = l.run("read", "--lane", l.lane, "--pr", "1", "--who", "rowan",
