@@ -542,8 +542,6 @@ $ nova-decide version
 nova-decide v0.16.0-dev.c839379e.0.20260919154525-3c3efc0e155c darwin/arm64 go1.27.1
 ```
 
-### The ladder of minds
-
 `route`, `help` and `log` need no key and no network with `--no-jev`: the rules
 alone answer, the same way every time. These lines were produced by running the
 binary built on this branch. `log` reads a log of your own: the one below is
