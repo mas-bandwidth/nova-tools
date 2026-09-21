@@ -165,6 +165,8 @@ type FillInput struct {
 	Markers  string        // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
 	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
 	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
+	Queue    string        // the queue directory whose .lock this fill takes; empty is --launched's parent
+	Repo     string        // owner/name the `AFTER: PR<n> merged` gate is asked about
 	Session  string        // the session id stamped into every launched card's marker
 	Benches  []string      // the benches to fill, in order
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
@@ -177,6 +179,9 @@ type FillInput struct {
 	Sleep    func(time.Duration)
 	Launcher CardLauncher
 	Capacity Capacity
+	// Locked says this fill runs inside a caller that already holds the queue's lock (the
+	// `loop` verb), so it takes none of its own.
+	Locked bool
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -252,6 +257,15 @@ func Fill(in FillInput) int {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))
 		}
+	}
+	// ONE WRITER PER QUEUE (queuelock.go). A fill moves cards and writes the markers that
+	// hold a lane, so a second one on the same queue is a race over both.
+	if !in.Locked {
+		lock, err := LockQueue(fillQueue(in), "fill")
+		if err != nil {
+			return refusal(in.Stderr, "FILL", err)
+		}
+		defer lock.Release()
 	}
 
 	for tick := 1; ; tick++ {
@@ -714,6 +728,17 @@ func stopped(path string) bool {
 	}
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// fillQueue is the directory whose lock this fill takes: --queue when it is named, else the
+// parent of --launched, which is the queue's own layout (queue/launched, queue/ready). It is
+// the layout and not a guess about meaning: a fill that moves queue/ready/card-9.md into
+// queue/launched/ is writing that queue, whatever the caller calls it.
+func fillQueue(in FillInput) string {
+	if q := strings.TrimSpace(in.Queue); q != "" {
+		return q
+	}
+	return filepath.Dir(strings.TrimRight(in.Launched, string(os.PathSeparator)))
 }
 
 // isDir says whether a path is a directory that is there.
