@@ -65,6 +65,7 @@ nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --ta
 nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
+nova-pulse sprint  prep|run|drain|stop|status [--dir <dir>] [--roots <dirs>] [--timeout <duration>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -323,6 +324,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdWake(rest, stdout, stderr)
 	case "sleep":
 		return cmdSleep(rest, stdout, stderr)
+	case "sprint":
+		return cmdSprint(rest, stdout, stderr, now)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
