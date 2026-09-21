@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,4 +73,82 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	if !strings.Contains(stderr, "run: nova-ci help") {
 		t.Errorf("a refusal stderr = %q, want it to name the door", stderr)
 	}
+}
+
+// (c) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
+// it is run, in order, and each one's whole output is compared with the block
+// written under it -- same number of lines, same lines, same order. Before this
+// test nothing in this package opened that document, so the two CI-SLOW lines a
+// stranger copies were a promise no build checked.
+//
+// NOTHING IS NORMALISED HERE, and that is a property of this transcript rather
+// than a shortcut: nova-ci reads a fixture on disk and prints what it counted,
+// so every digit on both lines reproduces. onboarding.Execute is told so by
+// being handed no Norm, and it says as much under any line that disagrees.
+//
+// The transcript's paths (`cmd/nova-ci/testdata/example-events.jsonl`) are
+// written from the root of the checkout, which is where a reader typing them
+// stands, so the test moves there rather than rewriting them -- a rewritten
+// path is no longer the line the document promised.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Chdir(repoRoot(t))
+	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-ci", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-ci command; this test would pass by running nothing")
+	}
+	// Both budgets are the point of the section: one over and one under, so a
+	// reader sees the refusal and the green. A transcript that has lost one of
+	// them still matches line for line and is still short of a first run.
+	if len(steps) != 2 {
+		t.Errorf("the `### First run` block runs %d commands, want 2: one budget the fixture exceeds and one it does not", len(steps))
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments, opening the file a `< path` redirect names -- relative to the
+// checkout root, where the test now stands and where the document's reader does.
+func runDocumented(t *testing.T) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		stdin := io.Reader(strings.NewReader(""))
+		if s.Stdin != "" {
+			f, err := os.Open(s.Stdin)
+			if err != nil {
+				return onboarding.Result{}, err
+			}
+			defer f.Close()
+			stdin = f
+		}
+		var out, errb bytes.Buffer
+		code := run(s.Args, stdin, &out, &errb)
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+}
+
+// repoRoot is the checkout root: this package sits two directories under it.
+// It is resolved rather than assumed so that a failure names a path.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
+		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
+	}
+	return root
 }

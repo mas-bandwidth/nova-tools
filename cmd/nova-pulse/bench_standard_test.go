@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // bench-standard (issue #880 item 15): tools/bench-standard.sh is the one admin
@@ -58,6 +60,14 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 	writeBenchExe(t, filepath.Join(bin, "sbcl"), "#!/bin/sh\nexit 0\n")
 	// Fake nova-secrets whose check passes for any key.
 	writeBenchExe(t, filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nexit 0\n")
+	// The toolchain roots the sandbox wall grants a card, taken from the ONE list rather
+	// than spelled again here (internal/swarm/toolchain.go): the standard checks a bench
+	// has them, because a bench missing one is a bench whose Go cards die inside the wall.
+	for _, name := range swarm.ToolchainRootNames("linux") {
+		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Fake harness at $HOME/nova-bench/harness-<ver>/opencode.
 	writeBenchExe(t, filepath.Join(home, "nova-bench", "harness-v1", "opencode"), "#!/bin/sh\nexit 0\n")
 	// Fake seat: exactly one *.key.
@@ -166,5 +176,30 @@ func TestBenchStandardDriftNamesSandboxNetwork(t *testing.T) {
 	}
 	if !strings.Contains(out, "STANDARD DRIFT") {
 		t.Fatalf("bench-standard drift output missing STANDARD DRIFT line:\n%s", out)
+	}
+}
+
+// TestBenchStandardDriftNamesAMissingToolchainRoot: the wall grants these roots and a card's
+// `go` lives under one of them, so a bench that is missing one has to DRIFT here rather than
+// let a Go card discover it inside the wall as `Permission denied` and then
+// `go.mod requires go >= 1.26 (running go 1.22.2)` (the schema dogfood loop, 2026-09-18).
+func TestBenchStandardDriftNamesAMissingToolchainRoot(t *testing.T) {
+	want := "v9.9.9-bench-test"
+	goVer := "go1.26.5"
+	for _, name := range swarm.ToolchainRootNames("linux") {
+		t.Run(name, func(t *testing.T) {
+			home, bin := benchStandardHome(t, want, goVer)
+			missing := filepath.Join(home, filepath.FromSlash(name))
+			if err := os.RemoveAll(missing); err != nil {
+				t.Fatal(err)
+			}
+			out, code := runBenchStandard(t, home, bin, want, goVer)
+			if code == 0 {
+				t.Fatalf("bench-standard with %s missing exit = 0, want non-zero\n%s", missing, out)
+			}
+			if !strings.Contains(out, "DRIFT toolchain root "+missing) {
+				t.Fatalf("bench-standard must name the missing toolchain root %s:\n%s", missing, out)
+			}
+		})
 	}
 }

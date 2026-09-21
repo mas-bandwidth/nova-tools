@@ -137,7 +137,12 @@ const MachinesShape = "one machine per line: <name>[TAB<bin>[TAB<dest>]]; blank 
 // directories are named at once -- and the quotes are load-bearing, because an
 // unquoted ~ is expanded by the LOCAL shell into the adopting host's home,
 // which is a path the machine has probably never heard of.
-const RemotePathsNote = "--bin and --dest are paths on each machine; the remote shell expands a leading ~, so quote it ('~/.local/bin') or the local shell expands it here instead"
+//
+// And the windows bench's own form is said here rather than found out at a
+// refusal: it is what docs/BENCH-WINDOWS.md puts in that bench's runner .path,
+// so it is what a person will type.
+const RemotePathsNote = "--bin and --dest are paths on each machine; the remote shell expands a leading ~, so quote it ('~/.local/bin') or the local shell expands it here instead. " +
+	`A windows target takes the drive form too ('C:\Users\nova\.local\bin'), folded to forward slashes before any command is composed -- the far side's ssh shell is Git Bash (docs/BENCH-WINDOWS.md) and a backslash there is an escape. The drive form is refused for every other target`
 
 // Toolchain is the edge to `go build`. The arguments are handed over whole, so
 // that a test asserting -trimpath and the -ldflags stamp is asserting the exact

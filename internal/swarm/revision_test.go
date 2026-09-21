@@ -111,11 +111,20 @@ func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		// THE ONE EXCEPTION (issue #1048, SPEC-SWARM rule 19): reap.go reads a harness log's
-		// AGE to decide whether a slot is finished. It is about disk, never about a report
-		// revision -- reap never touches a RESULT.md's identity, and the bytes-are-revision
-		// rule this test guards is unbroken.
-		if name == "reap.go" {
+		// THE EXCEPTIONS, each about LIVENESS ON DISK and never about a report's identity.
+		// The bytes-are-revision rule this test guards is unbroken by both.
+		//
+		//   reap.go (issue #1048, SPEC-SWARM rule 19) reads a harness log's AGE to decide
+		//   whether a slot is finished.
+		//
+		//   lease.go (issue #1585) reads the job lease's mtime, which IS the heartbeat --
+		//   the reaper writes the same rule in scripts/bench-hygiene.sh. It is read for one
+		//   question only: a lease whose owner this kernel cannot be asked about (another
+		//   host, or a record that did not parse) is HELD until its heartbeat is older than
+		//   JobLeaseStale. Without it an unfinished record reads as a dead owner and a
+		//   second launcher takes a live job directory, which is the P1 Stella held the
+		//   first repair for.
+		if name == "reap.go" || name == "lease.go" {
 			continue
 		}
 		raw, err := os.ReadFile(name)

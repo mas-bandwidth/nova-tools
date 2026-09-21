@@ -32,6 +32,7 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 	want := f.fs.String("want", "", "")
 	goWant := f.fs.String("go", "", "")
 	osName := f.fs.String("os", "", "")
+	platform := f.fs.String("platform", "", "")
 	minFree := f.fs.Int("min-free", 25, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", 0, "")
@@ -40,10 +41,14 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 	}
 	f.want(*benches, "benches", "the fleet file: name, ssh target, home, mac one per line")
 	f.want(*bench, "bench", "the one bench to hold against the standard")
-	switch *osName {
-	case "", "linux", "darwin":
+	resolvedOS := *osName
+	if resolvedOS == "" && *platform != "" {
+		resolvedOS = *platform
+	}
+	switch resolvedOS {
+	case "", "linux", "darwin", "windows":
 	default:
-		f.add(fmt.Sprintf("--os is linux or darwin, got %q; leave it out and the bench is asked with uname -s", *osName))
+		f.add(fmt.Sprintf("--os or --platform is linux, darwin, or windows, got %q; leave it out and the bench is asked with uname -s", resolvedOS))
 	}
 	if *minFree < 0 {
 		f.add(fmt.Sprintf("--min-free wants whole gigabytes, got %d", *minFree))
@@ -58,7 +63,7 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return pulse.FleetStandard(pulse.FleetStandardInput{
-		Benches: *benches, Machines: *machines, Name: *bench, SSH: *ssh, OS: *osName,
+		Benches: *benches, Machines: *machines, Name: *bench, SSH: *ssh, OS: resolvedOS,
 		Go: *goWant, Want: *want, MinFreeGB: *minFree,
 		Timeout: time.Duration(*timeout) * time.Second, Max: *max,
 		Stdout: stdout, Stderr: stderr,

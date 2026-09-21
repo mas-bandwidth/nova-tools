@@ -96,9 +96,16 @@ func mutateFixture(t *testing.T, dir string) (*MutateResult, error) {
 // look inside it afterwards.
 func mutateFixtureIn(t *testing.T, dir, tempRoot string) (*MutateResult, error) {
 	t.Helper()
+	return mutateFixtureRefs(t, dir, "main", "HEAD", tempRoot)
+}
+
+// mutateFixtureRefs names the base and the head, for the tests whose fixture leaves the
+// working copy on some other commit than the head.
+func mutateFixtureRefs(t *testing.T, dir, base, head, tempRoot string) (*MutateResult, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	return Mutate(ctx, MutateOptions{Repo: dir, Base: "main", Head: "HEAD", TempRoot: tempRoot})
+	return Mutate(ctx, MutateOptions{Repo: dir, Base: base, Head: head, TempRoot: tempRoot})
 }
 
 // The case the verb exists for: the head fixes Sign at zero and brings a test that is red
@@ -211,6 +218,51 @@ func TestSignNegative(t *testing.T) {
 	}
 	if res.Greens[0].File != "sign/sign_test.go" {
 		t.Fatalf("green file = %q, want the changed test file", res.Greens[0].File)
+	}
+}
+
+// --head is a ref, and the tree it names is the throwaway worktree's, never the caller's
+// checkout. A PR that ADDS a test file is the common shape, and a caller sitting on the
+// base does not have that file: reading it from the caller's working copy skips the one
+// file the range is about, and the verdict then rests on nothing.
+func TestMutateReadsATestFileTheHeadAddsWhileTheCallerSitsOnTheBase(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "git", "checkout", "-q", "-b", "fix")
+	write(t, dir, "sign/sign.go", `package sign
+
+// Sign answers zero at zero.
+func Sign(n int) int {
+	if n > 0 {
+		return 1
+	}
+	if n == 0 {
+		return 0
+	}
+	return -1
+}
+`)
+	write(t, dir, "sign/zero_test.go", `package sign
+
+import "testing"
+
+func TestSignZero(t *testing.T) {
+	if Sign(0) != 0 {
+		t.Fatal("zero")
+	}
+}
+`)
+	commit(t, dir, "fix Sign at zero, in a test file of its own")
+	run(t, dir, "git", "checkout", "-q", "main")
+
+	res, err := mutateFixtureRefs(t, dir, "main", "fix", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skips) != 0 {
+		t.Fatalf("skips = %+v; the head's test file is in the worktree the verb made at the head", res.Skips)
+	}
+	if !res.Pass || res.Red != 1 || res.Green != 0 {
+		t.Fatalf("pass=%v red=%d green=%d greens=%v; the added test must be run and red", res.Pass, res.Red, res.Green, res.Greens)
 	}
 }
 
@@ -334,10 +386,12 @@ func TestSignBig(t *testing.T) {
 	}
 }
 
-// A package that cannot even compile with the change reverted is the strongest red there
-// is, and the parse of `go test` output must read it that way: there are no per-test
-// result lines to count, and counting none would report the tests as green.
-func TestMutateCountsABuildFailureAsRed(t *testing.T) {
+// A build failure on the reverted side is NOT a kill (#1807). This shape -- a new symbol
+// with a test that genuinely asserts on it -- is the honest cost of that rule: mutate
+// cannot tell it apart from a call-only test that asserts nothing, so it is skipped with
+// the reason that says why. The remedy for a new-API card is mutation-kill's seed form
+// (T13), not a control that cannot see.
+func TestMutateDoesNotCountABuildFailureAsAKill(t *testing.T) {
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "newapi")
 	write(t, dir, "sign/sign.go", `package sign
@@ -379,14 +433,18 @@ func TestAbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Pass || res.Green != 0 || res.Red != 2 {
-		t.Fatalf("build failure not counted red: pass=%v red=%d green=%d greens=%v", res.Pass, res.Red, res.Green, res.Greens)
+	if res.Pass || res.Red != 0 {
+		t.Fatalf("a build failure on the reverted side was scored as a kill: pass=%v red=%d green=%d greens=%v", res.Pass, res.Red, res.Green, res.Greens)
+	}
+	if len(res.Skips) != 1 || !strings.HasPrefix(res.Skips[0].Reason, SkipRevertNoCompile) {
+		t.Fatalf("the skip does not say the revert would not compile: %+v", res.Skips)
 	}
 }
 
 // The revert is by file STATUS, not by patch: a file the head ADDED has no base version to
 // check out, and `git checkout <base> -- <path>` on it fails. It is removed instead, and
-// the test that needed it goes red for the right reason.
+// the test that needed it then fails to COMPILE -- which since #1807 is a skip and not a
+// kill, so the skip is the observable that proves the file was removed.
 func TestMutateRemovesAFileTheHeadAdded(t *testing.T) {
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "addfile")
@@ -421,7 +479,11 @@ func TestAbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Pass {
+	// The proof that the added file was REMOVED rather than checked out is that the
+	// revert got as far as a compile that then failed for want of it: `git checkout
+	// <base> -- sign/abs.go` would have made Mutate return an error instead. Since #1807
+	// that compile failure is a skip and not a kill, so the skip is the observable.
+	if len(res.Skips) != 1 || !strings.HasPrefix(res.Skips[0].Reason, SkipRevertNoCompile) {
 		t.Fatalf("an added file was not reverted: red=%d green=%d greens=%v skips=%v", res.Red, res.Green, res.Greens, res.Skips)
 	}
 }
@@ -473,5 +535,53 @@ func TestMutateRunsALispSuiteAndCountsItRed(t *testing.T) {
 	}
 	if !res.Pass || res.Red != 1 {
 		t.Fatalf("lisp suite not red without the change: pass=%v red=%d green=%d skips=%+v", res.Pass, res.Red, res.Green, res.Skips)
+	}
+}
+
+// resolve is the whole of --test's rule, and the four answers it can give (#1849,
+// Stella's ruling stella-e72bbf88a3f7). It is tested here rather than only through
+// the verb because ONE of the four -- a unit whose file could not be run -- is a
+// branch a fixture cannot reach on demand: a skip comes from a deleted test file or
+// a runner that would not start, and neither leaves a unit behind to name. A rule
+// that is only ever exercised by the paths that happen to be easy is a rule with a
+// hole in exactly the place the ruling says must not be inferred.
+func TestResolveNamesOneUnitOrSaysWhyItCannot(t *testing.T) {
+	units := []unit{
+		{name: "TestSignZero", file: "sign/sign_test.go", pkg: "sign"},
+		{name: "TestShapeOnly", file: "shape/shape_test.go", pkg: "shape"},
+		{name: "TestBoth", file: "sign/sign_test.go", pkg: "sign"},
+		{name: "TestBoth", file: "shape/shape_test.go", pkg: "shape"},
+		{name: "TestNotRun", file: "gone/gone_test.go", pkg: "gone"},
+	}
+	skipped := map[string]bool{"gone/gone_test.go": true}
+
+	// Resolved: the one unit with that name.
+	got, err := resolve("TestSignZero", units, skipped)
+	if err != nil || got.file != "sign/sign_test.go" {
+		t.Fatalf("resolve(TestSignZero) = %+v, %v", got, err)
+	}
+	// Resolved by qualification, which is what a caller does instead of guessing.
+	got, err = resolve("shape/shape_test.go:TestBoth", units, skipped)
+	if err != nil || got.file != "shape/shape_test.go" {
+		t.Fatalf("resolve(qualified) = %+v, %v", got, err)
+	}
+	for _, tc := range []struct{ name, want string }{
+		{"TestNoSuchThing", "names no test"},
+		{"TestBoth", "ambiguous"},
+		{"TestNotRun", "could not be run"},
+		{"sign/sign_test.go:TestShapeOnly", "names no test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolve(tc.name, units, skipped)
+			if err == nil {
+				t.Fatalf("resolve(%q) = %+v, want an error", tc.name, got)
+			}
+			if !errors.Is(err, ErrTestNotRun) {
+				t.Errorf("resolve(%q) error is not ErrTestNotRun: %v", tc.name, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("resolve(%q) = %v, want it to say %q", tc.name, err, tc.want)
+			}
+		})
 	}
 }

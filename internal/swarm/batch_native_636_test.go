@@ -57,6 +57,7 @@ func TestCard8909BatchRunsNativeWithNoRunner(t *testing.T) {
 	Batch(BatchInput{
 		ID: "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: root,
 		Harness: harness, Self: self636(t, dir),
+		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 		Stdout: &out, Stderr: &errb,
 	})
 	if strings.Contains(errb.String(), "--runner is required") {

@@ -12,6 +12,17 @@ GO ?= go
 PKGS ?= ./...
 CL_PKGS := ./cmd/... ./internal/...
 
+# THE HOST GUARD, on for every target. internal/testguard makes every ssh, scp
+# and rsync seam in this tree panic with its command line when this is 1, so a
+# unit test that constructs production code and injects no fake refuses HERE
+# instead of reaching a bench. It is exported once, at the top, rather than per
+# target: a tier that forgot it would be the one tier where a test can reach the
+# fleet, and ci.yml reaches every tier through make (the `make` class test), so
+# one line covers the whole CI path. A test that installs its own fake ssh on
+# PATH declares it with testguard.AllowHosts(). The rule that keeps the seams
+# honest is TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci.
+export NOVA_TEST_NO_HOST := 1
+
 # WINDOWS_TIMEOUT LIVED HERE, and it is gone with the legs it bounded (Glenn
 # 2026-09-18: "drop the native windows CI runners. WSL only from now on."). It
 # was the per-package ceiling on the hosted Windows PR leg and the merge group's

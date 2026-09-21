@@ -251,6 +251,11 @@ type taskDecider struct {
 // provider over the network.
 type decideFunc func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
 
+// DecideFunc is decideFunc under the name the pulse loop can pass across the
+// package boundary: nova-pulse run hands in the Jev client (or its own fake)
+// after each harvest (card 8371).
+type DecideFunc = decideFunc
+
 func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time, usagePath string) *taskDecider {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -322,19 +327,19 @@ func (d *taskDecider) destinations(sc Sidecar) ([]string, error) {
 // decideOne asks the one typed decision for a finished task and renders the
 // suffix for its TRIAGE REPORT line. ok is false when the provider errored or
 // answered without a reason: the caller then keeps today's bare line.
-func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok bool) {
+func (d *taskDecider) decideCore(sc Sidecar, class string) (td TaskDecision, suffix string, ok bool) {
 	attempt := decideAttempt(d.pool, sc)
 	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
 	if e, found := d.seen[key]; found {
 		suffix = fmt.Sprintf(" decide=%s conf=%.2f needs_human=%.2f floor=%.2f",
 			oneline.Field(e.Decision), e.Confidence, e.NeedsHuman, e.Floor)
-		return suffix, true
+		return TaskDecision{Task: sc.ID, Label: sc.Label, Reason: e.Decision, Confidence: e.Confidence, NeedsHuman: e.NeedsHuman}, suffix, true
 	}
 
 	dests, err := d.destinations(sc)
 	if err != nil {
 		d.lastErr = err
-		return "", false
+		return TaskDecision{}, "", false
 	}
 
 	var call retainedDecideCall
@@ -369,19 +374,26 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 
 	if err := d.recordUsage(sc, dests, call.Start, call.End, call.Usage, call.Failed); err != nil {
 		d.lastErr = err
-		return "", false
+		return TaskDecision{}, "", false
 	}
 	if call.Failed {
-		return "", false
+		return TaskDecision{}, "", false
 	}
 
 	reason, ok := call.Answers["reason"]
 	if !ok || reason.Choice == "" {
-		return "", false
+		return TaskDecision{}, "", false
 	}
 	human := 0.0
 	if h, ok := call.Answers["needs_human"]; ok {
 		human = h.Noul
+	}
+	td = TaskDecision{
+		Task:       sc.ID,
+		Label:      sc.Label,
+		Reason:     reason.Choice,
+		Confidence: reason.Confidence,
+		NeedsHuman: human,
 	}
 	decision := reason.Choice
 	if reason.Confidence < d.floor {
@@ -391,12 +403,96 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 		oneline.Field(decision), reason.Confidence, human, d.floor)
 	if err := d.log(sc, class, decision, reason.Confidence, human); err != nil {
 		d.lastErr = err
-		return "", false
+		return TaskDecision{}, "", false
 	}
 	if retainedPath != "" {
 		_ = os.Remove(retainedPath)
 	}
-	return suffix, true
+	return td, suffix, true
+}
+
+// decideOne renders the suffix for a finished task's TRIAGE REPORT line.
+func (d *taskDecider) decideOne(sc Sidecar, class string) (string, bool) {
+	_, suffix, ok := d.decideCore(sc, class)
+	return suffix, ok
+}
+
+// TaskDecision is one finished task's typed decision: the reason choice, its
+// confidence, and the needs_human probability, behind the floor. It is what
+// nova-pulse run reads to send a task to HUMAN or to retry it (card 8371).
+type TaskDecision struct {
+	Task       string
+	Label      string
+	Reason     string
+	Confidence float64
+	NeedsHuman float64
+}
+
+// decided reports whether this task's attempt already has a decision on file,
+// so a pass over a pool asks about a task once and never once per tick.
+func (d *taskDecider) decided(sc Sidecar) bool {
+	_, found := d.seen[fmt.Sprintf("%s\x00%d", sc.ID, decideAttempt(d.pool, sc))]
+	return found
+}
+
+// decideTask asks and logs one typed decision. ok is false when the provider
+// errored or answered without a reason: the caller keeps today's behaviour.
+func (d *taskDecider) decideTask(sc Sidecar, class string) (TaskDecision, bool) {
+	td, _, ok := d.decideCore(sc, class)
+	return td, ok
+}
+
+// DecideFinished asks the one typed decision for every finished task in the
+// pool's done/ and failed/ directories that has not been decided already. It
+// is the core of `nova-swarm triage --decide`, lifted into a function so
+// nova-pulse run can call it after each harvest (card 8371). floor 0 takes
+// DefaultDecideFloor.
+func DecideFinished(p *Pool, do DecideFunc, floor float64, now func() time.Time) ([]TaskDecision, error) {
+	if floor == 0 {
+		floor = DefaultDecideFloor
+	}
+	d := newTaskDecider(p, do, floor, now, "")
+	var out []TaskDecision
+	for _, state := range []string{Done, Failed} {
+		list, err := p.List(state)
+		if err != nil {
+			return nil, err
+		}
+		for _, sc := range list {
+			if d.decided(sc) {
+				continue
+			}
+			if td, ok := d.decideTask(sc, sc.Class); ok {
+				out = append(out, td)
+			}
+		}
+	}
+	return out, nil
+}
+
+// RequeueOnce queues one more attempt of a finished task -- the same text as a
+// new id, marked `requeued=1` -- through the existing requeue path
+// (freshAttempt, p.Add). It refuses a task already carrying a requeue, so a
+// provider_error is retried once and never twice (card 8371).
+func (p *Pool) RequeueOnce(id string, now time.Time) (Sidecar, bool) {
+	from, ok := p.Where(id)
+	if !ok || from == Running || from == Pending {
+		return Sidecar{}, false
+	}
+	sc, err := p.ReadSidecar(from, id)
+	if err != nil || sc.Requeued >= 1 {
+		return Sidecar{}, false
+	}
+	text, err := p.Text(from, id)
+	if err != nil {
+		return Sidecar{}, false
+	}
+	next := freshAttempt(sc, now)
+	next.From, next.Requeued = id, 1
+	if err := p.Add(text, next); err != nil {
+		return Sidecar{}, false
+	}
+	return next, true
 }
 
 // recordUsage appends one row to each unique usage TSV destination for this

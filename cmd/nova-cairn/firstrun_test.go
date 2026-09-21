@@ -124,11 +124,30 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	}
 }
 
-// The TESTS.md First run block is the first thing a stranger copies, so
-// every transcript line must match a line the tool actually printed — the
-// event prefix and the field names, in order. Values are a run's own
-// business and are deliberately NOT compared.
-func TestTESTSFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+// The `### First run` block of docs/TESTS.md is EXECUTED: every documented
+// command is run, in order, in one directory, and its whole output is compared
+// with the block written under it -- same number of lines, same lines, same
+// order.
+//
+// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
+// a `printed map[string]bool` and asked whether each documented line was in it,
+// with the VALUES deliberately not compared. Under that comparison an abridged
+// block passes (a dropped line removes a lookup, not an assertion), a reordered
+// pair is never looked at, and a wrong stamp, a wrong byte count or a wrong
+// `duplicate=` is invisible -- which for a tool whose whole job is a durable
+// receipt is most of what the transcript is for.
+//
+// NOTHING IS NORMALISED, and that is a property of this transcript rather than
+// a shortcut. The stamps come from `--now`, the ids and the store are named on
+// the command line, and the byte count is of the text typed there, so every
+// value on every line reproduces. onboarding.Execute is told so by being handed
+// no Norm, and it says as much under any line that disagrees.
+//
+// The store is typed as written. The documented `./cairns` is relative and the
+// tool PRINTS IT BACK on every line, so the test runs in a directory of its own
+// rather than rewriting the path: a rewritten one is no longer the line the
+// document promised, which is what the old test's `localize` gave up.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -137,47 +156,47 @@ func TestTESTSFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
-	seen := map[string]int{}
-	// One store for the whole sitting: the transcript opens a record and
-	// then appends to it, and a fresh directory per line would unmake that.
-	store := filepath.Join(t.TempDir(), "cairns")
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-cairn "); ok {
-			fields, err := localize(store, cmd)
-			if err != nil {
-				t.Fatalf("cannot split the TESTS.md command %q: %v", line, err)
-			}
-			exit, stdout, stderr := runCLI(t, "", fields...)
-			if exit != 0 {
-				t.Fatalf("the TESTS.md command %q does not run: exit %d, stderr: %s", line, exit, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
-			continue
-		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
-		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		if !printed[s] {
-			t.Errorf("TESTS.md line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	steps, err := onboarding.Steps("nova-cairn", lines)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for prefix, want := range map[string]int{
-		"OPEN OK": 1, "APPEND OK": 1, "INDEX ENTRY": 1,
-		"INDEX COVERAGE": 1, "RECEIPT OK": 1,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("TESTS.md First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+	// The sitting is the whole tool: a record opened, a line appended to it,
+	// the index that shows it and the receipt that proves it. A block that has
+	// quietly lost one of the four verbs is short of a first run, and no
+	// per-line comparison would say so -- the lines that remain would match.
+	verbs := map[string]bool{}
+	for _, s := range steps {
+		verbs[s.Args[0]] = true
+	}
+	for _, verb := range []string{"open", "append", "index", "receipt"} {
+		if !verbs[verb] {
+			t.Errorf("the `### First run` block never runs `nova-cairn %s`; the first sitting is all four verbs", verb)
 		}
+	}
+
+	// ONE store for the whole sitting: the transcript opens a record and then
+	// appends to it, and a fresh directory per line would unmake that.
+	t.Chdir(t.TempDir())
+	for _, p := range onboarding.Execute(steps, runDocumented) {
+		t.Error(p)
 	}
 }
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments. nova-cairn's first run reads nothing on stdin.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
+	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, strings.NewReader(""), &out, &errb)
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-cairn's first run reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NATIVE OPENCODE PATH (issue #296, slice 2). A frozen run configuration is executed
@@ -86,6 +87,189 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 		}
 	} else if hasFlagPair(argv, "--read", "/opt/homebrew") {
 		t.Errorf("the wall argv reads /opt/homebrew, which is absent:\n%s", strings.Join(argv, " "))
+	}
+}
+
+// TestNativeArgvReadsTheBenchToolchainRoots is the edge the schema dogfood loop found on
+// 2026-09-18, and it is the whole bug in one assertion: the provisioning standard puts Go
+// and sbcl under `~/sdk` with `~/go/bin` on PATH and the module cache at `~/go/pkg/mod`,
+// the wall named none of them, and `nova-swarm native` pins GOTOOLCHAIN=local -- so every
+// Go card on hulk got `Permission denied` on the bench's own go and then
+// `go.mod requires go >= 1.26 (running go 1.22.2)` from the only one the wall left it.
+// The roots are read-only and come from ONE list (swarm.ToolchainRoots).
+func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A home of the test's own, with the standard's shape under it, so the assertion is
+	// about the argv and not about the machine the test happens to run on.
+	// The LINUX list, named rather than taken from the machine, so the assertion is the
+	// same on a Mac runner and on a linux one: those are the roots that live under a home.
+	// The home RESOLVED, because a root reaches the argv resolved through its symlinks (the
+	// wall checks the resolved target) and on a Mac a temp dir is under /var, itself a link
+	// to /private/var. Resolving here keeps the assertion about the argv.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range swarm.ToolchainRootNames("linux") {
+		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Paths that are NOT the toolchain, made before the argv so an argv that named the
+	// home or globbed it would carry them.
+	var others []string
+	for _, name := range []string{".config/nova-secrets", ".ssh"} {
+		other := filepath.Join(home, filepath.FromSlash(name))
+		if err := os.MkdirAll(other, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		others = append(others, other)
+	}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}
+	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
+	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
+	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
+	// read-only root that slipped onto --read is exactly the widening Johnny's security
+	// read of #1364 refused.
+	for _, root := range swarm.ToolchainRootList("linux") {
+		path := filepath.Join(home, filepath.FromSlash(root.Name))
+		want, wrong := "--read-noexec", "--read"
+		if root.Exec {
+			want, wrong = "--read", "--read-noexec"
+		}
+		if !hasFlagPair(argv, want, path) {
+			t.Errorf("the wall argv does not carry the toolchain root %s as %s:\n%s", path, want, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, wrong, path) {
+			t.Errorf("the toolchain root %s is on %s, which is the other kind:\n%s", path, wrong, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, "--write", path) {
+			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", path, strings.Join(argv, " "))
+		}
+	}
+	// THE MODULE CACHE BY NAME, because it is the root this argv form was added for: READ
+	// WITHOUT EXECUTE, never read+execute. Every `go mod download` on the bench lands
+	// there and the bench user can write to it, so a card able to execute out of it could
+	// run whatever a dependency shipped.
+	modCache := filepath.Join(home, filepath.FromSlash("go/pkg/mod"))
+	if !hasFlagPair(argv, "--read-noexec", modCache) {
+		t.Errorf("the module cache is not granted read-without-execute:\n%s", strings.Join(argv, " "))
+	}
+	if hasFlagPair(argv, "--read", modCache) {
+		t.Errorf("the module cache is on --read, which CARRIES EXECUTE:\n%s", strings.Join(argv, " "))
+	}
+	// NOTHING ELSE UNDER HOME. The wall gained the toolchain and not the home: the key
+	// store and an ssh directory beside it stay outside every named path, on either flag.
+	for _, other := range append(others, home) {
+		for _, flag := range []string{"--read", "--read-noexec", "--write"} {
+			if hasFlagPair(argv, flag, other) {
+				t.Errorf("the wall argv names %s on %s, and it is not a toolchain root:\n%s", other, flag, strings.Join(argv, " "))
+			}
+		}
+	}
+	// ~/go/bin is granted BY NEITHER KIND (Johnny's security read of #1364): every
+	// `go install` on the bench lands there and the bench user can write to it. On a
+	// provisioned bench ~/go/bin/go is a symlink into the sdk tree and the kernel checks
+	// the resolved target, so a card's PATH still finds the granted toolchain.
+	goBin := filepath.Join(home, filepath.FromSlash("go/bin"))
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv = nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for _, flag := range []string{"--read", "--read-noexec", "--write"} {
+		if hasFlagPair(argv, flag, goBin) {
+			t.Errorf("the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
+		}
+	}
+}
+
+// TestNativeArgvSkipsAToolchainRootThatIsNotThere: rule 5 of the wall REFUSES a --read
+// naming a path that does not exist, so a bench without the standard's layout -- a darwin
+// bench has no ~/sdk -- loses the root rather than refusing the run.
+// TestNativeArgvReadsTheDarwinToolchainRoots is the darwin face of the same edge, measured
+// on the M2 Air 2026-09-18: a Mac's toolchains are INSTALLED and on PATH, and three of them
+// still died inside the bare wall because each resolves its runtime from the directory of
+// the launcher that ran it, and that launcher is a symlink out of any granted tree --
+// `go: cannot find GOROOT directory: 'go' binary is trimmed`, `dotnet: Failed to resolve
+// full path of the current executable []`, `java: Unable to locate a Java Runtime`. The
+// remedy measured by hand was `--read /opt/homebrew/Cellar/go/1.27.1`, and the wall now
+// names that tree itself, with the version read off the launcher.
+//
+// It runs ON a Mac, because what it asserts is that THIS bench's own installed toolchain
+// reaches the argv; the per-OS list itself is held by the class test in internal/ci on every
+// platform.
+func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the darwin toolchain roots are this bench's own installs; asserted on a Mac")
+	}
+	var system []swarm.ToolchainRoot
+	for _, r := range swarm.ToolchainRoots("darwin", os.Getenv("HOME")) {
+		if !r.Home() {
+			system = append(system, r)
+		}
+	}
+	if len(system) == 0 {
+		t.Skip("this Mac has none of the darwin system toolchains installed")
+	}
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "darwin"}
+	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for _, r := range system {
+		// Every darwin system root is a RUNTIME the card runs, so every one of them is the
+		// exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
+		// checked against the resolved target and `/opt/homebrew/opt/openjdk` is itself a
+		// symlink into the Cellar.
+		if !r.Exec {
+			t.Errorf("the darwin system root %s is granted without execute; it is a runtime the card runs", r.Name)
+		}
+		if !filepath.IsAbs(r.Path) || strings.HasSuffix(r.Path, string(filepath.Separator)+"bin") {
+			t.Errorf("the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
+		}
+		if !hasFlagPair(argv, "--read", r.Path) {
+			t.Errorf("the wall argv does not carry the darwin toolchain root %s (%s) as --read:\n%s", r.Name, r.Path, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, "--write", r.Path) {
+			t.Errorf("the darwin toolchain root %s is a WRITE; it is read-only:\n%s", r.Path, strings.Join(argv, " "))
+		}
+	}
+	// AND NEVER A DIRECTORY OF LAUNCHERS. `/opt/homebrew/bin` holds a symlink for every
+	// formula on the machine and brew writes it; the grant is on the Cellar tree the runtime
+	// lives in, and naming the bin directory as a toolchain root is the widening Johnny's
+	// security read of #1364 refused on ~/go/bin.
+	for _, r := range swarm.ToolchainRootList("darwin") {
+		if strings.HasSuffix(r.Name, "/bin") {
+			t.Errorf("the darwin list names the launcher directory %s as a toolchain root", r.Name)
+		}
+	}
+}
+
+func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir() // empty: not one root exists under it
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for i, a := range argv {
+		if a != "--read" && a != "--read-noexec" {
+			continue
+		}
+		if i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
+			t.Errorf("the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
+		}
 	}
 }
 
@@ -527,7 +711,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -560,7 +744,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -699,6 +883,8 @@ func TestCmdNativeCLI(t *testing.T) {
 	stderr.Reset()
 	args := []string{
 		"native",
+		"--slots-store", nativeStore(t),
+		"--owner", "fake-1",
 		"--harness", bin,
 		"--model", "fake/fake-model",
 		"--label", "test-label",
@@ -876,7 +1062,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -895,7 +1081,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -1649,7 +1835,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+			args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
 				"--deadline", "30s"}
 			if tc.walled {
@@ -1751,7 +1937,7 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/other-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/other-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 2 {
@@ -1787,7 +1973,7 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	t.Setenv("FAKE_KEY", fakeKey)
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -1836,7 +2022,7 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -1941,7 +2127,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -1957,7 +2143,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "opencode/other",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/other",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 2 {
@@ -1994,7 +2180,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--harness", bin, "--model", "other/deepseek-v4-flash",
+		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "other/deepseek-v4-flash",
 			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 2 {
@@ -2057,7 +2243,7 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "space-label", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -2068,5 +2254,46 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(slot, "jobs", "space-label", "RESULT.md")); err != nil {
 		t.Fatalf("RESULT.md is written under a job path with a space: %v", err)
+	}
+}
+
+// TestNativeHoldsAJobLease: the launcher takes <job>/.lease BEFORE the child starts and
+// releases it when the run ends (issue #1499). The child itself is the witness -- it reads
+// the lease from inside the job and reports its length -- because the file's whole purpose
+// is to exist WHILE the card runs: that is what the bench's hygiene pass reads instead of
+// guessing from how long the capture has been quiet. A card in one long model call is
+// silent and alive, and the reaper that could not tell the difference deleted two certify
+// trees, and a running card's HOME and TMPDIR, on 2026-09-19.
+func TestNativeHoldsAJobLease(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "lease-card"
+	jobDir := filepath.Join(slot, "jobs", label)
+	card := []byte("FAKE-CAT " + filepath.Join(jobDir, swarm.JobLeaseName) + "\n")
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
+		noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+	if err != nil {
+		t.Fatalf("the run wrote no harness output log: %v", err)
+	}
+	want := "cat " + filepath.Join(jobDir, swarm.JobLeaseName) + ": ok len="
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("the child could not read a lease at %s while it ran; the capture says:\n%s",
+			filepath.Join(jobDir, swarm.JobLeaseName), raw)
+	}
+	if strings.Contains(string(raw), want+"0\n") {
+		t.Errorf("the lease was empty while the child ran; it must name the launcher's pid:\n%s", raw)
+	}
+	if _, err := os.Lstat(filepath.Join(jobDir, swarm.JobLeaseName)); !os.IsNotExist(err) {
+		t.Errorf("the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
 	}
 }

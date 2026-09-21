@@ -57,6 +57,14 @@ for d in $changed_dirs; do want="$want ./$d"; done
 # package that holds it.
 want="$want ./internal/ci"
 
+# internal/docs holds the front page's contract: AGENTS.md must name every class
+# rule indexed in docs/SPEC-CI.md. It, too, reads the tree as text instead of
+# importing what it guards, so a docs-only change can break its class test
+# (#1504) without naming a dependent in the import graph. Select it on every run
+# for the same reason: the red surfaces in an integration batch instead of on
+# the PR that broke it (#1364, #1409).
+want="$want ./internal/docs"
+
 # dependents: every package in the tree that imports a changed one.
 while read -r pkg deps; do
   p="./${pkg#github.com/mas-bandwidth/nova-tools/}"

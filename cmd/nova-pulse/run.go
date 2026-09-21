@@ -31,6 +31,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	tempGlob := f.fs.String("temp-glob", "", "")
 	tempRoot := f.fs.String("temp-root", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
+	decide := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", 0, "")
+	keyEnv := f.fs.String("key-env", "", "")
+	baseURL := f.fs.String("base-url", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -51,6 +55,9 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if *decide && (*floor < 0 || *floor > 1) {
+		f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %v; 0.9 is how a caller says a typed decision must be sure before the loop acts on it", *floor))
 	}
 	if f.refused(stderr) {
 		return 2
@@ -81,6 +88,11 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		TempRoot: *tempRoot,
 		Now:      func() time.Time { return time.Now().UTC() },
 		Config:   func() pulse.Config { return cfg },
+
+		Decide:        *decide,
+		DecideFloor:   *floor,
+		DecideKeyEnv:  *keyEnv,
+		DecideBaseURL: *baseURL,
 	}))
 	return pulse.Run(in)
 }

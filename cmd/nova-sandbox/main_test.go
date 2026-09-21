@@ -224,6 +224,39 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 	})
 }
 
+// #1557: /usr/bin/c++ is an Xcode shim that reads /var/db/xcode_select_link.
+// The profile granted /var as a literal on the symlink, not a subpath, so the
+// shim died inside the wall with xcode-select's "unable to read data link" and
+// a worker read that as "no compiler installed". A C++ probe that compiles
+// outside the wall must compile inside it, with no extra --read.
+func TestCXXCompilesInsideTheWallOnDarwin(t *testing.T) {
+	needDarwin(t)
+	if _, err := os.Stat("/usr/bin/c++"); err != nil {
+		t.Skip("skipped: /usr/bin/c++ is not on this machine")
+	}
+	j := newJob(t)
+	src := filepath.Join(j.write, "probe.cpp")
+	if err := os.WriteFile(src, []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outsideBin := filepath.Join(j.outside, "probe")
+	if out, err := exec.Command("/usr/bin/c++", "-o", outsideBin, src).CombinedOutput(); err != nil {
+		t.Skipf("skipped: /usr/bin/c++ does not compile outside the wall, so a denial inside it proves nothing: %s", out)
+	}
+	insideBin := filepath.Join(j.write, "probe")
+	code, out, errOut := j.tool(t, j.env(), "--write", j.write, "--", "/usr/bin/c++", "-o", insideBin, src)
+	if code != 0 {
+		t.Fatalf("c++ inside the wall exited %d; want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(errOut, "xcode_select_link") {
+		t.Fatalf("the wall still denies /var/db/xcode_select_link:\n%s", errOut)
+	}
+	code, out, errOut = j.tool(t, j.env(), "--write", j.write, "--", insideBin)
+	if code != 0 || !strings.Contains(out, "ok") {
+		t.Fatalf("the C++ probe did not run inside the wall: exit %d stdout %q stderr %s", code, out, errOut)
+	}
+}
+
 // zsh switches large heredocs from a pipe to a temporary file. On macOS it chooses
 // that file from TMPPREFIX, not TMPDIR; an inherited outside prefix therefore made a
 // legitimate report write fail at the wall even though its final destination was allowed.
@@ -553,16 +586,18 @@ func TestUnbuiltPlatformsRefuse(t *testing.T) {
 	}
 }
 
-// realGit is the git a caller would use: /usr/bin/git on a Mac is an Xcode shim that
-// reads /var/db/xcode_select_link, which no root grants, so it fails inside the wall.
+// realGit is the git a caller would use. Homebrew's git is preferred when
+// present so the test is the same path a developer shell takes. /usr/bin/git
+// is an Xcode shim; the profile grants xcode_select_link (#1557), so the shim
+// is a working fallback inside the wall.
 func realGit(t *testing.T) string {
 	t.Helper()
-	for _, p := range []string{"/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git"} {
+	for _, p := range []string{"/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git", "/usr/bin/git"} {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
 		}
 	}
-	t.Skip("skipped: no git outside /usr/bin on this machine, and the Xcode shim cannot run inside the wall")
+	t.Skip("skipped: no git on this machine")
 	return ""
 }
 
@@ -626,6 +661,65 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	}
 	if strings.Contains(string(out), "CHECK FAIL") {
 		t.Fatalf("a check failed against the tool's profile:\n%s", out)
+	}
+}
+
+// #1557 HOLD: darwin-check.sh fills the template two ways. The tool generator
+// follows xcode_select_link into OptionalRoots; the hand filler did not, so a
+// reader running the script without NOVA_SANDBOX_FILL got the link literal
+// without the selected Xcode root, while cxx_compile required that root.
+func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
+	needDarwin(t)
+	var xcode []string
+	for _, r := range sandbox.OptionalRoots("/bin/echo") {
+		if strings.Contains(r, "Xcode.app") {
+			xcode = append(xcode, r)
+		}
+	}
+	if len(xcode) == 0 {
+		t.Skip("skipped: xcode-select's developer dir is already a fixed root or absent on this machine")
+	}
+
+	j := newJob(t)
+	p, bad := sandbox.Build(sandbox.Input{
+		Reads:  []string{j.read},
+		Writes: []string{j.write},
+		Home:   j.home,
+		Argv:   []string{"/bin/echo"},
+	})
+	if len(bad) > 0 {
+		t.Fatalf("generated policy refused: %v", bad)
+	}
+	generated, _, err := sandbox.DarwinProfile(p)
+	if err != nil {
+		t.Fatalf("generated profile: %v", err)
+	}
+
+	root := repoRoot(t)
+	script := filepath.Join(root, "profiles", "darwin-check.sh")
+	cmd := exec.Command("bash", script)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"NOVA_CHECK_SCRATCH="+filepath.Join(t.TempDir(), "check"),
+		"NOVA_CHECK_DUMP_PROFILE=1",
+		"NOVA_CHECK_NO_NETWORK=1")
+	hand, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hand-filling darwin-check.sh: %v\n%s", err, hand)
+	}
+	handText := string(hand)
+
+	for _, r := range xcode {
+		grant := `(allow file-read* (subpath "` + r + `"))`
+		if !strings.Contains(generated, grant) {
+			t.Fatalf("the generated profile does not grant %s, which OptionalRoots named: %v", grant, xcode)
+		}
+		if !strings.Contains(handText, grant) {
+			t.Errorf("the hand-filled profile does not grant %s, which the generated profile has; the two filler modes drifted", grant)
+		}
+	}
+	if t.Failed() {
+		t.Logf("hand-filled profile:\n%s", handText)
 	}
 }
 
@@ -1751,5 +1845,71 @@ func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.
 	// list. `<base>/secret/env` is the placement the wall is built around.
 	if code, _, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--secret", j.secret); code != 0 {
 		t.Fatalf("a secret outside both lists was exit %d: %s", code, errOut)
+	}
+}
+
+// --read-noexec IS A FLAG, and the reason it exists is the reason it is separate: a
+// `--read` root carries EXECUTE on both bodies -- landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally -- so a
+// cache or a data tree the job's own user can write to could be RUN from. Johnny's
+// security read of #1364 stopped `~/go/pkg/mod` being granted that way, and until this
+// flag existed `Policy.ReadsNoExec` and both wall bodies were unreachable from the argv:
+// the grant was implemented and could not be asked for.
+//
+// This test is the argv contract and runs on every platform, because a refusal is a
+// refusal everywhere: the flag is repeatable, it is on the banner, it takes a value, and
+// rule 5 refuses a path that is not there exactly as `--read` does.
+func TestReadNoExecIsAFlagOfTheBareForm(t *testing.T) {
+	j := newJob(t)
+	// The banner names it, or a caller cannot find it (ONBOARDING.md point 2).
+	if _, out, _ := j.tool(t, j.env(), "help"); !strings.Contains(out, "--read-noexec") {
+		t.Errorf("the banner does not name --read-noexec:\n%s", out)
+	}
+	// Rule 5: a path that is not there is a refusal, named by flag, and NOT created.
+	missing := filepath.Join(j.base, "no-such-cache")
+	code, _, errOut := j.tool(t, j.env(), "--read-noexec", missing, "--write", j.write, "--", "/bin/sh", "-c", "true")
+	if code != 125 || !strings.Contains(errOut, "reason=bad_read") || !strings.Contains(errOut, "--read-noexec") {
+		t.Fatalf("a --read-noexec that is not there was exit %d: %s", code, errOut)
+	}
+	if _, err := os.Stat(missing); err == nil {
+		t.Error("the tool CREATED the --read-noexec path; every path is yours and none is guessed")
+	}
+	// A flag with no value names itself and the form it wants (rule 16).
+	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--read-noexec"); code == 0 ||
+		!strings.Contains(errOut, "--read-noexec wants a value") {
+		t.Fatalf("a bare --read-noexec was exit %d: %s", code, errOut)
+	}
+}
+
+// The wall's two read sets, end to end on darwin: a script under --read-noexec is
+// READABLE and NOT EXECUTABLE, while the same script under --read runs. The OK line
+// carries the count as its own field, so a log says which kind of grant a run had.
+func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	cache := filepath.Join(j.base, "cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(cache, "x.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--read", j.read, "--read-noexec", cache, "--write", j.write, "--", "/bin/sh", "-c"}
+	code, out, errOut := j.tool(t, j.env(), append(args, "cat "+script)...)
+	if code != 0 || !strings.Contains(out, "echo ran") {
+		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "read-noexec=1") {
+		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	}
+	if code, _, _ := j.tool(t, j.env(), append(args, script)...); code == 0 {
+		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	}
+	// The control: the same file under --read runs, so the denial above is the no-exec
+	// grant and not a broken script.
+	ctl := []string{"--read", cache, "--write", j.write, "--", "/bin/sh", "-c", script}
+	if code, _, errOut := j.tool(t, j.env(), ctl...); code != 0 {
+		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
 	}
 }

@@ -289,6 +289,29 @@ same moment it gathers the `RESULT.md`.
 `nova-pulse`** on the timer's behalf (`nova-pulse beat`), so a bench writes through the tool's one
 writer and never opens a connection of its own.
 
+## The record: card results
+
+Card results were scraped from job directories on the benches by a harvest loop over ssh; it
+re-harvested old jobs and could force-push stale commits (review #1263 F09, F11). They are now a
+durable table, written from the `cards:done` stream of Part 2 and read by a verb rather than a walk
+over the `job*` directories.
+
+**`card_results` — one row per result.** `card_results(stream_id, label, bench, exit,
+result_line, job_path, commit, branch, pr, pushed_at, done_at, recorded_at)`. `stream_id` is the
+Redis stream entry id and the primary key, so a redelivered or replayed result is an `ON CONFLICT
+(stream_id) DO NOTHING` no-op and never a second row; `pr`, `pushed_at` and `done_at` are the
+"when known" columns and are SQL `NULL` when the result did not carry them. **Writer: `nova-work
+record`.**
+
+`nova-work record --migrate` applies `internal/record/schema.sql` — plain SQL, versioned by a
+`schema_version` table, idempotent — and exits. `nova-work record --redis <addr> --postgres <dsn>
+[--once] [--deadline 1h]` reads `cards:done` with `XREADGROUP` in the `record` group, commits each
+row, and `XACK`s only after the commit, so a crash between the two leaves the entry pending for
+the next start to repair. `nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed]
+[--max 20]` prints one line per row, newest first, with a `MORE` line naming the rest. The store
+is an interface: the unit tests run against a fake over the same contract with miniredis standing
+in for Redis, and the real Postgres path is the soak behind `RECORD_TEST_PG`.
+
 ## Part 4 — the verbs that change
 
 - **`nova-pulse watch`** subscribes to `nova:events:*` instead of polling the queue, the bus and
@@ -301,6 +324,8 @@ writer and never opens a connection of its own.
   reservation is the one atomic script and the admission is the counter, not a note.
 - **the pull worker** reads `nova:queue:*` with `XREADGROUP` and `XACK`s on clip, replacing the
   directory scan and the `taken/` rename.
+- **`nova-work record` and `results`** write and read `card_results` from the `cards:done`
+  stream, replacing the harvest loop over `job*` directories and its stale force-pushes.
 
 ## Part 5 — migration in four slices, and the red tests
 

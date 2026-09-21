@@ -1,0 +1,17 @@
+2026-09-18T09:31:14.2405249Z ##[group]Run make test
+2026-09-18T09:31:14.2405622Z [36;1mmake test[0m
+2026-09-18T09:31:14.2439717Z ##[endgroup]
+2026-09-18T10:02:55.2767233Z make tables-block-const-negative-control
+2026-09-18T10:02:55.4850044Z ##[error]test/tables/block_const_main.cpp:174:48: error: assignment of member 'blockdemo::RenderShip::object_id' in read-only object
+2026-09-18T10:02:55.4854957Z negative control: one write through the const row view turns the COMPILE red
+2026-09-18T10:22:18.3951373Z cc -std=c99 -Wall -Wextra -Werror -O2 -ffp-contract=off -Itest/c-tables test/c-tables/fixedform_v2.c -o build/schema_test_c_fixedform
+2026-09-18T10:22:19.1250295Z test/c-tables/fixedform_v2.c: In function 'fixed_v2_read_v1':
+2026-09-18T10:22:19.1251528Z ##[error]test/c-tables/fixedform_v2.c:25:22: error: 'back.grade' may be used uninitialized [-Werror=maybe-uninitialized]
+2026-09-18T10:22:19.1254194Z    25 |     fixed_check( back.grade == GRADE_GOLD, "ENUM: a variant inserted in the middle is remapped by NAME" );
+2026-09-18T10:22:19.1566440Z       |         ^~~~
+2026-09-18T10:22:19.1736869Z cc1: all warnings being treated as errors
+2026-09-18T10:22:19.1756395Z make[2]: *** [make/c.mk:928: build/schema_test_c_fixedform] Error 1
+2026-09-18T10:22:19.1761055Z make[1]: *** [make/c.mk:958: test-c] Error 2
+2026-09-18T10:22:19.1767773Z make: *** [Makefile:3248: test] Error 2
+2026-09-18T10:22:19.1778554Z ##[error]Process completed with exit code 2.
+2026-09-18T10:22:19.3899906Z Cleaning up orphan processes

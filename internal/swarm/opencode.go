@@ -148,16 +148,87 @@ func findOpenCodeStore(dataHome string) (string, error) {
 // present and `sqlite3 -readonly` answers `database is locked`; recording a dash for that
 // window loses tokens the harness really spent.
 func queryOpenCodeWaiting(path string) ([][]string, error) {
-	deadline := time.Now().Add(usageSettleWait)
+	return walWait{
+		first:  usageTimeout,
+		settle: usageSettleWait,
+		pause:  usageSettlePause,
+		query:  queryOpenCode,
+		now:    time.Now,
+		sleep:  time.Sleep,
+	}.read(path)
+}
+
+// walWait is that retry with its clock and its read named, so the waiting itself can be
+// held by a test that turns on no clock of its own and starts no process. `first` is what
+// the first read is allowed; every retry is allowed what is left of the window.
+type walWait struct {
+	first  time.Duration
+	settle time.Duration
+	pause  time.Duration
+	query  func(path string, limit time.Duration) ([][]string, error)
+	now    func() time.Time
+	sleep  func(time.Duration)
+}
+
+// read takes one reading and, while the refusal came with a -wal still beside the
+// database, waits for the writer to checkpoint it.
+//
+// THE WINDOW BOUNDS THE WAITING AND NEVER THE FIRST READ. The deadline is taken AFTER the
+// first attempt returns, because usageSettleWait is how long this tool waits for a
+// checkpoint -- not how long the whole read may take. Taken before the attempt, a slow
+// first open spends the budget that exists to outlast the writer: on a loaded macOS bench
+// the first `sqlite3` is a Mach-O the machine has never seen and the kernel assesses it on
+// that first exec, which cost the reader its every retry and recorded `database is locked`
+// for a writer that checkpointed a moment later. So a refusal with a -wal beside it always
+// buys at least one more look, and the window measures the looking.
+//
+// AND EVERY RETRY IS BOUNDED BY WHAT IS LEFT OF THE WINDOW. A retry is a `sqlite3` run,
+// and handing it the tool's whole query timeout made the window a floor instead of a
+// ceiling: two slow queries spent ~40s in one sample. The caller is why that matters --
+// `supervise` calls ReadProviderUsage synchronously in its select loop, so a read that
+// overruns is a stretch of time in which the worker's own deadline and budget cases cannot
+// run. A retry is given exactly the remaining window, and one that has nothing left is not
+// started at all.
+//
+// THE WORST CASE, STATED AND TRUE:
+//
+//	first read     usageTimeout                       20s
+//	  its drain    usageWaitDelay, if it is killed     2s
+//	the waiting    usageSettleWait                     5s   (all retries share it)
+//	  its drain    usageWaitDelay, at most once        2s
+//	                                                  ---
+//	                                                   29s
+//
+// The second drain is paid at most once because a drain spends the window too: `now` is
+// real time, so whatever a retry spends being killed and drained is time the next
+// deadline check sees, and the loop ends as soon as the window is gone. The last retry is
+// therefore the only one that can finish past the deadline, and it can overshoot by at
+// most one usageWaitDelay. That holds however the drain arises -- a child killed at its
+// deadline or one that exited leaving a pipe open -- so the bound does not rest on
+// `sqlite3` spawning no children.
+func (w walWait) read(path string) ([][]string, error) {
+	rows, err := w.query(path, w.first)
+	if err == nil {
+		return rows, nil
+	}
+	deadline := w.now().Add(w.settle)
 	for {
-		rows, err := queryOpenCode(path)
-		if err == nil {
-			return rows, nil
-		}
-		if !walPending(path) || !time.Now().Before(deadline) {
+		if !walPending(path) {
 			return nil, err
 		}
-		time.Sleep(usageSettlePause)
+		if !w.now().Before(deadline) {
+			return nil, err
+		}
+		w.sleep(w.pause)
+		// The pause spent part of the window, so the retry is allowed what is left AFTER
+		// it -- never the figure taken before it, and never a fresh query timeout.
+		remaining := deadline.Sub(w.now())
+		if remaining <= 0 {
+			return nil, err
+		}
+		if rows, err = w.query(path, remaining); err == nil {
+			return rows, nil
+		}
 	}
 }
 
@@ -171,8 +242,8 @@ func walPending(path string) bool {
 // queryOpenCode runs the one statement, read-only, under the timeout. The database is the
 // job's own and this tool never writes it: `-readonly` is that promise kept by the program
 // that opens it, and `-tabs` is the shape the rows come back in.
-func queryOpenCode(path string) ([][]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+func queryOpenCode(path string, limit time.Duration) ([][]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, messagesSQL)
 	var out, errb bytes.Buffer
@@ -180,8 +251,8 @@ func queryOpenCode(path string) ([][]string, error) {
 	cmd.WaitDelay = usageWaitDelay
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("the usage source %s could not be read: %s did not answer within %ds",
-			path, SQLiteBinary, int(usageTimeout/time.Second))
+		return nil, fmt.Errorf("the usage source %s could not be read: %s did not answer within %s",
+			path, SQLiteBinary, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("the usage source %s could not be read: %s: %v: %s",
