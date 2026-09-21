@@ -1883,8 +1883,10 @@ the third call too.
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
 ```
+
+`cut --kind recut` cuts a recut card from a prior diff (`--diff-file <path>`) or a typed HOLD (`--hold-file <path>`). With `--diff-file`, it performs a mechanical 3-way patch rebase (`git apply --3way`) against the target clone (`--dir <dir>`), recording `applied: clean` or `applied: conflict` in the card header and inlining the prior diff for the worker.
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
 is required of the form that uses it and of no other. `--root` is where `--pool`
